@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    { "tag": "minecraft:boats" },
+    { "tag": "minecraft:boats" },
+    { "tag": "minecraft:boats" },
+    { "tag": "minecraft:wool" },
+    { "tag": "minecraft:wool" },
+    { "tag": "minecraft:wool" }
+  ],
+  "result": {
+    "item": "sailboatmod:sailboat",
+    "count": 1
+  }
+}
