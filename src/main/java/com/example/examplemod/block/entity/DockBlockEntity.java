@@ -5,11 +5,15 @@ import com.example.examplemod.dock.DockScreenData;
 import com.example.examplemod.economy.VaultEconomyBridge;
 import com.example.examplemod.entity.SailboatEntity;
 import com.example.examplemod.item.RouteBookItem;
+import com.example.examplemod.market.MarketSavedData;
+import com.example.examplemod.market.PurchaseOrder;
+import com.example.examplemod.market.ShippingOrder;
 import com.example.examplemod.menu.DockMenu;
 import com.example.examplemod.registry.ModBlockEntities;
 import com.example.examplemod.route.RouteDefinition;
 import com.example.examplemod.route.RouteNbtUtil;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -44,12 +48,14 @@ import java.util.Collections;
 public class DockBlockEntity extends BlockEntity implements MenuProvider {
     private static final double ASSIGN_RADIUS = 64.0D;
     private static final int MAX_WAYBILLS = 64;
+    public static final int STORAGE_SIZE = 27;
     public static final int ZONE_HALF_X = 12;
     public static final int ZONE_HALF_Z = 8;
     public static final int MINIMAP_RADIUS = 50;
     private final List<RouteDefinition> routes = new ArrayList<>();
     private final List<WaybillEntry> waybills = new ArrayList<>();
     private final Map<UUID, Integer> assignments = new HashMap<>();
+    private final NonNullList<ItemStack> storage = NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY);
     private ItemStack routeBook = ItemStack.EMPTY;
     private String dockName = "";
     private String ownerName = "";
@@ -310,21 +316,23 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         int idx = Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
-        return assignBoat(boats.get(idx), autoStart, player);
+        return assignBoatToRouteIndex(boats.get(idx), Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, player);
     }
 
     public boolean assignBoat(SailboatEntity sailboat, boolean autoStart) {
-        return assignBoat(sailboat, autoStart, null);
+        return assignBoatToRouteIndex(sailboat, Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, null);
     }
 
-    private boolean assignBoat(SailboatEntity sailboat, boolean autoStart, Player operator) {
+    public boolean assignBoatToRouteIndex(SailboatEntity sailboat, int routeIndex, boolean autoStart, @Nullable Player operator) {
         if (routes.isEmpty()) {
             if (operator != null) {
                 operator.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_route"), true);
             }
             return false;
         }
+        int safeRouteIndex = Mth.clamp(routeIndex, 0, routes.size() - 1);
         int rentalFee = Math.max(SailboatEntity.MIN_RENTAL_PRICE, sailboat.getRentalPrice());
+        boolean chargedRental = false;
         if (operator != null && rentalFee > 0 && !isBoatOwnedBy(sailboat, operator)) {
             if (!chargeRentalFee(operator, rentalFee)) {
                 operator.displayClientMessage(Component.translatable(
@@ -339,19 +347,51 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     sailboat.getName(),
                     rentalFee
             ), true);
+            chargedRental = true;
         }
-        int routeIndex = Mth.clamp(selectedRouteIndex, 0, routes.size() - 1);
-        assignments.put(sailboat.getUUID(), routeIndex);
-        sailboat.setRouteCatalog(routes, routeIndex, worldPosition);
+        assignments.put(sailboat.getUUID(), safeRouteIndex);
+        sailboat.setRouteCatalog(routes, safeRouteIndex, worldPosition);
         sailboat.setPendingShipper(operator != null ? operator.getName().getString() : null);
         if (autoStart) {
             boolean started = sailboat.startAutopilotFromRouteStart();
             if (!started && operator != null) {
+                if (chargedRental) {
+                    refundRentalFee(operator, rentalFee);
+                }
                 operator.displayClientMessage(Component.translatable("screen.sailboatmod.route_start_need_zone"), true);
+                assignments.remove(sailboat.getUUID());
+                setChanged();
+                return false;
             }
         }
         setChanged();
         return true;
+    }
+
+    public List<SailboatEntity> getAssignableSailboats(Player player) {
+        return getNearbySailboats(player);
+    }
+
+    public int findRouteIndexByEndDockName(String dockName) {
+        if (dockName == null || dockName.isBlank()) {
+            return -1;
+        }
+        for (int i = 0; i < routes.size(); i++) {
+            RouteDefinition route = routes.get(i);
+            if (dockName.equalsIgnoreCase(route.endDockName())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public String getRouteName(int routeIndex) {
+        if (routes.isEmpty()) {
+            return "-";
+        }
+        int safeIndex = Mth.clamp(routeIndex, 0, routes.size() - 1);
+        String name = routes.get(safeIndex).name();
+        return name == null || name.isBlank() ? "Route-" + (safeIndex + 1) : name;
     }
 
     public DockScreenData buildScreenData(Player player) {
@@ -447,7 +487,15 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         int idx = Mth.clamp(selectedWaybillIndex, 0, waybills.size() - 1);
-        WaybillEntry removed = waybills.remove(idx);
+        WaybillEntry removed = waybills.get(idx);
+        if (!removed.canClaim(player)) {
+            player.displayClientMessage(Component.translatable(
+                    "block.sailboatmod.dock.waybill_claim_denied",
+                    removed.recipientNameOrFallback()
+            ), true);
+            return false;
+        }
+        waybills.remove(idx);
         for (ItemStack cargo : removed.cargo) {
             if (cargo.isEmpty()) {
                 continue;
@@ -458,6 +506,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 player.drop(left, false);
             }
         }
+        markClaimedOrders(removed);
         selectedWaybillIndex = waybills.isEmpty() ? 0 : Mth.clamp(idx, 0, waybills.size() - 1);
         setChanged();
         return true;
@@ -473,6 +522,38 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             long elapsedMillis,
             double distanceMeters,
             List<ItemStack> cargo
+    ) {
+        receiveShipment(
+                sailboat,
+                routeName,
+                shipperName,
+                startDockName,
+                endDockName,
+                departureEpochMillis,
+                elapsedMillis,
+                distanceMeters,
+                cargo,
+                "",
+                "",
+                "",
+                ""
+        );
+    }
+
+    public void receiveShipment(
+            SailboatEntity sailboat,
+            String routeName,
+            String shipperName,
+            String startDockName,
+            String endDockName,
+            long departureEpochMillis,
+            long elapsedMillis,
+            double distanceMeters,
+            List<ItemStack> cargo,
+            String recipientName,
+            String recipientUuid,
+            String purchaseOrderId,
+            String shippingOrderId
     ) {
         if (cargo == null || cargo.isEmpty()) {
             return;
@@ -493,6 +574,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         String safeShipper = sanitize(shipperName, "-");
         String safeStart = sanitize(startDockName, "-");
         String safeEnd = sanitize(endDockName, getDockName());
+        String safeRecipientName = sanitize(recipientName, "");
+        String safeRecipientUuid = sanitize(recipientUuid, "");
+        String safePurchaseOrderId = sanitize(purchaseOrderId, "");
+        String safeShippingOrderId = sanitize(shippingOrderId, "");
         long safeDeparture = departureEpochMillis > 0L ? departureEpochMillis : System.currentTimeMillis();
         String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date(safeDeparture));
         String waybillName = clampUtf(safeRoute + "+" + safeBoat + "+" + safeShipper + "+" + safeStart + "->" + safeEnd + "+" + stamp, 170);
@@ -507,7 +592,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 safeDeparture,
                 Math.max(0L, elapsedMillis),
                 Math.max(0.0D, distanceMeters),
-                packed
+                packed,
+                safeRecipientName,
+                safeRecipientUuid,
+                safePurchaseOrderId,
+                safeShippingOrderId
         ));
         if (waybills.size() > MAX_WAYBILLS) {
             int overflow = waybills.size() - MAX_WAYBILLS;
@@ -515,8 +604,127 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 waybills.remove(0);
             }
         }
+        markArrivedOrders(safePurchaseOrderId, safeShippingOrderId);
         selectedWaybillIndex = Math.max(0, waybills.size() - 1);
         setChanged();
+    }
+
+    public int getStorageSize() {
+        return storage.size();
+    }
+
+    public ItemStack getStorageItem(int slot) {
+        if (slot < 0 || slot >= storage.size()) {
+            return ItemStack.EMPTY;
+        }
+        return storage.get(slot);
+    }
+
+    public void setStorageItem(int slot, ItemStack stack) {
+        if (slot < 0 || slot >= storage.size()) {
+            return;
+        }
+        storage.set(slot, stack);
+        setChanged();
+    }
+
+    public ItemStack removeStorageItem(int slot, int amount) {
+        if (slot < 0 || slot >= storage.size() || amount <= 0) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack removed = net.minecraft.world.ContainerHelper.removeItem(storage, slot, amount);
+        if (!removed.isEmpty()) {
+            setChanged();
+        }
+        return removed;
+    }
+
+    public ItemStack removeStorageItemNoUpdate(int slot) {
+        if (slot < 0 || slot >= storage.size()) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack removed = net.minecraft.world.ContainerHelper.takeItem(storage, slot);
+        if (!removed.isEmpty()) {
+            setChanged();
+        }
+        return removed;
+    }
+
+    public void storageChanged() {
+        setChanged();
+    }
+
+    public int countMatchingStock(ItemStack sample) {
+        if (sample == null || sample.isEmpty()) {
+            return 0;
+        }
+        int total = 0;
+        for (ItemStack stack : storage) {
+            if (!stack.isEmpty() && ItemStack.isSameItemSameTags(stack, sample)) {
+                total += stack.getCount();
+            }
+        }
+        return total;
+    }
+
+    public boolean extractMatchingStock(ItemStack sample, int quantity) {
+        if (sample == null || sample.isEmpty() || quantity <= 0) {
+            return false;
+        }
+        if (countMatchingStock(sample) < quantity) {
+            return false;
+        }
+        int remaining = quantity;
+        for (int i = 0; i < storage.size() && remaining > 0; i++) {
+            ItemStack stack = storage.get(i);
+            if (stack.isEmpty() || !ItemStack.isSameItemSameTags(stack, sample)) {
+                continue;
+            }
+            int consume = Math.min(stack.getCount(), remaining);
+            stack.shrink(consume);
+            if (stack.isEmpty()) {
+                storage.set(i, ItemStack.EMPTY);
+            }
+            remaining -= consume;
+        }
+        setChanged();
+        return remaining <= 0;
+    }
+
+    public boolean canInsertCargo(List<ItemStack> cargo) {
+        if (cargo == null || cargo.isEmpty()) {
+            return true;
+        }
+        NonNullList<ItemStack> working = NonNullList.withSize(storage.size(), ItemStack.EMPTY);
+        for (int i = 0; i < storage.size(); i++) {
+            working.set(i, storage.get(i).copy());
+        }
+        for (ItemStack stack : cargo) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            ItemStack remaining = stack.copy();
+            mergeIntoStorage(remaining, working);
+            if (!remaining.isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public boolean insertCargo(List<ItemStack> cargo) {
+        if (!canInsertCargo(cargo)) {
+            return false;
+        }
+        for (ItemStack stack : cargo) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            ItemStack remaining = stack.copy();
+            mergeIntoStorage(remaining, storage);
+        }
+        setChanged();
+        return true;
     }
 
     private static String sanitize(String value, String fallback) {
@@ -740,6 +948,28 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return true;
     }
 
+    private static void refundRentalFee(Player player, int amount) {
+        if (player == null || amount <= 0) {
+            return;
+        }
+        Boolean vaultResult = VaultEconomyBridge.tryDeposit(player, amount);
+        if (vaultResult != null && vaultResult) {
+            return;
+        }
+        int remaining = amount;
+        while (remaining > 0) {
+            int stackSize = Math.min(64, remaining);
+            ItemStack stack = new ItemStack(Items.EMERALD, stackSize);
+            boolean added = player.getInventory().add(stack);
+            if (!added || !stack.isEmpty()) {
+                player.drop(stack, false);
+            }
+            remaining -= stackSize;
+        }
+        player.getInventory().setChanged();
+        player.containerMenu.broadcastChanges();
+    }
+
     public String getSelectedRouteName() {
         if (routes.isEmpty()) {
             return "-";
@@ -770,6 +1000,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         tag.putInt("ZoneMaxX", zoneMaxX);
         tag.putInt("ZoneMinZ", zoneMinZ);
         tag.putInt("ZoneMaxZ", zoneMaxZ);
+        CompoundTag storageTag = new CompoundTag();
+        net.minecraft.world.ContainerHelper.saveAllItems(storageTag, storage);
+        tag.put("Storage", storageTag);
         CompoundTag assignmentsTag = new CompoundTag();
         for (Map.Entry<UUID, Integer> entry : assignments.entrySet()) {
             assignmentsTag.putInt(entry.getKey().toString(), entry.getValue());
@@ -798,6 +1031,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         zoneMaxX = tag.contains("ZoneMaxX") ? tag.getInt("ZoneMaxX") : ZONE_HALF_X;
         zoneMinZ = tag.contains("ZoneMinZ") ? tag.getInt("ZoneMinZ") : -ZONE_HALF_Z;
         zoneMaxZ = tag.contains("ZoneMaxZ") ? tag.getInt("ZoneMaxZ") : ZONE_HALF_Z;
+        storage.clear();
+        net.minecraft.world.ContainerHelper.loadAllItems(tag.getCompound("Storage"), storage);
         assignments.clear();
         CompoundTag assignmentsTag = tag.getCompound("Assignments");
         for (String key : assignmentsTag.getAllKeys()) {
@@ -824,6 +1059,101 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
+    private void markArrivedOrders(String purchaseOrderId, String shippingOrderId) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        if (purchaseOrderId != null && !purchaseOrderId.isBlank()) {
+            PurchaseOrder order = market.getPurchaseOrder(purchaseOrderId);
+            if (order != null) {
+                market.putPurchaseOrder(new PurchaseOrder(
+                        order.orderId(),
+                        order.listingId(),
+                        order.buyerUuid(),
+                        order.buyerName(),
+                        order.quantity(),
+                        order.totalPrice(),
+                        order.sourceDockPos(),
+                        order.sourceDockName(),
+                        order.targetDockPos(),
+                        order.targetDockName(),
+                        "ARRIVED"
+                ));
+            }
+        }
+        if (shippingOrderId != null && !shippingOrderId.isBlank()) {
+            ShippingOrder order = market.getShippingOrder(shippingOrderId);
+            if (order != null) {
+                market.putShippingOrder(new ShippingOrder(
+                        order.shippingOrderId(),
+                        order.purchaseOrderId(),
+                        order.shipperUuid(),
+                        order.shipperName(),
+                        order.boatUuid(),
+                        order.boatName(),
+                        order.boatMode(),
+                        order.routeName(),
+                        order.sourceDockPos(),
+                        order.sourceDockName(),
+                        order.targetDockPos(),
+                        order.targetDockName(),
+                        order.rentalFee(),
+                        "DELIVERED"
+                ));
+            }
+        }
+    }
+
+    private void markClaimedOrders(WaybillEntry entry) {
+        if (level == null || level.isClientSide || entry == null || entry.purchaseOrderId == null || entry.purchaseOrderId.isBlank()) {
+            return;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        PurchaseOrder order = market.getPurchaseOrder(entry.purchaseOrderId);
+        if (order != null) {
+            market.putPurchaseOrder(new PurchaseOrder(
+                    order.orderId(),
+                    order.listingId(),
+                    order.buyerUuid(),
+                    order.buyerName(),
+                    order.quantity(),
+                    order.totalPrice(),
+                    order.sourceDockPos(),
+                    order.sourceDockName(),
+                    order.targetDockPos(),
+                    order.targetDockName(),
+                    "CLAIMED"
+            ));
+        }
+    }
+
+    private void mergeIntoStorage(ItemStack remaining, NonNullList<ItemStack> targetStorage) {
+        for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
+            ItemStack slot = targetStorage.get(i);
+            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, remaining)) {
+                continue;
+            }
+            int limit = Math.min(slot.getMaxStackSize(), 64);
+            int canMove = Math.min(limit - slot.getCount(), remaining.getCount());
+            if (canMove <= 0) {
+                continue;
+            }
+            slot.grow(canMove);
+            remaining.shrink(canMove);
+        }
+        for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
+            if (!targetStorage.get(i).isEmpty()) {
+                continue;
+            }
+            int toMove = Math.min(remaining.getMaxStackSize(), remaining.getCount());
+            ItemStack moved = remaining.copy();
+            moved.setCount(toMove);
+            targetStorage.set(i, moved);
+            remaining.shrink(toMove);
+        }
+    }
+
     private static String formatElapsed(long elapsedMillis) {
         long totalSeconds = Math.max(0L, elapsedMillis) / 1000L;
         long hours = totalSeconds / 3600L;
@@ -846,6 +1176,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         private final long elapsedMillis;
         private final double distanceMeters;
         private final List<ItemStack> cargo;
+        private final String recipientName;
+        private final String recipientUuid;
+        private final String purchaseOrderId;
+        private final String shippingOrderId;
 
         private WaybillEntry(
                 String waybillName,
@@ -857,7 +1191,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 long departureEpochMillis,
                 long elapsedMillis,
                 double distanceMeters,
-                List<ItemStack> cargo
+                List<ItemStack> cargo,
+                String recipientName,
+                String recipientUuid,
+                String purchaseOrderId,
+                String shippingOrderId
         ) {
             this.waybillName = sanitize(waybillName, "-");
             this.routeName = sanitize(routeName, "-");
@@ -869,6 +1207,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             this.elapsedMillis = Math.max(0L, elapsedMillis);
             this.distanceMeters = Math.max(0.0D, distanceMeters);
             this.cargo = new ArrayList<>();
+            this.recipientName = sanitize(recipientName, "");
+            this.recipientUuid = sanitize(recipientUuid, "");
+            this.purchaseOrderId = sanitize(purchaseOrderId, "");
+            this.shippingOrderId = sanitize(shippingOrderId, "");
             for (ItemStack stack : cargo) {
                 if (stack != null && !stack.isEmpty()) {
                     this.cargo.add(stack.copy());
@@ -887,6 +1229,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             tag.putLong("DepartureEpochMillis", departureEpochMillis);
             tag.putLong("ElapsedMillis", elapsedMillis);
             tag.putDouble("DistanceMeters", distanceMeters);
+            tag.putString("RecipientName", recipientName);
+            tag.putString("RecipientUuid", recipientUuid);
+            tag.putString("PurchaseOrderId", purchaseOrderId);
+            tag.putString("ShippingOrderId", shippingOrderId);
             ListTag cargoTag = new ListTag();
             for (ItemStack stack : cargo) {
                 cargoTag.add(stack.save(new CompoundTag()));
@@ -920,8 +1266,29 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     tag.getLong("DepartureEpochMillis"),
                     tag.getLong("ElapsedMillis"),
                     tag.getDouble("DistanceMeters"),
-                    cargo
+                    cargo,
+                    tag.getString("RecipientName"),
+                    tag.getString("RecipientUuid"),
+                    tag.getString("PurchaseOrderId"),
+                    tag.getString("ShippingOrderId")
             );
+        }
+
+        private boolean canClaim(Player player) {
+            if (player == null) {
+                return false;
+            }
+            if (recipientUuid == null || recipientUuid.isBlank()) {
+                return true;
+            }
+            return recipientUuid.equals(player.getUUID().toString());
+        }
+
+        private String recipientNameOrFallback() {
+            if (recipientName == null || recipientName.isBlank()) {
+                return "-";
+            }
+            return recipientName;
         }
 
         private List<String> toInfoLines() {
@@ -932,6 +1299,12 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             out.add("Waybill: " + waybillName);
             out.add("Shipper: " + shipperName + " | Boat: " + boatName);
             out.add("From: " + startDockName + " -> To: " + endDockName);
+            if (recipientUuid != null && !recipientUuid.isBlank()) {
+                out.add("Recipient: " + recipientNameOrFallback());
+            }
+            if ((purchaseOrderId != null && !purchaseOrderId.isBlank()) || (shippingOrderId != null && !shippingOrderId.isBlank())) {
+                out.add("Order: " + shortId(purchaseOrderId) + " | Ship: " + shortId(shippingOrderId));
+            }
             out.add("Date: " + dateText);
             out.add(String.format(Locale.ROOT, "Time: %s | Distance: %.0fm | Route: %s", formatElapsed(elapsedMillis), distanceMeters, routeName));
             return out;
@@ -956,6 +1329,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 out.add("- (empty)");
             }
             return out;
+        }
+
+        private static String shortId(String value) {
+            if (value == null || value.isBlank()) {
+                return "-";
+            }
+            return value.length() <= 8 ? value : value.substring(0, 8);
         }
     }
 }

@@ -20,6 +20,7 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.SAILBOAT_ITEM.get());
                         output.accept(ModItems.ROUTE_BOOK_ITEM.get());
                         output.accept(ModItems.DOCK_ITEM.get());
+                        output.accept(ModItems.MARKET_ITEM.get());
                     })
                     .build()
     );

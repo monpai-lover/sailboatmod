@@ -3,16 +3,23 @@ package com.example.examplemod.network;
 import com.example.examplemod.SailboatMod;
 import com.example.examplemod.network.packet.OpenSailboatStoragePacket;
 import com.example.examplemod.network.packet.OpenDockScreenPacket;
+import com.example.examplemod.network.packet.OpenMarketScreenPacket;
 import com.example.examplemod.network.packet.RenameSailboatPacket;
 import com.example.examplemod.network.packet.SelectSailboatSeatPacket;
 import com.example.examplemod.network.packet.SetSailboatRentalPricePacket;
 import com.example.examplemod.network.packet.SetHandlingPresetPacket;
 import com.example.examplemod.network.packet.ToggleSailPacket;
 import com.example.examplemod.network.packet.ControlAutopilotPacket;
+import com.example.examplemod.network.packet.CancelMarketListingPacket;
+import com.example.examplemod.network.packet.ClaimMarketCreditsPacket;
+import com.example.examplemod.network.packet.CreateMarketListingPacket;
+import com.example.examplemod.network.packet.DispatchMarketOrderPacket;
 import com.example.examplemod.network.packet.DockGuiActionPacket;
 import com.example.examplemod.network.packet.FinalizeRouteNamePacket;
+import com.example.examplemod.network.packet.MarketGuiActionPacket;
 import com.example.examplemod.network.packet.RenameDockPacket;
 import com.example.examplemod.network.packet.SetDockZonePacket;
+import com.example.examplemod.network.packet.PurchaseMarketListingPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.simple.SimpleChannel;
@@ -112,6 +119,55 @@ public final class ModNetwork {
                 SetDockZonePacket::encode,
                 SetDockZonePacket::decode,
                 SetDockZonePacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenMarketScreenPacket.class,
+                OpenMarketScreenPacket::encode,
+                OpenMarketScreenPacket::decode,
+                OpenMarketScreenPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                MarketGuiActionPacket.class,
+                MarketGuiActionPacket::encode,
+                MarketGuiActionPacket::decode,
+                MarketGuiActionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CreateMarketListingPacket.class,
+                CreateMarketListingPacket::encode,
+                CreateMarketListingPacket::decode,
+                CreateMarketListingPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                PurchaseMarketListingPacket.class,
+                PurchaseMarketListingPacket::encode,
+                PurchaseMarketListingPacket::decode,
+                PurchaseMarketListingPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                DispatchMarketOrderPacket.class,
+                DispatchMarketOrderPacket::encode,
+                DispatchMarketOrderPacket::decode,
+                DispatchMarketOrderPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CancelMarketListingPacket.class,
+                CancelMarketListingPacket::encode,
+                CancelMarketListingPacket::decode,
+                CancelMarketListingPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                ClaimMarketCreditsPacket.class,
+                ClaimMarketCreditsPacket::encode,
+                ClaimMarketCreditsPacket::decode,
+                ClaimMarketCreditsPacket::handle
         );
     }
 

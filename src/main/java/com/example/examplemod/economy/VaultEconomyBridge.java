@@ -37,6 +37,35 @@ public final class VaultEconomyBridge {
     }
 
     @Nullable
+    public static Boolean tryDeposit(Player player, int amount) {
+        if (player == null || amount <= 0) {
+            return Boolean.TRUE;
+        }
+        String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+        return tryDepositByIdentity(player.getUUID(), playerName, amount);
+    }
+
+    @Nullable
+    public static Boolean tryDepositByIdentity(UUID playerUuid, String playerName, int amount) {
+        if (amount <= 0) {
+            return Boolean.TRUE;
+        }
+        Object provider = resolveEconomyProvider();
+        if (provider == null) {
+            return null;
+        }
+        try {
+            Boolean withOffline = tryDepositWithOfflinePlayer(provider, playerUuid, amount);
+            if (withOffline != null) {
+                return withOffline;
+            }
+            return tryDepositWithName(provider, playerName, amount);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    @Nullable
     private static Object resolveEconomyProvider() {
         if (providerResolved) {
             return economyProvider;
@@ -87,6 +116,39 @@ public final class VaultEconomyBridge {
             String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
             Method withdrawPlayer = provider.getClass().getMethod("withdrawPlayer", String.class, double.class);
             Object response = withdrawPlayer.invoke(provider, playerName, (double) amount);
+            return isTransactionSuccess(response);
+        } catch (NoSuchMethodException ignored) {
+            return null;
+        } catch (Throwable ignored) {
+            return Boolean.FALSE;
+        }
+    }
+
+    @Nullable
+    private static Boolean tryDepositWithOfflinePlayer(Object provider, UUID playerUuid, int amount) {
+        try {
+            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+            Class<?> offlinePlayerClass = Class.forName("org.bukkit.OfflinePlayer");
+            Method getOfflinePlayer = bukkitClass.getMethod("getOfflinePlayer", UUID.class);
+            Object offlinePlayer = getOfflinePlayer.invoke(null, playerUuid);
+            Method depositPlayer = provider.getClass().getMethod("depositPlayer", offlinePlayerClass, double.class);
+            Object response = depositPlayer.invoke(provider, offlinePlayer, (double) amount);
+            return isTransactionSuccess(response);
+        } catch (NoSuchMethodException ignored) {
+            return null;
+        } catch (Throwable ignored) {
+            return Boolean.FALSE;
+        }
+    }
+
+    @Nullable
+    private static Boolean tryDepositWithName(Object provider, String playerName, int amount) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        try {
+            Method depositPlayer = provider.getClass().getMethod("depositPlayer", String.class, double.class);
+            Object response = depositPlayer.invoke(provider, playerName, (double) amount);
             return isTransactionSuccess(response);
         } catch (NoSuchMethodException ignored) {
             return null;

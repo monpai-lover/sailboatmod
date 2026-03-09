@@ -27,6 +27,11 @@ public final class ModItems {
             () -> new BlockItem(ModBlocks.DOCK_BLOCK.get(), new Item.Properties())
     );
 
+    public static final RegistryObject<Item> MARKET_ITEM = ITEMS.register(
+            "market",
+            () -> new BlockItem(ModBlocks.MARKET_BLOCK.get(), new Item.Properties())
+    );
+
     private ModItems() {
     }
 }

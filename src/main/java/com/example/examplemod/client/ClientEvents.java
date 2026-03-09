@@ -1,7 +1,8 @@
 package com.example.examplemod.client;
 
-import com.example.examplemod.client.screen.DockScreen;
 import com.example.examplemod.SailboatMod;
+import com.example.examplemod.client.screen.DockScreen;
+import com.example.examplemod.client.screen.MarketScreen;
 import com.example.examplemod.client.renderer.SailboatEntityRenderer;
 import com.example.examplemod.registry.ModEntities;
 import com.example.examplemod.registry.ModMenus;
@@ -21,7 +22,10 @@ public final class ClientEvents {
 
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
-        event.enqueueWork(() -> MenuScreens.register(ModMenus.DOCK_MENU.get(), DockScreen::new));
+        event.enqueueWork(() -> {
+            MenuScreens.register(ModMenus.DOCK_MENU.get(), DockScreen::new);
+            MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
+        });
     }
 
     private ClientEvents() {

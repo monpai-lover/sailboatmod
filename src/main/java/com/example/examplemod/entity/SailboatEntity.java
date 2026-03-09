@@ -1,6 +1,10 @@
 package com.example.examplemod.entity;
 
 import com.example.examplemod.block.entity.DockBlockEntity;
+import com.example.examplemod.market.MarketListing;
+import com.example.examplemod.market.MarketSavedData;
+import com.example.examplemod.market.PurchaseOrder;
+import com.example.examplemod.market.ShippingOrder;
 import com.example.examplemod.item.RouteBookItem;
 import com.example.examplemod.registry.ModItems;
 import com.example.examplemod.route.RouteDefinition;
@@ -153,6 +157,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private String autopilotShipmentShipperName = "";
     private String autopilotShipmentStartDockName = "";
     private String autopilotShipmentEndDockName = "";
+    private String autopilotShipmentRecipientName = "";
+    private String autopilotShipmentRecipientUuid = "";
+    private String autopilotShipmentPurchaseOrderId = "";
+    private String autopilotShipmentShippingOrderId = "";
     private long autopilotShipmentDepartureEpochMillis = 0L;
     private double autopilotShipmentDistanceMeters = 0.0D;
     private BlockPos autopilotDestinationDockHintPos = null;
@@ -638,6 +646,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         tag.putString("AutopilotShipmentShipperName", autopilotShipmentShipperName);
         tag.putString("AutopilotShipmentStartDockName", autopilotShipmentStartDockName);
         tag.putString("AutopilotShipmentEndDockName", autopilotShipmentEndDockName);
+        tag.putString("AutopilotShipmentRecipientName", autopilotShipmentRecipientName);
+        tag.putString("AutopilotShipmentRecipientUuid", autopilotShipmentRecipientUuid);
+        tag.putString("AutopilotShipmentPurchaseOrderId", autopilotShipmentPurchaseOrderId);
+        tag.putString("AutopilotShipmentShippingOrderId", autopilotShipmentShippingOrderId);
         tag.putLong("AutopilotShipmentDepartureEpochMillis", autopilotShipmentDepartureEpochMillis);
         tag.putDouble("AutopilotShipmentDistanceMeters", autopilotShipmentDistanceMeters);
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
@@ -705,6 +717,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotShipmentShipperName = tag.getString("AutopilotShipmentShipperName");
         autopilotShipmentStartDockName = tag.getString("AutopilotShipmentStartDockName");
         autopilotShipmentEndDockName = tag.getString("AutopilotShipmentEndDockName");
+        autopilotShipmentRecipientName = tag.getString("AutopilotShipmentRecipientName");
+        autopilotShipmentRecipientUuid = tag.getString("AutopilotShipmentRecipientUuid");
+        autopilotShipmentPurchaseOrderId = tag.getString("AutopilotShipmentPurchaseOrderId");
+        autopilotShipmentShippingOrderId = tag.getString("AutopilotShipmentShippingOrderId");
         autopilotShipmentDepartureEpochMillis = Math.max(0L, tag.getLong("AutopilotShipmentDepartureEpochMillis"));
         autopilotShipmentDistanceMeters = Math.max(0.0D, tag.getDouble("AutopilotShipmentDistanceMeters"));
         ownerName = tag.getString("OwnerName");
@@ -873,6 +889,60 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         pendingShipperName = shipperName == null ? "" : shipperName.trim();
     }
 
+    public void setPendingMarketDelivery(@Nullable String recipientName, @Nullable String recipientUuid,
+                                         @Nullable String purchaseOrderId, @Nullable String shippingOrderId) {
+        autopilotShipmentRecipientName = recipientName == null ? "" : recipientName.trim();
+        autopilotShipmentRecipientUuid = recipientUuid == null ? "" : recipientUuid.trim();
+        autopilotShipmentPurchaseOrderId = purchaseOrderId == null ? "" : purchaseOrderId.trim();
+        autopilotShipmentShippingOrderId = shippingOrderId == null ? "" : shippingOrderId.trim();
+    }
+
+    public void clearPendingMarketDelivery() {
+        autopilotShipmentRecipientName = "";
+        autopilotShipmentRecipientUuid = "";
+        autopilotShipmentPurchaseOrderId = "";
+        autopilotShipmentShippingOrderId = "";
+    }
+
+    public boolean loadCargo(List<ItemStack> cargo) {
+        if (!canLoadCargo(cargo)) {
+            return false;
+        }
+        for (ItemStack stack : cargo) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            ItemStack remaining = stack.copy();
+            mergeIntoInventory(remaining);
+        }
+        return true;
+    }
+
+    public boolean canLoadCargo(List<ItemStack> cargo) {
+        if (cargo == null || cargo.isEmpty()) {
+            return true;
+        }
+        NonNullList<ItemStack> snapshot = NonNullList.withSize(inventory.size(), ItemStack.EMPTY);
+        for (int i = 0; i < inventory.size(); i++) {
+            snapshot.set(i, inventory.get(i).copy());
+        }
+        NonNullList<ItemStack> working = NonNullList.withSize(inventory.size(), ItemStack.EMPTY);
+        for (int i = 0; i < snapshot.size(); i++) {
+            working.set(i, snapshot.get(i).copy());
+        }
+        for (ItemStack stack : cargo) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            ItemStack remaining = stack.copy();
+            mergeIntoInventory(remaining, working);
+            if (!remaining.isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public void setRouteCatalog(List<RouteDefinition> routes, int preferredIndex, @Nullable BlockPos dockPos) {
         if (level().isClientSide) {
             return;
@@ -936,8 +1006,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     }
 
     public void stopAutopilot() {
+        stopAutopilot(true);
+    }
+
+    private void stopAutopilot(boolean rollbackShipment) {
         if (level().isClientSide) {
             return;
+        }
+        if (rollbackShipment) {
+            rollbackMarketShipment();
         }
         entityData.set(DATA_AUTOPILOT_ACTIVE, false);
         autopilotRoute.clear();
@@ -1285,6 +1362,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotShipmentShipperName = "";
         autopilotShipmentStartDockName = "";
         autopilotShipmentEndDockName = "";
+        autopilotShipmentRecipientName = "";
+        autopilotShipmentRecipientUuid = "";
+        autopilotShipmentPurchaseOrderId = "";
+        autopilotShipmentShippingOrderId = "";
         autopilotShipmentDepartureEpochMillis = 0L;
         autopilotShipmentDistanceMeters = 0.0D;
         autopilotDestinationDockHintPos = null;
@@ -1344,10 +1425,121 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                     depart,
                     elapsed,
                     distance,
-                    cargo
+                    cargo,
+                    autopilotShipmentRecipientName,
+                    autopilotShipmentRecipientUuid,
+                    autopilotShipmentPurchaseOrderId,
+                    autopilotShipmentShippingOrderId
             );
         }
-        stopAutopilot();
+        stopAutopilot(false);
+    }
+
+    public List<ItemStack> unloadAllCargo() {
+        return drainAllCargo();
+    }
+
+    private void mergeIntoInventory(ItemStack remaining) {
+        mergeIntoInventory(remaining, inventory);
+    }
+
+    private void mergeIntoInventory(ItemStack remaining, NonNullList<ItemStack> targetInventory) {
+        for (int i = 0; i < targetInventory.size() && !remaining.isEmpty(); i++) {
+            ItemStack slot = targetInventory.get(i);
+            if (slot.isEmpty()) {
+                continue;
+            }
+            if (!ItemStack.isSameItemSameTags(slot, remaining)) {
+                continue;
+            }
+            int limit = Math.min(slot.getMaxStackSize(), container.getMaxStackSize());
+            int canMove = Math.min(limit - slot.getCount(), remaining.getCount());
+            if (canMove <= 0) {
+                continue;
+            }
+            slot.grow(canMove);
+            remaining.shrink(canMove);
+        }
+        for (int i = 0; i < targetInventory.size() && !remaining.isEmpty(); i++) {
+            ItemStack slot = targetInventory.get(i);
+            if (!slot.isEmpty()) {
+                continue;
+            }
+            int toMove = Math.min(remaining.getMaxStackSize(), remaining.getCount());
+            ItemStack moved = remaining.copy();
+            moved.setCount(toMove);
+            targetInventory.set(i, moved);
+            remaining.shrink(toMove);
+        }
+    }
+
+    private void rollbackMarketShipment() {
+        if (level().isClientSide || autopilotShipmentPurchaseOrderId == null || autopilotShipmentPurchaseOrderId.isBlank()) {
+            return;
+        }
+        MarketSavedData market = MarketSavedData.get(level());
+        PurchaseOrder purchaseOrder = market.getPurchaseOrder(autopilotShipmentPurchaseOrderId);
+        ShippingOrder shippingOrder = market.getShippingOrder(autopilotShipmentShippingOrderId);
+        List<ItemStack> cargo = drainAllCargo();
+        boolean rolledBackToDock = false;
+        if (purchaseOrder != null && level().getBlockEntity(purchaseOrder.sourceDockPos()) instanceof DockBlockEntity sourceDock) {
+            if (cargo.isEmpty()) {
+                rolledBackToDock = true;
+            } else {
+                rolledBackToDock = sourceDock.insertCargo(cargo);
+            }
+        }
+        if (!rolledBackToDock && !cargo.isEmpty()) {
+            loadCargo(cargo);
+        }
+        if (purchaseOrder != null) {
+            String nextStatus = rolledBackToDock ? "WAITING_SHIPMENT" : "FAILED";
+            market.putPurchaseOrder(new PurchaseOrder(
+                    purchaseOrder.orderId(),
+                    purchaseOrder.listingId(),
+                    purchaseOrder.buyerUuid(),
+                    purchaseOrder.buyerName(),
+                    purchaseOrder.quantity(),
+                    purchaseOrder.totalPrice(),
+                    purchaseOrder.sourceDockPos(),
+                    purchaseOrder.sourceDockName(),
+                    purchaseOrder.targetDockPos(),
+                    purchaseOrder.targetDockName(),
+                    nextStatus
+            ));
+            MarketListing listing = market.getListing(purchaseOrder.listingId());
+            if (listing != null && rolledBackToDock) {
+                market.putListing(new MarketListing(
+                        listing.listingId(),
+                        listing.sellerUuid(),
+                        listing.sellerName(),
+                        listing.itemStack(),
+                        listing.unitPrice(),
+                        listing.availableCount(),
+                        listing.reservedCount() + purchaseOrder.quantity(),
+                        listing.sourceDockPos(),
+                        listing.sourceDockName()
+                ));
+            }
+        }
+        if (shippingOrder != null) {
+            market.putShippingOrder(new ShippingOrder(
+                    shippingOrder.shippingOrderId(),
+                    shippingOrder.purchaseOrderId(),
+                    shippingOrder.shipperUuid(),
+                    shippingOrder.shipperName(),
+                    shippingOrder.boatUuid(),
+                    shippingOrder.boatName(),
+                    shippingOrder.boatMode(),
+                    shippingOrder.routeName(),
+                    shippingOrder.sourceDockPos(),
+                    shippingOrder.sourceDockName(),
+                    shippingOrder.targetDockPos(),
+                    shippingOrder.targetDockName(),
+                    shippingOrder.rentalFee(),
+                    rolledBackToDock ? "FAILED_ROLLBACK" : "FAILED"
+            ));
+        }
     }
 
     private List<ItemStack> drainAllCargo() {
