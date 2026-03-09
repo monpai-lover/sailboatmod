@@ -149,9 +149,8 @@ public class SailboatInfoScreen extends Screen {
                 break;
             }
         }
-        String ownerUuid = sailboat.getOwnerUuid() == null || sailboat.getOwnerUuid().isBlank() ? "-" : sailboat.getOwnerUuid();
         guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.captain", captainName), centerX - 100, top + 172, 0xFFD27F);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.owner_full", sailboat.getOwnerName(), ownerUuid), centerX - 100, top + 184, 0xA8E6FF);
+        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.owner_name", sailboat.getOwnerName()), centerX - 100, top + 184, 0xA8E6FF);
         guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.storage_info", 27), centerX - 100, top + 196, 0xA8E6FF);
 
         int rowY = top + 208;

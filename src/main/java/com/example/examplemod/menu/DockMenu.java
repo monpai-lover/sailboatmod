@@ -58,7 +58,7 @@ public class DockMenu extends AbstractContainerMenu {
         };
         this.dockSlotContainer.setItem(0, initial);
 
-        this.addSlot(new Slot(dockSlotContainer, 0, 172, 20) {
+        this.addSlot(new Slot(dockSlotContainer, 0, 10, 20) {
             @Override
             public boolean mayPlace(ItemStack stack) {
                 return stack.getItem() instanceof RouteBookItem;
@@ -139,7 +139,7 @@ public class DockMenu extends AbstractContainerMenu {
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
                 int slotIndex = col + row * 9;
-                this.addSlot(new Slot(dockStorageContainer, slotIndex, 10 + col * 18, 20 + row * 18));
+                this.addSlot(new Slot(dockStorageContainer, slotIndex, 28 + col * 18, 20 + row * 18));
             }
         }
     }

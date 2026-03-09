@@ -136,9 +136,9 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.name"), rightPanelX + 8, rightPanelY + 26, 0xFFD27F);
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book"), rightPanelX + 8, rightPanelY + 44, 0xFFD27F);
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xA8E6FF);
-        String ownerUuid = data.dockOwnerUuid() == null || data.dockOwnerUuid().isBlank() ? "-" : data.dockOwnerUuid();
-        String ownerLine = Component.translatable("screen.sailboatmod.owner_full", data.dockOwnerName(), ownerUuid).getString();
+        String ownerLine = Component.translatable("screen.sailboatmod.owner_name", data.dockOwnerName()).getString();
         guiGraphics.drawString(font, Component.literal(trimToWidth(ownerLine, 136)), rightPanelX + 8, rightPanelY + 52, 0xA8E6FF);
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book_slot"), leftPos + 28, topPos + 6, 0xFFD27F);
 
         if (activeTab == TAB_ROUTE) {
             drawRouteTab(guiGraphics, mouseX, mouseY);
