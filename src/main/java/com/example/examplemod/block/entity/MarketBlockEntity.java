@@ -103,16 +103,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             MarketSavedData market = MarketSavedData.get(level);
             for (MarketListing listing : market.getListings()) {
                 listingLines.add(listing.toSummaryLine());
-                if (listingLines.size() >= 8) {
-                    break;
-                }
             }
             List<PurchaseOrder> openOrders = linkedDockPos == null ? List.<PurchaseOrder>of() : market.getOpenOrdersForSourceDock(linkedDockPos);
             for (PurchaseOrder order : openOrders) {
                 orderLines.add(order.toSummaryLine());
-                if (orderLines.size() >= 8) {
-                    break;
-                }
             }
         }
 

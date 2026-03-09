@@ -22,6 +22,9 @@ import java.util.List;
 public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     private static final int PANEL_W = 118;
     private static final int PANEL_H = 100;
+    private static final int PANEL_CONTENT_Y = 22;
+    private static final int PANEL_ROW_H = 10;
+    private static final int PANEL_VISIBLE_ROWS = 7;
 
     private MarketOverviewData data;
     private EditBox listingQtyInput;
@@ -30,11 +33,15 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     private int selectedListingIndex = 0;
     private int selectedOrderIndex = 0;
     private int selectedBoatIndex = 0;
+    private int listingScroll = 0;
+    private int orderScroll = 0;
+    private int boatScroll = 0;
     private Button listButton;
     private Button buyButton;
     private Button dispatchButton;
     private Button cancelButton;
     private Button claimButton;
+    private String hoveredLine;
 
     public MarketScreen(MarketMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -53,6 +60,10 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         selectedListingIndex = clampSelection(selectedListingIndex, data.listingLines());
         selectedOrderIndex = clampSelection(selectedOrderIndex, data.orderLines());
         selectedBoatIndex = clampSelection(selectedBoatIndex, data.shippingLines());
+        listingScroll = clampScroll(listingScroll, data.listingLines());
+        orderScroll = clampScroll(orderScroll, data.orderLines());
+        boatScroll = clampScroll(boatScroll, data.shippingLines());
+        ensureSelectionVisible();
     }
 
     @Override
@@ -100,6 +111,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     @Override
     protected void renderBg(GuiGraphics guiGraphics, float partialTick, int mouseX, int mouseY) {
         updateButtonState();
+        hoveredLine = null;
         guiGraphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xCC111A20);
         guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + imageWidth - 1, topPos + imageHeight - 1, 0xCC1B2A33);
 
@@ -116,9 +128,9 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
                 : Component.translatable("screen.sailboatmod.market.linked_dock_missing").getString();
         guiGraphics.drawString(font, Component.literal(trimToWidth(dockLine, 230)), leftPos + 10, topPos + 50, 0xFFD4E8C4);
 
-        drawPanel(guiGraphics, leftPos + 10, topPos + 68, Component.translatable("screen.sailboatmod.market.tab.goods"), data.listingLines(), selectedListingIndex);
-        drawPanel(guiGraphics, leftPos + 126, topPos + 68, Component.translatable("screen.sailboatmod.market.tab.orders"), data.orderLines(), selectedOrderIndex);
-        drawPanel(guiGraphics, leftPos + 242, topPos + 68, Component.translatable("screen.sailboatmod.market.tab.shipping"), data.shippingLines(), selectedBoatIndex);
+        drawPanel(guiGraphics, leftPos + 10, topPos + 68, Component.translatable("screen.sailboatmod.market.tab.goods"), data.listingLines(), selectedListingIndex, listingScroll, mouseX, mouseY);
+        drawPanel(guiGraphics, leftPos + 126, topPos + 68, Component.translatable("screen.sailboatmod.market.tab.orders"), data.orderLines(), selectedOrderIndex, orderScroll, mouseX, mouseY);
+        drawPanel(guiGraphics, leftPos + 242, topPos + 68, Component.translatable("screen.sailboatmod.market.tab.shipping"), data.shippingLines(), selectedBoatIndex, boatScroll, mouseX, mouseY);
     }
 
     @Override
@@ -126,6 +138,9 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         renderTooltip(guiGraphics, mouseX, mouseY);
+        if (hoveredLine != null && !hoveredLine.isBlank()) {
+            guiGraphics.renderTooltip(this.font, Component.literal(hoveredLine), mouseX, mouseY);
+        }
     }
 
     @Override
@@ -134,19 +149,37 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && trySelectFromPanel(mouseX, mouseY, leftPos + 10, topPos + 68, data.listingLines(), 0)) {
+        if (button == 0 && trySelectFromPanel(mouseX, mouseY, leftPos + 10, topPos + 68, data.listingLines(), 0, listingScroll)) {
             return true;
         }
-        if (button == 0 && trySelectFromPanel(mouseX, mouseY, leftPos + 126, topPos + 68, data.orderLines(), 1)) {
+        if (button == 0 && trySelectFromPanel(mouseX, mouseY, leftPos + 126, topPos + 68, data.orderLines(), 1, orderScroll)) {
             return true;
         }
-        if (button == 0 && trySelectFromPanel(mouseX, mouseY, leftPos + 242, topPos + 68, data.shippingLines(), 2)) {
+        if (button == 0 && trySelectFromPanel(mouseX, mouseY, leftPos + 242, topPos + 68, data.shippingLines(), 2, boatScroll)) {
             return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
-    private void drawPanel(GuiGraphics g, int x, int y, Component title, List<String> lines, int selectedIndex) {
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        int direction = delta > 0 ? -1 : 1;
+        if (isInsidePanel(mouseX, mouseY, leftPos + 10, topPos + 68, data.listingLines())) {
+            listingScroll = clampScroll(listingScroll + direction, data.listingLines());
+            return true;
+        }
+        if (isInsidePanel(mouseX, mouseY, leftPos + 126, topPos + 68, data.orderLines())) {
+            orderScroll = clampScroll(orderScroll + direction, data.orderLines());
+            return true;
+        }
+        if (isInsidePanel(mouseX, mouseY, leftPos + 242, topPos + 68, data.shippingLines())) {
+            boatScroll = clampScroll(boatScroll + direction, data.shippingLines());
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, delta);
+    }
+
+    private void drawPanel(GuiGraphics g, int x, int y, Component title, List<String> lines, int selectedIndex, int scroll, int mouseX, int mouseY) {
         g.fill(x, y, x + PANEL_W, y + PANEL_H, 0x66203037);
         g.fill(x + 1, y + 1, x + PANEL_W - 1, y + PANEL_H - 1, 0x66131C23);
         g.drawString(font, title, x + 6, y + 6, 0xFFE7C977);
@@ -154,18 +187,25 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
             g.drawString(font, Component.translatable("screen.sailboatmod.market.empty"), x + 6, y + 22, 0xFF8D98A3);
             return;
         }
-        int drawY = y + 22;
-        int row = 0;
-        for (String line : lines) {
-            if (drawY > y + PANEL_H - 12) {
-                break;
-            }
-            if (row == selectedIndex) {
+        int maxScroll = Math.max(0, lines.size() - PANEL_VISIBLE_ROWS);
+        int safeScroll = Math.max(0, Math.min(scroll, maxScroll));
+        int start = safeScroll;
+        int end = Math.min(lines.size(), start + PANEL_VISIBLE_ROWS);
+        int drawY = y + PANEL_CONTENT_Y;
+        for (int i = start; i < end; i++) {
+            String line = lines.get(i);
+            if (i == selectedIndex) {
                 g.fill(x + 3, drawY - 1, x + PANEL_W - 3, drawY + 8, 0x55457A9A);
             }
             g.drawString(font, Component.literal(trimToWidth(line, PANEL_W - 12)), x + 6, drawY, 0xFFE0E0E0);
-            drawY += 10;
-            row++;
+            if (mouseX >= x + 3 && mouseX < x + PANEL_W - 3 && mouseY >= drawY - 1 && mouseY < drawY + 9) {
+                hoveredLine = line;
+            }
+            drawY += PANEL_ROW_H;
+        }
+        if (maxScroll > 0) {
+            String pageLine = (safeScroll + 1) + "/" + (maxScroll + 1);
+            g.drawString(font, Component.literal(pageLine), x + PANEL_W - 26, y + PANEL_H - 10, 0xFF8D98A3);
         }
     }
 
@@ -173,24 +213,26 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         ModNetwork.CHANNEL.sendToServer(new MarketGuiActionPacket(data.marketPos(), action));
     }
 
-    private boolean trySelectFromPanel(double mouseX, double mouseY, int x, int y, List<String> lines, int panelIndex) {
+    private boolean trySelectFromPanel(double mouseX, double mouseY, int x, int y, List<String> lines, int panelIndex, int scroll) {
         if (lines == null || lines.isEmpty()) {
             return false;
         }
         if (mouseX < x || mouseX >= x + PANEL_W || mouseY < y + 20 || mouseY >= y + PANEL_H) {
             return false;
         }
-        int row = (int) ((mouseY - (y + 22)) / 10);
-        if (row < 0 || row >= lines.size()) {
+        int row = (int) ((mouseY - (y + PANEL_CONTENT_Y)) / PANEL_ROW_H);
+        int idx = scroll + row;
+        if (row < 0 || row >= PANEL_VISIBLE_ROWS || idx < 0 || idx >= lines.size()) {
             return false;
         }
         if (panelIndex == 0) {
-            selectedListingIndex = row;
+            selectedListingIndex = idx;
         } else if (panelIndex == 1) {
-            selectedOrderIndex = row;
+            selectedOrderIndex = idx;
         } else {
-            selectedBoatIndex = row;
+            selectedBoatIndex = idx;
         }
+        ensureSelectionVisible();
         return true;
     }
 
@@ -199,6 +241,39 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
             return 0;
         }
         return Math.max(0, Math.min(current, lines.size() - 1));
+    }
+
+    private int clampScroll(int current, List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return 0;
+        }
+        return Math.max(0, Math.min(current, Math.max(0, lines.size() - PANEL_VISIBLE_ROWS)));
+    }
+
+    private void ensureSelectionVisible() {
+        listingScroll = ensureVisible(listingScroll, selectedListingIndex, data.listingLines());
+        orderScroll = ensureVisible(orderScroll, selectedOrderIndex, data.orderLines());
+        boatScroll = ensureVisible(boatScroll, selectedBoatIndex, data.shippingLines());
+    }
+
+    private int ensureVisible(int scroll, int selectedIndex, List<String> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return 0;
+        }
+        int clampedScroll = clampScroll(scroll, lines);
+        if (selectedIndex < clampedScroll) {
+            return selectedIndex;
+        }
+        if (selectedIndex >= clampedScroll + PANEL_VISIBLE_ROWS) {
+            return selectedIndex - PANEL_VISIBLE_ROWS + 1;
+        }
+        return clampedScroll;
+    }
+
+    private boolean isInsidePanel(double mouseX, double mouseY, int x, int y, List<String> lines) {
+        return lines != null && !lines.isEmpty()
+                && mouseX >= x && mouseX < x + PANEL_W
+                && mouseY >= y + 20 && mouseY < y + PANEL_H;
     }
 
     private int parsePositive(String value, int fallback) {
