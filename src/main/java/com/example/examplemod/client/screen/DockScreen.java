@@ -243,14 +243,14 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int lineY = infoY + 3;
         int maxWidth = infoW - 6;
         int maxBottom = infoY + infoH - 10;
-        for (String line : data.selectedWaybillInfoLines()) {
+        for (String line : data.selectedWaybillCargoLines()) {
             if (lineY > maxBottom) {
                 break;
             }
             g.drawString(font, Component.literal(trimToWidth(line, maxWidth)), infoX + 3, lineY, 0xDCEEFF);
             lineY += 9;
         }
-        for (String line : data.selectedWaybillCargoLines()) {
+        for (String line : data.selectedWaybillInfoLines()) {
             if (lineY > maxBottom) {
                 break;
             }
