@@ -178,6 +178,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (listing == null) {
             return false;
         }
+        if (player.getUUID().toString().equals(listing.sellerUuid())) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.self_buy_denied"), true);
+            return false;
+        }
         int amount = Math.max(1, Math.min(quantity, listing.availableCount()));
         int total = amount * Math.max(1, listing.unitPrice());
         if (!chargePlayer(player, total)) {

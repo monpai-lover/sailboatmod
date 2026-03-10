@@ -202,7 +202,7 @@ public class SailboatInfoScreen extends Screen {
     private Component getSeatButtonText(int seat) {
         Entity occupant = getSeatOccupant(seat);
         String label = occupant == null
-                ? Component.translatable("screen.sailboatmod.seat_empty").getString()
+                ? Component.translatable(seat == 0 ? "screen.sailboatmod.seat_captain" : "screen.sailboatmod.seat_empty").getString()
                 : shortenSeatLabel(occupant.getName().getString());
         return Component.literal((seat + 1) + ": " + label);
     }
