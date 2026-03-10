@@ -117,6 +117,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private static final double AUTOPILOT_FINAL_STOP_MAX_SPEED = 0.025D;
     private static final double AUTOPILOT_DEPARTURE_YIELD_LOOKAHEAD = 9.0D;
     private static final double AUTOPILOT_DEPARTURE_YIELD_LATERAL = 3.2D;
+    private static final double AUTOPILOT_DEPARTURE_YIELD_START_RADIUS = 12.0D;
     private static final float AUTOPILOT_TURN_IN_PLACE_DEGREES = 95.0F;
     private static final float AUTOPILOT_SLOW_TURN_DEGREES = 55.0F;
     private static final int AUTOPILOT_NO_PROGRESS_TICKS_LIMIT = 70;
@@ -161,6 +162,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private int autopilotTargetIndex = 0;
     private String autopilotRouteName = "";
     private BlockPos routeDockPos = null;
+    @Nullable
+    private Vec3 autopilotDepartureOrigin = null;
     private int selectedRouteIndex = 0;
     private int autopilotNoProgressTicks = 0;
     private double autopilotLastTargetDistance = Double.NaN;
@@ -1105,6 +1108,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         dockHoldPos = null;
         dockHoldYaw = Float.NaN;
         autopilotDockingSpot = null;
+        autopilotDepartureOrigin = position();
         if (routeCatalog.isEmpty()) {
             stopAutopilot();
             return false;
@@ -1158,6 +1162,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotNoProgressTicks = 0;
         autopilotLastTargetDistance = Double.NaN;
         autopilotDockingSpot = null;
+        autopilotDepartureOrigin = null;
         if (level() instanceof ServerLevel serverLevel) {
             clearAutopilotForcedChunks(serverLevel);
         }
@@ -1431,11 +1436,16 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     }
 
     private boolean shouldYieldForDeparture(Vec3 target, double dist) {
-        if (level() == null || autopilotTargetIndex > 1 || dist <= AUTOPILOT_ARRIVAL_RADIUS) {
+        if (level() == null || autopilotTargetIndex != 0 || dist <= AUTOPILOT_ARRIVAL_RADIUS) {
             return false;
         }
         DockBlockEntity startDock = getAutopilotStartDock();
         if (startDock == null || !startDock.isInsideDockZone(position())) {
+            return false;
+        }
+        if (autopilotDepartureOrigin == null
+                || position().distanceToSqr(autopilotDepartureOrigin)
+                > AUTOPILOT_DEPARTURE_YIELD_START_RADIUS * AUTOPILOT_DEPARTURE_YIELD_START_RADIUS) {
             return false;
         }
         double dirX = target.x - getX();
@@ -1452,9 +1462,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         );
         double selfTargetDistSq = position().distanceToSqr(target);
         for (SailboatEntity other : level().getEntitiesOfClass(SailboatEntity.class, searchBox, boat -> boat != this && boat.isAlive())) {
+            if (!other.isAutopilotActive()) {
+                continue;
+            }
             double otherMotionSq = other.getDeltaMovement().x * other.getDeltaMovement().x
                     + other.getDeltaMovement().z * other.getDeltaMovement().z;
-            if (!other.isAutopilotActive() && other.getEngineGear() == EngineGear.STOP && otherMotionSq < 4.0E-4D) {
+            if (other.getEngineGear() == EngineGear.STOP && otherMotionSq < 4.0E-4D) {
                 continue;
             }
             double offsetX = other.getX() - getX();
@@ -1468,11 +1481,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             if (lateralX * lateralX + lateralZ * lateralZ > AUTOPILOT_DEPARTURE_YIELD_LATERAL * AUTOPILOT_DEPARTURE_YIELD_LATERAL) {
                 continue;
             }
-            boolean otherNearStartDock = startDock.isInsideDockZone(other.position());
+            if (!startDock.isInsideDockZone(other.position())) {
+                continue;
+            }
             double otherTargetDistSq = other.position().distanceToSqr(target);
-            boolean otherHasPriority = otherNearStartDock
-                    ? otherTargetDistSq + 1.0D < selfTargetDistSq || (Math.abs(otherTargetDistSq - selfTargetDistSq) <= 1.0D && other.getId() < getId())
-                    : along > 1.5D;
+            boolean otherHasPriority = otherTargetDistSq + 1.0D < selfTargetDistSq
+                    || (Math.abs(otherTargetDistSq - selfTargetDistSq) <= 1.0D && other.getId() < getId());
             if (otherHasPriority) {
                 return true;
             }
