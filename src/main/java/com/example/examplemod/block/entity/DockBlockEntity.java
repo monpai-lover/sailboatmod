@@ -1306,6 +1306,22 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return dx >= zoneMinX && dx <= zoneMaxX && dz >= zoneMinZ && dz <= zoneMaxZ;
     }
 
+    public int getZoneMinX() {
+        return zoneMinX;
+    }
+
+    public int getZoneMaxX() {
+        return zoneMaxX;
+    }
+
+    public int getZoneMinZ() {
+        return zoneMinZ;
+    }
+
+    public int getZoneMaxZ() {
+        return zoneMaxZ;
+    }
+
     public static BlockPos findDockZoneContains(Level level, Vec3 point) {
         Set<BlockPos> docks = DockRegistry.get(level);
         BlockPos nearest = null;

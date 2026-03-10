@@ -111,11 +111,21 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private static final double AUTOPILOT_ARRIVAL_RADIUS = 3.2D;
     private static final double AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS = 7.5D;
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
+    private static final double AUTOPILOT_FINAL_SLOWDOWN_RADIUS = 11.0D;
+    private static final double AUTOPILOT_FINAL_STOP_RADIUS = 4.5D;
+    private static final double AUTOPILOT_FINAL_APPROACH_MAX_SPEED = 0.05D;
+    private static final double AUTOPILOT_FINAL_STOP_MAX_SPEED = 0.025D;
+    private static final double AUTOPILOT_DEPARTURE_YIELD_LOOKAHEAD = 9.0D;
+    private static final double AUTOPILOT_DEPARTURE_YIELD_LATERAL = 3.2D;
     private static final float AUTOPILOT_TURN_IN_PLACE_DEGREES = 95.0F;
     private static final float AUTOPILOT_SLOW_TURN_DEGREES = 55.0F;
     private static final int AUTOPILOT_NO_PROGRESS_TICKS_LIMIT = 70;
     private static final double AUTOPILOT_PROGRESS_EPSILON = 0.08D;
     private static final double AUTOPILOT_STALL_SKIP_RADIUS = 48.0D;
+    private static final double DOCK_PARKING_EDGE_PADDING = 1.5D;
+    private static final double DOCK_APPROACH_CLEAR_RADIUS = 3.8D;
+    private static final double DOCK_PARKING_GRID_STEP = 2.75D;
+    private static final double DOCK_PARKING_DOCK_EXCLUSION_RADIUS = 2.6D;
     private static final double AUTOPILOT_PASSED_PROGRESS_THRESHOLD = 1.05D;
     private static final double AUTOPILOT_PASSED_LATERAL_THRESHOLD = 14.0D;
     private static final int AUTOPILOT_CHUNK_RADIUS = 2;
@@ -169,6 +179,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private boolean autopilotReturnTrip = false;
     private final List<ShipmentManifestEntry> autopilotShipmentManifest = new ArrayList<>();
     private BlockPos autopilotDestinationDockHintPos = null;
+    @Nullable
+    private Vec3 autopilotDockingSpot = null;
+    private int dockHoldTicks = 0;
+    @Nullable
+    private Vec3 dockHoldPos = null;
+    private float dockHoldYaw = Float.NaN;
     private String ownerName = "";
     private String ownerUuid = "";
     private int rentalPrice = DEFAULT_RENTAL_PRICE;
@@ -310,6 +326,32 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                 && isAutopilotActive()
                 && !isAutopilotPaused()
                 && hasAutopilotRoute();
+        if (!level().isClientSide && isAutopilotActive() && isAutopilotPaused() && !(captain instanceof Player)) {
+            resumeAutopilot();
+            autopilotControl = !isAutopilotPaused() && hasAutopilotRoute();
+        }
+        if (!level().isClientSide && !isAutopilotActive() && dockHoldTicks > 0) {
+            dockHoldTicks--;
+            entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
+            Vec3 vel = getDeltaMovement();
+            Vec3 adjusted = new Vec3(vel.x * 0.15D, vel.y * 0.6D, vel.z * 0.15D);
+            if (dockHoldPos != null) {
+                Vec3 delta = dockHoldPos.subtract(position());
+                double planarDistSq = delta.x * delta.x + delta.z * delta.z;
+                if (planarDistSq <= 0.09D) {
+                    moveTo(dockHoldPos.x, getY(), dockHoldPos.z, Float.isNaN(dockHoldYaw) ? getYRot() : dockHoldYaw, getXRot());
+                    adjusted = new Vec3(0.0D, vel.y * 0.4D, 0.0D);
+                } else {
+                    adjusted = adjusted.add(delta.x * 0.08D, 0.0D, delta.z * 0.08D);
+                }
+            }
+            if (!Float.isNaN(dockHoldYaw)) {
+                setYRot(dockHoldYaw);
+                setYHeadRot(dockHoldYaw);
+                setYBodyRot(dockHoldYaw);
+            }
+            setDeltaMovement(adjusted);
+        }
         if (!level().isClientSide && isInWater() && (isVehicle() || autopilotControl)) {
             nonWaterTicks = 0;
             Vec3 current = getDeltaMovement();
@@ -476,6 +518,19 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                 if (gearDriving) {
                     nextX *= TURN_SPEED_LOSS;
                     nextZ *= TURN_SPEED_LOSS;
+                }
+            }
+
+            double finalDockDistance = getFinalDockApproachDistance();
+            if (!Double.isNaN(finalDockDistance)) {
+                double maxApproachSpeed = finalDockDistance <= AUTOPILOT_FINAL_STOP_RADIUS
+                        ? AUTOPILOT_FINAL_STOP_MAX_SPEED
+                        : AUTOPILOT_FINAL_APPROACH_MAX_SPEED;
+                double speed = Math.sqrt(nextX * nextX + nextZ * nextZ);
+                if (speed > maxApproachSpeed && speed > 1.0E-4D) {
+                    double scale = maxApproachSpeed / speed;
+                    nextX *= scale;
+                    nextZ *= scale;
                 }
             }
 
@@ -1046,6 +1101,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         if (level().isClientSide) {
             return false;
         }
+        dockHoldTicks = 0;
+        dockHoldPos = null;
+        dockHoldYaw = Float.NaN;
+        autopilotDockingSpot = null;
         if (routeCatalog.isEmpty()) {
             stopAutopilot();
             return false;
@@ -1098,6 +1157,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotRouteName = getSelectedRouteName();
         autopilotNoProgressTicks = 0;
         autopilotLastTargetDistance = Double.NaN;
+        autopilotDockingSpot = null;
         if (level() instanceof ServerLevel serverLevel) {
             clearAutopilotForcedChunks(serverLevel);
         }
@@ -1262,6 +1322,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         }
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
         Vec3 target = autopilotRoute.get(autopilotTargetIndex);
+        boolean finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
+        if (finalTarget) {
+            Vec3 approach = computeDockApproachPoint(getAutopilotDestinationDock());
+            if (approach == null) {
+                return AutopilotCommand.inactive();
+            }
+            target = approach;
+        }
         double dx = target.x - getX();
         double dz = target.z - getZ();
         double dist = Math.sqrt(dx * dx + dz * dz);
@@ -1271,7 +1339,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             double arrivalRadius = autopilotTargetIndex == 0
                     ? Math.max(AUTOPILOT_ARRIVAL_RADIUS, AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS)
                     : AUTOPILOT_ARRIVAL_RADIUS;
-            boolean finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
+            finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
             boolean reachedWaypoint = dist <= arrivalRadius;
             boolean passedWaypoint = !finalTarget && hasClearlyPassedCurrentWaypoint(target, dist);
             if (!reachedWaypoint && !passedWaypoint) {
@@ -1285,6 +1353,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                 return AutopilotCommand.inactive();
             }
             target = autopilotRoute.get(autopilotTargetIndex);
+            if (autopilotTargetIndex >= autopilotRoute.size() - 1) {
+                Vec3 approach = computeDockApproachPoint(getAutopilotDestinationDock());
+                if (approach == null) {
+                    return AutopilotCommand.inactive();
+                }
+                target = approach;
+            }
             dx = target.x - getX();
             dz = target.z - getZ();
             dist = Math.sqrt(dx * dx + dz * dz);
@@ -1299,6 +1374,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         float turnInput = Mth.clamp(yawError / 40.0F, -1.0F, 1.0F);
         boolean wantsTurn = Math.abs(yawError) > 1.5F;
         float absYawError = Math.abs(yawError);
+
+        if (shouldYieldForDeparture(target, dist)) {
+            autopilotNoProgressTicks = 0;
+            autopilotLastTargetDistance = dist;
+            return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
+        }
 
         if (absYawError > AUTOPILOT_TURN_IN_PLACE_DEGREES) {
             // Intentional pivot turn: do not treat as "stuck with no progress".
@@ -1331,20 +1412,72 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             autopilotLastTargetDistance = dist;
         }
 
+        double slowdownRadius = finalTarget ? AUTOPILOT_FINAL_SLOWDOWN_RADIUS : AUTOPILOT_SLOWDOWN_RADIUS;
+        double stopRadius = finalTarget ? AUTOPILOT_FINAL_STOP_RADIUS : AUTOPILOT_ARRIVAL_RADIUS * 1.2D;
         EngineGear desiredGear;
-        if (dist < AUTOPILOT_ARRIVAL_RADIUS * 1.2D) {
+        if (dist < stopRadius) {
             desiredGear = EngineGear.STOP;
         } else if (absYawError > AUTOPILOT_TURN_IN_PLACE_DEGREES) {
             // Large heading mismatch: pivot first, then advance.
             desiredGear = EngineGear.STOP;
         } else if (absYawError > AUTOPILOT_SLOW_TURN_DEGREES) {
             desiredGear = EngineGear.ONE_THIRD_AHEAD;
-        } else if (dist < AUTOPILOT_SLOWDOWN_RADIUS) {
+        } else if (dist < slowdownRadius) {
             desiredGear = EngineGear.ONE_THIRD_AHEAD;
         } else {
             desiredGear = isSailDeployed() ? EngineGear.FULL_AHEAD : EngineGear.TWO_THIRDS_AHEAD;
         }
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
+    }
+
+    private boolean shouldYieldForDeparture(Vec3 target, double dist) {
+        if (level() == null || autopilotTargetIndex > 1 || dist <= AUTOPILOT_ARRIVAL_RADIUS) {
+            return false;
+        }
+        DockBlockEntity startDock = getAutopilotStartDock();
+        if (startDock == null || !startDock.isInsideDockZone(position())) {
+            return false;
+        }
+        double dirX = target.x - getX();
+        double dirZ = target.z - getZ();
+        double dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
+        if (dirLen <= 1.0E-4D) {
+            return false;
+        }
+        dirX /= dirLen;
+        dirZ /= dirLen;
+        AABB searchBox = new AABB(
+                getX() - AUTOPILOT_DEPARTURE_YIELD_LOOKAHEAD, getY() - 1.5D, getZ() - AUTOPILOT_DEPARTURE_YIELD_LOOKAHEAD,
+                getX() + AUTOPILOT_DEPARTURE_YIELD_LOOKAHEAD, getY() + 1.5D, getZ() + AUTOPILOT_DEPARTURE_YIELD_LOOKAHEAD
+        );
+        double selfTargetDistSq = position().distanceToSqr(target);
+        for (SailboatEntity other : level().getEntitiesOfClass(SailboatEntity.class, searchBox, boat -> boat != this && boat.isAlive())) {
+            double otherMotionSq = other.getDeltaMovement().x * other.getDeltaMovement().x
+                    + other.getDeltaMovement().z * other.getDeltaMovement().z;
+            if (!other.isAutopilotActive() && other.getEngineGear() == EngineGear.STOP && otherMotionSq < 4.0E-4D) {
+                continue;
+            }
+            double offsetX = other.getX() - getX();
+            double offsetZ = other.getZ() - getZ();
+            double along = offsetX * dirX + offsetZ * dirZ;
+            if (along < -0.75D || along > AUTOPILOT_DEPARTURE_YIELD_LOOKAHEAD) {
+                continue;
+            }
+            double lateralX = offsetX - dirX * along;
+            double lateralZ = offsetZ - dirZ * along;
+            if (lateralX * lateralX + lateralZ * lateralZ > AUTOPILOT_DEPARTURE_YIELD_LATERAL * AUTOPILOT_DEPARTURE_YIELD_LATERAL) {
+                continue;
+            }
+            boolean otherNearStartDock = startDock.isInsideDockZone(other.position());
+            double otherTargetDistSq = other.position().distanceToSqr(target);
+            boolean otherHasPriority = otherNearStartDock
+                    ? otherTargetDistSq + 1.0D < selfTargetDistSq || (Math.abs(otherTargetDistSq - selfTargetDistSq) <= 1.0D && other.getId() < getId())
+                    : along > 1.5D;
+            if (otherHasPriority) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasClearlyPassedCurrentWaypoint(Vec3 target, double dist) {
@@ -1389,11 +1522,146 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     }
 
     private boolean isReadyToUnloadAtDestination() {
-        if (!hasAutopilotRoute() || autopilotTargetIndex < autopilotRoute.size() - 1) {
+        double distance = getFinalDockApproachDistance();
+        if (Double.isNaN(distance)) {
             return false;
         }
-        Vec3 finalWaypoint = autopilotRoute.get(autopilotRoute.size() - 1);
-        return position().distanceTo(finalWaypoint) <= AUTOPILOT_ARRIVAL_RADIUS;
+        return distance <= AUTOPILOT_ARRIVAL_RADIUS;
+    }
+
+    @Nullable
+    private DockBlockEntity getAutopilotDestinationDock() {
+        BlockPos endDockPos = findAutopilotDestinationDockPos();
+        if (endDockPos != null && level().getBlockEntity(endDockPos) instanceof DockBlockEntity dock) {
+            return dock;
+        }
+        return null;
+    }
+
+    @Nullable
+    private DockBlockEntity getAutopilotStartDock() {
+        if (routeDockPos != null && level().getBlockEntity(routeDockPos) instanceof DockBlockEntity dock) {
+            return dock;
+        }
+        if (!autopilotRoute.isEmpty()) {
+            BlockPos startDockPos = DockBlockEntity.findDockZoneContains(level(), autopilotRoute.get(0));
+            if (startDockPos != null && level().getBlockEntity(startDockPos) instanceof DockBlockEntity dock) {
+                return dock;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private Vec3 computeDockApproachPoint(@Nullable DockBlockEntity dock) {
+        if (dock == null || autopilotRoute.isEmpty()) {
+            return null;
+        }
+        if (autopilotDockingSpot != null && isDockParkingSpotValid(dock, autopilotDockingSpot)) {
+            return autopilotDockingSpot;
+        }
+        int lastIndex = autopilotRoute.size() - 1;
+        Vec3 finalWaypoint = autopilotRoute.get(lastIndex);
+        Vec3 dockCenter = new Vec3(dock.getBlockPos().getX() + 0.5D, getY(), dock.getBlockPos().getZ() + 0.5D);
+        double minX = dockCenter.x + dock.getZoneMinX() + DOCK_PARKING_EDGE_PADDING;
+        double maxX = dockCenter.x + dock.getZoneMaxX() - DOCK_PARKING_EDGE_PADDING;
+        double minZ = dockCenter.z + dock.getZoneMinZ() + DOCK_PARKING_EDGE_PADDING;
+        double maxZ = dockCenter.z + dock.getZoneMaxZ() - DOCK_PARKING_EDGE_PADDING;
+        if (minX > maxX) {
+            double centerX = dockCenter.x + (dock.getZoneMinX() + dock.getZoneMaxX()) * 0.5D;
+            minX = centerX;
+            maxX = centerX;
+        }
+        if (minZ > maxZ) {
+            double centerZ = dockCenter.z + (dock.getZoneMinZ() + dock.getZoneMaxZ()) * 0.5D;
+            minZ = centerZ;
+            maxZ = centerZ;
+        }
+
+        Vec3 preferred = new Vec3(
+                Mth.clamp(finalWaypoint.x, minX, maxX),
+                getY(),
+                Mth.clamp(finalWaypoint.z, minZ, maxZ)
+        );
+        if (preferred.distanceToSqr(dockCenter) < DOCK_PARKING_DOCK_EXCLUSION_RADIUS * DOCK_PARKING_DOCK_EXCLUSION_RADIUS) {
+            double awayX = preferred.x - dockCenter.x;
+            double awayZ = preferred.z - dockCenter.z;
+            if (awayX * awayX + awayZ * awayZ <= 1.0E-4D) {
+                awayX = finalWaypoint.x - dockCenter.x;
+                awayZ = finalWaypoint.z - dockCenter.z;
+            }
+            double awayLen = Math.sqrt(awayX * awayX + awayZ * awayZ);
+            if (awayLen <= 1.0E-4D) {
+                awayX = 0.0D;
+                awayZ = 1.0D;
+                awayLen = 1.0D;
+            }
+            double safeX = dockCenter.x + awayX / awayLen * DOCK_PARKING_DOCK_EXCLUSION_RADIUS;
+            double safeZ = dockCenter.z + awayZ / awayLen * DOCK_PARKING_DOCK_EXCLUSION_RADIUS;
+            preferred = new Vec3(Mth.clamp(safeX, minX, maxX), getY(), Mth.clamp(safeZ, minZ, maxZ));
+        }
+        Vec3 bestFallback = preferred;
+        double bestFallbackScore = Double.MAX_VALUE;
+        double maxRadius = Math.max(maxX - minX, maxZ - minZ) + DOCK_PARKING_GRID_STEP;
+
+        for (double radius = 0.0D; radius <= maxRadius; radius += DOCK_PARKING_GRID_STEP) {
+            for (int step = 0; step < 16; step++) {
+                double angle = (Math.PI * 2.0D * step) / 16.0D;
+                double x = Mth.clamp(preferred.x + Math.cos(angle) * radius, minX, maxX);
+                double z = Mth.clamp(preferred.z + Math.sin(angle) * radius, minZ, maxZ);
+                Vec3 candidate = new Vec3(x, getY(), z);
+                if (!dock.isInsideDockZone(candidate)) {
+                    continue;
+                }
+                if (candidate.distanceToSqr(dockCenter) < DOCK_PARKING_DOCK_EXCLUSION_RADIUS * DOCK_PARKING_DOCK_EXCLUSION_RADIUS) {
+                    continue;
+                }
+                double score = candidate.distanceToSqr(preferred) + candidate.distanceToSqr(finalWaypoint) * 0.15D;
+                if (score < bestFallbackScore) {
+                    bestFallbackScore = score;
+                    bestFallback = candidate;
+                }
+                if (!isDockApproachOccupied(candidate)) {
+                    autopilotDockingSpot = candidate;
+                    return candidate;
+                }
+            }
+        }
+
+        autopilotDockingSpot = bestFallback;
+        return bestFallback;
+    }
+
+    private double getFinalDockApproachDistance() {
+        if (!hasAutopilotRoute() || autopilotTargetIndex < autopilotRoute.size() - 1) {
+            return Double.NaN;
+        }
+        Vec3 approach = computeDockApproachPoint(getAutopilotDestinationDock());
+        if (approach == null) {
+            return Double.NaN;
+        }
+        return position().distanceTo(approach);
+    }
+
+    private boolean isDockParkingSpotValid(DockBlockEntity dock, Vec3 spot) {
+        if (dock == null) {
+            return false;
+        }
+        Vec3 dockCenter = new Vec3(dock.getBlockPos().getX() + 0.5D, spot.y, dock.getBlockPos().getZ() + 0.5D);
+        return dock.isInsideDockZone(spot)
+                && spot.distanceToSqr(dockCenter) >= DOCK_PARKING_DOCK_EXCLUSION_RADIUS * DOCK_PARKING_DOCK_EXCLUSION_RADIUS
+                && !isDockApproachOccupied(spot);
+    }
+
+    private boolean isDockApproachOccupied(Vec3 point) {
+        if (level() == null) {
+            return false;
+        }
+        AABB box = new AABB(
+                point.x - DOCK_APPROACH_CLEAR_RADIUS, getY() - 1.0D, point.z - DOCK_APPROACH_CLEAR_RADIUS,
+                point.x + DOCK_APPROACH_CLEAR_RADIUS, getY() + 1.0D, point.z + DOCK_APPROACH_CLEAR_RADIUS
+        );
+        return !level().getEntitiesOfClass(SailboatEntity.class, box, boat -> boat != this).isEmpty();
     }
 
     private boolean isInsideAutopilotDestinationDockZone() {
@@ -1527,6 +1795,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         boolean allowUnload = hasOrder || autopilotAllowNonOrderAutoUnload;
         boolean allowReturn = hasOrder || autopilotAllowNonOrderAutoReturn;
         if (!allowUnload && !allowReturn) {
+            applyDockHoldState(destinationDock);
             stopAutopilot(false);
             return;
         }
@@ -1547,7 +1816,41 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         if (!returnTrip && allowReturn && tryStartReturnTrip(destinationDock, previousSourceDockPos, returnBuyerUuid, returnBuyerName)) {
             return;
         }
+        applyDockHoldState(destinationDock);
         stopAutopilot(false);
+    }
+
+    private void applyDockHoldState(DockBlockEntity dock) {
+        Vec3 dockCenter = new Vec3(dock.getBlockPos().getX() + 0.5D, getY(), dock.getBlockPos().getZ() + 0.5D);
+        dockHoldTicks = 240;
+        dockHoldPos = computeDockApproachPoint(dock);
+        if (dockHoldPos == null) {
+            dockHoldPos = dockCenter;
+        }
+        dockHoldYaw = computeDockHoldYaw(dock, dockHoldPos);
+        moveTo(dockHoldPos.x, getY(), dockHoldPos.z, dockHoldYaw, getXRot());
+        setYRot(dockHoldYaw);
+        setYHeadRot(dockHoldYaw);
+        setYBodyRot(dockHoldYaw);
+        inertialPlanarVelocity = Vec3.ZERO;
+        commandedForwardAccel = 0.0D;
+        setDeltaMovement(Vec3.ZERO);
+    }
+
+    private float computeDockHoldYaw(DockBlockEntity dock, Vec3 holdPos) {
+        Vec3 dockCenter = new Vec3(dock.getBlockPos().getX() + 0.5D, holdPos.y, dock.getBlockPos().getZ() + 0.5D);
+        double awayX = holdPos.x - dockCenter.x;
+        double awayZ = holdPos.z - dockCenter.z;
+        if (awayX * awayX + awayZ * awayZ <= 1.0E-4D && autopilotRoute.size() >= 2) {
+            Vec3 finalWaypoint = autopilotRoute.get(autopilotRoute.size() - 1);
+            Vec3 previous = autopilotRoute.get(autopilotRoute.size() - 2);
+            awayX = previous.x - finalWaypoint.x;
+            awayZ = previous.z - finalWaypoint.z;
+        }
+        if (awayX * awayX + awayZ * awayZ <= 1.0E-4D) {
+            return getYRot();
+        }
+        return (float) (Mth.atan2(-awayX, awayZ) * (180.0D / Math.PI));
     }
 
     private boolean hasTransportOrder(List<ShipmentManifestEntry> manifest) {
