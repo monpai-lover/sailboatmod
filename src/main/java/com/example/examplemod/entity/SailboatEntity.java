@@ -127,6 +127,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private static final double DOCK_APPROACH_CLEAR_RADIUS = 3.8D;
     private static final double DOCK_PARKING_GRID_STEP = 2.75D;
     private static final double DOCK_PARKING_DOCK_EXCLUSION_RADIUS = 2.6D;
+    private static final float DOCK_HOLD_TURN_STEP_DEGREES = 2.5F;
     private static final double AUTOPILOT_PASSED_PROGRESS_THRESHOLD = 1.05D;
     private static final double AUTOPILOT_PASSED_LATERAL_THRESHOLD = 14.0D;
     private static final int AUTOPILOT_CHUNK_RADIUS = 2;
@@ -342,16 +343,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                 Vec3 delta = dockHoldPos.subtract(position());
                 double planarDistSq = delta.x * delta.x + delta.z * delta.z;
                 if (planarDistSq <= 0.09D) {
-                    moveTo(dockHoldPos.x, getY(), dockHoldPos.z, Float.isNaN(dockHoldYaw) ? getYRot() : dockHoldYaw, getXRot());
                     adjusted = new Vec3(0.0D, vel.y * 0.4D, 0.0D);
                 } else {
-                    adjusted = adjusted.add(delta.x * 0.08D, 0.0D, delta.z * 0.08D);
+                    adjusted = adjusted.add(delta.x * 0.05D, 0.0D, delta.z * 0.05D);
                 }
             }
             if (!Float.isNaN(dockHoldYaw)) {
-                setYRot(dockHoldYaw);
-                setYHeadRot(dockHoldYaw);
-                setYBodyRot(dockHoldYaw);
+                float nextYaw = getYRot() + Mth.clamp(Mth.wrapDegrees(dockHoldYaw - getYRot()),
+                        -DOCK_HOLD_TURN_STEP_DEGREES, DOCK_HOLD_TURN_STEP_DEGREES);
+                setYRot(nextYaw);
+                setYHeadRot(nextYaw);
+                setYBodyRot(nextYaw);
             }
             setDeltaMovement(adjusted);
         }
@@ -1133,7 +1135,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             autopilotRouteName = "Route-" + (selectedRouteIndex + 1);
         }
         initializeAutopilotShipmentContext(route);
-        autopilotTargetIndex = 0;
+        autopilotTargetIndex = determineInitialAutopilotTargetIndex();
         entityData.set(DATA_AUTOPILOT_ACTIVE, true);
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
         autopilotNoProgressTicks = 0;
@@ -1142,6 +1144,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         forwardPressedLastTick = false;
         reversePressedLastTick = false;
         return true;
+    }
+
+    private int determineInitialAutopilotTargetIndex() {
+        if (autopilotRoute.size() < 2) {
+            return 0;
+        }
+        DockBlockEntity startDock = getAutopilotStartDock();
+        if (startDock != null && startDock.isInsideDockZone(position())) {
+            return 1;
+        }
+        return 0;
     }
 
     public void stopAutopilot() {
@@ -1465,7 +1478,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     }
 
     private boolean shouldYieldForDeparture(Vec3 target, double dist) {
-        if (level() == null || autopilotTargetIndex != 0 || dist <= AUTOPILOT_ARRIVAL_RADIUS) {
+        if (level() == null || autopilotTargetIndex > 1 || dist <= AUTOPILOT_ARRIVAL_RADIUS) {
             return false;
         }
         DockBlockEntity startDock = getAutopilotStartDock();
@@ -1871,10 +1884,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             dockHoldPos = dockCenter;
         }
         dockHoldYaw = computeDockHoldYaw(dock, dockHoldPos);
-        moveTo(dockHoldPos.x, getY(), dockHoldPos.z, dockHoldYaw, getXRot());
-        setYRot(dockHoldYaw);
-        setYHeadRot(dockHoldYaw);
-        setYBodyRot(dockHoldYaw);
         inertialPlanarVelocity = Vec3.ZERO;
         commandedForwardAccel = 0.0D;
         setDeltaMovement(Vec3.ZERO);
