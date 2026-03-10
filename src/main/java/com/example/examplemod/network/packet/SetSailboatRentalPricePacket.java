@@ -4,7 +4,6 @@ import com.example.examplemod.entity.SailboatEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.util.Mth;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
@@ -20,11 +19,11 @@ public class SetSailboatRentalPricePacket {
 
     public static void encode(SetSailboatRentalPricePacket packet, FriendlyByteBuf buffer) {
         buffer.writeVarInt(packet.sailboatId);
-        buffer.writeVarInt(packet.rentalPrice);
+        buffer.writeInt(packet.rentalPrice);
     }
 
     public static SetSailboatRentalPricePacket decode(FriendlyByteBuf buffer) {
-        return new SetSailboatRentalPricePacket(buffer.readVarInt(), buffer.readVarInt());
+        return new SetSailboatRentalPricePacket(buffer.readVarInt(), buffer.readInt());
     }
 
     public static void handle(SetSailboatRentalPricePacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -41,9 +40,12 @@ public class SetSailboatRentalPricePacket {
                 player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_owner_only"), true);
                 return;
             }
-            int clamped = Mth.clamp(packet.rentalPrice, SailboatEntity.MIN_RENTAL_PRICE, SailboatEntity.MAX_RENTAL_PRICE);
-            sailboat.setRentalPrice(clamped);
-            player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_price_saved", sailboat.getRentalPrice()), true);
+            sailboat.setRentalPrice(packet.rentalPrice);
+            if (sailboat.isAvailableForRent()) {
+                player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_price_saved", sailboat.getRentalPrice()), true);
+            } else {
+                player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_price_saved_disabled"), true);
+            }
         });
         context.setPacketHandled(true);
     }

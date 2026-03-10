@@ -126,7 +126,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private static final double DOCK_PARKING_EDGE_PADDING = 1.5D;
     private static final double DOCK_APPROACH_CLEAR_RADIUS = 3.8D;
     private static final double DOCK_PARKING_GRID_STEP = 2.75D;
-    private static final double DOCK_PARKING_DOCK_EXCLUSION_RADIUS = 2.6D;
+    private static final double DOCK_PARKING_DOCK_EXCLUSION_RADIUS = 3.25D;
+    private static final double DOCK_PARKING_PREFERRED_DOCK_DISTANCE = 3.9D;
     private static final float DOCK_HOLD_TURN_STEP_DEGREES = 2.5F;
     private static final double AUTOPILOT_PASSED_PROGRESS_THRESHOLD = 1.05D;
     private static final double AUTOPILOT_PASSED_LATERAL_THRESHOLD = 14.0D;
@@ -135,7 +136,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private static final int AUTOPILOT_DEST_DOCK_CHUNK_RADIUS = 2;
     private static final int MAX_AUTOPILOT_WAYPOINTS = 256;
     public static final int DEFAULT_RENTAL_PRICE = 100;
-    public static final int MIN_RENTAL_PRICE = 0;
+    public static final int DISABLED_RENTAL_PRICE = -1;
+    public static final int MIN_RENTAL_PRICE = DISABLED_RENTAL_PRICE;
     public static final int MAX_RENTAL_PRICE = 1_000_000;
     private static final Vec3[] PASSENGER_OFFSETS = new Vec3[] {
             new Vec3(0.0D, 0.55D, 0.4D),
@@ -950,6 +952,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         return Mth.clamp(entityData.get(DATA_RENTAL_PRICE), MIN_RENTAL_PRICE, MAX_RENTAL_PRICE);
     }
 
+    public boolean isAvailableForRent() {
+        return getRentalPrice() >= 0;
+    }
+
     public boolean isOwnedBy(Player player) {
         if (player == null) {
             return false;
@@ -1657,7 +1663,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             preferred = new Vec3(Mth.clamp(safeX, minX, maxX), getY(), Mth.clamp(safeZ, minZ, maxZ));
         }
         Vec3 bestFallback = preferred;
+        Vec3 bestAvailable = null;
         double bestFallbackScore = Double.MAX_VALUE;
+        double bestAvailableScore = Double.MAX_VALUE;
         double maxRadius = Math.max(maxX - minX, maxZ - minZ) + DOCK_PARKING_GRID_STEP;
 
         for (double radius = 0.0D; radius <= maxRadius; radius += DOCK_PARKING_GRID_STEP) {
@@ -1672,18 +1680,27 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                 if (candidate.distanceToSqr(dockCenter) < DOCK_PARKING_DOCK_EXCLUSION_RADIUS * DOCK_PARKING_DOCK_EXCLUSION_RADIUS) {
                     continue;
                 }
-                double score = candidate.distanceToSqr(preferred) + candidate.distanceToSqr(finalWaypoint) * 0.15D;
+                double dockDistance = Math.sqrt(candidate.distanceToSqr(dockCenter));
+                double score = Math.abs(dockDistance - DOCK_PARKING_PREFERRED_DOCK_DISTANCE) * 8.0D
+                        + candidate.distanceToSqr(finalWaypoint) * 0.08D;
                 if (score < bestFallbackScore) {
                     bestFallbackScore = score;
                     bestFallback = candidate;
                 }
-                if (!isDockApproachOccupied(candidate)) {
-                    autopilotDockingSpot = candidate;
-                    return candidate;
+                if (!isDockParkingSpotValid(dock, candidate)) {
+                    continue;
+                }
+                if (score < bestAvailableScore) {
+                    bestAvailableScore = score;
+                    bestAvailable = candidate;
                 }
             }
         }
 
+        if (bestAvailable != null) {
+            autopilotDockingSpot = bestAvailable;
+            return bestAvailable;
+        }
         autopilotDockingSpot = bestFallback;
         return bestFallback;
     }
@@ -1706,7 +1723,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         Vec3 dockCenter = new Vec3(dock.getBlockPos().getX() + 0.5D, spot.y, dock.getBlockPos().getZ() + 0.5D);
         return dock.isInsideDockZone(spot)
                 && spot.distanceToSqr(dockCenter) >= DOCK_PARKING_DOCK_EXCLUSION_RADIUS * DOCK_PARKING_DOCK_EXCLUSION_RADIUS
+                && isDockParkingSpotWater(spot)
                 && !isDockApproachOccupied(spot);
+    }
+
+    private boolean isDockParkingSpotWater(Vec3 spot) {
+        if (level() == null) {
+            return false;
+        }
+        BlockPos waterPos = BlockPos.containing(spot.x, Math.max(level().getMinBuildHeight(), Mth.floor(getY() - 0.3D)), spot.z);
+        return level().getFluidState(waterPos).is(FluidTags.WATER)
+                || level().getFluidState(waterPos.below()).is(FluidTags.WATER);
     }
 
     private boolean isDockApproachOccupied(Vec3 point) {

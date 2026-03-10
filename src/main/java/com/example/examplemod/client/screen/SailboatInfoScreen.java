@@ -9,7 +9,6 @@ import com.example.examplemod.network.packet.SetHandlingPresetPacket;
 import com.example.examplemod.network.packet.SetSailboatRentalPricePacket;
 import com.example.examplemod.network.packet.ToggleSailPacket;
 import com.example.examplemod.network.packet.ControlAutopilotPacket;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -26,6 +25,7 @@ public class SailboatInfoScreen extends Screen {
     private Button sailButton;
     private Button routePrevButton;
     private Button routeNextButton;
+    private final Button[] seatButtons = new Button[5];
 
     public SailboatInfoScreen(SailboatEntity sailboat) {
         super(Component.translatable("screen.sailboatmod.info"));
@@ -43,10 +43,10 @@ public class SailboatInfoScreen extends Screen {
         this.addRenderableWidget(this.nameInput);
         this.rentalPriceInput = new EditBox(this.font, centerX + 36, top + 20, 64, 20, Component.translatable("screen.sailboatmod.rent_input"));
         this.rentalPriceInput.setMaxLength(7);
-        this.rentalPriceInput.setValue(Integer.toString(sailboat.getRentalPrice()));
+        this.rentalPriceInput.setValue(formatRentalPriceInput());
         this.addRenderableWidget(this.rentalPriceInput);
 
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.rename"), b -> {
+        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.save"), b -> {
             ModNetwork.CHANNEL.sendToServer(new RenameSailboatPacket(sailboat.getId(), nameInput.getValue()));
             ModNetwork.CHANNEL.sendToServer(new SetSailboatRentalPricePacket(sailboat.getId(), parseRentalPriceInput()));
         }).bounds(centerX - 100, top + 46, 96, 20).build());
@@ -85,12 +85,12 @@ public class SailboatInfoScreen extends Screen {
         }).bounds(centerX + 50, top + 114, 50, 20).build());
 
         for (int seat = 0; seat < 5; seat++) {
-            int buttonX = centerX - 100 + (seat % 3) * 68;
-            int buttonY = top + 138 + (seat / 3) * 22;
+            int buttonX = centerX - 100 + (seat % 2) * 104;
+            int buttonY = top + 138 + (seat / 2) * 22;
             int seatId = seat;
-            this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.seat", seat + 1), b -> {
+            this.seatButtons[seat] = this.addRenderableWidget(Button.builder(getSeatButtonText(seat), b -> {
                 ModNetwork.CHANNEL.sendToServer(new SelectSailboatSeatPacket(sailboat.getId(), seatId));
-            }).bounds(buttonX, buttonY, 64, 20).build());
+            }).bounds(buttonX, buttonY, 96, 20).build());
         }
     }
 
@@ -103,7 +103,7 @@ public class SailboatInfoScreen extends Screen {
         if (this.rentalPriceInput != null) {
             this.rentalPriceInput.tick();
             if (!this.rentalPriceInput.isFocused()) {
-                this.rentalPriceInput.setValue(Integer.toString(sailboat.getRentalPrice()));
+                this.rentalPriceInput.setValue(formatRentalPriceInput());
             }
         }
         if (this.handlingButton != null) {
@@ -117,6 +117,11 @@ public class SailboatInfoScreen extends Screen {
         }
         if (this.routeNextButton != null) {
             this.routeNextButton.active = sailboat.getRouteCount() > 0;
+        }
+        for (int seat = 0; seat < this.seatButtons.length; seat++) {
+            if (this.seatButtons[seat] != null) {
+                this.seatButtons[seat].setMessage(getSeatButtonText(seat));
+            }
         }
         if (Minecraft.getInstance().player == null || Minecraft.getInstance().player.getVehicle() != sailboat) {
             this.onClose();
@@ -134,7 +139,10 @@ public class SailboatInfoScreen extends Screen {
 
         Component nameText = sailboat.hasCustomName() ? sailboat.getCustomName() : Component.translatable("screen.sailboatmod.unnamed");
         guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.current_name", nameText), centerX - 100, top + 2, 0xE0E0E0);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.rent_price", sailboat.getRentalPrice()), centerX + 36, top + 2, 0xA8E6FF);
+        Component rentText = sailboat.isAvailableForRent()
+                ? Component.literal(Integer.toString(sailboat.getRentalPrice()))
+                : Component.translatable("screen.sailboatmod.rent_disabled");
+        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.rent_price", rentText), centerX + 36, top + 2, 0xA8E6FF);
         guiGraphics.drawCenteredString(this.font,
                 Component.translatable("screen.sailboatmod.route_current", sailboat.getSelectedRouteIndex() + 1, Math.max(sailboat.getRouteCount(), 1), sailboat.getSelectedRouteName()),
                 centerX, top + 98, 0xB0F0FF);
@@ -142,37 +150,8 @@ public class SailboatInfoScreen extends Screen {
                 Component.translatable("screen.sailboatmod.route_state", getAutopilotStateText()),
                 centerX, top + 86, 0xFFF3B0);
 
-        String captainName = "-";
-        for (Entity passenger : sailboat.getPassengers()) {
-            if (sailboat.getSeatFor(passenger) == 0) {
-                captainName = passenger.getName().getString();
-                break;
-            }
-        }
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.captain", captainName), centerX - 100, top + 172, 0xFFD27F);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.owner_name", sailboat.getOwnerName()), centerX - 100, top + 184, 0xA8E6FF);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.storage_info", 27), centerX - 100, top + 196, 0xA8E6FF);
-
-        int rowY = top + 208;
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.passengers"), centerX - 100, rowY, 0xFFFFFF);
-        rowY += 12;
-
-        if (sailboat.getPassengers().isEmpty()) {
-            guiGraphics.drawString(this.font, Component.literal("-"), centerX - 100, rowY, 0xAAAAAA);
-        } else {
-            for (Entity passenger : sailboat.getPassengers()) {
-                int seat = sailboat.getSeatFor(passenger) + 1;
-                Component line = Component.literal("[" + seat + "] " + passenger.getName().getString());
-                if (seat == 1) {
-                    line = line.copy().withStyle(ChatFormatting.GOLD);
-                }
-                guiGraphics.drawString(this.font, line, centerX - 100, rowY, 0xFFFFFF);
-                rowY += 12;
-                if (rowY > this.height - 12) {
-                    break;
-                }
-            }
-        }
+        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.owner_name", sailboat.getOwnerName()), centerX - 100, top + 208, 0xA8E6FF);
+        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.storage_info", 27), centerX - 100, top + 220, 0xA8E6FF);
     }
 
     @Override
@@ -214,5 +193,34 @@ public class SailboatInfoScreen extends Screen {
         } catch (NumberFormatException ignored) {
             return sailboat.getRentalPrice();
         }
+    }
+
+    private String formatRentalPriceInput() {
+        return Integer.toString(sailboat.getRentalPrice());
+    }
+
+    private Component getSeatButtonText(int seat) {
+        Entity occupant = getSeatOccupant(seat);
+        String label = occupant == null
+                ? Component.translatable("screen.sailboatmod.seat_empty").getString()
+                : shortenSeatLabel(occupant.getName().getString());
+        return Component.literal((seat + 1) + ": " + label);
+    }
+
+    private Entity getSeatOccupant(int seat) {
+        for (Entity passenger : sailboat.getPassengers()) {
+            if (sailboat.getSeatFor(passenger) == seat) {
+                return passenger;
+            }
+        }
+        return null;
+    }
+
+    private String shortenSeatLabel(String label) {
+        String trimmed = this.font.plainSubstrByWidth(label, 62);
+        if (trimmed.length() < label.length()) {
+            return trimmed + "...";
+        }
+        return trimmed;
     }
 }

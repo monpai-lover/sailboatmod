@@ -493,7 +493,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         int safeRouteIndex = Mth.clamp(routeIndex, 0, routes.size() - 1);
-        int rentalFee = Math.max(SailboatEntity.MIN_RENTAL_PRICE, sailboat.getRentalPrice());
+        if (operator != null && !isBoatOwnedBy(sailboat, operator) && !sailboat.isAvailableForRent()) {
+            operator.displayClientMessage(Component.translatable("block.sailboatmod.dock.not_for_rent", sailboat.getName()), true);
+            return false;
+        }
+        int rentalFee = Math.max(0, sailboat.getRentalPrice());
         boolean chargedRental = false;
         if (operator != null && rentalFee > 0 && !isBoatOwnedBy(sailboat, operator)) {
             if (!chargeRentalFee(operator, rentalFee)) {
@@ -536,7 +540,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     public List<SailboatEntity> getAvailableSailboatsForDispatch(Player player) {
         return getNearbySailboats(player).stream()
-                .filter(this::isBoatAvailableForDispatch)
+                .filter(boat -> isBoatAvailableForDispatch(boat, player))
                 .toList();
     }
 
@@ -1156,12 +1160,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return visible;
     }
 
-    private boolean isBoatAvailableForDispatch(SailboatEntity boat) {
+    private boolean isBoatAvailableForDispatch(SailboatEntity boat, @Nullable Player player) {
         return boat != null
                 && boat.isAlive()
                 && isInsideDockZone(boat.position())
                 && !boat.isAutopilotActive()
-                && !boat.hasCargo();
+                && !boat.hasCargo()
+                && (player == null || isBoatOwnedBy(boat, player) || boat.isAvailableForRent());
     }
 
     private static List<ItemStack> splitCargo(ItemStack template, int quantity) {
@@ -1453,9 +1458,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         } else {
             state = "RUN";
         }
+        String rentState = boat.isAvailableForRent() ? Integer.toString(boat.getRentalPrice()) : "OFF";
         String ownership = isBoatOwnedBy(boat, viewer)
-                ? ("OWN | RENT " + boat.getRentalPrice())
-                : ("RENT " + boat.getRentalPrice());
+                ? ("OWN | RENT " + rentState)
+                : ("RENT " + rentState);
         return boatName + " | " + route + " | " + state + " | " + ownership;
     }
 
