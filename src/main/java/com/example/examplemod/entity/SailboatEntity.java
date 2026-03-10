@@ -1417,7 +1417,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             autopilotLastTargetDistance = dist;
         }
 
-        double slowdownRadius = finalTarget ? AUTOPILOT_FINAL_SLOWDOWN_RADIUS : AUTOPILOT_SLOWDOWN_RADIUS;
+        double slowdownRadius = computeAutopilotSlowdownRadius(finalTarget);
         double stopRadius = finalTarget ? AUTOPILOT_FINAL_STOP_RADIUS : AUTOPILOT_ARRIVAL_RADIUS * 1.2D;
         EngineGear desiredGear;
         if (dist < stopRadius) {
@@ -1433,6 +1433,35 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             desiredGear = isSailDeployed() ? EngineGear.FULL_AHEAD : EngineGear.TWO_THIRDS_AHEAD;
         }
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
+    }
+
+    private double computeAutopilotSlowdownRadius(boolean finalTarget) {
+        if (finalTarget) {
+            return AUTOPILOT_FINAL_SLOWDOWN_RADIUS;
+        }
+        double segmentLength = getAutopilotTargetSegmentLength();
+        if (Double.isNaN(segmentLength)) {
+            return AUTOPILOT_SLOWDOWN_RADIUS;
+        }
+        return Mth.clamp(segmentLength * 0.45D, AUTOPILOT_ARRIVAL_RADIUS + 0.8D, AUTOPILOT_SLOWDOWN_RADIUS);
+    }
+
+    private double getAutopilotTargetSegmentLength() {
+        if (autopilotRoute.isEmpty()) {
+            return Double.NaN;
+        }
+        int targetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
+        Vec3 target = autopilotRoute.get(targetIndex);
+        Vec3 reference = null;
+        if (targetIndex > 0) {
+            reference = autopilotRoute.get(targetIndex - 1);
+        } else if (targetIndex + 1 < autopilotRoute.size()) {
+            reference = autopilotRoute.get(targetIndex + 1);
+        }
+        if (reference == null) {
+            return Double.NaN;
+        }
+        return target.distanceTo(reference);
     }
 
     private boolean shouldYieldForDeparture(Vec3 target, double dist) {
