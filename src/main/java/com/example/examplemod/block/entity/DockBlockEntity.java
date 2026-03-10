@@ -70,6 +70,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     private int selectedBoatIndex = 0;
     private int selectedStorageIndex = 0;
     private int selectedWaybillIndex = 0;
+    private boolean nonOrderAutoReturnEnabled = false;
+    private boolean nonOrderAutoUnloadEnabled = false;
 
     public DockBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.DOCK_BLOCK_ENTITY.get(), pos, state);
@@ -397,11 +399,61 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 "",
                 ""
         );
+        boat.setAllowNonOrderAutoReturn(nonOrderAutoReturnEnabled);
+        boat.setAllowNonOrderAutoUnload(nonOrderAutoUnloadEnabled);
         if (!assignLoadedBoatToRouteIndex(boat, safeRouteIndex, true, player)) {
             insertCargo(boat.unloadAllCargo());
             boat.clearPendingMarketDelivery();
+            boat.setAllowNonOrderAutoReturn(false);
+            boat.setAllowNonOrderAutoUnload(false);
             return false;
         }
+        setChanged();
+        return true;
+    }
+
+    public boolean isNonOrderAutoReturnEnabled() {
+        return nonOrderAutoReturnEnabled;
+    }
+
+    public void toggleNonOrderAutoReturn() {
+        nonOrderAutoReturnEnabled = !nonOrderAutoReturnEnabled;
+        setChanged();
+    }
+
+    public boolean isNonOrderAutoUnloadEnabled() {
+        return nonOrderAutoUnloadEnabled;
+    }
+
+    public void toggleNonOrderAutoUnload() {
+        nonOrderAutoUnloadEnabled = !nonOrderAutoUnloadEnabled;
+        setChanged();
+    }
+
+    public boolean takeSelectedStorage(Player player) {
+        if (!canManageDock(player)) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_owner_only"), true);
+            return false;
+        }
+        List<Integer> occupiedSlots = getVisibleStorageSlots();
+        if (occupiedSlots.isEmpty()) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
+            return false;
+        }
+        int safeStorageIndex = Mth.clamp(selectedStorageIndex, 0, occupiedSlots.size() - 1);
+        selectedStorageIndex = safeStorageIndex;
+        int slot = occupiedSlots.get(safeStorageIndex);
+        ItemStack removed = removeStorageItemNoUpdate(slot);
+        if (removed.isEmpty()) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
+            return false;
+        }
+        boolean added = player.getInventory().add(removed);
+        if (!added || !removed.isEmpty()) {
+            player.drop(removed, false);
+        }
+        player.getInventory().setChanged();
+        player.containerMenu.broadcastChanges();
         setChanged();
         return true;
     }
@@ -590,6 +642,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 getOwnerName(),
                 getOwnerUuid(),
                 canManageDock,
+                nonOrderAutoReturnEnabled,
+                nonOrderAutoUnloadEnabled,
                 routeBook.copy(),
                 routeNames,
                 routeMetas,
@@ -1480,6 +1534,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             tag.put("RouteBook", routeBook.save(new CompoundTag()));
         }
         tag.putString("DockName", dockName == null ? "" : dockName);
+        tag.putBoolean("NonOrderAutoReturn", nonOrderAutoReturnEnabled);
+        tag.putBoolean("NonOrderAutoUnload", nonOrderAutoUnloadEnabled);
         tag.putInt("ZoneMinX", zoneMinX);
         tag.putInt("ZoneMaxX", zoneMaxX);
         tag.putInt("ZoneMinZ", zoneMinZ);
@@ -1512,6 +1568,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         ownerUuid = tag.getString("OwnerUuid");
         routeBook = tag.contains("RouteBook") ? ItemStack.of(tag.getCompound("RouteBook")) : ItemStack.EMPTY;
         dockName = tag.getString("DockName");
+        nonOrderAutoReturnEnabled = tag.getBoolean("NonOrderAutoReturn");
+        nonOrderAutoUnloadEnabled = tag.getBoolean("NonOrderAutoUnload");
         zoneMinX = tag.contains("ZoneMinX") ? tag.getInt("ZoneMinX") : -ZONE_HALF_X;
         zoneMaxX = tag.contains("ZoneMaxX") ? tag.getInt("ZoneMaxX") : ZONE_HALF_X;
         zoneMinZ = tag.contains("ZoneMinZ") ? tag.getInt("ZoneMinZ") : -ZONE_HALF_Z;

@@ -1,10 +1,10 @@
 package com.example.examplemod.registry;
 
 import com.example.examplemod.SailboatMod;
+import com.example.examplemod.item.DescribedBlockItem;
 import com.example.examplemod.item.RouteBookItem;
 import com.example.examplemod.item.SailboatItem;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.BlockItem;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.registries.RegistryObject;
@@ -24,12 +24,12 @@ public final class ModItems {
 
     public static final RegistryObject<Item> DOCK_ITEM = ITEMS.register(
             "dock",
-            () -> new BlockItem(ModBlocks.DOCK_BLOCK.get(), new Item.Properties())
+            () -> new DescribedBlockItem(ModBlocks.DOCK_BLOCK.get(), new Item.Properties(), "item.sailboatmod.dock.desc")
     );
 
     public static final RegistryObject<Item> MARKET_ITEM = ITEMS.register(
             "market",
-            () -> new BlockItem(ModBlocks.MARKET_BLOCK.get(), new Item.Properties())
+            () -> new DescribedBlockItem(ModBlocks.MARKET_BLOCK.get(), new Item.Properties(), "item.sailboatmod.market.desc")
     );
 
     private ModItems() {

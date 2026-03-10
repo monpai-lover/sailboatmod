@@ -28,6 +28,8 @@ public class OpenDockScreenPacket {
         buffer.writeUtf(data.dockOwnerName(), 64);
         buffer.writeUtf(data.dockOwnerUuid(), 64);
         buffer.writeBoolean(data.canManageDock());
+        buffer.writeBoolean(data.nonOrderAutoReturnEnabled());
+        buffer.writeBoolean(data.nonOrderAutoUnloadEnabled());
         buffer.writeItem(data.routeBook());
 
         buffer.writeVarInt(data.routeNames().size());
@@ -90,6 +92,8 @@ public class OpenDockScreenPacket {
         String dockOwnerName = buffer.readUtf(64);
         String dockOwnerUuid = buffer.readUtf(64);
         boolean canManageDock = buffer.readBoolean();
+        boolean nonOrderAutoReturnEnabled = buffer.readBoolean();
+        boolean nonOrderAutoUnloadEnabled = buffer.readBoolean();
         ItemStack routeBook = buffer.readItem();
 
         int routeCount = buffer.readVarInt();
@@ -151,7 +155,7 @@ public class OpenDockScreenPacket {
         }
 
         return new OpenDockScreenPacket(new DockScreenData(
-                dockPos, dockName, dockOwnerName, dockOwnerUuid, canManageDock, routeBook, routeNames, routeMetas, selectedRouteIndex, waypoints, zoneMinX, zoneMaxX, zoneMinZ, zoneMaxZ,
+                dockPos, dockName, dockOwnerName, dockOwnerUuid, canManageDock, nonOrderAutoReturnEnabled, nonOrderAutoUnloadEnabled, routeBook, routeNames, routeMetas, selectedRouteIndex, waypoints, zoneMinX, zoneMaxX, zoneMinZ, zoneMaxZ,
                 boatIds, boatNames, boatPositions, selectedBoatIndex, storageLines, selectedStorageIndex,
                 waybillNames, selectedWaybillIndex, selectedWaybillInfoLines, selectedWaybillCargoLines
         ));

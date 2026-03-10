@@ -86,6 +86,17 @@ public class DockGuiActionPacket {
                 case ASSIGN_SELECTED -> dock.assignSelectedBoat(player, true);
                 case SELECT_STORAGE_INDEX -> dock.selectStorageIndex(packet.value, player);
                 case DISPATCH_SELECTED_CARGO -> dock.dispatchSelectedStorage(player);
+                case TAKE_SELECTED_STORAGE -> dock.takeSelectedStorage(player);
+                case TOGGLE_NON_ORDER_AUTO_RETURN -> {
+                    if (dock.canManageDock(player)) {
+                        dock.toggleNonOrderAutoReturn();
+                    }
+                }
+                case TOGGLE_NON_ORDER_AUTO_UNLOAD -> {
+                    if (dock.canManageDock(player)) {
+                        dock.toggleNonOrderAutoUnload();
+                    }
+                }
                 case SELECT_WAYBILL_INDEX -> dock.selectWaybillIndex(packet.value);
                 case TAKE_SELECTED_WAYBILL -> dock.claimSelectedWaybill(player);
                 case REFRESH -> { }
@@ -115,6 +126,9 @@ public class DockGuiActionPacket {
         ASSIGN_SELECTED,
         SELECT_STORAGE_INDEX,
         DISPATCH_SELECTED_CARGO,
+        TAKE_SELECTED_STORAGE,
+        TOGGLE_NON_ORDER_AUTO_RETURN,
+        TOGGLE_NON_ORDER_AUTO_UNLOAD,
         SELECT_WAYBILL_INDEX,
         TAKE_SELECTED_WAYBILL,
         REFRESH

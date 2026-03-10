@@ -2,8 +2,11 @@ package com.example.examplemod.menu;
 
 import com.example.examplemod.block.entity.DockBlockEntity;
 import com.example.examplemod.item.RouteBookItem;
+import com.example.examplemod.network.ModNetwork;
+import com.example.examplemod.network.packet.OpenDockScreenPacket;
 import com.example.examplemod.registry.ModMenus;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
@@ -12,18 +15,23 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraftforge.network.PacketDistributor;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.List;
 
 public class DockMenu extends AbstractContainerMenu {
     private static final int ROUTE_BOOK_SLOT = 0;
     private static final int STORAGE_START = 1;
-    private static final int STORAGE_COUNT = DockBlockEntity.STORAGE_SIZE;
+    private static final int STORAGE_COUNT = 1;
     private static final int PLAYER_INV_START = STORAGE_START + STORAGE_COUNT;
     private final BlockPos dockPos;
     private final Level level;
+    private final Player player;
     private final Container dockSlotContainer;
     private final Container dockStorageContainer;
     private final boolean canManageDock;
+    private boolean updatingDepositSlot = false;
     @Nullable
     private final DockBlockEntity dock;
 
@@ -35,6 +43,7 @@ public class DockMenu extends AbstractContainerMenu {
         super(ModMenus.DOCK_MENU.get(), containerId);
         this.dockPos = dockPos;
         this.level = inventory.player.level();
+        this.player = inventory.player;
         this.dock = level.getBlockEntity(dockPos) instanceof DockBlockEntity be ? be : null;
         this.canManageDock = dock != null && dock.canManageDock(inventory.player);
 
@@ -72,69 +81,28 @@ public class DockMenu extends AbstractContainerMenu {
             }
         });
 
-        this.dockStorageContainer = new Container() {
+        this.dockStorageContainer = new SimpleContainer(1) {
             @Override
-            public int getContainerSize() {
-                return dock == null ? 0 : dock.getStorageSize();
-            }
-
-            @Override
-            public boolean isEmpty() {
-                if (dock == null) {
-                    return true;
-                }
-                if (!canManageDock) {
-                    return true;
-                }
-                for (int i = 0; i < dock.getStorageSize(); i++) {
-                    if (!dock.getStorageItem(i).isEmpty()) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-
-            @Override
-            public ItemStack getItem(int slot) {
-                return dock == null || !canManageDock ? ItemStack.EMPTY : dock.getStorageItem(slot);
-            }
-
-            @Override
-            public ItemStack removeItem(int slot, int amount) {
-                return dock == null || !canManageDock ? ItemStack.EMPTY : dock.removeStorageItem(slot, amount);
-            }
-
-            @Override
-            public ItemStack removeItemNoUpdate(int slot) {
-                return dock == null || !canManageDock ? ItemStack.EMPTY : dock.removeStorageItemNoUpdate(slot);
-            }
-
-            @Override
-            public void setItem(int slot, ItemStack stack) {
-                if (canManageDock && dock != null) {
-                    dock.setStorageItem(slot, stack);
-                }
+            public boolean canPlaceItem(int slot, ItemStack stack) {
+                return canManageDock;
             }
 
             @Override
             public void setChanged() {
-                if (canManageDock && dock != null) {
-                    dock.storageChanged();
-                }
-            }
-
-            @Override
-            public boolean stillValid(Player player) {
-                return DockMenu.this.stillValid(player);
-            }
-
-            @Override
-            public void clearContent() {
-                if (dock == null || !canManageDock) {
+                super.setChanged();
+                if (updatingDepositSlot || !canManageDock || dock == null) {
                     return;
                 }
-                for (int i = 0; i < dock.getStorageSize(); i++) {
-                    dock.setStorageItem(i, ItemStack.EMPTY);
+                ItemStack stack = getItem(0);
+                if (stack.isEmpty()) {
+                    return;
+                }
+                ItemStack copy = stack.copy();
+                if (dock.insertCargo(List.of(copy))) {
+                    updatingDepositSlot = true;
+                    setItem(0, ItemStack.EMPTY);
+                    updatingDepositSlot = false;
+                    sendDockUpdate();
                 }
             }
         };
@@ -146,12 +114,12 @@ public class DockMenu extends AbstractContainerMenu {
     }
 
     private void addDockStorageSlots() {
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 9; col++) {
-                int slotIndex = col + row * 9;
-                this.addSlot(new Slot(dockStorageContainer, slotIndex, 28 + col * 18, 20 + row * 18));
+        this.addSlot(new Slot(dockStorageContainer, 0, 10, 46) {
+            @Override
+            public boolean mayPickup(Player player) {
+                return canManageDock;
             }
-        }
+        });
     }
 
     private void addPlayerInventory(Inventory inventory) {
@@ -214,5 +182,17 @@ public class DockMenu extends AbstractContainerMenu {
 
     public BlockPos getDockPos() {
         return dockPos;
+    }
+
+    private void sendDockUpdate() {
+        if (dock == null || player == null) {
+            return;
+        }
+        if (player instanceof ServerPlayer serverPlayer) {
+            ModNetwork.CHANNEL.send(
+                    PacketDistributor.PLAYER.with(() -> serverPlayer),
+                    new OpenDockScreenPacket(dock.buildScreenData(serverPlayer))
+            );
+        }
     }
 }

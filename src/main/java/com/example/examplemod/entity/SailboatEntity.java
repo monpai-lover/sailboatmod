@@ -164,6 +164,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private String autopilotShipmentShippingOrderId = "";
     private long autopilotShipmentDepartureEpochMillis = 0L;
     private double autopilotShipmentDistanceMeters = 0.0D;
+    private boolean autopilotAllowNonOrderAutoReturn = false;
+    private boolean autopilotAllowNonOrderAutoUnload = false;
     private boolean autopilotReturnTrip = false;
     private final List<ShipmentManifestEntry> autopilotShipmentManifest = new ArrayList<>();
     private BlockPos autopilotDestinationDockHintPos = null;
@@ -655,6 +657,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         tag.putString("AutopilotShipmentShippingOrderId", autopilotShipmentShippingOrderId);
         tag.putLong("AutopilotShipmentDepartureEpochMillis", autopilotShipmentDepartureEpochMillis);
         tag.putDouble("AutopilotShipmentDistanceMeters", autopilotShipmentDistanceMeters);
+        tag.putBoolean("AutopilotAllowNonOrderAutoReturn", autopilotAllowNonOrderAutoReturn);
+        tag.putBoolean("AutopilotAllowNonOrderAutoUnload", autopilotAllowNonOrderAutoUnload);
         tag.putBoolean("AutopilotReturnTrip", autopilotReturnTrip);
         ListTag manifestTag = new ListTag();
         for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
@@ -732,6 +736,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotShipmentShippingOrderId = tag.getString("AutopilotShipmentShippingOrderId");
         autopilotShipmentDepartureEpochMillis = Math.max(0L, tag.getLong("AutopilotShipmentDepartureEpochMillis"));
         autopilotShipmentDistanceMeters = Math.max(0.0D, tag.getDouble("AutopilotShipmentDistanceMeters"));
+        autopilotAllowNonOrderAutoReturn = tag.getBoolean("AutopilotAllowNonOrderAutoReturn");
+        autopilotAllowNonOrderAutoUnload = tag.getBoolean("AutopilotAllowNonOrderAutoUnload");
         autopilotReturnTrip = tag.getBoolean("AutopilotReturnTrip");
         autopilotShipmentManifest.clear();
         ListTag manifestTag = tag.getList("AutopilotShipmentManifest", Tag.TAG_COMPOUND);
@@ -940,6 +946,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     public void setPendingShipmentManifest(List<ShipmentManifestEntry> manifest) {
         autopilotShipmentManifest.clear();
+        autopilotAllowNonOrderAutoReturn = false;
+        autopilotAllowNonOrderAutoUnload = false;
         if (manifest != null) {
             for (ShipmentManifestEntry entry : manifest) {
                 if (entry == null) {
@@ -962,6 +970,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     public List<ShipmentManifestEntry> getPendingShipmentManifest() {
         return List.copyOf(autopilotShipmentManifest);
+    }
+
+    public void setAllowNonOrderAutoReturn(boolean allow) {
+        autopilotAllowNonOrderAutoReturn = allow;
+    }
+
+    public void setAllowNonOrderAutoUnload(boolean allow) {
+        autopilotAllowNonOrderAutoUnload = allow;
     }
 
     public boolean loadCargo(List<ItemStack> cargo) {
@@ -1458,6 +1474,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotShipmentShippingOrderId = "";
         autopilotShipmentDepartureEpochMillis = 0L;
         autopilotShipmentDistanceMeters = 0.0D;
+        autopilotAllowNonOrderAutoReturn = false;
+        autopilotAllowNonOrderAutoUnload = false;
         autopilotReturnTrip = false;
         autopilotShipmentManifest.clear();
         autopilotDestinationDockHintPos = null;
@@ -1505,22 +1523,49 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         BlockPos previousSourceDockPos = routeDockPos == null ? null : routeDockPos.immutable();
         boolean returnTrip = autopilotReturnTrip;
         List<ShipmentManifestEntry> manifest = List.copyOf(autopilotShipmentManifest);
+        boolean hasOrder = hasTransportOrder(manifest);
+        boolean allowUnload = hasOrder || autopilotAllowNonOrderAutoUnload;
+        boolean allowReturn = hasOrder || autopilotAllowNonOrderAutoReturn;
+        if (!allowUnload && !allowReturn) {
+            stopAutopilot(false);
+            return;
+        }
         String returnBuyerUuid = manifest.isEmpty() ? autopilotShipmentRecipientUuid : manifest.get(0).recipientUuid();
         String returnBuyerName = manifest.isEmpty() ? autopilotShipmentRecipientName : manifest.get(0).recipientName();
 
-        List<ItemStack> cargo = drainAllCargo();
-        if (!cargo.isEmpty()) {
-            long depart = autopilotShipmentDepartureEpochMillis > 0L ? autopilotShipmentDepartureEpochMillis : System.currentTimeMillis();
-            long elapsed = Math.max(0L, System.currentTimeMillis() - depart);
-            double distance = autopilotShipmentDistanceMeters > 0.0D ? autopilotShipmentDistanceMeters : computeRouteLengthMeters(autopilotRoute);
-            String routeName = autopilotRouteName == null || autopilotRouteName.isBlank() ? getSelectedRouteName() : autopilotRouteName;
-            destinationDock.receiveShipment(this, routeName, autopilotShipmentShipperName, autopilotShipmentStartDockName,
-                    autopilotShipmentEndDockName, depart, elapsed, distance, cargo, manifest);
+        if (allowUnload) {
+            List<ItemStack> cargo = drainAllCargo();
+            if (!cargo.isEmpty()) {
+                long depart = autopilotShipmentDepartureEpochMillis > 0L ? autopilotShipmentDepartureEpochMillis : System.currentTimeMillis();
+                long elapsed = Math.max(0L, System.currentTimeMillis() - depart);
+                double distance = autopilotShipmentDistanceMeters > 0.0D ? autopilotShipmentDistanceMeters : computeRouteLengthMeters(autopilotRoute);
+                String routeName = autopilotRouteName == null || autopilotRouteName.isBlank() ? getSelectedRouteName() : autopilotRouteName;
+                destinationDock.receiveShipment(this, routeName, autopilotShipmentShipperName, autopilotShipmentStartDockName,
+                        autopilotShipmentEndDockName, depart, elapsed, distance, cargo, manifest);
+            }
         }
-        if (!returnTrip && tryStartReturnTrip(destinationDock, previousSourceDockPos, returnBuyerUuid, returnBuyerName)) {
+        if (!returnTrip && allowReturn && tryStartReturnTrip(destinationDock, previousSourceDockPos, returnBuyerUuid, returnBuyerName)) {
             return;
         }
         stopAutopilot(false);
+    }
+
+    private boolean hasTransportOrder(List<ShipmentManifestEntry> manifest) {
+        if (manifest == null || manifest.isEmpty()) {
+            return false;
+        }
+        for (ShipmentManifestEntry entry : manifest) {
+            if (entry == null) {
+                continue;
+            }
+            String purchaseOrderId = entry.purchaseOrderId();
+            String shippingOrderId = entry.shippingOrderId();
+            if ((purchaseOrderId != null && !purchaseOrderId.isBlank())
+                    || (shippingOrderId != null && !shippingOrderId.isBlank())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public List<ItemStack> unloadAllCargo() {

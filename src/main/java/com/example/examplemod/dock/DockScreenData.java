@@ -12,6 +12,8 @@ public record DockScreenData(
         String dockOwnerName,
         String dockOwnerUuid,
         boolean canManageDock,
+        boolean nonOrderAutoReturnEnabled,
+        boolean nonOrderAutoUnloadEnabled,
         ItemStack routeBook,
         List<String> routeNames,
         List<String> routeMetas,

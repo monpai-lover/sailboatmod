@@ -74,6 +74,12 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     private Button dispatchCargoButton;
     @Nullable
     private Button takeWaybillButton;
+    @Nullable
+    private Button takeStorageButton;
+    @Nullable
+    private Button nonOrderAutoReturnButton;
+    @Nullable
+    private Button nonOrderAutoUnloadButton;
 
     public DockScreen(DockMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -120,6 +126,12 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
                 .bounds(panelX + 8, top + 44, 60, 16).build());
         this.dispatchCargoButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.ship_cargo"), b -> send(DockGuiActionPacket.Action.DISPATCH_SELECTED_CARGO))
                 .bounds(panelX + 72, top + 44, 74, 16).build());
+        this.nonOrderAutoReturnButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> send(DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_RETURN))
+                .bounds(panelX + 8, top + 126, 132, 16).build());
+        this.nonOrderAutoUnloadButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> send(DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_UNLOAD))
+                .bounds(panelX + 8, top + 144, 132, 16).build());
+        this.takeStorageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.withdraw"), b -> send(DockGuiActionPacket.Action.TAKE_SELECTED_STORAGE))
+                .bounds(panelX + 146, top + 66, 40, 16).build());
         this.takeWaybillButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.take"), b -> send(DockGuiActionPacket.Action.TAKE_SELECTED_WAYBILL))
                 .bounds(panelX + 146, top + 142, 40, 16).build());
 
@@ -145,12 +157,15 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         guiGraphics.fill(rightPanelX + 1, rightPanelY + 1, rightPanelX + RIGHT_PANEL_W - 1, rightPanelY + imageHeight - 1, 0xCC182632);
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.name"), rightPanelX + 8, rightPanelY + 26, 0xFFD27F);
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book"), rightPanelX + 8, rightPanelY + 44, 0xFFD27F);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xA8E6FF);
-        String ownerLine = Component.translatable("screen.sailboatmod.owner_name", data.dockOwnerName()).getString();
-        guiGraphics.drawString(font, Component.literal(trimToWidth(ownerLine, 136)), rightPanelX + 8, rightPanelY + 52, 0xA8E6FF);
-        if (data.canManageDock()) {
-            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book_slot"), leftPos + 28, topPos + 6, 0xFFD27F);
+        if (activeTab == TAB_ROUTE) {
+            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xA8E6FF);
+            String ownerLine = Component.translatable("screen.sailboatmod.owner_name", data.dockOwnerName()).getString();
+            guiGraphics.drawString(font, Component.literal(trimToWidth(ownerLine, 136)), rightPanelX + 8, rightPanelY + 52, 0xA8E6FF);
         }
+        int slotLabelColor = data.canManageDock() ? 0xFFD27F : 0xA8A8A8;
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book_slot"), leftPos + 8, topPos + 6, slotLabelColor);
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_slot"), leftPos + 8, topPos + 32, slotLabelColor);
+        guiGraphics.fill(leftPos + 6, topPos + 38, leftPos + imageWidth - 6, topPos + 39, 0xFF4A5560);
 
         if (activeTab == TAB_ROUTE) {
             drawRouteTab(guiGraphics, mouseX, mouseY);
@@ -679,6 +694,26 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
             dispatchCargoButton.visible = onStorage;
             dispatchCargoButton.active = onStorage && data.canManageDock() && !data.storageLines().isEmpty() && !data.nearbyBoatNames().isEmpty() && !data.routeNames().isEmpty();
         }
+        if (takeStorageButton != null) {
+            takeStorageButton.visible = onStorage;
+            takeStorageButton.active = onStorage && data.canManageDock() && !data.storageLines().isEmpty();
+        }
+        if (nonOrderAutoReturnButton != null) {
+            nonOrderAutoReturnButton.visible = onDispatch;
+            nonOrderAutoReturnButton.active = onDispatch && data.canManageDock();
+            nonOrderAutoReturnButton.setMessage(Component.translatable(
+                    data.nonOrderAutoReturnEnabled()
+                            ? "screen.sailboatmod.dock.non_order_auto.on"
+                            : "screen.sailboatmod.dock.non_order_auto.off"));
+        }
+        if (nonOrderAutoUnloadButton != null) {
+            nonOrderAutoUnloadButton.visible = onDispatch;
+            nonOrderAutoUnloadButton.active = onDispatch && data.canManageDock();
+            nonOrderAutoUnloadButton.setMessage(Component.translatable(
+                    data.nonOrderAutoUnloadEnabled()
+                            ? "screen.sailboatmod.dock.non_order_unload.on"
+                            : "screen.sailboatmod.dock.non_order_unload.off"));
+        }
         if (takeWaybillButton != null) {
             takeWaybillButton.visible = onWaybill;
             takeWaybillButton.active = onWaybill && !data.waybillNames().isEmpty();
@@ -701,6 +736,8 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
                 "Dock",
                 "-",
                 "",
+                false,
+                false,
                 false,
                 ItemStack.EMPTY,
                 List.of(),
