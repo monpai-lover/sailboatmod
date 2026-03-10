@@ -27,13 +27,17 @@ import java.util.List;
 public class DockScreen extends AbstractContainerScreen<DockMenu> {
     private static final int TAB_ROUTE = 0;
     private static final int TAB_DISPATCH = 1;
-    private static final int TAB_WAYBILL = 2;
+    private static final int TAB_STORAGE = 2;
+    private static final int TAB_WAYBILL = 3;
     private static final int COMPACT_ROW_H = 12;
     private static final int COMPACT_VISIBLE_ROWS = 9;
     private static final int META_ROW_H = 20;
     private static final int META_VISIBLE_ROWS = 5;
     private static final int WAYBILL_ROW_H = 12;
     private static final int WAYBILL_VISIBLE_ROWS = 3;
+    private static final int DISPATCH_VISIBLE_ROWS = 5;
+    private static final int STORAGE_ROW_H = 12;
+    private static final int STORAGE_VISIBLE_ROWS = 4;
     private static final int RIGHT_PANEL_W = 194;
     private static final int RIGHT_PANEL_GAP = 6;
     private static final int RIGHT_PANEL_OVERLAP = 0;
@@ -67,6 +71,8 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     @Nullable
     private Button assignButton;
     @Nullable
+    private Button dispatchCargoButton;
+    @Nullable
     private Button takeWaybillButton;
 
     public DockScreen(DockMenu menu, Inventory inventory, Component title) {
@@ -95,11 +101,13 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int top = this.rightPanelY;
         int panelX = this.rightPanelX;
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.routes"), b -> activeTab = TAB_ROUTE)
-                .bounds(panelX + 36, top + 4, 48, 16).build());
+                .bounds(panelX + 6, top + 4, 42, 16).build());
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.dispatch"), b -> activeTab = TAB_DISPATCH)
-                .bounds(panelX + 86, top + 4, 48, 16).build());
+                .bounds(panelX + 52, top + 4, 42, 16).build());
+        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.warehouse"), b -> activeTab = TAB_STORAGE)
+                .bounds(panelX + 98, top + 4, 42, 16).build());
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.waybill"), b -> activeTab = TAB_WAYBILL)
-                .bounds(panelX + 136, top + 4, 50, 16).build());
+                .bounds(panelX + 144, top + 4, 44, 16).build());
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.refresh"), b -> send(DockGuiActionPacket.Action.REFRESH))
                 .bounds(panelX + 146, top + 160, 40, 16).build());
         this.importButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.import"), b -> send(DockGuiActionPacket.Action.IMPORT_BOOK))
@@ -109,7 +117,9 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         this.deleteButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.delete"), b -> send(DockGuiActionPacket.Action.DELETE_ROUTE))
                 .bounds(panelX + 146, top + 124, 40, 16).build());
         this.assignButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.assign"), b -> send(DockGuiActionPacket.Action.ASSIGN_SELECTED))
-                .bounds(panelX + 146, top + 142, 40, 16).build());
+                .bounds(panelX + 8, top + 44, 60, 16).build());
+        this.dispatchCargoButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.ship_cargo"), b -> send(DockGuiActionPacket.Action.DISPATCH_SELECTED_CARGO))
+                .bounds(panelX + 72, top + 44, 74, 16).build());
         this.takeWaybillButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.take"), b -> send(DockGuiActionPacket.Action.TAKE_SELECTED_WAYBILL))
                 .bounds(panelX + 146, top + 142, 40, 16).build());
 
@@ -138,12 +148,16 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xA8E6FF);
         String ownerLine = Component.translatable("screen.sailboatmod.owner_name", data.dockOwnerName()).getString();
         guiGraphics.drawString(font, Component.literal(trimToWidth(ownerLine, 136)), rightPanelX + 8, rightPanelY + 52, 0xA8E6FF);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book_slot"), leftPos + 28, topPos + 6, 0xFFD27F);
+        if (data.canManageDock()) {
+            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book_slot"), leftPos + 28, topPos + 6, 0xFFD27F);
+        }
 
         if (activeTab == TAB_ROUTE) {
             drawRouteTab(guiGraphics, mouseX, mouseY);
         } else if (activeTab == TAB_DISPATCH) {
             drawDispatchTab(guiGraphics);
+        } else if (activeTab == TAB_STORAGE) {
+            drawStorageTab(guiGraphics);
         } else {
             drawWaybillTab(guiGraphics);
         }
@@ -182,10 +196,20 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int boatsW = DISPATCH_BOATS_W;
         int routesX = rightPanelX + DISPATCH_ROUTES_X;
         int routesW = DISPATCH_ROUTES_W;
-        drawListFrame(g, boatsX, listsY, boatsW, COMPACT_VISIBLE_ROWS * COMPACT_ROW_H);
+        drawListFrame(g, boatsX, listsY, boatsW, DISPATCH_VISIBLE_ROWS * COMPACT_ROW_H);
         drawBoatList(g, boatsX, listsY, boatsW);
-        drawListFrame(g, routesX, listsY, routesW, COMPACT_VISIBLE_ROWS * COMPACT_ROW_H);
+        drawListFrame(g, routesX, listsY, routesW, DISPATCH_VISIBLE_ROWS * COMPACT_ROW_H);
         drawRouteList(g, routesX, listsY, routesW, false);
+    }
+
+    private void drawStorageTab(GuiGraphics g) {
+        int storageX = rightPanelX + 8;
+        int storageY = rightPanelY + 62;
+        int storageW = 178;
+        int storageH = STORAGE_VISIBLE_ROWS * STORAGE_ROW_H + 12;
+        drawListFrame(g, storageX, storageY, storageW, storageH);
+        g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_title"), storageX + 4, storageY + 3, 0xFFD27F);
+        drawStorageList(g, storageX, storageY + 12, storageW, storageH - 12);
     }
 
     private void drawWaybillTab(GuiGraphics g) {
@@ -199,7 +223,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int infoX = listX;
         int infoY = listY + listH + 4;
         int infoW = listW;
-        int infoH = 72;
+        int infoH = 30;
         drawListFrame(g, infoX, infoY, infoW, infoH);
         int lineY = infoY + 3;
         int maxWidth = infoW - 6;
@@ -398,7 +422,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
             return;
         }
         int rowHeight = showMeta ? META_ROW_H : COMPACT_ROW_H;
-        int visibleRows = showMeta ? META_VISIBLE_ROWS : COMPACT_VISIBLE_ROWS;
+        int visibleRows = showMeta ? META_VISIBLE_ROWS : DISPATCH_VISIBLE_ROWS;
         int selected = Math.max(0, Math.min(data.selectedRouteIndex(), data.routeNames().size() - 1));
         int start = Math.max(0, Math.min(selected - visibleRows / 2, Math.max(0, data.routeNames().size() - visibleRows)));
         int end = Math.min(data.routeNames().size(), start + visibleRows);
@@ -421,8 +445,8 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
             return;
         }
         int selected = Math.max(0, Math.min(data.selectedBoatIndex(), data.nearbyBoatNames().size() - 1));
-        int start = Math.max(0, Math.min(selected - COMPACT_VISIBLE_ROWS / 2, Math.max(0, data.nearbyBoatNames().size() - COMPACT_VISIBLE_ROWS)));
-        int end = Math.min(data.nearbyBoatNames().size(), start + COMPACT_VISIBLE_ROWS);
+        int start = Math.max(0, Math.min(selected - DISPATCH_VISIBLE_ROWS / 2, Math.max(0, data.nearbyBoatNames().size() - DISPATCH_VISIBLE_ROWS)));
+        int end = Math.min(data.nearbyBoatNames().size(), start + DISPATCH_VISIBLE_ROWS);
         for (int i = start; i < end; i++) {
             int row = i - start;
             int ry = y + row * COMPACT_ROW_H;
@@ -453,13 +477,16 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (activeTab == TAB_ROUTE && button == 0 && tryStartZoneSelect(mouseX, mouseY)) {
+        if (activeTab == TAB_ROUTE && data.canManageDock() && button == 0 && tryStartZoneSelect(mouseX, mouseY)) {
             return true;
         }
-        if (button == 0 && activeTab != TAB_WAYBILL && tryClickRouteList(mouseX, mouseY)) {
+        if (button == 0 && (activeTab == TAB_ROUTE || activeTab == TAB_DISPATCH) && tryClickRouteList(mouseX, mouseY)) {
             return true;
         }
         if (button == 0 && activeTab == TAB_DISPATCH && tryClickBoatList(mouseX, mouseY)) {
+            return true;
+        }
+        if (button == 0 && activeTab == TAB_STORAGE && tryClickStorageList(mouseX, mouseY)) {
             return true;
         }
         if (button == 0 && activeTab == TAB_WAYBILL && tryClickWaybillList(mouseX, mouseY)) {
@@ -523,7 +550,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int y = rightPanelY + 62;
         int w = activeTab == TAB_ROUTE ? 128 : DISPATCH_ROUTES_W;
         int rowHeight = activeTab == TAB_ROUTE ? META_ROW_H : COMPACT_ROW_H;
-        int visibleRows = activeTab == TAB_ROUTE ? META_VISIBLE_ROWS : COMPACT_VISIBLE_ROWS;
+        int visibleRows = activeTab == TAB_ROUTE ? META_VISIBLE_ROWS : DISPATCH_VISIBLE_ROWS;
         if (mouseX < x || mouseX >= x + w || mouseY < y || mouseY >= y + visibleRows * rowHeight || data.routeNames().isEmpty()) {
             return false;
         }
@@ -542,17 +569,36 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int x = rightPanelX + DISPATCH_BOATS_X;
         int y = rightPanelY + 62;
         int w = DISPATCH_BOATS_W;
-        if (mouseX < x || mouseX >= x + w || mouseY < y || mouseY >= y + COMPACT_VISIBLE_ROWS * COMPACT_ROW_H || data.nearbyBoatNames().isEmpty()) {
+        if (mouseX < x || mouseX >= x + w || mouseY < y || mouseY >= y + DISPATCH_VISIBLE_ROWS * COMPACT_ROW_H || data.nearbyBoatNames().isEmpty()) {
             return false;
         }
         int selected = Math.max(0, Math.min(data.selectedBoatIndex(), data.nearbyBoatNames().size() - 1));
-        int start = Math.max(0, Math.min(selected - COMPACT_VISIBLE_ROWS / 2, Math.max(0, data.nearbyBoatNames().size() - COMPACT_VISIBLE_ROWS)));
+        int start = Math.max(0, Math.min(selected - DISPATCH_VISIBLE_ROWS / 2, Math.max(0, data.nearbyBoatNames().size() - DISPATCH_VISIBLE_ROWS)));
         int row = (int) ((mouseY - y) / COMPACT_ROW_H);
         int idx = start + row;
         if (idx < 0 || idx >= data.nearbyBoatNames().size()) {
             return false;
         }
         send(DockGuiActionPacket.Action.SELECT_BOAT_INDEX, idx);
+        return true;
+    }
+
+    private boolean tryClickStorageList(double mouseX, double mouseY) {
+        int x = rightPanelX + 8;
+        int y = rightPanelY + 74;
+        int w = 178;
+        int h = STORAGE_VISIBLE_ROWS * STORAGE_ROW_H;
+        if (mouseX < x || mouseX >= x + w || mouseY < y || mouseY >= y + h || data.storageLines().isEmpty()) {
+            return false;
+        }
+        int selected = Math.max(0, Math.min(data.selectedStorageIndex(), data.storageLines().size() - 1));
+        int start = Math.max(0, Math.min(selected - STORAGE_VISIBLE_ROWS / 2, Math.max(0, data.storageLines().size() - STORAGE_VISIBLE_ROWS)));
+        int row = (int) ((mouseY - y) / STORAGE_ROW_H);
+        int idx = start + row;
+        if (idx < 0 || idx >= data.storageLines().size()) {
+            return false;
+        }
+        send(DockGuiActionPacket.Action.SELECT_STORAGE_INDEX, idx);
         return true;
     }
 
@@ -611,26 +657,34 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     private void updateActionButtonVisibility() {
         boolean onRoute = activeTab == TAB_ROUTE;
         boolean onDispatch = activeTab == TAB_DISPATCH;
+        boolean onStorage = activeTab == TAB_STORAGE;
         boolean onWaybill = activeTab == TAB_WAYBILL;
         if (importButton != null) {
             importButton.visible = onRoute;
-            importButton.active = onRoute;
+            importButton.active = onRoute && data.canManageDock();
         }
         if (reverseButton != null) {
             reverseButton.visible = onRoute;
-            reverseButton.active = onRoute;
+            reverseButton.active = onRoute && data.canManageDock();
         }
         if (deleteButton != null) {
             deleteButton.visible = onRoute;
-            deleteButton.active = onRoute;
+            deleteButton.active = onRoute && data.canManageDock();
         }
         if (assignButton != null) {
             assignButton.visible = onDispatch;
             assignButton.active = onDispatch;
         }
+        if (dispatchCargoButton != null) {
+            dispatchCargoButton.visible = onStorage;
+            dispatchCargoButton.active = onStorage && data.canManageDock() && !data.storageLines().isEmpty() && !data.nearbyBoatNames().isEmpty() && !data.routeNames().isEmpty();
+        }
         if (takeWaybillButton != null) {
             takeWaybillButton.visible = onWaybill;
             takeWaybillButton.active = onWaybill && !data.waybillNames().isEmpty();
+        }
+        if (dockNameInput != null) {
+            dockNameInput.setEditable(data.canManageDock());
         }
     }
 
@@ -647,6 +701,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
                 "Dock",
                 "-",
                 "",
+                false,
                 ItemStack.EMPTY,
                 List.of(),
                 List.of(),
@@ -663,7 +718,31 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
                 List.of(),
                 0,
                 List.of(),
+                0,
+                List.of(),
                 List.of()
         );
+    }
+
+    private void drawStorageList(GuiGraphics g, int x, int y, int w, int h) {
+        if (!data.canManageDock()) {
+            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_owner_only"), x + 4, y + 4, 0xAAAAAA);
+            return;
+        }
+        if (data.storageLines().isEmpty()) {
+            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_empty"), x + 4, y + 4, 0xAAAAAA);
+            return;
+        }
+        int selected = Math.max(0, Math.min(data.selectedStorageIndex(), data.storageLines().size() - 1));
+        int start = Math.max(0, Math.min(selected - STORAGE_VISIBLE_ROWS / 2, Math.max(0, data.storageLines().size() - STORAGE_VISIBLE_ROWS)));
+        int end = Math.min(data.storageLines().size(), start + STORAGE_VISIBLE_ROWS);
+        for (int i = start; i < end; i++) {
+            int row = i - start;
+            int ry = y + row * STORAGE_ROW_H;
+            int bg = i == selected ? 0x55457A9A : 0x22000000;
+            g.fill(x + 1, ry + 1, x + w - 1, ry + STORAGE_ROW_H - 1, bg);
+            String line = (i + 1) + "." + (data.storageLines().get(i) == null ? "" : data.storageLines().get(i));
+            g.drawString(font, Component.literal(trimToWidth(line, w - 6)), x + 3, ry + 2, 0xE0E0E0);
+        }
     }
 }

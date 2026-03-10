@@ -5,8 +5,10 @@ import com.example.examplemod.dock.DockScreenData;
 import com.example.examplemod.economy.VaultEconomyBridge;
 import com.example.examplemod.entity.SailboatEntity;
 import com.example.examplemod.item.RouteBookItem;
+import com.example.examplemod.market.MarketListing;
 import com.example.examplemod.market.MarketSavedData;
 import com.example.examplemod.market.PurchaseOrder;
+import com.example.examplemod.market.ShipmentManifestEntry;
 import com.example.examplemod.market.ShippingOrder;
 import com.example.examplemod.menu.DockMenu;
 import com.example.examplemod.registry.ModBlockEntities;
@@ -66,6 +68,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     private int zoneMaxZ = ZONE_HALF_Z;
     private int selectedRouteIndex = 0;
     private int selectedBoatIndex = 0;
+    private int selectedStorageIndex = 0;
     private int selectedWaybillIndex = 0;
 
     public DockBlockEntity(BlockPos pos, BlockState state) {
@@ -127,6 +130,14 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     public String getOwnerUuid() {
         return ownerUuid == null ? "" : ownerUuid;
+    }
+
+    public boolean canManageDock(@Nullable Player player) {
+        if (player == null) {
+            return false;
+        }
+        String currentOwner = getOwnerUuid();
+        return !currentOwner.isBlank() && currentOwner.equals(player.getUUID().toString());
     }
 
     public boolean setDockZone(int minX, int maxX, int minZ, int maxZ) {
@@ -309,8 +320,23 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return selectedBoatIndex;
     }
 
+    public int selectStorageIndex(int index, Player player) {
+        if (!canManageDock(player)) {
+            selectedStorageIndex = 0;
+            return 0;
+        }
+        List<Integer> occupiedSlots = getVisibleStorageSlots();
+        if (occupiedSlots.isEmpty()) {
+            selectedStorageIndex = 0;
+            return 0;
+        }
+        selectedStorageIndex = Mth.clamp(index, 0, occupiedSlots.size() - 1);
+        setChanged();
+        return selectedStorageIndex;
+    }
+
     public boolean assignSelectedBoat(Player player, boolean autoStart) {
-        List<SailboatEntity> boats = getNearbySailboats(player);
+        List<SailboatEntity> boats = getAvailableSailboatsForDispatch(player);
         if (boats.isEmpty()) {
             player.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_target"), true);
             return false;
@@ -319,14 +345,90 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return assignBoatToRouteIndex(boats.get(idx), Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, player);
     }
 
+    public boolean dispatchSelectedStorage(Player player) {
+        if (!canManageDock(player)) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_owner_only"), true);
+            return false;
+        }
+        List<Integer> occupiedSlots = getVisibleStorageSlots();
+        if (occupiedSlots.isEmpty()) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
+            return false;
+        }
+        int safeStorageIndex = Mth.clamp(selectedStorageIndex, 0, occupiedSlots.size() - 1);
+        selectedStorageIndex = safeStorageIndex;
+        int slot = occupiedSlots.get(safeStorageIndex);
+        ItemStack stack = getStorageItem(slot);
+        if (stack.isEmpty()) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
+            return false;
+        }
+        List<SailboatEntity> boats = getAvailableSailboatsForDispatch(player);
+        if (boats.isEmpty()) {
+            player.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_target"), true);
+            return false;
+        }
+        if (routes.isEmpty()) {
+            player.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_route"), true);
+            return false;
+        }
+        int safeBoatIndex = Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
+        int safeRouteIndex = Mth.clamp(selectedRouteIndex, 0, routes.size() - 1);
+        SailboatEntity boat = boats.get(safeBoatIndex);
+        List<ItemStack> cargo = List.of(stack.copy());
+        if (!boat.canLoadCargo(cargo)) {
+            player.displayClientMessage(Component.literal("Boat cargo hold is full."), true);
+            return false;
+        }
+        ItemStack removed = removeStorageItemNoUpdate(slot);
+        if (removed.isEmpty()) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
+            return false;
+        }
+        cargo = List.of(removed.copy());
+        if (!boat.loadCargo(cargo)) {
+            setStorageItem(slot, removed);
+            player.displayClientMessage(Component.literal("Boat cargo load failed."), true);
+            return false;
+        }
+        boat.setPendingMarketDelivery(
+                player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
+                player.getUUID().toString(),
+                "",
+                ""
+        );
+        if (!assignLoadedBoatToRouteIndex(boat, safeRouteIndex, true, player)) {
+            insertCargo(boat.unloadAllCargo());
+            boat.clearPendingMarketDelivery();
+            return false;
+        }
+        setChanged();
+        return true;
+    }
+
     public boolean assignBoat(SailboatEntity sailboat, boolean autoStart) {
         return assignBoatToRouteIndex(sailboat, Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, null);
     }
 
     public boolean assignBoatToRouteIndex(SailboatEntity sailboat, int routeIndex, boolean autoStart, @Nullable Player operator) {
+        return assignBoatToRouteIndex(sailboat, routeIndex, autoStart, operator, false);
+    }
+
+    public boolean assignLoadedBoatToRouteIndex(SailboatEntity sailboat, int routeIndex, boolean autoStart, @Nullable Player operator) {
+        return assignBoatToRouteIndex(sailboat, routeIndex, autoStart, operator, true);
+    }
+
+    private boolean assignBoatToRouteIndex(SailboatEntity sailboat, int routeIndex, boolean autoStart,
+                                           @Nullable Player operator, boolean allowCargo) {
         if (routes.isEmpty()) {
             if (operator != null) {
                 operator.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_route"), true);
+            }
+            return false;
+        }
+        if (sailboat == null || !sailboat.isAlive() || !isInsideDockZone(sailboat.position()) || sailboat.isAutopilotActive() || (!allowCargo && sailboat.hasCargo())) {
+            if (operator != null) {
+                operator.displayClientMessage(Component.translatable("screen.sailboatmod.dock.boat_not_ready"), true);
             }
             return false;
         }
@@ -372,7 +474,25 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return getNearbySailboats(player);
     }
 
+    public List<SailboatEntity> getAvailableSailboatsForDispatch(Player player) {
+        return getNearbySailboats(player).stream()
+                .filter(this::isBoatAvailableForDispatch)
+                .toList();
+    }
+
     public int findRouteIndexByEndDockName(String dockName) {
+        return findRouteIndexByDestinationDock(null, dockName);
+    }
+
+    public int findRouteIndexByDestinationDock(@Nullable BlockPos dockPos, @Nullable String dockName) {
+        if (dockPos != null) {
+            for (int i = 0; i < routes.size(); i++) {
+                BlockPos routeDockPos = findRouteEndDockPos(routes.get(i));
+                if (dockPos.equals(routeDockPos)) {
+                    return i;
+                }
+            }
+        }
         if (dockName == null || dockName.isBlank()) {
             return -1;
         }
@@ -385,6 +505,19 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return -1;
     }
 
+    @Nullable
+    private BlockPos findRouteEndDockPos(RouteDefinition route) {
+        if (level == null || route == null || route.waypoints().isEmpty()) {
+            return null;
+        }
+        Vec3 endWaypoint = route.waypoints().get(route.waypoints().size() - 1);
+        BlockPos exact = findDockZoneContains(level, endWaypoint);
+        if (exact != null) {
+            return exact;
+        }
+        return findNearestRegisteredDock(level, endWaypoint, 256.0D);
+    }
+
     public String getRouteName(int routeIndex) {
         if (routes.isEmpty()) {
             return "-";
@@ -395,6 +528,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public DockScreenData buildScreenData(Player player) {
+        boolean canManageDock = canManageDock(player);
         List<String> routeNames = new ArrayList<>();
         List<String> routeMetas = new ArrayList<>();
         List<Vec3> selectedPoints = List.of();
@@ -427,6 +561,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         int safeBoatIndex = boats.isEmpty() ? 0 : Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
         selectedBoatIndex = safeBoatIndex;
+        List<Integer> visibleStorageSlots = canManageDock ? getVisibleStorageSlots() : List.of();
+        List<String> storageLines = canManageDock ? getVisibleStorageLines(player) : List.of();
+        int safeStorageIndex = visibleStorageSlots.isEmpty() ? 0 : Mth.clamp(selectedStorageIndex, 0, visibleStorageSlots.size() - 1);
+        selectedStorageIndex = safeStorageIndex;
         int safeWaybillIndex = waybills.isEmpty() ? 0 : Mth.clamp(selectedWaybillIndex, 0, waybills.size() - 1);
         selectedWaybillIndex = safeWaybillIndex;
 
@@ -451,6 +589,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 getDockName(),
                 getOwnerName(),
                 getOwnerUuid(),
+                canManageDock,
                 routeBook.copy(),
                 routeNames,
                 routeMetas,
@@ -464,6 +603,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 boatNames,
                 boatPositions,
                 safeBoatIndex,
+                storageLines,
+                safeStorageIndex,
                 waybillNames,
                 safeWaybillIndex,
                 waybillInfoLines,
@@ -513,7 +654,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public void receiveShipment(
-            SailboatEntity sailboat,
+            @Nullable SailboatEntity sailboat,
             String routeName,
             String shipperName,
             String startDockName,
@@ -533,15 +674,69 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 elapsedMillis,
                 distanceMeters,
                 cargo,
-                "",
-                "",
-                "",
-                ""
+                List.of()
         );
     }
 
     public void receiveShipment(
-            SailboatEntity sailboat,
+            @Nullable SailboatEntity sailboat,
+            String routeName,
+            String shipperName,
+            String startDockName,
+            String endDockName,
+            long departureEpochMillis,
+            long elapsedMillis,
+            double distanceMeters,
+            List<ItemStack> cargo,
+            List<ShipmentManifestEntry> manifest
+    ) {
+        List<ItemStack> packed = copyCargo(cargo);
+        if (packed.isEmpty()) {
+            return;
+        }
+
+        List<ShipmentManifestEntry> safeManifest = manifest == null ? List.of() : manifest.stream()
+                .filter(entry -> entry != null)
+                .toList();
+        if (safeManifest.isEmpty()) {
+            appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
+                    departureEpochMillis, elapsedMillis, distanceMeters, packed,
+                    "", "", "", "");
+            return;
+        }
+
+        List<ItemStack> cargoPool = copyCargo(packed);
+        for (int i = 0; i < safeManifest.size(); i++) {
+            ShipmentManifestEntry entry = safeManifest.get(i);
+            List<ItemStack> entryCargo;
+            if (entry.quantity() > 0 && entry.itemStack() != null && !entry.itemStack().isEmpty()) {
+                entryCargo = extractMatchingCargo(cargoPool, entry.itemStack(), entry.quantity());
+            } else if (i == safeManifest.size() - 1) {
+                entryCargo = copyCargo(cargoPool);
+                cargoPool.clear();
+            } else {
+                entryCargo = List.of();
+            }
+            if (entryCargo.isEmpty() && i == safeManifest.size() - 1 && !cargoPool.isEmpty()) {
+                entryCargo = copyCargo(cargoPool);
+                cargoPool.clear();
+            }
+            if (entryCargo.isEmpty()) {
+                continue;
+            }
+            appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
+                    departureEpochMillis, elapsedMillis, distanceMeters, entryCargo,
+                    entry.recipientName(), entry.recipientUuid(), entry.purchaseOrderId(), entry.shippingOrderId());
+        }
+        if (!cargoPool.isEmpty()) {
+            appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
+                    departureEpochMillis, elapsedMillis, distanceMeters, cargoPool,
+                    "", "", "", "");
+        }
+    }
+
+    private void appendWaybillEntry(
+            @Nullable SailboatEntity sailboat,
             String routeName,
             String shipperName,
             String startDockName,
@@ -555,22 +750,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             String purchaseOrderId,
             String shippingOrderId
     ) {
-        if (cargo == null || cargo.isEmpty()) {
-            return;
-        }
-        List<ItemStack> packed = new ArrayList<>();
-        for (ItemStack stack : cargo) {
-            if (stack == null || stack.isEmpty()) {
-                continue;
-            }
-            packed.add(stack.copy());
-        }
+        List<ItemStack> packed = copyCargo(cargo);
         if (packed.isEmpty()) {
             return;
         }
 
         String safeRoute = sanitize(routeName, "-");
-        String safeBoat = sanitize(sailboat.getName().getString(), "Sailboat");
+        String safeBoat = sailboat == null ? "Direct" : sanitize(sailboat.getName().getString(), "Sailboat");
         String safeShipper = sanitize(shipperName, "-");
         String safeStart = sanitize(startDockName, "-");
         String safeEnd = sanitize(endDockName, getDockName());
@@ -607,6 +793,47 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         markArrivedOrders(safePurchaseOrderId, safeShippingOrderId);
         selectedWaybillIndex = Math.max(0, waybills.size() - 1);
         setChanged();
+    }
+
+    private static List<ItemStack> copyCargo(List<ItemStack> cargo) {
+        List<ItemStack> packed = new ArrayList<>();
+        if (cargo == null) {
+            return packed;
+        }
+        for (ItemStack stack : cargo) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            packed.add(stack.copy());
+        }
+        return packed;
+    }
+
+    private static List<ItemStack> extractMatchingCargo(List<ItemStack> pool, ItemStack template, int quantity) {
+        List<ItemStack> extracted = new ArrayList<>();
+        if (pool == null || template == null || template.isEmpty() || quantity <= 0) {
+            return extracted;
+        }
+        int remaining = quantity;
+        for (ItemStack stack : pool) {
+            if (remaining <= 0) {
+                break;
+            }
+            if (stack.isEmpty() || !ItemStack.isSameItemSameTags(stack, template)) {
+                continue;
+            }
+            int take = Math.min(stack.getCount(), remaining);
+            if (take <= 0) {
+                continue;
+            }
+            ItemStack moved = stack.copy();
+            moved.setCount(take);
+            extracted.add(moved);
+            stack.shrink(take);
+            remaining -= take;
+        }
+        pool.removeIf(ItemStack::isEmpty);
+        return extracted;
     }
 
     public int getStorageSize() {
@@ -725,6 +952,262 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         setChanged();
         return true;
+    }
+
+    public List<String> getVisibleStorageLines(Player player) {
+        if (!canManageDock(player)) {
+            return List.of();
+        }
+        List<Integer> visibleSlots = getVisibleStorageSlots();
+        List<String> lines = new ArrayList<>(visibleSlots.size());
+        for (int slot : visibleSlots) {
+            ItemStack stack = storage.get(slot);
+            String itemName = stack.isEmpty() ? "-" : stack.getHoverName().getString();
+            lines.add(clampUtf(itemName + " x" + stack.getCount(), 150));
+        }
+        return lines;
+    }
+
+    public int getVisibleStorageCount(Player player) {
+        return canManageDock(player) ? getVisibleStorageSlots().size() : 0;
+    }
+
+    public ItemStack getStorageItemForVisibleIndex(Player player, int visibleIndex) {
+        if (!canManageDock(player)) {
+            return ItemStack.EMPTY;
+        }
+        List<Integer> visibleSlots = getVisibleStorageSlots();
+        if (visibleIndex < 0 || visibleIndex >= visibleSlots.size()) {
+            return ItemStack.EMPTY;
+        }
+        return storage.get(visibleSlots.get(visibleIndex)).copy();
+    }
+
+    public boolean extractVisibleStorage(Player player, int visibleIndex, int quantity) {
+        ItemStack stack = getStorageItemForVisibleIndex(player, visibleIndex);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        int amount = Math.max(1, Math.min(quantity, stack.getCount()));
+        return extractMatchingStock(stack, amount);
+    }
+
+    public boolean tryLoadReturnCargo(SailboatEntity boat, @Nullable BlockPos targetDockPos,
+                                      @Nullable String buyerUuid, @Nullable String buyerName) {
+        if (level == null || level.isClientSide || boat == null || targetDockPos == null) {
+            return false;
+        }
+        String safeBuyerUuid = buyerUuid == null ? "" : buyerUuid.trim();
+        if (safeBuyerUuid.isBlank()) {
+            return false;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        List<PurchaseOrder> candidates = market.getOpenOrdersForSourceDock(worldPosition, targetDockPos, safeBuyerUuid);
+        List<ItemStack> cargo = new ArrayList<>();
+        List<ReturnLoadSelection> selections = new ArrayList<>();
+        for (PurchaseOrder order : candidates) {
+            MarketListing listing = market.getListing(order.listingId());
+            if (listing == null) {
+                continue;
+            }
+            int shippableQuantity = findMaxLoadableQuantity(boat, cargo, listing.itemStack(), order.quantity());
+            if (shippableQuantity <= 0) {
+                if (!cargo.isEmpty()) {
+                    break;
+                }
+                continue;
+            }
+            PurchaseSplit split = splitOrderForShipment(market, order, shippableQuantity);
+            if (split == null) {
+                continue;
+            }
+            cargo.addAll(splitCargo(listing.itemStack(), split.shipped().quantity()));
+            selections.add(new ReturnLoadSelection(split.shipped(), split.remainder(), listing));
+            if (shippableQuantity < order.quantity()) {
+                break;
+            }
+        }
+        if (cargo.isEmpty() || selections.isEmpty() || !boat.canLoadCargo(cargo) || !boat.loadCargo(cargo)) {
+            return false;
+        }
+
+        List<ShipmentManifestEntry> manifest = new ArrayList<>();
+        Map<String, Integer> listingReservationDeltas = new HashMap<>();
+        for (ReturnLoadSelection selection : selections) {
+            String shippingOrderId = market.nextId();
+            PurchaseOrder order = selection.dispatchOrder();
+            manifest.add(new ShipmentManifestEntry(
+                    selection.listing().listingId(),
+                    selection.listing().itemStack(),
+                    order.orderId(),
+                    shippingOrderId,
+                    order.buyerUuid(),
+                    order.buyerName(),
+                    order.quantity()
+            ));
+            listingReservationDeltas.merge(selection.listing().listingId(), order.quantity(), Integer::sum);
+            market.putPurchaseOrder(new PurchaseOrder(
+                    order.orderId(),
+                    order.listingId(),
+                    order.buyerUuid(),
+                    order.buyerName(),
+                    order.quantity(),
+                    order.totalPrice(),
+                    order.sourceDockPos(),
+                    order.sourceDockName(),
+                    order.targetDockPos(),
+                    order.targetDockName(),
+                    "IN_TRANSIT"
+            ));
+            if (selection.remainderOrder() != null) {
+                market.putPurchaseOrder(selection.remainderOrder());
+            }
+            market.putShippingOrder(new ShippingOrder(
+                    shippingOrderId,
+                    order.orderId(),
+                    boat.getOwnerUuid(),
+                    boat.getOwnerName(),
+                    boat.getUUID().toString(),
+                    boat.getName().getString(),
+                    "OWN",
+                    getDockName() + " Return",
+                    order.sourceDockPos(),
+                    order.sourceDockName(),
+                    order.targetDockPos(),
+                    order.targetDockName(),
+                    0,
+                    "SAILING"
+            ));
+        }
+        applyListingReservationDeltas(market, listingReservationDeltas);
+        boat.setPendingShipmentManifest(manifest);
+        return true;
+    }
+
+    private List<Integer> getVisibleStorageSlots() {
+        List<Integer> visible = new ArrayList<>();
+        for (int i = 0; i < storage.size(); i++) {
+            if (!storage.get(i).isEmpty()) {
+                visible.add(i);
+            }
+        }
+        return visible;
+    }
+
+    private boolean isBoatAvailableForDispatch(SailboatEntity boat) {
+        return boat != null
+                && boat.isAlive()
+                && isInsideDockZone(boat.position())
+                && !boat.isAutopilotActive()
+                && !boat.hasCargo();
+    }
+
+    private static List<ItemStack> splitCargo(ItemStack template, int quantity) {
+        List<ItemStack> cargo = new ArrayList<>();
+        if (template == null || template.isEmpty() || quantity <= 0) {
+            return cargo;
+        }
+        int remaining = quantity;
+        int stackSize = Math.max(1, template.getMaxStackSize());
+        while (remaining > 0) {
+            int amount = Math.min(stackSize, remaining);
+            ItemStack stack = template.copy();
+            stack.setCount(amount);
+            cargo.add(stack);
+            remaining -= amount;
+        }
+        return cargo;
+    }
+
+    private int findMaxLoadableQuantity(SailboatEntity boat, List<ItemStack> currentCargo, ItemStack template, int maxQuantity) {
+        if (boat == null || template == null || template.isEmpty() || maxQuantity <= 0) {
+            return 0;
+        }
+        int low = 0;
+        int high = maxQuantity;
+        while (low < high) {
+            int mid = (low + high + 1) >>> 1;
+            List<ItemStack> candidate = new ArrayList<>(currentCargo);
+            candidate.addAll(splitCargo(template, mid));
+            if (boat.canLoadCargo(candidate)) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return low;
+    }
+
+    @Nullable
+    private PurchaseSplit splitOrderForShipment(MarketSavedData market, PurchaseOrder order, int shippedQuantity) {
+        if (market == null || order == null || shippedQuantity <= 0) {
+            return null;
+        }
+        if (shippedQuantity >= order.quantity()) {
+            return new PurchaseSplit(order, null);
+        }
+        int shippedTotal = order.totalPrice() * shippedQuantity / Math.max(1, order.quantity());
+        int remainderQuantity = order.quantity() - shippedQuantity;
+        int remainderTotal = Math.max(0, order.totalPrice() - shippedTotal);
+        PurchaseOrder shipped = new PurchaseOrder(
+                order.orderId(),
+                order.listingId(),
+                order.buyerUuid(),
+                order.buyerName(),
+                shippedQuantity,
+                shippedTotal,
+                order.sourceDockPos(),
+                order.sourceDockName(),
+                order.targetDockPos(),
+                order.targetDockName(),
+                order.status()
+        );
+        PurchaseOrder remainder = new PurchaseOrder(
+                market.nextId(),
+                order.listingId(),
+                order.buyerUuid(),
+                order.buyerName(),
+                remainderQuantity,
+                remainderTotal,
+                order.sourceDockPos(),
+                order.sourceDockName(),
+                order.targetDockPos(),
+                order.targetDockName(),
+                "WAITING_SHIPMENT"
+        );
+        return new PurchaseSplit(shipped, remainder);
+    }
+
+    private void applyListingReservationDeltas(MarketSavedData market, Map<String, Integer> listingReservationDeltas) {
+        for (Map.Entry<String, Integer> entry : listingReservationDeltas.entrySet()) {
+            MarketListing listing = market.getListing(entry.getKey());
+            if (listing == null) {
+                continue;
+            }
+            int nextReserved = Math.max(0, listing.reservedCount() - Math.max(0, entry.getValue()));
+            if (listing.availableCount() <= 0 && nextReserved <= 0) {
+                market.removeListing(listing.listingId());
+                continue;
+            }
+            market.putListing(new MarketListing(
+                    listing.listingId(),
+                    listing.sellerUuid(),
+                    listing.sellerName(),
+                    listing.itemStack(),
+                    listing.unitPrice(),
+                    listing.availableCount(),
+                    nextReserved,
+                    listing.sourceDockPos(),
+                    listing.sourceDockName()
+            ));
+        }
+    }
+
+    private record ReturnLoadSelection(PurchaseOrder dispatchOrder, @Nullable PurchaseOrder remainderOrder,
+                                       MarketListing listing) {
+    }
+
+    private record PurchaseSplit(PurchaseOrder shipped, @Nullable PurchaseOrder remainder) {
     }
 
     private static String sanitize(String value, String fallback) {
@@ -989,6 +1472,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         RouteNbtUtil.writeRoutes(tag, "DockRoutes", routes);
         tag.putInt("SelectedRouteIndex", selectedRouteIndex);
         tag.putInt("SelectedBoatIndex", selectedBoatIndex);
+        tag.putInt("SelectedStorageIndex", selectedStorageIndex);
         tag.putInt("SelectedWaybillIndex", selectedWaybillIndex);
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
         tag.putString("OwnerUuid", ownerUuid == null ? "" : ownerUuid);
@@ -1022,6 +1506,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         routes.addAll(RouteNbtUtil.readRoutes(tag, "DockRoutes"));
         selectedRouteIndex = routes.isEmpty() ? 0 : Mth.clamp(tag.getInt("SelectedRouteIndex"), 0, routes.size() - 1);
         selectedBoatIndex = Math.max(0, tag.getInt("SelectedBoatIndex"));
+        selectedStorageIndex = Math.max(0, tag.getInt("SelectedStorageIndex"));
         selectedWaybillIndex = Math.max(0, tag.getInt("SelectedWaybillIndex"));
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");

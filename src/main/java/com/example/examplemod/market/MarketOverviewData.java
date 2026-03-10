@@ -13,6 +13,8 @@ public record MarketOverviewData(
         boolean linkedDock,
         String linkedDockName,
         String linkedDockPosText,
+        boolean dockStorageAccessible,
+        List<String> dockStorageLines,
         List<String> listingLines,
         List<String> orderLines,
         List<String> shippingLines

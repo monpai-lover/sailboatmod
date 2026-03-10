@@ -126,6 +126,28 @@ public class MarketSavedData extends SavedData {
         return out;
     }
 
+    public List<PurchaseOrder> getOpenOrdersForSourceDock(net.minecraft.core.BlockPos sourceDockPos,
+                                                          net.minecraft.core.BlockPos targetDockPos,
+                                                          String buyerUuid) {
+        List<PurchaseOrder> out = new ArrayList<>();
+        if (sourceDockPos == null) {
+            return out;
+        }
+        for (PurchaseOrder order : purchaseOrders.values()) {
+            if (!sourceDockPos.equals(order.sourceDockPos()) || !"WAITING_SHIPMENT".equals(order.status())) {
+                continue;
+            }
+            if (targetDockPos != null && !targetDockPos.equals(order.targetDockPos())) {
+                continue;
+            }
+            if (buyerUuid != null && !buyerUuid.isBlank() && !buyerUuid.equals(order.buyerUuid())) {
+                continue;
+            }
+            out.add(order);
+        }
+        return out;
+    }
+
     public List<ShippingOrder> getShippingOrdersForPlayer(String playerUuid) {
         List<ShippingOrder> out = new ArrayList<>();
         for (ShippingOrder order : shippingOrders.values()) {

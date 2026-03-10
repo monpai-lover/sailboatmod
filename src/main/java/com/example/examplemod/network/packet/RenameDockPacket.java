@@ -38,7 +38,9 @@ public class RenameDockPacket {
             if (!(player.level().getBlockEntity(packet.dockPos) instanceof DockBlockEntity dock)) {
                 return;
             }
-            dock.setDockName(packet.dockName);
+            if (dock.canManageDock(player)) {
+                dock.setDockName(packet.dockName);
+            }
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> player),
                     new OpenDockScreenPacket(dock.buildScreenData(player))

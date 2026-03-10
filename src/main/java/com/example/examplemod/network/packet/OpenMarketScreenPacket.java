@@ -29,6 +29,8 @@ public class OpenMarketScreenPacket {
         buffer.writeBoolean(data.linkedDock());
         buffer.writeUtf(data.linkedDockName(), 64);
         buffer.writeUtf(data.linkedDockPosText(), 64);
+        buffer.writeBoolean(data.dockStorageAccessible());
+        writeLines(buffer, data.dockStorageLines(), 160);
         writeLines(buffer, data.listingLines(), 192);
         writeLines(buffer, data.orderLines(), 192);
         writeLines(buffer, data.shippingLines(), 192);
@@ -43,6 +45,8 @@ public class OpenMarketScreenPacket {
         boolean linkedDock = buffer.readBoolean();
         String linkedDockName = buffer.readUtf(64);
         String linkedDockPosText = buffer.readUtf(64);
+        boolean dockStorageAccessible = buffer.readBoolean();
+        List<String> dockStorageLines = readLines(buffer, 160);
         List<String> listingLines = readLines(buffer, 192);
         List<String> orderLines = readLines(buffer, 192);
         List<String> shippingLines = readLines(buffer, 192);
@@ -55,6 +59,8 @@ public class OpenMarketScreenPacket {
                 linkedDock,
                 linkedDockName,
                 linkedDockPosText,
+                dockStorageAccessible,
+                dockStorageLines,
                 listingLines,
                 orderLines,
                 shippingLines

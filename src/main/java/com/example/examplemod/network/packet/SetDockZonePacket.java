@@ -53,7 +53,9 @@ public class SetDockZonePacket {
             if (!(player.level().getBlockEntity(packet.dockPos) instanceof DockBlockEntity dock)) {
                 return;
             }
-            dock.setDockZone(packet.minX, packet.maxX, packet.minZ, packet.maxZ);
+            if (dock.canManageDock(player)) {
+                dock.setDockZone(packet.minX, packet.maxX, packet.minZ, packet.maxZ);
+            }
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenDockScreenPacket(dock.buildScreenData(player)));
         });
         context.setPacketHandled(true);

@@ -44,9 +44,11 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     private int selectedListingIndex = 0;
     private int selectedOrderIndex = 0;
     private int selectedBoatIndex = 0;
+    private int selectedStorageIndex = 0;
     private int listingScroll = 0;
     private int orderScroll = 0;
     private int boatScroll = 0;
+    private int storageScroll = 0;
     private String hoveredLine;
 
     private EditBox listingQtyInput;
@@ -80,9 +82,11 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         selectedListingIndex = clampSelection(selectedListingIndex, data.listingLines());
         selectedOrderIndex = clampSelection(selectedOrderIndex, data.orderLines());
         selectedBoatIndex = clampSelection(selectedBoatIndex, data.shippingLines());
+        selectedStorageIndex = clampSelection(selectedStorageIndex, data.dockStorageLines());
         listingScroll = clampScroll(listingScroll, data.listingLines());
         orderScroll = clampScroll(orderScroll, data.orderLines());
         boatScroll = clampScroll(boatScroll, data.shippingLines());
+        storageScroll = clampScroll(storageScroll, data.dockStorageLines());
         ensureSelectionVisible();
     }
 
@@ -116,6 +120,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         listButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.list_hand"), b ->
                 ModNetwork.CHANNEL.sendToServer(new CreateMarketListingPacket(
                         data.marketPos(),
+                        selectedStorageIndex,
                         parsePositive(listingQtyInput.getValue(), 1),
                         parsePositive(listingPriceInput.getValue(), 10)
                 ))).bounds(leftPos + 244, topPos + 74, 50, 16).build());
@@ -166,9 +171,14 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         } else if (activePage == PAGE_SELL) {
             guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.qty"), leftPos + 98, topPos + 78, 0xFFE7C977);
             guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.price"), leftPos + 166, topPos + 78, 0xFFE7C977);
-            drawSingleListPage(guiGraphics, mouseX, mouseY, Component.translatable("screen.sailboatmod.market.tab.goods"),
-                    data.listingLines(), selectedListingIndex, listingScroll,
-                    Component.translatable("screen.sailboatmod.market.sell_help").getString());
+            String detailText = !data.dockStorageAccessible()
+                    ? Component.translatable("screen.sailboatmod.market.storage_owner_only").getString()
+                    : selectedStorageIndex < data.dockStorageLines().size()
+                    ? data.dockStorageLines().get(selectedStorageIndex)
+                    : Component.translatable("screen.sailboatmod.market.storage_empty").getString();
+            drawSingleListPage(guiGraphics, mouseX, mouseY, Component.translatable("screen.sailboatmod.market.storage_title"),
+                    data.dockStorageLines(), selectedStorageIndex, storageScroll,
+                    detailText + "\n" + Component.translatable("screen.sailboatmod.market.sell_help").getString());
         } else if (activePage == PAGE_DISPATCH) {
             drawListPanel(guiGraphics, leftPos + MAIN_LIST_X, topPos + PANEL_Y, DISPATCH_LIST_W, PANEL_H,
                     Component.translatable("screen.sailboatmod.market.tab.orders"), data.orderLines(), selectedOrderIndex, orderScroll, mouseX, mouseY);
@@ -204,8 +214,12 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0) {
-            if ((activePage == PAGE_GOODS || activePage == PAGE_SELL)
+            if (activePage == PAGE_GOODS
                     && trySelectFromList(mouseX, mouseY, leftPos + MAIN_LIST_X, topPos + PANEL_Y, MAIN_LIST_W, data.listingLines(), 0, listingScroll)) {
+                return true;
+            }
+            if (activePage == PAGE_SELL
+                    && trySelectFromList(mouseX, mouseY, leftPos + MAIN_LIST_X, topPos + PANEL_Y, MAIN_LIST_W, data.dockStorageLines(), 3, storageScroll)) {
                 return true;
             }
             if (activePage == PAGE_DISPATCH) {
@@ -223,9 +237,14 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
         int direction = delta > 0 ? -1 : 1;
-        if ((activePage == PAGE_GOODS || activePage == PAGE_SELL)
+        if (activePage == PAGE_GOODS
                 && isInsideList(mouseX, mouseY, leftPos + MAIN_LIST_X, topPos + PANEL_Y, MAIN_LIST_W)) {
             listingScroll = clampScroll(listingScroll + direction, data.listingLines());
+            return true;
+        }
+        if (activePage == PAGE_SELL
+                && isInsideList(mouseX, mouseY, leftPos + MAIN_LIST_X, topPos + PANEL_Y, MAIN_LIST_W)) {
+            storageScroll = clampScroll(storageScroll + direction, data.dockStorageLines());
             return true;
         }
         if (activePage == PAGE_DISPATCH) {
@@ -315,8 +334,10 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
             selectedListingIndex = idx;
         } else if (listType == 1) {
             selectedOrderIndex = idx;
-        } else {
+        } else if (listType == 2) {
             selectedBoatIndex = idx;
+        } else {
+            selectedStorageIndex = idx;
         }
         ensureSelectionVisible();
         return true;
@@ -350,11 +371,11 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         }
         if (listButton != null) {
             listButton.visible = onSell;
-            listButton.active = onSell && data.linkedDock();
+            listButton.active = onSell && data.linkedDock() && data.dockStorageAccessible() && !data.dockStorageLines().isEmpty();
         }
         if (cancelButton != null) {
-            cancelButton.visible = onSell;
-            cancelButton.active = onSell && data.linkedDock() && !data.listingLines().isEmpty();
+            cancelButton.visible = onGoods;
+            cancelButton.active = onGoods && data.linkedDock() && !data.listingLines().isEmpty();
         }
         if (buyButton != null) {
             buyButton.visible = onGoods;
@@ -410,6 +431,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         listingScroll = ensureVisible(listingScroll, selectedListingIndex, data.listingLines());
         orderScroll = ensureVisible(orderScroll, selectedOrderIndex, data.orderLines());
         boatScroll = ensureVisible(boatScroll, selectedBoatIndex, data.shippingLines());
+        storageScroll = ensureVisible(storageScroll, selectedStorageIndex, data.dockStorageLines());
     }
 
     private int ensureVisible(int scroll, int selectedIndex, List<String> lines) {
@@ -455,6 +477,6 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     }
 
     private MarketOverviewData empty(net.minecraft.core.BlockPos pos) {
-        return new MarketOverviewData(pos, "Market", "-", "", 0, false, "-", "-", List.of(), List.of(), List.of());
+        return new MarketOverviewData(pos, "Market", "-", "", 0, false, "-", "-", false, List.of(), List.of(), List.of(), List.of());
     }
 }

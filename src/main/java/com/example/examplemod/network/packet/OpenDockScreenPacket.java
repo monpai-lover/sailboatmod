@@ -27,6 +27,7 @@ public class OpenDockScreenPacket {
         buffer.writeUtf(data.dockName(), 64);
         buffer.writeUtf(data.dockOwnerName(), 64);
         buffer.writeUtf(data.dockOwnerUuid(), 64);
+        buffer.writeBoolean(data.canManageDock());
         buffer.writeItem(data.routeBook());
 
         buffer.writeVarInt(data.routeNames().size());
@@ -61,6 +62,12 @@ public class OpenDockScreenPacket {
         }
         buffer.writeVarInt(data.selectedBoatIndex());
 
+        buffer.writeVarInt(data.storageLines().size());
+        for (String storageLine : data.storageLines()) {
+            buffer.writeUtf(storageLine, 160);
+        }
+        buffer.writeVarInt(data.selectedStorageIndex());
+
         buffer.writeVarInt(data.waybillNames().size());
         for (String waybillName : data.waybillNames()) {
             buffer.writeUtf(waybillName, 192);
@@ -82,6 +89,7 @@ public class OpenDockScreenPacket {
         String dockName = buffer.readUtf(64);
         String dockOwnerName = buffer.readUtf(64);
         String dockOwnerUuid = buffer.readUtf(64);
+        boolean canManageDock = buffer.readBoolean();
         ItemStack routeBook = buffer.readItem();
 
         int routeCount = buffer.readVarInt();
@@ -117,6 +125,13 @@ public class OpenDockScreenPacket {
         }
         int selectedBoatIndex = buffer.readVarInt();
 
+        int storageCount = buffer.readVarInt();
+        List<String> storageLines = new ArrayList<>(storageCount);
+        for (int i = 0; i < storageCount; i++) {
+            storageLines.add(buffer.readUtf(160));
+        }
+        int selectedStorageIndex = buffer.readVarInt();
+
         int waybillCount = buffer.readVarInt();
         List<String> waybillNames = new ArrayList<>(waybillCount);
         for (int i = 0; i < waybillCount; i++) {
@@ -136,8 +151,8 @@ public class OpenDockScreenPacket {
         }
 
         return new OpenDockScreenPacket(new DockScreenData(
-                dockPos, dockName, dockOwnerName, dockOwnerUuid, routeBook, routeNames, routeMetas, selectedRouteIndex, waypoints, zoneMinX, zoneMaxX, zoneMinZ, zoneMaxZ,
-                boatIds, boatNames, boatPositions, selectedBoatIndex,
+                dockPos, dockName, dockOwnerName, dockOwnerUuid, canManageDock, routeBook, routeNames, routeMetas, selectedRouteIndex, waypoints, zoneMinX, zoneMaxX, zoneMinZ, zoneMaxZ,
+                boatIds, boatNames, boatPositions, selectedBoatIndex, storageLines, selectedStorageIndex,
                 waybillNames, selectedWaybillIndex, selectedWaybillInfoLines, selectedWaybillCargoLines
         ));
     }

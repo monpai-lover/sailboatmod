@@ -47,19 +47,45 @@ public class DockGuiActionPacket {
             }
 
             switch (packet.action) {
-                case LOAD_BOOK_FROM_HAND -> dock.loadRouteBookFromPlayer(player);
-                case LOAD_BOOK_FROM_INVENTORY_SLOT -> dock.loadRouteBookFromInventorySlot(player, packet.value);
-                case IMPORT_BOOK -> dock.importRouteBook();
-                case CLEAR_BOOK -> dock.clearRouteBook();
-                case DELETE_ROUTE -> dock.deleteSelectedRoute();
+                case LOAD_BOOK_FROM_HAND -> {
+                    if (dock.canManageDock(player)) {
+                        dock.loadRouteBookFromPlayer(player);
+                    }
+                }
+                case LOAD_BOOK_FROM_INVENTORY_SLOT -> {
+                    if (dock.canManageDock(player)) {
+                        dock.loadRouteBookFromInventorySlot(player, packet.value);
+                    }
+                }
+                case IMPORT_BOOK -> {
+                    if (dock.canManageDock(player)) {
+                        dock.importRouteBook();
+                    }
+                }
+                case CLEAR_BOOK -> {
+                    if (dock.canManageDock(player)) {
+                        dock.clearRouteBook();
+                    }
+                }
+                case DELETE_ROUTE -> {
+                    if (dock.canManageDock(player)) {
+                        dock.deleteSelectedRoute();
+                    }
+                }
                 case PREV_ROUTE -> dock.selectRouteDelta(-1);
                 case NEXT_ROUTE -> dock.selectRouteDelta(1);
                 case SELECT_ROUTE_INDEX -> dock.selectRouteIndex(packet.value);
-                case REVERSE_ROUTE -> dock.reverseSelectedRoute();
+                case REVERSE_ROUTE -> {
+                    if (dock.canManageDock(player)) {
+                        dock.reverseSelectedRoute();
+                    }
+                }
                 case PREV_BOAT -> dock.selectBoatDelta(-1, player);
                 case NEXT_BOAT -> dock.selectBoatDelta(1, player);
                 case SELECT_BOAT_INDEX -> dock.selectBoatIndex(packet.value, player);
                 case ASSIGN_SELECTED -> dock.assignSelectedBoat(player, true);
+                case SELECT_STORAGE_INDEX -> dock.selectStorageIndex(packet.value, player);
+                case DISPATCH_SELECTED_CARGO -> dock.dispatchSelectedStorage(player);
                 case SELECT_WAYBILL_INDEX -> dock.selectWaybillIndex(packet.value);
                 case TAKE_SELECTED_WAYBILL -> dock.claimSelectedWaybill(player);
                 case REFRESH -> { }
@@ -87,6 +113,8 @@ public class DockGuiActionPacket {
         NEXT_BOAT,
         SELECT_BOAT_INDEX,
         ASSIGN_SELECTED,
+        SELECT_STORAGE_INDEX,
+        DISPATCH_SELECTED_CARGO,
         SELECT_WAYBILL_INDEX,
         TAKE_SELECTED_WAYBILL,
         REFRESH

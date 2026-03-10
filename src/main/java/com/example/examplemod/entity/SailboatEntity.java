@@ -4,6 +4,7 @@ import com.example.examplemod.block.entity.DockBlockEntity;
 import com.example.examplemod.market.MarketListing;
 import com.example.examplemod.market.MarketSavedData;
 import com.example.examplemod.market.PurchaseOrder;
+import com.example.examplemod.market.ShipmentManifestEntry;
 import com.example.examplemod.market.ShippingOrder;
 import com.example.examplemod.item.RouteBookItem;
 import com.example.examplemod.registry.ModItems;
@@ -163,6 +164,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private String autopilotShipmentShippingOrderId = "";
     private long autopilotShipmentDepartureEpochMillis = 0L;
     private double autopilotShipmentDistanceMeters = 0.0D;
+    private boolean autopilotReturnTrip = false;
+    private final List<ShipmentManifestEntry> autopilotShipmentManifest = new ArrayList<>();
     private BlockPos autopilotDestinationDockHintPos = null;
     private String ownerName = "";
     private String ownerUuid = "";
@@ -652,6 +655,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         tag.putString("AutopilotShipmentShippingOrderId", autopilotShipmentShippingOrderId);
         tag.putLong("AutopilotShipmentDepartureEpochMillis", autopilotShipmentDepartureEpochMillis);
         tag.putDouble("AutopilotShipmentDistanceMeters", autopilotShipmentDistanceMeters);
+        tag.putBoolean("AutopilotReturnTrip", autopilotReturnTrip);
+        ListTag manifestTag = new ListTag();
+        for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
+            manifestTag.add(entry.save());
+        }
+        tag.put("AutopilotShipmentManifest", manifestTag);
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
         tag.putString("OwnerUuid", ownerUuid == null ? "" : ownerUuid);
         tag.putInt("RentalPrice", rentalPrice);
@@ -723,6 +732,28 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotShipmentShippingOrderId = tag.getString("AutopilotShipmentShippingOrderId");
         autopilotShipmentDepartureEpochMillis = Math.max(0L, tag.getLong("AutopilotShipmentDepartureEpochMillis"));
         autopilotShipmentDistanceMeters = Math.max(0.0D, tag.getDouble("AutopilotShipmentDistanceMeters"));
+        autopilotReturnTrip = tag.getBoolean("AutopilotReturnTrip");
+        autopilotShipmentManifest.clear();
+        ListTag manifestTag = tag.getList("AutopilotShipmentManifest", Tag.TAG_COMPOUND);
+        for (Tag raw : manifestTag) {
+            if (raw instanceof CompoundTag compound) {
+                autopilotShipmentManifest.add(ShipmentManifestEntry.load(compound));
+            }
+        }
+        if (autopilotShipmentManifest.isEmpty() && (!autopilotShipmentPurchaseOrderId.isBlank()
+                || !autopilotShipmentShippingOrderId.isBlank()
+                || !autopilotShipmentRecipientUuid.isBlank()
+                || !autopilotShipmentRecipientName.isBlank())) {
+            autopilotShipmentManifest.add(new ShipmentManifestEntry(
+                    "",
+                    ItemStack.EMPTY,
+                    autopilotShipmentPurchaseOrderId,
+                    autopilotShipmentShippingOrderId,
+                    autopilotShipmentRecipientUuid,
+                    autopilotShipmentRecipientName,
+                    0
+            ));
+        }
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");
         int loadedRentalPrice = tag.contains("RentalPrice", Tag.TAG_INT) ? tag.getInt("RentalPrice") : DEFAULT_RENTAL_PRICE;
@@ -891,17 +922,46 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     public void setPendingMarketDelivery(@Nullable String recipientName, @Nullable String recipientUuid,
                                          @Nullable String purchaseOrderId, @Nullable String shippingOrderId) {
-        autopilotShipmentRecipientName = recipientName == null ? "" : recipientName.trim();
-        autopilotShipmentRecipientUuid = recipientUuid == null ? "" : recipientUuid.trim();
-        autopilotShipmentPurchaseOrderId = purchaseOrderId == null ? "" : purchaseOrderId.trim();
-        autopilotShipmentShippingOrderId = shippingOrderId == null ? "" : shippingOrderId.trim();
+        setPendingShipmentManifest(List.of(new ShipmentManifestEntry(
+                "",
+                ItemStack.EMPTY,
+                purchaseOrderId,
+                shippingOrderId,
+                recipientUuid,
+                recipientName,
+                0
+        )));
     }
 
     public void clearPendingMarketDelivery() {
-        autopilotShipmentRecipientName = "";
-        autopilotShipmentRecipientUuid = "";
-        autopilotShipmentPurchaseOrderId = "";
-        autopilotShipmentShippingOrderId = "";
+        autopilotShipmentManifest.clear();
+        syncPrimaryShipmentFieldsFromManifest();
+    }
+
+    public void setPendingShipmentManifest(List<ShipmentManifestEntry> manifest) {
+        autopilotShipmentManifest.clear();
+        if (manifest != null) {
+            for (ShipmentManifestEntry entry : manifest) {
+                if (entry == null) {
+                    continue;
+                }
+                autopilotShipmentManifest.add(entry);
+            }
+        }
+        syncPrimaryShipmentFieldsFromManifest();
+    }
+
+    public boolean hasCargo() {
+        for (ItemStack stack : inventory) {
+            if (!stack.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public List<ShipmentManifestEntry> getPendingShipmentManifest() {
+        return List.copyOf(autopilotShipmentManifest);
     }
 
     public boolean loadCargo(List<ItemStack> cargo) {
@@ -1180,7 +1240,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             stopAutopilot();
             return AutopilotCommand.inactive();
         }
-        if (isInsideAutopilotDestinationDockZone()) {
+        if (isReadyToUnloadAtDestination()) {
             finishAutopilotAndUnloadAtDestination();
             return AutopilotCommand.inactive();
         }
@@ -1195,10 +1255,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             double arrivalRadius = autopilotTargetIndex == 0
                     ? Math.max(AUTOPILOT_ARRIVAL_RADIUS, AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS)
                     : AUTOPILOT_ARRIVAL_RADIUS;
+            boolean finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
             boolean reachedWaypoint = dist <= arrivalRadius;
-            boolean passedWaypoint = hasClearlyPassedCurrentWaypoint(target, dist);
+            boolean passedWaypoint = !finalTarget && hasClearlyPassedCurrentWaypoint(target, dist);
             if (!reachedWaypoint && !passedWaypoint) {
                 break;
+            }
+            if (finalTarget) {
+                finishAutopilotAndUnloadAtDestination();
+                return AutopilotCommand.inactive();
             }
             if (!advanceAutopilotTargetOrStop()) {
                 return AutopilotCommand.inactive();
@@ -1229,7 +1294,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         }
         autopilotLastTargetDistance = dist;
 
-        if (autopilotNoProgressTicks >= AUTOPILOT_NO_PROGRESS_TICKS_LIMIT && dist <= AUTOPILOT_STALL_SKIP_RADIUS) {
+        if (autopilotNoProgressTicks >= AUTOPILOT_NO_PROGRESS_TICKS_LIMIT
+                && dist <= AUTOPILOT_STALL_SKIP_RADIUS
+                && autopilotTargetIndex < autopilotRoute.size() - 1) {
             if (!advanceAutopilotTargetOrStop()) {
                 return AutopilotCommand.inactive();
             }
@@ -1299,10 +1366,18 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private boolean advanceAutopilotTargetOrStop() {
         autopilotTargetIndex++;
         if (autopilotTargetIndex >= autopilotRoute.size()) {
-            stopAutopilot();
+            finishAutopilotAndUnloadAtDestination();
             return false;
         }
         return true;
+    }
+
+    private boolean isReadyToUnloadAtDestination() {
+        if (!hasAutopilotRoute() || autopilotTargetIndex < autopilotRoute.size() - 1) {
+            return false;
+        }
+        Vec3 finalWaypoint = autopilotRoute.get(autopilotRoute.size() - 1);
+        return position().distanceTo(finalWaypoint) <= AUTOPILOT_ARRIVAL_RADIUS;
     }
 
     private boolean isInsideAutopilotDestinationDockZone() {
@@ -1358,6 +1433,21 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         pendingShipperName = "";
     }
 
+    private void syncPrimaryShipmentFieldsFromManifest() {
+        if (autopilotShipmentManifest.isEmpty()) {
+            autopilotShipmentRecipientName = "";
+            autopilotShipmentRecipientUuid = "";
+            autopilotShipmentPurchaseOrderId = "";
+            autopilotShipmentShippingOrderId = "";
+            return;
+        }
+        ShipmentManifestEntry first = autopilotShipmentManifest.get(0);
+        autopilotShipmentRecipientName = first.recipientName();
+        autopilotShipmentRecipientUuid = first.recipientUuid();
+        autopilotShipmentPurchaseOrderId = first.purchaseOrderId();
+        autopilotShipmentShippingOrderId = first.shippingOrderId();
+    }
+
     private void clearAutopilotShipmentContext() {
         autopilotShipmentShipperName = "";
         autopilotShipmentStartDockName = "";
@@ -1368,6 +1458,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotShipmentShippingOrderId = "";
         autopilotShipmentDepartureEpochMillis = 0L;
         autopilotShipmentDistanceMeters = 0.0D;
+        autopilotReturnTrip = false;
+        autopilotShipmentManifest.clear();
         autopilotDestinationDockHintPos = null;
     }
 
@@ -1410,27 +1502,23 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             return;
         }
 
+        BlockPos previousSourceDockPos = routeDockPos == null ? null : routeDockPos.immutable();
+        boolean returnTrip = autopilotReturnTrip;
+        List<ShipmentManifestEntry> manifest = List.copyOf(autopilotShipmentManifest);
+        String returnBuyerUuid = manifest.isEmpty() ? autopilotShipmentRecipientUuid : manifest.get(0).recipientUuid();
+        String returnBuyerName = manifest.isEmpty() ? autopilotShipmentRecipientName : manifest.get(0).recipientName();
+
         List<ItemStack> cargo = drainAllCargo();
         if (!cargo.isEmpty()) {
             long depart = autopilotShipmentDepartureEpochMillis > 0L ? autopilotShipmentDepartureEpochMillis : System.currentTimeMillis();
             long elapsed = Math.max(0L, System.currentTimeMillis() - depart);
             double distance = autopilotShipmentDistanceMeters > 0.0D ? autopilotShipmentDistanceMeters : computeRouteLengthMeters(autopilotRoute);
             String routeName = autopilotRouteName == null || autopilotRouteName.isBlank() ? getSelectedRouteName() : autopilotRouteName;
-            destinationDock.receiveShipment(
-                    this,
-                    routeName,
-                    autopilotShipmentShipperName,
-                    autopilotShipmentStartDockName,
-                    autopilotShipmentEndDockName,
-                    depart,
-                    elapsed,
-                    distance,
-                    cargo,
-                    autopilotShipmentRecipientName,
-                    autopilotShipmentRecipientUuid,
-                    autopilotShipmentPurchaseOrderId,
-                    autopilotShipmentShippingOrderId
-            );
+            destinationDock.receiveShipment(this, routeName, autopilotShipmentShipperName, autopilotShipmentStartDockName,
+                    autopilotShipmentEndDockName, depart, elapsed, distance, cargo, manifest);
+        }
+        if (!returnTrip && tryStartReturnTrip(destinationDock, previousSourceDockPos, returnBuyerUuid, returnBuyerName)) {
+            return;
         }
         stopAutopilot(false);
     }
@@ -1474,71 +1562,87 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     }
 
     private void rollbackMarketShipment() {
-        if (level().isClientSide || autopilotShipmentPurchaseOrderId == null || autopilotShipmentPurchaseOrderId.isBlank()) {
+        if (level().isClientSide || autopilotShipmentManifest.isEmpty()) {
             return;
         }
         MarketSavedData market = MarketSavedData.get(level());
-        PurchaseOrder purchaseOrder = market.getPurchaseOrder(autopilotShipmentPurchaseOrderId);
-        ShippingOrder shippingOrder = market.getShippingOrder(autopilotShipmentShippingOrderId);
         List<ItemStack> cargo = drainAllCargo();
         boolean rolledBackToDock = false;
-        if (purchaseOrder != null && level().getBlockEntity(purchaseOrder.sourceDockPos()) instanceof DockBlockEntity sourceDock) {
+        DockBlockEntity rollbackDock = null;
+        for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
+            PurchaseOrder purchaseOrder = market.getPurchaseOrder(entry.purchaseOrderId());
+            if (purchaseOrder == null) {
+                continue;
+            }
+            if (level().getBlockEntity(purchaseOrder.sourceDockPos()) instanceof DockBlockEntity sourceDock) {
+                rollbackDock = sourceDock;
+                break;
+            }
+        }
+        if (rollbackDock != null) {
             if (cargo.isEmpty()) {
                 rolledBackToDock = true;
             } else {
-                rolledBackToDock = sourceDock.insertCargo(cargo);
+                rolledBackToDock = rollbackDock.insertCargo(cargo);
             }
         }
         if (!rolledBackToDock && !cargo.isEmpty()) {
             loadCargo(cargo);
         }
-        if (purchaseOrder != null) {
-            String nextStatus = rolledBackToDock ? "WAITING_SHIPMENT" : "FAILED";
-            market.putPurchaseOrder(new PurchaseOrder(
-                    purchaseOrder.orderId(),
-                    purchaseOrder.listingId(),
-                    purchaseOrder.buyerUuid(),
-                    purchaseOrder.buyerName(),
-                    purchaseOrder.quantity(),
-                    purchaseOrder.totalPrice(),
-                    purchaseOrder.sourceDockPos(),
-                    purchaseOrder.sourceDockName(),
-                    purchaseOrder.targetDockPos(),
-                    purchaseOrder.targetDockName(),
-                    nextStatus
-            ));
-            MarketListing listing = market.getListing(purchaseOrder.listingId());
-            if (listing != null && rolledBackToDock) {
-                market.putListing(new MarketListing(
-                        listing.listingId(),
-                        listing.sellerUuid(),
-                        listing.sellerName(),
-                        listing.itemStack(),
-                        listing.unitPrice(),
-                        listing.availableCount(),
-                        listing.reservedCount() + purchaseOrder.quantity(),
-                        listing.sourceDockPos(),
-                        listing.sourceDockName()
+        for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
+            if (!entry.isMarketOrder()) {
+                continue;
+            }
+            PurchaseOrder purchaseOrder = market.getPurchaseOrder(entry.purchaseOrderId());
+            if (purchaseOrder != null) {
+                String nextStatus = rolledBackToDock ? "WAITING_SHIPMENT" : "FAILED";
+                market.putPurchaseOrder(new PurchaseOrder(
+                        purchaseOrder.orderId(),
+                        purchaseOrder.listingId(),
+                        purchaseOrder.buyerUuid(),
+                        purchaseOrder.buyerName(),
+                        purchaseOrder.quantity(),
+                        purchaseOrder.totalPrice(),
+                        purchaseOrder.sourceDockPos(),
+                        purchaseOrder.sourceDockName(),
+                        purchaseOrder.targetDockPos(),
+                        purchaseOrder.targetDockName(),
+                        nextStatus
+                ));
+                MarketListing listing = market.getListing(purchaseOrder.listingId());
+                if (listing != null && rolledBackToDock) {
+                    market.putListing(new MarketListing(
+                            listing.listingId(),
+                            listing.sellerUuid(),
+                            listing.sellerName(),
+                            listing.itemStack(),
+                            listing.unitPrice(),
+                            listing.availableCount(),
+                            listing.reservedCount() + purchaseOrder.quantity(),
+                            listing.sourceDockPos(),
+                            listing.sourceDockName()
+                    ));
+                }
+            }
+            ShippingOrder shippingOrder = market.getShippingOrder(entry.shippingOrderId());
+            if (shippingOrder != null) {
+                market.putShippingOrder(new ShippingOrder(
+                        shippingOrder.shippingOrderId(),
+                        shippingOrder.purchaseOrderId(),
+                        shippingOrder.shipperUuid(),
+                        shippingOrder.shipperName(),
+                        shippingOrder.boatUuid(),
+                        shippingOrder.boatName(),
+                        shippingOrder.boatMode(),
+                        shippingOrder.routeName(),
+                        shippingOrder.sourceDockPos(),
+                        shippingOrder.sourceDockName(),
+                        shippingOrder.targetDockPos(),
+                        shippingOrder.targetDockName(),
+                        shippingOrder.rentalFee(),
+                        rolledBackToDock ? "FAILED_ROLLBACK" : "FAILED"
                 ));
             }
-        }
-        if (shippingOrder != null) {
-            market.putShippingOrder(new ShippingOrder(
-                    shippingOrder.shippingOrderId(),
-                    shippingOrder.purchaseOrderId(),
-                    shippingOrder.shipperUuid(),
-                    shippingOrder.shipperName(),
-                    shippingOrder.boatUuid(),
-                    shippingOrder.boatName(),
-                    shippingOrder.boatMode(),
-                    shippingOrder.routeName(),
-                    shippingOrder.sourceDockPos(),
-                    shippingOrder.sourceDockName(),
-                    shippingOrder.targetDockPos(),
-                    shippingOrder.targetDockName(),
-                    shippingOrder.rentalFee(),
-                    rolledBackToDock ? "FAILED_ROLLBACK" : "FAILED"
-            ));
         }
     }
 
@@ -1553,6 +1657,37 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             inventory.set(i, ItemStack.EMPTY);
         }
         return cargo;
+    }
+
+    private boolean tryStartReturnTrip(DockBlockEntity currentDock, @Nullable BlockPos returnDockPos,
+                                       @Nullable String buyerUuid, @Nullable String buyerName) {
+        if (level().isClientSide || currentDock == null || returnDockPos == null || autopilotRoute.size() < 2) {
+            return false;
+        }
+        List<Vec3> reversedWaypoints = new ArrayList<>(autopilotRoute);
+        java.util.Collections.reverse(reversedWaypoints);
+        RouteDefinition reverseRoute = new RouteDefinition(
+                (autopilotRouteName == null || autopilotRouteName.isBlank() ? "Route" : autopilotRouteName) + " (Return)",
+                reversedWaypoints,
+                currentDock.getOwnerName(),
+                currentDock.getOwnerUuid(),
+                System.currentTimeMillis(),
+                computeRouteLengthMeters(reversedWaypoints),
+                currentDock.getDockName(),
+                DockBlockEntity.getDockDisplayName(level(), returnDockPos)
+        );
+
+        String preferredBuyerUuid = buyerUuid == null || buyerUuid.isBlank() ? getOwnerUuid() : buyerUuid;
+        String preferredBuyerName = buyerName == null || buyerName.isBlank() ? getOwnerName() : buyerName;
+        currentDock.tryLoadReturnCargo(this, returnDockPos, preferredBuyerUuid, preferredBuyerName);
+
+        setRouteCatalog(List.of(reverseRoute), 0, endDockPosOrCurrent(currentDock));
+        autopilotReturnTrip = true;
+        return startAutopilot();
+    }
+
+    private BlockPos endDockPosOrCurrent(DockBlockEntity dock) {
+        return dock.getBlockPos();
     }
 
     private boolean isInsideRouteStartWaitingZone(RouteDefinition route) {

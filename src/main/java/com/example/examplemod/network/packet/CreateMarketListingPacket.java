@@ -12,23 +12,26 @@ import java.util.function.Supplier;
 
 public class CreateMarketListingPacket {
     private final BlockPos marketPos;
+    private final int storageIndex;
     private final int quantity;
     private final int unitPrice;
 
-    public CreateMarketListingPacket(BlockPos marketPos, int quantity, int unitPrice) {
+    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice) {
         this.marketPos = marketPos;
+        this.storageIndex = storageIndex;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
     }
 
     public static void encode(CreateMarketListingPacket packet, FriendlyByteBuf buffer) {
         buffer.writeBlockPos(packet.marketPos);
+        buffer.writeVarInt(packet.storageIndex);
         buffer.writeVarInt(packet.quantity);
         buffer.writeVarInt(packet.unitPrice);
     }
 
     public static CreateMarketListingPacket decode(FriendlyByteBuf buffer) {
-        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt());
+        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt());
     }
 
     public static void handle(CreateMarketListingPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -41,7 +44,7 @@ public class CreateMarketListingPacket {
             if (!(player.level().getBlockEntity(packet.marketPos) instanceof MarketBlockEntity market)) {
                 return;
             }
-            market.createListingFromHeldItem(player, packet.quantity, packet.unitPrice);
+            market.createListingFromDockStorage(player, packet.storageIndex, packet.quantity, packet.unitPrice);
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> player),
                     new OpenMarketScreenPacket(market.buildOverview(player))

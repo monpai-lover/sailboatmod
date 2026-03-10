@@ -6,6 +6,7 @@ import com.example.examplemod.entity.SailboatEntity;
 import com.example.examplemod.market.MarketOverviewData;
 import com.example.examplemod.market.MarketSavedData;
 import com.example.examplemod.market.PurchaseOrder;
+import com.example.examplemod.market.ShipmentManifestEntry;
 import com.example.examplemod.market.ShippingOrder;
 import com.example.examplemod.market.MarketListing;
 import com.example.examplemod.menu.MarketMenu;
@@ -25,7 +26,9 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public class MarketBlockEntity extends BlockEntity implements MenuProvider {
@@ -86,6 +89,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         String dockPosText = "-";
         boolean linked = false;
         List<String> boatLines = new ArrayList<>();
+        boolean dockStorageAccessible = false;
+        List<String> dockStorageLines = List.of();
         if (level != null && linkedDockPos != null && level.getBlockEntity(linkedDockPos) instanceof DockBlockEntity dock) {
             dockName = dock.getDockName();
             dockPosText = linkedDockPos.toShortString();
@@ -93,6 +98,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (player != null) {
                 DockScreenData dockData = dock.buildScreenData(player);
                 boatLines.addAll(dockData.nearbyBoatNames());
+                dockStorageAccessible = dockData.canManageDock();
+                dockStorageLines = dockData.storageLines();
             }
         }
 
@@ -119,36 +126,31 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 linked,
                 dockName,
                 dockPosText,
+                dockStorageAccessible,
+                dockStorageLines,
                 listingLines,
                 orderLines,
                 shippingLines
         );
     }
 
-    public boolean createListingFromHeldItem(Player player, int quantity, int unitPrice) {
+    public boolean createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int unitPrice) {
         DockBlockEntity dock = getLinkedDock();
         if (level == null || level.isClientSide || dock == null || player == null) {
             return false;
         }
-        ItemStack held = player.getMainHandItem();
-        if (held.isEmpty()) {
-            held = player.getOffhandItem();
-        }
-        if (held.isEmpty()) {
-            player.displayClientMessage(Component.literal("Hold a sample item to list from dock stock."), true);
+        ItemStack selected = dock.getStorageItemForVisibleIndex(player, visibleStorageIndex);
+        if (selected.isEmpty()) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.storage_empty"), true);
             return false;
         }
-        int stocked = dock.countMatchingStock(held);
-        if (stocked <= 0) {
-            player.displayClientMessage(Component.literal("Linked dock has no matching stock."), true);
-            return false;
-        }
+        int stocked = selected.getCount();
         int amount = Math.max(1, Math.min(quantity, stocked));
         int price = Math.max(1, unitPrice);
-        ItemStack listed = held.copy();
+        ItemStack listed = selected.copy();
         listed.setCount(1);
-        if (!dock.extractMatchingStock(held, amount)) {
-            player.displayClientMessage(Component.literal("Not enough matching dock stock."), true);
+        if (!dock.extractVisibleStorage(player, visibleStorageIndex, amount)) {
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.storage_empty"), true);
             return false;
         }
         MarketSavedData market = MarketSavedData.get(level);
@@ -194,7 +196,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sourceDockPos(),
                 listing.sourceDockName()
         ));
-        market.putPurchaseOrder(new PurchaseOrder(
+        PurchaseOrder createdOrder = new PurchaseOrder(
                 market.nextId(),
                 listing.listingId(),
                 player.getUUID().toString(),
@@ -206,7 +208,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 linkedDockPos,
                 dock.getDockName(),
                 "WAITING_SHIPMENT"
-        ));
+        );
+        market.putPurchaseOrder(createdOrder);
+        tryAutoDispatchOrders(player, createdOrder.sourceDockPos());
         return true;
     }
 
@@ -275,89 +279,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean dispatchOrder(Player player, int orderIndex, int boatIndex) {
-        DockBlockEntity sourceDock = getLinkedDock();
-        if (level == null || level.isClientSide || sourceDock == null || player == null || linkedDockPos == null) {
-            return false;
-        }
-        MarketSavedData market = MarketSavedData.get(level);
-        PurchaseOrder order = market.getSourceOrderByIndex(linkedDockPos, orderIndex);
-        if (order == null) {
-            return false;
-        }
-        MarketListing listing = findListingById(market, order.listingId());
-        if (listing == null) {
-            player.displayClientMessage(Component.literal("Listing not found."), true);
-            return false;
-        }
-        List<SailboatEntity> boats = sourceDock.getAssignableSailboats(player);
-        if (boats.isEmpty()) {
-            player.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_target"), true);
-            return false;
-        }
-        int safeBoatIndex = Math.max(0, Math.min(boatIndex, boats.size() - 1));
-        SailboatEntity boat = boats.get(safeBoatIndex);
-        int routeIndex = sourceDock.findRouteIndexByEndDockName(order.targetDockName());
-        if (routeIndex < 0) {
-            player.displayClientMessage(Component.literal("No matching route to target dock."), true);
-            return false;
-        }
-        List<ItemStack> cargo = splitCargo(listing.itemStack(), order.quantity());
-        if (!boat.canLoadCargo(cargo)) {
-            player.displayClientMessage(Component.literal("Boat cargo hold is full."), true);
-            return false;
-        }
-        if (!boat.loadCargo(cargo)) {
-            player.displayClientMessage(Component.literal("Boat cargo load failed."), true);
-            return false;
-        }
-        String shippingOrderId = market.nextId();
-        boat.setPendingMarketDelivery(order.buyerName(), order.buyerUuid(), order.orderId(), shippingOrderId);
-        if (!sourceDock.assignBoatToRouteIndex(boat, routeIndex, true, player)) {
-            sourceDock.insertCargo(boat.unloadAllCargo());
-            boat.clearPendingMarketDelivery();
-            return false;
-        }
-        market.putPurchaseOrder(new PurchaseOrder(
-                order.orderId(),
-                order.listingId(),
-                order.buyerUuid(),
-                order.buyerName(),
-                order.quantity(),
-                order.totalPrice(),
-                order.sourceDockPos(),
-                order.sourceDockName(),
-                order.targetDockPos(),
-                order.targetDockName(),
-                "IN_TRANSIT"
-        ));
-        market.putListing(new MarketListing(
-                listing.listingId(),
-                listing.sellerUuid(),
-                listing.sellerName(),
-                listing.itemStack(),
-                listing.unitPrice(),
-                listing.availableCount(),
-                Math.max(0, listing.reservedCount() - order.quantity()),
-                listing.sourceDockPos(),
-                listing.sourceDockName()
-        ));
-        market.putShippingOrder(new ShippingOrder(
-                shippingOrderId,
-                order.orderId(),
-                player.getUUID().toString(),
-                player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
-                boat.getUUID().toString(),
-                boat.getName().getString(),
-                boat.isOwnedBy(player) ? "OWN" : "RENTED",
-                sourceDock.getRouteName(routeIndex),
-                order.sourceDockPos(),
-                order.sourceDockName(),
-                order.targetDockPos(),
-                order.targetDockName(),
-                boat.isOwnedBy(player) ? 0 : boat.getRentalPrice(),
-                "SAILING"
-        ));
-        return true;
+        return linkedDockPos != null && player != null && tryAutoDispatchOrders(player, linkedDockPos);
     }
 
     public String getMarketName() {
@@ -421,6 +343,334 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private MarketListing findListingById(MarketSavedData market, String listingId) {
         return market.getListing(listingId);
+    }
+
+    private boolean tryAutoDispatchOrders(Player player, BlockPos sourceDockPos) {
+        if (level == null || level.isClientSide || player == null || sourceDockPos == null) {
+            return false;
+        }
+        DockBlockEntity sourceDock = level.getBlockEntity(sourceDockPos) instanceof DockBlockEntity dock ? dock : null;
+        if (sourceDock == null) {
+            return false;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        boolean progressedAny = false;
+        while (true) {
+            boolean progressed = processLocalOrders(sourceDock, market);
+            List<SailboatEntity> boats = sourceDock.getAvailableSailboatsForDispatch(player);
+            boolean shipped = false;
+            for (SailboatEntity boat : boats) {
+                ShipmentPlan plan = buildShipmentPlan(sourceDock, market, boat);
+                if (plan == null) {
+                    continue;
+                }
+                if (dispatchShipmentPlan(player, boat, sourceDock, market, plan)) {
+                    shipped = true;
+                    progressed = true;
+                    break;
+                }
+            }
+            if (!progressed) {
+                break;
+            }
+            progressedAny = true;
+            if (!shipped && sourceDock.getAvailableSailboatsForDispatch(player).isEmpty()) {
+                break;
+            }
+        }
+        return progressedAny;
+    }
+
+    private boolean processLocalOrders(DockBlockEntity sourceDock, MarketSavedData market) {
+        if (sourceDock == null || market == null) {
+            return false;
+        }
+        boolean processed = false;
+        List<PurchaseOrder> waiting = new ArrayList<>(market.getOpenOrdersForSourceDock(sourceDock.getBlockPos()));
+        for (PurchaseOrder order : waiting) {
+            if (!order.sourceDockPos().equals(order.targetDockPos())) {
+                continue;
+            }
+            MarketListing listing = findListingById(market, order.listingId());
+            if (listing == null) {
+                continue;
+            }
+            deliverOrderLocally(sourceDock, market, order, listing);
+            processed = true;
+        }
+        return processed;
+    }
+
+    private void deliverOrderLocally(DockBlockEntity dock, MarketSavedData market, PurchaseOrder order, MarketListing listing) {
+        List<ItemStack> cargo = splitCargo(listing.itemStack(), order.quantity());
+        dock.receiveShipment(
+                null,
+                "LOCAL",
+                "LOCAL",
+                dock.getDockName(),
+                dock.getDockName(),
+                System.currentTimeMillis(),
+                0L,
+                0.0D,
+                cargo,
+                List.of(new ShipmentManifestEntry(
+                        listing.listingId(),
+                        listing.itemStack(),
+                        order.orderId(),
+                        "",
+                        order.buyerUuid(),
+                        order.buyerName(),
+                        order.quantity()
+                ))
+        );
+        applyListingReservationDeltas(market, Map.of(listing.listingId(), order.quantity()));
+    }
+
+    @Nullable
+    private ShipmentPlan buildShipmentPlan(DockBlockEntity sourceDock, MarketSavedData market, SailboatEntity boat) {
+        if (sourceDock == null || market == null || boat == null) {
+            return null;
+        }
+        LinkedHashMap<BlockPos, List<PurchaseOrder>> byTargetDock = new LinkedHashMap<>();
+        for (PurchaseOrder order : market.getOpenOrdersForSourceDock(sourceDock.getBlockPos())) {
+            if (order.sourceDockPos().equals(order.targetDockPos())) {
+                continue;
+            }
+            int routeIndex = sourceDock.findRouteIndexByDestinationDock(order.targetDockPos(), order.targetDockName());
+            if (routeIndex < 0) {
+                continue;
+            }
+            byTargetDock.computeIfAbsent(order.targetDockPos(), ignored -> new ArrayList<>()).add(order);
+        }
+
+        ShipmentPlan bestPlan = null;
+        for (Map.Entry<BlockPos, List<PurchaseOrder>> entry : byTargetDock.entrySet()) {
+            int routeIndex = sourceDock.findRouteIndexByDestinationDock(entry.getKey(), entry.getValue().get(0).targetDockName());
+            ShipmentPlan candidate = buildShipmentPlanForTarget(sourceDock, market, boat, routeIndex, entry.getKey(), entry.getValue());
+            if (candidate == null) {
+                continue;
+            }
+            if (bestPlan == null
+                    || candidate.selections().size() > bestPlan.selections().size()
+                    || (candidate.selections().size() == bestPlan.selections().size()
+                    && candidate.totalQuantity() > bestPlan.totalQuantity())) {
+                bestPlan = candidate;
+            }
+        }
+        return bestPlan;
+    }
+
+    @Nullable
+    private ShipmentPlan buildShipmentPlanForTarget(DockBlockEntity sourceDock, MarketSavedData market, SailboatEntity boat,
+                                                    int routeIndex, BlockPos targetDockPos, List<PurchaseOrder> orders) {
+        if (routeIndex < 0 || orders == null || orders.isEmpty()) {
+            return null;
+        }
+        List<ItemStack> cargo = new ArrayList<>();
+        List<ShipmentOrderSelection> selections = new ArrayList<>();
+        for (PurchaseOrder order : orders) {
+            MarketListing listing = findListingById(market, order.listingId());
+            if (listing == null) {
+                continue;
+            }
+            int shippableQuantity = findMaxLoadableQuantity(boat, cargo, listing.itemStack(), order.quantity());
+            if (shippableQuantity <= 0) {
+                if (!cargo.isEmpty()) {
+                    break;
+                }
+                continue;
+            }
+            PurchaseSplit split = splitOrderForShipment(market, order, shippableQuantity);
+            if (split == null) {
+                continue;
+            }
+            cargo.addAll(splitCargo(listing.itemStack(), split.shipped().quantity()));
+            selections.add(new ShipmentOrderSelection(split.shipped(), split.remainder(), listing));
+            if (shippableQuantity < order.quantity()) {
+                break;
+            }
+        }
+        if (cargo.isEmpty() || selections.isEmpty()) {
+            return null;
+        }
+        return new ShipmentPlan(routeIndex, targetDockPos, cargo, selections);
+    }
+
+    private boolean dispatchShipmentPlan(Player player, SailboatEntity boat, DockBlockEntity sourceDock,
+                                         MarketSavedData market, ShipmentPlan plan) {
+        if (player == null || boat == null || sourceDock == null || market == null || plan == null) {
+            return false;
+        }
+        if (!boat.canLoadCargo(plan.cargo()) || !boat.loadCargo(plan.cargo())) {
+            return false;
+        }
+
+        List<ShipmentManifestEntry> manifest = new ArrayList<>();
+        Map<String, Integer> listingReservationDeltas = new LinkedHashMap<>();
+        List<ShippingOrder> shippingOrders = new ArrayList<>();
+        for (ShipmentOrderSelection selection : plan.selections()) {
+            String shippingOrderId = market.nextId();
+            PurchaseOrder order = selection.dispatchOrder();
+            manifest.add(new ShipmentManifestEntry(
+                    selection.listing().listingId(),
+                    selection.listing().itemStack(),
+                    order.orderId(),
+                    shippingOrderId,
+                    order.buyerUuid(),
+                    order.buyerName(),
+                    order.quantity()
+            ));
+            listingReservationDeltas.merge(selection.listing().listingId(), order.quantity(), Integer::sum);
+            shippingOrders.add(new ShippingOrder(
+                    shippingOrderId,
+                    order.orderId(),
+                    player.getUUID().toString(),
+                    player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
+                    boat.getUUID().toString(),
+                    boat.getName().getString(),
+                    boat.isOwnedBy(player) ? "OWN" : "RENTED",
+                    sourceDock.getRouteName(plan.routeIndex()),
+                    order.sourceDockPos(),
+                    order.sourceDockName(),
+                    order.targetDockPos(),
+                    order.targetDockName(),
+                    boat.isOwnedBy(player) ? 0 : boat.getRentalPrice(),
+                    "SAILING"
+            ));
+        }
+        boat.setPendingShipmentManifest(manifest);
+        if (!sourceDock.assignLoadedBoatToRouteIndex(boat, plan.routeIndex(), true, player)) {
+            sourceDock.insertCargo(boat.unloadAllCargo());
+            boat.clearPendingMarketDelivery();
+            return false;
+        }
+
+        for (ShipmentOrderSelection selection : plan.selections()) {
+            PurchaseOrder order = selection.dispatchOrder();
+            market.putPurchaseOrder(new PurchaseOrder(
+                    order.orderId(),
+                    order.listingId(),
+                    order.buyerUuid(),
+                    order.buyerName(),
+                    order.quantity(),
+                    order.totalPrice(),
+                    order.sourceDockPos(),
+                    order.sourceDockName(),
+                    order.targetDockPos(),
+                    order.targetDockName(),
+                    "IN_TRANSIT"
+            ));
+            if (selection.remainderOrder() != null) {
+                market.putPurchaseOrder(selection.remainderOrder());
+            }
+        }
+        applyListingReservationDeltas(market, listingReservationDeltas);
+        for (ShippingOrder shippingOrder : shippingOrders) {
+            market.putShippingOrder(shippingOrder);
+        }
+        return true;
+    }
+
+    private void applyListingReservationDeltas(MarketSavedData market, Map<String, Integer> listingReservationDeltas) {
+        for (Map.Entry<String, Integer> entry : listingReservationDeltas.entrySet()) {
+            MarketListing listing = market.getListing(entry.getKey());
+            if (listing == null) {
+                continue;
+            }
+            int nextReserved = Math.max(0, listing.reservedCount() - Math.max(0, entry.getValue()));
+            if (listing.availableCount() <= 0 && nextReserved <= 0) {
+                market.removeListing(listing.listingId());
+                continue;
+            }
+            market.putListing(new MarketListing(
+                    listing.listingId(),
+                    listing.sellerUuid(),
+                    listing.sellerName(),
+                    listing.itemStack(),
+                    listing.unitPrice(),
+                    listing.availableCount(),
+                    nextReserved,
+                    listing.sourceDockPos(),
+                    listing.sourceDockName()
+            ));
+        }
+    }
+
+    private int findMaxLoadableQuantity(SailboatEntity boat, List<ItemStack> currentCargo, ItemStack template, int maxQuantity) {
+        if (boat == null || template == null || template.isEmpty() || maxQuantity <= 0) {
+            return 0;
+        }
+        int low = 0;
+        int high = maxQuantity;
+        while (low < high) {
+            int mid = (low + high + 1) >>> 1;
+            List<ItemStack> candidate = new ArrayList<>(currentCargo);
+            candidate.addAll(splitCargo(template, mid));
+            if (boat.canLoadCargo(candidate)) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return low;
+    }
+
+    @Nullable
+    private PurchaseSplit splitOrderForShipment(MarketSavedData market, PurchaseOrder order, int shippedQuantity) {
+        if (market == null || order == null || shippedQuantity <= 0) {
+            return null;
+        }
+        if (shippedQuantity >= order.quantity()) {
+            return new PurchaseSplit(order, null);
+        }
+        int shippedTotal = order.totalPrice() * shippedQuantity / Math.max(1, order.quantity());
+        int remainderQuantity = order.quantity() - shippedQuantity;
+        int remainderTotal = Math.max(0, order.totalPrice() - shippedTotal);
+        PurchaseOrder shipped = new PurchaseOrder(
+                order.orderId(),
+                order.listingId(),
+                order.buyerUuid(),
+                order.buyerName(),
+                shippedQuantity,
+                shippedTotal,
+                order.sourceDockPos(),
+                order.sourceDockName(),
+                order.targetDockPos(),
+                order.targetDockName(),
+                order.status()
+        );
+        PurchaseOrder remainder = new PurchaseOrder(
+                market.nextId(),
+                order.listingId(),
+                order.buyerUuid(),
+                order.buyerName(),
+                remainderQuantity,
+                remainderTotal,
+                order.sourceDockPos(),
+                order.sourceDockName(),
+                order.targetDockPos(),
+                order.targetDockName(),
+                "WAITING_SHIPMENT"
+        );
+        return new PurchaseSplit(shipped, remainder);
+    }
+
+    private record ShipmentPlan(int routeIndex, BlockPos targetDockPos, List<ItemStack> cargo,
+                                List<ShipmentOrderSelection> selections) {
+        private int totalQuantity() {
+            int total = 0;
+            for (ShipmentOrderSelection selection : selections) {
+                total += selection.dispatchOrder().quantity();
+            }
+            return total;
+        }
+    }
+
+    private record ShipmentOrderSelection(PurchaseOrder dispatchOrder, @Nullable PurchaseOrder remainderOrder,
+                                          MarketListing listing) {
+    }
+
+    private record PurchaseSplit(PurchaseOrder shipped, @Nullable PurchaseOrder remainder) {
     }
 
     private static List<ItemStack> splitCargo(ItemStack template, int quantity) {

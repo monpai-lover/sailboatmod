@@ -23,6 +23,7 @@ public class DockMenu extends AbstractContainerMenu {
     private final Level level;
     private final Container dockSlotContainer;
     private final Container dockStorageContainer;
+    private final boolean canManageDock;
     @Nullable
     private final DockBlockEntity dock;
 
@@ -35,18 +36,19 @@ public class DockMenu extends AbstractContainerMenu {
         this.dockPos = dockPos;
         this.level = inventory.player.level();
         this.dock = level.getBlockEntity(dockPos) instanceof DockBlockEntity be ? be : null;
+        this.canManageDock = dock != null && dock.canManageDock(inventory.player);
 
-        ItemStack initial = dock != null ? dock.buildScreenData(inventory.player).routeBook() : ItemStack.EMPTY;
+        ItemStack initial = canManageDock && dock != null ? dock.buildScreenData(inventory.player).routeBook() : ItemStack.EMPTY;
         this.dockSlotContainer = new SimpleContainer(1) {
             @Override
             public boolean canPlaceItem(int slot, ItemStack stack) {
-                return stack.getItem() instanceof RouteBookItem;
+                return canManageDock && stack.getItem() instanceof RouteBookItem;
             }
 
             @Override
             public void setChanged() {
                 super.setChanged();
-                if (dock != null) {
+                if (canManageDock && dock != null) {
                     ItemStack stack = getItem(0);
                     if (stack.isEmpty()) {
                         dock.clearRouteBook();
@@ -61,7 +63,12 @@ public class DockMenu extends AbstractContainerMenu {
         this.addSlot(new Slot(dockSlotContainer, 0, 10, 20) {
             @Override
             public boolean mayPlace(ItemStack stack) {
-                return stack.getItem() instanceof RouteBookItem;
+                return canManageDock && stack.getItem() instanceof RouteBookItem;
+            }
+
+            @Override
+            public boolean mayPickup(Player player) {
+                return canManageDock;
             }
         });
 
@@ -76,6 +83,9 @@ public class DockMenu extends AbstractContainerMenu {
                 if (dock == null) {
                     return true;
                 }
+                if (!canManageDock) {
+                    return true;
+                }
                 for (int i = 0; i < dock.getStorageSize(); i++) {
                     if (!dock.getStorageItem(i).isEmpty()) {
                         return false;
@@ -86,29 +96,29 @@ public class DockMenu extends AbstractContainerMenu {
 
             @Override
             public ItemStack getItem(int slot) {
-                return dock == null ? ItemStack.EMPTY : dock.getStorageItem(slot);
+                return dock == null || !canManageDock ? ItemStack.EMPTY : dock.getStorageItem(slot);
             }
 
             @Override
             public ItemStack removeItem(int slot, int amount) {
-                return dock == null ? ItemStack.EMPTY : dock.removeStorageItem(slot, amount);
+                return dock == null || !canManageDock ? ItemStack.EMPTY : dock.removeStorageItem(slot, amount);
             }
 
             @Override
             public ItemStack removeItemNoUpdate(int slot) {
-                return dock == null ? ItemStack.EMPTY : dock.removeStorageItemNoUpdate(slot);
+                return dock == null || !canManageDock ? ItemStack.EMPTY : dock.removeStorageItemNoUpdate(slot);
             }
 
             @Override
             public void setItem(int slot, ItemStack stack) {
-                if (dock != null) {
+                if (canManageDock && dock != null) {
                     dock.setStorageItem(slot, stack);
                 }
             }
 
             @Override
             public void setChanged() {
-                if (dock != null) {
+                if (canManageDock && dock != null) {
                     dock.storageChanged();
                 }
             }
@@ -120,7 +130,7 @@ public class DockMenu extends AbstractContainerMenu {
 
             @Override
             public void clearContent() {
-                if (dock == null) {
+                if (dock == null || !canManageDock) {
                     return;
                 }
                 for (int i = 0; i < dock.getStorageSize(); i++) {
