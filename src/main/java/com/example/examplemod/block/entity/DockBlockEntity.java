@@ -347,7 +347,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         SailboatEntity boat = boats.get(idx);
         boat.setAllowNonOrderAutoReturn(nonOrderAutoReturnEnabled);
         boat.setAllowNonOrderAutoUnload(nonOrderAutoUnloadEnabled);
-        boolean assigned = assignBoatToRouteIndex(boat, Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, player);
+        boolean assigned = assignLoadedBoatToRouteIndex(boat, Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, player);
         if (!assigned) {
             boat.setAllowNonOrderAutoReturn(false);
             boat.setAllowNonOrderAutoUnload(false);
