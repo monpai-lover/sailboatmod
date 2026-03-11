@@ -26,20 +26,34 @@ public class SailboatEntityModel extends GeoModel<SailboatEntity> {
     @Override
     public void setCustomAnimations(SailboatEntity animatable, long instanceId, AnimationState<SailboatEntity> animationState) {
         super.setCustomAnimations(animatable, instanceId, animationState);
-        float deploy = animatable.getSailDeployProgress((float) animationState.getPartialTick());
-        float foldedRad = (float) Math.toRadians(-78.0D);
-        float targetRotX = foldedRad * (1.0F - deploy);
+        float deployProgress = animatable.getSailDeployProgress((float)animationState.getPartialTick());
+        // The authored keyframes represent stowing the sail; deployment reuses them in reverse.
+        float stowProgress = 1.0F - deployProgress;
 
-        rotateIfPresent("bone12", targetRotX);
-        rotateIfPresent("bone13", targetRotX * 0.6F);
-        rotateIfPresent("bone16", targetRotX);
-        rotateIfPresent("bone17", targetRotX * 0.6F);
+        applyTransform("bone12", 0.0F, 73.0F * stowProgress, 0.0F, 0.0F, 1.0F, 0.9F * stowProgress, 1.0F);
+        applyTransform(
+                "bone13",
+                0.0F,
+                0.0F,
+                0.0F,
+                (float)Math.toRadians(12.5F * stowProgress),
+                1.0F,
+                1.0F - (0.8F * stowProgress),
+                1.0F
+        );
+        applyTransform("bone16", 0.0F, 66.0F * stowProgress, 0.0F, 0.0F, 1.0F, 1.0F - (0.8F * stowProgress), 1.0F);
     }
 
-    private void rotateIfPresent(String boneName, float rotX) {
+    private void applyTransform(String boneName, float posX, float posY, float posZ, float rotX, float scaleX, float scaleY, float scaleZ) {
         CoreGeoBone bone = getAnimationProcessor().getBone(boneName);
         if (bone != null) {
+            bone.setPosX(posX);
+            bone.setPosY(posY);
+            bone.setPosZ(posZ);
             bone.setRotX(rotX);
+            bone.setScaleX(scaleX);
+            bone.setScaleY(scaleY);
+            bone.setScaleZ(scaleZ);
         }
     }
 }
