@@ -1550,6 +1550,12 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return routes.size();
     }
 
+    public List<RouteDefinition> getRoutesForMap() {
+        return routes.stream()
+                .map(RouteDefinition::copy)
+                .toList();
+    }
+
     @Override
     protected void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
