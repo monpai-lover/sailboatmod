@@ -5,6 +5,7 @@ import com.example.examplemod.entity.SailboatEntity;
 import net.minecraft.resources.ResourceLocation;
 import software.bernie.geckolib.core.animatable.model.CoreGeoBone;
 import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.core.state.BoneSnapshot;
 import software.bernie.geckolib.model.GeoModel;
 
 public class SailboatEntityModel extends GeoModel<SailboatEntity> {
@@ -47,13 +48,14 @@ public class SailboatEntityModel extends GeoModel<SailboatEntity> {
     private void applyTransform(String boneName, float posX, float posY, float posZ, float rotX, float scaleX, float scaleY, float scaleZ) {
         CoreGeoBone bone = getAnimationProcessor().getBone(boneName);
         if (bone != null) {
-            bone.setPosX(posX);
-            bone.setPosY(posY);
-            bone.setPosZ(posZ);
-            bone.setRotX(rotX);
-            bone.setScaleX(scaleX);
-            bone.setScaleY(scaleY);
-            bone.setScaleZ(scaleZ);
+            BoneSnapshot initial = bone.getInitialSnapshot();
+            bone.setPosX(initial.getOffsetX() + posX);
+            bone.setPosY(initial.getOffsetY() + posY);
+            bone.setPosZ(initial.getOffsetZ() + posZ);
+            bone.setRotX(initial.getRotX() + rotX);
+            bone.setScaleX(initial.getScaleX() * scaleX);
+            bone.setScaleY(initial.getScaleY() * scaleY);
+            bone.setScaleZ(initial.getScaleZ() * scaleZ);
         }
     }
 }
