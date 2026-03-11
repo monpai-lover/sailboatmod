@@ -42,7 +42,17 @@ public class SailboatEntityModel extends GeoModel<SailboatEntity> {
                 1.0F - (0.8F * stowProgress),
                 1.0F
         );
-        applyTransform("bone16", 0.0F, 66.0F * stowProgress, 0.0F, 0.0F, 1.0F, 1.0F - (0.8F * stowProgress), 1.0F);
+        applyTransform("bone16", 0.0F, 73.0F * stowProgress, 0.0F, 0.0F, 1.0F, 0.9F * stowProgress, 1.0F);
+        applyTransform(
+                "bone17",
+                0.0F,
+                0.0F,
+                0.0F,
+                (float)Math.toRadians(12.5F * stowProgress),
+                1.0F,
+                1.0F - (0.8F * stowProgress),
+                1.0F
+        );
     }
 
     private void applyTransform(String boneName, float posX, float posY, float posZ, float rotX, float scaleX, float scaleY, float scaleZ) {
