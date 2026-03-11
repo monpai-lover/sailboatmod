@@ -46,7 +46,9 @@ import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 import software.bernie.geckolib.animatable.GeoEntity;
 import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.core.animation.AnimationController;
 import software.bernie.geckolib.core.animation.AnimatableManager;
+import software.bernie.geckolib.core.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.util.HashMap;
@@ -58,6 +60,8 @@ import java.util.Set;
 import java.util.UUID;
 
 public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
+    private static final RawAnimation SAIL_DOWN_ANIMATION = RawAnimation.begin().thenPlayAndHold("sail down");
+    private static final RawAnimation SAIL_UP_ANIMATION = RawAnimation.begin().thenPlayAndHold("sail up");
     private static final EntityDataAccessor<Boolean> DATA_SAIL_DEPLOYED =
             SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Integer> DATA_HANDLING_PRESET =
@@ -854,6 +858,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
+        controllers.add(new AnimationController<>(this, "sail_state", 0, state ->
+                state.setAndContinue(isSailDeployed() ? SAIL_UP_ANIMATION : SAIL_DOWN_ANIMATION)));
     }
 
     @Override
