@@ -7,6 +7,7 @@ import com.example.examplemod.market.PurchaseOrder;
 import com.example.examplemod.market.ShipmentManifestEntry;
 import com.example.examplemod.market.ShippingOrder;
 import com.example.examplemod.item.RouteBookItem;
+import com.example.examplemod.integration.bluemap.BlueMapIntegration;
 import com.example.examplemod.registry.ModItems;
 import com.example.examplemod.route.RouteDefinition;
 import com.example.examplemod.route.RouteNbtUtil;
@@ -24,6 +25,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.Container;
 import net.minecraft.world.Containers;
 import net.minecraft.world.InteractionHand;
@@ -40,6 +42,7 @@ import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.network.NetworkHooks;
@@ -102,8 +105,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private static final double GEAR_ACCEL_RAMP_DOWN = 0.0009D;
     private static final double TURN_VELOCITY_ROTATE_RAD = 0.045D;
     private static final double TURN_SPEED_LOSS = 0.997D;
-    private static final double THROTTLE_LATERAL_DAMP = 0.86D;
-    private static final double GLIDE_LATERAL_DAMP = 0.74D;
+    private static final double THROTTLE_LATERAL_DAMP = 0.28D;
+    private static final double GLIDE_LATERAL_DAMP = 0.36D;
     private static final double DEPLOYED_MAX_FORWARD_KNOTS = 20.0D;
     private static final double STOWED_MAX_FORWARD_KNOTS = 7.0D;
     private static final double MAX_REVERSE_KNOTS = 5.0D;
@@ -112,6 +115,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private static final double STOWED_MAX_FORWARD_BLOCKS_PER_TICK = STOWED_MAX_FORWARD_KNOTS * KNOTS_TO_BLOCKS_PER_TICK;
     private static final double MAX_REVERSE_BLOCKS_PER_TICK = MAX_REVERSE_KNOTS * KNOTS_TO_BLOCKS_PER_TICK;
     private static final int LEGACY_LIGHT_CLEAN_RADIUS = 3;
+    private static final int BLUEMAP_BOAT_SYNC_INTERVAL_TICKS = 10;
     private static final double AUTOPILOT_ARRIVAL_RADIUS = 3.2D;
     private static final double AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS = 7.5D;
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
@@ -198,6 +202,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     private String ownerName = "";
     private String ownerUuid = "";
     private int rentalPrice = DEFAULT_RENTAL_PRICE;
+    private boolean pendingBlueMapRemoval = false;
 
     private final Container container = new Container() {
         @Override
@@ -275,6 +280,32 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         this.entityData.define(DATA_SEAT_3, -1);
         this.entityData.define(DATA_SEAT_4, -1);
         this.entityData.define(DATA_RENTAL_PRICE, DEFAULT_RENTAL_PRICE);
+    }
+
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        if (isInvulnerableTo(source)) {
+            return false;
+        }
+        if (!level().isClientSide && !isRemoved()) {
+            setHurtDir(-getHurtDir());
+            setHurtTime(10);
+            setDamage(getDamage() + amount * 10.0F);
+            markHurt();
+            gameEvent(GameEvent.ENTITY_DAMAGE, source.getEntity());
+            boolean instabuild = source.getEntity() instanceof Player attackPlayer && attackPlayer.getAbilities().instabuild;
+            if (instabuild || getDamage() > 40.0F) {
+                if (!instabuild && level().getGameRules().getBoolean(net.minecraft.world.level.GameRules.RULE_DOENTITYDROPS)) {
+                    destroy(source);
+                } else {
+                    pendingBlueMapRemoval = true;
+                    BlueMapIntegration.removeBoat(level(), getUUID());
+                    container.clearContent();
+                }
+                discard();
+            }
+        }
+        return true;
     }
 
     @Override
@@ -519,18 +550,26 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                     nextX *= turnDrag;
                     nextZ *= turnDrag;
                 }
-
-                // Always suppress side-slip after turning to prevent drift-like lateral acceleration.
-                double forwardComp = nextX * dirX + nextZ * dirZ;
-                double lateralComp = nextX * (-dirZ) + nextZ * dirX;
-                lateralComp *= gearDriving ? THROTTLE_LATERAL_DAMP : GLIDE_LATERAL_DAMP;
-                nextX = dirX * forwardComp + (-dirZ) * lateralComp;
-                nextZ = dirZ * forwardComp + dirX * lateralComp;
-                if (gearDriving) {
-                    nextX *= TURN_SPEED_LOSS;
-                    nextZ *= TURN_SPEED_LOSS;
-                }
             }
+
+            double forwardComp = nextX * dirX + nextZ * dirZ;
+            double lateralComp = nextX * (-dirZ) + nextZ * dirX;
+            double lateralRetention = gearDriving ? 0.94D : 0.97D;
+            if (wantsTurn) {
+                double turnStrength = Mth.clamp(Math.abs(turnInput), 0.0D, 1.0D);
+                double turnRetention = gearDriving ? THROTTLE_LATERAL_DAMP : GLIDE_LATERAL_DAMP;
+                double minRetention = gearDriving ? 0.10D : 0.14D;
+                lateralRetention = Mth.lerp(turnStrength, turnRetention, minRetention);
+            }
+            lateralComp *= lateralRetention;
+            nextX = dirX * forwardComp + (-dirZ) * lateralComp;
+            nextZ = dirZ * forwardComp + dirX * lateralComp;
+            if (wantsTurn && gearDriving) {
+                nextX *= TURN_SPEED_LOSS;
+                nextZ *= TURN_SPEED_LOSS;
+            }
+
+
 
             double finalDockDistance = getFinalDockApproachDistance();
             if (!Double.isNaN(finalDockDistance)) {
@@ -558,6 +597,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             } else {
                 nonWaterTicks = 0;
             }
+        }
+        if (!level().isClientSide && (tickCount <= 1 || tickCount % BLUEMAP_BOAT_SYNC_INTERVAL_TICKS == 0)) {
+            BlueMapIntegration.syncBoat(this);
         }
     }
 
@@ -691,6 +733,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     @Override
     public Item getDropItem() {
         return ModItems.SAILBOAT_ITEM.get();
+    }
+
+    @Override
+    protected void destroy(DamageSource source) {
+        if (!level().isClientSide) {
+            pendingBlueMapRemoval = true;
+            BlueMapIntegration.removeBoat(level(), getUUID());
+            Containers.dropContents(level(), blockPosition(), container);
+            container.clearContent();
+        }
+        super.destroy(source);
     }
 
     @Override
@@ -849,9 +902,18 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         if (!level().isClientSide && level() instanceof ServerLevel serverLevel) {
             clearAutopilotForcedChunks(serverLevel);
         }
-        if (!level().isClientSide && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED)) {
-            Containers.dropContents(level(), blockPosition(), container);
-            container.clearContent();
+        if (!level().isClientSide) {
+            if (pendingBlueMapRemoval || reason == RemovalReason.KILLED) {
+                if (!pendingBlueMapRemoval) {
+                    BlueMapIntegration.removeBoat(level(), getUUID());
+                    Containers.dropContents(level(), blockPosition(), container);
+                    container.clearContent();
+                }
+            } else if (reason == RemovalReason.CHANGED_DIMENSION) {
+                BlueMapIntegration.removeBoat(level(), getUUID());
+            } else {
+                BlueMapIntegration.syncBoat(this);
+            }
         }
         super.remove(reason);
     }
@@ -2381,3 +2443,4 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         }
     }
 }
+

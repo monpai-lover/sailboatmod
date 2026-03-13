@@ -1,8 +1,10 @@
 package com.example.examplemod;
 
+import com.example.examplemod.entity.SailboatEntity;
 import com.example.examplemod.integration.bluemap.BlueMapIntegration;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.server.ServerStartedEvent;
 import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -24,6 +26,16 @@ public final class ServerEvents {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server != null) {
             BlueMapIntegration.onServerTick(server);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onEntityJoinLevel(EntityJoinLevelEvent event) {
+        if (event.getLevel().isClientSide()) {
+            return;
+        }
+        if (event.getEntity() instanceof SailboatEntity boat) {
+            BlueMapIntegration.syncBoat(boat);
         }
     }
 

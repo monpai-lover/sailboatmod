@@ -1,6 +1,7 @@
 package com.example.examplemod.block.entity;
 
 import com.example.examplemod.dock.DockRegistry;
+import com.example.examplemod.integration.bluemap.BlueMapIntegration;
 import com.example.examplemod.dock.DockScreenData;
 import com.example.examplemod.economy.VaultEconomyBridge;
 import com.example.examplemod.entity.SailboatEntity;
@@ -82,6 +83,15 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         super.onLoad();
         if (level != null && !level.isClientSide) {
             DockRegistry.register(level, worldPosition);
+            BlueMapIntegration.syncDock(this);
+        }
+    }
+
+    @Override
+    public void setChanged() {
+        super.setChanged();
+        if (level != null && !level.isClientSide) {
+            BlueMapIntegration.syncDock(this);
         }
     }
 
@@ -1918,3 +1928,4 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 }
+

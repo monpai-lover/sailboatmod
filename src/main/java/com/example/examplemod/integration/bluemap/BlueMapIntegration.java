@@ -1,14 +1,13 @@
 package com.example.examplemod.integration.bluemap;
 
 import com.example.examplemod.block.entity.DockBlockEntity;
-import com.example.examplemod.dock.DockRegistry;
 import com.example.examplemod.entity.SailboatEntity;
 import com.example.examplemod.route.RouteDefinition;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.phys.AABB;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 
@@ -21,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 public final class BlueMapIntegration {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -28,7 +28,6 @@ public final class BlueMapIntegration {
     private static final String DOCKS_SET_ID = "sailboatmod_docks";
     private static final String BOATS_SET_ID = "sailboatmod_boats";
     private static final String ROUTES_SET_ID = "sailboatmod_routes";
-    private static final AABB ENTITY_SCAN_BOX = new AABB(-30_000_000D, -2_048D, -30_000_000D, 30_000_000D, 2_048D, 30_000_000D);
 
     private static volatile ReflectionApi api;
     private static volatile boolean initAttempted;
@@ -56,6 +55,65 @@ public final class BlueMapIntegration {
         lastSyncTick = Long.MIN_VALUE;
     }
 
+    public static void syncDock(DockBlockEntity dock) {
+        if (dock == null || dock.getLevel() == null || dock.getLevel().isClientSide) {
+            return;
+        }
+        BlueMapMarkerSavedData.get(dock.getLevel()).putDock(new BlueMapMarkerSavedData.DockSnapshot(
+                dock.getLevel().dimension().location().toString(),
+                dock.getBlockPos(),
+                dock.getDockName(),
+                dock.getOwnerName(),
+                dock.getOwnerUuid(),
+                dock.getRoutesForMap()
+        ));
+    }
+
+    public static void removeDock(Level level, BlockPos pos) {
+        if (level == null || level.isClientSide || pos == null) {
+            return;
+        }
+        BlueMapMarkerSavedData.get(level).removeDock(level.dimension(), pos);
+        syncNow(level);
+    }
+
+    public static void syncBoat(SailboatEntity boat) {
+        if (boat == null || boat.level().isClientSide) {
+            return;
+        }
+        BlueMapMarkerSavedData.get(boat.level()).putBoat(new BlueMapMarkerSavedData.BoatSnapshot(
+                boat.level().dimension().location().toString(),
+                boat.getUUID(),
+                boatDisplayName(boat),
+                boat.getOwnerName(),
+                boat.getOwnerUuid(),
+                boat.isAutopilotActive(),
+                boat.isAutopilotPaused(),
+                activeRouteName(boat),
+                boat.hasCargo(),
+                boat.isAvailableForRent() ? boat.getRentalPrice() : -1,
+                boat.getX(),
+                boat.getY() + 1.0D,
+                boat.getZ(),
+                boat.getDeltaMovement().horizontalDistance() * 20.0D
+        ));
+    }
+
+    public static void removeBoat(Level level, UUID uuid) {
+        if (level == null || level.isClientSide || uuid == null) {
+            return;
+        }
+        BlueMapMarkerSavedData.get(level).removeBoat(level.dimension(), uuid);
+        syncNow(level);
+    }
+
+    private static void syncNow(Level level) {
+        if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
+            return;
+        }
+        lastSyncTick = serverLevel.getServer().getTickCount();
+        sync(serverLevel.getServer());
+    }
     private static void sync(MinecraftServer server) {
         ReflectionApi reflection = reflectionApi();
         if (reflection == null) {
@@ -162,6 +220,10 @@ public final class BlueMapIntegration {
             if (blueMapWorld == null) {
                 return;
             }
+            BlueMapMarkerSavedData markerData = BlueMapMarkerSavedData.get(level);
+            List<BlueMapMarkerSavedData.DockSnapshot> docks = markerData.getDocks(level.dimension());
+            List<BlueMapMarkerSavedData.BoatSnapshot> boats = markerData.getBoats(level.dimension());
+
             @SuppressWarnings("unchecked")
             Collection<Object> maps = (Collection<Object>) this.blueMapWorldGetMapsMethod.invoke(blueMapWorld);
             for (Object map : maps) {
@@ -175,9 +237,9 @@ public final class BlueMapIntegration {
                 clearMarkerSet(boatsSet);
                 clearMarkerSet(routesSet);
 
-                renderDocks(level, docksSet);
-                renderBoats(level, boatsSet);
-                renderRoutes(level, routesSet);
+                renderDocks(docksSet, docks);
+                renderBoats(boatsSet, boats);
+                renderRoutes(routesSet, docks);
             }
         }
 
@@ -215,18 +277,16 @@ public final class BlueMapIntegration {
             markers.clear();
         }
 
-        private void renderDocks(ServerLevel level, Object markerSet) throws Exception {
+        private void renderDocks(Object markerSet, List<BlueMapMarkerSavedData.DockSnapshot> docks) throws Exception {
             @SuppressWarnings("unchecked")
             Map<String, Object> markers = (Map<String, Object>) this.markerSetGetMarkersMethod.invoke(markerSet);
-            for (BlockPos pos : DockRegistry.get(level)) {
-                if (!(level.getBlockEntity(pos) instanceof DockBlockEntity dock)) {
-                    continue;
-                }
+            for (BlueMapMarkerSavedData.DockSnapshot dock : docks) {
+                BlockPos pos = dock.pos();
                 Object marker = buildPoiMarker(
-                        dock.getDockName(),
-                        dock.getBlockPos().getX() + 0.5D,
-                        dock.getBlockPos().getY() + 1.0D,
-                        dock.getBlockPos().getZ() + 0.5D,
+                        blankToFallback(dock.dockName(), "Dock-" + pos.getX() + "," + pos.getZ()),
+                        pos.getX() + 0.5D,
+                        pos.getY() + 1.0D,
+                        pos.getZ() + 0.5D,
                         """
                         <div class="sailboatmod-popup">
                         <strong>%s</strong><br>
@@ -235,9 +295,9 @@ public final class BlueMapIntegration {
                         Coords: %d, %d, %d
                         </div>
                         """.formatted(
-                                escapeHtml(dock.getDockName()),
-                                escapeHtml(dock.getOwnerName()),
-                                dock.getRouteCount(),
+                                escapeHtml(blankToFallback(dock.dockName(), "Dock")),
+                                escapeHtml(blankToDash(dock.ownerName())),
+                                dock.routes().size(),
                                 pos.getX(), pos.getY(), pos.getZ()
                         )
                 );
@@ -245,15 +305,15 @@ public final class BlueMapIntegration {
             }
         }
 
-        private void renderBoats(ServerLevel level, Object markerSet) throws Exception {
+        private void renderBoats(Object markerSet, List<BlueMapMarkerSavedData.BoatSnapshot> boats) throws Exception {
             @SuppressWarnings("unchecked")
             Map<String, Object> markers = (Map<String, Object>) this.markerSetGetMarkersMethod.invoke(markerSet);
-            for (SailboatEntity boat : level.getEntitiesOfClass(SailboatEntity.class, ENTITY_SCAN_BOX, SailboatEntity::isAlive)) {
+            for (BlueMapMarkerSavedData.BoatSnapshot boat : boats) {
                 Object marker = buildPoiMarker(
-                        boat.getName().getString(),
-                        boat.getX(),
-                        boat.getY() + 1.0D,
-                        boat.getZ(),
+                        blankToFallback(boat.displayName(), "Sailboat"),
+                        boat.x(),
+                        boat.y(),
+                        boat.z(),
                         """
                         <div class="sailboatmod-popup">
                         <strong>%s</strong><br>
@@ -266,30 +326,27 @@ public final class BlueMapIntegration {
                         Coords: %.1f, %.1f, %.1f
                         </div>
                         """.formatted(
-                                escapeHtml(boat.getName().getString()),
-                                escapeHtml(boat.getOwnerName()),
+                                escapeHtml(blankToFallback(boat.displayName(), "Sailboat")),
+                                escapeHtml(blankToDash(boat.ownerName())),
                                 escapeHtml(autopilotState(boat)),
-                                escapeHtml(activeRouteName(boat)),
-                                boat.getDeltaMovement().horizontalDistance() * 20.0D,
+                                escapeHtml(blankToDash(boat.routeName())),
+                                boat.speedBlocksPerSecond(),
                                 boat.hasCargo() ? "loaded" : "empty",
-                                boat.isAvailableForRent() ? Integer.toString(boat.getRentalPrice()) : "off",
-                                boat.getX(), boat.getY(), boat.getZ()
+                                boat.rentalPrice() >= 0 ? Integer.toString(boat.rentalPrice()) : "off",
+                                boat.x(), boat.y(), boat.z()
                         )
                 );
-                markers.put("boat-" + boat.getUUID(), marker);
+                markers.put("boat-" + boat.uuid(), marker);
             }
         }
 
-        private void renderRoutes(ServerLevel level, Object markerSet) throws Exception {
+        private void renderRoutes(Object markerSet, List<BlueMapMarkerSavedData.DockSnapshot> docks) throws Exception {
             @SuppressWarnings("unchecked")
             Map<String, Object> markers = (Map<String, Object>) this.markerSetGetMarkersMethod.invoke(markerSet);
             Set<String> seen = new HashSet<>();
             int fallbackIndex = 1;
-            for (BlockPos pos : DockRegistry.get(level)) {
-                if (!(level.getBlockEntity(pos) instanceof DockBlockEntity dock)) {
-                    continue;
-                }
-                for (RouteDefinition route : dock.getRoutesForMap()) {
+            for (BlueMapMarkerSavedData.DockSnapshot dock : docks) {
+                for (RouteDefinition route : dock.routes()) {
                     if (route.waypoints().size() < 2) {
                         continue;
                     }
@@ -352,6 +409,11 @@ public final class BlueMapIntegration {
         }
     }
 
+    private static String boatDisplayName(SailboatEntity boat) {
+        String name = boat == null ? "" : boat.getName().getString();
+        return name == null || name.isBlank() ? "Sailboat" : name;
+    }
+
     private static String activeRouteName(SailboatEntity boat) {
         String routeName = boat.isAutopilotActive() ? boat.getAutopilotRouteName() : boat.getSelectedRouteName();
         return routeName == null || routeName.isBlank() ? "-" : routeName;
@@ -362,6 +424,16 @@ public final class BlueMapIntegration {
             return "idle";
         }
         if (boat.isAutopilotPaused()) {
+            return "paused";
+        }
+        return "running";
+    }
+
+    private static String autopilotState(BlueMapMarkerSavedData.BoatSnapshot boat) {
+        if (!boat.autopilotActive()) {
+            return "idle";
+        }
+        if (boat.autopilotPaused()) {
             return "paused";
         }
         return "running";
@@ -396,6 +468,10 @@ public final class BlueMapIntegration {
         return value == null || value.isBlank() ? "-" : value;
     }
 
+    private static String blankToFallback(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
     private static String escapeHtml(String value) {
         if (value == null || value.isEmpty()) {
             return "";
@@ -410,3 +486,4 @@ public final class BlueMapIntegration {
     private BlueMapIntegration() {
     }
 }
+

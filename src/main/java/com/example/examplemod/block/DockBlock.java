@@ -1,6 +1,7 @@
 package com.example.examplemod.block;
 
 import com.example.examplemod.block.entity.DockBlockEntity;
+import com.example.examplemod.integration.bluemap.BlueMapIntegration;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -49,7 +50,16 @@ public class DockBlock extends BaseEntityBlock {
     }
 
     @Override
+    public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        if (!state.is(newState.getBlock()) && !level.isClientSide) {
+            BlueMapIntegration.removeDock(level, pos);
+        }
+        super.onRemove(state, level, pos, newState, movedByPiston);
+    }
+
+    @Override
     public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
         return false;
     }
 }
+
