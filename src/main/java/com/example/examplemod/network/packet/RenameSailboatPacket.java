@@ -19,7 +19,7 @@ public class RenameSailboatPacket {
 
     public static void encode(RenameSailboatPacket packet, FriendlyByteBuf buffer) {
         buffer.writeVarInt(packet.sailboatId);
-        buffer.writeUtf(packet.name, 64);
+        PacketStringCodec.writeUtfSafe(buffer, packet.name, 64);
     }
 
     public static RenameSailboatPacket decode(FriendlyByteBuf buffer) {

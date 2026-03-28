@@ -150,27 +150,27 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     protected void renderBg(GuiGraphics guiGraphics, float partialTick, int mouseX, int mouseY) {
         hoveredLine = null;
         updateControlVisibility();
-        guiGraphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xCC111A20);
-        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + imageWidth - 1, topPos + imageHeight - 1, 0xCC1B2A33);
+        guiGraphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xCC6E4B2A);
+        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + imageWidth - 1, topPos + imageHeight - 1, 0xCC483322);
 
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.title"), leftPos + 10, topPos + 10, 0xFFE7C977);
-        guiGraphics.drawString(font, Component.literal(data.marketName()), leftPos + 10, topPos + 22, 0xFFE0F0FF);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.owner_name", data.ownerName()), leftPos + 10, topPos + 34, 0xFFA7D7F3);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.pending", data.pendingCredits()), leftPos + 126, topPos + 10, 0xFFD4E8C4);
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.title"), leftPos + 10, topPos + 10, 0xFFF0CD87);
+        guiGraphics.drawString(font, Component.literal(data.marketName()), leftPos + 10, topPos + 22, 0xFFE9E4D7);
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.owner_name", data.ownerName()), leftPos + 10, topPos + 34, 0xFFB7E7DE);
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.pending", data.pendingCredits()), leftPos + 126, topPos + 10, 0xFFB7E7DE);
         String dockLine = data.linkedDock()
                 ? Component.translatable("screen.sailboatmod.market.linked_dock_value", data.linkedDockName(), data.linkedDockPosText()).getString()
                 : Component.translatable("screen.sailboatmod.market.linked_dock_missing").getString();
-        guiGraphics.drawString(font, Component.literal(trimToWidth(dockLine, 238)), leftPos + 126, topPos + 22, 0xFFD4E8C4);
-        guiGraphics.drawString(font, Component.translatable(pageTitleKey()), leftPos + 10, topPos + 76, 0xFFE7C977);
+        guiGraphics.drawString(font, Component.literal(trimToWidth(dockLine, 238)), leftPos + 126, topPos + 22, 0xFFB7E7DE);
+        guiGraphics.drawString(font, Component.translatable(pageTitleKey()), leftPos + 10, topPos + 76, 0xFFF0CD87);
 
         if (activePage == PAGE_GOODS) {
-            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.buy_qty"), leftPos + 98, topPos + 78, 0xFFE7C977);
+            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.buy_qty"), leftPos + 98, topPos + 78, 0xFFF0CD87);
             drawSingleListPage(guiGraphics, mouseX, mouseY, Component.translatable("screen.sailboatmod.market.tab.goods"),
                     data.listingLines(), selectedListingIndex, listingScroll,
                     selectedListingIndex < data.listingLines().size() ? data.listingLines().get(selectedListingIndex) : Component.translatable("screen.sailboatmod.market.empty").getString());
         } else if (activePage == PAGE_SELL) {
-            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.qty"), leftPos + 98, topPos + 78, 0xFFE7C977);
-            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.price"), leftPos + 166, topPos + 78, 0xFFE7C977);
+            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.qty"), leftPos + 98, topPos + 78, 0xFFF0CD87);
+            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.market.price"), leftPos + 166, topPos + 78, 0xFFF0CD87);
             String detailText = !data.dockStorageAccessible()
                     ? Component.translatable("screen.sailboatmod.market.storage_owner_only").getString()
                     : selectedStorageIndex < data.dockStorageLines().size()
@@ -271,9 +271,9 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     private void drawListPanel(GuiGraphics g, int x, int y, int w, int h, Component title,
                                List<String> lines, int selectedIndex, int scroll, int mouseX, int mouseY) {
         drawPanelFrame(g, x, y, w, h);
-        g.drawString(font, title, x + 6, y + 6, 0xFFE7C977);
+        g.drawString(font, title, x + 6, y + 6, 0xFFF0CD87);
         if (lines == null || lines.isEmpty()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.market.empty"), x + 6, y + 22, 0xFF8D98A3);
+            g.drawString(font, Component.translatable("screen.sailboatmod.market.empty"), x + 6, y + 22, 0xFF9F998F);
             return;
         }
         int safeScroll = clampScroll(scroll, lines);
@@ -282,7 +282,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         for (int i = safeScroll; i < end; i++) {
             String line = lines.get(i);
             if (i == selectedIndex) {
-                g.fill(x + 3, drawY - 1, x + w - 3, drawY + 8, 0x55457A9A);
+                g.fill(x + 3, drawY - 1, x + w - 3, drawY + 8, 0x8861C3B0);
             }
             g.drawString(font, Component.literal(trimToWidth(line, w - 12)), x + 6, drawY, 0xFFE0E0E0);
             if (mouseX >= x + 3 && mouseX < x + w - 3 && mouseY >= drawY - 1 && mouseY < drawY + 9) {
@@ -293,13 +293,13 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
         int maxScroll = Math.max(0, lines.size() - VISIBLE_ROWS);
         if (maxScroll > 0) {
             String page = (safeScroll + 1) + "/" + (maxScroll + 1);
-            g.drawString(font, Component.literal(page), x + w - 26, y + h - 10, 0xFF8D98A3);
+            g.drawString(font, Component.literal(page), x + w - 26, y + h - 10, 0xFF9F998F);
         }
     }
 
     private void drawDetailPanel(GuiGraphics g, int x, int y, int w, int h, Component title, List<String> paragraphs) {
         drawPanelFrame(g, x, y, w, h);
-        g.drawString(font, title, x + 6, y + 6, 0xFFE7C977);
+        g.drawString(font, title, x + 6, y + 6, 0xFFF0CD87);
         int drawY = y + 22;
         for (String paragraph : paragraphs) {
             if (paragraph == null || paragraph.isBlank()) {
@@ -309,7 +309,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
                 if (drawY > y + h - 10) {
                     return;
                 }
-                g.drawString(font, sequence, x + 6, drawY, 0xFFDCEEFF);
+                g.drawString(font, sequence, x + 6, drawY, 0xFFB7E7DE);
                 drawY += 10;
             }
             drawY += 2;
@@ -317,8 +317,8 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> {
     }
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) {
-        g.fill(x, y, x + w, y + h, 0x66203037);
-        g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23);
+        g.fill(x, y, x + w, y + h, 0xAA6A4B2A);
+        g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0xAA221A13);
     }
 
     private boolean trySelectFromList(double mouseX, double mouseY, int x, int y, int w, List<String> lines, int listType, int scroll) {

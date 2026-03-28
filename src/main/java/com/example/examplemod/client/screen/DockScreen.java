@@ -150,22 +150,22 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     protected void renderBg(GuiGraphics guiGraphics, float partialTick, int mouseX, int mouseY) {
         hoveredMinimapBoatName = null;
         updateActionButtonVisibility();
-        guiGraphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xCC101820);
-        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + imageWidth - 1, topPos + imageHeight - 1, 0xCC182632);
+        guiGraphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xCC6E4B2A);
+        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + imageWidth - 1, topPos + imageHeight - 1, 0xCC49311F);
         drawMenuSlotFrames(guiGraphics);
-        guiGraphics.fill(rightPanelX, rightPanelY, rightPanelX + RIGHT_PANEL_W, rightPanelY + imageHeight, 0xCC101820);
-        guiGraphics.fill(rightPanelX + 1, rightPanelY + 1, rightPanelX + RIGHT_PANEL_W - 1, rightPanelY + imageHeight - 1, 0xCC182632);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.name"), rightPanelX + 8, rightPanelY + 26, 0xFFD27F);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book"), rightPanelX + 8, rightPanelY + 44, 0xFFD27F);
+        guiGraphics.fill(rightPanelX, rightPanelY, rightPanelX + RIGHT_PANEL_W, rightPanelY + imageHeight, 0xCC6E4B2A);
+        guiGraphics.fill(rightPanelX + 1, rightPanelY + 1, rightPanelX + RIGHT_PANEL_W - 1, rightPanelY + imageHeight - 1, 0xCC49311F);
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.name"), rightPanelX + 8, rightPanelY + 26, 0xFFF4CF8A);
+        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book"), rightPanelX + 8, rightPanelY + 44, 0xFFF4CF8A);
         if (activeTab == TAB_ROUTE) {
-            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xA8E6FF);
+            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xFFAEDAD1);
             String ownerLine = Component.translatable("screen.sailboatmod.owner_name", data.dockOwnerName()).getString();
-            guiGraphics.drawString(font, Component.literal(trimToWidth(ownerLine, 136)), rightPanelX + 8, rightPanelY + 52, 0xA8E6FF);
+            guiGraphics.drawString(font, Component.literal(trimToWidth(ownerLine, 136)), rightPanelX + 8, rightPanelY + 52, 0xFFAEDAD1);
         }
-        int slotLabelColor = data.canManageDock() ? 0xFFD27F : 0xA8A8A8;
+        int slotLabelColor = data.canManageDock() ? 0xFFF4CF8A : 0xFFAAA39A;
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book_slot"), leftPos + 8, topPos + 6, slotLabelColor);
         guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_slot"), leftPos + 8, topPos + 32, slotLabelColor);
-        guiGraphics.fill(leftPos + 6, topPos + 38, leftPos + imageWidth - 6, topPos + 39, 0xFF4A5560);
+        guiGraphics.fill(leftPos + 6, topPos + 38, leftPos + imageWidth - 6, topPos + 39, 0xFF9F7A4A);
 
         if (activeTab == TAB_ROUTE) {
             drawRouteTab(guiGraphics, mouseX, mouseY);
@@ -223,7 +223,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int storageW = 178;
         int storageH = STORAGE_VISIBLE_ROWS * STORAGE_ROW_H + 12;
         drawListFrame(g, storageX, storageY, storageW, storageH);
-        g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_title"), storageX + 4, storageY + 3, 0xFFD27F);
+        g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_title"), storageX + 4, storageY + 3, 0xFFF4CF8A);
         drawStorageList(g, storageX, storageY + 12, storageW, storageH - 12);
     }
 
@@ -247,21 +247,21 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
             if (lineY > maxBottom) {
                 break;
             }
-            g.drawString(font, Component.literal(trimToWidth(line, maxWidth)), infoX + 3, lineY, 0xDCEEFF);
+            g.drawString(font, Component.literal(trimToWidth(line, maxWidth)), infoX + 3, lineY, 0xFFAEDAD1);
             lineY += 9;
         }
         for (String line : data.selectedWaybillInfoLines()) {
             if (lineY > maxBottom) {
                 break;
             }
-            g.drawString(font, Component.literal(trimToWidth(line, maxWidth)), infoX + 3, lineY, 0xE0E0E0);
+            g.drawString(font, Component.literal(trimToWidth(line, maxWidth)), infoX + 3, lineY, 0xFFE7E3D8);
             lineY += 9;
         }
     }
 
     private void drawMiniMap(GuiGraphics g, int x, int y, int w, int h, int mouseX, int mouseY) {
-        g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF5C6D78);
-        g.fill(x, y, x + w, y + h, 0xAA0A1218);
+        g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF8EAF9E);
+        g.fill(x, y, x + w, y + h, 0xAA0B110F);
         if (minecraft == null || minecraft.level == null) {
             return;
         }
@@ -413,8 +413,8 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     }
 
     private void drawListFrame(GuiGraphics guiGraphics, int x, int y, int w, int h) {
-        guiGraphics.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF5C6D78);
-        guiGraphics.fill(x, y, x + w, y + h, 0xAA141A1E);
+        guiGraphics.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF8EAF9E);
+        guiGraphics.fill(x, y, x + w, y + h, 0xAA1A1916);
     }
 
     private void drawMenuSlotFrames(GuiGraphics guiGraphics) {
@@ -426,14 +426,14 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     }
 
     private void drawVanillaSlotFrame(GuiGraphics guiGraphics, int x, int y) {
-        guiGraphics.fill(x - 1, y - 1, x + 17, y + 17, 0xFF9B9B9B);
-        guiGraphics.fill(x, y, x + 16, y + 16, 0xFF161616);
-        guiGraphics.fill(x + 1, y + 1, x + 15, y + 15, 0xFF2B2B2B);
+        guiGraphics.fill(x - 1, y - 1, x + 17, y + 17, 0xFFAA8A5A);
+        guiGraphics.fill(x, y, x + 16, y + 16, 0xFF21160E);
+        guiGraphics.fill(x + 1, y + 1, x + 15, y + 15, 0xFF3C2A1A);
     }
 
     private void drawRouteList(GuiGraphics g, int x, int y, int w, boolean showMeta) {
         if (data.routeNames().isEmpty()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.no_route"), x + 4, y + 4, 0xAAAAAA);
+            g.drawString(font, Component.translatable("screen.sailboatmod.dock.no_route"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         int rowHeight = showMeta ? META_ROW_H : COMPACT_ROW_H;
@@ -444,19 +444,19 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         for (int i = start; i < end; i++) {
             int row = i - start;
             int ry = y + row * rowHeight;
-            int bg = i == selected ? 0x55457A9A : 0x22000000;
+            int bg = i == selected ? 0x8860B6A7 : 0x220E0905;
             g.fill(x + 1, ry + 1, x + w - 1, ry + rowHeight - 1, bg);
             String routeLine = (i + 1) + "." + (data.routeNames().get(i) == null ? "" : data.routeNames().get(i));
-            g.drawString(font, Component.literal(trimToWidth(routeLine, w - 6)), x + 3, ry + 2, 0xE0E0E0);
+            g.drawString(font, Component.literal(trimToWidth(routeLine, w - 6)), x + 3, ry + 2, 0xFFE7E3D8);
             if (showMeta && i < data.routeMetas().size()) {
-                g.drawString(font, Component.literal(trimToWidth(data.routeMetas().get(i), w - 6)), x + 3, ry + 11, 0x9FCDE6);
+                g.drawString(font, Component.literal(trimToWidth(data.routeMetas().get(i), w - 6)), x + 3, ry + 11, 0xFFAEDAD1);
             }
         }
     }
 
     private void drawBoatList(GuiGraphics g, int x, int y, int w) {
         if (data.nearbyBoatNames().isEmpty()) {
-            g.drawString(font, Component.literal("-"), x + 4, y + 4, 0xAAAAAA);
+            g.drawString(font, Component.literal("-"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         int selected = Math.max(0, Math.min(data.selectedBoatIndex(), data.nearbyBoatNames().size() - 1));
@@ -465,16 +465,16 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         for (int i = start; i < end; i++) {
             int row = i - start;
             int ry = y + row * COMPACT_ROW_H;
-            int bg = i == selected ? 0x55457A9A : 0x22000000;
+            int bg = i == selected ? 0x8860B6A7 : 0x220E0905;
             g.fill(x + 1, ry + 1, x + w - 1, ry + COMPACT_ROW_H - 1, bg);
             String boatLine = (i + 1) + "." + (data.nearbyBoatNames().get(i) == null ? "" : data.nearbyBoatNames().get(i));
-            g.drawString(font, Component.literal(trimToWidth(boatLine, w - 6)), x + 3, ry + 2, 0xE0E0E0);
+            g.drawString(font, Component.literal(trimToWidth(boatLine, w - 6)), x + 3, ry + 2, 0xFFE7E3D8);
         }
     }
 
     private void drawWaybillList(GuiGraphics g, int x, int y, int w) {
         if (data.waybillNames().isEmpty()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.no_waybill"), x + 4, y + 4, 0xAAAAAA);
+            g.drawString(font, Component.translatable("screen.sailboatmod.dock.no_waybill"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         int selected = Math.max(0, Math.min(data.selectedWaybillIndex(), data.waybillNames().size() - 1));
@@ -483,10 +483,10 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         for (int i = start; i < end; i++) {
             int row = i - start;
             int ry = y + row * WAYBILL_ROW_H;
-            int bg = i == selected ? 0x55457A9A : 0x22000000;
+            int bg = i == selected ? 0x8860B6A7 : 0x220E0905;
             g.fill(x + 1, ry + 1, x + w - 1, ry + WAYBILL_ROW_H - 1, bg);
             String line = (i + 1) + "." + (data.waybillNames().get(i) == null ? "" : data.waybillNames().get(i));
-            g.drawString(font, Component.literal(trimToWidth(line, w - 6)), x + 3, ry + 2, 0xE0E0E0);
+            g.drawString(font, Component.literal(trimToWidth(line, w - 6)), x + 3, ry + 2, 0xFFE7E3D8);
         }
     }
 
@@ -763,11 +763,11 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
 
     private void drawStorageList(GuiGraphics g, int x, int y, int w, int h) {
         if (!data.canManageDock()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_owner_only"), x + 4, y + 4, 0xAAAAAA);
+            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_owner_only"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         if (data.storageLines().isEmpty()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_empty"), x + 4, y + 4, 0xAAAAAA);
+            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_empty"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         int selected = Math.max(0, Math.min(data.selectedStorageIndex(), data.storageLines().size() - 1));
@@ -776,10 +776,10 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         for (int i = start; i < end; i++) {
             int row = i - start;
             int ry = y + row * STORAGE_ROW_H;
-            int bg = i == selected ? 0x55457A9A : 0x22000000;
+            int bg = i == selected ? 0x8860B6A7 : 0x220E0905;
             g.fill(x + 1, ry + 1, x + w - 1, ry + STORAGE_ROW_H - 1, bg);
             String line = (i + 1) + "." + (data.storageLines().get(i) == null ? "" : data.storageLines().get(i));
-            g.drawString(font, Component.literal(trimToWidth(line, w - 6)), x + 3, ry + 2, 0xE0E0E0);
+            g.drawString(font, Component.literal(trimToWidth(line, w - 6)), x + 3, ry + 2, 0xFFE7E3D8);
         }
     }
 }

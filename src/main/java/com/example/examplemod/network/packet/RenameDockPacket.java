@@ -21,7 +21,7 @@ public class RenameDockPacket {
 
     public static void encode(RenameDockPacket packet, FriendlyByteBuf buffer) {
         buffer.writeBlockPos(packet.dockPos);
-        buffer.writeUtf(packet.dockName, 64);
+        PacketStringCodec.writeUtfSafe(buffer, packet.dockName, 64);
     }
 
     public static RenameDockPacket decode(FriendlyByteBuf buffer) {

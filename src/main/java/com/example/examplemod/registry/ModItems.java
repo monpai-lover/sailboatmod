@@ -32,6 +32,16 @@ public final class ModItems {
             () -> new DescribedBlockItem(ModBlocks.MARKET_BLOCK.get(), new Item.Properties(), "item.sailboatmod.market.desc")
     );
 
+    public static final RegistryObject<Item> NATION_CORE_ITEM = ITEMS.register(
+            "nation_core",
+            () -> new DescribedBlockItem(ModBlocks.NATION_CORE_BLOCK.get(), new Item.Properties().stacksTo(1), "item.sailboatmod.nation_core.desc")
+    );
+
+    public static final RegistryObject<Item> NATION_FLAG_ITEM = ITEMS.register(
+            "nation_flag",
+            () -> new DescribedBlockItem(ModBlocks.NATION_FLAG_BLOCK.get(), new Item.Properties().stacksTo(16), "item.sailboatmod.nation_flag.desc")
+    );
+
     private ModItems() {
     }
 }

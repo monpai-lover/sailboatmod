@@ -24,9 +24,9 @@ public class OpenDockScreenPacket {
     public static void encode(OpenDockScreenPacket packet, FriendlyByteBuf buffer) {
         DockScreenData data = packet.data;
         buffer.writeBlockPos(data.dockPos());
-        buffer.writeUtf(data.dockName(), 64);
-        buffer.writeUtf(data.dockOwnerName(), 64);
-        buffer.writeUtf(data.dockOwnerUuid(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.dockName(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.dockOwnerName(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.dockOwnerUuid(), 64);
         buffer.writeBoolean(data.canManageDock());
         buffer.writeBoolean(data.nonOrderAutoReturnEnabled());
         buffer.writeBoolean(data.nonOrderAutoUnloadEnabled());
@@ -34,11 +34,11 @@ public class OpenDockScreenPacket {
 
         buffer.writeVarInt(data.routeNames().size());
         for (String routeName : data.routeNames()) {
-            buffer.writeUtf(routeName, 128);
+            PacketStringCodec.writeUtfSafe(buffer, routeName, 128);
         }
         buffer.writeVarInt(data.routeMetas().size());
         for (String meta : data.routeMetas()) {
-            buffer.writeUtf(meta, 160);
+            PacketStringCodec.writeUtfSafe(buffer, meta, 160);
         }
         buffer.writeVarInt(data.selectedRouteIndex());
         buffer.writeVarInt(data.zoneMinX());
@@ -56,7 +56,7 @@ public class OpenDockScreenPacket {
         buffer.writeVarInt(data.nearbyBoatIds().size());
         for (int i = 0; i < data.nearbyBoatIds().size(); i++) {
             buffer.writeVarInt(data.nearbyBoatIds().get(i));
-            buffer.writeUtf(data.nearbyBoatNames().get(i), 128);
+            PacketStringCodec.writeUtfSafe(buffer, data.nearbyBoatNames().get(i), 128);
             Vec3 boatPos = i < data.nearbyBoatPositions().size() ? data.nearbyBoatPositions().get(i) : Vec3.ZERO;
             buffer.writeDouble(boatPos.x);
             buffer.writeDouble(boatPos.y);
@@ -66,23 +66,23 @@ public class OpenDockScreenPacket {
 
         buffer.writeVarInt(data.storageLines().size());
         for (String storageLine : data.storageLines()) {
-            buffer.writeUtf(storageLine, 160);
+            PacketStringCodec.writeUtfSafe(buffer, storageLine, 160);
         }
         buffer.writeVarInt(data.selectedStorageIndex());
 
         buffer.writeVarInt(data.waybillNames().size());
         for (String waybillName : data.waybillNames()) {
-            buffer.writeUtf(waybillName, 192);
+            PacketStringCodec.writeUtfSafe(buffer, waybillName, 192);
         }
         buffer.writeVarInt(data.selectedWaybillIndex());
 
         buffer.writeVarInt(data.selectedWaybillInfoLines().size());
         for (String line : data.selectedWaybillInfoLines()) {
-            buffer.writeUtf(line, 192);
+            PacketStringCodec.writeUtfSafe(buffer, line, 192);
         }
         buffer.writeVarInt(data.selectedWaybillCargoLines().size());
         for (String line : data.selectedWaybillCargoLines()) {
-            buffer.writeUtf(line, 160);
+            PacketStringCodec.writeUtfSafe(buffer, line, 160);
         }
     }
 

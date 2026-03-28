@@ -23,6 +23,7 @@ public class BlueMapMarkerSavedData extends SavedData {
 
     private final Map<String, DockSnapshot> docks = new LinkedHashMap<>();
     private final Map<String, BoatSnapshot> boats = new LinkedHashMap<>();
+    private final Map<String, NationOverlaySnapshot> nationOverlays = new LinkedHashMap<>();
 
     public static BlueMapMarkerSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
@@ -52,6 +53,15 @@ public class BlueMapMarkerSavedData extends SavedData {
             BoatSnapshot snapshot = BoatSnapshot.load(compound);
             data.boats.put(boatKey(snapshot.dimension(), snapshot.uuid()), snapshot);
         }
+
+        ListTag nationOverlayTag = tag.getList("NationOverlays", Tag.TAG_COMPOUND);
+        for (Tag raw : nationOverlayTag) {
+            if (!(raw instanceof CompoundTag compound)) {
+                continue;
+            }
+            NationOverlaySnapshot snapshot = NationOverlaySnapshot.load(compound);
+            data.nationOverlays.put(nationOverlayKey(snapshot.dimension(), snapshot.nationId()), snapshot);
+        }
         return data;
     }
 
@@ -68,6 +78,12 @@ public class BlueMapMarkerSavedData extends SavedData {
             boatTag.add(snapshot.save());
         }
         tag.put("Boats", boatTag);
+
+        ListTag nationOverlayTag = new ListTag();
+        for (NationOverlaySnapshot snapshot : nationOverlays.values()) {
+            nationOverlayTag.add(snapshot.save());
+        }
+        tag.put("NationOverlays", nationOverlayTag);
         return tag;
     }
 
@@ -123,12 +139,63 @@ public class BlueMapMarkerSavedData extends SavedData {
         return results;
     }
 
+    public void replaceNationOverlays(ResourceKey<Level> dimension, List<NationOverlaySnapshot> snapshots) {
+        String dimensionId = dimension.location().toString();
+        Map<String, NationOverlaySnapshot> incoming = new LinkedHashMap<>();
+        for (NationOverlaySnapshot snapshot : snapshots) {
+            if (!dimensionId.equals(snapshot.dimension())) {
+                continue;
+            }
+            incoming.put(nationOverlayKey(snapshot.dimension(), snapshot.nationId()), snapshot);
+        }
+
+        boolean changed = false;
+        List<String> toRemove = new ArrayList<>();
+        for (Map.Entry<String, NationOverlaySnapshot> entry : nationOverlays.entrySet()) {
+            if (!dimensionId.equals(entry.getValue().dimension())) {
+                continue;
+            }
+            if (!incoming.containsKey(entry.getKey())) {
+                toRemove.add(entry.getKey());
+            }
+        }
+        for (String key : toRemove) {
+            nationOverlays.remove(key);
+            changed = true;
+        }
+        for (Map.Entry<String, NationOverlaySnapshot> entry : incoming.entrySet()) {
+            NationOverlaySnapshot current = nationOverlays.get(entry.getKey());
+            if (!entry.getValue().equals(current)) {
+                nationOverlays.put(entry.getKey(), entry.getValue());
+                changed = true;
+            }
+        }
+        if (changed) {
+            setDirty();
+        }
+    }
+
+    public List<NationOverlaySnapshot> getNationOverlays(ResourceKey<Level> dimension) {
+        String dimensionId = dimension.location().toString();
+        List<NationOverlaySnapshot> results = new ArrayList<>();
+        for (NationOverlaySnapshot snapshot : nationOverlays.values()) {
+            if (dimensionId.equals(snapshot.dimension())) {
+                results.add(snapshot);
+            }
+        }
+        return results;
+    }
+
     private static String dockKey(String dimension, BlockPos pos) {
         return dimension + "|" + pos.asLong();
     }
 
     private static String boatKey(String dimension, UUID uuid) {
         return dimension + "|" + uuid;
+    }
+
+    private static String nationOverlayKey(String dimension, String nationId) {
+        return dimension + "|" + nationId;
     }
 
     public record DockSnapshot(
@@ -239,8 +306,125 @@ public class BlueMapMarkerSavedData extends SavedData {
         }
     }
 
+    public record NationOverlaySnapshot(
+            String dimension,
+            String nationId,
+            String nationName,
+            String leaderName,
+            int colorRgb,
+            int chunkCount,
+            boolean activeWar,
+            String warRole,
+            String warOpponentName,
+            String warCaptureState,
+            int attackerScore,
+            int defenderScore,
+            int remainingWarSeconds,
+            boolean hasCore,
+            BlockPos corePos,
+            List<BorderSegmentSnapshot> borders
+    ) {
+        public NationOverlaySnapshot {
+            dimension = sanitize(dimension);
+            nationId = sanitize(nationId);
+            nationName = sanitize(nationName);
+            leaderName = sanitize(leaderName);
+            warRole = sanitize(warRole);
+            warOpponentName = sanitize(warOpponentName);
+            warCaptureState = sanitize(warCaptureState);
+            chunkCount = Math.max(0, chunkCount);
+            attackerScore = Math.max(0, attackerScore);
+            defenderScore = Math.max(0, defenderScore);
+            remainingWarSeconds = Math.max(0, remainingWarSeconds);
+            corePos = corePos == null ? BlockPos.ZERO : corePos.immutable();
+            borders = borders == null ? List.of() : borders.stream().map(BorderSegmentSnapshot::copy).toList();
+        }
+
+        public CompoundTag save() {
+            CompoundTag tag = new CompoundTag();
+            tag.putString("Dimension", dimension);
+            tag.putString("NationId", nationId);
+            tag.putString("NationName", nationName);
+            tag.putString("LeaderName", leaderName);
+            tag.putInt("ColorRgb", colorRgb);
+            tag.putInt("ChunkCount", chunkCount);
+            tag.putBoolean("ActiveWar", activeWar);
+            tag.putString("WarRole", warRole);
+            tag.putString("WarOpponentName", warOpponentName);
+            tag.putString("WarCaptureState", warCaptureState);
+            tag.putInt("AttackerScore", attackerScore);
+            tag.putInt("DefenderScore", defenderScore);
+            tag.putInt("RemainingWarSeconds", remainingWarSeconds);
+            tag.putBoolean("HasCore", hasCore);
+            tag.putLong("CorePos", corePos.asLong());
+
+            ListTag bordersTag = new ListTag();
+            for (BorderSegmentSnapshot border : borders) {
+                bordersTag.add(border.save());
+            }
+            tag.put("Borders", bordersTag);
+            return tag;
+        }
+
+        public static NationOverlaySnapshot load(CompoundTag tag) {
+            List<BorderSegmentSnapshot> borders = new ArrayList<>();
+            ListTag bordersTag = tag.getList("Borders", Tag.TAG_COMPOUND);
+            for (Tag raw : bordersTag) {
+                if (raw instanceof CompoundTag compound) {
+                    borders.add(BorderSegmentSnapshot.load(compound));
+                }
+            }
+            return new NationOverlaySnapshot(
+                    tag.getString("Dimension"),
+                    tag.getString("NationId"),
+                    tag.getString("NationName"),
+                    tag.getString("LeaderName"),
+                    tag.getInt("ColorRgb"),
+                    tag.getInt("ChunkCount"),
+                    tag.getBoolean("ActiveWar"),
+                    tag.getString("WarRole"),
+                    tag.getString("WarOpponentName"),
+                    tag.contains("WarCaptureState", Tag.TAG_STRING) ? tag.getString("WarCaptureState") : "idle",
+                    tag.contains("AttackerScore", Tag.TAG_INT) ? tag.getInt("AttackerScore") : 0,
+                    tag.contains("DefenderScore", Tag.TAG_INT) ? tag.getInt("DefenderScore") : 0,
+                    tag.contains("RemainingWarSeconds", Tag.TAG_INT) ? tag.getInt("RemainingWarSeconds") : 0,
+                    tag.getBoolean("HasCore"),
+                    tag.getBoolean("HasCore") ? BlockPos.of(tag.getLong("CorePos")) : BlockPos.ZERO,
+                    borders
+            );
+        }
+    }
+
+    public record BorderSegmentSnapshot(
+            int startX,
+            int startZ,
+            int endX,
+            int endZ
+    ) {
+        public BorderSegmentSnapshot copy() {
+            return new BorderSegmentSnapshot(startX, startZ, endX, endZ);
+        }
+
+        public CompoundTag save() {
+            CompoundTag tag = new CompoundTag();
+            tag.putInt("StartX", startX);
+            tag.putInt("StartZ", startZ);
+            tag.putInt("EndX", endX);
+            tag.putInt("EndZ", endZ);
+            return tag;
+        }
+
+        public static BorderSegmentSnapshot load(CompoundTag tag) {
+            return new BorderSegmentSnapshot(
+                    tag.getInt("StartX"),
+                    tag.getInt("StartZ"),
+                    tag.getInt("EndX"),
+                    tag.getInt("EndZ")
+            );
+        }
+    }
+
     private static String sanitize(String value) {
         return value == null ? "" : value;
     }
 }
-

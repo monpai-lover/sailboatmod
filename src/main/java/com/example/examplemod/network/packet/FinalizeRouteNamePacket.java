@@ -19,7 +19,7 @@ public class FinalizeRouteNamePacket {
 
     public static void encode(FinalizeRouteNamePacket packet, FriendlyByteBuf buffer) {
         buffer.writeEnum(packet.hand);
-        buffer.writeUtf(packet.routeName, 64);
+        PacketStringCodec.writeUtfSafe(buffer, packet.routeName, 64);
     }
 
     public static FinalizeRouteNamePacket decode(FriendlyByteBuf buffer) {

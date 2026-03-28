@@ -22,13 +22,13 @@ public class OpenMarketScreenPacket {
     public static void encode(OpenMarketScreenPacket packet, FriendlyByteBuf buffer) {
         MarketOverviewData data = packet.data;
         buffer.writeBlockPos(data.marketPos());
-        buffer.writeUtf(data.marketName(), 64);
-        buffer.writeUtf(data.ownerName(), 64);
-        buffer.writeUtf(data.ownerUuid(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.marketName(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.ownerName(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.ownerUuid(), 64);
         buffer.writeVarInt(data.pendingCredits());
         buffer.writeBoolean(data.linkedDock());
-        buffer.writeUtf(data.linkedDockName(), 64);
-        buffer.writeUtf(data.linkedDockPosText(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.linkedDockName(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.linkedDockPosText(), 64);
         buffer.writeBoolean(data.dockStorageAccessible());
         writeLines(buffer, data.dockStorageLines(), 160);
         writeLines(buffer, data.listingLines(), 192);
@@ -76,7 +76,7 @@ public class OpenMarketScreenPacket {
     private static void writeLines(FriendlyByteBuf buffer, List<String> lines, int maxLen) {
         buffer.writeVarInt(lines.size());
         for (String line : lines) {
-            buffer.writeUtf(line, maxLen);
+            PacketStringCodec.writeUtfSafe(buffer, line, maxLen);
         }
     }
 

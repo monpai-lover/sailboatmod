@@ -18,9 +18,17 @@ public final class ClientKeyMappings {
             "key.categories.gameplay"
     );
 
+    public static final KeyMapping OPEN_NATION_MENU = new KeyMapping(
+            "key.sailboatmod.open_nation_menu",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_N,
+            "key.categories.gameplay"
+    );
+
     @SubscribeEvent
     public static void registerKeys(RegisterKeyMappingsEvent event) {
         event.register(OPEN_SAILBOAT_INFO);
+        event.register(OPEN_NATION_MENU);
     }
 
     private ClientKeyMappings() {

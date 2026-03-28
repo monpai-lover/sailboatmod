@@ -21,6 +21,8 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.ROUTE_BOOK_ITEM.get());
                         output.accept(ModItems.DOCK_ITEM.get());
                         output.accept(ModItems.MARKET_ITEM.get());
+                        output.accept(ModItems.NATION_CORE_ITEM.get());
+                        output.accept(ModItems.NATION_FLAG_ITEM.get());
                     })
                     .build()
     );

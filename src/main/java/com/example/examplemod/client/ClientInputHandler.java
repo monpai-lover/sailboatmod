@@ -4,10 +4,12 @@ import com.example.examplemod.SailboatMod;
 import com.example.examplemod.client.screen.SailboatInfoScreen;
 import com.example.examplemod.entity.SailboatEntity;
 import com.example.examplemod.network.ModNetwork;
+import com.example.examplemod.network.packet.OpenNationMenuPacket;
 import com.example.examplemod.network.packet.OpenSailboatStoragePacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -26,6 +28,12 @@ public final class ClientInputHandler {
             return;
         }
 
+        if (ClientKeyMappings.OPEN_NATION_MENU.consumeClick()) {
+            NationClientHooks.openCachedOrEmpty();
+            ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket());
+            return;
+        }
+
         if (player.getVehicle() instanceof SailboatEntity && minecraft.options.keyInventory.consumeClick()) {
             ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket());
         }
@@ -33,6 +41,11 @@ public final class ClientInputHandler {
         if (player.getVehicle() instanceof SailboatEntity sailboat && ClientKeyMappings.OPEN_SAILBOAT_INFO.consumeClick()) {
             minecraft.setScreen(new SailboatInfoScreen(sailboat));
         }
+    }
+
+    @SubscribeEvent
+    public static void onClientLogout(ClientPlayerNetworkEvent.LoggingOut event) {
+        NationClientHooks.clearCache();
     }
 
     private ClientInputHandler() {
