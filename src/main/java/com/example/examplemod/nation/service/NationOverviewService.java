@@ -6,6 +6,7 @@ import com.example.examplemod.nation.menu.NationOverviewData;
 import com.example.examplemod.nation.menu.NationOverviewDiplomacyEntry;
 import com.example.examplemod.nation.menu.NationOverviewDiplomacyRequest;
 import com.example.examplemod.nation.menu.NationOverviewMember;
+import com.example.examplemod.nation.menu.NationOverviewTown;
 import com.example.examplemod.nation.model.NationClaimRecord;
 import com.example.examplemod.nation.model.NationDiplomacyRecord;
 import com.example.examplemod.nation.model.NationDiplomacyRequestRecord;
@@ -16,6 +17,7 @@ import com.example.examplemod.nation.model.NationOfficeRecord;
 import com.example.examplemod.nation.model.NationPermission;
 import com.example.examplemod.nation.model.NationRecord;
 import com.example.examplemod.nation.model.NationWarRecord;
+import com.example.examplemod.nation.model.TownRecord;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 
@@ -49,6 +51,7 @@ public final class NationOverviewService {
         NationRecord currentClaimNation = currentClaim == null ? null : data.getNation(currentClaim.nationId());
         NationWarRecord activeWar = NationWarService.getActiveWarForNation(data, nation.nationId());
         NationFlagRecord flag = data.getFlag(nation.flagId());
+        TownRecord capitalTown = TownService.getCapitalTown(data, nation);
         long cooldownRemaining = NationWarService.cooldownRemainingMillis(data, nation.nationId(), now);
         NationOfficeRecord officerOffice = data.getOffice(nation.nationId(), NationOfficeIds.OFFICER);
 
@@ -85,6 +88,22 @@ public final class NationOverviewService {
             ));
         }
 
+        List<NationOverviewTown> towns = new ArrayList<>();
+        List<TownRecord> townRecords = new ArrayList<>(data.getTownsForNation(nation.nationId()));
+        townRecords.sort(
+                Comparator.comparing((TownRecord town) -> !town.townId().equals(nation.capitalTownId()))
+                        .thenComparing(TownRecord::name, String.CASE_INSENSITIVE_ORDER)
+        );
+        for (TownRecord town : townRecords) {
+            towns.add(new NationOverviewTown(
+                    town.townId(),
+                    town.name(),
+                    playerName(data, player, town.mayorUuid()),
+                    data.getClaimsForTown(town.townId()).size(),
+                    town.townId().equals(nation.capitalTownId())
+            ));
+        }
+
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>();
         for (NationClaimRecord claim : data.getClaimsInArea(
                 player.level().dimension().location().toString(),
@@ -105,6 +124,7 @@ public final class NationOverviewService {
             ));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
+        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), playerChunk, CLAIM_PREVIEW_RADIUS);
 
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>();
         for (NationDiplomacyRecord relation : data.getDiplomacyForNation(nation.nationId())) {
@@ -138,6 +158,8 @@ public final class NationOverviewService {
                 nation.secondaryColorRgb(),
                 playerName(data, player, nation.leaderUuid()),
                 officeName(data, nation.nationId(), selfMember.officeId()),
+                capitalTown == null ? "" : capitalTown.townId(),
+                capitalTown == null ? "" : capitalTown.name(),
                 memberRecords.size(),
                 nation.hasCore(),
                 nation.coreDimension(),
@@ -176,6 +198,8 @@ public final class NationOverviewService {
                 diplomacyRelations,
                 incomingDiplomacyRequests,
                 members,
+                towns,
+                nearbyTerrainColors,
                 nearbyClaims
         );
     }

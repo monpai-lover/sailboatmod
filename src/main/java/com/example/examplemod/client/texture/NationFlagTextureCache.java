@@ -348,6 +348,20 @@ public final class NationFlagTextureCache {
         }
     }
 
+    public static void clearCache() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft != null) {
+            for (ResourceLocation textureId : CACHE.values()) {
+                minecraft.getTextureManager().release(textureId);
+            }
+        }
+        CACHE.clear();
+        SYNCED_BYTES.clear();
+        FLAG_VERSIONS.clear();
+        PENDING.clear();
+        bannerBaseBytes = null;
+    }
+
     private NationFlagTextureCache() {
     }
 }

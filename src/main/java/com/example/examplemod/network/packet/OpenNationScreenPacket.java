@@ -6,6 +6,7 @@ import com.example.examplemod.nation.menu.NationOverviewData;
 import com.example.examplemod.nation.menu.NationOverviewDiplomacyEntry;
 import com.example.examplemod.nation.menu.NationOverviewDiplomacyRequest;
 import com.example.examplemod.nation.menu.NationOverviewMember;
+import com.example.examplemod.nation.menu.NationOverviewTown;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
@@ -32,6 +33,8 @@ public class OpenNationScreenPacket {
         buffer.writeInt(data.secondaryColorRgb());
         writeUtfSafe(buffer, data.leaderName(), 64);
         writeUtfSafe(buffer, data.officeName(), 64);
+        writeUtfSafe(buffer, data.capitalTownId(), 40);
+        writeUtfSafe(buffer, data.capitalTownName(), 64);
         buffer.writeVarInt(data.memberCount());
         buffer.writeBoolean(data.hasCore());
         writeUtfSafe(buffer, data.coreDimension(), 128);
@@ -87,6 +90,18 @@ public class OpenNationScreenPacket {
             writeUtfSafe(buffer, member.officeName(), 64);
             buffer.writeBoolean(member.online());
         }
+        buffer.writeVarInt(data.towns().size());
+        for (NationOverviewTown town : data.towns()) {
+            writeUtfSafe(buffer, town.townId(), 40);
+            writeUtfSafe(buffer, town.townName(), 64);
+            writeUtfSafe(buffer, town.mayorName(), 64);
+            buffer.writeVarInt(town.claimCount());
+            buffer.writeBoolean(town.capital());
+        }
+        buffer.writeVarInt(data.nearbyTerrainColors().size());
+        for (Integer color : data.nearbyTerrainColors()) {
+            buffer.writeInt(color == null ? 0xFF33414A : color);
+        }
         buffer.writeVarInt(data.nearbyClaims().size());
         for (NationOverviewClaim claim : data.nearbyClaims()) {
             buffer.writeInt(claim.chunkX());
@@ -109,6 +124,8 @@ public class OpenNationScreenPacket {
         int secondaryColorRgb = buffer.readInt();
         String leaderName = buffer.readUtf(64);
         String officeName = buffer.readUtf(64);
+        String capitalTownId = buffer.readUtf(40);
+        String capitalTownName = buffer.readUtf(64);
         int memberCount = buffer.readVarInt();
         boolean hasCore = buffer.readBoolean();
         String coreDimension = buffer.readUtf(128);
@@ -173,6 +190,22 @@ public class OpenNationScreenPacket {
                     buffer.readBoolean()
             ));
         }
+        int townListSize = buffer.readVarInt();
+        List<NationOverviewTown> towns = new ArrayList<>(townListSize);
+        for (int i = 0; i < townListSize; i++) {
+            towns.add(new NationOverviewTown(
+                    buffer.readUtf(40),
+                    buffer.readUtf(64),
+                    buffer.readUtf(64),
+                    buffer.readVarInt(),
+                    buffer.readBoolean()
+            ));
+        }
+        int terrainColorCount = buffer.readVarInt();
+        List<Integer> nearbyTerrainColors = new ArrayList<>(terrainColorCount);
+        for (int i = 0; i < terrainColorCount; i++) {
+            nearbyTerrainColors.add(buffer.readInt());
+        }
         int claimListSize = buffer.readVarInt();
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>(claimListSize);
         for (int i = 0; i < claimListSize; i++) {
@@ -196,6 +229,8 @@ public class OpenNationScreenPacket {
                 secondaryColorRgb,
                 leaderName,
                 officeName,
+                capitalTownId,
+                capitalTownName,
                 memberCount,
                 hasCore,
                 coreDimension,
@@ -234,6 +269,8 @@ public class OpenNationScreenPacket {
                 diplomacyRelations,
                 incomingDiplomacyRequests,
                 members,
+                towns,
+                nearbyTerrainColors,
                 nearbyClaims
         ));
     }

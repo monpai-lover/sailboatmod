@@ -5,6 +5,8 @@ import com.example.examplemod.block.DockBlock;
 import com.example.examplemod.block.MarketBlock;
 import com.example.examplemod.block.NationCoreBlock;
 import com.example.examplemod.block.NationFlagBlock;
+import com.example.examplemod.block.TownFlagBlock;
+import com.example.examplemod.block.TownCoreBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -26,6 +28,11 @@ public final class ModBlocks {
             () -> new MarketBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_LIGHT_BLUE).strength(3.0F).sound(SoundType.WOOD))
     );
 
+    public static final RegistryObject<Block> TOWN_CORE_BLOCK = BLOCKS.register(
+            "town_core",
+            () -> new TownCoreBlock(BlockBehaviour.Properties.of().mapColor(MapColor.TERRACOTTA_CYAN).strength(4.0F).sound(SoundType.STONE).requiresCorrectToolForDrops())
+    );
+
     public static final RegistryObject<Block> NATION_CORE_BLOCK = BLOCKS.register(
             "nation_core",
             () -> new NationCoreBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_RED).strength(4.0F).sound(SoundType.METAL).requiresCorrectToolForDrops())
@@ -36,7 +43,11 @@ public final class ModBlocks {
             () -> new NationFlagBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_RED).strength(2.0F).sound(SoundType.WOOL).noOcclusion())
     );
 
+    public static final RegistryObject<Block> TOWN_FLAG_BLOCK = BLOCKS.register(
+            "town_flag",
+            () -> new TownFlagBlock(BlockBehaviour.Properties.of().mapColor(MapColor.TERRACOTTA_CYAN).strength(2.0F).sound(SoundType.WOOL).noOcclusion())
+    );
+
     private ModBlocks() {
     }
 }
-

@@ -8,6 +8,7 @@ import com.example.examplemod.nation.service.NationFlagService;
 import com.example.examplemod.nation.service.NationResult;
 import com.example.examplemod.nation.service.NationService;
 import com.example.examplemod.nation.service.NationWarService;
+import com.example.examplemod.nation.service.TownService;
 import com.example.examplemod.network.packet.NationToastPacket;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.BoolArgumentType;
@@ -33,6 +34,22 @@ public final class NationCommands {
         nation.then(Commands.literal("create")
                 .then(Commands.argument("name", StringArgumentType.greedyString())
                         .executes(context -> sendResult(context.getSource(), NationService.createNation(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "name"))))));
+
+        nation.then(Commands.literal("town")
+                .then(Commands.literal("create")
+                        .then(Commands.argument("name", StringArgumentType.greedyString())
+                                .executes(context -> sendResult(context.getSource(), TownService.createTown(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "name"))))))
+                .then(Commands.literal("rename")
+                        .then(Commands.argument("town", StringArgumentType.word())
+                                .then(Commands.argument("name", StringArgumentType.greedyString())
+                                        .executes(context -> sendResult(context.getSource(), TownService.renameTown(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"), StringArgumentType.getString(context, "name")))))))
+                .then(Commands.literal("info")
+                        .then(Commands.argument("town", StringArgumentType.greedyString())
+                                .executes(context -> sendLines(context.getSource(), TownService.describeTown(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))))
+                .then(Commands.literal("mayor")
+                        .then(Commands.argument("town", StringArgumentType.word())
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .executes(context -> sendResult(context.getSource(), TownService.assignMayor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"), EntityArgument.getPlayer(context, "player"))))))));
 
         nation.then(Commands.literal("rename")
                 .then(Commands.argument("name", StringArgumentType.greedyString())
@@ -248,6 +265,7 @@ public final class NationCommands {
                 Component.translatable("command.sailboatmod.nation.help.header"),
                 Component.translatable("command.sailboatmod.nation.help.create"),
                 Component.translatable("command.sailboatmod.nation.help.join"),
+                Component.translatable("command.sailboatmod.nation.help.town"),
                 Component.translatable("command.sailboatmod.nation.help.manage"),
                 Component.translatable("command.sailboatmod.nation.help.claim"),
                 Component.translatable("command.sailboatmod.nation.help.flag"),

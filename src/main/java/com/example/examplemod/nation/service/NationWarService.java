@@ -1,21 +1,26 @@
 package com.example.examplemod.nation.service;
 
 import com.example.examplemod.nation.data.NationSavedData;
+import com.example.examplemod.nation.menu.NationOverviewData;
 import com.example.examplemod.nation.model.NationMemberRecord;
 import com.example.examplemod.nation.model.NationPermission;
 import com.example.examplemod.nation.model.NationRecord;
 import com.example.examplemod.nation.model.NationWarRecord;
 import com.example.examplemod.network.packet.NationToastPacket;
+import com.example.examplemod.network.packet.OpenNationScreenPacket;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.AABB;
+import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class NationWarService {
@@ -31,6 +36,7 @@ public final class NationWarService {
     private static final long WAR_DURATION_MILLIS = 20L * 60L * 1000L;
     private static final long WAR_COOLDOWN_MILLIS = 10L * 60L * 1000L;
     private static final long ENDED_WAR_RETENTION_MILLIS = 30L * 60L * 1000L;
+    private static final Map<String, WarSyncSnapshot> WAR_SYNC_CACHE = new HashMap<>();
 
     public static int scoreToWin() {
         return SCORE_TO_WIN;
@@ -42,6 +48,10 @@ public final class NationWarService {
 
     public static long warCooldownMillis() {
         return WAR_COOLDOWN_MILLIS;
+    }
+
+    public static void clearRuntimeState() {
+        WAR_SYNC_CACHE.clear();
     }
 
     public static int remainingWarSeconds(NationWarRecord war, long nowMillis) {
@@ -130,6 +140,7 @@ public final class NationWarService {
         broadcast(declareMessage);
         broadcast(timerMessage);
         notifyWarParticipants(actor.getServer(), data, attacker.nationId(), defender.nationId(), Component.translatable("toast.sailboatmod.nation.war.title"), declareMessage);
+        syncWarOverviewParticipants(actor.getServer(), data, war, now, true);
         return NationResult.success(Component.translatable("command.sailboatmod.nation.war.declare.success", defender.name()));
     }
 
@@ -291,7 +302,7 @@ public final class NationWarService {
             return;
         }
 
-        data.putWar(new NationWarRecord(
+        NationWarRecord updatedWar = new NationWarRecord(
                 war.warId(),
                 war.attackerNationId(),
                 war.defenderNationId(),
@@ -304,7 +315,9 @@ public final class NationWarService {
                 "",
                 0L,
                 captureState
-        ));
+        );
+        data.putWar(updatedWar);
+        syncWarOverviewParticipants(server, data, updatedWar, nowMillis, false);
     }
 
     private static int awardOccupationScore(int currentScore, long tickCount) {
@@ -330,7 +343,7 @@ public final class NationWarService {
     }
 
     private static void endWar(NationSavedData data, NationWarRecord war, String winnerNationId, String captureState, long endedAt, Component message) {
-        data.putWar(new NationWarRecord(
+        NationWarRecord endedWar = new NationWarRecord(
                 war.warId(),
                 war.attackerNationId(),
                 war.defenderNationId(),
@@ -343,9 +356,12 @@ public final class NationWarService {
                 winnerNationId,
                 endedAt,
                 captureState
-        ));
-                broadcast(message);
+        );
+        data.putWar(endedWar);
+        broadcast(message);
         notifyWarParticipants(ServerLifecycleHooks.getCurrentServer(), data, war.attackerNationId(), war.defenderNationId(), Component.translatable("toast.sailboatmod.nation.war.title"), message);
+        syncWarOverviewParticipants(ServerLifecycleHooks.getCurrentServer(), data, endedWar, endedAt, true);
+        WAR_SYNC_CACHE.remove(war.warId());
         broadcast(Component.translatable("command.sailboatmod.nation.war.cooldown_start", formatDurationMinutes(WAR_COOLDOWN_MILLIS)));
     }
 
@@ -377,7 +393,51 @@ public final class NationWarService {
         }
         for (String warId : toRemove) {
             data.removeWar(warId);
+            WAR_SYNC_CACHE.remove(warId);
         }
+    }
+
+    private static void syncWarOverviewParticipants(MinecraftServer server, NationSavedData data, NationWarRecord war, long nowMillis, boolean force) {
+        if (server == null || data == null || war == null) {
+            return;
+        }
+        WarSyncSnapshot nextSnapshot = new WarSyncSnapshot(
+                war.state(),
+                war.attackerScore(),
+                war.defenderScore(),
+                (int) Math.round(war.captureProgress()),
+                safeStatus(war.captureState()),
+                remainingWarSeconds(war, nowMillis),
+                warCooldownSeconds(data, war, nowMillis)
+        );
+        WarSyncSnapshot previous = WAR_SYNC_CACHE.get(war.warId());
+        if (!force && nextSnapshot.equals(previous)) {
+            return;
+        }
+        WAR_SYNC_CACHE.put(war.warId(), nextSnapshot);
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            NationMemberRecord member = data.getMember(player.getUUID());
+            if (member == null) {
+                continue;
+            }
+            String nationId = member.nationId();
+            if (!nationId.equals(war.attackerNationId()) && !nationId.equals(war.defenderNationId())) {
+                continue;
+            }
+            NationOverviewData overview = NationOverviewService.buildFor(player);
+            com.example.examplemod.network.ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(overview));
+        }
+    }
+
+    private static int warCooldownSeconds(NationSavedData data, NationWarRecord war, long nowMillis) {
+        if (data == null || war == null) {
+            return 0;
+        }
+        long remaining = Math.max(
+                cooldownRemainingMillis(data, war.attackerNationId(), nowMillis),
+                cooldownRemainingMillis(data, war.defenderNationId(), nowMillis)
+        );
+        return (int) Math.ceil(remaining / 1000.0D);
     }
 
     private static String determineCaptureState(int attackerCount, int defenderCount) {
@@ -429,6 +489,17 @@ public final class NationWarService {
     private static String formatDurationMinutes(long millis) {
         long totalMinutes = Math.max(1L, millis / 60000L);
         return totalMinutes + "m";
+    }
+
+    private record WarSyncSnapshot(
+            String state,
+            int attackerScore,
+            int defenderScore,
+            int captureProgress,
+            String captureState,
+            int remainingSeconds,
+            int cooldownSeconds
+    ) {
     }
 
     private NationWarService() {

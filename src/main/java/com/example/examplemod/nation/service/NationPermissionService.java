@@ -9,6 +9,7 @@ import com.example.examplemod.nation.model.NationMemberRecord;
 import com.example.examplemod.nation.model.NationOfficeRecord;
 import com.example.examplemod.nation.model.NationPermission;
 import com.example.examplemod.nation.model.NationRecord;
+import com.example.examplemod.nation.model.TownRecord;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
@@ -97,22 +98,28 @@ public final class NationPermissionService {
         NationRecord ownerNation = data.getNation(claim.nationId());
         NationMemberRecord actorMember = playerUuid == null ? null : data.getMember(playerUuid);
         NationOfficeRecord actorOffice = actorMember == null ? null : data.getOffice(actorMember.nationId(), actorMember.officeId());
-        ChunkRole role = resolveRole(data, actorMember, actorOffice, claim);
+        ChunkRole role = resolveRole(data, playerUuid, actorMember, actorOffice, claim);
         NationDiplomacyStatus diplomacy = resolveDiplomacy(data, actorMember == null ? "" : actorMember.nationId(), claim.nationId());
         NationClaimAccessLevel requiredLevel = requiredLevel(claim, action);
 
         boolean allowed = switch (role) {
-            case UNCLAIMED -> true;
-            case LEADER, OFFICER, MEMBER -> requiredLevel != null && actorOffice != null && actorOffice.priority() <= requiredLevel.maxPriority();
+            case UNCLAIMED, LEADER -> true;
+            case OFFICER, MEMBER -> requiredLevel != null && actorOffice != null && actorOffice.priority() <= requiredLevel.maxPriority();
             default -> false;
         };
 
         return new AccessResult(allowed, claim, ownerNation, actorMember, actorOffice, role, diplomacy, requiredLevel, action);
     }
 
-    private static ChunkRole resolveRole(NationSavedData data, NationMemberRecord actorMember, NationOfficeRecord actorOffice, NationClaimRecord claim) {
+    private static ChunkRole resolveRole(NationSavedData data, UUID playerUuid, NationMemberRecord actorMember, NationOfficeRecord actorOffice, NationClaimRecord claim) {
         if (claim == null) {
             return ChunkRole.UNCLAIMED;
+        }
+        if (!claim.townId().isBlank() && playerUuid != null) {
+            TownRecord town = data.getTown(claim.townId());
+            if (town != null && playerUuid.equals(town.mayorUuid())) {
+                return ChunkRole.LEADER;
+            }
         }
         if (actorMember == null || actorMember.nationId().isBlank()) {
             return ChunkRole.OUTSIDER;

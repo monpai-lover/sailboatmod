@@ -15,18 +15,23 @@ import com.example.examplemod.network.packet.OpenDockScreenPacket;
 import com.example.examplemod.network.packet.OpenMarketScreenPacket;
 import com.example.examplemod.network.packet.OpenNationMenuPacket;
 import com.example.examplemod.network.packet.OpenNationScreenPacket;
+import com.example.examplemod.network.packet.OpenTownMenuPacket;
+import com.example.examplemod.network.packet.OpenTownScreenPacket;
 import com.example.examplemod.network.packet.OpenSailboatStoragePacket;
 import com.example.examplemod.network.packet.PurchaseMarketListingPacket;
 import com.example.examplemod.network.packet.RenameDockPacket;
 import com.example.examplemod.network.packet.RenameSailboatPacket;
 import com.example.examplemod.network.packet.SelectSailboatSeatPacket;
 import com.example.examplemod.network.packet.SetClaimPermissionPacket;
+import com.example.examplemod.network.packet.SetTownClaimPermissionPacket;
 import com.example.examplemod.network.packet.SetDockZonePacket;
 import com.example.examplemod.network.packet.SetHandlingPresetPacket;
 import com.example.examplemod.network.packet.SetSailboatRentalPricePacket;
 import com.example.examplemod.network.packet.SyncNationFlagChunkPacket;
+import com.example.examplemod.network.packet.TownGuiActionPacket;
 import com.example.examplemod.network.packet.ToggleSailPacket;
 import com.example.examplemod.network.packet.UploadNationFlagChunkPacket;
+import com.example.examplemod.network.packet.UploadTownFlagChunkPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.simple.SimpleChannel;
@@ -185,10 +190,24 @@ public final class ModNetwork {
         );
         CHANNEL.registerMessage(
                 packetId++,
+                OpenTownMenuPacket.class,
+                OpenTownMenuPacket::encode,
+                OpenTownMenuPacket::decode,
+                OpenTownMenuPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
                 NationGuiActionPacket.class,
                 NationGuiActionPacket::encode,
                 NationGuiActionPacket::decode,
                 NationGuiActionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                TownGuiActionPacket.class,
+                TownGuiActionPacket::encode,
+                TownGuiActionPacket::decode,
+                TownGuiActionPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -199,10 +218,24 @@ public final class ModNetwork {
         );
         CHANNEL.registerMessage(
                 packetId++,
+                OpenTownScreenPacket.class,
+                OpenTownScreenPacket::encode,
+                OpenTownScreenPacket::decode,
+                OpenTownScreenPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
                 SetClaimPermissionPacket.class,
                 SetClaimPermissionPacket::encode,
                 SetClaimPermissionPacket::decode,
                 SetClaimPermissionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SetTownClaimPermissionPacket.class,
+                SetTownClaimPermissionPacket::encode,
+                SetTownClaimPermissionPacket::decode,
+                SetTownClaimPermissionPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -217,6 +250,13 @@ public final class ModNetwork {
                 UploadNationFlagChunkPacket::encode,
                 UploadNationFlagChunkPacket::decode,
                 UploadNationFlagChunkPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                UploadTownFlagChunkPacket.class,
+                UploadTownFlagChunkPacket::encode,
+                UploadTownFlagChunkPacket::decode,
+                UploadTownFlagChunkPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,

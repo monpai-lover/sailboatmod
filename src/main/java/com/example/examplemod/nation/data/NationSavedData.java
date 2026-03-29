@@ -9,6 +9,7 @@ import com.example.examplemod.nation.model.NationJoinRequestRecord;
 import com.example.examplemod.nation.model.NationMemberRecord;
 import com.example.examplemod.nation.model.NationOfficeRecord;
 import com.example.examplemod.nation.model.NationRecord;
+import com.example.examplemod.nation.model.TownRecord;
 import com.example.examplemod.nation.model.NationWarRecord;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -30,6 +31,7 @@ public class NationSavedData extends SavedData {
     private static final String DATA_NAME = "sailboatmod_nations";
 
     private final Map<String, NationRecord> nations = new LinkedHashMap<>();
+    private final Map<String, TownRecord> towns = new LinkedHashMap<>();
     private final Map<UUID, NationMemberRecord> members = new LinkedHashMap<>();
     private final Map<String, NationOfficeRecord> offices = new LinkedHashMap<>();
     private final Map<String, NationInviteRecord> invites = new LinkedHashMap<>();
@@ -57,6 +59,16 @@ public class NationSavedData extends SavedData {
                 NationRecord nation = NationRecord.load(compound);
                 if (!nation.nationId().isBlank()) {
                     data.nations.put(nation.nationId(), nation);
+                }
+            }
+        }
+
+        ListTag townTag = tag.getList("Towns", Tag.TAG_COMPOUND);
+        for (Tag raw : townTag) {
+            if (raw instanceof CompoundTag compound) {
+                TownRecord town = TownRecord.load(compound);
+                if (!town.townId().isBlank()) {
+                    data.towns.put(town.townId(), town);
                 }
             }
         }
@@ -160,6 +172,12 @@ public class NationSavedData extends SavedData {
         }
         tag.put("Nations", nationTag);
 
+        ListTag townTag = new ListTag();
+        for (TownRecord town : towns.values()) {
+            townTag.add(town.save());
+        }
+        tag.put("Towns", townTag);
+
         ListTag memberTag = new ListTag();
         for (NationMemberRecord member : members.values()) {
             memberTag.add(member.save());
@@ -255,6 +273,17 @@ public class NationSavedData extends SavedData {
             return;
         }
         boolean changed = nations.remove(normalized) != null;
+
+        List<String> townIds = new ArrayList<>();
+        for (TownRecord town : towns.values()) {
+            if (normalized.equals(town.nationId())) {
+                townIds.add(town.townId());
+            }
+        }
+        for (String townId : townIds) {
+            towns.remove(townId);
+            changed = true;
+        }
 
         List<UUID> memberIds = new ArrayList<>();
         for (NationMemberRecord member : members.values()) {
@@ -359,6 +388,83 @@ public class NationSavedData extends SavedData {
         if (changed) {
             setDirty();
         }
+    }
+
+    public List<TownRecord> getTowns() {
+        return List.copyOf(towns.values());
+    }
+
+    public TownRecord getTown(String townId) {
+        if (townId == null || townId.isBlank()) {
+            return null;
+        }
+        return towns.get(normalizeId(townId));
+    }
+
+    public void putTown(TownRecord town) {
+        if (town == null || town.townId().isBlank()) {
+            return;
+        }
+        towns.put(town.townId(), town);
+        setDirty();
+    }
+
+    public void removeTown(String townId) {
+        String normalized = normalizeId(townId);
+        if (normalized.isBlank()) {
+            return;
+        }
+        boolean changed = towns.remove(normalized) != null;
+        List<String> claimKeys = new ArrayList<>();
+        for (Map.Entry<String, NationClaimRecord> entry : claims.entrySet()) {
+            if (normalized.equals(entry.getValue().townId())) {
+                claimKeys.add(entry.getKey());
+            }
+        }
+        for (String key : claimKeys) {
+            claims.remove(key);
+            changed = true;
+        }
+        if (changed) {
+            setDirty();
+        }
+    }
+
+    public List<TownRecord> getTownsForNation(String nationId) {
+        String normalized = normalizeId(nationId);
+        List<TownRecord> result = new ArrayList<>();
+        for (TownRecord town : towns.values()) {
+            if (normalized.equals(town.nationId())) {
+                result.add(town);
+            }
+        }
+        return result;
+    }
+
+    public List<TownRecord> getTownsForMayor(UUID mayorUuid) {
+        List<TownRecord> result = new ArrayList<>();
+        if (mayorUuid == null) {
+            return result;
+        }
+        for (TownRecord town : towns.values()) {
+            if (mayorUuid.equals(town.mayorUuid())) {
+                result.add(town);
+            }
+        }
+        return result;
+    }
+
+    public TownRecord findTownByName(String rawTownName) {
+        if (rawTownName == null || rawTownName.isBlank()) {
+            return null;
+        }
+        String normalized = rawTownName.trim();
+        for (TownRecord town : towns.values()) {
+            if (town.name().equalsIgnoreCase(normalized)) {
+                return town;
+            }
+        }
+        return null;
     }
 
     public NationMemberRecord getMember(UUID playerUuid) {
@@ -565,11 +671,42 @@ public class NationSavedData extends SavedData {
         setDirty();
     }
 
+    public void clearClaimsForTown(String townId) {
+        String normalized = normalizeId(townId);
+        if (normalized.isBlank()) {
+            return;
+        }
+        List<String> claimKeys = new ArrayList<>();
+        for (Map.Entry<String, NationClaimRecord> entry : claims.entrySet()) {
+            if (normalized.equals(entry.getValue().townId())) {
+                claimKeys.add(entry.getKey());
+            }
+        }
+        if (claimKeys.isEmpty()) {
+            return;
+        }
+        for (String key : claimKeys) {
+            claims.remove(key);
+        }
+        setDirty();
+    }
+
     public List<NationClaimRecord> getClaimsForNation(String nationId) {
         String normalized = normalizeId(nationId);
         List<NationClaimRecord> result = new ArrayList<>();
         for (NationClaimRecord claim : claims.values()) {
             if (normalized.equals(claim.nationId())) {
+                result.add(claim);
+            }
+        }
+        return result;
+    }
+
+    public List<NationClaimRecord> getClaimsForTown(String townId) {
+        String normalized = normalizeId(townId);
+        List<NationClaimRecord> result = new ArrayList<>();
+        for (NationClaimRecord claim : claims.values()) {
+            if (normalized.equals(claim.townId())) {
                 result.add(claim);
             }
         }

@@ -1,0 +1,22 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "WWW",
+    "WCW",
+    " S "
+  ],
+  "key": {
+    "W": {
+      "item": "minecraft:light_blue_wool"
+    },
+    "C": {
+      "item": "sailboatmod:town_core"
+    },
+    "S": {
+      "item": "minecraft:stick"
+    }
+  },
+  "result": {
+    "item": "sailboatmod:town_flag"
+  }
+}

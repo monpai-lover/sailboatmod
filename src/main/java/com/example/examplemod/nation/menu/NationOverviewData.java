@@ -11,6 +11,8 @@ public record NationOverviewData(
         int secondaryColorRgb,
         String leaderName,
         String officeName,
+        String capitalTownId,
+        String capitalTownName,
         int memberCount,
         boolean hasCore,
         String coreDimension,
@@ -49,6 +51,8 @@ public record NationOverviewData(
         List<NationOverviewDiplomacyEntry> diplomacyRelations,
         List<NationOverviewDiplomacyRequest> incomingDiplomacyRequests,
         List<NationOverviewMember> members,
+        List<NationOverviewTown> towns,
+        List<Integer> nearbyTerrainColors,
         List<NationOverviewClaim> nearbyClaims
 ) {
     public NationOverviewData {
@@ -59,6 +63,8 @@ public record NationOverviewData(
         secondaryColorRgb &= 0x00FFFFFF;
         leaderName = sanitize(leaderName, 64);
         officeName = sanitize(officeName, 64);
+        capitalTownId = sanitize(capitalTownId, 40);
+        capitalTownName = sanitize(capitalTownName, 64);
         coreDimension = sanitize(coreDimension, 128);
         currentChunkOwnerName = sanitize(currentChunkOwnerName, 64);
         breakAccessLevel = sanitize(breakAccessLevel, 16);
@@ -100,6 +106,17 @@ public record NationOverviewData(
                         sanitize(member.officeName(), 64),
                         member.online()))
                 .toList();
+        towns = towns == null ? List.of() : towns.stream()
+                .map(town -> new NationOverviewTown(
+                        sanitize(town.townId(), 40),
+                        sanitize(town.townName(), 64),
+                        sanitize(town.mayorName(), 64),
+                        town.claimCount(),
+                        town.capital()))
+                .toList();
+        nearbyTerrainColors = nearbyTerrainColors == null ? List.of() : nearbyTerrainColors.stream()
+                .map(color -> 0xFF000000 | (color & 0x00FFFFFF))
+                .toList();
         nearbyClaims = nearbyClaims == null ? List.of() : nearbyClaims.stream()
                 .map(claim -> new NationOverviewClaim(
                         claim.chunkX(),
@@ -123,6 +140,8 @@ public record NationOverviewData(
                 0xF2C14E,
                 "",
                 "",
+                "",
+                "",
                 0,
                 false,
                 "",
@@ -158,6 +177,8 @@ public record NationOverviewData(
                 false,
                 false,
                 "",
+                List.of(),
+                List.of(),
                 List.of(),
                 List.of(),
                 List.of(),

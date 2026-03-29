@@ -5,6 +5,7 @@ import com.example.examplemod.nation.service.NationClaimService;
 import com.example.examplemod.nation.service.NationOverviewService;
 import com.example.examplemod.nation.service.NationResult;
 import com.example.examplemod.nation.service.NationService;
+import com.example.examplemod.nation.service.TownService;
 import com.example.examplemod.network.ModNetwork;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -93,6 +94,12 @@ public class NationGuiActionPacket {
                             ? NationResult.failure(Component.translatable("command.sailboatmod.nation.member.invalid"))
                             : NationService.removeOfficer(player, targetUuid);
                 }
+                case APPOINT_MAYOR -> {
+                    UUID targetUuid = parseUuid(packet.memberUuid);
+                    yield targetUuid == null
+                            ? NationResult.failure(Component.translatable("command.sailboatmod.nation.member.invalid"))
+                            : TownService.assignMayorById(player, packet.text, targetUuid);
+                }
                 case RENAME_OFFICER_TITLE -> NationService.renameOfficerTitle(player, packet.text);
             };
 
@@ -126,6 +133,7 @@ public class NationGuiActionPacket {
         UNCLAIM_CHUNK,
         APPOINT_OFFICER,
         REMOVE_OFFICER,
+        APPOINT_MAYOR,
         RENAME_OFFICER_TITLE
     }
 }

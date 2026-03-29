@@ -1,4 +1,4 @@
-# Nation System Task List
+﻿# Nation System Task List
 
 ## Goal
 
@@ -216,7 +216,7 @@ Client-side additions:
 - [x] Extend `ServerEvents.java` or create `NationServerEvents.java`
 - [x] Tick war progress every server tick
 - [x] Initialize and refresh BlueMap nation overlays
-- [ ] Clear temporary war tracking on server stop
+- [x] Clear temporary war tracking on server stop
 
 ### Protection Events
 
@@ -303,7 +303,7 @@ Create screens under `client/screen/nation/`.
 - [ ] `NationDiplomacyScreen`
 - [ ] `NationWarScreen`
 - [ ] `NationFlagScreen`
-- [ ] `NationCreateScreen`
+- [x] `NationCreateScreen` (covered by the create/join flow embedded in `NationHomeScreen`)
 
 ### Client Data Objects
 
@@ -502,7 +502,7 @@ Create screens under `client/screen/nation/`.
 
 - [x] war declarations
 - [x] capture logic
-- [ ] war score sync (server-side war logic exists; dedicated client sync still pending)
+- [x] war score sync (active wars now push refreshed overview data to participants as scores/timers change)
 - [x] war announcements and end conditions
 
 ## MVP Cut Recommendation
@@ -537,6 +537,7 @@ Defer these until after the MVP:
 - [ ] War capture progress advances only under valid conditions (manual war test pending)
 - [ ] A PNG flag survives restart and renders in UI and in-world (restart test pending)
 - [ ] The system tolerates invalid packets and malformed uploads without corrupting saved data (targeted abuse tests pending)
+
 
 
 

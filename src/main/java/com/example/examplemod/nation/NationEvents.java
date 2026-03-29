@@ -2,6 +2,7 @@ package com.example.examplemod.nation;
 
 import com.example.examplemod.SailboatMod;
 import com.example.examplemod.block.NationCoreBlock;
+import com.example.examplemod.block.TownCoreBlock;
 import com.example.examplemod.nation.command.NationCommands;
 import com.example.examplemod.nation.data.NationSavedData;
 import com.example.examplemod.nation.model.NationClaimRecord;
@@ -13,6 +14,8 @@ import com.example.examplemod.nation.service.NationFlagSyncService;
 import com.example.examplemod.nation.service.NationFlagUploadService;
 import com.example.examplemod.nation.service.NationService;
 import com.example.examplemod.nation.service.NationWarService;
+import com.example.examplemod.nation.service.TownFlagBlockTracker;
+import com.example.examplemod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
@@ -125,7 +128,12 @@ public final class NationEvents {
             return;
         }
         boolean allowed;
-        if (event.getState().getBlock() instanceof NationCoreBlock) {
+        if (event.getState().getBlock() instanceof TownCoreBlock) {
+            allowed = TownService.canBreakCore(player.level(), player.getUUID(), event.getPos());
+            if (!allowed) {
+                player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.core.break_denied"));
+            }
+        } else if (event.getState().getBlock() instanceof NationCoreBlock) {
             allowed = NationClaimService.canBreakCore(player.level(), player.getUUID(), event.getPos());
             if (!allowed) {
                 player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.core.break_denied"));
@@ -281,8 +289,10 @@ public final class NationEvents {
         LAST_TERRITORY.clear();
         LAST_TAB_LIST_KEYS.clear();
         PENDING_CONTAINER_ACCESS.clear();
+        NationWarService.clearRuntimeState();
         NationFlagUploadService.clearSessions();
         NationFlagBlockTracker.clearTrackedFlags();
+        TownFlagBlockTracker.clearTrackedFlags();
     }
 
     private static void rememberContainerAccess(ServerPlayer player, BlockPos pos) {

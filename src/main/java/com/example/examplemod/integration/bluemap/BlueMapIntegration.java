@@ -7,6 +7,7 @@ import com.example.examplemod.nation.model.NationClaimRecord;
 import com.example.examplemod.nation.model.NationMemberRecord;
 import com.example.examplemod.nation.model.NationRecord;
 import com.example.examplemod.nation.model.NationWarRecord;
+import com.example.examplemod.nation.model.TownRecord;
 import com.example.examplemod.nation.service.NationWarService;
 import com.example.examplemod.route.RouteDefinition;
 import com.mojang.logging.LogUtils;
@@ -34,6 +35,7 @@ public final class BlueMapIntegration {
     private static final String DOCKS_SET_ID = "sailboatmod_docks";
     private static final String BOATS_SET_ID = "sailboatmod_boats";
     private static final String ROUTES_SET_ID = "sailboatmod_routes";
+    private static final String TOWN_CORES_SET_ID = "sailboatmod_town_cores";
     private static final String NATION_CORES_SET_ID = "sailboatmod_nation_cores";
     private static final String NATION_BORDERS_SET_ID = "sailboatmod_nation_borders";
 
@@ -233,6 +235,9 @@ public final class BlueMapIntegration {
             List<BlueMapMarkerSavedData.DockSnapshot> docks = markerData.getDocks(level.dimension());
             List<BlueMapMarkerSavedData.BoatSnapshot> boats = markerData.getBoats(level.dimension());
             NationSavedData nationData = NationSavedData.get(level);
+            List<TownRecord> towns = nationData.getTowns().stream()
+                    .filter(TownRecord::hasCore)
+                    .toList();
             List<NationRecord> nations = nationData.getNations().stream()
                     .filter(nation -> nation.hasCore() || !nationData.getClaimsForNation(nation.nationId()).isEmpty())
                     .toList();
@@ -249,18 +254,21 @@ public final class BlueMapIntegration {
                 Object docksSet = prepareMarkerSet(markerSets, DOCKS_SET_ID, "Sailboat Docks", 10);
                 Object boatsSet = prepareMarkerSet(markerSets, BOATS_SET_ID, "Sailboats", 11);
                 Object routesSet = prepareMarkerSet(markerSets, ROUTES_SET_ID, "Sailboat Routes", 12);
-                Object nationCoresSet = prepareMarkerSet(markerSets, NATION_CORES_SET_ID, "Nation Cores", 13);
-                Object nationBordersSet = prepareMarkerSet(markerSets, NATION_BORDERS_SET_ID, "Nation Territories", 14);
+                Object townCoresSet = prepareMarkerSet(markerSets, TOWN_CORES_SET_ID, "Town Cores", 13);
+                Object nationCoresSet = prepareMarkerSet(markerSets, NATION_CORES_SET_ID, "Nation Cores", 14);
+                Object nationBordersSet = prepareMarkerSet(markerSets, NATION_BORDERS_SET_ID, "Nation Territories", 15);
 
                 clearMarkerSet(docksSet);
                 clearMarkerSet(boatsSet);
                 clearMarkerSet(routesSet);
+                clearMarkerSet(townCoresSet);
                 clearMarkerSet(nationCoresSet);
                 clearMarkerSet(nationBordersSet);
 
                 renderDocks(docksSet, docks);
                 renderBoats(boatsSet, boats);
                 renderRoutes(routesSet, docks);
+                renderTownCores(townCoresSet, nationData, towns);
                 renderNationCores(nationCoresSet, nationOverlays);
                 renderNationBorders(nationBordersSet, nationOverlays, overlayY);
             }
@@ -497,6 +505,43 @@ public final class BlueMapIntegration {
             );
         }
 
+        private void renderTownCores(Object markerSet, NationSavedData data, List<TownRecord> towns) throws Exception {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> markers = (Map<String, Object>) this.markerSetGetMarkersMethod.invoke(markerSet);
+            for (TownRecord town : towns) {
+                if (!town.hasCore()) {
+                    continue;
+                }
+                NationRecord nation = town.hasNation() ? data.getNation(town.nationId()) : null;
+                BlockPos pos = BlockPos.of(town.corePos());
+                int claimCount = data.getClaimsForTown(town.townId()).size();
+                boolean capital = nation != null && town.townId().equals(nation.capitalTownId());
+                Object marker = buildPoiMarker(
+                        town.name() + " Town",
+                        pos.getX() + 0.5D,
+                        pos.getY() + 1.15D,
+                        pos.getZ() + 0.5D,
+                        """
+                        <div class="sailboatmod-popup">
+                        <strong>%s</strong><br>
+                        Nation: %s<br>
+                        Mayor: %s<br>
+                        Claims: %d<br>
+                        Capital: %s<br>
+                        Coords: %d, %d, %d
+                        </div>
+                        """.formatted(
+                                escapeHtml(town.name()),
+                                escapeHtml(nameOf(nation)),
+                                escapeHtml(mayorName(data, town)),
+                                claimCount,
+                                capital ? "Yes" : "No",
+                                pos.getX(), pos.getY(), pos.getZ()
+                        )
+                );
+                markers.put("town-core-" + town.townId(), marker);
+            }
+        }
         private void renderNationCores(Object markerSet, List<BlueMapMarkerSavedData.NationOverlaySnapshot> nationOverlays) throws Exception {
             @SuppressWarnings("unchecked")
             Map<String, Object> markers = (Map<String, Object>) this.markerSetGetMarkersMethod.invoke(markerSet);
@@ -651,11 +696,22 @@ public final class BlueMapIntegration {
     }
 
     private static String leaderName(NationSavedData data, NationRecord nation) {
-        NationMemberRecord member = data.getMember(nation.leaderUuid());
+        return nation == null ? "-" : storedPlayerName(data, nation.leaderUuid());
+    }
+
+    private static String mayorName(NationSavedData data, TownRecord town) {
+        return town == null ? "-" : storedPlayerName(data, town.mayorUuid());
+    }
+
+    private static String storedPlayerName(NationSavedData data, UUID playerUuid) {
+        if (playerUuid == null) {
+            return "-";
+        }
+        NationMemberRecord member = data.getMember(playerUuid);
         if (member != null && !member.lastKnownName().isBlank()) {
             return member.lastKnownName();
         }
-        return nation.leaderUuid() == null ? "-" : nation.leaderUuid().toString();
+        return playerUuid.toString();
     }
 
     private static String chunkKey(int chunkX, int chunkZ) {

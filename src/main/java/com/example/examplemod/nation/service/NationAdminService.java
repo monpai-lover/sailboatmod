@@ -28,6 +28,7 @@ public final class NationAdminService {
 
         data.removeNation(nation.nationId());
         NationFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
+        TownFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
         return NationResult.success(Component.translatable("command.sailboatmod.nationadmin.disband.success", nation.name()));
     }
 
@@ -51,11 +52,13 @@ public final class NationAdminService {
                 nation.secondaryColorRgb(),
                 nation.leaderUuid(),
                 nation.createdAt(),
+                nation.capitalTownId(),
                 nation.coreDimension(),
                 nation.corePos(),
                 ""
         ));
         NationFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
+        TownFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
         return NationResult.success(Component.translatable("command.sailboatmod.nationadmin.clearflag.success", nation.name()));
     }
 
@@ -79,6 +82,7 @@ public final class NationAdminService {
                 chunkX,
                 chunkZ,
                 nation.nationId(),
+                "",
                 NationClaimAccessLevel.MEMBER.id(),
                 NationClaimAccessLevel.MEMBER.id(),
                 NationClaimAccessLevel.MEMBER.id(),

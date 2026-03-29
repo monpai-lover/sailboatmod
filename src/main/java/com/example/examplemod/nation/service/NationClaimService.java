@@ -7,6 +7,7 @@ import com.example.examplemod.nation.model.NationClaimRecord;
 import com.example.examplemod.nation.model.NationMemberRecord;
 import com.example.examplemod.nation.model.NationPermission;
 import com.example.examplemod.nation.model.NationRecord;
+import com.example.examplemod.nation.model.TownRecord;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -49,6 +50,18 @@ public final class NationClaimService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.already_set"));
         }
 
+        TownRecord capitalTown = TownService.getCapitalTown(data, nation);
+        if (capitalTown == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.need_town"));
+        }
+        if (!capitalTown.hasCore()) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.need_capital_town_core", capitalTown.name()));
+        }
+        if (!player.level().dimension().location().toString().equalsIgnoreCase(capitalTown.coreDimension())
+                || !isSameChunk(new ChunkPos(pos), new ChunkPos(BlockPos.of(capitalTown.corePos())))) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.must_place_in_capital_town", capitalTown.name()));
+        }
+
         ChunkPos chunkPos = new ChunkPos(pos);
         Component restrictionMessage = getClaimRestrictionMessage(player.level(), chunkPos, true);
         if (restrictionMessage != null) {
@@ -68,6 +81,7 @@ public final class NationClaimService {
                 nation.secondaryColorRgb(),
                 nation.leaderUuid(),
                 nation.createdAt(),
+                nation.capitalTownId(),
                 player.level().dimension().location().toString(),
                 pos.asLong(),
                 nation.flagId()
@@ -80,10 +94,23 @@ public final class NationClaimService {
                     chunkPos.x,
                     chunkPos.z,
                     nation.nationId(),
+                    capitalTown.townId(),
                     NationClaimAccessLevel.MEMBER.id(),
                     NationClaimAccessLevel.MEMBER.id(),
                     NationClaimAccessLevel.MEMBER.id(),
                     System.currentTimeMillis()
+            ));
+        } else {
+            data.putClaim(new NationClaimRecord(
+                    existingClaim.dimensionId(),
+                    existingClaim.chunkX(),
+                    existingClaim.chunkZ(),
+                    nation.nationId(),
+                    capitalTown.townId(),
+                    existingClaim.breakAccessLevel(),
+                    existingClaim.placeAccessLevel(),
+                    existingClaim.useAccessLevel(),
+                    existingClaim.claimedAt()
             ));
         }
         return NationResult.success(Component.translatable("command.sailboatmod.nation.core.placed", nation.name()));
@@ -106,6 +133,7 @@ public final class NationClaimService {
                     nation.secondaryColorRgb(),
                     nation.leaderUuid(),
                     nation.createdAt(),
+                    nation.capitalTownId(),
                     "",
                     NationRecord.noCorePos(),
                     nation.flagId()
@@ -134,6 +162,11 @@ public final class NationClaimService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.need_core"));
         }
 
+        TownRecord claimTown = TownService.getCapitalTown(data, nation);
+        if (claimTown == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.need_town"));
+        }
+
         Component restrictionMessage = getClaimRestrictionMessage(player.level(), chunkPos, false);
         if (restrictionMessage != null) {
             return NationResult.failure(restrictionMessage);
@@ -147,7 +180,7 @@ public final class NationClaimService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.occupied"));
         }
 
-        if (!isClaimAdjacentToNation(data, player.level(), chunkPos, nation)) {
+        if (!isClaimAdjacentToTown(data, player.level(), chunkPos, nation, claimTown)) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_adjacent"));
         }
 
@@ -166,6 +199,7 @@ public final class NationClaimService {
                 chunkPos.x,
                 chunkPos.z,
                 nation.nationId(),
+                claimTown.townId(),
                 NationClaimAccessLevel.MEMBER.id(),
                 NationClaimAccessLevel.MEMBER.id(),
                 NationClaimAccessLevel.MEMBER.id(),
@@ -312,6 +346,10 @@ public final class NationClaimService {
                 && pos.asLong() == nation.corePos();
     }
 
+    private static boolean isSameChunk(ChunkPos left, ChunkPos right) {
+        return left != null && right != null && left.x == right.x && left.z == right.z;
+    }
+
     private static boolean isCoreChunk(Level level, ChunkPos chunkPos, NationRecord nation) {
         if (level == null || chunkPos == null || nation == null || !nation.hasCore()) {
             return false;
@@ -323,12 +361,12 @@ public final class NationClaimService {
         return coreChunk.x == chunkPos.x && coreChunk.z == chunkPos.z;
     }
 
-    private static boolean isClaimAdjacentToNation(NationSavedData data, Level level, ChunkPos target, NationRecord nation) {
-        List<NationClaimRecord> nationClaims = data.getClaimsForNation(nation.nationId());
-        if (nationClaims.isEmpty()) {
+    private static boolean isClaimAdjacentToTown(NationSavedData data, Level level, ChunkPos target, NationRecord nation, TownRecord town) {
+        List<NationClaimRecord> townClaims = town == null ? List.of() : data.getClaimsForTown(town.townId());
+        if (townClaims.isEmpty()) {
             return isCoreChunk(level, target, nation);
         }
-        for (NationClaimRecord claim : nationClaims) {
+        for (NationClaimRecord claim : townClaims) {
             if (!level.dimension().location().toString().equalsIgnoreCase(claim.dimensionId())) {
                 continue;
             }

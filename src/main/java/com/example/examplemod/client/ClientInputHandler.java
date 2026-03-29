@@ -2,6 +2,7 @@ package com.example.examplemod.client;
 
 import com.example.examplemod.SailboatMod;
 import com.example.examplemod.client.screen.SailboatInfoScreen;
+import com.example.examplemod.client.texture.NationFlagTextureCache;
 import com.example.examplemod.entity.SailboatEntity;
 import com.example.examplemod.network.ModNetwork;
 import com.example.examplemod.network.packet.OpenNationMenuPacket;
@@ -46,6 +47,8 @@ public final class ClientInputHandler {
     @SubscribeEvent
     public static void onClientLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         NationClientHooks.clearCache();
+        TownClientHooks.clearCache();
+        NationFlagTextureCache.clearCache();
     }
 
     private ClientInputHandler() {

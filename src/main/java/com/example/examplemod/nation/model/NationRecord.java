@@ -14,6 +14,7 @@ public record NationRecord(
         int secondaryColorRgb,
         UUID leaderUuid,
         long createdAt,
+        String capitalTownId,
         String coreDimension,
         long corePos,
         String flagId
@@ -44,6 +45,7 @@ public record NationRecord(
         primaryColorRgb = clampRgb(primaryColorRgb);
         secondaryColorRgb = clampRgb(secondaryColorRgb);
         leaderUuid = leaderUuid == null ? new UUID(0L, 0L) : leaderUuid;
+        capitalTownId = sanitizeId(capitalTownId);
         coreDimension = sanitizeId(coreDimension);
         flagId = sanitizeId(flagId);
     }
@@ -57,6 +59,7 @@ public record NationRecord(
         tag.putInt("SecondaryColor", secondaryColorRgb);
         tag.putUUID("LeaderUuid", leaderUuid);
         tag.putLong("CreatedAt", createdAt);
+        tag.putString("CapitalTownId", capitalTownId);
         tag.putString("CoreDimension", coreDimension);
         tag.putLong("CorePos", corePos);
         tag.putString("FlagId", flagId);
@@ -73,6 +76,7 @@ public record NationRecord(
                 tag.getInt("SecondaryColor"),
                 leaderUuid,
                 tag.getLong("CreatedAt"),
+                tag.getString("CapitalTownId"),
                 tag.getString("CoreDimension"),
                 tag.contains("CorePos") ? tag.getLong("CorePos") : NO_CORE_POS,
                 tag.getString("FlagId")

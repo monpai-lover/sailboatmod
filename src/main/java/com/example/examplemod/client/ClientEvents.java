@@ -4,6 +4,8 @@ import com.example.examplemod.SailboatMod;
 import com.example.examplemod.client.renderer.SailboatEntityRenderer;
 import com.example.examplemod.client.renderer.blockentity.NationCoreBlockEntityRenderer;
 import com.example.examplemod.client.renderer.blockentity.NationFlagBlockEntityRenderer;
+import com.example.examplemod.client.renderer.blockentity.TownCoreBlockEntityRenderer;
+import com.example.examplemod.client.renderer.blockentity.TownFlagBlockEntityRenderer;
 import com.example.examplemod.client.screen.DockScreen;
 import com.example.examplemod.client.screen.MarketScreen;
 import com.example.examplemod.registry.ModBlockEntities;
@@ -23,6 +25,8 @@ public final class ClientEvents {
         event.registerEntityRenderer(ModEntities.SAILBOAT.get(), SailboatEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_CORE_BLOCK_ENTITY.get(), NationCoreBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_FLAG_BLOCK_ENTITY.get(), NationFlagBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.TOWN_CORE_BLOCK_ENTITY.get(), TownCoreBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.TOWN_FLAG_BLOCK_ENTITY.get(), TownFlagBlockEntityRenderer::new);
     }
 
     @SubscribeEvent

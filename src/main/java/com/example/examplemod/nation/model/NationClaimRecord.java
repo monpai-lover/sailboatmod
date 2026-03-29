@@ -9,6 +9,7 @@ public record NationClaimRecord(
         int chunkX,
         int chunkZ,
         String nationId,
+        String townId,
         String breakAccessLevel,
         String placeAccessLevel,
         String useAccessLevel,
@@ -17,6 +18,7 @@ public record NationClaimRecord(
     public NationClaimRecord {
         dimensionId = normalize(dimensionId);
         nationId = normalize(nationId);
+        townId = normalize(townId);
         breakAccessLevel = normalizeAccessLevel(breakAccessLevel);
         placeAccessLevel = normalizeAccessLevel(placeAccessLevel);
         useAccessLevel = normalizeAccessLevel(useAccessLevel);
@@ -28,6 +30,7 @@ public record NationClaimRecord(
         tag.putInt("ChunkX", chunkX);
         tag.putInt("ChunkZ", chunkZ);
         tag.putString("NationId", nationId);
+        tag.putString("TownId", townId);
         tag.putString("BreakAccessLevel", breakAccessLevel);
         tag.putString("PlaceAccessLevel", placeAccessLevel);
         tag.putString("UseAccessLevel", useAccessLevel);
@@ -41,6 +44,7 @@ public record NationClaimRecord(
                 tag.getInt("ChunkX"),
                 tag.getInt("ChunkZ"),
                 tag.getString("NationId"),
+                tag.contains("TownId") ? tag.getString("TownId") : "",
                 tag.contains("BreakAccessLevel") ? tag.getString("BreakAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
                 tag.contains("PlaceAccessLevel") ? tag.getString("PlaceAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
                 tag.contains("UseAccessLevel") ? tag.getString("UseAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
@@ -54,6 +58,7 @@ public record NationClaimRecord(
                 chunkX,
                 chunkZ,
                 nationId,
+                townId,
                 breakLevel == null ? breakAccessLevel : breakLevel.id(),
                 placeLevel == null ? placeAccessLevel : placeLevel.id(),
                 useLevel == null ? useAccessLevel : useLevel.id(),

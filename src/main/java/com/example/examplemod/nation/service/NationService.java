@@ -10,6 +10,7 @@ import com.example.examplemod.nation.model.NationOfficeRecord;
 import com.example.examplemod.nation.model.NationPermission;
 import com.example.examplemod.nation.model.NationRecord;
 import com.example.examplemod.nation.model.NationWarRecord;
+import com.example.examplemod.nation.model.TownRecord;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
@@ -59,6 +60,11 @@ public final class NationService {
 
         String nationId = UUID.randomUUID().toString().replace("-", "");
         long now = System.currentTimeMillis();
+        TownRecord capitalTown = TownService.bindStandaloneTownToNation(data, player.getUUID(), nationId);
+        if (capitalTown == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.create.need_town"));
+        }
+
         NationRecord nation = new NationRecord(
                 nationId,
                 name,
@@ -67,6 +73,7 @@ public final class NationService {
                 DEFAULT_SECONDARY_COLOR,
                 player.getUUID(),
                 now,
+                capitalTown.townId(),
                 "",
                 NationRecord.noCorePos(),
                 ""
@@ -132,11 +139,13 @@ public final class NationService {
                 nation.secondaryColorRgb(),
                 nation.leaderUuid(),
                 nation.createdAt(),
+                nation.capitalTownId(),
                 nation.coreDimension(),
                 nation.corePos(),
                 nation.flagId()
         ));
         NationFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
+        TownFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
         refreshNationPlayerNames(actor.getServer(), nation.nationId());
         return NationResult.success(Component.translatable("command.sailboatmod.nation.rename.success", name));
     }
@@ -174,11 +183,13 @@ public final class NationService {
                 nation.secondaryColorRgb(),
                 nation.leaderUuid(),
                 nation.createdAt(),
+                nation.capitalTownId(),
                 nation.coreDimension(),
                 nation.corePos(),
                 nation.flagId()
         ));
         NationFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
+        TownFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
         refreshNationPlayerNames(actor.getServer(), nation.nationId());
         return NationResult.success(Component.translatable("command.sailboatmod.nation.short_name.success", shortName));
     }
@@ -784,6 +795,7 @@ public final class NationService {
                 nation.secondaryColorRgb(),
                 target.getUUID(),
                 nation.createdAt(),
+                nation.capitalTownId(),
                 nation.coreDimension(),
                 nation.corePos(),
                 nation.flagId()
@@ -948,11 +960,13 @@ public final class NationService {
                 secondaryColor,
                 nation.leaderUuid(),
                 nation.createdAt(),
+                nation.capitalTownId(),
                 nation.coreDimension(),
                 nation.corePos(),
                 nation.flagId()
         ));
         NationFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
+        TownFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
         refreshNationPlayerNames(actor.getServer(), nation.nationId());
         return NationResult.success(Component.translatable(
                 primary ? "command.sailboatmod.nation.color.primary_success" : "command.sailboatmod.nation.color.secondary_success",
@@ -1034,6 +1048,7 @@ public final class NationService {
         }
         data.removeNation(nation.nationId());
         NationFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
+        TownFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
     }
 
     private static String permissionSummary(Set<NationPermission> permissions) {

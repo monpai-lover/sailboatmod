@@ -63,12 +63,14 @@ public final class NationFlagService {
                     nation.secondaryColorRgb(),
                     nation.leaderUuid(),
                     nation.createdAt(),
+                    nation.capitalTownId(),
                     nation.coreDimension(),
                     nation.corePos(),
                     flag.flagId()
             ));
             NationFlagSyncService.syncFlagToAll(player, flag.flagId());
             NationFlagBlockTracker.refreshNationFlags(player.getServer(), nation.nationId());
+            TownFlagBlockTracker.refreshNationFlags(player.getServer(), nation.nationId());
             return NationResult.success(Component.translatable("command.sailboatmod.nation.flag.import.success", flag.flagId(), flag.width(), flag.height()));
         } catch (IOException e) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.flag.import.failed", e.getMessage()));
@@ -112,6 +114,7 @@ public final class NationFlagService {
         );
         data.putFlag(updated);
         NationFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
+        TownFlagBlockTracker.refreshNationFlags(actor.getServer(), nation.nationId());
         return NationResult.success(Component.translatable(mirrored ? "command.sailboatmod.nation.flag.mirror.on" : "command.sailboatmod.nation.flag.mirror.off"));
     }
 
