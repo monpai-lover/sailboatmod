@@ -1,6 +1,7 @@
 package com.example.examplemod.nation.service;
 
 import com.example.examplemod.nation.data.NationSavedData;
+import com.example.examplemod.nation.model.NationClaimAccessLevel;
 import com.example.examplemod.nation.model.NationClaimRecord;
 import com.example.examplemod.nation.model.NationMemberRecord;
 import com.example.examplemod.nation.model.NationPermission;
@@ -165,6 +166,15 @@ public final class TownService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.occupied", occupiedTown.name()));
         }
 
+        ChunkPos coreChunk = new ChunkPos(pos);
+        NationClaimRecord existingClaim = data.getClaim(actor.level(), coreChunk);
+        if (existingClaim != null) {
+            if (selectedTown.nationId().isBlank() || !selectedTown.nationId().equals(existingClaim.nationId())) {
+                String occupiedName = occupiedTown == null ? selectedTown.name() : occupiedTown.name();
+                return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.occupied", occupiedName));
+            }
+        }
+
         TownRecord updated = new TownRecord(
                 selectedTown.townId(),
                 selectedTown.nationId(),
@@ -176,6 +186,33 @@ public final class TownService {
                 selectedTown.flagId()
         );
         data.putTown(updated);
+
+        if (existingClaim == null) {
+            data.putClaim(new NationClaimRecord(
+                    actor.level().dimension().location().toString(),
+                    coreChunk.x,
+                    coreChunk.z,
+                    updated.nationId(),
+                    updated.townId(),
+                    NationClaimAccessLevel.MEMBER.id(),
+                    NationClaimAccessLevel.MEMBER.id(),
+                    NationClaimAccessLevel.MEMBER.id(),
+                    System.currentTimeMillis()
+            ));
+        } else {
+            data.putClaim(new NationClaimRecord(
+                    existingClaim.dimensionId(),
+                    existingClaim.chunkX(),
+                    existingClaim.chunkZ(),
+                    updated.nationId().isBlank() ? existingClaim.nationId() : updated.nationId(),
+                    updated.townId(),
+                    existingClaim.breakAccessLevel(),
+                    existingClaim.placeAccessLevel(),
+                    existingClaim.useAccessLevel(),
+                    existingClaim.claimedAt()
+            ));
+        }
+
         return NationResult.success(Component.translatable(
                 preparation.createdNewTown()
                         ? "command.sailboatmod.nation.town.core.created_and_placed"
@@ -281,10 +318,18 @@ public final class TownService {
         NationSavedData data = NationSavedData.get(level);
         ChunkPos chunkPos = new ChunkPos(pos);
         NationClaimRecord claim = data.getClaim(level, chunkPos);
-        if (claim != null && !claim.townId().isBlank()) {
-            TownRecord claimedTown = data.getTown(claim.townId());
-            if (claimedTown != null) {
-                return claimedTown;
+        if (claim != null) {
+            if (!claim.townId().isBlank()) {
+                TownRecord claimedTown = data.getTown(claim.townId());
+                if (claimedTown != null) {
+                    return claimedTown;
+                }
+            }
+            if (!claim.nationId().isBlank()) {
+                TownRecord capitalTown = getCapitalTown(data, data.getNation(claim.nationId()));
+                if (capitalTown != null) {
+                    return capitalTown;
+                }
             }
         }
         for (TownRecord town : data.getTowns()) {

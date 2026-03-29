@@ -362,7 +362,7 @@ public final class NationClaimService {
     }
 
     private static boolean isClaimAdjacentToTown(NationSavedData data, Level level, ChunkPos target, NationRecord nation, TownRecord town) {
-        List<NationClaimRecord> townClaims = town == null ? List.of() : data.getClaimsForTown(town.townId());
+        List<NationClaimRecord> townClaims = town == null ? List.of() : TownService.getManagedClaims(data, town);
         if (townClaims.isEmpty()) {
             return isCoreChunk(level, target, nation);
         }
