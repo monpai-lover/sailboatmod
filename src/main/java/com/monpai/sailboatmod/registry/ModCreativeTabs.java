@@ -25,6 +25,7 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.NATION_CORE_ITEM.get());
                         output.accept(ModItems.NATION_FLAG_ITEM.get());
                         output.accept(ModItems.TOWN_FLAG_ITEM.get());
+                        output.accept(ModItems.BANK_ITEM.get());
                     })
                     .build()
     );

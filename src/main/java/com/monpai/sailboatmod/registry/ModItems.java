@@ -43,6 +43,11 @@ public final class ModItems {
             () -> new DescribedBlockItem(ModBlocks.NATION_CORE_BLOCK.get(), new Item.Properties().stacksTo(1), "item.sailboatmod.nation_core.desc")
     );
 
+    public static final RegistryObject<Item> BANK_ITEM = ITEMS.register(
+            "bank_block",
+            () -> new DescribedBlockItem(ModBlocks.BANK_BLOCK.get(), new Item.Properties(), "item.sailboatmod.bank_block.desc")
+    );
+
     public static final RegistryObject<Item> NATION_FLAG_ITEM = ITEMS.register(
             "nation_flag",
             () -> new StandingAndWallFlagBlockItem(ModBlocks.NATION_FLAG_BLOCK.get(), ModBlocks.WALL_NATION_FLAG_BLOCK.get(), new Item.Properties().stacksTo(16), "item.sailboatmod.nation_flag.desc")

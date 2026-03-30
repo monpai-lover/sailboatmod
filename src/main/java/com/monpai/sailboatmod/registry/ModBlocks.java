@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.block.BankBlock;
 import com.monpai.sailboatmod.block.DockBlock;
 import com.monpai.sailboatmod.block.MarketBlock;
 import com.monpai.sailboatmod.block.NationCoreBlock;
@@ -53,6 +54,11 @@ public final class ModBlocks {
     public static final RegistryObject<Block> WALL_NATION_FLAG_BLOCK = BLOCKS.register(
             "wall_nation_flag",
             () -> new WallNationFlagBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_RED).strength(2.0F).sound(SoundType.WOOL).noOcclusion().dropsLike(NATION_FLAG_BLOCK.get()))
+    );
+
+    public static final RegistryObject<Block> BANK_BLOCK = BLOCKS.register(
+            "bank_block",
+            () -> new BankBlock(BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(3.0F).sound(SoundType.METAL))
     );
 
     public static final RegistryObject<Block> WALL_TOWN_FLAG_BLOCK = BLOCKS.register(

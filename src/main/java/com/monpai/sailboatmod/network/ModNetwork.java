@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.ClaimMarketCreditsPacket;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
@@ -272,6 +273,13 @@ public final class ModNetwork {
                 RenameMarketPacket::encode,
                 RenameMarketPacket::decode,
                 RenameMarketPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                BankActionPacket.class,
+                BankActionPacket::encode,
+                BankActionPacket::decode,
+                BankActionPacket::handle
         );
     }
 

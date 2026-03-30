@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.menu.BankMenu;
 import com.monpai.sailboatmod.menu.DockMenu;
 import com.monpai.sailboatmod.menu.MarketMenu;
 import net.minecraft.world.inventory.MenuType;
@@ -20,6 +21,11 @@ public final class ModMenus {
     public static final RegistryObject<MenuType<MarketMenu>> MARKET_MENU = MENUS.register(
             "market_menu",
             () -> IForgeMenuType.create(MarketMenu::new)
+    );
+
+    public static final RegistryObject<MenuType<BankMenu>> BANK_MENU = MENUS.register(
+            "bank_menu",
+            () -> IForgeMenuType.create(BankMenu::new)
     );
 
     private ModMenus() {

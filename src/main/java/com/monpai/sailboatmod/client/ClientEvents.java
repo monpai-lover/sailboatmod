@@ -2,10 +2,12 @@ package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.renderer.SailboatEntityRenderer;
+import com.monpai.sailboatmod.client.renderer.blockentity.BankBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.NationCoreBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.NationFlagBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.TownCoreBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.TownFlagBlockEntityRenderer;
+import com.monpai.sailboatmod.client.screen.BankScreen;
 import com.monpai.sailboatmod.client.screen.DockScreen;
 import com.monpai.sailboatmod.client.screen.MarketScreen;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
@@ -25,6 +27,7 @@ public final class ClientEvents {
         event.registerEntityRenderer(ModEntities.SAILBOAT.get(), SailboatEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_CORE_BLOCK_ENTITY.get(), NationCoreBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_FLAG_BLOCK_ENTITY.get(), NationFlagBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.BANK_BLOCK_ENTITY.get(), BankBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.TOWN_CORE_BLOCK_ENTITY.get(), TownCoreBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.TOWN_FLAG_BLOCK_ENTITY.get(), TownFlagBlockEntityRenderer::new);
     }
@@ -33,6 +36,7 @@ public final class ClientEvents {
     public static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
             MenuScreens.register(ModMenus.DOCK_MENU.get(), DockScreen::new);
+            MenuScreens.register(ModMenus.BANK_MENU.get(), BankScreen::new);
             MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
         });
     }

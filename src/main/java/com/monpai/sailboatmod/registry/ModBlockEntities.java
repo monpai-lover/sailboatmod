@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.block.entity.BankBlockEntity;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.block.entity.NationCoreBlockEntity;
@@ -44,6 +45,11 @@ public final class ModBlockEntities {
     public static final RegistryObject<BlockEntityType<TownFlagBlockEntity>> TOWN_FLAG_BLOCK_ENTITY = BLOCK_ENTITIES.register(
             "town_flag",
             () -> BlockEntityType.Builder.of(TownFlagBlockEntity::new, ModBlocks.TOWN_FLAG_BLOCK.get(), ModBlocks.WALL_TOWN_FLAG_BLOCK.get()).build(null)
+    );
+
+    public static final RegistryObject<BlockEntityType<BankBlockEntity>> BANK_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "bank_block",
+            () -> BlockEntityType.Builder.of(BankBlockEntity::new, ModBlocks.BANK_BLOCK.get()).build(null)
     );
 
     private ModBlockEntities() {
