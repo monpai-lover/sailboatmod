@@ -42,7 +42,7 @@ public class NationHomeScreen extends Screen {
     private static final int ACTIVE_WAR_REFRESH_INTERVAL_TICKS = 20;
     private static final int SCREEN_W = 468;
     private static final int SCREEN_H = 330;
-    private static final int TAB_W = 72;
+    private static final int TAB_W = 62;
     private static final int BODY_X = 12;
     private static final int BODY_Y = 64;
     private static final int BODY_W = SCREEN_W - 24;
@@ -50,8 +50,8 @@ public class NationHomeScreen extends Screen {
     private static final int MEMBER_LIST_W = 192;
     private static final int MEMBER_ROW_H = 14;
     private static final int MEMBER_VISIBLE_ROWS = 12;
-    private static final int CLAIM_MAP_W = 182;
-    private static final int CLAIM_MAP_H = 182;
+    private static final int CLAIM_MAP_W = 164;
+    private static final int CLAIM_MAP_H = 164;
     private static final int CLAIM_RADIUS = 20;
 
     private NationOverviewData data;
@@ -72,6 +72,7 @@ public class NationHomeScreen extends Screen {
     private Button warTabButton;
     private Button flagTabButton;
     private Button diplomacyTabButton;
+    private Button treasuryTabButton;
     private Button claimButton;
     private Button unclaimButton;
     private Button warButton;
@@ -104,6 +105,10 @@ public class NationHomeScreen extends Screen {
     private String selectedTownId = "";
     private int selectedClaimChunkX = Integer.MIN_VALUE;
     private int selectedClaimChunkZ = Integer.MIN_VALUE;
+    private int areaCorner1X = Integer.MIN_VALUE;
+    private int areaCorner1Z = Integer.MIN_VALUE;
+    private int areaCorner2X = Integer.MIN_VALUE;
+    private int areaCorner2Z = Integer.MIN_VALUE;
     private int claimsSubPage;
     private Button claimsSubPageButton;
     private int diplomacyScroll;
@@ -144,11 +149,12 @@ public class NationHomeScreen extends Screen {
         int top = top();
         this.refreshButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.refresh"), b -> requestRefresh()).bounds(left + SCREEN_W - 82, top + 12, 70, 18).build());
         this.overviewTabButton = addTabButton(left + 12, top + 36, Page.OVERVIEW, Component.translatable("screen.sailboatmod.nation.section.overview"));
-        this.membersTabButton = addTabButton(left + 86, top + 36, Page.MEMBERS, Component.translatable("screen.sailboatmod.nation.section.members"));
-        this.claimsTabButton = addTabButton(left + 160, top + 36, Page.CLAIMS, Component.translatable("screen.sailboatmod.nation.section.claims"));
-        this.warTabButton = addTabButton(left + 234, top + 36, Page.WAR, Component.translatable("screen.sailboatmod.nation.section.war"));
-        this.diplomacyTabButton = addTabButton(left + 308, top + 36, Page.DIPLOMACY, Component.translatable("screen.sailboatmod.nation.section.diplomacy"));
-        this.flagTabButton = addTabButton(left + 382, top + 36, Page.FLAG, Component.translatable("screen.sailboatmod.nation.section.flag"));
+        this.membersTabButton = addTabButton(left + 76, top + 36, Page.MEMBERS, Component.translatable("screen.sailboatmod.nation.section.members"));
+        this.claimsTabButton = addTabButton(left + 140, top + 36, Page.CLAIMS, Component.translatable("screen.sailboatmod.nation.section.claims"));
+        this.warTabButton = addTabButton(left + 204, top + 36, Page.WAR, Component.translatable("screen.sailboatmod.nation.section.war"));
+        this.diplomacyTabButton = addTabButton(left + 268, top + 36, Page.DIPLOMACY, Component.translatable("screen.sailboatmod.nation.section.diplomacy"));
+        this.treasuryTabButton = addTabButton(left + 332, top + 36, Page.TREASURY, Component.translatable("screen.sailboatmod.nation.section.treasury"));
+        this.flagTabButton = addTabButton(left + 396, top + 36, Page.FLAG, Component.translatable("screen.sailboatmod.nation.section.flag"));
 
         this.claimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.claim"), b -> claimSelectedChunk()).bounds(left + BODY_X + 12, top + BODY_Y + BODY_H - 26, 72, 18).build());
         this.unclaimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.unclaim"), b -> unclaimSelectedChunk()).bounds(left + BODY_X + 90, top + BODY_Y + BODY_H - 26, 86, 18).build());
@@ -336,6 +342,7 @@ public class NationHomeScreen extends Screen {
             case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y);
             case WAR -> drawWarPage(g, left + BODY_X, top + BODY_Y);
             case DIPLOMACY -> drawDiplomacyPage(g, left + BODY_X, top + BODY_Y);
+            case TREASURY -> drawTreasuryPage(g, left + BODY_X, top + BODY_Y);
             case FLAG -> drawFlagPage(g, left + BODY_X, top + BODY_Y);
         }
         if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
@@ -557,6 +564,18 @@ public class NationHomeScreen extends Screen {
         };
     }
 
+    private void drawTreasuryPage(GuiGraphics g, int x, int y) {
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.balance_label"), x + 12, y + 34, 0xFFB8C0C8);
+        String balanceText = String.format("%,d", this.data.treasuryBalance());
+        g.drawString(this.font, balanceText, x + 12, y + 50, 0xFFE7C977);
+        drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.hint"), x + 12, y + 80, BODY_W - 24, 0xFF8D98A3);
+        if (this.data.canManageTreasury()) {
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, y + 110, BODY_W - 24, 0xFF8D98A3);
+        } else {
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.no_permission"), x + 12, y + 110, BODY_W - 24, 0xFF8D98A3);
+        }
+    }
+
     private void drawFlagPage(GuiGraphics g, int x, int y) {
         List<Component> lines = buildFlagLines();
         ResourceLocation texture = NationFlagTextureCache.resolve(this.data.flagId(), previewPrimaryColor(), previewSecondaryColor(), this.data.flagMirrored());
@@ -661,6 +680,7 @@ public class NationHomeScreen extends Screen {
         if (this.warTabButton != null) this.warTabButton.active = this.currentPage != Page.WAR;
         if (this.flagTabButton != null) this.flagTabButton.active = this.currentPage != Page.FLAG;
         if (this.diplomacyTabButton != null) this.diplomacyTabButton.active = this.currentPage != Page.DIPLOMACY;
+        if (this.treasuryTabButton != null) this.treasuryTabButton.active = this.currentPage != Page.TREASURY;
 
         boolean overviewPage = this.currentPage == Page.OVERVIEW;
         boolean hasNation = this.data.hasNation();
@@ -758,8 +778,71 @@ public class NationHomeScreen extends Screen {
                 g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
             }
         }
+        int borderColor = 0xFF000000 | this.data.secondaryColorRgb();
+        for (int gz = 0; gz <= CLAIM_RADIUS * 2; gz++) {
+            int y1 = mapY + gz * CLAIM_MAP_H / (CLAIM_RADIUS * 2 + 1);
+            int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (CLAIM_RADIUS * 2 + 1);
+            int chunkZ = this.data.currentChunkZ() + gz - CLAIM_RADIUS;
+            for (int gx = 0; gx <= CLAIM_RADIUS * 2; gx++) {
+                int x1 = mapX + gx * CLAIM_MAP_W / (CLAIM_RADIUS * 2 + 1);
+                int x2 = mapX + (gx + 1) * CLAIM_MAP_W / (CLAIM_RADIUS * 2 + 1);
+                int chunkX = this.data.currentChunkX() + gx - CLAIM_RADIUS;
+                NationOverviewClaim claim = findClaim(chunkX, chunkZ);
+                if (claim == null) continue;
+                String ownerId = claim.nationId();
+                if (!sameOwner(ownerId, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
+                if (!sameOwner(ownerId, chunkX, chunkZ + 1)) g.fill(x1, y2 - 1, x2, y2, borderColor);
+                if (!sameOwner(ownerId, chunkX - 1, chunkZ)) g.fill(x1, y1, x1 + 1, y2, borderColor);
+                if (!sameOwner(ownerId, chunkX + 1, chunkZ)) g.fill(x2 - 1, y1, x2, y2, borderColor);
+            }
+        }
         drawClaimMarker(g, mapX, mapY, this.data.currentChunkX(), this.data.currentChunkZ(), 0xFFFFFFFF);
         drawClaimMarker(g, mapX, mapY, this.selectedClaimChunkX, this.selectedClaimChunkZ, 0xFFFFD166);
+        if (hasAreaSelection()) {
+            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
+            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
+            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
+            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
+            for (int az = minZ; az <= maxZ; az++) {
+                for (int ax = minX; ax <= maxX; ax++) {
+                    drawClaimMarker(g, mapX, mapY, ax, az, 0xAAFF8844);
+                }
+            }
+        } else if (this.areaCorner1X != Integer.MIN_VALUE) {
+            drawClaimMarker(g, mapX, mapY, this.areaCorner1X, this.areaCorner1Z, 0xAAFF8844);
+        }
+        drawTownLabels(g, mapX, mapY);
+    }
+
+    private void drawTownLabels(GuiGraphics g, int mapX, int mapY) {
+        java.util.Map<String, int[]> townAcc = new java.util.LinkedHashMap<>();
+        java.util.Map<String, String> townNames = new java.util.LinkedHashMap<>();
+        for (NationOverviewClaim claim : this.data.nearbyClaims()) {
+            String tid = claim.townId().isBlank() ? "_n_" + claim.nationId() : claim.townId();
+            String label = claim.townId().isBlank() ? claim.nationName() : claim.townName();
+            if (label.isBlank()) continue;
+            int[] acc = townAcc.computeIfAbsent(tid, k -> new int[3]);
+            acc[0] += claim.chunkX(); acc[1] += claim.chunkZ(); acc[2]++;
+            townNames.putIfAbsent(tid, label);
+        }
+        int borderColor = 0xFF000000 | this.data.secondaryColorRgb();
+        for (var entry : townAcc.entrySet()) {
+            int[] acc = entry.getValue();
+            int count = acc[2];
+            int avgX = Math.round((float) acc[0] / count);
+            int avgZ = Math.round((float) acc[1] / count);
+            int lx = avgX - this.data.currentChunkX() + CLAIM_RADIUS;
+            int lz = avgZ - this.data.currentChunkZ() + CLAIM_RADIUS;
+            if (lx < 0 || lx > CLAIM_RADIUS * 2 || lz < 0 || lz > CLAIM_RADIUS * 2) continue;
+            int px = mapX + lx * CLAIM_MAP_W / (CLAIM_RADIUS * 2 + 1);
+            int py = mapY + lz * CLAIM_MAP_H / (CLAIM_RADIUS * 2 + 1);
+            String text = townNames.get(entry.getKey()) + "(" + count + ")";
+            int tw = this.font.width(text);
+            int tx = Math.max(mapX, Math.min(px - tw / 2, mapX + CLAIM_MAP_W - tw));
+            int ty = Math.max(mapY, Math.min(py - 4, mapY + CLAIM_MAP_H - 10));
+            g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xAA000000);
+            g.drawString(this.font, text, tx, ty, borderColor);
+        }
     }
 
     private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
@@ -874,8 +957,41 @@ public class NationHomeScreen extends Screen {
     private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
     private void previousTownSelection() { cycleTownSelection(-1); }
     private void nextTownSelection() { cycleTownSelection(1); }
-    private void claimSelectedChunk() { sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.CLAIM_CHUNK, this.selectedClaimChunkX, this.selectedClaimChunkZ), Component.translatable("screen.sailboatmod.nation.claims.action_claiming", this.selectedClaimChunkX, this.selectedClaimChunkZ)); }
-    private void unclaimSelectedChunk() { sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.UNCLAIM_CHUNK, this.selectedClaimChunkX, this.selectedClaimChunkZ), Component.translatable("screen.sailboatmod.nation.claims.action_unclaiming", this.selectedClaimChunkX, this.selectedClaimChunkZ)); }
+    private void claimSelectedChunk() {
+        if (hasAreaSelection()) {
+            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
+            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
+            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
+            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
+            for (int az = minZ; az <= maxZ; az++) {
+                for (int ax = minX; ax <= maxX; ax++) {
+                    ModNetwork.CHANNEL.sendToServer(new NationGuiActionPacket(NationGuiActionPacket.Action.CLAIM_CHUNK, ax, az));
+                }
+            }
+            int count = (maxX - minX + 1) * (maxZ - minZ + 1);
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.action_batch_claiming", count);
+            return;
+        }
+        sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.CLAIM_CHUNK, this.selectedClaimChunkX, this.selectedClaimChunkZ), Component.translatable("screen.sailboatmod.nation.claims.action_claiming", this.selectedClaimChunkX, this.selectedClaimChunkZ));
+    }
+    private void unclaimSelectedChunk() {
+        if (hasAreaSelection()) {
+            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
+            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
+            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
+            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
+            for (int az = minZ; az <= maxZ; az++) {
+                for (int ax = minX; ax <= maxX; ax++) {
+                    ModNetwork.CHANNEL.sendToServer(new NationGuiActionPacket(NationGuiActionPacket.Action.UNCLAIM_CHUNK, ax, az));
+                }
+            }
+            int count = (maxX - minX + 1) * (maxZ - minZ + 1);
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.action_batch_unclaiming", count);
+            return;
+        }
+        sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.UNCLAIM_CHUNK, this.selectedClaimChunkX, this.selectedClaimChunkZ), Component.translatable("screen.sailboatmod.nation.claims.action_unclaiming", this.selectedClaimChunkX, this.selectedClaimChunkZ));
+    }
+    private boolean hasAreaSelection() { return this.areaCorner1X != Integer.MIN_VALUE && this.areaCorner2X != Integer.MIN_VALUE; }
     private void appointSelectedMember() { NationOverviewMember selected = selectedMember(); if (selected != null) sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.APPOINT_OFFICER, selected.playerUuid()), Component.translatable("screen.sailboatmod.nation.members.action_appointing", selected.playerName())); }
     private void removeSelectedOfficer() { NationOverviewMember selected = selectedMember(); if (selected != null) sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.REMOVE_OFFICER, selected.playerUuid()), Component.translatable("screen.sailboatmod.nation.members.action_removing", selected.playerName())); }
     private void appointSelectedMayor() { NationOverviewMember selected = selectedMember(); if (selected != null && !this.data.capitalTownId().isBlank()) sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.APPOINT_MAYOR, selected.playerUuid(), this.data.capitalTownId()), Component.translatable("screen.sailboatmod.nation.members.action_assigning_mayor", selected.playerName(), this.data.capitalTownName().isBlank() ? this.data.capitalTownId() : this.data.capitalTownName())); }
@@ -979,7 +1095,27 @@ public class NationHomeScreen extends Screen {
     private void syncOfficerTitleInput() { if (this.officerTitleInput != null && !this.officerTitleInput.isFocused()) this.officerTitleInput.setValue(this.data.officerTitle()); }
     private void syncSelections() { if (this.selectedClaimChunkX == Integer.MIN_VALUE || Math.abs(this.selectedClaimChunkX - this.data.currentChunkX()) > CLAIM_RADIUS || Math.abs(this.selectedClaimChunkZ - this.data.currentChunkZ()) > CLAIM_RADIUS) { this.selectedClaimChunkX = this.data.currentChunkX(); this.selectedClaimChunkZ = this.data.currentChunkZ(); } if (this.data.members().isEmpty()) { this.selectedMemberUuid = ""; this.memberScroll = 0; return; } if (this.selectedMemberUuid.isBlank()) this.selectedMemberUuid = this.data.members().get(0).playerUuid(); for (NationOverviewMember member : this.data.members()) if (member.playerUuid().equals(this.selectedMemberUuid)) return; this.selectedMemberUuid = this.data.members().get(0).playerUuid(); }
     private boolean trySelectMember(double mouseX, double mouseY) { int[] b = memberListBounds(); if (mouseX < b[0] || mouseX >= b[0] + b[2] || mouseY < b[1] || mouseY >= b[1] + b[3] || this.data.members().isEmpty()) return false; int row = (int) ((mouseY - b[1] - 4) / MEMBER_ROW_H); if (row < 0 || row >= MEMBER_VISIBLE_ROWS) return false; int idx = clampMemberScroll(this.memberScroll) + row; if (idx < 0 || idx >= this.data.members().size()) return false; this.selectedMemberUuid = this.data.members().get(idx).playerUuid(); updateButtonState(); return true; }
-    private boolean trySelectClaim(double mouseX, double mouseY) { int mapX = claimMapX(left() + BODY_X); int mapY = claimMapY(top() + BODY_Y); if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false; int cellX = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseX - mapX) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_W))); int cellZ = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseY - mapY) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_H))); this.selectedClaimChunkX = this.data.currentChunkX() + cellX - CLAIM_RADIUS; this.selectedClaimChunkZ = this.data.currentChunkZ() + cellZ - CLAIM_RADIUS; updateButtonState(); return true; }
+    private boolean trySelectClaim(double mouseX, double mouseY) {
+        int mapX = claimMapX(left() + BODY_X); int mapY = claimMapY(top() + BODY_Y);
+        if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false;
+        int cellX = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseX - mapX) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_W)));
+        int cellZ = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseY - mapY) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_H)));
+        int chunkX = this.data.currentChunkX() + cellX - CLAIM_RADIUS;
+        int chunkZ = this.data.currentChunkZ() + cellZ - CLAIM_RADIUS;
+        if (hasShiftDown()) {
+            if (this.areaCorner1X == Integer.MIN_VALUE) {
+                this.areaCorner1X = chunkX; this.areaCorner1Z = chunkZ;
+                this.areaCorner2X = Integer.MIN_VALUE; this.areaCorner2Z = Integer.MIN_VALUE;
+            } else {
+                this.areaCorner2X = chunkX; this.areaCorner2Z = chunkZ;
+            }
+        } else {
+            this.selectedClaimChunkX = chunkX; this.selectedClaimChunkZ = chunkZ;
+            this.areaCorner1X = Integer.MIN_VALUE; this.areaCorner1Z = Integer.MIN_VALUE;
+            this.areaCorner2X = Integer.MIN_VALUE; this.areaCorner2Z = Integer.MIN_VALUE;
+        }
+        updateButtonState(); return true;
+    }
     private boolean trySelectDiplomacyNation(double mouseX, double mouseY) { int listX = left() + BODY_X + 8; int listY = top() + BODY_Y + 28; int listW = 220; int listH = DIP_VISIBLE_ROWS * DIP_ROW_H; if (mouseX < listX || mouseX >= listX + listW || mouseY < listY || mouseY >= listY + listH || this.data.allNations().isEmpty()) return false; int row = (int) ((mouseY - listY) / DIP_ROW_H); if (row < 0 || row >= DIP_VISIBLE_ROWS) return false; int idx = Math.max(0, Math.min(this.diplomacyScroll, this.data.allNations().size() - DIP_VISIBLE_ROWS)) + row; if (idx < 0 || idx >= this.data.allNations().size()) return false; this.selectedDiplomacyNationId = this.data.allNations().get(idx).nationId(); updateButtonState(); return true; }
     private int[] memberListBounds() { return new int[] { left() + BODY_X + 10, top() + BODY_Y + 48, MEMBER_LIST_W, MEMBER_VISIBLE_ROWS * MEMBER_ROW_H + 8 }; }
     private int claimMapX(int bodyX) { return bodyX + BODY_W - CLAIM_MAP_W - 16; }
@@ -987,6 +1123,7 @@ public class NationHomeScreen extends Screen {
     private NationOverviewMember selectedMember() { for (NationOverviewMember m : this.data.members()) if (m.playerUuid().equals(this.selectedMemberUuid)) return m; return null; }
     private NationOverviewClaim selectedClaim() { return findClaim(this.selectedClaimChunkX, this.selectedClaimChunkZ); }
     private NationOverviewClaim findClaim(int x, int z) { for (NationOverviewClaim c : this.data.nearbyClaims()) if (c.chunkX() == x && c.chunkZ() == z) return c; return null; }
+    private boolean sameOwner(String ownerId, int x, int z) { NationOverviewClaim c = findClaim(x, z); return c != null && ownerId.equals(c.nationId()); }
     private boolean canAppointSelectedMember() { NationOverviewMember s = selectedMember(); return s != null && !NationOfficeIds.LEADER.equals(s.officeId()) && !NationOfficeIds.OFFICER.equals(s.officeId()); }
     private boolean canRemoveSelectedOfficer() { NationOverviewMember s = selectedMember(); return s != null && NationOfficeIds.OFFICER.equals(s.officeId()); }
     private boolean canAssignSelectedMemberAsMayor() { NationOverviewMember s = selectedMember(); return s != null && !this.data.capitalTownId().isBlank(); }
@@ -1034,7 +1171,7 @@ public class NationHomeScreen extends Screen {
     private int top() { return (this.height - SCREEN_H) / 2; }
 
     private enum Page {
-        OVERVIEW("screen.sailboatmod.nation.section.overview"), MEMBERS("screen.sailboatmod.nation.section.members"), CLAIMS("screen.sailboatmod.nation.section.claims"), WAR("screen.sailboatmod.nation.section.war"), DIPLOMACY("screen.sailboatmod.nation.section.diplomacy"), FLAG("screen.sailboatmod.nation.section.flag");
+        OVERVIEW("screen.sailboatmod.nation.section.overview"), MEMBERS("screen.sailboatmod.nation.section.members"), CLAIMS("screen.sailboatmod.nation.section.claims"), WAR("screen.sailboatmod.nation.section.war"), DIPLOMACY("screen.sailboatmod.nation.section.diplomacy"), TREASURY("screen.sailboatmod.nation.section.treasury"), FLAG("screen.sailboatmod.nation.section.flag");
         private final String titleKey;
         Page(String titleKey) { this.titleKey = titleKey; }
         private Component title() { return Component.translatable(this.titleKey); }

@@ -78,6 +78,8 @@ public class OpenTownScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, claim.nationId(), 40);
             PacketStringCodec.writeUtfSafe(buffer, claim.nationName(), 64);
             buffer.writeInt(claim.primaryColorRgb());
+            PacketStringCodec.writeUtfSafe(buffer, claim.townId(), 40);
+            PacketStringCodec.writeUtfSafe(buffer, claim.townName(), 64);
             PacketStringCodec.writeUtfSafe(buffer, claim.breakAccessLevel(), 16);
             PacketStringCodec.writeUtfSafe(buffer, claim.placeAccessLevel(), 16);
             PacketStringCodec.writeUtfSafe(buffer, claim.useAccessLevel(), 16);
@@ -151,6 +153,8 @@ public class OpenTownScreenPacket {
                     buffer.readUtf(40),
                     buffer.readUtf(64),
                     buffer.readInt(),
+                    buffer.readUtf(40),
+                    buffer.readUtf(64),
                     buffer.readUtf(16),
                     buffer.readUtf(16),
                     buffer.readUtf(16),

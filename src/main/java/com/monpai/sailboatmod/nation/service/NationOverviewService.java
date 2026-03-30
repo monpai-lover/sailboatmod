@@ -17,6 +17,7 @@ import com.monpai.sailboatmod.nation.model.NationOfficeIds;
 import com.monpai.sailboatmod.nation.model.NationOfficeRecord;
 import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
+import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.NationWarRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import net.minecraft.server.level.ServerPlayer;
@@ -55,6 +56,7 @@ public final class NationOverviewService {
         TownRecord capitalTown = TownService.getCapitalTown(data, nation);
         long cooldownRemaining = NationWarService.cooldownRemainingMillis(data, nation.nationId(), now);
         NationOfficeRecord officerOffice = data.getOffice(nation.nationId(), NationOfficeIds.OFFICER);
+        NationTreasuryRecord treasury = data.getTreasury(nation.nationId());
 
         int warScoreSelf = 0;
         int warScoreOpponent = 0;
@@ -113,12 +115,15 @@ public final class NationOverviewService {
                 playerChunk.z - CLAIM_PREVIEW_RADIUS,
                 playerChunk.z + CLAIM_PREVIEW_RADIUS)) {
             NationRecord owner = data.getNation(claim.nationId());
+            TownRecord claimTown = claim.townId().isBlank() ? null : data.getTown(claim.townId());
             nearbyClaims.add(new NationOverviewClaim(
                     claim.chunkX(),
                     claim.chunkZ(),
                     claim.nationId(),
                     nameOrFallback(owner, claim.nationId()),
                     owner == null ? 0x8A8A8A : owner.primaryColorRgb(),
+                    claim.townId(),
+                    claimTown == null ? "" : claimTown.name(),
                     claim.breakAccessLevel(),
                     claim.placeAccessLevel(),
                     claim.useAccessLevel(),
@@ -224,6 +229,8 @@ public final class NationOverviewService {
                 NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_CLAIMS),
                 NationService.hasPermission(player.level(), player.getUUID(), NationPermission.UPLOAD_FLAG),
                 NationService.hasPermission(player.level(), player.getUUID(), NationPermission.DECLARE_WAR),
+                NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_TREASURY),
+                treasury == null ? 0L : treasury.currencyBalance(),
                 officerOffice == null ? "Officer" : officeName(data, nation.nationId(), NationOfficeIds.OFFICER),
                 diplomacyRelations,
                 incomingDiplomacyRequests,

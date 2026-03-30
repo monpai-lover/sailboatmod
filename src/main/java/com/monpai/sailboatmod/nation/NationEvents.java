@@ -35,6 +35,7 @@ import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.level.ExplosionEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
+import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
@@ -92,6 +93,16 @@ public final class NationEvents {
             return;
         }
         if (current.nationId().isBlank()) {
+            if (previous != null && !previous.nationId().isBlank()) {
+                NationSavedData data = NationSavedData.get(player.level());
+                NationRecord leftNation = data.getNation(previous.nationId());
+                if (leftNation != null) {
+                    String leftName = leftNation.name().isBlank() ? leftNation.nationId() : leftNation.name();
+                    MutableComponent leaveMsg = Component.translatable("actionbar.sailboatmod.nation.territory.left", leftName)
+                            .setStyle(Style.EMPTY.withColor(TextColor.fromRgb(leftNation.primaryColorRgb())));
+                    player.displayClientMessage(leaveMsg, true);
+                }
+            }
             return;
         }
 
@@ -367,7 +378,7 @@ public final class NationEvents {
         return nation.leaderUuid().toString();
     }
 
-    @SubscribeEvent
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onServerChat(ServerChatEvent event) {
         ServerPlayer player = event.getPlayer();
         Component prefix = NationService.buildNamePrefix(player.level(), player.getUUID());
@@ -385,12 +396,43 @@ public final class NationEvents {
             if (bukkitPlayer == null) {
                 return;
             }
-            Component prefix = NationService.buildNamePrefix(player.level(), player.getUUID());
-            String prefixedName = prefix.getString() + player.getGameProfile().getName();
+            NationSavedData data = NationSavedData.get(player.level());
+            NationMemberRecord member = data.getMember(player.getUUID());
+            NationRecord nation = member == null ? null : data.getNation(member.nationId());
+            String playerName = player.getGameProfile().getName();
+            String displayName;
+            if (nation != null) {
+                String colorCode = nearestChatColor(nation.primaryColorRgb());
+                String shortName = nation.shortName().isBlank() ? NationRecord.buildShortName(nation.name()) : nation.shortName();
+                String officeName = NationService.resolveOfficeName(data, member);
+                displayName = colorCode + "[" + shortName + "][" + officeName + "]" + "\u00A7r" + playerName;
+            } else {
+                displayName = playerName;
+            }
             java.lang.reflect.Method setDisplayName = bukkitPlayer.getClass().getMethod("setDisplayName", String.class);
-            setDisplayName.invoke(bukkitPlayer, prefixedName);
+            setDisplayName.invoke(bukkitPlayer, displayName);
         } catch (Throwable ignored) {
         }
+    }
+
+    private static String nearestChatColor(int rgb) {
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        int[][] colors = {
+            {0, 0, 0, 0}, {0, 0, 170, 1}, {0, 170, 0, 2}, {0, 170, 170, 3},
+            {170, 0, 0, 4}, {170, 0, 170, 5}, {255, 170, 0, 6}, {170, 170, 170, 7},
+            {85, 85, 85, 8}, {85, 85, 255, 9}, {85, 255, 85, 0x0A}, {85, 255, 255, 0x0B},
+            {255, 85, 85, 0x0C}, {255, 85, 255, 0x0D}, {255, 255, 85, 0x0E}, {255, 255, 255, 0x0F}
+        };
+        int bestDist = Integer.MAX_VALUE;
+        int bestCode = 0x0F;
+        for (int[] c : colors) {
+            int dr = r - c[0], dg = g - c[1], db = b - c[2];
+            int dist = dr * dr + dg * dg + db * db;
+            if (dist < bestDist) { bestDist = dist; bestCode = c[3]; }
+        }
+        return "\u00A7" + Integer.toHexString(bestCode);
     }
 
     private static void invokeRefreshName(ServerPlayer player, String methodName) {

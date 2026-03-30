@@ -75,6 +75,8 @@ public final class TownOverviewService {
                     displayClaimTownId(claim, town, nation),
                     displayClaimName(claimTown, claimNation, town, nation, claim),
                     claimColor(claimTown, claimNation),
+                    claim.townId(),
+                    claimTown == null ? "" : claimTown.name(),
                     claim.breakAccessLevel(),
                     claim.placeAccessLevel(),
                     claim.useAccessLevel(),

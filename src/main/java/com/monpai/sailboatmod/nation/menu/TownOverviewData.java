@@ -86,6 +86,8 @@ public record TownOverviewData(
                         sanitize(claim.nationId(), 40),
                         sanitize(claim.nationName(), 64),
                         claim.primaryColorRgb(),
+                        sanitize(claim.townId(), 40),
+                        sanitize(claim.townName(), 64),
                         sanitize(claim.breakAccessLevel(), 16),
                         sanitize(claim.placeAccessLevel(), 16),
                         sanitize(claim.useAccessLevel(), 16),

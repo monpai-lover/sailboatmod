@@ -51,6 +51,8 @@ public record NationOverviewData(
         boolean canManageClaims,
         boolean canUploadFlag,
         boolean canDeclareWar,
+        boolean canManageTreasury,
+        long treasuryBalance,
         String officerTitle,
         List<NationOverviewDiplomacyEntry> diplomacyRelations,
         List<NationOverviewDiplomacyRequest> incomingDiplomacyRequests,
@@ -95,6 +97,7 @@ public record NationOverviewData(
         flagWidth = Math.max(0, flagWidth);
         flagHeight = Math.max(0, flagHeight);
         flagByteSize = Math.max(0L, flagByteSize);
+        treasuryBalance = Math.max(0L, treasuryBalance);
         diplomacyRelations = diplomacyRelations == null ? List.of() : diplomacyRelations.stream()
                 .map(entry -> new NationOverviewDiplomacyEntry(
                         sanitize(entry.nationId(), 40),
@@ -133,6 +136,8 @@ public record NationOverviewData(
                         sanitize(claim.nationId(), 40),
                         sanitize(claim.nationName(), 64),
                         claim.primaryColorRgb(),
+                        sanitize(claim.townId(), 40),
+                        sanitize(claim.townName(), 64),
                         sanitize(claim.breakAccessLevel(), 16),
                         sanitize(claim.placeAccessLevel(), 16),
                         sanitize(claim.useAccessLevel(), 16),
@@ -205,6 +210,8 @@ public record NationOverviewData(
                 false,
                 false,
                 false,
+                false,
+                0L,
                 "",
                 List.of(),
                 List.of(),

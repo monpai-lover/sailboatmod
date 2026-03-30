@@ -916,7 +916,7 @@ public final class NationService {
         return prefix.setStyle(Style.EMPTY.withColor(TextColor.fromRgb(nation.primaryColorRgb())));
     }
 
-    private static String resolveOfficeName(NationSavedData data, NationMemberRecord member) {
+    public static String resolveOfficeName(NationSavedData data, NationMemberRecord member) {
         String officeId = member.officeId();
         if (NationOfficeIds.LEADER.equals(officeId)) {
             return Component.translatable("nation.prefix.leader").getString();

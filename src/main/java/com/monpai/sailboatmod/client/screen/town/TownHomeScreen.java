@@ -36,8 +36,8 @@ public class TownHomeScreen extends Screen {
     private static final int BODY_Y = 60;
     private static final int BODY_W = SCREEN_W - 24;
     private static final int BODY_H = 220;
-    private static final int CLAIM_MAP_W = 182;
-    private static final int CLAIM_MAP_H = 182;
+    private static final int CLAIM_MAP_W = 164;
+    private static final int CLAIM_MAP_H = 164;
     private static final int CLAIM_RADIUS = 20;
     private static final int AUTO_REFRESH_INTERVAL_TICKS = 40;
     private static final int MEMBER_LIST_W = 180;
@@ -71,6 +71,10 @@ public class TownHomeScreen extends Screen {
     private Button abandonTownButton;
     private int selectedClaimChunkX = Integer.MIN_VALUE;
     private int selectedClaimChunkZ = Integer.MIN_VALUE;
+    private int areaCorner1X = Integer.MIN_VALUE;
+    private int areaCorner1Z = Integer.MIN_VALUE;
+    private int areaCorner2X = Integer.MIN_VALUE;
+    private int areaCorner2Z = Integer.MIN_VALUE;
     private int claimsSubPage;
     private Button claimsSubPageButton;
     private int autoRefreshTicks;
@@ -423,8 +427,71 @@ public class TownHomeScreen extends Screen {
                 g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
             }
         }
+        int borderColor = 0xFF000000 | this.data.secondaryColorRgb();
+        for (int gz = 0; gz <= CLAIM_RADIUS * 2; gz++) {
+            int y1 = mapY + gz * CLAIM_MAP_H / (CLAIM_RADIUS * 2 + 1);
+            int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (CLAIM_RADIUS * 2 + 1);
+            int chunkZ = this.data.currentChunkZ() + gz - CLAIM_RADIUS;
+            for (int gx = 0; gx <= CLAIM_RADIUS * 2; gx++) {
+                int x1 = mapX + gx * CLAIM_MAP_W / (CLAIM_RADIUS * 2 + 1);
+                int x2 = mapX + (gx + 1) * CLAIM_MAP_W / (CLAIM_RADIUS * 2 + 1);
+                int chunkX = this.data.currentChunkX() + gx - CLAIM_RADIUS;
+                NationOverviewClaim claim = findClaim(chunkX, chunkZ);
+                if (claim == null) continue;
+                String ownerId = claim.nationId();
+                if (!sameOwner(ownerId, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
+                if (!sameOwner(ownerId, chunkX, chunkZ + 1)) g.fill(x1, y2 - 1, x2, y2, borderColor);
+                if (!sameOwner(ownerId, chunkX - 1, chunkZ)) g.fill(x1, y1, x1 + 1, y2, borderColor);
+                if (!sameOwner(ownerId, chunkX + 1, chunkZ)) g.fill(x2 - 1, y1, x2, y2, borderColor);
+            }
+        }
         drawClaimMarker(g, mapX, mapY, this.data.currentChunkX(), this.data.currentChunkZ(), 0xFFFFFFFF);
         drawClaimMarker(g, mapX, mapY, this.selectedClaimChunkX, this.selectedClaimChunkZ, 0xFFFFD166);
+        if (hasAreaSelection()) {
+            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
+            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
+            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
+            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
+            for (int az = minZ; az <= maxZ; az++) {
+                for (int ax = minX; ax <= maxX; ax++) {
+                    drawClaimMarker(g, mapX, mapY, ax, az, 0xAAFF8844);
+                }
+            }
+        } else if (this.areaCorner1X != Integer.MIN_VALUE) {
+            drawClaimMarker(g, mapX, mapY, this.areaCorner1X, this.areaCorner1Z, 0xAAFF8844);
+        }
+        drawTownLabels(g, mapX, mapY);
+    }
+
+    private void drawTownLabels(GuiGraphics g, int mapX, int mapY) {
+        java.util.Map<String, int[]> townAcc = new java.util.LinkedHashMap<>();
+        java.util.Map<String, String> townNames = new java.util.LinkedHashMap<>();
+        for (NationOverviewClaim claim : this.data.nearbyClaims()) {
+            String tid = claim.townId().isBlank() ? "_n_" + claim.nationId() : claim.townId();
+            String label = claim.townId().isBlank() ? claim.nationName() : claim.townName();
+            if (label.isBlank()) continue;
+            int[] acc = townAcc.computeIfAbsent(tid, k -> new int[3]);
+            acc[0] += claim.chunkX(); acc[1] += claim.chunkZ(); acc[2]++;
+            townNames.putIfAbsent(tid, label);
+        }
+        int borderColor = 0xFF000000 | this.data.secondaryColorRgb();
+        for (var entry : townAcc.entrySet()) {
+            int[] acc = entry.getValue();
+            int count = acc[2];
+            int avgX = Math.round((float) acc[0] / count);
+            int avgZ = Math.round((float) acc[1] / count);
+            int lx = avgX - this.data.currentChunkX() + CLAIM_RADIUS;
+            int lz = avgZ - this.data.currentChunkZ() + CLAIM_RADIUS;
+            if (lx < 0 || lx > CLAIM_RADIUS * 2 || lz < 0 || lz > CLAIM_RADIUS * 2) continue;
+            int px = mapX + lx * CLAIM_MAP_W / (CLAIM_RADIUS * 2 + 1);
+            int py = mapY + lz * CLAIM_MAP_H / (CLAIM_RADIUS * 2 + 1);
+            String text = townNames.get(entry.getKey()) + "(" + count + ")";
+            int tw = this.font.width(text);
+            int tx = Math.max(mapX, Math.min(px - tw / 2, mapX + CLAIM_MAP_W - tw));
+            int ty = Math.max(mapY, Math.min(py - 4, mapY + CLAIM_MAP_H - 10));
+            g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xAA000000);
+            g.drawString(this.font, text, tx, ty, borderColor);
+        }
     }
 
     private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
@@ -497,12 +564,42 @@ public class TownHomeScreen extends Screen {
     }
 
     private void claimSelectedChunk() {
+        if (hasAreaSelection()) {
+            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
+            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
+            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
+            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
+            for (int az = minZ; az <= maxZ; az++) {
+                for (int ax = minX; ax <= maxX; ax++) {
+                    ModNetwork.CHANNEL.sendToServer(new TownGuiActionPacket(TownGuiActionPacket.Action.CLAIM_CHUNK, this.data.townId(), ax, az));
+                }
+            }
+            int count = (maxX - minX + 1) * (maxZ - minZ + 1);
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.action_batch_claiming", count);
+            return;
+        }
         sendTownAction(new TownGuiActionPacket(TownGuiActionPacket.Action.CLAIM_CHUNK, this.data.townId(), this.selectedClaimChunkX, this.selectedClaimChunkZ), Component.translatable("screen.sailboatmod.town.claims.action_claiming", this.selectedClaimChunkX, this.selectedClaimChunkZ));
     }
 
     private void unclaimSelectedChunk() {
+        if (hasAreaSelection()) {
+            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
+            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
+            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
+            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
+            for (int az = minZ; az <= maxZ; az++) {
+                for (int ax = minX; ax <= maxX; ax++) {
+                    ModNetwork.CHANNEL.sendToServer(new TownGuiActionPacket(TownGuiActionPacket.Action.UNCLAIM_CHUNK, this.data.townId(), ax, az));
+                }
+            }
+            int count = (maxX - minX + 1) * (maxZ - minZ + 1);
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.action_batch_unclaiming", count);
+            return;
+        }
         sendTownAction(new TownGuiActionPacket(TownGuiActionPacket.Action.UNCLAIM_CHUNK, this.data.townId(), this.selectedClaimChunkX, this.selectedClaimChunkZ), Component.translatable("screen.sailboatmod.town.claims.action_unclaiming", this.selectedClaimChunkX, this.selectedClaimChunkZ));
     }
+
+    private boolean hasAreaSelection() { return this.areaCorner1X != Integer.MIN_VALUE && this.areaCorner2X != Integer.MIN_VALUE; }
 
     private void submitUpload() {
         this.statusLine = TownFlagUploadClient.uploadFromPath(this.data.townId(), valueOf(this.flagPathInput));
@@ -590,8 +687,20 @@ public class TownHomeScreen extends Screen {
         if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false;
         int cellX = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseX - mapX) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_W)));
         int cellZ = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseY - mapY) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_H)));
-        this.selectedClaimChunkX = this.data.currentChunkX() + cellX - CLAIM_RADIUS;
-        this.selectedClaimChunkZ = this.data.currentChunkZ() + cellZ - CLAIM_RADIUS;
+        int chunkX = this.data.currentChunkX() + cellX - CLAIM_RADIUS;
+        int chunkZ = this.data.currentChunkZ() + cellZ - CLAIM_RADIUS;
+        if (hasShiftDown()) {
+            if (this.areaCorner1X == Integer.MIN_VALUE) {
+                this.areaCorner1X = chunkX; this.areaCorner1Z = chunkZ;
+                this.areaCorner2X = Integer.MIN_VALUE; this.areaCorner2Z = Integer.MIN_VALUE;
+            } else {
+                this.areaCorner2X = chunkX; this.areaCorner2Z = chunkZ;
+            }
+        } else {
+            this.selectedClaimChunkX = chunkX; this.selectedClaimChunkZ = chunkZ;
+            this.areaCorner1X = Integer.MIN_VALUE; this.areaCorner1Z = Integer.MIN_VALUE;
+            this.areaCorner2X = Integer.MIN_VALUE; this.areaCorner2Z = Integer.MIN_VALUE;
+        }
         updateButtonState();
         return true;
     }
@@ -615,6 +724,7 @@ public class TownHomeScreen extends Screen {
     }
 
     private NationOverviewClaim findClaim(int x, int z) { for (NationOverviewClaim claim : this.data.nearbyClaims()) if (claim.chunkX() == x && claim.chunkZ() == z) return claim; return null; }
+    private boolean sameOwner(String ownerId, int x, int z) { NationOverviewClaim c = findClaim(x, z); return c != null && ownerId.equals(c.nationId()); }
     private boolean canAssignSelectedMemberAsMayor() { NationOverviewMember selected = selectedMember(); return this.data.canAssignMayor() && selected != null && !selected.playerUuid().equals(this.data.mayorUuid()); }
     private boolean townNameChanged() { return !valueOf(this.townNameInput).trim().equals(this.data.townName()); }
     private String valueOf(EditBox box) { return box == null ? "" : box.getValue(); }

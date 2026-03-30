@@ -81,6 +81,8 @@ public class OpenNationScreenPacket {
         buffer.writeBoolean(data.canManageClaims());
         buffer.writeBoolean(data.canUploadFlag());
         buffer.writeBoolean(data.canDeclareWar());
+        buffer.writeBoolean(data.canManageTreasury());
+        buffer.writeLong(data.treasuryBalance());
         writeUtfSafe(buffer, data.officerTitle(), 64);
         buffer.writeVarInt(data.diplomacyRelations().size());
         for (NationOverviewDiplomacyEntry relation : data.diplomacyRelations()) {
@@ -121,6 +123,8 @@ public class OpenNationScreenPacket {
             writeUtfSafe(buffer, claim.nationId(), 40);
             writeUtfSafe(buffer, claim.nationName(), 64);
             buffer.writeInt(claim.primaryColorRgb());
+            writeUtfSafe(buffer, claim.townId(), 40);
+            writeUtfSafe(buffer, claim.townName(), 64);
             writeUtfSafe(buffer, claim.breakAccessLevel(), 16);
             writeUtfSafe(buffer, claim.placeAccessLevel(), 16);
             writeUtfSafe(buffer, claim.useAccessLevel(), 16);
@@ -193,6 +197,8 @@ public class OpenNationScreenPacket {
         boolean canManageClaims = buffer.readBoolean();
         boolean canUploadFlag = buffer.readBoolean();
         boolean canDeclareWar = buffer.readBoolean();
+        boolean canManageTreasury = buffer.readBoolean();
+        long treasuryBalance = buffer.readLong();
         String officerTitle = buffer.readUtf(64);
         int diplomacyRelationSize = buffer.readVarInt();
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>(diplomacyRelationSize);
@@ -248,6 +254,8 @@ public class OpenNationScreenPacket {
                     buffer.readUtf(40),
                     buffer.readUtf(64),
                     buffer.readInt(),
+                    buffer.readUtf(40),
+                    buffer.readUtf(64),
                     buffer.readUtf(16),
                     buffer.readUtf(16),
                     buffer.readUtf(16),
@@ -321,6 +329,8 @@ public class OpenNationScreenPacket {
                 canManageClaims,
                 canUploadFlag,
                 canDeclareWar,
+                canManageTreasury,
+                treasuryBalance,
                 officerTitle,
                 diplomacyRelations,
                 incomingDiplomacyRequests,
