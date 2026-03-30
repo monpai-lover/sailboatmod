@@ -647,5 +647,8 @@
   "command.sailboatmod.nation.office.permission.leader_locked": "领袖职位的权限是固定的，无法修改。",
   "command.sailboatmod.nation.office.permission.success": "已将 %s 的权限 %s 设置为 %s。",
   "command.sailboatmod.nation.office.info.header": "国家职位列表：",
-  "command.sailboatmod.nation.office.info.entry": "%s (%s) | 优先级 %s | 权限：%s"
+  "command.sailboatmod.nation.office.info.entry": "%s (%s) | 优先级 %s | 权限：%s",
+  "nation.prefix.leader": "领袖",
+  "nation.prefix.officer": "官员",
+  "nation.prefix.member": "成员"
 }

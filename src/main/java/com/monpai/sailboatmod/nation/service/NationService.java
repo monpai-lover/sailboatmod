@@ -897,13 +897,34 @@ public final class NationService {
     }
 
     public static Component buildNamePrefix(Level level, UUID playerUuid) {
-        NationRecord nation = getPlayerNation(level, playerUuid);
+        NationSavedData data = NationSavedData.get(level);
+        NationMemberRecord member = data.getMember(playerUuid);
+        if (member == null) {
+            return Component.empty();
+        }
+        NationRecord nation = data.getNation(member.nationId());
         if (nation == null) {
             return Component.empty();
         }
         String shortName = nation.shortName().isBlank() ? NationRecord.buildShortName(nation.name()) : nation.shortName();
-        MutableComponent prefix = Component.literal("[" + shortName + "] ");
+        String officeName = resolveOfficeName(data, member);
+        MutableComponent prefix = Component.literal("[" + shortName + "][" + officeName + "]");
         return prefix.setStyle(Style.EMPTY.withColor(TextColor.fromRgb(nation.primaryColorRgb())));
+    }
+
+    private static String resolveOfficeName(NationSavedData data, NationMemberRecord member) {
+        String officeId = member.officeId();
+        if (NationOfficeIds.LEADER.equals(officeId)) {
+            return Component.translatable("nation.prefix.leader").getString();
+        }
+        if (NationOfficeIds.OFFICER.equals(officeId)) {
+            NationOfficeRecord office = data.getOffice(member.nationId(), officeId);
+            if (office != null && !office.name().isBlank()) {
+                return office.name();
+            }
+            return Component.translatable("nation.prefix.officer").getString();
+        }
+        return Component.translatable("nation.prefix.member").getString();
     }
 
     public static void updateKnownPlayer(ServerPlayer player) {

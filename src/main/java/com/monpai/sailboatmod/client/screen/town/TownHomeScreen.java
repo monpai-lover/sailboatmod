@@ -396,7 +396,7 @@ public class TownHomeScreen extends Screen {
                 int color = sampleClaimTerrainColor(chunkX, chunkZ);
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim != null) {
-                    double overlayStrength = this.data.townId().equals(claim.nationId()) ? 0.28D : 0.22D;
+                    double overlayStrength = this.data.townId().equals(claim.nationId()) ? 0.50D : 0.38D;
                     color = blendColor(color, 0xFF000000 | claim.primaryColorRgb(), overlayStrength);
                 }
                 g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);

@@ -27,6 +27,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.event.RegisterCommandsEvent;
+import net.minecraftforge.event.ServerChatEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerContainerEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
@@ -334,20 +335,22 @@ public final class NationEvents {
         NationMemberRecord member = data.getMember(player.getUUID());
         NationRecord nation = member == null ? null : data.getNation(member.nationId());
         String playerName = player.getGameProfile().getName();
-        String tabKey = tabListKey(nation, playerName);
+        String tabKey = tabListKey(nation, member, playerName);
         if (!force && tabKey.equals(LAST_TAB_LIST_KEYS.get(player.getUUID()))) {
             return;
         }
         LAST_TAB_LIST_KEYS.put(player.getUUID(), tabKey);
         invokeRefreshName(player, "refreshDisplayName");
         invokeRefreshName(player, "refreshTabListName");
+        syncBukkitDisplayName(player);
     }
 
-    private static String tabListKey(NationRecord nation, String playerName) {
+    private static String tabListKey(NationRecord nation, NationMemberRecord member, String playerName) {
         if (nation == null) {
             return "|" + playerName;
         }
-        return nation.nationId() + "|" + nation.primaryColorRgb() + "|" + (nation.shortName().isBlank() ? nation.name() : nation.shortName()) + "|" + playerName;
+        String officeId = member != null ? member.officeId() : "";
+        return nation.nationId() + "|" + nation.primaryColorRgb() + "|" + (nation.shortName().isBlank() ? nation.name() : nation.shortName()) + "|" + officeId + "|" + playerName;
     }
 
     private static String leaderName(NationSavedData data, ServerPlayer viewer, NationRecord nation) {
@@ -362,6 +365,32 @@ public final class NationEvents {
             return member.lastKnownName();
         }
         return nation.leaderUuid().toString();
+    }
+
+    @SubscribeEvent
+    public static void onServerChat(ServerChatEvent event) {
+        ServerPlayer player = event.getPlayer();
+        Component prefix = NationService.buildNamePrefix(player.level(), player.getUUID());
+        if (prefix.getString().isBlank()) {
+            return;
+        }
+        event.setMessage(Component.empty().append(prefix).append(event.getMessage()));
+    }
+
+    private static void syncBukkitDisplayName(ServerPlayer player) {
+        try {
+            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+            java.lang.reflect.Method getPlayer = bukkitClass.getMethod("getPlayer", UUID.class);
+            Object bukkitPlayer = getPlayer.invoke(null, player.getUUID());
+            if (bukkitPlayer == null) {
+                return;
+            }
+            Component prefix = NationService.buildNamePrefix(player.level(), player.getUUID());
+            String prefixedName = prefix.getString() + player.getGameProfile().getName();
+            java.lang.reflect.Method setDisplayName = bukkitPlayer.getClass().getMethod("setDisplayName", String.class);
+            setDisplayName.invoke(bukkitPlayer, prefixedName);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void invokeRefreshName(ServerPlayer player, String methodName) {

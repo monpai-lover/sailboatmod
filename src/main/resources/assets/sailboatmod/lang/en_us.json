@@ -608,5 +608,8 @@
   "item.sailboatmod.town_flag": "Town Flag Stand",
   "item.sailboatmod.town_flag.desc": "Displays the town flag and can only be placed inside town chunks you manage.",
   "command.sailboatmod.nation.town.flag.place_denied": "Town flag stands can only be placed inside a town you manage.",
-  "command.sailboatmod.nation.town.flag.info": "Town flag owner: %s | Flag ID: %s"
+  "command.sailboatmod.nation.town.flag.info": "Town flag owner: %s | Flag ID: %s",
+  "nation.prefix.leader": "Leader",
+  "nation.prefix.officer": "Officer",
+  "nation.prefix.member": "Member"
 }
