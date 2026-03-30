@@ -725,5 +725,9 @@
   "command.sailboatmod.nation.bank.deposit_item.success": "物品已存入国库。",
   "command.sailboatmod.nation.bank.withdraw_item.success": "物品已从国库取出。",
   "command.sailboatmod.nation.bank.treasury_full": "国库已满。",
-  "command.sailboatmod.nation.bank.inventory_full": "你的背包已满。"
+  "command.sailboatmod.nation.bank.inventory_full": "你的背包已满。",
+  "item.sailboatmod.bank_constructor": "银行建筑器",
+  "item.sailboatmod.bank_constructor.desc": "放置后自动建造维多利亚银行建筑。手持时显示预览轮廓。",
+  "command.sailboatmod.nation.bank_constructor.started": "银行建造已开始！大约10秒后完成。",
+  "command.sailboatmod.nation.bank_constructor.failed": "建造启动失败，无法加载建筑结构。"
 }

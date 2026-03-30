@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.network;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.PlaceBankStructurePacket;
 import com.monpai.sailboatmod.network.packet.ClaimMarketCreditsPacket;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
 import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
@@ -280,6 +281,13 @@ public final class ModNetwork {
                 BankActionPacket::encode,
                 BankActionPacket::decode,
                 BankActionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                PlaceBankStructurePacket.class,
+                PlaceBankStructurePacket::encode,
+                PlaceBankStructurePacket::decode,
+                PlaceBankStructurePacket::handle
         );
     }
 

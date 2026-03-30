@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
+import com.monpai.sailboatmod.nation.service.BankConstructionManager;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationFlagBlockTracker;
 import com.monpai.sailboatmod.nation.service.NationFlagSyncService;
@@ -74,6 +75,11 @@ public final class NationEvents {
             return;
         }
         NationWarService.tickWars(ServerLifecycleHooks.getCurrentServer());
+        if (ServerLifecycleHooks.getCurrentServer() != null) {
+            for (var level : ServerLifecycleHooks.getCurrentServer().getAllLevels()) {
+                BankConstructionManager.tick(level);
+            }
+        }
     }
 
     @SubscribeEvent
@@ -302,6 +308,7 @@ public final class NationEvents {
         LAST_TAB_LIST_KEYS.clear();
         PENDING_CONTAINER_ACCESS.clear();
         NationWarService.clearRuntimeState();
+        BankConstructionManager.clearAll();
         NationFlagUploadService.clearSessions();
         NationFlagBlockTracker.clearTrackedFlags();
         TownFlagBlockTracker.clearTrackedFlags();

@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.item.DescribedBlockItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.item.SailboatItem;
@@ -56,6 +57,11 @@ public final class ModItems {
     public static final RegistryObject<Item> TOWN_FLAG_ITEM = ITEMS.register(
             "town_flag",
             () -> new StandingAndWallFlagBlockItem(ModBlocks.TOWN_FLAG_BLOCK.get(), ModBlocks.WALL_TOWN_FLAG_BLOCK.get(), new Item.Properties().stacksTo(16), "item.sailboatmod.town_flag.desc")
+    );
+
+    public static final RegistryObject<Item> BANK_CONSTRUCTOR_ITEM = ITEMS.register(
+            "bank_constructor",
+            () -> new BankConstructorItem(new Item.Properties().stacksTo(1))
     );
 
     private ModItems() {

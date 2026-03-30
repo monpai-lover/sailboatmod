@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.renderer.SailboatEntityRenderer;
+import com.monpai.sailboatmod.client.renderer.BankConstructorPreviewRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.BankBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.NationCoreBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.NationFlagBlockEntityRenderer;

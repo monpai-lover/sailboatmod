@@ -686,5 +686,9 @@
   "command.sailboatmod.nation.bank.deposit_item.success": "Item deposited into the treasury.",
   "command.sailboatmod.nation.bank.withdraw_item.success": "Item withdrawn from the treasury.",
   "command.sailboatmod.nation.bank.treasury_full": "The treasury is full.",
-  "command.sailboatmod.nation.bank.inventory_full": "Your inventory is full."
+  "command.sailboatmod.nation.bank.inventory_full": "Your inventory is full.",
+  "item.sailboatmod.bank_constructor": "Bank Constructor",
+  "item.sailboatmod.bank_constructor.desc": "Place to construct a Victorian Bank building. Shows preview outline when held.",
+  "command.sailboatmod.nation.bank_constructor.started": "Bank construction started! Building will complete in about 10 seconds.",
+  "command.sailboatmod.nation.bank_constructor.failed": "Failed to start construction. Structure could not be loaded."
 }

@@ -1,6 +1,12 @@
 {
-  "parent": "minecraft:block/cube_all",
+  "parent": "minecraft:block/cube",
   "textures": {
-    "all": "sailboatmod:block/bank_block"
+    "north": "sailboatmod:block/bank_front",
+    "south": "sailboatmod:block/bank_side",
+    "east": "sailboatmod:block/bank_side",
+    "west": "sailboatmod:block/bank_side",
+    "up": "sailboatmod:block/bank_side",
+    "down": "sailboatmod:block/bank_side",
+    "particle": "sailboatmod:block/bank_front"
   }
 }
