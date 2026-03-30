@@ -1,0 +1,56 @@
+package com.monpai.sailboatmod.client;
+
+import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.client.screen.SailboatInfoScreen;
+import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
+import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
+import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.common.Mod;
+
+@Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
+public final class ClientInputHandler {
+    @SubscribeEvent
+    public static void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase != TickEvent.Phase.START) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        LocalPlayer player = minecraft.player;
+        if (player == null || minecraft.screen != null) {
+            return;
+        }
+
+        if (ClientKeyMappings.OPEN_NATION_MENU.consumeClick()) {
+            NationClientHooks.openCachedOrEmpty();
+            ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket());
+            return;
+        }
+
+        if (player.getVehicle() instanceof SailboatEntity && minecraft.options.keyInventory.consumeClick()) {
+            ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket());
+        }
+
+        if (player.getVehicle() instanceof SailboatEntity sailboat && ClientKeyMappings.OPEN_SAILBOAT_INFO.consumeClick()) {
+            minecraft.setScreen(new SailboatInfoScreen(sailboat));
+        }
+    }
+
+    @SubscribeEvent
+    public static void onClientLogout(ClientPlayerNetworkEvent.LoggingOut event) {
+        NationClientHooks.clearCache();
+        TownClientHooks.clearCache();
+        NationFlagTextureCache.clearCache();
+    }
+
+    private ClientInputHandler() {
+    }
+}

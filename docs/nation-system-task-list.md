@@ -412,8 +412,8 @@ Create screens under `client/screen/nation/`.
 
 - [x] Pull nation flag texture from client cache
 - [x] Add fallback texture if the image is missing
-- [ ] Support standing and wall variants if desired
-- [ ] Add simple wave animation later, not in MVP
+- [x] Support standing and wall variants if desired
+- [x] Add simple wave animation later, not in MVP
 
 ### Protection
 

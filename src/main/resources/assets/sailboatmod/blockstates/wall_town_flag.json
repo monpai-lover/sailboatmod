@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "sailboatmod:block/wall_town_flag"
+    },
+    "facing=east": {
+      "model": "sailboatmod:block/wall_town_flag",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "sailboatmod:block/wall_town_flag",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "sailboatmod:block/wall_town_flag",
+      "y": 270
+    }
+  }
+}

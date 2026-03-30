@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "sailboatmod:block/nation_flag",
+    "particle": "sailboatmod:block/nation_flag"
+  }
+}
