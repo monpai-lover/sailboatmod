@@ -381,6 +381,7 @@ public final class NationEvents {
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onServerChat(ServerChatEvent event) {
         ServerPlayer player = event.getPlayer();
+        syncBukkitDisplayName(player);
         Component prefix = NationService.buildNamePrefix(player.level(), player.getUUID());
         if (prefix.getString().isBlank()) {
             return;

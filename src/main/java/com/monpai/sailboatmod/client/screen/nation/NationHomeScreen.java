@@ -318,7 +318,7 @@ public class NationHomeScreen extends Screen {
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         this.renderBackground(guiGraphics);
-        drawContents(guiGraphics);
+        drawContents(guiGraphics, mouseX, mouseY);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
     }
 
@@ -327,7 +327,7 @@ public class NationHomeScreen extends Screen {
         return false;
     }
 
-    private void drawContents(GuiGraphics g) {
+    private void drawContents(GuiGraphics g, int mouseX, int mouseY) {
         int left = left();
         int top = top();
         g.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xCC101820);
@@ -339,7 +339,7 @@ public class NationHomeScreen extends Screen {
         switch (this.currentPage) {
             case OVERVIEW -> drawOverviewPage(g, left + BODY_X, top + BODY_Y);
             case MEMBERS -> drawMembersPage(g, left + BODY_X, top + BODY_Y);
-            case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y);
+            case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y, mouseX, mouseY);
             case WAR -> drawWarPage(g, left + BODY_X, top + BODY_Y);
             case DIPLOMACY -> drawDiplomacyPage(g, left + BODY_X, top + BODY_Y);
             case TREASURY -> drawTreasuryPage(g, left + BODY_X, top + BODY_Y);
@@ -414,7 +414,7 @@ public class NationHomeScreen extends Screen {
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.manage_hint"), infoX, y + 228, 0xFF8D98A3);
     }
 
-    private void drawClaimsPage(GuiGraphics g, int x, int y) {
+    private void drawClaimsPage(GuiGraphics g, int x, int y, int mouseX, int mouseY) {
         if (this.claimsSubPage == 1) {
             drawClaimsPermPage(g, x, y);
             return;
@@ -427,7 +427,7 @@ public class NationHomeScreen extends Screen {
         int mapX = claimMapX(x);
         int mapY = claimMapY(y);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.map_title"), mapX, y + 12, 0xFFB8C0C8);
-        drawClaimMap(g, mapX, mapY);
+        drawClaimMap(g, mapX, mapY, mouseX, mouseY);
     }
 
     private void drawClaimsPermPage(GuiGraphics g, int x, int y) {
@@ -758,7 +758,7 @@ public class NationHomeScreen extends Screen {
         }
     }
 
-    private void drawClaimMap(GuiGraphics g, int mapX, int mapY) {
+    private void drawClaimMap(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
         g.fill(mapX - 1, mapY - 1, mapX + CLAIM_MAP_W + 1, mapY + CLAIM_MAP_H + 1, 0xFF6F8390);
         g.fill(mapX, mapY, mapX + CLAIM_MAP_W, mapY + CLAIM_MAP_H, 0xFF22323C);
         for (int gz = 0; gz <= CLAIM_RADIUS * 2; gz++) {
@@ -811,38 +811,32 @@ public class NationHomeScreen extends Screen {
         } else if (this.areaCorner1X != Integer.MIN_VALUE) {
             drawClaimMarker(g, mapX, mapY, this.areaCorner1X, this.areaCorner1Z, 0xAAFF8844);
         }
-        drawTownLabels(g, mapX, mapY);
+        drawTownLabels(g, mapX, mapY, mouseX, mouseY);
     }
 
-    private void drawTownLabels(GuiGraphics g, int mapX, int mapY) {
-        java.util.Map<String, int[]> townAcc = new java.util.LinkedHashMap<>();
-        java.util.Map<String, String> townNames = new java.util.LinkedHashMap<>();
-        for (NationOverviewClaim claim : this.data.nearbyClaims()) {
-            String tid = claim.townId().isBlank() ? "_n_" + claim.nationId() : claim.townId();
-            String label = claim.townId().isBlank() ? claim.nationName() : claim.townName();
-            if (label.isBlank()) continue;
-            int[] acc = townAcc.computeIfAbsent(tid, k -> new int[3]);
-            acc[0] += claim.chunkX(); acc[1] += claim.chunkZ(); acc[2]++;
-            townNames.putIfAbsent(tid, label);
+    private void drawTownLabels(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
+        if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return;
+        int cellX = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseX - mapX) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_W)));
+        int cellZ = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseY - mapY) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_H)));
+        int hoverChunkX = this.data.currentChunkX() + cellX - CLAIM_RADIUS;
+        int hoverChunkZ = this.data.currentChunkZ() + cellZ - CLAIM_RADIUS;
+        NationOverviewClaim hoverClaim = findClaim(hoverChunkX, hoverChunkZ);
+        if (hoverClaim == null) return;
+        String hoverId = hoverClaim.townId().isBlank() ? hoverClaim.nationId() : hoverClaim.townId();
+        String label = hoverClaim.townId().isBlank() ? hoverClaim.nationName() : hoverClaim.townName();
+        if (label.isBlank()) return;
+        int count = 0;
+        for (NationOverviewClaim c : this.data.nearbyClaims()) {
+            String cid = c.townId().isBlank() ? c.nationId() : c.townId();
+            if (cid.equals(hoverId)) count++;
         }
-        int borderColor = 0xFF000000 | this.data.secondaryColorRgb();
-        for (var entry : townAcc.entrySet()) {
-            int[] acc = entry.getValue();
-            int count = acc[2];
-            int avgX = Math.round((float) acc[0] / count);
-            int avgZ = Math.round((float) acc[1] / count);
-            int lx = avgX - this.data.currentChunkX() + CLAIM_RADIUS;
-            int lz = avgZ - this.data.currentChunkZ() + CLAIM_RADIUS;
-            if (lx < 0 || lx > CLAIM_RADIUS * 2 || lz < 0 || lz > CLAIM_RADIUS * 2) continue;
-            int px = mapX + lx * CLAIM_MAP_W / (CLAIM_RADIUS * 2 + 1);
-            int py = mapY + lz * CLAIM_MAP_H / (CLAIM_RADIUS * 2 + 1);
-            String text = townNames.get(entry.getKey()) + "(" + count + ")";
-            int tw = this.font.width(text);
-            int tx = Math.max(mapX, Math.min(px - tw / 2, mapX + CLAIM_MAP_W - tw));
-            int ty = Math.max(mapY, Math.min(py - 4, mapY + CLAIM_MAP_H - 10));
-            g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xAA000000);
-            g.drawString(this.font, text, tx, ty, borderColor);
-        }
+        int color = 0xFF000000 | hoverClaim.primaryColorRgb();
+        String text = label + "(" + count + ")";
+        int tw = this.font.width(text);
+        int tx = Math.max(mapX, Math.min(mouseX - tw / 2, mapX + CLAIM_MAP_W - tw));
+        int ty = Math.max(mapY, Math.min(mouseY - 14, mapY + CLAIM_MAP_H - 10));
+        g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xCC000000);
+        g.drawString(this.font, text, tx, ty, color);
     }
 
     private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
@@ -1075,8 +1069,22 @@ public class NationHomeScreen extends Screen {
 
     private void cycleClaimPermission(String actionId, String currentLevelId) {
         NationClaimAccessLevel next = nextAccessLevel(currentLevelId);
-        ModNetwork.CHANNEL.sendToServer(new SetClaimPermissionPacket(this.selectedClaimChunkX, this.selectedClaimChunkZ, actionId, next.id()));
-        this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating", actionName(actionId), accessName(next.id()));
+        if (hasAreaSelection()) {
+            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
+            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
+            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
+            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
+            for (int az = minZ; az <= maxZ; az++) {
+                for (int ax = minX; ax <= maxX; ax++) {
+                    ModNetwork.CHANNEL.sendToServer(new SetClaimPermissionPacket(ax, az, actionId, next.id()));
+                }
+            }
+            int count = (maxX - minX + 1) * (maxZ - minZ + 1);
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating_batch", count, actionName(actionId), accessName(next.id()));
+        } else {
+            ModNetwork.CHANNEL.sendToServer(new SetClaimPermissionPacket(this.selectedClaimChunkX, this.selectedClaimChunkZ, actionId, next.id()));
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating", actionName(actionId), accessName(next.id()));
+        }
     }
 
     private void runCommand(String command) {
@@ -1102,16 +1110,11 @@ public class NationHomeScreen extends Screen {
         int cellZ = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseY - mapY) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_H)));
         int chunkX = this.data.currentChunkX() + cellX - CLAIM_RADIUS;
         int chunkZ = this.data.currentChunkZ() + cellZ - CLAIM_RADIUS;
-        if (hasShiftDown()) {
-            if (this.areaCorner1X == Integer.MIN_VALUE) {
-                this.areaCorner1X = chunkX; this.areaCorner1Z = chunkZ;
-                this.areaCorner2X = Integer.MIN_VALUE; this.areaCorner2Z = Integer.MIN_VALUE;
-            } else {
-                this.areaCorner2X = chunkX; this.areaCorner2Z = chunkZ;
-            }
+        if (hasShiftDown() && this.areaCorner1X != Integer.MIN_VALUE) {
+            this.areaCorner2X = chunkX; this.areaCorner2Z = chunkZ;
         } else {
             this.selectedClaimChunkX = chunkX; this.selectedClaimChunkZ = chunkZ;
-            this.areaCorner1X = Integer.MIN_VALUE; this.areaCorner1Z = Integer.MIN_VALUE;
+            this.areaCorner1X = chunkX; this.areaCorner1Z = chunkZ;
             this.areaCorner2X = Integer.MIN_VALUE; this.areaCorner2Z = Integer.MIN_VALUE;
         }
         updateButtonState(); return true;

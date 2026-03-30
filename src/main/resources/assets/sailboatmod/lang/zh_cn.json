@@ -368,6 +368,7 @@
   "screen.sailboatmod.nation.claims.button.entity_use": "实体交互: %s",
   "screen.sailboatmod.nation.claims.button.entity_damage": "实体伤害: %s",
   "screen.sailboatmod.nation.claims.updating": "正在将 %s 权限更新为 %s...",
+  "screen.sailboatmod.nation.claims.updating_batch": "正在批量更新 %s 个地块: %s 权限更新为 %s...",
   "screen.sailboatmod.nation.claims.action.break": "破坏",
   "screen.sailboatmod.nation.claims.action.place": "放置",
   "screen.sailboatmod.nation.claims.action.use": "使用",

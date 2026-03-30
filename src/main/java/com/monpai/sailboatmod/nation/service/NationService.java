@@ -1041,6 +1041,9 @@ public final class NationService {
         if (data == null || member == null || permission == null) {
             return false;
         }
+        if (NationOfficeIds.LEADER.equals(member.officeId())) {
+            return true;
+        }
         NationOfficeRecord office = data.getOffice(member.nationId(), member.officeId());
         return office != null && office.hasPermission(permission);
     }

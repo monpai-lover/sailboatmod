@@ -368,6 +368,7 @@
   "screen.sailboatmod.nation.claims.button.entity_use": "E.Use: %s",
   "screen.sailboatmod.nation.claims.button.entity_damage": "Entity Damage: %s",
   "screen.sailboatmod.nation.claims.updating": "Updating %s access to %s...",
+  "screen.sailboatmod.nation.claims.updating_batch": "Updating %s chunks: %s access to %s...",
   "screen.sailboatmod.nation.claims.action.break": "break",
   "screen.sailboatmod.nation.claims.action.place": "place",
   "screen.sailboatmod.nation.claims.action.use": "use",
