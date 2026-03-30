@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
+import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
+import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
@@ -135,6 +137,7 @@ public final class NationWarService {
                 "idle"
         );
                 data.putWar(war);
+        clearDiplomacyOnWar(data, attacker.nationId(), defender.nationId());
         Component declareMessage = Component.translatable("command.sailboatmod.nation.war.declare.broadcast", attacker.name(), defender.name());
         Component timerMessage = Component.translatable("command.sailboatmod.nation.war.declare.timer", attacker.name(), defender.name(), formatDurationMinutes(WAR_DURATION_MILLIS));
         broadcast(declareMessage);
@@ -226,6 +229,36 @@ public final class NationWarService {
             }
         }
         return null;
+    }
+
+    public static boolean areAtWar(NationSavedData data, String nationIdA, String nationIdB) {
+        if (data == null || nationIdA == null || nationIdB == null) {
+            return false;
+        }
+        for (NationWarRecord war : data.getWars()) {
+            if (!war.isActive()) {
+                continue;
+            }
+            if ((nationIdA.equals(war.attackerNationId()) && nationIdB.equals(war.defenderNationId()))
+                    || (nationIdA.equals(war.defenderNationId()) && nationIdB.equals(war.attackerNationId()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void clearDiplomacyOnWar(NationSavedData data, String attackerNationId, String defenderNationId) {
+        NationDiplomacyRecord relation = data.getDiplomacy(attackerNationId, defenderNationId);
+        if (relation != null && !NationDiplomacyStatus.ENEMY.id().equals(relation.statusId())) {
+            data.putDiplomacy(new NationDiplomacyRecord(
+                    attackerNationId,
+                    defenderNationId,
+                    NationDiplomacyStatus.ENEMY.id(),
+                    System.currentTimeMillis()
+            ));
+        }
+        data.removeDiplomacyRequest(attackerNationId, defenderNationId, NationDiplomacyStatus.ALLIED.id());
+        data.removeDiplomacyRequest(defenderNationId, attackerNationId, NationDiplomacyStatus.ALLIED.id());
     }
 
     private static void tickWar(MinecraftServer server, NationSavedData data, NationWarRecord war, long tickCount, long nowMillis) {
@@ -425,7 +458,7 @@ public final class NationWarService {
                 continue;
             }
             NationOverviewData overview = NationOverviewService.buildFor(player);
-            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(overview));
+            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(overview, !force));
         }
     }
 

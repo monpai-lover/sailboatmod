@@ -15,7 +15,8 @@ public enum NationPermission {
     MANAGE_CLAIMS,
     DECLARE_WAR,
     UPLOAD_FLAG,
-    PLACE_CORE;
+    PLACE_CORE,
+    MANAGE_TREASURY;
 
     public static Set<NationPermission> loadSet(ListTag tag) {
         EnumSet<NationPermission> permissions = EnumSet.noneOf(NationPermission.class);

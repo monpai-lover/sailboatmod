@@ -27,6 +27,9 @@ public final class NationDiplomacyService {
         if (context.nation().nationId().equals(target.nationId())) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.self"));
         }
+        if (NationWarService.areAtWar(context.data(), context.nation().nationId(), target.nationId())) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.at_war", target.name()));
+        }
 
         NationDiplomacyRecord relation = context.data().getDiplomacy(context.nation().nationId(), target.nationId());
         if (relation != null && NationDiplomacyStatus.ALLIED.id().equals(relation.statusId())) {
@@ -59,6 +62,9 @@ public final class NationDiplomacyService {
         NationRecord target = NationService.findNation(actor.level(), rawNationName);
         if (target == null) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.target_not_found", rawNationName));
+        }
+        if (NationWarService.areAtWar(context.data(), context.nation().nationId(), target.nationId())) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.at_war", target.name()));
         }
         NationDiplomacyRequestRecord request = context.data().getDiplomacyRequest(target.nationId(), context.nation().nationId(), NationDiplomacyStatus.ALLIED.id());
         if (request == null) {
@@ -181,6 +187,10 @@ public final class NationDiplomacyService {
         }
         if (context.nation().nationId().equals(target.nationId())) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.self"));
+        }
+        if (status != NationDiplomacyStatus.ENEMY && status != NationDiplomacyStatus.NEUTRAL
+                && NationWarService.areAtWar(context.data(), context.nation().nationId(), target.nationId())) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.at_war", target.name()));
         }
 
         NationDiplomacyRecord relation = context.data().getDiplomacy(context.nation().nationId(), target.nationId());

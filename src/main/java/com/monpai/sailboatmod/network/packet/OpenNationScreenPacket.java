@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyRequest;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
+import com.monpai.sailboatmod.nation.menu.NationOverviewNationEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewTown;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
@@ -18,12 +19,19 @@ import java.util.function.Supplier;
 
 public class OpenNationScreenPacket {
     private final NationOverviewData data;
+    private final boolean warSyncOnly;
 
     public OpenNationScreenPacket(NationOverviewData data) {
+        this(data, false);
+    }
+
+    public OpenNationScreenPacket(NationOverviewData data, boolean warSyncOnly) {
         this.data = data;
+        this.warSyncOnly = warSyncOnly;
     }
 
     public static void encode(OpenNationScreenPacket packet, FriendlyByteBuf buffer) {
+        buffer.writeBoolean(packet.warSyncOnly);
         NationOverviewData data = packet.data;
         buffer.writeBoolean(data.hasNation());
         writeUtfSafe(buffer, data.nationId(), 40);
@@ -121,9 +129,22 @@ public class OpenNationScreenPacket {
             writeUtfSafe(buffer, claim.entityUseAccessLevel(), 16);
             writeUtfSafe(buffer, claim.entityDamageAccessLevel(), 16);
         }
+        buffer.writeVarInt(data.allNations().size());
+        for (NationOverviewNationEntry entry : data.allNations()) {
+            writeUtfSafe(buffer, entry.nationId(), 40);
+            writeUtfSafe(buffer, entry.nationName(), 64);
+            writeUtfSafe(buffer, entry.shortName(), 16);
+            buffer.writeInt(entry.primaryColorRgb());
+            buffer.writeInt(entry.secondaryColorRgb());
+            writeUtfSafe(buffer, entry.flagId(), 128);
+            buffer.writeBoolean(entry.flagMirrored());
+            buffer.writeVarInt(entry.memberCount());
+            writeUtfSafe(buffer, entry.diplomacyStatusId(), 24);
+        }
     }
 
     public static OpenNationScreenPacket decode(FriendlyByteBuf buffer) {
+        boolean warSyncOnly = buffer.readBoolean();
         boolean hasNation = buffer.readBoolean();
         String nationId = buffer.readUtf(40);
         String nationName = buffer.readUtf(64);
@@ -236,6 +257,21 @@ public class OpenNationScreenPacket {
                     buffer.readUtf(16)
             ));
         }
+        int nationListSize = buffer.readVarInt();
+        List<NationOverviewNationEntry> allNations = new ArrayList<>(nationListSize);
+        for (int i = 0; i < nationListSize; i++) {
+            allNations.add(new NationOverviewNationEntry(
+                    buffer.readUtf(40),
+                    buffer.readUtf(64),
+                    buffer.readUtf(16),
+                    buffer.readInt(),
+                    buffer.readInt(),
+                    buffer.readUtf(128),
+                    buffer.readBoolean(),
+                    buffer.readVarInt(),
+                    buffer.readUtf(24)
+            ));
+        }
         return new OpenNationScreenPacket(new NationOverviewData(
                 hasNation,
                 nationId,
@@ -291,13 +327,20 @@ public class OpenNationScreenPacket {
                 members,
                 towns,
                 nearbyTerrainColors,
-                nearbyClaims
-        ));
+                nearbyClaims,
+                allNations
+        ), warSyncOnly);
     }
 
     public static void handle(OpenNationScreenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> NationClientHooks.openOrUpdate(packet.data)));
+        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
+            if (packet.warSyncOnly) {
+                NationClientHooks.updateIfOpen(packet.data);
+            } else {
+                NationClientHooks.openOrUpdate(packet.data);
+            }
+        }));
         context.setPacketHandled(true);
     }
 

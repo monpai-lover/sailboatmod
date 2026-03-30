@@ -57,7 +57,8 @@ public record NationOverviewData(
         List<NationOverviewMember> members,
         List<NationOverviewTown> towns,
         List<Integer> nearbyTerrainColors,
-        List<NationOverviewClaim> nearbyClaims
+        List<NationOverviewClaim> nearbyClaims,
+        List<NationOverviewNationEntry> allNations
 ) {
     public NationOverviewData {
         nationId = sanitize(nationId, 40);
@@ -140,6 +141,18 @@ public record NationOverviewData(
                         sanitize(claim.entityUseAccessLevel(), 16),
                         sanitize(claim.entityDamageAccessLevel(), 16)))
                 .toList();
+        allNations = allNations == null ? List.of() : allNations.stream()
+                .map(entry -> new NationOverviewNationEntry(
+                        sanitize(entry.nationId(), 40),
+                        sanitize(entry.nationName(), 64),
+                        sanitize(entry.shortName(), 16),
+                        entry.primaryColorRgb(),
+                        entry.secondaryColorRgb(),
+                        sanitize(entry.flagId(), 128),
+                        entry.flagMirrored(),
+                        entry.memberCount(),
+                        sanitize(entry.diplomacyStatusId(), 24)))
+                .toList();
     }
 
     public static NationOverviewData empty() {
@@ -193,6 +206,7 @@ public record NationOverviewData(
                 false,
                 false,
                 "",
+                List.of(),
                 List.of(),
                 List.of(),
                 List.of(),

@@ -117,6 +117,21 @@ public final class BlueMapIntegration {
         syncNow(level);
     }
 
+    private static void pruneStaleEntries(ServerLevel level, BlueMapMarkerSavedData markerData) {
+        List<BlueMapMarkerSavedData.DockSnapshot> docks = markerData.getDocks(level.dimension());
+        for (BlueMapMarkerSavedData.DockSnapshot dock : docks) {
+            if (!(level.getBlockEntity(dock.pos()) instanceof DockBlockEntity)) {
+                markerData.removeDock(level.dimension(), dock.pos());
+            }
+        }
+        List<BlueMapMarkerSavedData.BoatSnapshot> boats = markerData.getBoats(level.dimension());
+        for (BlueMapMarkerSavedData.BoatSnapshot boat : boats) {
+            if (level.getEntity(boat.uuid()) == null) {
+                markerData.removeBoat(level.dimension(), boat.uuid());
+            }
+        }
+    }
+
     private static void syncNow(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
             return;
@@ -232,6 +247,7 @@ public final class BlueMapIntegration {
                 return;
             }
             BlueMapMarkerSavedData markerData = BlueMapMarkerSavedData.get(level);
+            pruneStaleEntries(level, markerData);
             List<BlueMapMarkerSavedData.DockSnapshot> docks = markerData.getDocks(level.dimension());
             List<BlueMapMarkerSavedData.BoatSnapshot> boats = markerData.getBoats(level.dimension());
             NationSavedData nationData = NationSavedData.get(level);

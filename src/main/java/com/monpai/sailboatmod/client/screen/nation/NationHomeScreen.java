@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyRequest;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
+import com.monpai.sailboatmod.nation.menu.NationOverviewNationEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewTown;
 import com.monpai.sailboatmod.nation.model.NationClaimAccessLevel;
 import com.monpai.sailboatmod.nation.model.NationOfficeIds;
@@ -41,7 +42,7 @@ public class NationHomeScreen extends Screen {
     private static final int ACTIVE_WAR_REFRESH_INTERVAL_TICKS = 20;
     private static final int SCREEN_W = 468;
     private static final int SCREEN_H = 330;
-    private static final int TAB_W = 80;
+    private static final int TAB_W = 72;
     private static final int BODY_X = 12;
     private static final int BODY_Y = 64;
     private static final int BODY_W = SCREEN_W - 24;
@@ -61,7 +62,7 @@ public class NationHomeScreen extends Screen {
     private EditBox primaryColorInput;
     private EditBox secondaryColorInput;
     private EditBox flagPathInput;
-    private EditBox diplomacyTargetInput;
+    private EditBox warTargetInput;
     private EditBox officerTitleInput;
     private Component statusLine = Component.empty();
     private Button refreshButton;
@@ -70,15 +71,11 @@ public class NationHomeScreen extends Screen {
     private Button claimsTabButton;
     private Button warTabButton;
     private Button flagTabButton;
+    private Button diplomacyTabButton;
     private Button claimButton;
     private Button unclaimButton;
     private Button warButton;
     private Button declareWarButton;
-    private Button allyButton;
-    private Button tradeButton;
-    private Button neutralButton;
-    private Button acceptAllianceButton;
-    private Button rejectAllianceButton;
     private Button uploadButton;
     private Button browseButton;
     private Button applyColorsButton;
@@ -107,6 +104,20 @@ public class NationHomeScreen extends Screen {
     private String selectedTownId = "";
     private int selectedClaimChunkX = Integer.MIN_VALUE;
     private int selectedClaimChunkZ = Integer.MIN_VALUE;
+    private int claimsSubPage;
+    private Button claimsSubPageButton;
+    private int diplomacyScroll;
+    private String selectedDiplomacyNationId = "";
+    private Button dipAllyButton;
+    private Button dipTradeButton;
+    private Button dipEnemyButton;
+    private Button dipNeutralButton;
+    private Button dipDeclareWarButton;
+    private Button dipAcceptAllyButton;
+    private Button dipRejectAllyButton;
+    private Button dipBackButton;
+    private static final int DIP_ROW_H = 20;
+    private static final int DIP_VISIBLE_ROWS = 9;
 
     public NationHomeScreen(NationOverviewData data) {
         super(Component.translatable("screen.sailboatmod.nation.home.title"));
@@ -133,30 +144,36 @@ public class NationHomeScreen extends Screen {
         int top = top();
         this.refreshButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.refresh"), b -> requestRefresh()).bounds(left + SCREEN_W - 82, top + 12, 70, 18).build());
         this.overviewTabButton = addTabButton(left + 12, top + 36, Page.OVERVIEW, Component.translatable("screen.sailboatmod.nation.section.overview"));
-        this.membersTabButton = addTabButton(left + 100, top + 36, Page.MEMBERS, Component.translatable("screen.sailboatmod.nation.section.members"));
-        this.claimsTabButton = addTabButton(left + 188, top + 36, Page.CLAIMS, Component.translatable("screen.sailboatmod.nation.section.claims"));
-        this.warTabButton = addTabButton(left + 276, top + 36, Page.WAR, Component.translatable("screen.sailboatmod.nation.section.war"));
-        this.flagTabButton = addTabButton(left + 364, top + 36, Page.FLAG, Component.translatable("screen.sailboatmod.nation.section.flag"));
+        this.membersTabButton = addTabButton(left + 86, top + 36, Page.MEMBERS, Component.translatable("screen.sailboatmod.nation.section.members"));
+        this.claimsTabButton = addTabButton(left + 160, top + 36, Page.CLAIMS, Component.translatable("screen.sailboatmod.nation.section.claims"));
+        this.warTabButton = addTabButton(left + 234, top + 36, Page.WAR, Component.translatable("screen.sailboatmod.nation.section.war"));
+        this.diplomacyTabButton = addTabButton(left + 308, top + 36, Page.DIPLOMACY, Component.translatable("screen.sailboatmod.nation.section.diplomacy"));
+        this.flagTabButton = addTabButton(left + 382, top + 36, Page.FLAG, Component.translatable("screen.sailboatmod.nation.section.flag"));
 
         this.claimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.claim"), b -> claimSelectedChunk()).bounds(left + BODY_X + 12, top + BODY_Y + BODY_H - 26, 72, 18).build());
         this.unclaimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.unclaim"), b -> unclaimSelectedChunk()).bounds(left + BODY_X + 90, top + BODY_Y + BODY_H - 26, 86, 18).build());
-        this.breakPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("break", selectedBreakAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 130, 80, 18).build());
-        this.placePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("place", selectedPlaceAccessLevel())).bounds(left + BODY_X + 96, top + BODY_Y + 130, 80, 18).build());
-        this.usePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("use", selectedUseAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 152, 80, 18).build());
-        this.containerPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("container", selectedContainerAccessLevel())).bounds(left + BODY_X + 96, top + BODY_Y + 152, 80, 18).build());
-        this.redstonePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("redstone", selectedRedstoneAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 174, 80, 18).build());
-        this.entityUsePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_use", selectedEntityUseAccessLevel())).bounds(left + BODY_X + 96, top + BODY_Y + 174, 80, 18).build());
-        this.entityDamagePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_damage", selectedEntityDamageAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 196, 164, 18).build());
-        this.warButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.war_info"), b -> runCommand("nation war info")).bounds(left + BODY_X + 12, top + BODY_Y + 170, 184, 18).build());
-        this.diplomacyTargetInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 146, 184, 18, Component.translatable("screen.sailboatmod.nation.war.target_input"));
-        this.diplomacyTargetInput.setMaxLength(48);
-        this.addRenderableWidget(this.diplomacyTargetInput);
-        this.declareWarButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.declare_war"), b -> submitDeclareWar()).bounds(left + BODY_X + 206, top + BODY_Y + 146, 100, 18).build());
-        this.allyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.ally"), b -> submitAllianceRequest()).bounds(left + BODY_X + 312, top + BODY_Y + 146, 100, 18).build());
-        this.tradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.trade"), b -> submitTradeRequest()).bounds(left + BODY_X + 206, top + BODY_Y + 170, 100, 18).build());
-        this.neutralButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.neutral"), b -> submitNeutralDiplomacy()).bounds(left + BODY_X + 312, top + BODY_Y + 170, 100, 18).build());
-        this.acceptAllianceButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> submitAcceptAlliance()).bounds(left + BODY_X + 206, top + BODY_Y + 194, 100, 18).build());
-        this.rejectAllianceButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.reject"), b -> submitRejectAlliance()).bounds(left + BODY_X + 312, top + BODY_Y + 194, 100, 18).build());
+        this.claimsSubPageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claims.toggle_perms"), b -> { this.claimsSubPage = this.claimsSubPage == 0 ? 1 : 0; updateButtonState(); }).bounds(left + BODY_X + 184, top + BODY_Y + BODY_H - 26, 120, 18).build());
+        this.breakPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("break", selectedBreakAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 50, 100, 18).build());
+        this.placePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("place", selectedPlaceAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 50, 100, 18).build());
+        this.usePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("use", selectedUseAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 74, 100, 18).build());
+        this.containerPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("container", selectedContainerAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 74, 100, 18).build());
+        this.redstonePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("redstone", selectedRedstoneAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 98, 100, 18).build());
+        this.entityUsePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_use", selectedEntityUseAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 98, 100, 18).build());
+        this.entityDamagePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_damage", selectedEntityDamageAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 122, 208, 18).build());
+        this.warButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.war_info"), b -> runCommand("nation war info")).bounds(left + BODY_X + 12, top + BODY_Y + 164, 184, 18).build());
+        this.warTargetInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 192, 280, 18, Component.translatable("screen.sailboatmod.nation.war.target_input"));
+        this.warTargetInput.setMaxLength(48);
+        this.addRenderableWidget(this.warTargetInput);
+        this.declareWarButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.declare_war"), b -> submitDeclareWar()).bounds(left + BODY_X + 300, top + BODY_Y + 192, 120, 18).build());
+
+        this.dipAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.ally"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ALLY)).bounds(left + BODY_X + 234, top + BODY_Y + 40, 100, 18).build());
+        this.dipTradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.trade"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_TRADE)).bounds(left + BODY_X + 340, top + BODY_Y + 40, 100, 18).build());
+        this.dipEnemyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.enemy"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_NEUTRAL)).bounds(left + BODY_X + 234, top + BODY_Y + 64, 100, 18).build());
+        this.dipNeutralButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.neutral"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_NEUTRAL)).bounds(left + BODY_X + 340, top + BODY_Y + 64, 100, 18).build());
+        this.dipDeclareWarButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.declare_war"), b -> submitDipAction(NationGuiActionPacket.Action.DECLARE_WAR)).bounds(left + BODY_X + 234, top + BODY_Y + 88, 206, 18).build());
+        this.dipAcceptAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ACCEPT)).bounds(left + BODY_X + 234, top + BODY_Y + 112, 100, 18).build());
+        this.dipRejectAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.reject"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_REJECT)).bounds(left + BODY_X + 340, top + BODY_Y + 112, 100, 18).build());
+        this.dipBackButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.back"), b -> { this.selectedDiplomacyNationId = ""; updateButtonState(); }).bounds(left + BODY_X + 234, top + BODY_Y + 136, 206, 18).build());
 
         this.nationNameInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 148, 196, 18, Component.translatable("screen.sailboatmod.nation.name"));
         this.nationNameInput.setMaxLength(24);
@@ -218,7 +235,7 @@ public class NationHomeScreen extends Screen {
         if (this.primaryColorInput != null) this.primaryColorInput.tick();
         if (this.secondaryColorInput != null) this.secondaryColorInput.tick();
         if (this.flagPathInput != null) this.flagPathInput.tick();
-        if (this.diplomacyTargetInput != null) this.diplomacyTargetInput.tick();
+        if (this.warTargetInput != null) this.warTargetInput.tick();
         if (this.officerTitleInput != null) this.officerTitleInput.tick();
         tickAutoRefresh();
         updateButtonState();
@@ -255,7 +272,7 @@ public class NationHomeScreen extends Screen {
                 if (this.secondaryColorInput != null && this.secondaryColorInput.isFocused()) return submitAndTrue(this::submitColorUpdate);
                 if (this.flagPathInput != null && this.flagPathInput.isFocused()) return submitAndTrue(this::submitUpload);
             }
-            if (this.currentPage == Page.WAR && this.diplomacyTargetInput != null && this.diplomacyTargetInput.isFocused()) return submitAndTrue(this::submitDeclareWar);
+            if (this.currentPage == Page.WAR && this.warTargetInput != null && this.warTargetInput.isFocused()) return submitAndTrue(this::submitDeclareWar);
             if (this.currentPage == Page.MEMBERS && this.officerTitleInput != null && this.officerTitleInput.isFocused()) return submitAndTrue(this::submitOfficerTitleUpdate);
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
@@ -270,6 +287,17 @@ public class NationHomeScreen extends Screen {
                 return true;
             }
         }
+        if (this.currentPage == Page.DIPLOMACY) {
+            int listX = left() + BODY_X + 8;
+            int listY = top() + BODY_Y + 28;
+            int listW = 220;
+            int listH = DIP_VISIBLE_ROWS * DIP_ROW_H;
+            if (mouseX >= listX && mouseX < listX + listW && mouseY >= listY && mouseY < listY + listH) {
+                int maxScroll = Math.max(0, this.data.allNations().size() - DIP_VISIBLE_ROWS);
+                this.diplomacyScroll = Math.max(0, Math.min(maxScroll, this.diplomacyScroll + (delta > 0 ? -1 : 1)));
+                return true;
+            }
+        }
         return super.mouseScrolled(mouseX, mouseY, delta);
     }
 
@@ -277,6 +305,7 @@ public class NationHomeScreen extends Screen {
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0 && this.currentPage == Page.MEMBERS && trySelectMember(mouseX, mouseY)) return true;
         if (button == 0 && this.currentPage == Page.CLAIMS && trySelectClaim(mouseX, mouseY)) return true;
+        if (button == 0 && this.currentPage == Page.DIPLOMACY && trySelectDiplomacyNation(mouseX, mouseY)) return true;
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
@@ -306,6 +335,7 @@ public class NationHomeScreen extends Screen {
             case MEMBERS -> drawMembersPage(g, left + BODY_X, top + BODY_Y);
             case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y);
             case WAR -> drawWarPage(g, left + BODY_X, top + BODY_Y);
+            case DIPLOMACY -> drawDiplomacyPage(g, left + BODY_X, top + BODY_Y);
             case FLAG -> drawFlagPage(g, left + BODY_X, top + BODY_Y);
         }
         if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
@@ -378,6 +408,10 @@ public class NationHomeScreen extends Screen {
     }
 
     private void drawClaimsPage(GuiGraphics g, int x, int y) {
+        if (this.claimsSubPage == 1) {
+            drawClaimsPermPage(g, x, y);
+            return;
+        }
         int drawY = y + 34;
         for (Component line : buildClaimLines()) {
             drawWrappedLine(g, line, x + 12, drawY, 206, 0xFFDCEEFF);
@@ -389,17 +423,23 @@ public class NationHomeScreen extends Screen {
         drawClaimMap(g, mapX, mapY);
     }
 
+    private void drawClaimsPermPage(GuiGraphics g, int x, int y) {
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.perms_title"), x + 12, y + 30, 0xFFB8C0C8);
+        NationOverviewClaim selected = selectedClaim();
+        if (selected == null) {
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.claims.perms_select_hint"), x + 12, y + 150, BODY_W - 24, 0xFF8D98A3);
+        } else {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.selected_chunk", this.selectedClaimChunkX, this.selectedClaimChunkZ), x + 12, y + 150, 0xFFDCEEFF);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.owner", selected.nationName()), x + 12, y + 166, 0xFFB8C0C8);
+        }
+    }
+
     private void drawWarPage(GuiGraphics g, int x, int y) {
         int warPanelX = x + 8;
         int warPanelY = y + 28;
-        int warPanelW = 188;
-        int warPanelH = 106;
-        int diplomacyPanelX = x + 204;
-        int diplomacyPanelY = y + 28;
-        int diplomacyPanelW = 216;
-        int diplomacyPanelH = 106;
+        int warPanelW = BODY_W - 16;
+        int warPanelH = 126;
         drawPanelFrame(g, warPanelX, warPanelY, warPanelW, warPanelH);
-        drawPanelFrame(g, diplomacyPanelX, diplomacyPanelY, diplomacyPanelW, diplomacyPanelH);
 
         int drawY = warPanelY + 10;
         for (Component line : buildWarLines()) {
@@ -410,26 +450,111 @@ public class NationHomeScreen extends Screen {
             return;
         }
 
-        drawDiplomacySection(g,
-                Component.translatable("screen.sailboatmod.nation.war.diplomacy_title"),
-                buildDiplomacyRelationLines(),
-                diplomacyPanelX + 8,
-                diplomacyPanelY + 8,
-                diplomacyPanelW - 16,
-                4);
+        Component hint = this.data.canDeclareWar()
+                ? Component.translatable("screen.sailboatmod.nation.war.declare_hint")
+                : Component.translatable("command.sailboatmod.nation.diplomacy.no_permission");
+        drawWrappedLine(g, hint, x + 12, y + 196, BODY_W - 24, 0xFF8D98A3);
+    }
+
+    private void drawDiplomacyPage(GuiGraphics g, int x, int y) {
+        if (!this.data.hasNation()) {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.no_nation"), x + 12, y + 36, 0xFF8D98A3);
+            return;
+        }
+        List<NationOverviewNationEntry> nations = this.data.allNations();
+        if (nations.isEmpty()) {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.no_nations"), x + 12, y + 36, 0xFF8D98A3);
+            return;
+        }
+
+        int listX = x + 8;
+        int listY = y + 28;
+        int listW = 220;
+        int listH = DIP_VISIBLE_ROWS * DIP_ROW_H;
+        drawPanelFrame(g, listX, listY, listW, listH);
+
+        int start = Math.max(0, Math.min(this.diplomacyScroll, nations.size() - DIP_VISIBLE_ROWS));
+        int end = Math.min(nations.size(), start + DIP_VISIBLE_ROWS);
+        for (int i = start; i < end; i++) {
+            NationOverviewNationEntry entry = nations.get(i);
+            int rowY = listY + (i - start) * DIP_ROW_H;
+            boolean selected = entry.nationId().equals(this.selectedDiplomacyNationId);
+            if (selected) {
+                g.fill(listX + 1, rowY, listX + listW - 1, rowY + DIP_ROW_H, 0x44FFD700);
+            }
+
+            int flagX = listX + 4;
+            int flagY = rowY + 2;
+            int flagW = 16;
+            int flagH = 16;
+            if (!entry.flagId().isBlank()) {
+                ResourceLocation flagTex = NationFlagTextureCache.resolve(entry.flagId(), entry.primaryColorRgb(), entry.secondaryColorRgb(), entry.flagMirrored());
+                g.blit(flagTex, flagX, flagY, 0, 0, flagW, flagH, flagW, flagH);
+            } else {
+                g.fill(flagX, flagY, flagX + flagW, flagY + flagH, 0xFF000000 | entry.primaryColorRgb());
+            }
+
+            String name = shortText(entry.nationName(), 14);
+            g.drawString(this.font, name, listX + 24, rowY + 5, 0xFFDCEEFF);
+
+            String statusLabel = entry.diplomacyStatusId().isBlank() ? "-" : entry.diplomacyStatusId();
+            int statusColor = diplomacyStatusColor(entry.diplomacyStatusId());
+            g.drawString(this.font, statusLabel, listX + listW - this.font.width(statusLabel) - 6, rowY + 5, statusColor);
+        }
+
+        if (!this.selectedDiplomacyNationId.isBlank()) {
+            NationOverviewNationEntry selected = selectedDiplomacyNation();
+            if (selected != null) {
+                int detailX = x + 236;
+                int detailY = y + 28;
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.selected", selected.nationName()), detailX, detailY, 0xFFE7C977);
+                String status = selected.diplomacyStatusId().isBlank() ? "neutral" : selected.diplomacyStatusId();
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.status", status), detailX, detailY + 14, 0xFFB8C0C8);
+            }
+        } else {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.select_hint"), x + 236, y + 40, 0xFF8D98A3);
+        }
+
         drawDiplomacySection(g,
                 Component.translatable("screen.sailboatmod.nation.war.requests_title"),
                 buildIncomingRequestLines(),
-                diplomacyPanelX + 8,
-                diplomacyPanelY + 56,
-                diplomacyPanelW - 16,
-                3);
+                x + 236, y + 164, 200, 3);
+    }
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.war.target_input"), x + 12, y + 132, 0xFFB8C0C8);
-        Component hint = this.data.canDeclareWar()
-                ? Component.translatable("screen.sailboatmod.nation.war.diplomacy_hint")
-                : Component.translatable("command.sailboatmod.nation.diplomacy.no_permission");
-        drawWrappedLine(g, hint, x + 12, y + 214, 184, 0xFF8D98A3);
+    private NationOverviewNationEntry selectedDiplomacyNation() {
+        for (NationOverviewNationEntry entry : this.data.allNations()) {
+            if (entry.nationId().equals(this.selectedDiplomacyNationId)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasPendingAllianceRequest(String nationId) {
+        for (NationOverviewDiplomacyRequest request : this.data.incomingDiplomacyRequests()) {
+            if (request.nationId().equals(nationId) && "allied".equals(request.statusId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void submitDipAction(NationGuiActionPacket.Action action) {
+        NationOverviewNationEntry selected = selectedDiplomacyNation();
+        if (selected == null || !this.data.hasNation() || !this.data.canDeclareWar()) {
+            return;
+        }
+        sendNationAction(new NationGuiActionPacket(action, selected.nationName(), true), Component.translatable("screen.sailboatmod.nation.status.sending"));
+    }
+
+    private static int diplomacyStatusColor(String statusId) {
+        if (statusId == null || statusId.isBlank()) return 0xFF8D98A3;
+        return switch (statusId) {
+            case "allied" -> 0xFF55FF55;
+            case "trade" -> 0xFF55FFFF;
+            case "enemy" -> 0xFFFF5555;
+            default -> 0xFF8D98A3;
+        };
     }
 
     private void drawFlagPage(GuiGraphics g, int x, int y) {
@@ -535,6 +660,7 @@ public class NationHomeScreen extends Screen {
         if (this.claimsTabButton != null) this.claimsTabButton.active = this.currentPage != Page.CLAIMS;
         if (this.warTabButton != null) this.warTabButton.active = this.currentPage != Page.WAR;
         if (this.flagTabButton != null) this.flagTabButton.active = this.currentPage != Page.FLAG;
+        if (this.diplomacyTabButton != null) this.diplomacyTabButton.active = this.currentPage != Page.DIPLOMACY;
 
         boolean overviewPage = this.currentPage == Page.OVERVIEW;
         boolean hasNation = this.data.hasNation();
@@ -560,32 +686,42 @@ public class NationHomeScreen extends Screen {
         if (this.appointMayorButton != null) { this.appointMayorButton.visible = membersPage; this.appointMayorButton.active = membersPage && leaderControls && canAssignSelectedMemberAsMayor(); }
 
         boolean claimsPage = this.currentPage == Page.CLAIMS;
+        boolean claimsMapView = claimsPage && this.claimsSubPage == 0;
+        boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
         NationOverviewClaim selectedClaim = selectedClaim();
         boolean ownClaim = selectedClaim != null && this.data.nationId().equals(selectedClaim.nationId());
-        if (this.claimButton != null) { this.claimButton.visible = claimsPage; this.claimButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && selectedClaim == null; }
-        if (this.unclaimButton != null) { this.unclaimButton.visible = claimsPage; this.unclaimButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; }
-        if (this.breakPermissionButton != null) { this.breakPermissionButton.visible = claimsPage; this.breakPermissionButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.breakPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.break", accessName(selectedBreakAccessLevel()))); }
-        if (this.placePermissionButton != null) { this.placePermissionButton.visible = claimsPage; this.placePermissionButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.placePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.place", accessName(selectedPlaceAccessLevel()))); }
-        if (this.usePermissionButton != null) { this.usePermissionButton.visible = claimsPage; this.usePermissionButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.usePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.use", accessName(selectedUseAccessLevel()))); }
-        if (this.containerPermissionButton != null) { this.containerPermissionButton.visible = claimsPage; this.containerPermissionButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.containerPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.container", accessName(selectedContainerAccessLevel()))); }
-        if (this.redstonePermissionButton != null) { this.redstonePermissionButton.visible = claimsPage; this.redstonePermissionButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.redstonePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.redstone", accessName(selectedRedstoneAccessLevel()))); }
-        if (this.entityUsePermissionButton != null) { this.entityUsePermissionButton.visible = claimsPage; this.entityUsePermissionButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.entityUsePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_use", accessName(selectedEntityUseAccessLevel()))); }
-        if (this.entityDamagePermissionButton != null) { this.entityDamagePermissionButton.visible = claimsPage; this.entityDamagePermissionButton.active = claimsPage && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.entityDamagePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_damage", accessName(selectedEntityDamageAccessLevel()))); }
+        if (this.claimButton != null) { this.claimButton.visible = claimsMapView; this.claimButton.active = claimsMapView && this.data.hasNation() && this.data.canManageClaims() && selectedClaim == null; }
+        if (this.unclaimButton != null) { this.unclaimButton.visible = claimsMapView; this.unclaimButton.active = claimsMapView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; }
+        if (this.claimsSubPageButton != null) { this.claimsSubPageButton.visible = claimsPage; this.claimsSubPageButton.active = claimsPage && this.data.hasNation(); this.claimsSubPageButton.setMessage(Component.translatable(claimsPermView ? "screen.sailboatmod.nation.claims.show_map" : "screen.sailboatmod.nation.claims.show_perms")); }
+        if (this.breakPermissionButton != null) { this.breakPermissionButton.visible = claimsPermView; this.breakPermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.breakPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.break", accessName(selectedBreakAccessLevel()))); }
+        if (this.placePermissionButton != null) { this.placePermissionButton.visible = claimsPermView; this.placePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.placePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.place", accessName(selectedPlaceAccessLevel()))); }
+        if (this.usePermissionButton != null) { this.usePermissionButton.visible = claimsPermView; this.usePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.usePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.use", accessName(selectedUseAccessLevel()))); }
+        if (this.containerPermissionButton != null) { this.containerPermissionButton.visible = claimsPermView; this.containerPermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.containerPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.container", accessName(selectedContainerAccessLevel()))); }
+        if (this.redstonePermissionButton != null) { this.redstonePermissionButton.visible = claimsPermView; this.redstonePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.redstonePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.redstone", accessName(selectedRedstoneAccessLevel()))); }
+        if (this.entityUsePermissionButton != null) { this.entityUsePermissionButton.visible = claimsPermView; this.entityUsePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.entityUsePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_use", accessName(selectedEntityUseAccessLevel()))); }
+        if (this.entityDamagePermissionButton != null) { this.entityDamagePermissionButton.visible = claimsPermView; this.entityDamagePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.entityDamagePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_damage", accessName(selectedEntityDamageAccessLevel()))); }
 
         boolean warPage = this.currentPage == Page.WAR;
-        String diplomacyTarget = diplomacyTarget();
-        String diplomacyRequestTarget = diplomacyRequestTarget();
         boolean canManageDiplomacy = warPage && this.data.hasNation() && this.data.canDeclareWar();
-        boolean hasDiplomacyTarget = !diplomacyTarget.isBlank();
-        boolean hasRequestTarget = !diplomacyRequestTarget.isBlank();
-        if (this.diplomacyTargetInput != null) { this.diplomacyTargetInput.visible = warPage; this.diplomacyTargetInput.setEditable(canManageDiplomacy); }
+        String warTarget = valueOf(this.warTargetInput).trim();
+        if (this.warTargetInput != null) { this.warTargetInput.visible = warPage; this.warTargetInput.setEditable(canManageDiplomacy); }
         if (this.warButton != null) { this.warButton.visible = warPage; this.warButton.active = this.data.hasNation(); }
-        if (this.declareWarButton != null) { this.declareWarButton.visible = warPage; this.declareWarButton.active = canManageDiplomacy && hasDiplomacyTarget && !this.data.hasActiveWar() && this.data.warCooldownRemainingSeconds() <= 0; }
-        if (this.allyButton != null) { this.allyButton.visible = warPage; this.allyButton.active = canManageDiplomacy && hasDiplomacyTarget; }
-        if (this.tradeButton != null) { this.tradeButton.visible = warPage; this.tradeButton.active = canManageDiplomacy && hasDiplomacyTarget; }
-        if (this.neutralButton != null) { this.neutralButton.visible = warPage; this.neutralButton.active = canManageDiplomacy && hasDiplomacyTarget; }
-        if (this.acceptAllianceButton != null) { this.acceptAllianceButton.visible = warPage; this.acceptAllianceButton.active = canManageDiplomacy && hasRequestTarget; }
-        if (this.rejectAllianceButton != null) { this.rejectAllianceButton.visible = warPage; this.rejectAllianceButton.active = canManageDiplomacy && hasRequestTarget; }
+        if (this.declareWarButton != null) { this.declareWarButton.visible = warPage; this.declareWarButton.active = canManageDiplomacy && !warTarget.isBlank() && !this.data.hasActiveWar() && this.data.warCooldownRemainingSeconds() <= 0; }
+
+        boolean dipPage = this.currentPage == Page.DIPLOMACY;
+        boolean dipHasSelection = !this.selectedDiplomacyNationId.isBlank();
+        boolean dipCanManage = dipPage && this.data.hasNation() && this.data.canDeclareWar();
+        boolean dipHasPendingAlly = dipPage && dipHasSelection && hasPendingAllianceRequest(this.selectedDiplomacyNationId);
+        NationOverviewNationEntry selectedNation = selectedDiplomacyNation();
+        boolean dipIsAllied = selectedNation != null && "allied".equals(selectedNation.diplomacyStatusId());
+        if (this.dipAllyButton != null) { this.dipAllyButton.visible = dipPage && dipHasSelection; this.dipAllyButton.active = dipCanManage && !dipIsAllied; }
+        if (this.dipTradeButton != null) { this.dipTradeButton.visible = dipPage && dipHasSelection; this.dipTradeButton.active = dipCanManage; }
+        if (this.dipEnemyButton != null) { this.dipEnemyButton.visible = dipPage && dipHasSelection; this.dipEnemyButton.active = dipCanManage; }
+        if (this.dipNeutralButton != null) { this.dipNeutralButton.visible = dipPage && dipHasSelection; this.dipNeutralButton.active = dipCanManage; }
+        if (this.dipDeclareWarButton != null) { this.dipDeclareWarButton.visible = dipPage && dipHasSelection; this.dipDeclareWarButton.active = dipCanManage && !this.data.hasActiveWar() && this.data.warCooldownRemainingSeconds() <= 0; }
+        if (this.dipAcceptAllyButton != null) { this.dipAcceptAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipAcceptAllyButton.active = dipCanManage && dipHasPendingAlly; }
+        if (this.dipRejectAllyButton != null) { this.dipRejectAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipRejectAllyButton.active = dipCanManage && dipHasPendingAlly; }
+        if (this.dipBackButton != null) { this.dipBackButton.visible = dipPage && dipHasSelection; this.dipBackButton.active = dipPage && dipHasSelection; }
 
         boolean flagPage = this.currentPage == Page.FLAG;
         if (this.primaryColorInput != null) { this.primaryColorInput.visible = flagPage; this.primaryColorInput.setEditable(flagPage && canManageInfo); }
@@ -789,27 +925,10 @@ public class NationHomeScreen extends Screen {
     }
 
     private void submitDeclareWar() {
-        submitDiplomacyAction(NationGuiActionPacket.Action.DECLARE_WAR, "screen.sailboatmod.nation.war.action.declaring");
-    }
-
-    private void submitAllianceRequest() {
-        submitDiplomacyAction(NationGuiActionPacket.Action.DIPLOMACY_ALLY, "screen.sailboatmod.nation.war.action.allying");
-    }
-
-    private void submitTradeRequest() {
-        submitDiplomacyAction(NationGuiActionPacket.Action.DIPLOMACY_TRADE, "screen.sailboatmod.nation.war.action.trading");
-    }
-
-    private void submitNeutralDiplomacy() {
-        submitDiplomacyAction(NationGuiActionPacket.Action.DIPLOMACY_NEUTRAL, "screen.sailboatmod.nation.war.action.neutralizing");
-    }
-
-    private void submitAcceptAlliance() {
-        submitDiplomacyAction(NationGuiActionPacket.Action.DIPLOMACY_ACCEPT, "screen.sailboatmod.nation.war.action.accepting", diplomacyRequestTarget());
-    }
-
-    private void submitRejectAlliance() {
-        submitDiplomacyAction(NationGuiActionPacket.Action.DIPLOMACY_REJECT, "screen.sailboatmod.nation.war.action.rejecting", diplomacyRequestTarget());
+        if (!this.data.hasNation() || !this.data.canDeclareWar()) return;
+        String target = valueOf(this.warTargetInput).trim();
+        if (target.isBlank()) return;
+        sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.DECLARE_WAR, target, true), Component.translatable("screen.sailboatmod.nation.war.action.declaring", target));
     }
 
     private void submitOfficerTitleUpdate() {
@@ -844,16 +963,6 @@ public class NationHomeScreen extends Screen {
         this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating", actionName(actionId), accessName(next.id()));
     }
 
-    private void submitDiplomacyAction(NationGuiActionPacket.Action action, String statusKey) {
-        submitDiplomacyAction(action, statusKey, diplomacyTarget());
-    }
-
-    private void submitDiplomacyAction(NationGuiActionPacket.Action action, String statusKey, String target) {
-        if (!this.data.hasNation() || !this.data.canDeclareWar()) return;
-        if (target == null || target.isBlank()) return;
-        sendNationAction(new NationGuiActionPacket(action, target, true), Component.translatable(statusKey, target));
-    }
-
     private void runCommand(String command) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player != null && minecraft.player.connection != null) {
@@ -871,6 +980,7 @@ public class NationHomeScreen extends Screen {
     private void syncSelections() { if (this.selectedClaimChunkX == Integer.MIN_VALUE || Math.abs(this.selectedClaimChunkX - this.data.currentChunkX()) > CLAIM_RADIUS || Math.abs(this.selectedClaimChunkZ - this.data.currentChunkZ()) > CLAIM_RADIUS) { this.selectedClaimChunkX = this.data.currentChunkX(); this.selectedClaimChunkZ = this.data.currentChunkZ(); } if (this.data.members().isEmpty()) { this.selectedMemberUuid = ""; this.memberScroll = 0; return; } if (this.selectedMemberUuid.isBlank()) this.selectedMemberUuid = this.data.members().get(0).playerUuid(); for (NationOverviewMember member : this.data.members()) if (member.playerUuid().equals(this.selectedMemberUuid)) return; this.selectedMemberUuid = this.data.members().get(0).playerUuid(); }
     private boolean trySelectMember(double mouseX, double mouseY) { int[] b = memberListBounds(); if (mouseX < b[0] || mouseX >= b[0] + b[2] || mouseY < b[1] || mouseY >= b[1] + b[3] || this.data.members().isEmpty()) return false; int row = (int) ((mouseY - b[1] - 4) / MEMBER_ROW_H); if (row < 0 || row >= MEMBER_VISIBLE_ROWS) return false; int idx = clampMemberScroll(this.memberScroll) + row; if (idx < 0 || idx >= this.data.members().size()) return false; this.selectedMemberUuid = this.data.members().get(idx).playerUuid(); updateButtonState(); return true; }
     private boolean trySelectClaim(double mouseX, double mouseY) { int mapX = claimMapX(left() + BODY_X); int mapY = claimMapY(top() + BODY_Y); if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false; int cellX = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseX - mapX) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_W))); int cellZ = Math.max(0, Math.min(CLAIM_RADIUS * 2, (int) ((mouseY - mapY) * (CLAIM_RADIUS * 2 + 1) / CLAIM_MAP_H))); this.selectedClaimChunkX = this.data.currentChunkX() + cellX - CLAIM_RADIUS; this.selectedClaimChunkZ = this.data.currentChunkZ() + cellZ - CLAIM_RADIUS; updateButtonState(); return true; }
+    private boolean trySelectDiplomacyNation(double mouseX, double mouseY) { int listX = left() + BODY_X + 8; int listY = top() + BODY_Y + 28; int listW = 220; int listH = DIP_VISIBLE_ROWS * DIP_ROW_H; if (mouseX < listX || mouseX >= listX + listW || mouseY < listY || mouseY >= listY + listH || this.data.allNations().isEmpty()) return false; int row = (int) ((mouseY - listY) / DIP_ROW_H); if (row < 0 || row >= DIP_VISIBLE_ROWS) return false; int idx = Math.max(0, Math.min(this.diplomacyScroll, this.data.allNations().size() - DIP_VISIBLE_ROWS)) + row; if (idx < 0 || idx >= this.data.allNations().size()) return false; this.selectedDiplomacyNationId = this.data.allNations().get(idx).nationId(); updateButtonState(); return true; }
     private int[] memberListBounds() { return new int[] { left() + BODY_X + 10, top() + BODY_Y + 48, MEMBER_LIST_W, MEMBER_VISIBLE_ROWS * MEMBER_ROW_H + 8 }; }
     private int claimMapX(int bodyX) { return bodyX + BODY_W - CLAIM_MAP_W - 16; }
     private int claimMapY(int bodyY) { return bodyY + 24; }
@@ -882,8 +992,6 @@ public class NationHomeScreen extends Screen {
     private boolean canAssignSelectedMemberAsMayor() { NationOverviewMember s = selectedMember(); return s != null && !this.data.capitalTownId().isBlank(); }
     private boolean officerTitleChanged() { return !valueOf(this.officerTitleInput).trim().equals(this.data.officerTitle()); }
     private boolean nationInfoChanged() { return !valueOf(this.nationNameInput).trim().equals(this.data.nationName()) || !valueOf(this.shortNameInput).trim().equals(this.data.shortName()); }
-    private String diplomacyTarget() { return valueOf(this.diplomacyTargetInput).trim(); }
-    private String diplomacyRequestTarget() { String target = diplomacyTarget(); if (hasIncomingAllianceRequest(target)) return target; NationOverviewDiplomacyRequest request = firstIncomingAllianceRequest(); return request == null ? "" : request.nationName(); }
     private void syncTownSelection() { if (this.data.towns().isEmpty()) { this.selectedTownId = ""; return; } if (!this.selectedTownId.isBlank()) { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return; } if (!this.data.capitalTownId().isBlank()) { for (NationOverviewTown town : this.data.towns()) { if (town.townId().equals(this.data.capitalTownId())) { this.selectedTownId = town.townId(); return; } } } this.selectedTownId = this.data.towns().get(0).townId(); }
     private NationOverviewTown selectedTown() { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return town; return this.data.towns().isEmpty() ? null : this.data.towns().get(0); }
     private void cycleTownSelection(int delta) { if (this.data.towns().isEmpty()) return; int index = 0; for (int i = 0; i < this.data.towns().size(); i++) { if (this.data.towns().get(i).townId().equals(this.selectedTownId)) { index = i; break; } } int size = this.data.towns().size(); int next = Math.floorMod(index + delta, size); this.selectedTownId = this.data.towns().get(next).townId(); updateButtonState(); }
@@ -926,7 +1034,7 @@ public class NationHomeScreen extends Screen {
     private int top() { return (this.height - SCREEN_H) / 2; }
 
     private enum Page {
-        OVERVIEW("screen.sailboatmod.nation.section.overview"), MEMBERS("screen.sailboatmod.nation.section.members"), CLAIMS("screen.sailboatmod.nation.section.claims"), WAR("screen.sailboatmod.nation.section.war"), FLAG("screen.sailboatmod.nation.section.flag");
+        OVERVIEW("screen.sailboatmod.nation.section.overview"), MEMBERS("screen.sailboatmod.nation.section.members"), CLAIMS("screen.sailboatmod.nation.section.claims"), WAR("screen.sailboatmod.nation.section.war"), DIPLOMACY("screen.sailboatmod.nation.section.diplomacy"), FLAG("screen.sailboatmod.nation.section.flag");
         private final String titleKey;
         Page(String titleKey) { this.titleKey = titleKey; }
         private Component title() { return Component.translatable(this.titleKey); }

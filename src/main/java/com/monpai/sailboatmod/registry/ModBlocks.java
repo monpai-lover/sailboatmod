@@ -32,12 +32,12 @@ public final class ModBlocks {
 
     public static final RegistryObject<Block> TOWN_CORE_BLOCK = BLOCKS.register(
             "town_core",
-            () -> new TownCoreBlock(BlockBehaviour.Properties.of().mapColor(MapColor.TERRACOTTA_CYAN).strength(4.0F).sound(SoundType.STONE).requiresCorrectToolForDrops())
+            () -> new TownCoreBlock(BlockBehaviour.Properties.of().mapColor(MapColor.TERRACOTTA_CYAN).strength(-1.0F, 3600000.0F).sound(SoundType.STONE).noLootTable().pushReaction(net.minecraft.world.level.material.PushReaction.BLOCK))
     );
 
     public static final RegistryObject<Block> NATION_CORE_BLOCK = BLOCKS.register(
             "nation_core",
-            () -> new NationCoreBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_RED).strength(4.0F).sound(SoundType.METAL).requiresCorrectToolForDrops())
+            () -> new NationCoreBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_RED).strength(-1.0F, 3600000.0F).sound(SoundType.METAL).noLootTable().pushReaction(net.minecraft.world.level.material.PushReaction.BLOCK))
     );
 
     public static final RegistryObject<Block> NATION_FLAG_BLOCK = BLOCKS.register(

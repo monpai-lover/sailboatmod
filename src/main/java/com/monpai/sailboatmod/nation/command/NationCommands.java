@@ -1,18 +1,22 @@
 package com.monpai.sailboatmod.nation.command;
 
+import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationRecord;
+import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.NationAdminService;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationDiplomacyService;
 import com.monpai.sailboatmod.nation.service.NationFlagService;
 import com.monpai.sailboatmod.nation.service.NationResult;
 import com.monpai.sailboatmod.nation.service.NationService;
+import com.monpai.sailboatmod.nation.service.NationTreasuryService;
 import com.monpai.sailboatmod.nation.service.NationWarService;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.network.packet.NationToastPacket;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import net.minecraft.commands.CommandSourceStack;
@@ -49,7 +53,40 @@ public final class NationCommands {
                 .then(Commands.literal("mayor")
                         .then(Commands.argument("town", StringArgumentType.word())
                                 .then(Commands.argument("player", EntityArgument.player())
-                                        .executes(context -> sendResult(context.getSource(), TownService.assignMayor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"), EntityArgument.getPlayer(context, "player"))))))));
+                                        .executes(context -> sendResult(context.getSource(), TownService.assignMayor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"), EntityArgument.getPlayer(context, "player")))))))
+                .then(Commands.literal("invite")
+                        .then(Commands.argument("town", StringArgumentType.greedyString())
+                                .executes(context -> {
+                                    ServerPlayer player = context.getSource().getPlayerOrException();
+                                    NationResult result = TownService.inviteTownToNation(player, StringArgumentType.getString(context, "town"));
+                                    int commandResult = sendResult(context.getSource(), result);
+                                    if (result.success()) {
+                                        notifyTownMayor(player, StringArgumentType.getString(context, "town"));
+                                    }
+                                    return commandResult;
+                                })))
+                .then(Commands.literal("join")
+                        .then(Commands.argument("nation", StringArgumentType.greedyString())
+                                .executes(context -> sendResult(context.getSource(), TownService.townJoinNation(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "nation"))))))
+                .then(Commands.literal("decline")
+                        .then(Commands.argument("nation", StringArgumentType.greedyString())
+                                .executes(context -> sendResult(context.getSource(), TownService.declineTownInvite(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "nation"))))))
+                .then(Commands.literal("apply")
+                        .then(Commands.literal("list")
+                                .executes(context -> sendLines(context.getSource(), TownService.listTownRequests(context.getSource().getPlayerOrException()))))
+                        .then(Commands.literal("accept")
+                                .then(Commands.argument("town", StringArgumentType.greedyString())
+                                        .executes(context -> sendResult(context.getSource(), TownService.acceptTownApply(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))))
+                        .then(Commands.literal("reject")
+                                .then(Commands.argument("town", StringArgumentType.greedyString())
+                                        .executes(context -> sendResult(context.getSource(), TownService.rejectTownApply(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))))
+                        .then(Commands.argument("nation", StringArgumentType.greedyString())
+                                .executes(context -> sendResult(context.getSource(), TownService.applyTownToNation(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "nation"))))))
+                .then(Commands.literal("leave")
+                        .executes(context -> sendResult(context.getSource(), TownService.leaveTownFromNation(context.getSource().getPlayerOrException()))))
+                .then(Commands.literal("kick")
+                        .then(Commands.argument("town", StringArgumentType.greedyString())
+                                .executes(context -> sendResult(context.getSource(), TownService.kickTownFromNation(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town")))))));
 
         nation.then(Commands.literal("rename")
                 .then(Commands.argument("name", StringArgumentType.greedyString())
@@ -228,6 +265,16 @@ public final class NationCommands {
                         .then(Commands.argument("nation", StringArgumentType.greedyString())
                                 .executes(context -> sendResult(context.getSource(), NationDiplomacyService.setNeutral(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "nation")))))));
 
+        nation.then(Commands.literal("treasury")
+                .then(Commands.literal("deposit")
+                        .then(Commands.argument("amount", LongArgumentType.longArg(1))
+                                .executes(context -> sendResult(context.getSource(), NationTreasuryService.depositCurrency(context.getSource().getPlayerOrException(), LongArgumentType.getLong(context, "amount"))))))
+                .then(Commands.literal("withdraw")
+                        .then(Commands.argument("amount", LongArgumentType.longArg(1))
+                                .executes(context -> sendResult(context.getSource(), NationTreasuryService.withdrawCurrency(context.getSource().getPlayerOrException(), LongArgumentType.getLong(context, "amount"))))))
+                .then(Commands.literal("status")
+                        .executes(context -> sendResult(context.getSource(), NationTreasuryService.status(context.getSource().getPlayerOrException())))));
+
         nation.then(Commands.literal("info")
                 .executes(context -> {
                     ServerPlayer player = context.getSource().getPlayerOrException();
@@ -296,6 +343,28 @@ public final class NationCommands {
             source.sendSuccess(() -> line, false);
         }
         return lines.isEmpty() ? 0 : 1;
+    }
+
+    private static void notifyTownMayor(ServerPlayer actor, String rawTownName) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        TownRecord town = data.findTownByName(TownRecord.normalizeName(rawTownName));
+        NationRecord nationRecord = NationService.getPlayerNation(actor.level(), actor.getUUID());
+        if (town == null || nationRecord == null || actor.getServer() == null) {
+            return;
+        }
+        ServerPlayer mayor = actor.getServer().getPlayerList().getPlayer(town.mayorUuid());
+        if (mayor == null) {
+            return;
+        }
+        Component inviteMessage = Component.translatable(
+                "command.sailboatmod.nation.town.invite.target",
+                actor.getGameProfile().getName(),
+                town.name(),
+                nationRecord.name(),
+                nationRecord.name()
+        );
+        mayor.sendSystemMessage(inviteMessage);
+        NationToastPacket.send(mayor, Component.translatable("toast.sailboatmod.nation.town_invite.title"), inviteMessage);
     }
 
     private NationCommands() {

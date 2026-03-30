@@ -71,6 +71,8 @@ public class TownHomeScreen extends Screen {
     private Button abandonTownButton;
     private int selectedClaimChunkX = Integer.MIN_VALUE;
     private int selectedClaimChunkZ = Integer.MIN_VALUE;
+    private int claimsSubPage;
+    private Button claimsSubPageButton;
     private int autoRefreshTicks;
     private int memberScroll;
     private String selectedMemberUuid = "";
@@ -109,13 +111,14 @@ public class TownHomeScreen extends Screen {
 
         this.claimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.claim"), b -> claimSelectedChunk()).bounds(left + BODY_X + 12, top + BODY_Y + BODY_H - 26, 72, 18).build());
         this.unclaimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.unclaim"), b -> unclaimSelectedChunk()).bounds(left + BODY_X + 90, top + BODY_Y + BODY_H - 26, 86, 18).build());
-        this.breakPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("break", selectedBreakAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 120, 80, 18).build());
-        this.placePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("place", selectedPlaceAccessLevel())).bounds(left + BODY_X + 96, top + BODY_Y + 120, 80, 18).build());
-        this.usePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("use", selectedUseAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 142, 80, 18).build());
-        this.containerPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("container", selectedContainerAccessLevel())).bounds(left + BODY_X + 96, top + BODY_Y + 142, 80, 18).build());
-        this.redstonePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("redstone", selectedRedstoneAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 164, 80, 18).build());
-        this.entityUsePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_use", selectedEntityUseAccessLevel())).bounds(left + BODY_X + 96, top + BODY_Y + 164, 80, 18).build());
-        this.entityDamagePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_damage", selectedEntityDamageAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 186, 164, 18).build());
+        this.claimsSubPageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claims.show_perms"), b -> { this.claimsSubPage = this.claimsSubPage == 0 ? 1 : 0; updateButtonState(); }).bounds(left + BODY_X + 184, top + BODY_Y + BODY_H - 26, 120, 18).build());
+        this.breakPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("break", selectedBreakAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 50, 100, 18).build());
+        this.placePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("place", selectedPlaceAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 50, 100, 18).build());
+        this.usePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("use", selectedUseAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 74, 100, 18).build());
+        this.containerPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("container", selectedContainerAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 74, 100, 18).build());
+        this.redstonePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("redstone", selectedRedstoneAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 98, 100, 18).build());
+        this.entityUsePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_use", selectedEntityUseAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 98, 100, 18).build());
+        this.entityDamagePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_damage", selectedEntityDamageAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 122, 208, 18).build());
 
         this.flagPathInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + BODY_H - 54, 248, 18, Component.translatable("screen.sailboatmod.town.flag_path"));
         this.flagPathInput.setMaxLength(512);
@@ -268,6 +271,10 @@ public class TownHomeScreen extends Screen {
     }
 
     private void drawClaimsPage(GuiGraphics g, int x, int y) {
+        if (this.claimsSubPage == 1) {
+            drawClaimsPermPage(g, x, y);
+            return;
+        }
         int drawY = y + 34;
         for (Component line : buildClaimLines()) {
             drawWrappedLine(g, line, x + 12, drawY, 206, 0xFFDCEEFF);
@@ -277,6 +284,17 @@ public class TownHomeScreen extends Screen {
         int mapY = claimMapY(y);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.town.claims.map_title"), mapX, y + 12, 0xFFB8C0C8);
         drawClaimMap(g, mapX, mapY);
+    }
+
+    private void drawClaimsPermPage(GuiGraphics g, int x, int y) {
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.perms_title"), x + 12, y + 30, 0xFFB8C0C8);
+        NationOverviewClaim selected = firstSelectedAreaClaim();
+        if (selected == null) {
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.claims.perms_select_hint"), x + 12, y + 150, BODY_W - 24, 0xFF8D98A3);
+        } else {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.town.claims.selected_chunk", this.selectedClaimChunkX, this.selectedClaimChunkZ), x + 12, y + 150, 0xFFDCEEFF);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.town.claims.owner", selected.nationName()), x + 12, y + 166, 0xFFB8C0C8);
+        }
     }
 
     private void drawFlagPage(GuiGraphics g, int x, int y) {
@@ -359,17 +377,20 @@ public class TownHomeScreen extends Screen {
         if (this.appointMayorButton != null) { this.appointMayorButton.visible = membersPage; this.appointMayorButton.active = membersPage && hasTown && canAssignSelectedMemberAsMayor(); }
 
         boolean claimsPage = this.currentPage == Page.CLAIMS;
+        boolean claimsMapView = claimsPage && this.claimsSubPage == 0;
+        boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
         boolean areaHasClaim = selectedClaimAreaHasAnyClaim();
         boolean ownClaim = selectedClaimAreaOwnedByTown();
-        if (this.claimButton != null) { this.claimButton.visible = claimsPage; this.claimButton.active = claimsPage && hasTown && this.data.canManageTown() && !areaHasClaim; }
-        if (this.unclaimButton != null) { this.unclaimButton.visible = claimsPage; this.unclaimButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; }
-        if (this.breakPermissionButton != null) { this.breakPermissionButton.visible = claimsPage; this.breakPermissionButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; this.breakPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.break", accessName(selectedBreakAccessLevel()))); }
-        if (this.placePermissionButton != null) { this.placePermissionButton.visible = claimsPage; this.placePermissionButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; this.placePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.place", accessName(selectedPlaceAccessLevel()))); }
-        if (this.usePermissionButton != null) { this.usePermissionButton.visible = claimsPage; this.usePermissionButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; this.usePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.use", accessName(selectedUseAccessLevel()))); }
-        if (this.containerPermissionButton != null) { this.containerPermissionButton.visible = claimsPage; this.containerPermissionButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; this.containerPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.container", accessName(selectedContainerAccessLevel()))); }
-        if (this.redstonePermissionButton != null) { this.redstonePermissionButton.visible = claimsPage; this.redstonePermissionButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; this.redstonePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.redstone", accessName(selectedRedstoneAccessLevel()))); }
-        if (this.entityUsePermissionButton != null) { this.entityUsePermissionButton.visible = claimsPage; this.entityUsePermissionButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; this.entityUsePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_use", accessName(selectedEntityUseAccessLevel()))); }
-        if (this.entityDamagePermissionButton != null) { this.entityDamagePermissionButton.visible = claimsPage; this.entityDamagePermissionButton.active = claimsPage && hasTown && this.data.canManageTown() && ownClaim; this.entityDamagePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_damage", accessName(selectedEntityDamageAccessLevel()))); }
+        if (this.claimButton != null) { this.claimButton.visible = claimsMapView; this.claimButton.active = claimsMapView && hasTown && this.data.canManageTown() && !areaHasClaim; }
+        if (this.unclaimButton != null) { this.unclaimButton.visible = claimsMapView; this.unclaimButton.active = claimsMapView && hasTown && this.data.canManageTown() && ownClaim; }
+        if (this.claimsSubPageButton != null) { this.claimsSubPageButton.visible = claimsPage; this.claimsSubPageButton.active = claimsPage && hasTown; this.claimsSubPageButton.setMessage(Component.translatable(claimsPermView ? "screen.sailboatmod.nation.claims.show_map" : "screen.sailboatmod.nation.claims.show_perms")); }
+        if (this.breakPermissionButton != null) { this.breakPermissionButton.visible = claimsPermView; this.breakPermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.breakPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.break", accessName(selectedBreakAccessLevel()))); }
+        if (this.placePermissionButton != null) { this.placePermissionButton.visible = claimsPermView; this.placePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.placePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.place", accessName(selectedPlaceAccessLevel()))); }
+        if (this.usePermissionButton != null) { this.usePermissionButton.visible = claimsPermView; this.usePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.usePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.use", accessName(selectedUseAccessLevel()))); }
+        if (this.containerPermissionButton != null) { this.containerPermissionButton.visible = claimsPermView; this.containerPermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.containerPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.container", accessName(selectedContainerAccessLevel()))); }
+        if (this.redstonePermissionButton != null) { this.redstonePermissionButton.visible = claimsPermView; this.redstonePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.redstonePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.redstone", accessName(selectedRedstoneAccessLevel()))); }
+        if (this.entityUsePermissionButton != null) { this.entityUsePermissionButton.visible = claimsPermView; this.entityUsePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.entityUsePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_use", accessName(selectedEntityUseAccessLevel()))); }
+        if (this.entityDamagePermissionButton != null) { this.entityDamagePermissionButton.visible = claimsPermView; this.entityDamagePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.entityDamagePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_damage", accessName(selectedEntityDamageAccessLevel()))); }
 
         boolean flagPage = this.currentPage == Page.FLAG;
         if (this.flagPathInput != null) { this.flagPathInput.visible = flagPage; this.flagPathInput.setEditable(flagPage && hasTown && this.data.canUploadFlag()); }

@@ -9,7 +9,9 @@ import com.monpai.sailboatmod.nation.model.NationJoinRequestRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationOfficeRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
+import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.nation.model.TownNationRequestRecord;
 import com.monpai.sailboatmod.nation.model.NationWarRecord;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -41,6 +43,8 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationFlagRecord> flags = new LinkedHashMap<>();
     private final Map<String, NationDiplomacyRecord> diplomacy = new LinkedHashMap<>();
     private final Map<String, NationDiplomacyRequestRecord> diplomacyRequests = new LinkedHashMap<>();
+    private final Map<String, TownNationRequestRecord> townNationRequests = new LinkedHashMap<>();
+    private final Map<String, NationTreasuryRecord> treasuries = new LinkedHashMap<>();
 
     public static NationSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
@@ -161,6 +165,27 @@ public class NationSavedData extends SavedData {
             }
         }
 
+        ListTag townNationRequestTag = tag.getList("TownNationRequests", Tag.TAG_COMPOUND);
+        for (Tag raw : townNationRequestTag) {
+            if (raw instanceof CompoundTag compound) {
+                TownNationRequestRecord request = TownNationRequestRecord.load(compound);
+                String key = townNationRequestKey(request.townId(), request.nationId());
+                if (!key.isBlank()) {
+                    data.townNationRequests.put(key, request);
+                }
+            }
+        }
+
+        ListTag treasuryTag = tag.getList("Treasuries", Tag.TAG_COMPOUND);
+        for (Tag raw : treasuryTag) {
+            if (raw instanceof CompoundTag compound) {
+                NationTreasuryRecord treasury = NationTreasuryRecord.load(compound);
+                if (!treasury.nationId().isBlank()) {
+                    data.treasuries.put(treasury.nationId(), treasury);
+                }
+            }
+        }
+
         return data;
     }
 
@@ -235,6 +260,18 @@ public class NationSavedData extends SavedData {
             diplomacyRequestTag.add(request.save());
         }
         tag.put("DiplomacyRequests", diplomacyRequestTag);
+
+        ListTag townNationRequestTag = new ListTag();
+        for (TownNationRequestRecord request : townNationRequests.values()) {
+            townNationRequestTag.add(request.save());
+        }
+        tag.put("TownNationRequests", townNationRequestTag);
+
+        ListTag treasuryTag = new ListTag();
+        for (NationTreasuryRecord treasury : treasuries.values()) {
+            treasuryTag.add(treasury.save());
+        }
+        tag.put("Treasuries", treasuryTag);
         return tag;
     }
 
@@ -385,6 +422,21 @@ public class NationSavedData extends SavedData {
             changed = true;
         }
 
+        List<String> townNationRequestKeys = new ArrayList<>();
+        for (Map.Entry<String, TownNationRequestRecord> entry : townNationRequests.entrySet()) {
+            if (normalized.equals(entry.getValue().nationId())) {
+                townNationRequestKeys.add(entry.getKey());
+            }
+        }
+        for (String key : townNationRequestKeys) {
+            townNationRequests.remove(key);
+            changed = true;
+        }
+
+        if (treasuries.remove(normalized) != null) {
+            changed = true;
+        }
+
         if (changed) {
             setDirty();
         }
@@ -423,6 +475,16 @@ public class NationSavedData extends SavedData {
         }
         for (String key : claimKeys) {
             claims.remove(key);
+            changed = true;
+        }
+        List<String> requestKeys = new ArrayList<>();
+        for (Map.Entry<String, TownNationRequestRecord> entry : townNationRequests.entrySet()) {
+            if (normalized.equals(entry.getValue().townId())) {
+                requestKeys.add(entry.getKey());
+            }
+        }
+        for (String key : requestKeys) {
+            townNationRequests.remove(key);
             changed = true;
         }
         if (changed) {
@@ -621,6 +683,107 @@ public class NationSavedData extends SavedData {
             }
         }
         return result;
+    }
+
+    public TownNationRequestRecord getTownNationRequest(String townId, String nationId) {
+        String key = townNationRequestKey(townId, nationId);
+        return key.isBlank() ? null : townNationRequests.get(key);
+    }
+
+    public void putTownNationRequest(TownNationRequestRecord request) {
+        String key = townNationRequestKey(request.townId(), request.nationId());
+        if (key.isBlank()) {
+            return;
+        }
+        townNationRequests.put(key, request);
+        setDirty();
+    }
+
+    public void removeTownNationRequest(String townId, String nationId) {
+        String key = townNationRequestKey(townId, nationId);
+        if (!key.isBlank() && townNationRequests.remove(key) != null) {
+            setDirty();
+        }
+    }
+
+    public void clearTownNationRequestsForTown(String townId) {
+        String normalized = normalizeId(townId);
+        if (normalized.isBlank()) {
+            return;
+        }
+        List<String> keys = new ArrayList<>();
+        for (Map.Entry<String, TownNationRequestRecord> entry : townNationRequests.entrySet()) {
+            if (normalized.equals(entry.getValue().townId())) {
+                keys.add(entry.getKey());
+            }
+        }
+        if (keys.isEmpty()) {
+            return;
+        }
+        for (String key : keys) {
+            townNationRequests.remove(key);
+        }
+        setDirty();
+    }
+
+    public void clearTownNationRequestsForNation(String nationId) {
+        String normalized = normalizeId(nationId);
+        if (normalized.isBlank()) {
+            return;
+        }
+        List<String> keys = new ArrayList<>();
+        for (Map.Entry<String, TownNationRequestRecord> entry : townNationRequests.entrySet()) {
+            if (normalized.equals(entry.getValue().nationId())) {
+                keys.add(entry.getKey());
+            }
+        }
+        if (keys.isEmpty()) {
+            return;
+        }
+        for (String key : keys) {
+            townNationRequests.remove(key);
+        }
+        setDirty();
+    }
+
+    public List<TownNationRequestRecord> getTownNationRequestsForNation(String nationId) {
+        String normalized = normalizeId(nationId);
+        List<TownNationRequestRecord> result = new ArrayList<>();
+        for (TownNationRequestRecord request : townNationRequests.values()) {
+            if (normalized.equals(request.nationId())) {
+                result.add(request);
+            }
+        }
+        return result;
+    }
+
+    public NationTreasuryRecord getTreasury(String nationId) {
+        String normalized = normalizeId(nationId);
+        return normalized.isBlank() ? null : treasuries.get(normalized);
+    }
+
+    public NationTreasuryRecord getOrCreateTreasury(String nationId) {
+        String normalized = normalizeId(nationId);
+        if (normalized.isBlank()) return NationTreasuryRecord.empty("");
+        NationTreasuryRecord existing = treasuries.get(normalized);
+        if (existing != null) return existing;
+        NationTreasuryRecord newTreasury = NationTreasuryRecord.empty(normalized);
+        treasuries.put(normalized, newTreasury);
+        setDirty();
+        return newTreasury;
+    }
+
+    public void putTreasury(NationTreasuryRecord treasury) {
+        if (treasury == null || treasury.nationId().isBlank()) return;
+        treasuries.put(treasury.nationId(), treasury);
+        setDirty();
+    }
+
+    public void removeTreasury(String nationId) {
+        String normalized = normalizeId(nationId);
+        if (!normalized.isBlank() && treasuries.remove(normalized) != null) {
+            setDirty();
+        }
     }
 
     public NationClaimRecord getClaim(String dimensionId, int chunkX, int chunkZ) {
@@ -908,6 +1071,15 @@ public class NationSavedData extends SavedData {
             return "";
         }
         return from + "|" + to + "|" + status;
+    }
+
+    private static String townNationRequestKey(String townId, String nationId) {
+        String normalizedTownId = normalizeId(townId);
+        String normalizedNationId = normalizeId(nationId);
+        if (normalizedTownId.isBlank() || normalizedNationId.isBlank()) {
+            return "";
+        }
+        return normalizedTownId + "|" + normalizedNationId;
     }
 
     private static String normalizeId(String value) {

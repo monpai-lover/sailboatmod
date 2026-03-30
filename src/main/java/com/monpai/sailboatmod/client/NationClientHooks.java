@@ -28,6 +28,14 @@ public final class NationClientHooks {
         minecraft.setScreen(new NationHomeScreen(lastSyncedData));
     }
 
+    public static void updateIfOpen(NationOverviewData data) {
+        lastSyncedData = data == null ? NationOverviewData.empty() : data;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
+            nationHomeScreen.updateData(lastSyncedData);
+        }
+    }
+
     public static void showToast(String title, String message) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null) {

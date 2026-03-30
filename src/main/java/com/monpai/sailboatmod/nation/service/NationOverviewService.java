@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyRequest;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
+import com.monpai.sailboatmod.nation.menu.NationOverviewNationEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewTown;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
@@ -153,6 +154,27 @@ public final class NationOverviewService {
         }
         incomingDiplomacyRequests.sort(Comparator.comparing(NationOverviewDiplomacyRequest::nationName, String.CASE_INSENSITIVE_ORDER));
 
+        List<NationOverviewNationEntry> allNations = new ArrayList<>();
+        for (NationRecord other : data.getNations()) {
+            if (other.nationId().equals(nation.nationId())) {
+                continue;
+            }
+            NationDiplomacyRecord relation = data.getDiplomacy(nation.nationId(), other.nationId());
+            NationFlagRecord otherFlag = data.getFlag(other.flagId());
+            allNations.add(new NationOverviewNationEntry(
+                    other.nationId(),
+                    other.name(),
+                    other.shortName(),
+                    other.primaryColorRgb(),
+                    other.secondaryColorRgb(),
+                    other.flagId(),
+                    otherFlag != null && otherFlag.mirrored(),
+                    data.getMembersForNation(other.nationId()).size(),
+                    relation == null ? "" : relation.statusId()
+            ));
+        }
+        allNations.sort(Comparator.comparing(NationOverviewNationEntry::nationName, String.CASE_INSENSITIVE_ORDER));
+
         return new NationOverviewData(
                 true,
                 nation.nationId(),
@@ -208,7 +230,8 @@ public final class NationOverviewService {
                 members,
                 towns,
                 nearbyTerrainColors,
-                nearbyClaims
+                nearbyClaims,
+                allNations
         );
     }
 

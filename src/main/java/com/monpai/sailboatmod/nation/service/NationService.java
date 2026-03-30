@@ -11,6 +11,8 @@ import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.NationWarRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.registry.ModBlocks;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
@@ -18,6 +20,8 @@ import net.minecraft.network.chat.TextColor;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 
 import java.io.IOException;
@@ -1105,9 +1109,38 @@ public final class NationService {
             } catch (IOException ignored) {
             }
         }
+        removeCoreAndDrop(level, nation);
         data.removeNation(nation.nationId());
         NationFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
         TownFlagBlockTracker.refreshNationFlags(level.getServer(), nation.nationId());
+    }
+
+    private static void removeCoreAndDrop(ServerLevel level, NationRecord nation) {
+        if (!nation.hasCore()) {
+            return;
+        }
+        BlockPos corePos = BlockPos.of(nation.corePos());
+        ServerLevel coreLevel = resolveDimension(level.getServer(), nation.coreDimension());
+        if (coreLevel == null) {
+            return;
+        }
+        if (coreLevel.getBlockState(corePos).getBlock() instanceof com.monpai.sailboatmod.block.NationCoreBlock) {
+            coreLevel.removeBlock(corePos, false);
+            ItemEntity item = new ItemEntity(coreLevel, corePos.getX() + 0.5, corePos.getY() + 0.5, corePos.getZ() + 0.5, new ItemStack(ModBlocks.NATION_CORE_BLOCK.get()));
+            item.setDefaultPickUpDelay();
+            coreLevel.addFreshEntity(item);
+        }
+    }
+
+    private static ServerLevel resolveDimension(MinecraftServer server, String dimensionId) {
+        if (server == null || dimensionId == null || dimensionId.isBlank()) {
+            return null;
+        }
+        net.minecraft.resources.ResourceLocation dimLoc = net.minecraft.resources.ResourceLocation.tryParse(dimensionId);
+        if (dimLoc == null) {
+            return null;
+        }
+        return server.getLevel(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, dimLoc));
     }
 
     private static String permissionSummary(Set<NationPermission> permissions) {
