@@ -38,7 +38,12 @@ public class TownHomeScreen extends Screen {
     private static final int BODY_H = 220;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
-    private static int claimRadius() { return com.monpai.sailboatmod.ModConfig.claimPreviewRadius(); }
+    private int claimRadius() {
+        int size = this.data.nearbyTerrainColors().size();
+        if (size <= 0) return com.monpai.sailboatmod.ModConfig.claimPreviewRadius();
+        int diameter = (int) Math.round(Math.sqrt(size));
+        return (diameter - 1) / 2;
+    }
     private static final int AUTO_REFRESH_INTERVAL_TICKS = 40;
     private static final int MEMBER_LIST_W = 180;
     private static final int MEMBER_ROW_H = 14;

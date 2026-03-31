@@ -135,6 +135,7 @@ public class NationGuiActionPacket {
                 case DIPLOMACY_ALLY -> NationDiplomacyService.requestAlliance(player, packet.text);
                 case DIPLOMACY_TRADE -> NationDiplomacyService.setTrade(player, packet.text);
                 case DIPLOMACY_NEUTRAL -> NationDiplomacyService.setNeutral(player, packet.text);
+                case DIPLOMACY_ENEMY -> NationDiplomacyService.setEnemy(player, packet.text);
                 case DIPLOMACY_ACCEPT -> NationDiplomacyService.acceptAlliance(player, packet.text);
                 case DIPLOMACY_REJECT -> NationDiplomacyService.rejectAlliance(player, packet.text);
                 case TOGGLE_FLAG_MIRROR -> NationFlagService.setMirrored(player, null);
@@ -203,6 +204,7 @@ public class NationGuiActionPacket {
         DIPLOMACY_ALLY,
         DIPLOMACY_TRADE,
         DIPLOMACY_NEUTRAL,
+        DIPLOMACY_ENEMY,
         DIPLOMACY_ACCEPT,
         DIPLOMACY_REJECT,
         TOGGLE_FLAG_MIRROR,

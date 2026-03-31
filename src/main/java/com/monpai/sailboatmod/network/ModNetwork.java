@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.PlaceBankStructurePacket;
+import com.monpai.sailboatmod.network.packet.SyncTreasuryPacket;
 import com.monpai.sailboatmod.network.packet.ClaimMarketCreditsPacket;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
 import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
@@ -36,6 +37,7 @@ import com.monpai.sailboatmod.network.packet.ToggleSailPacket;
 import com.monpai.sailboatmod.network.packet.UploadNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.UploadTownFlagChunkPacket;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.simple.SimpleChannel;
 
@@ -288,6 +290,13 @@ public final class ModNetwork {
                 PlaceBankStructurePacket::encode,
                 PlaceBankStructurePacket::decode,
                 PlaceBankStructurePacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncTreasuryPacket.class,
+                SyncTreasuryPacket::encode,
+                SyncTreasuryPacket::decode,
+                SyncTreasuryPacket::handle
         );
     }
 

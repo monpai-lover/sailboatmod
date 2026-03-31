@@ -52,7 +52,12 @@ public class NationHomeScreen extends Screen {
     private static final int MEMBER_VISIBLE_ROWS = 12;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
-    private static int claimRadius() { return com.monpai.sailboatmod.ModConfig.claimPreviewRadius(); }
+    private int claimRadius() {
+        int size = this.data.nearbyTerrainColors().size();
+        if (size <= 0) return com.monpai.sailboatmod.ModConfig.claimPreviewRadius();
+        int diameter = (int) Math.round(Math.sqrt(size));
+        return (diameter - 1) / 2;
+    }
 
     private NationOverviewData data;
     private Page currentPage = Page.OVERVIEW;
@@ -185,7 +190,7 @@ public class NationHomeScreen extends Screen {
 
         this.dipAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.ally"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ALLY)).bounds(left + BODY_X + 234, top + BODY_Y + 40, 100, 18).build());
         this.dipTradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.trade"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_TRADE)).bounds(left + BODY_X + 340, top + BODY_Y + 40, 100, 18).build());
-        this.dipEnemyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.enemy"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_NEUTRAL)).bounds(left + BODY_X + 234, top + BODY_Y + 64, 100, 18).build());
+        this.dipEnemyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.enemy"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ENEMY)).bounds(left + BODY_X + 234, top + BODY_Y + 64, 100, 18).build());
         this.dipNeutralButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.neutral"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_NEUTRAL)).bounds(left + BODY_X + 340, top + BODY_Y + 64, 100, 18).build());
         this.dipDeclareWarButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.declare_war"), b -> submitDipAction(NationGuiActionPacket.Action.DECLARE_WAR)).bounds(left + BODY_X + 234, top + BODY_Y + 88, 206, 18).build());
         this.dipAcceptAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ACCEPT)).bounds(left + BODY_X + 234, top + BODY_Y + 112, 100, 18).build());

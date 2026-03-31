@@ -137,6 +137,11 @@ public class BankActionPacket {
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.withdraw_item.success"));
                 }
             }
+            // Sync treasury to client after any action
+            NationTreasuryRecord updatedTreasury = data.getOrCreateTreasury(town.nationId());
+            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(
+                    net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> player),
+                    new SyncTreasuryPacket(updatedTreasury));
         });
         ctx.get().setPacketHandled(true);
     }

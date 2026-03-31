@@ -62,6 +62,9 @@ public final class StructureConstructionManager {
         StructurePlaceSettings settings = new StructurePlaceSettings();
         template.placeInWorld(level, origin, origin, settings, level.getRandom(), Block.UPDATE_ALL);
 
+        // Force-place the core block at center for each structure type
+        placeCoreBlock(level, origin, type);
+
         // After placement, fix core block ownership
         fixCoreOwnership(level, origin, template, player, type);
 
@@ -143,6 +146,17 @@ public final class StructureConstructionManager {
             }
         }
         return null;
+    }
+
+    private static void placeCoreBlock(ServerLevel level, BlockPos origin, StructureType type) {
+        BlockPos center = new BlockPos(origin.getX() + type.w() / 2, origin.getY() + 1, origin.getZ() + type.d() / 2);
+        switch (type) {
+            case VICTORIAN_BANK -> level.setBlock(center, ModBlocks.BANK_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+            case VICTORIAN_TOWN_HALL -> level.setBlock(center, ModBlocks.TOWN_CORE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+            case NATION_CAPITOL -> level.setBlock(center, ModBlocks.NATION_CORE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+            case OPEN_AIR_MARKETPLACE -> level.setBlock(center, ModBlocks.MARKET_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+            case WATERFRONT_DOCK -> level.setBlock(center, ModBlocks.DOCK_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+        }
     }
 
     private static void fixCoreOwnership(ServerLevel level, BlockPos origin, StructureTemplate template, ServerPlayer player, StructureType type) {

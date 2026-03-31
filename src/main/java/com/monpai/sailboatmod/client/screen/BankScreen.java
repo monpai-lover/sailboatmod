@@ -1,11 +1,10 @@
 package com.monpai.sailboatmod.client.screen;
 
 import com.monpai.sailboatmod.menu.BankMenu;
-import com.monpai.sailboatmod.nation.data.NationSavedData;
-import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
+import com.monpai.sailboatmod.network.packet.SyncTreasuryPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -143,7 +142,7 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
         ItemStack stack = treasury.items().get(slot);
         if (stack.isEmpty()) return;
         List<Component> tooltip = new ArrayList<>(stack.getTooltipLines(Minecraft.getInstance().player, net.minecraft.world.item.TooltipFlag.NORMAL));
-        String depositor = treasury.getDepositor(slot);
+        String depositor = getCachedDepositor(slot);
         if (!depositor.isBlank()) {
             tooltip.add(Component.translatable("screen.sailboatmod.bank.depositor", depositor).withStyle(net.minecraft.ChatFormatting.GRAY));
         }
@@ -204,12 +203,15 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
     }
 
     private NationTreasuryRecord getTreasury() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.level == null) return null;
-        NationSavedData data = NationSavedData.get(mc.level);
-        NationMemberRecord member = data.getMember(mc.player.getUUID());
-        if (member == null) return null;
-        return data.getOrCreateTreasury(member.nationId());
+        SyncTreasuryPacket.ClientTreasuryCache cache = null;
+        long bal = SyncTreasuryPacket.ClientTreasuryCache.getBalance();
+        net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> items = SyncTreasuryPacket.ClientTreasuryCache.getItems();
+        if (bal <= 0 && items.stream().allMatch(net.minecraft.world.item.ItemStack::isEmpty)) return null;
+        return new NationTreasuryRecord("", bal, items, new String[NationTreasuryRecord.TREASURY_SLOTS], 0, 0, 0, 0L);
+    }
+
+    private String getCachedDepositor(int slot) {
+        return SyncTreasuryPacket.ClientTreasuryCache.getDepositor(slot);
     }
 
     private void doDeposit() {
