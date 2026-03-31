@@ -189,7 +189,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             player.displayClientMessage(Component.literal("Not enough funds."), true);
             return false;
         }
-        paySeller(market, listing.sellerUuid(), listing.sellerName(), total);
+        int sellerPayout = total;
+        com.monpai.sailboatmod.nation.service.TaxService.TaxResult salesTaxResult =
+                com.monpai.sailboatmod.nation.service.TaxService.applySalesTax(level, total, this.worldPosition);
+        sellerPayout = salesTaxResult.sellerReceives();
+        com.monpai.sailboatmod.nation.service.TaxService.TaxResult tariffResult =
+                com.monpai.sailboatmod.nation.service.TaxService.applyImportTariff(level, sellerPayout, listing.sourceDockPos(), linkedDockPos);
+        sellerPayout = tariffResult.sellerReceives();
+        com.monpai.sailboatmod.nation.service.TaxService.recordTrade(level, this.worldPosition);
+        paySeller(market, listing.sellerUuid(), listing.sellerName(), sellerPayout);
         market.putListing(new MarketListing(
                 listing.listingId(),
                 listing.sellerUuid(),

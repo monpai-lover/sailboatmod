@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.nation.service.NationFlagService;
 import com.monpai.sailboatmod.nation.service.NationOverviewService;
 import com.monpai.sailboatmod.nation.service.NationResult;
 import com.monpai.sailboatmod.nation.service.NationService;
+import com.monpai.sailboatmod.nation.service.NationTreasuryService;
 import com.monpai.sailboatmod.nation.service.NationWarService;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -137,6 +138,14 @@ public class NationGuiActionPacket {
                 case DIPLOMACY_ACCEPT -> NationDiplomacyService.acceptAlliance(player, packet.text);
                 case DIPLOMACY_REJECT -> NationDiplomacyService.rejectAlliance(player, packet.text);
                 case TOGGLE_FLAG_MIRROR -> NationFlagService.setMirrored(player, null);
+                case SET_SALES_TAX -> {
+                    try { yield NationTreasuryService.setSalesTax(player, Integer.parseInt(packet.text.trim())); }
+                    catch (NumberFormatException e) { yield NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.tax.invalid_range", 0, 30)); }
+                }
+                case SET_IMPORT_TARIFF -> {
+                    try { yield NationTreasuryService.setImportTariff(player, Integer.parseInt(packet.text.trim())); }
+                    catch (NumberFormatException e) { yield NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.tax.invalid_range", 0, 50)); }
+                }
             };
 
             if (!result.message().getString().isBlank()) {
@@ -187,7 +196,9 @@ public class NationGuiActionPacket {
         DIPLOMACY_NEUTRAL,
         DIPLOMACY_ACCEPT,
         DIPLOMACY_REJECT,
-        TOGGLE_FLAG_MIRROR
+        TOGGLE_FLAG_MIRROR,
+        SET_SALES_TAX,
+        SET_IMPORT_TARIFF
     }
 
     private static int[] parseAreaBounds(String text) {

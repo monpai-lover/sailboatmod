@@ -273,7 +273,13 @@ public final class NationCommands {
                         .then(Commands.argument("amount", LongArgumentType.longArg(1))
                                 .executes(context -> sendResult(context.getSource(), NationTreasuryService.withdrawCurrency(context.getSource().getPlayerOrException(), LongArgumentType.getLong(context, "amount"))))))
                 .then(Commands.literal("status")
-                        .executes(context -> sendResult(context.getSource(), NationTreasuryService.status(context.getSource().getPlayerOrException())))));
+                        .executes(context -> sendResult(context.getSource(), NationTreasuryService.status(context.getSource().getPlayerOrException()))))
+                .then(Commands.literal("salestax")
+                        .then(Commands.argument("percent", IntegerArgumentType.integer(0, 30))
+                                .executes(context -> sendResult(context.getSource(), NationTreasuryService.setSalesTax(context.getSource().getPlayerOrException(), IntegerArgumentType.getInteger(context, "percent") * 100)))))
+                .then(Commands.literal("tariff")
+                        .then(Commands.argument("percent", IntegerArgumentType.integer(0, 50))
+                                .executes(context -> sendResult(context.getSource(), NationTreasuryService.setImportTariff(context.getSource().getPlayerOrException(), IntegerArgumentType.getInteger(context, "percent") * 100))))));
 
         nation.then(Commands.literal("info")
                 .executes(context -> {

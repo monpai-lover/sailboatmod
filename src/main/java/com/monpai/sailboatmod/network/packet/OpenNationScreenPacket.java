@@ -83,6 +83,9 @@ public class OpenNationScreenPacket {
         buffer.writeBoolean(data.canDeclareWar());
         buffer.writeBoolean(data.canManageTreasury());
         buffer.writeLong(data.treasuryBalance());
+        buffer.writeVarInt(data.salesTaxBasisPoints());
+        buffer.writeVarInt(data.importTariffBasisPoints());
+        buffer.writeVarInt(data.recentTradeCount());
         writeUtfSafe(buffer, data.officerTitle(), 64);
         buffer.writeVarInt(data.diplomacyRelations().size());
         for (NationOverviewDiplomacyEntry relation : data.diplomacyRelations()) {
@@ -199,6 +202,9 @@ public class OpenNationScreenPacket {
         boolean canDeclareWar = buffer.readBoolean();
         boolean canManageTreasury = buffer.readBoolean();
         long treasuryBalance = buffer.readLong();
+        int salesTaxBasisPoints = buffer.readVarInt();
+        int importTariffBasisPoints = buffer.readVarInt();
+        int recentTradeCount = buffer.readVarInt();
         String officerTitle = buffer.readUtf(64);
         int diplomacyRelationSize = buffer.readVarInt();
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>(diplomacyRelationSize);
@@ -331,6 +337,9 @@ public class OpenNationScreenPacket {
                 canDeclareWar,
                 canManageTreasury,
                 treasuryBalance,
+                salesTaxBasisPoints,
+                importTariffBasisPoints,
+                recentTradeCount,
                 officerTitle,
                 diplomacyRelations,
                 incomingDiplomacyRequests,

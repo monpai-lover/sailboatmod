@@ -568,11 +568,21 @@ public class NationHomeScreen extends Screen {
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.balance_label"), x + 12, y + 34, 0xFFB8C0C8);
         String balanceText = String.format("%,d", this.data.treasuryBalance());
         g.drawString(this.font, balanceText, x + 12, y + 50, 0xFFE7C977);
-        drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.hint"), x + 12, y + 80, BODY_W - 24, 0xFF8D98A3);
+
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.sales_tax_label"), x + 12, y + 76, 0xFFB8C0C8);
+        g.drawString(this.font, String.format("%.1f%%", this.data.salesTaxBasisPoints() / 100.0), x + 140, y + 76, 0xFFDCEEFF);
+
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.import_tariff_label"), x + 12, y + 94, 0xFFB8C0C8);
+        g.drawString(this.font, String.format("%.1f%%", this.data.importTariffBasisPoints() / 100.0), x + 140, y + 94, 0xFFDCEEFF);
+
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.trade_count_label"), x + 12, y + 112, 0xFFB8C0C8);
+        g.drawString(this.font, String.valueOf(this.data.recentTradeCount()), x + 140, y + 112, 0xFFDCEEFF);
+
         if (this.data.canManageTreasury()) {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, y + 110, BODY_W - 24, 0xFF8D98A3);
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.tax_hint"), x + 12, y + 140, BODY_W - 24, 0xFF8D98A3);
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, y + 170, BODY_W - 24, 0xFF8D98A3);
         } else {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.no_permission"), x + 12, y + 110, BODY_W - 24, 0xFF8D98A3);
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.no_permission"), x + 12, y + 140, BODY_W - 24, 0xFF8D98A3);
         }
     }
 

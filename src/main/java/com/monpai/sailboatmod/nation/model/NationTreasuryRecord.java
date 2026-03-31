@@ -11,28 +11,59 @@ import java.util.Locale;
 public record NationTreasuryRecord(
         String nationId,
         long currencyBalance,
-        NonNullList<ItemStack> items
+        NonNullList<ItemStack> items,
+        int salesTaxBasisPoints,
+        int importTariffBasisPoints,
+        int recentTradeCount,
+        long lastTaxAdjustTime
 ) {
     public static final int TREASURY_SLOTS = 54;
+    public static final int MAX_SALES_TAX_BP = 3000;
+    public static final int MAX_IMPORT_TARIFF_BP = 5000;
 
     public NationTreasuryRecord {
         nationId = nationId == null ? "" : nationId.trim().toLowerCase(Locale.ROOT);
         if (currencyBalance < 0L) currencyBalance = 0L;
         if (items == null) items = NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY);
+        salesTaxBasisPoints = Math.max(0, Math.min(MAX_SALES_TAX_BP, salesTaxBasisPoints));
+        importTariffBasisPoints = Math.max(0, Math.min(MAX_IMPORT_TARIFF_BP, importTariffBasisPoints));
+        if (recentTradeCount < 0) recentTradeCount = 0;
+        if (lastTaxAdjustTime < 0L) lastTaxAdjustTime = 0L;
     }
 
     public static NationTreasuryRecord empty(String nationId) {
-        return new NationTreasuryRecord(nationId, 0L, NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY));
+        return new NationTreasuryRecord(nationId, 0L, NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY), 500, 1000, 0, 0L);
     }
 
     public NationTreasuryRecord withBalance(long newBalance) {
-        return new NationTreasuryRecord(nationId, Math.max(0L, newBalance), items);
+        return new NationTreasuryRecord(nationId, Math.max(0L, newBalance), items, salesTaxBasisPoints, importTariffBasisPoints, recentTradeCount, lastTaxAdjustTime);
+    }
+
+    public NationTreasuryRecord withSalesTax(int basisPoints) {
+        return new NationTreasuryRecord(nationId, currencyBalance, items, basisPoints, importTariffBasisPoints, recentTradeCount, lastTaxAdjustTime);
+    }
+
+    public NationTreasuryRecord withImportTariff(int basisPoints) {
+        return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBasisPoints, basisPoints, recentTradeCount, lastTaxAdjustTime);
+    }
+
+    public NationTreasuryRecord withTradeRecorded() {
+        long now = System.currentTimeMillis();
+        long elapsed = now - lastTaxAdjustTime;
+        if (elapsed > 86_400_000L) {
+            return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBasisPoints, importTariffBasisPoints, 1, now);
+        }
+        return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBasisPoints, importTariffBasisPoints, recentTradeCount + 1, lastTaxAdjustTime);
     }
 
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag();
         tag.putString("NationId", nationId);
         tag.putLong("CurrencyBalance", currencyBalance);
+        tag.putInt("SalesTaxBP", salesTaxBasisPoints);
+        tag.putInt("ImportTariffBP", importTariffBasisPoints);
+        tag.putInt("RecentTradeCount", recentTradeCount);
+        tag.putLong("LastTaxAdjustTime", lastTaxAdjustTime);
         ListTag itemList = new ListTag();
         for (int i = 0; i < items.size(); i++) {
             if (!items.get(i).isEmpty()) {
@@ -49,6 +80,10 @@ public record NationTreasuryRecord(
     public static NationTreasuryRecord load(CompoundTag tag) {
         String nationId = tag.getString("NationId");
         long currencyBalance = tag.getLong("CurrencyBalance");
+        int salesTaxBP = tag.contains("SalesTaxBP") ? tag.getInt("SalesTaxBP") : 500;
+        int importTariffBP = tag.contains("ImportTariffBP") ? tag.getInt("ImportTariffBP") : 1000;
+        int recentTradeCount = tag.getInt("RecentTradeCount");
+        long lastTaxAdjustTime = tag.getLong("LastTaxAdjustTime");
         NonNullList<ItemStack> items = NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY);
         ListTag itemList = tag.getList("Items", Tag.TAG_COMPOUND);
         for (int i = 0; i < itemList.size(); i++) {
@@ -58,6 +93,6 @@ public record NationTreasuryRecord(
                 items.set(slot, ItemStack.of(itemTag));
             }
         }
-        return new NationTreasuryRecord(nationId, currencyBalance, items);
+        return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBP, importTariffBP, recentTradeCount, lastTaxAdjustTime);
     }
 }
