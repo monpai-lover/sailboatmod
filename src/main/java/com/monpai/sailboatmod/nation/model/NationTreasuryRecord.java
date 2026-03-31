@@ -12,6 +12,7 @@ public record NationTreasuryRecord(
         String nationId,
         long currencyBalance,
         NonNullList<ItemStack> items,
+        String[] itemDepositors,
         int salesTaxBasisPoints,
         int importTariffBasisPoints,
         int recentTradeCount,
@@ -25,6 +26,7 @@ public record NationTreasuryRecord(
         nationId = nationId == null ? "" : nationId.trim().toLowerCase(Locale.ROOT);
         if (currencyBalance < 0L) currencyBalance = 0L;
         if (items == null) items = NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY);
+        if (itemDepositors == null) itemDepositors = new String[TREASURY_SLOTS];
         salesTaxBasisPoints = Math.max(0, Math.min(MAX_SALES_TAX_BP, salesTaxBasisPoints));
         importTariffBasisPoints = Math.max(0, Math.min(MAX_IMPORT_TARIFF_BP, importTariffBasisPoints));
         if (recentTradeCount < 0) recentTradeCount = 0;
@@ -32,28 +34,37 @@ public record NationTreasuryRecord(
     }
 
     public static NationTreasuryRecord empty(String nationId) {
-        return new NationTreasuryRecord(nationId, 0L, NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY), 500, 1000, 0, 0L);
+        return new NationTreasuryRecord(nationId, 0L, NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY), new String[TREASURY_SLOTS], 500, 1000, 0, 0L);
     }
 
     public NationTreasuryRecord withBalance(long newBalance) {
-        return new NationTreasuryRecord(nationId, Math.max(0L, newBalance), items, salesTaxBasisPoints, importTariffBasisPoints, recentTradeCount, lastTaxAdjustTime);
+        return new NationTreasuryRecord(nationId, Math.max(0L, newBalance), items, itemDepositors, salesTaxBasisPoints, importTariffBasisPoints, recentTradeCount, lastTaxAdjustTime);
     }
 
     public NationTreasuryRecord withSalesTax(int basisPoints) {
-        return new NationTreasuryRecord(nationId, currencyBalance, items, basisPoints, importTariffBasisPoints, recentTradeCount, lastTaxAdjustTime);
+        return new NationTreasuryRecord(nationId, currencyBalance, items, itemDepositors, basisPoints, importTariffBasisPoints, recentTradeCount, lastTaxAdjustTime);
     }
 
     public NationTreasuryRecord withImportTariff(int basisPoints) {
-        return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBasisPoints, basisPoints, recentTradeCount, lastTaxAdjustTime);
+        return new NationTreasuryRecord(nationId, currencyBalance, items, itemDepositors, salesTaxBasisPoints, basisPoints, recentTradeCount, lastTaxAdjustTime);
     }
 
     public NationTreasuryRecord withTradeRecorded() {
         long now = System.currentTimeMillis();
         long elapsed = now - lastTaxAdjustTime;
         if (elapsed > 86_400_000L) {
-            return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBasisPoints, importTariffBasisPoints, 1, now);
+            return new NationTreasuryRecord(nationId, currencyBalance, items, itemDepositors, salesTaxBasisPoints, importTariffBasisPoints, 1, now);
         }
-        return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBasisPoints, importTariffBasisPoints, recentTradeCount + 1, lastTaxAdjustTime);
+        return new NationTreasuryRecord(nationId, currencyBalance, items, itemDepositors, salesTaxBasisPoints, importTariffBasisPoints, recentTradeCount + 1, lastTaxAdjustTime);
+    }
+
+    public String getDepositor(int slot) {
+        if (slot < 0 || slot >= itemDepositors.length || itemDepositors[slot] == null) return "";
+        return itemDepositors[slot];
+    }
+
+    public void setDepositor(int slot, String name) {
+        if (slot >= 0 && slot < itemDepositors.length) itemDepositors[slot] = name;
     }
 
     public CompoundTag save() {
@@ -70,6 +81,9 @@ public record NationTreasuryRecord(
                 CompoundTag itemTag = new CompoundTag();
                 itemTag.putInt("Slot", i);
                 items.get(i).save(itemTag);
+                if (itemDepositors[i] != null && !itemDepositors[i].isBlank()) {
+                    itemTag.putString("Depositor", itemDepositors[i]);
+                }
                 itemList.add(itemTag);
             }
         }
@@ -85,14 +99,18 @@ public record NationTreasuryRecord(
         int recentTradeCount = tag.getInt("RecentTradeCount");
         long lastTaxAdjustTime = tag.getLong("LastTaxAdjustTime");
         NonNullList<ItemStack> items = NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY);
+        String[] depositors = new String[TREASURY_SLOTS];
         ListTag itemList = tag.getList("Items", Tag.TAG_COMPOUND);
         for (int i = 0; i < itemList.size(); i++) {
             CompoundTag itemTag = itemList.getCompound(i);
             int slot = itemTag.getInt("Slot");
             if (slot >= 0 && slot < TREASURY_SLOTS) {
                 items.set(slot, ItemStack.of(itemTag));
+                if (itemTag.contains("Depositor")) {
+                    depositors[slot] = itemTag.getString("Depositor");
+                }
             }
         }
-        return new NationTreasuryRecord(nationId, currencyBalance, items, salesTaxBP, importTariffBP, recentTradeCount, lastTaxAdjustTime);
+        return new NationTreasuryRecord(nationId, currencyBalance, items, depositors, salesTaxBP, importTariffBP, recentTradeCount, lastTaxAdjustTime);
     }
 }

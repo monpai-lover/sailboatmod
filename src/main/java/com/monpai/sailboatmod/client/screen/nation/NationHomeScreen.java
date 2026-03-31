@@ -608,22 +608,24 @@ public class NationHomeScreen extends Screen {
     private void drawTreasuryPage(GuiGraphics g, int x, int y) {
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.balance_label"), x + 12, y + 34, 0xFFB8C0C8);
         String balanceText = String.format("%,d", this.data.treasuryBalance());
-        g.drawString(this.font, balanceText, x + 12, y + 50, 0xFFE7C977);
+        g.drawString(this.font, balanceText, x + 120, y + 34, 0xFFE7C977);
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.sales_tax_label"), x + 12, y + 76, 0xFFB8C0C8);
-        g.drawString(this.font, String.format("%.1f%%", this.data.salesTaxBasisPoints() / 100.0), x + 140, y + 76, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.sales_tax_label"), x + 12, y + 56, 0xFFB8C0C8);
+        g.drawString(this.font, String.format("%.1f%%", this.data.salesTaxBasisPoints() / 100.0), x + 140, y + 56, 0xFFDCEEFF);
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.import_tariff_label"), x + 12, y + 94, 0xFFB8C0C8);
-        g.drawString(this.font, String.format("%.1f%%", this.data.importTariffBasisPoints() / 100.0), x + 140, y + 94, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.import_tariff_label"), x + 12, y + 74, 0xFFB8C0C8);
+        g.drawString(this.font, String.format("%.1f%%", this.data.importTariffBasisPoints() / 100.0), x + 140, y + 74, 0xFFDCEEFF);
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.trade_count_label"), x + 12, y + 112, 0xFFB8C0C8);
-        g.drawString(this.font, String.valueOf(this.data.recentTradeCount()), x + 140, y + 112, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.trade_count_label"), x + 12, y + 92, 0xFFB8C0C8);
+        g.drawString(this.font, String.valueOf(this.data.recentTradeCount()), x + 140, y + 92, 0xFFDCEEFF);
+
+        drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.bank_hint"), x + 12, y + 120, BODY_W - 24, 0xFF8D98A3);
 
         if (this.data.canManageTreasury()) {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.tax_hint"), x + 12, y + 140, BODY_W - 24, 0xFF8D98A3);
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, y + 170, BODY_W - 24, 0xFF8D98A3);
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.tax_hint"), x + 12, y + 150, BODY_W - 24, 0xFF8D98A3);
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, y + 180, BODY_W - 24, 0xFF8D98A3);
         } else {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.no_permission"), x + 12, y + 140, BODY_W - 24, 0xFF8D98A3);
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.no_permission"), x + 12, y + 150, BODY_W - 24, 0xFF8D98A3);
         }
     }
 

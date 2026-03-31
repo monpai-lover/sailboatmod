@@ -106,9 +106,11 @@ public class BankActionPacket {
                     ItemStack held = player.getMainHandItem();
                     if (held.isEmpty()) return;
                     NonNullList<ItemStack> items = treasury.items();
+                    String depositorName = player.getGameProfile() != null ? player.getGameProfile().getName() : player.getName().getString();
                     for (int i = 0; i < items.size(); i++) {
                         if (items.get(i).isEmpty()) {
                             items.set(i, held.copy());
+                            treasury.setDepositor(i, depositorName);
                             player.getMainHandItem().setCount(0);
                             data.putTreasury(treasury);
                             player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.deposit_item.success"));
@@ -130,6 +132,7 @@ public class BankActionPacket {
                         return;
                     }
                     treasury.items().set(msg.slot, ItemStack.EMPTY);
+                    treasury.setDepositor(msg.slot, null);
                     data.putTreasury(treasury);
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.withdraw_item.success"));
                 }
