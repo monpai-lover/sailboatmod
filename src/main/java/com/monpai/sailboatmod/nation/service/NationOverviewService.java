@@ -57,6 +57,7 @@ public final class NationOverviewService {
         long cooldownRemaining = NationWarService.cooldownRemainingMillis(data, nation.nationId(), now);
         NationOfficeRecord officerOffice = data.getOffice(nation.nationId(), NationOfficeIds.OFFICER);
         NationTreasuryRecord treasury = data.getTreasury(nation.nationId());
+        com.monpai.sailboatmod.nation.model.PeaceProposalRecord peaceProposal = activeWar == null ? null : data.getPeaceProposal(activeWar.warId());
 
         int warScoreSelf = 0;
         int warScoreOpponent = 0;
@@ -122,6 +123,7 @@ public final class NationOverviewService {
                     claim.nationId(),
                     nameOrFallback(owner, claim.nationId()),
                     owner == null ? 0x8A8A8A : owner.primaryColorRgb(),
+                    owner == null ? 0xF2C14E : owner.secondaryColorRgb(),
                     claim.townId(),
                     claimTown == null ? "" : claimTown.name(),
                     claim.breakAccessLevel(),
@@ -217,6 +219,12 @@ public final class NationOverviewService {
                 warStatus,
                 warTimeRemainingSeconds,
                 (int) Math.ceil(cooldownRemaining / 1000.0D),
+                peaceProposal != null && !peaceProposal.isExpired(),
+                peaceProposal == null ? "" : peaceProposal.type(),
+                peaceProposal == null ? 0 : peaceProposal.cedeTerritoryCount(),
+                peaceProposal == null ? 0L : peaceProposal.reparationAmount(),
+                peaceProposal != null && !peaceProposal.proposerNationId().equals(nation.nationId()),
+                peaceProposal == null ? 0 : (int) Math.ceil(peaceProposal.remainingMillis() / 1000.0),
                 nation.flagId(),
                 flag == null ? 0 : flag.width(),
                 flag == null ? 0 : flag.height(),

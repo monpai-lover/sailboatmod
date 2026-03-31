@@ -6,6 +6,7 @@ public record NationOverviewClaim(
         String nationId,
         String nationName,
         int primaryColorRgb,
+        int secondaryColorRgb,
         String townId,
         String townName,
         String breakAccessLevel,
@@ -20,6 +21,7 @@ public record NationOverviewClaim(
         nationId = nationId == null ? "" : nationId.trim();
         nationName = nationName == null ? "" : nationName.trim();
         primaryColorRgb &= 0x00FFFFFF;
+        secondaryColorRgb &= 0x00FFFFFF;
         townId = townId == null ? "" : townId.trim();
         townName = townName == null ? "" : townName.trim();
         breakAccessLevel = breakAccessLevel == null ? "" : breakAccessLevel.trim();

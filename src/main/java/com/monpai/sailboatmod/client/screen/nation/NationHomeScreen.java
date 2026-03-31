@@ -121,6 +121,17 @@ public class NationHomeScreen extends Screen {
     private Button dipAcceptAllyButton;
     private Button dipRejectAllyButton;
     private Button dipBackButton;
+    private Button salesTaxUpButton;
+    private Button salesTaxDownButton;
+    private Button tariffUpButton;
+    private Button tariffDownButton;
+    private Button radiusUpButton;
+    private Button radiusDownButton;
+    private Button proposeCeasefireButton;
+    private Button proposeCedeButton;
+    private Button proposeReparationButton;
+    private Button acceptPeaceButton;
+    private Button rejectPeaceButton;
     private static final int DIP_ROW_H = 20;
     private static final int DIP_VISIBLE_ROWS = 9;
 
@@ -212,6 +223,23 @@ public class NationHomeScreen extends Screen {
         this.browseButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.browse"), b -> browseForImage()).bounds(left + BODY_X + 268, top + BODY_Y + BODY_H - 54, 56, 18).build());
         this.uploadButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.upload"), b -> submitUpload()).bounds(left + BODY_X + 330, top + BODY_Y + BODY_H - 54, 72, 18).build());
         this.toggleMirrorButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.toggle_mirror"), b -> submitMirrorToggle()).bounds(left + BODY_X + 170, top + BODY_Y + 82, 126, 18).build());
+
+        // Treasury tax buttons
+        this.salesTaxUpButton = this.addRenderableWidget(Button.builder(Component.literal("+"), b -> adjustSalesTax(100)).bounds(left + BODY_X + 200, top + BODY_Y + 72, 20, 14).build());
+        this.salesTaxDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustSalesTax(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 72, 20, 14).build());
+        this.tariffUpButton = this.addRenderableWidget(Button.builder(Component.literal("+"), b -> adjustTariff(100)).bounds(left + BODY_X + 200, top + BODY_Y + 90, 20, 14).build());
+        this.tariffDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustTariff(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 90, 20, 14).build());
+
+        // Claim radius buttons
+        this.radiusUpButton = this.addRenderableWidget(Button.builder(Component.literal("R+"), b -> adjustRadius(5)).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
+        this.radiusDownButton = this.addRenderableWidget(Button.builder(Component.literal("R-"), b -> adjustRadius(-5)).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W + 12, top + BODY_Y + 10, 24, 14).build());
+
+        // Peace proposal buttons
+        this.proposeCeasefireButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.ceasefire"), b -> submitPeaceProposal("ceasefire", 0, 0)).bounds(left + BODY_X + 12, top + BODY_Y + 148, 90, 18).build());
+        this.proposeCedeButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.cede_territory"), b -> submitPeaceProposal("cede_territory", 5, 0)).bounds(left + BODY_X + 108, top + BODY_Y + 148, 90, 18).build());
+        this.proposeReparationButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.reparation"), b -> submitPeaceProposal("reparation", 0, 500)).bounds(left + BODY_X + 204, top + BODY_Y + 148, 90, 18).build());
+        this.acceptPeaceButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> { sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.ACCEPT_PEACE), Component.translatable("command.sailboatmod.nation.peace.accepted_self")); }).bounds(left + BODY_X + 12, top + BODY_Y + 148, 90, 18).build());
+        this.rejectPeaceButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.reject"), b -> { sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.REJECT_PEACE), Component.translatable("command.sailboatmod.nation.peace.rejected")); }).bounds(left + BODY_X + 108, top + BODY_Y + 148, 90, 18).build());
 
         this.officerTitleInput = new EditBox(this.font, left + BODY_X + 224, top + BODY_Y + 152, 136, 18, Component.translatable("screen.sailboatmod.nation.members.title_input"));
         this.officerTitleInput.setMaxLength(24);
@@ -455,6 +483,19 @@ public class NationHomeScreen extends Screen {
         }
         if (!this.data.hasNation()) {
             return;
+        }
+
+        if (this.data.hasPeaceProposal()) {
+            int proposalY = y + 160;
+            drawPanelFrame(g, warPanelX, proposalY, warPanelW, 60);
+            String typeKey = "command.sailboatmod.nation.peace.type." + this.data.peaceProposalType();
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.peace.proposal_title"), warPanelX + 8, proposalY + 6, 0xFFE7C977);
+            g.drawString(this.font, Component.translatable(typeKey), warPanelX + 8, proposalY + 20, 0xFFDCEEFF);
+            String details = "";
+            if (this.data.peaceProposalCede() > 0) details += Component.translatable("screen.sailboatmod.nation.peace.cede_count", this.data.peaceProposalCede()).getString() + "  ";
+            if (this.data.peaceProposalAmount() > 0) details += Component.translatable("screen.sailboatmod.nation.peace.reparation_amount", this.data.peaceProposalAmount()).getString();
+            if (!details.isBlank()) g.drawString(this.font, details, warPanelX + 8, proposalY + 34, 0xFFB8C0C8);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.peace.remaining", this.data.peaceProposalRemainingSeconds()), warPanelX + warPanelW - 80, proposalY + 6, 0xFF8D98A3);
         }
 
         Component hint = this.data.canDeclareWar()
@@ -753,6 +794,25 @@ public class NationHomeScreen extends Screen {
         if (this.dipRejectAllyButton != null) { this.dipRejectAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipRejectAllyButton.active = dipCanManage && dipHasPendingAlly; }
         if (this.dipBackButton != null) { this.dipBackButton.visible = dipPage && dipHasSelection; this.dipBackButton.active = dipPage && dipHasSelection; }
 
+        boolean treasuryPage = this.currentPage == Page.TREASURY;
+        boolean canTreasury = treasuryPage && this.data.hasNation() && this.data.canManageTreasury();
+        if (this.salesTaxUpButton != null) { this.salesTaxUpButton.visible = treasuryPage; this.salesTaxUpButton.active = canTreasury; }
+        if (this.salesTaxDownButton != null) { this.salesTaxDownButton.visible = treasuryPage; this.salesTaxDownButton.active = canTreasury; }
+        if (this.tariffUpButton != null) { this.tariffUpButton.visible = treasuryPage; this.tariffUpButton.active = canTreasury; }
+        if (this.tariffDownButton != null) { this.tariffDownButton.visible = treasuryPage; this.tariffDownButton.active = canTreasury; }
+
+        if (this.radiusUpButton != null) { this.radiusUpButton.visible = claimsPage; this.radiusUpButton.active = claimsPage; }
+        if (this.radiusDownButton != null) { this.radiusDownButton.visible = claimsPage; this.radiusDownButton.active = claimsPage; }
+
+        boolean hasWar = this.data.hasActiveWar();
+        boolean canWar = warPage && this.data.hasNation() && this.data.canDeclareWar() && hasWar;
+        boolean hasIncomingProposal = this.data.hasPeaceProposal() && this.data.peaceProposalIncoming();
+        if (this.proposeCeasefireButton != null) { this.proposeCeasefireButton.visible = warPage && hasWar && !hasIncomingProposal; this.proposeCeasefireButton.active = canWar; }
+        if (this.proposeCedeButton != null) { this.proposeCedeButton.visible = warPage && hasWar && !hasIncomingProposal; this.proposeCedeButton.active = canWar; }
+        if (this.proposeReparationButton != null) { this.proposeReparationButton.visible = warPage && hasWar && !hasIncomingProposal; this.proposeReparationButton.active = canWar; }
+        if (this.acceptPeaceButton != null) { this.acceptPeaceButton.visible = warPage && hasIncomingProposal; this.acceptPeaceButton.active = canWar && hasIncomingProposal; }
+        if (this.rejectPeaceButton != null) { this.rejectPeaceButton.visible = warPage && hasIncomingProposal; this.rejectPeaceButton.active = canWar && hasIncomingProposal; }
+
         boolean flagPage = this.currentPage == Page.FLAG;
         if (this.primaryColorInput != null) { this.primaryColorInput.visible = flagPage; this.primaryColorInput.setEditable(flagPage && canManageInfo); }
         if (this.secondaryColorInput != null) { this.secondaryColorInput.visible = flagPage; this.secondaryColorInput.setEditable(flagPage && canManageInfo); }
@@ -788,7 +848,6 @@ public class NationHomeScreen extends Screen {
                 g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
             }
         }
-        int borderColor = 0xFF000000 | this.data.secondaryColorRgb();
         for (int gz = 0; gz <= claimRadius() * 2; gz++) {
             int y1 = mapY + gz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
             int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (claimRadius() * 2 + 1);
@@ -799,6 +858,7 @@ public class NationHomeScreen extends Screen {
                 int chunkX = this.data.currentChunkX() + gx - claimRadius();
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim == null) continue;
+                int borderColor = 0xFF000000 | claim.secondaryColorRgb();
                 String ownerId = claim.nationId();
                 if (!sameOwner(ownerId, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
                 if (!sameOwner(ownerId, chunkX, chunkZ + 1)) g.fill(x1, y2 - 1, x2, y2, borderColor);
@@ -832,13 +892,12 @@ public class NationHomeScreen extends Screen {
         int hoverChunkZ = this.data.currentChunkZ() + cellZ - claimRadius();
         NationOverviewClaim hoverClaim = findClaim(hoverChunkX, hoverChunkZ);
         if (hoverClaim == null) return;
-        String hoverId = hoverClaim.townId().isBlank() ? hoverClaim.nationId() : hoverClaim.townId();
-        String label = hoverClaim.townId().isBlank() ? hoverClaim.nationName() : hoverClaim.townName();
+        String hoverId = hoverClaim.nationId();
+        String label = hoverClaim.nationName();
         if (label.isBlank()) return;
         int count = 0;
         for (NationOverviewClaim c : this.data.nearbyClaims()) {
-            String cid = c.townId().isBlank() ? c.nationId() : c.townId();
-            if (cid.equals(hoverId)) count++;
+            if (c.nationId().equals(hoverId)) count++;
         }
         int color = 0xFF000000 | hoverClaim.primaryColorRgb();
         String text = label + "(" + count + ")";
@@ -1034,6 +1093,29 @@ public class NationHomeScreen extends Screen {
     private void submitMirrorToggle() {
         if (!this.data.hasNation() || !this.data.canUploadFlag() || this.data.flagId().isBlank()) return;
         sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.TOGGLE_FLAG_MIRROR), Component.translatable("screen.sailboatmod.nation.flag.mirror.toggling"));
+    }
+
+    private void adjustSalesTax(int deltaBp) {
+        int current = this.data.salesTaxBasisPoints();
+        int next = Math.max(0, Math.min(3000, current + deltaBp));
+        sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.SET_SALES_TAX, String.valueOf(next), true), Component.translatable("command.sailboatmod.nation.treasury.tax.sales_set", String.format("%.1f%%", next / 100.0)));
+    }
+
+    private void adjustTariff(int deltaBp) {
+        int current = this.data.importTariffBasisPoints();
+        int next = Math.max(0, Math.min(5000, current + deltaBp));
+        sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.SET_IMPORT_TARIFF, String.valueOf(next), true), Component.translatable("command.sailboatmod.nation.treasury.tax.tariff_set", String.format("%.1f%%", next / 100.0)));
+    }
+
+    private void adjustRadius(int delta) {
+        int current = com.monpai.sailboatmod.ModConfig.CLAIM_PREVIEW_RADIUS.get();
+        int next = Math.max(5, Math.min(60, current + delta));
+        com.monpai.sailboatmod.ModConfig.CLAIM_PREVIEW_RADIUS.set(next);
+        requestRefresh();
+    }
+
+    private void submitPeaceProposal(String type, int cede, long reparation) {
+        sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.PROPOSE_PEACE, type + "," + cede + "," + reparation, true), Component.translatable("command.sailboatmod.nation.peace.sent"));
     }
 
     private void submitDeclareWar() {

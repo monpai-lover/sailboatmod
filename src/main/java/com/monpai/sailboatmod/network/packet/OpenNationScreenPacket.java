@@ -69,6 +69,12 @@ public class OpenNationScreenPacket {
         writeUtfSafe(buffer, data.warStatus(), 24);
         buffer.writeVarInt(data.warTimeRemainingSeconds());
         buffer.writeVarInt(data.warCooldownRemainingSeconds());
+        buffer.writeBoolean(data.hasPeaceProposal());
+        writeUtfSafe(buffer, data.peaceProposalType(), 24);
+        buffer.writeVarInt(data.peaceProposalCede());
+        buffer.writeLong(data.peaceProposalAmount());
+        buffer.writeBoolean(data.peaceProposalIncoming());
+        buffer.writeVarInt(data.peaceProposalRemainingSeconds());
         writeUtfSafe(buffer, data.flagId(), 128);
         buffer.writeVarInt(data.flagWidth());
         buffer.writeVarInt(data.flagHeight());
@@ -126,6 +132,7 @@ public class OpenNationScreenPacket {
             writeUtfSafe(buffer, claim.nationId(), 40);
             writeUtfSafe(buffer, claim.nationName(), 64);
             buffer.writeInt(claim.primaryColorRgb());
+            buffer.writeInt(claim.secondaryColorRgb());
             writeUtfSafe(buffer, claim.townId(), 40);
             writeUtfSafe(buffer, claim.townName(), 64);
             writeUtfSafe(buffer, claim.breakAccessLevel(), 16);
@@ -188,6 +195,12 @@ public class OpenNationScreenPacket {
         String warStatus = buffer.readUtf(24);
         int warTimeRemainingSeconds = buffer.readVarInt();
         int warCooldownRemainingSeconds = buffer.readVarInt();
+        boolean hasPeaceProposal = buffer.readBoolean();
+        String peaceProposalType = buffer.readUtf(24);
+        int peaceProposalCede = buffer.readVarInt();
+        long peaceProposalAmount = buffer.readLong();
+        boolean peaceProposalIncoming = buffer.readBoolean();
+        int peaceProposalRemainingSeconds = buffer.readVarInt();
         String flagId = buffer.readUtf(128);
         int flagWidth = buffer.readVarInt();
         int flagHeight = buffer.readVarInt();
@@ -260,6 +273,7 @@ public class OpenNationScreenPacket {
                     buffer.readUtf(40),
                     buffer.readUtf(64),
                     buffer.readInt(),
+                    buffer.readInt(),
                     buffer.readUtf(40),
                     buffer.readUtf(64),
                     buffer.readUtf(16),
@@ -323,6 +337,12 @@ public class OpenNationScreenPacket {
                 warStatus,
                 warTimeRemainingSeconds,
                 warCooldownRemainingSeconds,
+                hasPeaceProposal,
+                peaceProposalType,
+                peaceProposalCede,
+                peaceProposalAmount,
+                peaceProposalIncoming,
+                peaceProposalRemainingSeconds,
                 flagId,
                 flagWidth,
                 flagHeight,

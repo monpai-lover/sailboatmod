@@ -427,7 +427,6 @@ public class TownHomeScreen extends Screen {
                 g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
             }
         }
-        int borderColor = 0xFF000000 | this.data.secondaryColorRgb();
         for (int gz = 0; gz <= claimRadius() * 2; gz++) {
             int y1 = mapY + gz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
             int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (claimRadius() * 2 + 1);
@@ -438,6 +437,7 @@ public class TownHomeScreen extends Screen {
                 int chunkX = this.data.currentChunkX() + gx - claimRadius();
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim == null) continue;
+                int borderColor = 0xFF000000 | claim.secondaryColorRgb();
                 String ownerId = claim.nationId();
                 if (!sameOwner(ownerId, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
                 if (!sameOwner(ownerId, chunkX, chunkZ + 1)) g.fill(x1, y2 - 1, x2, y2, borderColor);

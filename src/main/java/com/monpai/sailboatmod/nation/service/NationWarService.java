@@ -537,5 +537,143 @@ public final class NationWarService {
 
     private NationWarService() {
     }
+
+    // ── Peace Proposal ──
+
+    public static NationResult proposePeace(ServerPlayer actor, String type, int cedeCount, long reparation) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        NationMemberRecord member = data.getMember(actor.getUUID());
+        if (member == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.invite.no_nation"));
+        if (!NationService.hasPermission(actor.level(), actor.getUUID(), NationPermission.DECLARE_WAR))
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.war.no_permission"));
+        NationRecord nation = data.getNation(member.nationId());
+        if (nation == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.data_missing"));
+        NationWarRecord war = getActiveWarForNation(data, nation.nationId());
+        if (war == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.no_war"));
+
+        String proposerNationId = nation.nationId();
+        if ("reparation".equals(type) || "cede_territory".equals(type)) {
+            if (reparation > 0) {
+                com.monpai.sailboatmod.nation.model.NationTreasuryRecord treasury = data.getOrCreateTreasury(proposerNationId);
+                if (treasury.currencyBalance() < reparation)
+                    return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.insufficient_funds"));
+            }
+            if ("cede_territory".equals(type) && cedeCount <= 0)
+                return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.invalid_cede"));
+        }
+
+        com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal = new com.monpai.sailboatmod.nation.model.PeaceProposalRecord(
+                war.warId(), proposerNationId, type, cedeCount, reparation, System.currentTimeMillis());
+        data.putPeaceProposal(proposal);
+
+        String opponentId = war.attackerNationId().equals(proposerNationId) ? war.defenderNationId() : war.attackerNationId();
+        NationRecord opponent = data.getNation(opponentId);
+        notifyWarParticipants(ServerLifecycleHooks.getCurrentServer(), data,
+                opponentId, opponentId,
+                Component.translatable("toast.sailboatmod.nation.peace.title"),
+                Component.translatable("command.sailboatmod.nation.peace.proposed", nation.name(), Component.translatable("command.sailboatmod.nation.peace.type." + type)));
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.peace.sent"));
+    }
+
+    public static NationResult acceptPeace(ServerPlayer actor) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        NationMemberRecord member = data.getMember(actor.getUUID());
+        if (member == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.invite.no_nation"));
+        if (!NationService.hasPermission(actor.level(), actor.getUUID(), NationPermission.DECLARE_WAR))
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.war.no_permission"));
+        NationRecord nation = data.getNation(member.nationId());
+        if (nation == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.data_missing"));
+        NationWarRecord war = getActiveWarForNation(data, nation.nationId());
+        if (war == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.no_war"));
+
+        com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal = data.getPeaceProposal(war.warId());
+        if (proposal == null || proposal.isExpired())
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.no_proposal"));
+        if (proposal.proposerNationId().equals(nation.nationId()))
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.own_proposal"));
+
+        // Execute terms
+        String proposerId = proposal.proposerNationId();
+        String accepterId = nation.nationId();
+        if (proposal.reparationAmount() > 0) {
+            com.monpai.sailboatmod.nation.model.NationTreasuryRecord proposerTreasury = data.getOrCreateTreasury(proposerId);
+            if (proposerTreasury.currencyBalance() < proposal.reparationAmount()) {
+                data.removePeaceProposal(war.warId());
+                return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.insufficient_funds"));
+            }
+            data.putTreasury(proposerTreasury.withBalance(proposerTreasury.currencyBalance() - proposal.reparationAmount()));
+            com.monpai.sailboatmod.nation.model.NationTreasuryRecord accepterTreasury = data.getOrCreateTreasury(accepterId);
+            data.putTreasury(accepterTreasury.withBalance(accepterTreasury.currencyBalance() + proposal.reparationAmount()));
+        }
+        if ("cede_territory".equals(proposal.type()) && proposal.cedeTerritoryCount() > 0) {
+            cedeTerritoryFromEdge(data, actor.level(), proposerId, accepterId, proposal.cedeTerritoryCount());
+        }
+
+        data.removePeaceProposal(war.warId());
+        endWar(data, war, "", "ended", System.currentTimeMillis(),
+                Component.translatable("command.sailboatmod.nation.peace.accepted",
+                        nameOf(data.getNation(proposerId)), nameOf(nation)));
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.peace.accepted_self"));
+    }
+
+    public static NationResult rejectPeace(ServerPlayer actor) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        NationMemberRecord member = data.getMember(actor.getUUID());
+        if (member == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.invite.no_nation"));
+        NationWarRecord war = getActiveWarForNation(data, member.nationId());
+        if (war == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.no_war"));
+        com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal = data.getPeaceProposal(war.warId());
+        if (proposal == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.peace.no_proposal"));
+        data.removePeaceProposal(war.warId());
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.peace.rejected"));
+    }
+
+    public static void tickProposalExpiry(NationSavedData data) {
+        List<String> expired = new ArrayList<>();
+        for (com.monpai.sailboatmod.nation.model.PeaceProposalRecord p : data.getPeaceProposals()) {
+            if (p.isExpired()) expired.add(p.warId());
+        }
+        for (String warId : expired) data.removePeaceProposal(warId);
+    }
+
+    private static void cedeTerritoryFromEdge(NationSavedData data, net.minecraft.world.level.Level level, String fromNationId, String toNationId, int count) {
+        com.monpai.sailboatmod.nation.model.TownRecord toTown = null;
+        NationRecord toNation = data.getNation(toNationId);
+        if (toNation != null) toTown = TownService.getCapitalTown(data, toNation);
+        String toTownId = toTown == null ? "" : toTown.townId();
+
+        List<com.monpai.sailboatmod.nation.model.NationClaimRecord> claims = new ArrayList<>(data.getClaimsForNation(fromNationId));
+        // Sort by distance from core (farthest first) to cede edge chunks
+        NationRecord fromNation = data.getNation(fromNationId);
+        if (fromNation != null && fromNation.hasCore()) {
+            BlockPos core = BlockPos.of(fromNation.corePos());
+            int cx = new net.minecraft.world.level.ChunkPos(core).x;
+            int cz = new net.minecraft.world.level.ChunkPos(core).z;
+            claims.sort((a, b) -> {
+                int distA = Math.abs(a.chunkX() - cx) + Math.abs(a.chunkZ() - cz);
+                int distB = Math.abs(b.chunkX() - cx) + Math.abs(b.chunkZ() - cz);
+                return Integer.compare(distB, distA);
+            });
+        }
+        int ceded = 0;
+        for (com.monpai.sailboatmod.nation.model.NationClaimRecord claim : claims) {
+            if (ceded >= count) break;
+            // Don't cede core chunk
+            if (fromNation != null && fromNation.hasCore()) {
+                BlockPos corePos = BlockPos.of(fromNation.corePos());
+                net.minecraft.world.level.ChunkPos coreChunk = new net.minecraft.world.level.ChunkPos(corePos);
+                if (claim.chunkX() == coreChunk.x && claim.chunkZ() == coreChunk.z) continue;
+            }
+            // Transfer to recipient
+            data.putClaim(new com.monpai.sailboatmod.nation.model.NationClaimRecord(
+                    claim.dimensionId(), claim.chunkX(), claim.chunkZ(),
+                    toNationId, toTownId,
+                    claim.breakAccessLevel(), claim.placeAccessLevel(),
+                    claim.useAccessLevel(), claim.containerAccessLevel(),
+                    claim.redstoneAccessLevel(), claim.entityUseAccessLevel(),
+                    claim.entityDamageAccessLevel(), System.currentTimeMillis()));
+            ceded++;
+        }
+    }
 }
 

@@ -75,6 +75,7 @@ public final class TownOverviewService {
                     displayClaimTownId(claim, town, nation),
                     displayClaimName(claimTown, claimNation, town, nation, claim),
                     claimColor(claimTown, claimNation),
+                    claimSecondaryColor(claimTown, claimNation),
                     claim.townId(),
                     claimTown == null ? "" : claimTown.name(),
                     claim.breakAccessLevel(),
@@ -194,6 +195,13 @@ public final class TownOverviewService {
             return nation.primaryColorRgb();
         }
         return DEFAULT_PRIMARY_COLOR;
+    }
+
+    private static int claimSecondaryColor(TownRecord town, NationRecord nation) {
+        if (nation != null) {
+            return nation.secondaryColorRgb();
+        }
+        return DEFAULT_SECONDARY_COLOR;
     }
 
     private static String officeName(NationSavedData data, String nationId, String officeId) {

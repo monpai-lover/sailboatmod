@@ -45,6 +45,7 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationDiplomacyRequestRecord> diplomacyRequests = new LinkedHashMap<>();
     private final Map<String, TownNationRequestRecord> townNationRequests = new LinkedHashMap<>();
     private final Map<String, NationTreasuryRecord> treasuries = new LinkedHashMap<>();
+    private final Map<String, com.monpai.sailboatmod.nation.model.PeaceProposalRecord> peaceProposals = new LinkedHashMap<>();
 
     public static NationSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
@@ -129,6 +130,16 @@ public class NationSavedData extends SavedData {
                 NationWarRecord war = NationWarRecord.load(compound);
                 if (!war.warId().isBlank()) {
                     data.wars.put(war.warId(), war);
+                }
+            }
+        }
+
+        ListTag proposalLoadTag = tag.getList("PeaceProposals", Tag.TAG_COMPOUND);
+        for (Tag raw : proposalLoadTag) {
+            if (raw instanceof CompoundTag compound) {
+                com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal = com.monpai.sailboatmod.nation.model.PeaceProposalRecord.load(compound);
+                if (!proposal.warId().isBlank()) {
+                    data.peaceProposals.put(proposal.warId(), proposal);
                 }
             }
         }
@@ -242,6 +253,12 @@ public class NationSavedData extends SavedData {
             warTag.add(war.save());
         }
         tag.put("Wars", warTag);
+
+        ListTag proposalTag = new ListTag();
+        for (com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal : peaceProposals.values()) {
+            proposalTag.add(proposal.save());
+        }
+        tag.put("PeaceProposals", proposalTag);
 
         ListTag flagTag = new ListTag();
         for (NationFlagRecord flag : flags.values()) {
@@ -854,6 +871,10 @@ public class NationSavedData extends SavedData {
         setDirty();
     }
 
+    public java.util.Collection<NationClaimRecord> getAllClaims() {
+        return List.copyOf(claims.values());
+    }
+
     public List<NationClaimRecord> getClaimsForNation(String nationId) {
         String normalized = normalizeId(nationId);
         List<NationClaimRecord> result = new ArrayList<>();
@@ -918,6 +939,28 @@ public class NationSavedData extends SavedData {
         if (!normalized.isBlank() && wars.remove(normalized) != null) {
             setDirty();
         }
+    }
+
+    public com.monpai.sailboatmod.nation.model.PeaceProposalRecord getPeaceProposal(String warId) {
+        if (warId == null || warId.isBlank()) return null;
+        return peaceProposals.get(normalizeId(warId));
+    }
+
+    public void putPeaceProposal(com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal) {
+        if (proposal == null || proposal.warId().isBlank()) return;
+        peaceProposals.put(proposal.warId(), proposal);
+        setDirty();
+    }
+
+    public void removePeaceProposal(String warId) {
+        String normalized = normalizeId(warId);
+        if (!normalized.isBlank() && peaceProposals.remove(normalized) != null) {
+            setDirty();
+        }
+    }
+
+    public java.util.Collection<com.monpai.sailboatmod.nation.model.PeaceProposalRecord> getPeaceProposals() {
+        return List.copyOf(peaceProposals.values());
     }
 
     public NationFlagRecord getFlag(String flagId) {

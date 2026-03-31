@@ -146,6 +146,15 @@ public class NationGuiActionPacket {
                     try { yield NationTreasuryService.setImportTariff(player, Integer.parseInt(packet.text.trim())); }
                     catch (NumberFormatException e) { yield NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.tax.invalid_range", 0, 50)); }
                 }
+                case PROPOSE_PEACE -> {
+                    String[] parts = packet.text.split(",", 3);
+                    String pType = parts.length > 0 ? parts[0].trim() : "ceasefire";
+                    int cede = parts.length > 1 ? safeParseInt(parts[1]) : 0;
+                    long rep = parts.length > 2 ? safeParseLong(parts[2]) : 0L;
+                    yield NationWarService.proposePeace(player, pType, cede, rep);
+                }
+                case ACCEPT_PEACE -> NationWarService.acceptPeace(player);
+                case REJECT_PEACE -> NationWarService.rejectPeace(player);
             };
 
             if (!result.message().getString().isBlank()) {
@@ -198,7 +207,10 @@ public class NationGuiActionPacket {
         DIPLOMACY_REJECT,
         TOGGLE_FLAG_MIRROR,
         SET_SALES_TAX,
-        SET_IMPORT_TARIFF
+        SET_IMPORT_TARIFF,
+        PROPOSE_PEACE,
+        ACCEPT_PEACE,
+        REJECT_PEACE
     }
 
     private static int[] parseAreaBounds(String text) {
@@ -210,5 +222,13 @@ public class NationGuiActionPacket {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private static int safeParseInt(String s) {
+        try { return Integer.parseInt(s.trim()); } catch (NumberFormatException e) { return 0; }
+    }
+
+    private static long safeParseLong(String s) {
+        try { return Long.parseLong(s.trim()); } catch (NumberFormatException e) { return 0L; }
     }
 }
