@@ -36,7 +36,7 @@ public class TownGuiActionPacket {
         this(action, townId, 0, 0, text);
     }
 
-    private TownGuiActionPacket(Action action, String townId, int chunkX, int chunkZ, String text) {
+    public TownGuiActionPacket(Action action, String townId, int chunkX, int chunkZ, String text) {
         this.action = action == null ? Action.REFRESH : action;
         this.townId = townId == null ? "" : townId.trim();
         this.chunkX = chunkX;
@@ -74,6 +74,18 @@ public class TownGuiActionPacket {
                 case REFRESH -> NationResult.success(Component.empty());
                 case CLAIM_CHUNK -> TownClaimService.claimChunk(player, packet.townId, new ChunkPos(packet.chunkX, packet.chunkZ));
                 case UNCLAIM_CHUNK -> TownClaimService.unclaimChunk(player, packet.townId, new ChunkPos(packet.chunkX, packet.chunkZ));
+                case CLAIM_AREA -> {
+                    int[] bounds = parseAreaBounds(packet.text);
+                    yield bounds == null
+                            ? NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_adjacent"))
+                            : TownClaimService.claimArea(player, packet.townId, Math.min(packet.chunkX, bounds[0]), Math.max(packet.chunkX, bounds[0]), Math.min(packet.chunkZ, bounds[1]), Math.max(packet.chunkZ, bounds[1]));
+                }
+                case UNCLAIM_AREA -> {
+                    int[] bounds = parseAreaBounds(packet.text);
+                    yield bounds == null
+                            ? NationResult.failure(Component.translatable("command.sailboatmod.nation.town.claim.not_owned"))
+                            : TownClaimService.unclaimArea(player, packet.townId, Math.min(packet.chunkX, bounds[0]), Math.max(packet.chunkX, bounds[0]), Math.min(packet.chunkZ, bounds[1]), Math.max(packet.chunkZ, bounds[1]));
+                }
                 case RENAME_TOWN -> TownService.renameTownById(player, packet.townId, packet.text);
                 case TOGGLE_FLAG_MIRROR -> TownFlagService.setMirrored(player, packet.townId, null);
                 case ABANDON_TOWN -> TownService.abandonTown(player, packet.townId);
@@ -117,9 +129,22 @@ public class TownGuiActionPacket {
         REFRESH,
         CLAIM_CHUNK,
         UNCLAIM_CHUNK,
+        CLAIM_AREA,
+        UNCLAIM_AREA,
         RENAME_TOWN,
         TOGGLE_FLAG_MIRROR,
         ABANDON_TOWN,
         APPOINT_MAYOR
+    }
+
+    private static int[] parseAreaBounds(String text) {
+        if (text == null || text.isBlank()) return null;
+        String[] parts = text.split(",");
+        if (parts.length != 2) return null;
+        try {
+            return new int[] { Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim()) };
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

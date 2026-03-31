@@ -35,6 +35,14 @@ public class NationGuiActionPacket {
         this(action, chunkX, chunkZ, "", "");
     }
 
+    public NationGuiActionPacket(Action action, int chunkX, int chunkZ, String memberUuid, String text) {
+        this.action = action == null ? Action.REFRESH : action;
+        this.chunkX = chunkX;
+        this.chunkZ = chunkZ;
+        this.memberUuid = memberUuid == null ? "" : memberUuid.trim();
+        this.text = text == null ? "" : text.trim();
+    }
+
     public NationGuiActionPacket(Action action, String memberUuid) {
         this(action, 0, 0, memberUuid, "");
     }
@@ -47,13 +55,6 @@ public class NationGuiActionPacket {
         this(action, 0, 0, "", text);
     }
 
-    private NationGuiActionPacket(Action action, int chunkX, int chunkZ, String memberUuid, String text) {
-        this.action = action == null ? Action.REFRESH : action;
-        this.chunkX = chunkX;
-        this.chunkZ = chunkZ;
-        this.memberUuid = memberUuid == null ? "" : memberUuid.trim();
-        this.text = text == null ? "" : text.trim();
-    }
 
     public static void encode(NationGuiActionPacket packet, FriendlyByteBuf buffer) {
         buffer.writeEnum(packet.action);
@@ -85,6 +86,18 @@ public class NationGuiActionPacket {
                 case REFRESH -> NationResult.success(Component.empty());
                 case CLAIM_CHUNK -> NationClaimService.claimChunk(player, new ChunkPos(packet.chunkX, packet.chunkZ));
                 case UNCLAIM_CHUNK -> NationClaimService.unclaimChunk(player, new ChunkPos(packet.chunkX, packet.chunkZ));
+                case CLAIM_AREA -> {
+                    int[] bounds = parseAreaBounds(packet.text);
+                    yield bounds == null
+                            ? NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_adjacent"))
+                            : NationClaimService.claimArea(player, Math.min(packet.chunkX, bounds[0]), Math.max(packet.chunkX, bounds[0]), Math.min(packet.chunkZ, bounds[1]), Math.max(packet.chunkZ, bounds[1]));
+                }
+                case UNCLAIM_AREA -> {
+                    int[] bounds = parseAreaBounds(packet.text);
+                    yield bounds == null
+                            ? NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_owned"))
+                            : NationClaimService.unclaimArea(player, Math.min(packet.chunkX, bounds[0]), Math.max(packet.chunkX, bounds[0]), Math.min(packet.chunkZ, bounds[1]), Math.max(packet.chunkZ, bounds[1]));
+                }
                 case APPOINT_OFFICER -> {
                     UUID targetUuid = parseUuid(packet.memberUuid);
                     yield targetUuid == null
@@ -154,6 +167,8 @@ public class NationGuiActionPacket {
         REFRESH,
         CLAIM_CHUNK,
         UNCLAIM_CHUNK,
+        CLAIM_AREA,
+        UNCLAIM_AREA,
         APPOINT_OFFICER,
         REMOVE_OFFICER,
         APPOINT_MAYOR,
@@ -173,5 +188,16 @@ public class NationGuiActionPacket {
         DIPLOMACY_ACCEPT,
         DIPLOMACY_REJECT,
         TOGGLE_FLAG_MIRROR
+    }
+
+    private static int[] parseAreaBounds(String text) {
+        if (text == null || text.isBlank()) return null;
+        String[] parts = text.split(",");
+        if (parts.length != 2) return null;
+        try {
+            return new int[] { Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim()) };
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

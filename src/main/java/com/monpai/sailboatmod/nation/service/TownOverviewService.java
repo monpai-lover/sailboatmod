@@ -20,7 +20,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class TownOverviewService {
-    private static final int CLAIM_PREVIEW_RADIUS = 20;
+    private static int claimPreviewRadius() { return com.monpai.sailboatmod.ModConfig.claimPreviewRadius(); }
     private static final int DEFAULT_PRIMARY_COLOR = 0x4FA89B;
     private static final int DEFAULT_SECONDARY_COLOR = 0xD8B35A;
 
@@ -63,10 +63,10 @@ public final class TownOverviewService {
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>();
         for (NationClaimRecord claim : data.getClaimsInArea(
                 player.level().dimension().location().toString(),
-                playerChunk.x - CLAIM_PREVIEW_RADIUS,
-                playerChunk.x + CLAIM_PREVIEW_RADIUS,
-                playerChunk.z - CLAIM_PREVIEW_RADIUS,
-                playerChunk.z + CLAIM_PREVIEW_RADIUS)) {
+                playerChunk.x - claimPreviewRadius(),
+                playerChunk.x + claimPreviewRadius(),
+                playerChunk.z - claimPreviewRadius(),
+                playerChunk.z + claimPreviewRadius())) {
             TownRecord claimTown = claim.townId().isBlank() ? null : data.getTown(claim.townId());
             NationRecord claimNation = claim.nationId().isBlank() ? null : data.getNation(claim.nationId());
             nearbyClaims.add(new NationOverviewClaim(
@@ -86,7 +86,7 @@ public final class TownOverviewService {
                     claim.entityDamageAccessLevel()));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), playerChunk, CLAIM_PREVIEW_RADIUS);
+        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), playerChunk, claimPreviewRadius());
 
         boolean canManageTown = TownService.canManageTown(player, data, town);
         boolean canAssignMayor = nation != null && player.getUUID().equals(nation.leaderUuid());

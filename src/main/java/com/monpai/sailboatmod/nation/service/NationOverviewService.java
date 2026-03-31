@@ -29,7 +29,7 @@ import java.util.List;
 import java.util.UUID;
 
 public final class NationOverviewService {
-    private static final int CLAIM_PREVIEW_RADIUS = 20;
+    private static int claimPreviewRadius() { return com.monpai.sailboatmod.ModConfig.claimPreviewRadius(); }
 
     public static NationOverviewData buildFor(ServerPlayer player) {
         if (player == null) {
@@ -110,10 +110,10 @@ public final class NationOverviewService {
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>();
         for (NationClaimRecord claim : data.getClaimsInArea(
                 player.level().dimension().location().toString(),
-                playerChunk.x - CLAIM_PREVIEW_RADIUS,
-                playerChunk.x + CLAIM_PREVIEW_RADIUS,
-                playerChunk.z - CLAIM_PREVIEW_RADIUS,
-                playerChunk.z + CLAIM_PREVIEW_RADIUS)) {
+                playerChunk.x - claimPreviewRadius(),
+                playerChunk.x + claimPreviewRadius(),
+                playerChunk.z - claimPreviewRadius(),
+                playerChunk.z + claimPreviewRadius())) {
             NationRecord owner = data.getNation(claim.nationId());
             TownRecord claimTown = claim.townId().isBlank() ? null : data.getTown(claim.townId());
             nearbyClaims.add(new NationOverviewClaim(
@@ -134,7 +134,7 @@ public final class NationOverviewService {
             ));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), playerChunk, CLAIM_PREVIEW_RADIUS);
+        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), playerChunk, claimPreviewRadius());
 
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>();
         for (NationDiplomacyRecord relation : data.getDiplomacyForNation(nation.nationId())) {

@@ -1,10 +1,10 @@
 package com.monpai.sailboatmod.item;
 
+import com.monpai.sailboatmod.nation.service.BankConstructionManager;
 import com.monpai.sailboatmod.nation.service.TownService;
-import com.monpai.sailboatmod.network.ModNetwork;
-import com.monpai.sailboatmod.network.packet.PlaceBankStructurePacket;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResultHolder;
@@ -47,7 +47,14 @@ public class BankConstructorItem extends Item {
             serverPlayer.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.facility.missing_town"));
             return InteractionResultHolder.fail(stack);
         }
-        ModNetwork.CHANNEL.sendToServer(new PlaceBankStructurePacket(target));
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return InteractionResultHolder.pass(stack);
+        }
+        boolean started = BankConstructionManager.startConstruction(serverLevel, target, serverPlayer);
+        if (!started) {
+            serverPlayer.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.failed"));
+            return InteractionResultHolder.fail(stack);
+        }
         if (!player.getAbilities().instabuild) {
             stack.shrink(1);
         }

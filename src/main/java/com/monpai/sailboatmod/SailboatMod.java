@@ -8,7 +8,9 @@ import com.monpai.sailboatmod.registry.ModEntities;
 import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.registry.ModMenus;
 import net.minecraftforge.eventbus.api.IEventBus;
+import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.config.ModConfig.Type;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import software.bernie.geckolib.GeckoLib;
 
@@ -27,5 +29,7 @@ public class SailboatMod {
         ModMenus.MENUS.register(modEventBus);
         ModCreativeTabs.CREATIVE_MODE_TABS.register(modEventBus);
         ModNetwork.register();
+
+        ModLoadingContext.get().registerConfig(Type.COMMON, com.monpai.sailboatmod.ModConfig.COMMON_SPEC);
     }
 }

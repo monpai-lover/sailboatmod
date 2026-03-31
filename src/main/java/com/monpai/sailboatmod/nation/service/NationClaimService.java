@@ -223,6 +223,99 @@ public final class NationClaimService {
                 : Component.translatable("command.sailboatmod.nation.claim.success", chunkPos.x, chunkPos.z));
     }
 
+    public static NationResult claimArea(ServerPlayer player, int minX, int maxX, int minZ, int maxZ) {
+        NationSavedData data = NationSavedData.get(player.level());
+        NationMemberRecord member = data.getMember(player.getUUID());
+        if (member == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.no_nation"));
+        }
+        if (!NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_CLAIMS)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.no_permission"));
+        }
+        NationRecord nation = data.getNation(member.nationId());
+        if (nation == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.data_missing"));
+        }
+        if (!nation.hasCore()) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.need_core"));
+        }
+        TownRecord claimTown = TownService.getCapitalTown(data, nation);
+        if (claimTown == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.need_town"));
+        }
+
+        List<ChunkPos> pending = new java.util.ArrayList<>();
+        for (int z = minZ; z <= maxZ; z++) {
+            for (int x = minX; x <= maxX; x++) {
+                pending.add(new ChunkPos(x, z));
+            }
+        }
+
+        int claimed = 0;
+        boolean progress = true;
+        while (progress && !pending.isEmpty()) {
+            progress = false;
+            List<ChunkPos> remaining = new java.util.ArrayList<>();
+            for (ChunkPos target : pending) {
+                Component restriction = getClaimRestrictionMessage(player.level(), target, false);
+                if (restriction != null) continue;
+                NationClaimRecord existing = data.getClaim(player.level(), target);
+                if (existing != null) continue;
+                if (!isClaimAdjacentToTown(data, player.level(), target, nation, claimTown)) {
+                    remaining.add(target);
+                    continue;
+                }
+                if (CLAIM_COST > 0 && !chargePlayer(player, CLAIM_COST)) {
+                    return NationResult.success(Component.translatable("command.sailboatmod.nation.claim.batch_partial", claimed));
+                }
+                data.putClaim(new NationClaimRecord(
+                        player.level().dimension().location().toString(), target.x, target.z,
+                        nation.nationId(), claimTown.townId(),
+                        NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
+                        NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
+                        NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
+                        NationClaimAccessLevel.MEMBER.id(), System.currentTimeMillis()));
+                claimed++;
+                progress = true;
+            }
+            pending = remaining;
+        }
+        if (claimed == 0) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_adjacent"));
+        }
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.claim.batch_success", claimed));
+    }
+
+    public static NationResult unclaimArea(ServerPlayer player, int minX, int maxX, int minZ, int maxZ) {
+        NationSavedData data = NationSavedData.get(player.level());
+        NationMemberRecord member = data.getMember(player.getUUID());
+        if (member == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.no_nation"));
+        }
+        if (!NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_CLAIMS)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.no_permission"));
+        }
+        NationRecord nation = data.getNation(member.nationId());
+        if (nation == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.data_missing"));
+        }
+        int unclaimed = 0;
+        for (int z = minZ; z <= maxZ; z++) {
+            for (int x = minX; x <= maxX; x++) {
+                ChunkPos cp = new ChunkPos(x, z);
+                NationClaimRecord existing = data.getClaim(player.level(), cp);
+                if (existing == null || !nation.nationId().equals(existing.nationId())) continue;
+                if (isCoreChunk(player.level(), cp, nation)) continue;
+                data.removeClaim(player.level().dimension().location().toString(), x, z);
+                unclaimed++;
+            }
+        }
+        if (unclaimed == 0) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_owned"));
+        }
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.unclaim.batch_success", unclaimed));
+    }
+
     public static NationResult unclaimChunk(ServerPlayer player, ChunkPos chunkPos) {
         NationSavedData data = NationSavedData.get(player.level());
         NationMemberRecord member = data.getMember(player.getUUID());
