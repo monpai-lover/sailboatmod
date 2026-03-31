@@ -4,13 +4,18 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.screen.SailboatInfoScreen;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.item.BankConstructorItem;
+import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -41,6 +46,45 @@ public final class ClientInputHandler {
 
         if (player.getVehicle() instanceof SailboatEntity sailboat && ClientKeyMappings.OPEN_SAILBOAT_INFO.consumeClick()) {
             minecraft.setScreen(new SailboatInfoScreen(sailboat));
+        }
+    }
+
+    @SubscribeEvent
+    public static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || mc.screen != null) return;
+        ItemStack held = player.getMainHandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getMainHandItem()
+                : player.getOffhandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getOffhandItem() : ItemStack.EMPTY;
+        if (held.isEmpty()) return;
+
+        int delta = event.getScrollDelta() > 0 ? 1 : -1;
+        boolean shift = net.minecraft.client.gui.screens.Screen.hasShiftDown();
+        boolean alt = net.minecraft.client.gui.screens.Screen.hasAltDown();
+
+        if (shift) {
+            // Shift+scroll: cycle structure type
+            BankConstructorItem.cycleStructure(held, delta);
+            var type = BankConstructorItem.getSelectedType(held);
+            player.displayClientMessage(Component.translatable("item.sailboatmod.structure.selected", Component.translatable(type.translationKey())), true);
+            event.setCanceled(true);
+        } else if (alt) {
+            // Alt+scroll: cycle adjust mode
+            BankConstructorItem.cycleAdjustMode(held, delta);
+            var mode = BankConstructorItem.getAdjustMode(held);
+            player.displayClientMessage(Component.translatable("item.sailboatmod.constructor.mode_changed", Component.translatable(mode.translationKey())), true);
+            event.setCanceled(true);
+        } else {
+            // Normal scroll in non-BUILD mode: adjust value
+            var mode = BankConstructorItem.getAdjustMode(held);
+            if (mode != BankConstructorItem.AdjustMode.BUILD) {
+                BankConstructorItem.adjustValue(held, delta);
+                int oY = BankConstructorItem.getOffsetY(held);
+                int oX = BankConstructorItem.getOffsetX(held);
+                int rot = BankConstructorItem.getRotation(held);
+                player.displayClientMessage(Component.translatable("item.sailboatmod.constructor.adjusted", oX, oY, rot * 90), true);
+                event.setCanceled(true);
+            }
         }
     }
 

@@ -1030,6 +1030,16 @@ public final class TownService {
     private record PlacementPreparation(TownRecord town, boolean createdNewTown, NationResult failure) {
     }
 
+    public static NationResult createTownAt(ServerPlayer actor, String rawName, BlockPos pos) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        TownCreationOutcome outcome = tryCreateTown(actor, data, rawName);
+        if (outcome.town() == null) return outcome.result();
+        TownRecord town = outcome.town();
+        if (town == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.no_town"));
+        placeCoreAt(data, actor.level(), town, pos);
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.town.create.success", town.name()));
+    }
+
     public static TownRecord getTownForMember(NationSavedData data, NationMemberRecord member) {
         if (data == null || member == null) return null;
         for (TownRecord town : data.getTownsForNation(member.nationId())) {

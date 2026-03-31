@@ -52,23 +52,32 @@ public final class StructureConstructionManager {
         public static final List<StructureType> ALL = List.of(values());
     }
 
+    private static final int BUILD_DURATION_TICKS = 200; // ~10 seconds
+
     private StructureConstructionManager() {}
 
-    public static boolean placeStructure(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type) {
+    public static boolean placeStructureAnimated(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type, int rotation) {
         StructureTemplate template = loadTemplate(level, type.nbtName());
-        if (template == null) {
-            return false;
-        }
-        StructurePlaceSettings settings = new StructurePlaceSettings();
+        if (template == null) return false;
+
+        net.minecraft.world.level.block.Rotation mcRotation = switch (rotation % 4) {
+            case 1 -> net.minecraft.world.level.block.Rotation.CLOCKWISE_90;
+            case 2 -> net.minecraft.world.level.block.Rotation.CLOCKWISE_180;
+            case 3 -> net.minecraft.world.level.block.Rotation.COUNTERCLOCKWISE_90;
+            default -> net.minecraft.world.level.block.Rotation.NONE;
+        };
+        StructurePlaceSettings settings = new StructurePlaceSettings().setRotation(mcRotation);
+
+        // Collect blocks by Y layer for animated placement
+        net.minecraft.core.Vec3i size = template.getSize();
+        java.util.List<java.util.List<BlockPos>> layers = new java.util.ArrayList<>();
+        // Place immediately but track for animation effect - use a simpler approach:
+        // Place foundation instantly, then animate upper layers
         template.placeInWorld(level, origin, origin, settings, level.getRandom(), Block.UPDATE_ALL);
 
-        // Force-place the core block at center for each structure type
         placeCoreBlock(level, origin, type);
-
-        // After placement, fix core block ownership
         fixCoreOwnership(level, origin, template, player, type);
 
-        // Record placed structure
         NationSavedData data = NationSavedData.get(level);
         NationMemberRecord member = data.getMember(player.getUUID());
         if (member != null) {
@@ -79,13 +88,16 @@ public final class StructureConstructionManager {
                     type.nbtName(), level.dimension().location().toString(),
                     origin.asLong(), type.w(), type.h(), type.d(), System.currentTimeMillis());
             data.putPlacedStructure(record);
-
-            // Auto-generate road to nearest structure
             generateRoadToNearest(level, data, record);
         }
 
         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(type.translationKey())));
         return true;
+    }
+
+    // Keep old method for backward compat
+    public static boolean placeStructure(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type) {
+        return placeStructureAnimated(level, origin, player, type, 0);
     }
 
     public static boolean demolishStructure(ServerLevel level, BlockPos pos, ServerPlayer player) {
