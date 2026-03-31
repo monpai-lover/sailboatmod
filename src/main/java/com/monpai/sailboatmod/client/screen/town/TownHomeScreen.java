@@ -59,6 +59,7 @@ public class TownHomeScreen extends Screen {
     private Button membersTabButton;
     private Button claimsTabButton;
     private Button flagTabButton;
+    private Button economyTabButton;
     private Button saveTownNameButton;
     private Button appointMayorButton;
     private Button claimButton;
@@ -110,6 +111,7 @@ public class TownHomeScreen extends Screen {
         this.membersTabButton = addTabButton(left + 110, top + 34, Page.MEMBERS, Component.translatable("screen.sailboatmod.town.section.members"));
         this.claimsTabButton = addTabButton(left + 208, top + 34, Page.CLAIMS, Component.translatable("screen.sailboatmod.town.section.claims"));
         this.flagTabButton = addTabButton(left + 306, top + 34, Page.FLAG, Component.translatable("screen.sailboatmod.town.section.flag"));
+        this.economyTabButton = addTabButton(left + 12, top + 54, Page.ECONOMY, Component.translatable("screen.sailboatmod.town.section.economy"));
 
         this.townNameInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 148, 144, 18, Component.translatable("screen.sailboatmod.town.name"));
         this.townNameInput.setMaxLength(24);
@@ -221,6 +223,7 @@ public class TownHomeScreen extends Screen {
             case MEMBERS -> drawMembersPage(g, left + BODY_X, top + BODY_Y);
             case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y, mouseX, mouseY);
             case FLAG -> drawFlagPage(g, left + BODY_X, top + BODY_Y);
+            case ECONOMY -> drawEconomyPage(g, left + BODY_X, top + BODY_Y, mouseX, mouseY);
         }
         if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
     }
@@ -328,6 +331,99 @@ public class TownHomeScreen extends Screen {
         g.drawString(this.font, Component.translatable("screen.sailboatmod.town.flag.upload_hint_short"), x + 12, y + BODY_H - 82, 0xFFB8C0C8);
     }
 
+    private void drawEconomyPage(GuiGraphics g, int x, int y, int mouseX, int mouseY) {
+        if (!this.data.hasTown()) {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.no_town"), x + 12, y + 40, 0xFFDCEEFF);
+            return;
+        }
+
+        // Statistics
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.population", 45), x + 12, y + 30, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.employment", "71%"), x + 12, y + 44, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.literacy", "40%"), x + 12, y + 58, 0xFFDCEEFF);
+
+        // Pie chart - Profession distribution
+        int pieX = x + 30;
+        int pieY = y + 90;
+        int pieR = 40;
+        drawProfessionPieChart(g, pieX, pieY, pieR, mouseX, mouseY);
+
+        // Line chart - Economic trends
+        int lineX = x + 200;
+        int lineY = y + 80;
+        int lineW = 200;
+        int lineH = 100;
+        drawEconomyLineChart(g, lineX, lineY, lineW, lineH, mouseX, mouseY);
+    }
+
+    private void drawProfessionPieChart(GuiGraphics g, int cx, int cy, int r, int mouseX, int mouseY) {
+        int[] colors = {0xFF4A9EFF, 0xFFFF6B6B, 0xFF4ECDC4, 0xFFFFA07A, 0xFF98D8C8, 0xFFFFD93D, 0xFFB4A7D6, 0xFFE0E0E0};
+        String[] labels = {"Farmer", "Miner", "Lumberjack", "Fisherman", "Blacksmith", "Baker", "Guard", "Unemployed"};
+        int[] values = {8, 6, 5, 4, 3, 3, 3, 13};
+
+        int total = 0;
+        for (int v : values) total += v;
+
+        float angle = 0;
+        for (int i = 0; i < values.length; i++) {
+            float sweep = (float) values[i] / total * 360;
+            drawPieSlice(g, cx, cy, r, angle, sweep, colors[i]);
+
+            // Tooltip
+            if (isMouseInPieSlice(mouseX, mouseY, cx, cy, r, angle, sweep)) {
+                g.renderTooltip(this.font, Component.literal(labels[i] + ": " + values[i]), mouseX, mouseY);
+            }
+            angle += sweep;
+        }
+    }
+
+    private void drawPieSlice(GuiGraphics g, int cx, int cy, int r, float startAngle, float sweep, int color) {
+        for (float a = startAngle; a < startAngle + sweep; a += 1) {
+            double rad = Math.toRadians(a - 90);
+            int x1 = cx + (int)(Math.cos(rad) * r);
+            int y1 = cy + (int)(Math.sin(rad) * r);
+            g.fill(cx, cy, x1, y1, color);
+        }
+    }
+
+    private boolean isMouseInPieSlice(int mx, int my, int cx, int cy, int r, float startAngle, float sweep) {
+        int dx = mx - cx;
+        int dy = my - cy;
+        double dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > r) return false;
+        double angle = Math.toDegrees(Math.atan2(dy, dx)) + 90;
+        if (angle < 0) angle += 360;
+        return angle >= startAngle && angle < startAngle + sweep;
+    }
+
+    private void drawEconomyLineChart(GuiGraphics g, int x, int y, int w, int h, int mouseX, int mouseY) {
+        g.fill(x, y, x + w, y + h, 0xFF2A3540);
+        g.fill(x, y + h - 1, x + w, y + h, 0xFF8090A0);
+        g.fill(x, y, x + 1, y + h, 0xFF8090A0);
+
+        // Sample data points
+        int[] popData = {20, 25, 30, 35, 40, 42, 45};
+        int[] empData = {60, 65, 68, 70, 72, 71, 71};
+
+        drawLine(g, x, y, w, h, popData, 0xFF4A9EFF);
+        drawLine(g, x, y, w, h, empData, 0xFF4ECDC4);
+
+        if (mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h) {
+            g.renderTooltip(this.font, Component.literal("Population: 45, Employment: 71%"), mouseX, mouseY);
+        }
+    }
+
+    private void drawLine(GuiGraphics g, int x, int y, int w, int h, int[] data, int color) {
+        int step = w / (data.length - 1);
+        for (int i = 0; i < data.length - 1; i++) {
+            int x1 = x + i * step;
+            int y1 = y + h - (data[i] * h / 100);
+            int x2 = x + (i + 1) * step;
+            int y2 = y + h - (data[i + 1] * h / 100);
+            g.fill(x1, y1, x2, y1 + 2, color);
+        }
+    }
+
     private List<Component> buildOverviewLines() {
         List<Component> lines = new ArrayList<>();
         if (!this.data.hasTown()) {
@@ -375,6 +471,7 @@ public class TownHomeScreen extends Screen {
         if (this.membersTabButton != null) this.membersTabButton.active = this.currentPage != Page.MEMBERS;
         if (this.claimsTabButton != null) this.claimsTabButton.active = this.currentPage != Page.CLAIMS;
         if (this.flagTabButton != null) this.flagTabButton.active = this.currentPage != Page.FLAG;
+        if (this.economyTabButton != null) this.economyTabButton.active = this.currentPage != Page.ECONOMY;
 
         boolean overviewPage = this.currentPage == Page.OVERVIEW;
         boolean membersPage = this.currentPage == Page.MEMBERS;
@@ -759,7 +856,8 @@ public class TownHomeScreen extends Screen {
         OVERVIEW("screen.sailboatmod.town.section.overview"),
         MEMBERS("screen.sailboatmod.town.section.members"),
         CLAIMS("screen.sailboatmod.town.section.claims"),
-        FLAG("screen.sailboatmod.town.section.flag");
+        FLAG("screen.sailboatmod.town.section.flag"),
+        ECONOMY("screen.sailboatmod.town.section.economy");
 
         private final String titleKey;
 

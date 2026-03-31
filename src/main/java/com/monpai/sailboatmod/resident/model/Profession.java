@@ -9,7 +9,8 @@ public enum Profession {
     BLACKSMITH("blacksmith", "Blacksmith", true),
     BAKER("baker", "Baker", true),
     GUARD("guard", "Guard", false),
-    SOLDIER("soldier", "Soldier", false);
+    SOLDIER("soldier", "Soldier", false),
+    BUILDER("builder", "Builder", false);
 
     private final String id;
     private final String displayName;

@@ -19,7 +19,11 @@ def queue_prompt(workflow, prompt_text, seed):
     workflow["5"]["inputs"]["seed"] = seed
     payload = {"prompt": workflow}
     response = requests.post(f"{COMFYUI_URL}/prompt", json=payload)
-    return response.json()["prompt_id"]
+    result = response.json()
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return None
+    return result.get("prompt_id", None)
 
 def main():
     parser = argparse.ArgumentParser()

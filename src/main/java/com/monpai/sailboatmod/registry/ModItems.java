@@ -85,6 +85,16 @@ public final class ModItems {
             () -> new CommandBatonItem(new Item.Properties().stacksTo(1))
     );
 
+    public static final RegistryObject<Item> WORKSTATION_ITEM = ITEMS.register(
+            "workstation",
+            () -> new DescribedBlockItem(ModBlocks.WORKSTATION_BLOCK.get(), new Item.Properties(), "item.sailboatmod.workstation.desc")
+    );
+
+    public static final RegistryObject<Item> SCHOOL_ITEM = ITEMS.register(
+            "school",
+            () -> new DescribedBlockItem(ModBlocks.SCHOOL_BLOCK.get(), new Item.Properties(), "item.sailboatmod.school.desc")
+    );
+
     private ModItems() {
     }
 }

@@ -20,7 +20,11 @@ public record TownEconomyRecord(
         int employed = (int) residents.stream().filter(r -> r.profession() != Profession.UNEMPLOYED).count();
         int literate = (int) residents.stream().filter(ResidentRecord::educated).count();
         return new TownEconomyRecord(
-            town.townId(), total, employed, total - employed, literate,
+            town.townId(),
+            total,
+            employed,
+            total - employed,
+            literate,
             total > 0 ? (float)(total - employed) / total * 100 : 0,
             total > 0 ? (float)literate / total * 100 : 0,
             System.currentTimeMillis()

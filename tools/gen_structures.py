@@ -65,6 +65,8 @@ LANTERN = 21
 CAMPFIRE = 22
 BED_FOOT = 23
 BED_HEAD = 24
+WORKSTATION = 25
+SCHOOL = 26
 
 COMMON_PALETTE = [
     block_state("minecraft:air"),                                    # 0
@@ -92,6 +94,8 @@ COMMON_PALETTE = [
     block_state("minecraft:campfire", {"facing": "south", "lit": "true", "signal_fire": "false"}), # 22
     block_state("minecraft:red_bed", {"facing": "south", "part": "foot", "occupied": "false"}), # 23
     block_state("minecraft:red_bed", {"facing": "south", "part": "head", "occupied": "false"}), # 24
+    block_state("sailboatmod:workstation"),                           # 25
+    block_state("sailboatmod:school"),                                # 26
 ]
 
 def build_cottage(w, d, h, name, out_path):
@@ -212,6 +216,68 @@ def build_tavern(w, d, h, out_path):
 
     save_structure(out_path, (w, h, d), COMMON_PALETTE, blocks)
 
+def build_workstation(out_path):
+    """Build a simple 5x5x4 workstation."""
+    w, d, h = 5, 5, 4
+    blocks = []
+
+    # Floor
+    for x in range(w):
+        for z in range(d):
+            blocks.append(block_entry(x, 0, z, COBBLESTONE))
+
+    # Walls
+    for y in range(1, h - 1):
+        for x in range(w):
+            for z in range(d):
+                if x == 0 or x == w - 1 or z == 0 or z == d - 1:
+                    blocks.append(block_entry(x, y, z, OAK_PLANKS))
+
+    # Roof
+    for x in range(w):
+        for z in range(d):
+            blocks.append(block_entry(x, h - 1, z, OAK_SLAB_TOP))
+
+    # Door
+    blocks.append(block_entry(2, 1, 0, OAK_DOOR_LOWER))
+    blocks.append(block_entry(2, 2, 0, OAK_DOOR_UPPER))
+
+    # Workstation core
+    blocks.append(block_entry(2, 1, 2, WORKSTATION))
+
+    save_structure(out_path, (w, h, d), COMMON_PALETTE, blocks)
+
+def build_school(out_path):
+    """Build a simple 8x6x5 school."""
+    w, d, h = 8, 6, 5
+    blocks = []
+
+    # Floor
+    for x in range(w):
+        for z in range(d):
+            blocks.append(block_entry(x, 0, z, COBBLESTONE))
+
+    # Walls
+    for y in range(1, h - 1):
+        for x in range(w):
+            for z in range(d):
+                if x == 0 or x == w - 1 or z == 0 or z == d - 1:
+                    blocks.append(block_entry(x, y, z, OAK_PLANKS))
+
+    # Roof
+    for x in range(w):
+        for z in range(d):
+            blocks.append(block_entry(x, h - 1, z, OAK_SLAB_TOP))
+
+    # Door
+    blocks.append(block_entry(3, 1, 0, OAK_DOOR_LOWER))
+    blocks.append(block_entry(3, 2, 0, OAK_DOOR_UPPER))
+
+    # School core
+    blocks.append(block_entry(4, 1, 3, SCHOOL))
+
+    save_structure(out_path, (w, h, d), COMMON_PALETTE, blocks)
+
 if __name__ == "__main__":
     import os
     out_dir = r"F:\Codex\sailboatmod\src\main\resources\data\sailboatmod\structures"
@@ -224,5 +290,11 @@ if __name__ == "__main__":
 
     print("Generating tavern...")
     build_tavern(13, 11, 9, os.path.join(out_dir, "tavern.nbt"))
+
+    print("Generating workstation...")
+    build_workstation(os.path.join(out_dir, "workstation.nbt"))
+
+    print("Generating school...")
+    build_school(os.path.join(out_dir, "school.nbt"))
 
     print("Done!")

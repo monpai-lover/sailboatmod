@@ -1,30 +1,18 @@
 {
   "1": {
     "inputs": {
-      "ckpt_name": "flux2-klein-9B.safetensors"
+      "unet_name": "flux-2-klein-4b.safetensors",
+      "weight_dtype": "default"
     },
-    "class_type": "CheckpointLoaderSimple",
+    "class_type": "UNETLoader",
     "_meta": {
-      "title": "Load Checkpoint"
-    }
-  },
-  "2": {
-    "inputs": {
-      "lora_name": "mcskin_lora.safetensors",
-      "strength_model": 0.8,
-      "strength_clip": 0.8,
-      "model": ["1", 0],
-      "clip": ["1", 1]
-    },
-    "class_type": "LoraLoader",
-    "_meta": {
-      "title": "Load LoRA"
+      "title": "Load Diffusion Model (FLUX UNET)"
     }
   },
   "3": {
     "inputs": {
       "text": "minecraft skin, {profession}, {gender}, {culture} style, 64x64 pixel art, front view, T-pose",
-      "clip": ["2", 1]
+      "clip": ["9", 0]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
@@ -33,8 +21,8 @@
   },
   "4": {
     "inputs": {
-      "text": "blurry, low quality, distorted, 3d render",
-      "clip": ["2", 1]
+      "text": "",
+      "clip": ["9", 0]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
@@ -45,18 +33,18 @@
     "inputs": {
       "seed": 0,
       "steps": 20,
-      "cfg": 7.0,
+      "cfg": 1.0,
       "sampler_name": "euler",
-      "scheduler": "normal",
+      "scheduler": "simple",
       "denoise": 1.0,
-      "model": ["2", 0],
+      "model": ["1", 0],
       "positive": ["3", 0],
       "negative": ["4", 0],
       "latent_image": ["6", 0]
     },
     "class_type": "KSampler",
     "_meta": {
-      "title": "KSampler"
+      "title": "KSampler (FLUX)"
     }
   },
   "6": {
@@ -73,7 +61,7 @@
   "7": {
     "inputs": {
       "samples": ["5", 0],
-      "vae": ["1", 2]
+      "vae": ["10", 0]
     },
     "class_type": "VAEDecode",
     "_meta": {
@@ -88,6 +76,26 @@
     "class_type": "SaveImage",
     "_meta": {
       "title": "Save Image"
+    }
+  },
+  "9": {
+    "inputs": {
+      "clip_name1": "clip_l.safetensors",
+      "clip_name2": "t5xxl_fp16.safetensors",
+      "type": "flux"
+    },
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "DualCLIPLoader (FLUX)"
+    }
+  },
+  "10": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
     }
   }
 }

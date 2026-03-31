@@ -9,10 +9,13 @@ import com.monpai.sailboatmod.block.DockBlock;
 import com.monpai.sailboatmod.block.MarketBlock;
 import com.monpai.sailboatmod.block.NationCoreBlock;
 import com.monpai.sailboatmod.block.NationFlagBlock;
+import com.monpai.sailboatmod.block.SchoolBlock;
 import com.monpai.sailboatmod.block.TownFlagBlock;
 import com.monpai.sailboatmod.block.TownCoreBlock;
 import com.monpai.sailboatmod.block.WallNationFlagBlock;
 import com.monpai.sailboatmod.block.WallTownFlagBlock;
+import com.monpai.sailboatmod.block.WorkstationBlock;
+import com.monpai.sailboatmod.resident.model.Profession;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -82,6 +85,16 @@ public final class ModBlocks {
     public static final RegistryObject<Block> WALL_TOWN_FLAG_BLOCK = BLOCKS.register(
             "wall_town_flag",
             () -> new WallTownFlagBlock(BlockBehaviour.Properties.of().mapColor(MapColor.TERRACOTTA_CYAN).strength(2.0F).sound(SoundType.WOOL).noOcclusion().dropsLike(TOWN_FLAG_BLOCK.get()))
+    );
+
+    public static final RegistryObject<Block> WORKSTATION_BLOCK = BLOCKS.register(
+            "workstation",
+            () -> new WorkstationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.5F).sound(SoundType.WOOD), Profession.UNEMPLOYED, 1)
+    );
+
+    public static final RegistryObject<Block> SCHOOL_BLOCK = BLOCKS.register(
+            "school",
+            () -> new SchoolBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(3.0F).sound(SoundType.WOOD))
     );
 
     private ModBlocks() {
