@@ -29,7 +29,9 @@ public class WorkstationBlock extends Block {
         super.setPlacedBy(level, pos, state, placer, stack);
         if (!level.isClientSide) {
             int layers = StructureBuilder.getTotalLayers("workstation");
-            BuildingConstructionService.startConstruction(level, "", "workstation", pos, layers);
+            // Workstation core is at (2,1,2) in NBT, adjust origin so core aligns with placed block
+            BlockPos origin = pos.offset(-2, -1, -2);
+            BuildingConstructionService.startConstruction(level, "", "workstation", origin, layers);
         }
     }
 }

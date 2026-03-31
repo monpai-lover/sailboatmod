@@ -26,7 +26,9 @@ public class SchoolBlock extends Block {
         super.setPlacedBy(level, pos, state, placer, stack);
         if (!level.isClientSide) {
             int layers = StructureBuilder.getTotalLayers("school");
-            BuildingConstructionService.startConstruction(level, "", "school", pos, layers);
+            // School core is at (4,1,3) in NBT, adjust origin so core aligns with placed block
+            BlockPos origin = pos.offset(-4, -1, -3);
+            BuildingConstructionService.startConstruction(level, "", "school", origin, layers);
         }
     }
 }

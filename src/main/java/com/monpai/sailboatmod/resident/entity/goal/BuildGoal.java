@@ -40,6 +40,11 @@ public class BuildGoal extends Goal {
     }
 
     @Override
+    public boolean canContinueToUse() {
+        return targetConstruction != null && resident.getProfession() == Profession.BUILDER;
+    }
+
+    @Override
     public void start() {
         if (targetConstruction != null) {
             BuildingConstructionService.assignBuilder(resident.level(), targetConstruction.buildingId(), resident.getUUID().toString());
@@ -48,6 +53,13 @@ public class BuildGoal extends Goal {
 
     @Override
     public void tick() {
+        if (targetConstruction == null) {
+            stop();
+            return;
+        }
+
+        // Refresh construction data (record is immutable, need to fetch latest)
+        targetConstruction = BuildingConstructionService.getConstruction(resident.level(), targetConstruction.buildingId());
         if (targetConstruction == null || targetConstruction.isComplete()) {
             stop();
             return;
