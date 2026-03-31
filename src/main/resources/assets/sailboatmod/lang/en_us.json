@@ -723,8 +723,18 @@
   "command.sailboatmod.nation.bank.withdraw_item.success": "Item withdrawn from the treasury.",
   "command.sailboatmod.nation.bank.treasury_full": "The treasury is full.",
   "command.sailboatmod.nation.bank.inventory_full": "Your inventory is full.",
-  "item.sailboatmod.bank_constructor": "Bank Constructor",
-  "item.sailboatmod.bank_constructor.desc": "Place to construct a Victorian Bank building. Shows preview outline when held.",
-  "command.sailboatmod.nation.bank_constructor.started": "Bank construction started! Building will complete in about 10 seconds.",
-  "command.sailboatmod.nation.bank_constructor.failed": "Failed to start construction. Structure could not be loaded."
+  "item.sailboatmod.bank_constructor": "Structure Constructor",
+  "item.sailboatmod.bank_constructor.desc": "Place to construct buildings. Shift+Right-click to cycle structure type.",
+  "item.sailboatmod.structure.current": "Current: %s",
+  "item.sailboatmod.structure.cycle_hint": "Shift+Right-click to cycle",
+  "item.sailboatmod.structure.selected": "Selected: %s",
+  "item.sailboatmod.structure.victorian_bank": "Victorian Bank",
+  "item.sailboatmod.structure.victorian_town_hall": "Victorian Town Hall",
+  "item.sailboatmod.structure.nation_capitol": "Nation Capitol",
+  "item.sailboatmod.structure.open_air_marketplace": "Open Air Marketplace",
+  "item.sailboatmod.structure.waterfront_dock": "Waterfront Dock",
+  "command.sailboatmod.nation.structure.placed": "%s construction complete!",
+  "command.sailboatmod.nation.structure.demolished": "Structure demolished.",
+  "command.sailboatmod.nation.bank_constructor.started": "Construction started!",
+  "command.sailboatmod.nation.bank_constructor.failed": "Construction failed. Structure could not be loaded."
 }

@@ -762,8 +762,18 @@
   "command.sailboatmod.nation.bank.withdraw_item.success": "物品已从国库取出。",
   "command.sailboatmod.nation.bank.treasury_full": "国库已满。",
   "command.sailboatmod.nation.bank.inventory_full": "你的背包已满。",
-  "item.sailboatmod.bank_constructor": "银行建筑器",
-  "item.sailboatmod.bank_constructor.desc": "放置后自动建造维多利亚银行建筑。手持时显示预览轮廓。",
-  "command.sailboatmod.nation.bank_constructor.started": "银行建造已开始！大约10秒后完成。",
-  "command.sailboatmod.nation.bank_constructor.failed": "建造启动失败，无法加载建筑结构。"
+  "item.sailboatmod.bank_constructor": "建筑器",
+  "item.sailboatmod.bank_constructor.desc": "放置后自动建造建筑。Shift+右键切换建筑类型。",
+  "item.sailboatmod.structure.current": "当前建筑: %s",
+  "item.sailboatmod.structure.cycle_hint": "Shift+右键切换建筑类型",
+  "item.sailboatmod.structure.selected": "已选择: %s",
+  "item.sailboatmod.structure.victorian_bank": "维多利亚银行",
+  "item.sailboatmod.structure.victorian_town_hall": "维多利亚市政厅",
+  "item.sailboatmod.structure.nation_capitol": "国家议会大厦",
+  "item.sailboatmod.structure.open_air_marketplace": "露天集市",
+  "item.sailboatmod.structure.waterfront_dock": "滨水码头",
+  "command.sailboatmod.nation.structure.placed": "%s 建造完成！",
+  "command.sailboatmod.nation.structure.demolished": "建筑已拆除。",
+  "command.sailboatmod.nation.bank_constructor.started": "银行建造已开始！",
+  "command.sailboatmod.nation.bank_constructor.failed": "建造失败，无法加载建筑结构。"
 }

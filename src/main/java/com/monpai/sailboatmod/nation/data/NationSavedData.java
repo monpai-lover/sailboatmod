@@ -46,6 +46,7 @@ public class NationSavedData extends SavedData {
     private final Map<String, TownNationRequestRecord> townNationRequests = new LinkedHashMap<>();
     private final Map<String, NationTreasuryRecord> treasuries = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.PeaceProposalRecord> peaceProposals = new LinkedHashMap<>();
+    private final Map<String, com.monpai.sailboatmod.nation.model.PlacedStructureRecord> placedStructures = new LinkedHashMap<>();
 
     public static NationSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
@@ -140,6 +141,16 @@ public class NationSavedData extends SavedData {
                 com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal = com.monpai.sailboatmod.nation.model.PeaceProposalRecord.load(compound);
                 if (!proposal.warId().isBlank()) {
                     data.peaceProposals.put(proposal.warId(), proposal);
+                }
+            }
+        }
+
+        ListTag structuresLoadTag = tag.getList("PlacedStructures", Tag.TAG_COMPOUND);
+        for (Tag raw : structuresLoadTag) {
+            if (raw instanceof CompoundTag compound) {
+                com.monpai.sailboatmod.nation.model.PlacedStructureRecord s = com.monpai.sailboatmod.nation.model.PlacedStructureRecord.load(compound);
+                if (!s.structureId().isBlank()) {
+                    data.placedStructures.put(s.structureId(), s);
                 }
             }
         }
@@ -259,6 +270,12 @@ public class NationSavedData extends SavedData {
             proposalTag.add(proposal.save());
         }
         tag.put("PeaceProposals", proposalTag);
+
+        ListTag structuresTag = new ListTag();
+        for (com.monpai.sailboatmod.nation.model.PlacedStructureRecord s : placedStructures.values()) {
+            structuresTag.add(s.save());
+        }
+        tag.put("PlacedStructures", structuresTag);
 
         ListTag flagTag = new ListTag();
         for (NationFlagRecord flag : flags.values()) {
@@ -961,6 +978,30 @@ public class NationSavedData extends SavedData {
 
     public java.util.Collection<com.monpai.sailboatmod.nation.model.PeaceProposalRecord> getPeaceProposals() {
         return List.copyOf(peaceProposals.values());
+    }
+
+    public com.monpai.sailboatmod.nation.model.PlacedStructureRecord getPlacedStructure(String structureId) {
+        if (structureId == null || structureId.isBlank()) return null;
+        return placedStructures.get(structureId);
+    }
+
+    public void putPlacedStructure(com.monpai.sailboatmod.nation.model.PlacedStructureRecord record) {
+        if (record == null || record.structureId().isBlank()) return;
+        placedStructures.put(record.structureId(), record);
+        setDirty();
+    }
+
+    public void removePlacedStructure(String structureId) {
+        if (structureId != null && !structureId.isBlank() && placedStructures.remove(structureId) != null) setDirty();
+    }
+
+    public java.util.Collection<com.monpai.sailboatmod.nation.model.PlacedStructureRecord> getPlacedStructures() {
+        return List.copyOf(placedStructures.values());
+    }
+
+    public java.util.List<com.monpai.sailboatmod.nation.model.PlacedStructureRecord> getPlacedStructuresForTown(String townId) {
+        if (townId == null || townId.isBlank()) return List.of();
+        return placedStructures.values().stream().filter(s -> townId.equals(s.townId())).toList();
     }
 
     public NationFlagRecord getFlag(String flagId) {

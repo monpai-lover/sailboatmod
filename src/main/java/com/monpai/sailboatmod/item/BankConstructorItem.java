@@ -1,8 +1,10 @@
 package com.monpai.sailboatmod.item;
 
-import com.monpai.sailboatmod.nation.service.BankConstructionManager;
+import com.monpai.sailboatmod.nation.service.StructureConstructionManager;
+import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import com.monpai.sailboatmod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -21,17 +23,47 @@ import org.jetbrains.annotations.Nullable;
 import java.util.List;
 
 public class BankConstructorItem extends Item {
-    public static final int STRUCTURE_W = 19;
-    public static final int STRUCTURE_H = 10;
-    public static final int STRUCTURE_D = 18;
 
     public BankConstructorItem(Properties properties) {
         super(properties);
     }
 
+    public static StructureType getSelectedType(ItemStack stack) {
+        if (stack.hasTag() && stack.getTag().contains("StructureIndex")) {
+            int idx = stack.getTag().getInt("StructureIndex");
+            if (idx >= 0 && idx < StructureType.ALL.size()) return StructureType.ALL.get(idx);
+        }
+        return StructureType.VICTORIAN_BANK;
+    }
+
+    public static int getSelectedIndex(ItemStack stack) {
+        if (stack.hasTag() && stack.getTag().contains("StructureIndex")) {
+            return Math.floorMod(stack.getTag().getInt("StructureIndex"), StructureType.ALL.size());
+        }
+        return 0;
+    }
+
+    public static void cycleStructure(ItemStack stack, int delta) {
+        int current = getSelectedIndex(stack);
+        int next = Math.floorMod(current + delta, StructureType.ALL.size());
+        CompoundTag tag = stack.getOrCreateTag();
+        tag.putInt("StructureIndex", next);
+    }
+
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
+
+        // Shift+right-click cycles structure
+        if (player.isShiftKeyDown()) {
+            if (!level.isClientSide) {
+                cycleStructure(stack, 1);
+                StructureType type = getSelectedType(stack);
+                player.displayClientMessage(Component.translatable("item.sailboatmod.structure.selected", Component.translatable(type.translationKey())), true);
+            }
+            return InteractionResultHolder.success(stack);
+        }
+
         BlockHitResult hit = getPlayerPOVHitResult(level, player, ClipContext.Fluid.NONE);
         if (hit.getType() != HitResult.Type.BLOCK) {
             return InteractionResultHolder.pass(stack);
@@ -50,7 +82,8 @@ public class BankConstructorItem extends Item {
         if (!(level instanceof ServerLevel serverLevel)) {
             return InteractionResultHolder.pass(stack);
         }
-        boolean started = BankConstructionManager.startConstruction(serverLevel, target, serverPlayer);
+        StructureType type = getSelectedType(stack);
+        boolean started = StructureConstructionManager.placeStructure(serverLevel, target, serverPlayer, type);
         if (!started) {
             serverPlayer.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.failed"));
             return InteractionResultHolder.fail(stack);
@@ -63,6 +96,8 @@ public class BankConstructorItem extends Item {
 
     @Override
     public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
-        tooltip.add(Component.translatable("item.sailboatmod.bank_constructor.desc"));
+        StructureType type = getSelectedType(stack);
+        tooltip.add(Component.translatable("item.sailboatmod.structure.current", Component.translatable(type.translationKey())));
+        tooltip.add(Component.translatable("item.sailboatmod.structure.cycle_hint"));
     }
 }

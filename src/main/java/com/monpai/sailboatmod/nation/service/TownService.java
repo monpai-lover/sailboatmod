@@ -1030,6 +1030,33 @@ public final class TownService {
     private record PlacementPreparation(TownRecord town, boolean createdNewTown, NationResult failure) {
     }
 
+    public static TownRecord getTownForMember(NationSavedData data, NationMemberRecord member) {
+        if (data == null || member == null) return null;
+        for (TownRecord town : data.getTownsForNation(member.nationId())) {
+            if (member.playerUuid().equals(town.mayorUuid())) return town;
+        }
+        List<TownRecord> towns = data.getTownsForNation(member.nationId());
+        return towns.isEmpty() ? null : towns.get(0);
+    }
+
+    public static void placeCoreAt(NationSavedData data, Level level, TownRecord town, BlockPos pos) {
+        if (data == null || level == null || town == null || pos == null) return;
+        TownRecord updated = new TownRecord(
+                town.townId(), town.nationId(), town.name(), town.mayorUuid(),
+                town.createdAt(), level.dimension().location().toString(), pos.asLong(), town.flagId());
+        data.putTown(updated);
+        ChunkPos coreChunk = new ChunkPos(pos);
+        if (data.getClaim(level, coreChunk) == null) {
+            data.putClaim(new NationClaimRecord(
+                    level.dimension().location().toString(), coreChunk.x, coreChunk.z,
+                    town.nationId(), town.townId(),
+                    NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
+                    NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
+                    NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
+                    NationClaimAccessLevel.MEMBER.id(), System.currentTimeMillis()));
+        }
+    }
+
     private TownService() {
     }
 }
