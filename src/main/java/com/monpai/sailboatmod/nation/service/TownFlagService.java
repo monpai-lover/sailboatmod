@@ -34,7 +34,8 @@ public final class TownFlagService {
                     town.createdAt(),
                     town.coreDimension(),
                     town.corePos(),
-                    flag.flagId()
+                    flag.flagId(),
+                    town.cultureId()
             ));
             if (existing != null && !existing.flagId().equals(flag.flagId())) {
                 NationFlagStorage.deleteFlag(player.serverLevel(), data, existing.flagId());

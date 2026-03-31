@@ -14,7 +14,8 @@ public record TownRecord(
         long createdAt,
         String coreDimension,
         long corePos,
-        String flagId
+        String flagId,
+        String cultureId
 ) {
     public static final int MIN_NAME_LENGTH = 3;
     public static final int MAX_NAME_LENGTH = 24;
@@ -40,6 +41,7 @@ public record TownRecord(
         mayorUuid = mayorUuid == null ? new UUID(0L, 0L) : mayorUuid;
         coreDimension = sanitizeId(coreDimension);
         flagId = sanitizeId(flagId);
+        cultureId = cultureId == null || cultureId.isBlank() ? "european" : cultureId.trim().toLowerCase(Locale.ROOT);
     }
 
     public CompoundTag save() {
@@ -52,6 +54,7 @@ public record TownRecord(
         tag.putString("CoreDimension", coreDimension);
         tag.putLong("CorePos", corePos);
         tag.putString("FlagId", flagId);
+        tag.putString("CultureId", cultureId);
         return tag;
     }
 
@@ -65,7 +68,8 @@ public record TownRecord(
                 tag.getLong("CreatedAt"),
                 tag.getString("CoreDimension"),
                 tag.contains("CorePos") ? tag.getLong("CorePos") : NO_CORE_POS,
-                tag.getString("FlagId")
+                tag.getString("FlagId"),
+                tag.contains("CultureId") ? tag.getString("CultureId") : "european"
         );
     }
 

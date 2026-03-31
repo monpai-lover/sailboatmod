@@ -2,6 +2,9 @@ package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.entity.BankBlockEntity;
+import com.monpai.sailboatmod.block.entity.BarBlockEntity;
+import com.monpai.sailboatmod.block.entity.BarracksBlockEntity;
+import com.monpai.sailboatmod.block.entity.CottageBlockEntity;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.block.entity.NationCoreBlockEntity;
@@ -50,6 +53,21 @@ public final class ModBlockEntities {
     public static final RegistryObject<BlockEntityType<BankBlockEntity>> BANK_BLOCK_ENTITY = BLOCK_ENTITIES.register(
             "bank_block",
             () -> BlockEntityType.Builder.of(BankBlockEntity::new, ModBlocks.BANK_BLOCK.get()).build(null)
+    );
+
+    public static final RegistryObject<BlockEntityType<CottageBlockEntity>> COTTAGE_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "cottage",
+            () -> BlockEntityType.Builder.of(CottageBlockEntity::new, ModBlocks.COTTAGE_BLOCK.get()).build(null)
+    );
+
+    public static final RegistryObject<BlockEntityType<BarBlockEntity>> BAR_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "bar",
+            () -> BlockEntityType.Builder.of(BarBlockEntity::new, ModBlocks.BAR_BLOCK.get()).build(null)
+    );
+
+    public static final RegistryObject<BlockEntityType<BarracksBlockEntity>> BARRACKS_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "barracks",
+            () -> BlockEntityType.Builder.of(BarracksBlockEntity::new, ModBlocks.BARRACKS_BLOCK.get()).build(null)
     );
 
     private ModBlockEntities() {

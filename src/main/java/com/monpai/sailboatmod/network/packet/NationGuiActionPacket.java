@@ -156,6 +156,20 @@ public class NationGuiActionPacket {
                 }
                 case ACCEPT_PEACE -> NationWarService.acceptPeace(player);
                 case REJECT_PEACE -> NationWarService.rejectPeace(player);
+                case PROPOSE_TRADE -> {
+                    String[] tp = packet.text.split(",", 2);
+                    long offerC = tp.length > 0 ? safeParseLong(tp[0]) : 0L;
+                    long requestC = tp.length > 1 ? safeParseLong(tp[1]) : 0L;
+                    yield com.monpai.sailboatmod.nation.service.NationTradeService.proposeTrade(player, packet.memberUuid, offerC, requestC);
+                }
+                case ACCEPT_TRADE -> com.monpai.sailboatmod.nation.service.NationTradeService.acceptTrade(player, packet.text);
+                case REJECT_TRADE -> com.monpai.sailboatmod.nation.service.NationTradeService.rejectTrade(player, packet.text);
+                case OPEN_TRADE_SCREEN -> {
+                    com.monpai.sailboatmod.nation.menu.TradeScreenData tradeData =
+                            com.monpai.sailboatmod.nation.service.NationTradeService.buildTradeScreenData(player, packet.text);
+                    ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTradeScreenPacket(tradeData));
+                    yield NationResult.success(Component.empty());
+                }
             };
 
             if (!result.message().getString().isBlank()) {
@@ -212,7 +226,11 @@ public class NationGuiActionPacket {
         SET_IMPORT_TARIFF,
         PROPOSE_PEACE,
         ACCEPT_PEACE,
-        REJECT_PEACE
+        REJECT_PEACE,
+        PROPOSE_TRADE,
+        ACCEPT_TRADE,
+        REJECT_TRADE,
+        OPEN_TRADE_SCREEN
     }
 
     private static int[] parseAreaBounds(String text) {

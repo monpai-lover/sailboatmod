@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.item.BankConstructorItem;
+import com.monpai.sailboatmod.item.CommandBatonItem;
 import com.monpai.sailboatmod.item.DescribedBlockItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.item.SailboatItem;
@@ -62,6 +63,26 @@ public final class ModItems {
     public static final RegistryObject<Item> BANK_CONSTRUCTOR_ITEM = ITEMS.register(
             "bank_constructor",
             () -> new BankConstructorItem(new Item.Properties().stacksTo(1))
+    );
+
+    public static final RegistryObject<Item> COTTAGE_ITEM = ITEMS.register(
+            "cottage",
+            () -> new DescribedBlockItem(ModBlocks.COTTAGE_BLOCK.get(), new Item.Properties(), "item.sailboatmod.cottage.desc")
+    );
+
+    public static final RegistryObject<Item> BAR_ITEM = ITEMS.register(
+            "bar",
+            () -> new DescribedBlockItem(ModBlocks.BAR_BLOCK.get(), new Item.Properties(), "item.sailboatmod.bar.desc")
+    );
+
+    public static final RegistryObject<Item> BARRACKS_ITEM = ITEMS.register(
+            "barracks",
+            () -> new DescribedBlockItem(ModBlocks.BARRACKS_BLOCK.get(), new Item.Properties(), "item.sailboatmod.barracks.desc")
+    );
+
+    public static final RegistryObject<Item> COMMAND_BATON_ITEM = ITEMS.register(
+            "command_baton",
+            () -> new CommandBatonItem(new Item.Properties().stacksTo(1))
     );
 
     private ModItems() {

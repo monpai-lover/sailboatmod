@@ -84,7 +84,8 @@ public final class TownService {
                 town.createdAt(),
                 town.coreDimension(),
                 town.corePos(),
-                town.flagId()
+                town.flagId(),
+                town.cultureId()
         ));
         return NationResult.success(Component.translatable("command.sailboatmod.nation.town.rename.success", name));
     }
@@ -112,7 +113,8 @@ public final class TownService {
                 town.createdAt(),
                 town.coreDimension(),
                 town.corePos(),
-                town.flagId()
+                town.flagId(),
+                town.cultureId()
         ));
         return NationResult.success(Component.translatable("command.sailboatmod.nation.town.mayor.success", town.name(), target.getGameProfile().getName()));
     }
@@ -200,7 +202,8 @@ public final class TownService {
                 town.createdAt(),
                 town.coreDimension(),
                 town.corePos(),
-                town.flagId()
+                town.flagId(),
+                town.cultureId()
         ));
         return NationResult.success(Component.translatable("command.sailboatmod.nation.town.mayor.success", town.name(), targetName));
     }
@@ -241,7 +244,8 @@ public final class TownService {
                 selectedTown.createdAt(),
                 actor.level().dimension().location().toString(),
                 pos.asLong(),
-                selectedTown.flagId()
+                selectedTown.flagId(),
+                selectedTown.cultureId()
         );
         data.putTown(updated);
 
@@ -305,7 +309,8 @@ public final class TownService {
                     town.createdAt(),
                     "",
                     TownRecord.noCorePos(),
-                    town.flagId()
+                    town.flagId(),
+                    town.cultureId()
             );
             data.putTown(updated);
             return;
@@ -371,7 +376,8 @@ public final class TownService {
                 chosen.createdAt(),
                 chosen.coreDimension(),
                 chosen.corePos(),
-                chosen.flagId()
+                chosen.flagId(),
+                chosen.cultureId()
         );
         data.putTown(updated);
         return updated;
@@ -547,7 +553,8 @@ public final class TownService {
                 now,
                 "",
                 TownRecord.noCorePos(),
-                ""
+                "",
+                "european"
         );
         data.putTown(town);
 
@@ -964,7 +971,7 @@ public final class TownService {
     private static void bindTownToNation(NationSavedData data, TownRecord town, String nationId) {
         TownRecord updated = new TownRecord(
                 town.townId(), nationId, town.name(), town.mayorUuid(), town.createdAt(),
-                town.coreDimension(), town.corePos(), town.flagId()
+                town.coreDimension(), town.corePos(), town.flagId(), town.cultureId()
         );
         data.putTown(updated);
 
@@ -996,7 +1003,7 @@ public final class TownService {
     private static void unbindTownFromNation(NationSavedData data, TownRecord town) {
         TownRecord updated = new TownRecord(
                 town.townId(), "", town.name(), town.mayorUuid(), town.createdAt(),
-                town.coreDimension(), town.corePos(), town.flagId()
+                town.coreDimension(), town.corePos(), town.flagId(), town.cultureId()
         );
         data.putTown(updated);
 
@@ -1053,7 +1060,7 @@ public final class TownService {
         if (data == null || level == null || town == null || pos == null) return;
         TownRecord updated = new TownRecord(
                 town.townId(), town.nationId(), town.name(), town.mayorUuid(),
-                town.createdAt(), level.dimension().location().toString(), pos.asLong(), town.flagId());
+                town.createdAt(), level.dimension().location().toString(), pos.asLong(), town.flagId(), town.cultureId());
         data.putTown(updated);
         ChunkPos coreChunk = new ChunkPos(pos);
         if (data.getClaim(level, coreChunk) == null) {

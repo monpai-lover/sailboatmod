@@ -29,7 +29,11 @@ public final class StructureConstructionManager {
         VICTORIAN_TOWN_HALL("victorian_town_hall", "item.sailboatmod.structure.victorian_town_hall", 21, 12, 21),
         NATION_CAPITOL("nation_capitol", "item.sailboatmod.structure.nation_capitol", 25, 14, 25),
         OPEN_AIR_MARKETPLACE("open_air_marketplace", "item.sailboatmod.structure.open_air_marketplace", 17, 9, 15),
-        WATERFRONT_DOCK("waterfront_dock", "item.sailboatmod.structure.waterfront_dock", 16, 8, 12);
+        WATERFRONT_DOCK("waterfront_dock", "item.sailboatmod.structure.waterfront_dock", 16, 8, 12),
+        COTTAGE_SMALL("cottage_small", "item.sailboatmod.structure.cottage_small", 7, 6, 7),
+        COTTAGE_MEDIUM("cottage_medium", "item.sailboatmod.structure.cottage_medium", 9, 7, 9),
+        COTTAGE_LARGE("cottage_large", "item.sailboatmod.structure.cottage_large", 11, 8, 11),
+        TAVERN("tavern", "item.sailboatmod.structure.tavern", 13, 9, 11);
 
         private final String nbtName;
         private final String translationKey;
@@ -168,6 +172,8 @@ public final class StructureConstructionManager {
             case NATION_CAPITOL -> level.setBlock(center, ModBlocks.NATION_CORE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
             case OPEN_AIR_MARKETPLACE -> level.setBlock(center, ModBlocks.MARKET_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
             case WATERFRONT_DOCK -> level.setBlock(center, ModBlocks.DOCK_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+            case COTTAGE_SMALL, COTTAGE_MEDIUM, COTTAGE_LARGE -> level.setBlock(center, ModBlocks.COTTAGE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+            case TAVERN -> level.setBlock(center, ModBlocks.BAR_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
         }
     }
 

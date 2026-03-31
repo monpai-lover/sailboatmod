@@ -5,6 +5,8 @@ import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.PlaceBankStructurePacket;
 import com.monpai.sailboatmod.network.packet.SyncTreasuryPacket;
+import com.monpai.sailboatmod.network.packet.OpenTradeScreenPacket;
+import com.monpai.sailboatmod.network.packet.TradeScreenActionPacket;
 import com.monpai.sailboatmod.network.packet.ClaimMarketCreditsPacket;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
 import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
@@ -297,6 +299,20 @@ public final class ModNetwork {
                 SyncTreasuryPacket::encode,
                 SyncTreasuryPacket::decode,
                 SyncTreasuryPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenTradeScreenPacket.class,
+                OpenTradeScreenPacket::encode,
+                OpenTradeScreenPacket::decode,
+                OpenTradeScreenPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                TradeScreenActionPacket.class,
+                TradeScreenActionPacket::encode,
+                TradeScreenActionPacket::decode,
+                TradeScreenActionPacket::handle
         );
     }
 

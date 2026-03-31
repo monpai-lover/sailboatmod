@@ -7,6 +7,8 @@ import com.monpai.sailboatmod.registry.ModCreativeTabs;
 import com.monpai.sailboatmod.registry.ModEntities;
 import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.registry.ModMenus;
+import com.monpai.sailboatmod.resident.entity.ResidentEntity;
+import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
@@ -30,6 +32,13 @@ public class SailboatMod {
         ModCreativeTabs.CREATIVE_MODE_TABS.register(modEventBus);
         ModNetwork.register();
 
+        modEventBus.addListener(this::onEntityAttributeCreation);
+
         ModLoadingContext.get().registerConfig(Type.COMMON, com.monpai.sailboatmod.ModConfig.COMMON_SPEC);
+    }
+
+    private void onEntityAttributeCreation(EntityAttributeCreationEvent event) {
+        event.put(ModEntities.RESIDENT.get(), ResidentEntity.createAttributes().build());
+        event.put(ModEntities.SOLDIER.get(), com.monpai.sailboatmod.resident.entity.SoldierEntity.createSoldierAttributes().build());
     }
 }

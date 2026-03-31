@@ -126,6 +126,7 @@ public class NationHomeScreen extends Screen {
     private Button dipAcceptAllyButton;
     private Button dipRejectAllyButton;
     private Button dipBackButton;
+    private Button dipOpenTradeButton;
     private Button salesTaxUpButton;
     private Button salesTaxDownButton;
     private Button tariffUpButton;
@@ -196,6 +197,9 @@ public class NationHomeScreen extends Screen {
         this.dipAcceptAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ACCEPT)).bounds(left + BODY_X + 234, top + BODY_Y + 112, 100, 18).build());
         this.dipRejectAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.reject"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_REJECT)).bounds(left + BODY_X + 340, top + BODY_Y + 112, 100, 18).build());
         this.dipBackButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.back"), b -> { this.selectedDiplomacyNationId = ""; updateButtonState(); }).bounds(left + BODY_X + 234, top + BODY_Y + 136, 206, 18).build());
+        this.dipOpenTradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.trade.open"), b -> {
+            ModNetwork.CHANNEL.send(net.minecraftforge.network.PacketDistributor.SERVER.noArg(), new NationGuiActionPacket(NationGuiActionPacket.Action.OPEN_TRADE_SCREEN, this.selectedDiplomacyNationId, true));
+        }).bounds(left + BODY_X + 234, top + BODY_Y + 160, 206, 18).build());
 
         this.nationNameInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 148, 196, 18, Component.translatable("screen.sailboatmod.nation.name"));
         this.nationNameInput.setMaxLength(24);
@@ -800,6 +804,7 @@ public class NationHomeScreen extends Screen {
         if (this.dipAcceptAllyButton != null) { this.dipAcceptAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipAcceptAllyButton.active = dipCanManage && dipHasPendingAlly; }
         if (this.dipRejectAllyButton != null) { this.dipRejectAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipRejectAllyButton.active = dipCanManage && dipHasPendingAlly; }
         if (this.dipBackButton != null) { this.dipBackButton.visible = dipPage && dipHasSelection; this.dipBackButton.active = dipPage && dipHasSelection; }
+        if (this.dipOpenTradeButton != null) { this.dipOpenTradeButton.visible = dipPage && dipHasSelection; this.dipOpenTradeButton.active = dipCanManage; }
 
         boolean treasuryPage = this.currentPage == Page.TREASURY;
         boolean canTreasury = treasuryPage && this.data.hasNation() && this.data.canManageTreasury();

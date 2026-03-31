@@ -2,6 +2,9 @@ package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.BankBlock;
+import com.monpai.sailboatmod.block.BarBlock;
+import com.monpai.sailboatmod.block.BarracksBlock;
+import com.monpai.sailboatmod.block.CottageBlock;
 import com.monpai.sailboatmod.block.DockBlock;
 import com.monpai.sailboatmod.block.MarketBlock;
 import com.monpai.sailboatmod.block.NationCoreBlock;
@@ -59,6 +62,21 @@ public final class ModBlocks {
     public static final RegistryObject<Block> BANK_BLOCK = BLOCKS.register(
             "bank_block",
             () -> new BankBlock(BlockBehaviour.Properties.of().mapColor(MapColor.GOLD).strength(3.0F).sound(SoundType.METAL))
+    );
+
+    public static final RegistryObject<Block> COTTAGE_BLOCK = BLOCKS.register(
+            "cottage",
+            () -> new CottageBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.5F).sound(SoundType.WOOD))
+    );
+
+    public static final RegistryObject<Block> BAR_BLOCK = BLOCKS.register(
+            "bar",
+            () -> new BarBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BROWN).strength(3.0F).sound(SoundType.WOOD))
+    );
+
+    public static final RegistryObject<Block> BARRACKS_BLOCK = BLOCKS.register(
+            "barracks",
+            () -> new BarracksBlock(BlockBehaviour.Properties.of().mapColor(MapColor.STONE).strength(3.5F).sound(SoundType.STONE))
     );
 
     public static final RegistryObject<Block> WALL_TOWN_FLAG_BLOCK = BLOCKS.register(

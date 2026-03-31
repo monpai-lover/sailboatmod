@@ -75,6 +75,11 @@ public class OpenNationScreenPacket {
         buffer.writeLong(data.peaceProposalAmount());
         buffer.writeBoolean(data.peaceProposalIncoming());
         buffer.writeVarInt(data.peaceProposalRemainingSeconds());
+        buffer.writeBoolean(data.hasTradeProposal());
+        writeUtfSafe(buffer, data.tradeProposerNationName(), 64);
+        buffer.writeLong(data.tradeOfferCurrency());
+        buffer.writeLong(data.tradeRequestCurrency());
+        buffer.writeBoolean(data.tradeProposalIncoming());
         writeUtfSafe(buffer, data.flagId(), 128);
         buffer.writeVarInt(data.flagWidth());
         buffer.writeVarInt(data.flagHeight());
@@ -201,6 +206,11 @@ public class OpenNationScreenPacket {
         long peaceProposalAmount = buffer.readLong();
         boolean peaceProposalIncoming = buffer.readBoolean();
         int peaceProposalRemainingSeconds = buffer.readVarInt();
+        boolean hasTradeProposal = buffer.readBoolean();
+        String tradeProposerNationName = buffer.readUtf(64);
+        long tradeOfferCurrency = buffer.readLong();
+        long tradeRequestCurrency = buffer.readLong();
+        boolean tradeProposalIncoming = buffer.readBoolean();
         String flagId = buffer.readUtf(128);
         int flagWidth = buffer.readVarInt();
         int flagHeight = buffer.readVarInt();
@@ -343,6 +353,11 @@ public class OpenNationScreenPacket {
                 peaceProposalAmount,
                 peaceProposalIncoming,
                 peaceProposalRemainingSeconds,
+                hasTradeProposal,
+                tradeProposerNationName,
+                tradeOfferCurrency,
+                tradeRequestCurrency,
+                tradeProposalIncoming,
                 flagId,
                 flagWidth,
                 flagHeight,

@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.resident.entity.ResidentEntity;
+import com.monpai.sailboatmod.resident.entity.SoldierEntity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraftforge.registries.DeferredRegister;
@@ -19,6 +21,24 @@ public final class ModEntities {
                     .clientTrackingRange(10)
                     .updateInterval(1)
                     .build("sailboat")
+    );
+
+    public static final RegistryObject<EntityType<ResidentEntity>> RESIDENT = ENTITY_TYPES.register(
+            "resident",
+            () -> EntityType.Builder.<ResidentEntity>of(ResidentEntity::new, MobCategory.CREATURE)
+                    .sized(0.6F, 1.95F)
+                    .clientTrackingRange(10)
+                    .updateInterval(3)
+                    .build("resident")
+    );
+
+    public static final RegistryObject<EntityType<SoldierEntity>> SOLDIER = ENTITY_TYPES.register(
+            "soldier",
+            () -> EntityType.Builder.<SoldierEntity>of(SoldierEntity::new, MobCategory.CREATURE)
+                    .sized(0.6F, 1.95F)
+                    .clientTrackingRange(10)
+                    .updateInterval(3)
+                    .build("soldier")
     );
 
     private ModEntities() {

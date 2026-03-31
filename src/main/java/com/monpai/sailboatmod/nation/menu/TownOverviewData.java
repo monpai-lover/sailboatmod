@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.menu;
 
 import java.util.List;
+import java.util.Map;
 
 public record TownOverviewData(
         boolean hasTown,
@@ -42,7 +43,9 @@ public record TownOverviewData(
         boolean isMayor,
         List<NationOverviewMember> members,
         List<Integer> nearbyTerrainColors,
-        List<NationOverviewClaim> nearbyClaims
+        List<NationOverviewClaim> nearbyClaims,
+        String cultureId,
+        Map<String, Integer> cultureDistribution
 ) {
     public TownOverviewData {
         townId = sanitize(townId, 40);
@@ -64,10 +67,12 @@ public record TownOverviewData(
         entityDamageAccessLevel = sanitize(entityDamageAccessLevel, 16);
         flagId = sanitize(flagId, 128);
         flagHash = sanitize(flagHash, 80);
+        cultureId = sanitize(cultureId, 32);
         totalClaims = Math.max(0, totalClaims);
         flagWidth = Math.max(0, flagWidth);
         flagHeight = Math.max(0, flagHeight);
         flagByteSize = Math.max(0L, flagByteSize);
+        cultureDistribution = cultureDistribution == null ? Map.of() : Map.copyOf(cultureDistribution);
         members = members == null ? List.of() : members.stream()
                 .map(member -> new NationOverviewMember(
                         sanitize(member.playerUuid(), 40),
@@ -140,7 +145,9 @@ public record TownOverviewData(
                 false,
                 List.of(),
                 List.of(),
-                List.of());
+                List.of(),
+                "european",
+                Map.of());
     }
 
     private static String sanitize(String value, int maxLength) {

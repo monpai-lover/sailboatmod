@@ -89,6 +89,12 @@ public class OpenTownScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, claim.entityUseAccessLevel(), 16);
             PacketStringCodec.writeUtfSafe(buffer, claim.entityDamageAccessLevel(), 16);
         }
+        PacketStringCodec.writeUtfSafe(buffer, data.cultureId(), 32);
+        buffer.writeVarInt(data.cultureDistribution().size());
+        for (var entry : data.cultureDistribution().entrySet()) {
+            PacketStringCodec.writeUtfSafe(buffer, entry.getKey(), 32);
+            buffer.writeVarInt(entry.getValue());
+        }
     }
 
     public static OpenTownScreenPacket decode(FriendlyByteBuf buffer) {
@@ -166,6 +172,12 @@ public class OpenTownScreenPacket {
                     buffer.readUtf(16)
             ));
         }
+        String cultureId = buffer.readUtf(32);
+        int cultureDistSize = buffer.readVarInt();
+        java.util.Map<String, Integer> cultureDistribution = new java.util.HashMap<>();
+        for (int i = 0; i < cultureDistSize; i++) {
+            cultureDistribution.put(buffer.readUtf(32), buffer.readVarInt());
+        }
         return new OpenTownScreenPacket(new TownOverviewData(
                 hasTown,
                 townId,
@@ -206,7 +218,9 @@ public class OpenTownScreenPacket {
                 isMayor,
                 members,
                 nearbyTerrainColors,
-                nearbyClaims
+                nearbyClaims,
+                cultureId,
+                cultureDistribution
         ));
     }
 

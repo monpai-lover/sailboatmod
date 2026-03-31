@@ -58,6 +58,7 @@ public final class NationOverviewService {
         NationOfficeRecord officerOffice = data.getOffice(nation.nationId(), NationOfficeIds.OFFICER);
         NationTreasuryRecord treasury = data.getTreasury(nation.nationId());
         com.monpai.sailboatmod.nation.model.PeaceProposalRecord peaceProposal = activeWar == null ? null : data.getPeaceProposal(activeWar.warId());
+        com.monpai.sailboatmod.nation.model.TradeProposalRecord tradeProposal = data.getTradeProposalForNation(nation.nationId());
 
         int warScoreSelf = 0;
         int warScoreOpponent = 0;
@@ -225,6 +226,11 @@ public final class NationOverviewService {
                 peaceProposal == null ? 0L : peaceProposal.reparationAmount(),
                 peaceProposal != null && !peaceProposal.proposerNationId().equals(nation.nationId()),
                 peaceProposal == null ? 0 : (int) Math.ceil(peaceProposal.remainingMillis() / 1000.0),
+                tradeProposal != null && !tradeProposal.isExpired(),
+                tradeProposal == null ? "" : nameOrFallback(data.getNation(tradeProposal.proposerNationId()), tradeProposal.proposerNationId()),
+                tradeProposal == null ? 0L : tradeProposal.offerCurrency(),
+                tradeProposal == null ? 0L : tradeProposal.requestCurrency(),
+                tradeProposal != null && !tradeProposal.proposerNationId().equals(nation.nationId()),
                 nation.flagId(),
                 flag == null ? 0 : flag.width(),
                 flag == null ? 0 : flag.height(),

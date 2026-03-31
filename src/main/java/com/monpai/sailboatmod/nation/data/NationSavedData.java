@@ -47,6 +47,7 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationTreasuryRecord> treasuries = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.PeaceProposalRecord> peaceProposals = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.PlacedStructureRecord> placedStructures = new LinkedHashMap<>();
+    private final Map<String, com.monpai.sailboatmod.nation.model.TradeProposalRecord> tradeProposals = new LinkedHashMap<>();
 
     public static NationSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
@@ -151,6 +152,16 @@ public class NationSavedData extends SavedData {
                 com.monpai.sailboatmod.nation.model.PlacedStructureRecord s = com.monpai.sailboatmod.nation.model.PlacedStructureRecord.load(compound);
                 if (!s.structureId().isBlank()) {
                     data.placedStructures.put(s.structureId(), s);
+                }
+            }
+        }
+
+        ListTag tradeLoadTag = tag.getList("TradeProposals", Tag.TAG_COMPOUND);
+        for (Tag raw : tradeLoadTag) {
+            if (raw instanceof CompoundTag compound) {
+                com.monpai.sailboatmod.nation.model.TradeProposalRecord t = com.monpai.sailboatmod.nation.model.TradeProposalRecord.load(compound);
+                if (!t.proposalId().isBlank()) {
+                    data.tradeProposals.put(t.proposalId(), t);
                 }
             }
         }
@@ -276,6 +287,12 @@ public class NationSavedData extends SavedData {
             structuresTag.add(s.save());
         }
         tag.put("PlacedStructures", structuresTag);
+
+        ListTag tradeTag = new ListTag();
+        for (com.monpai.sailboatmod.nation.model.TradeProposalRecord t : tradeProposals.values()) {
+            tradeTag.add(t.save());
+        }
+        tag.put("TradeProposals", tradeTag);
 
         ListTag flagTag = new ListTag();
         for (NationFlagRecord flag : flags.values()) {
@@ -1002,6 +1019,28 @@ public class NationSavedData extends SavedData {
     public java.util.List<com.monpai.sailboatmod.nation.model.PlacedStructureRecord> getPlacedStructuresForTown(String townId) {
         if (townId == null || townId.isBlank()) return List.of();
         return placedStructures.values().stream().filter(s -> townId.equals(s.townId())).toList();
+    }
+
+    public void putTradeProposal(com.monpai.sailboatmod.nation.model.TradeProposalRecord proposal) {
+        if (proposal == null || proposal.proposalId().isBlank()) return;
+        tradeProposals.put(proposal.proposalId(), proposal);
+        setDirty();
+    }
+
+    public void removeTradeProposal(String proposalId) {
+        if (proposalId != null && !proposalId.isBlank() && tradeProposals.remove(proposalId) != null) setDirty();
+    }
+
+    public java.util.Collection<com.monpai.sailboatmod.nation.model.TradeProposalRecord> getTradeProposals() {
+        return List.copyOf(tradeProposals.values());
+    }
+
+    public com.monpai.sailboatmod.nation.model.TradeProposalRecord getTradeProposalForNation(String nationId) {
+        if (nationId == null || nationId.isBlank()) return null;
+        for (com.monpai.sailboatmod.nation.model.TradeProposalRecord p : tradeProposals.values()) {
+            if (nationId.equals(p.targetNationId()) || nationId.equals(p.proposerNationId())) return p;
+        }
+        return null;
     }
 
     public NationFlagRecord getFlag(String flagId) {

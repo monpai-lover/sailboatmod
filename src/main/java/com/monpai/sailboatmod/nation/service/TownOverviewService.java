@@ -138,7 +138,9 @@ public final class TownOverviewService {
                 isMayor,
                 members,
                 nearbyTerrainColors,
-                nearbyClaims);
+                nearbyClaims,
+                town.cultureId(),
+                TownCultureService.getCultureDistribution(player.level(), town.townId()));
     }
 
     private static int countClaimsManagedByTown(NationSavedData data, TownRecord town, NationRecord nation) {

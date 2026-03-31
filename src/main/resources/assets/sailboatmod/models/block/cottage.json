@@ -1,0 +1,12 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "north": "sailboatmod:block/cottage_front",
+    "south": "sailboatmod:block/cottage_side",
+    "east": "sailboatmod:block/cottage_side",
+    "west": "sailboatmod:block/cottage_side",
+    "up": "sailboatmod:block/cottage_top",
+    "down": "sailboatmod:block/cottage_side",
+    "particle": "sailboatmod:block/cottage_front"
+  }
+}
