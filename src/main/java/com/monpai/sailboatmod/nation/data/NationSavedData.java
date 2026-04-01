@@ -1021,6 +1021,20 @@ public class NationSavedData extends SavedData {
         return placedStructures.values().stream().filter(s -> townId.equals(s.townId())).toList();
     }
 
+    /**
+     * Alias for {@link #getPlacedStructure(String)} used by BuildingUpgradeService.
+     */
+    public com.monpai.sailboatmod.nation.model.PlacedStructureRecord getStructure(String structureId) {
+        return getPlacedStructure(structureId);
+    }
+
+    /**
+     * Alias for {@link #putPlacedStructure(com.monpai.sailboatmod.nation.model.PlacedStructureRecord)} used by BuildingUpgradeService.
+     */
+    public void putStructure(com.monpai.sailboatmod.nation.model.PlacedStructureRecord record) {
+        putPlacedStructure(record);
+    }
+
     public void putTradeProposal(com.monpai.sailboatmod.nation.model.TradeProposalRecord proposal) {
         if (proposal == null || proposal.proposalId().isBlank()) return;
         tradeProposals.put(proposal.proposalId(), proposal);

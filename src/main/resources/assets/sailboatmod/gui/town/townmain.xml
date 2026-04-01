@@ -1,0 +1,81 @@
+<window size="320 240" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/ldtteam/BlockUI/version/1.20.1/src/main/resources/assets/blockui/gui/block_ui.xsd"
+        lightbox="true">
+
+    <!-- Left side tabs (MineColonies style) -->
+    <button id="overviewTab" size="28 22" pos="0 30" label="O" textcolor="black"/>
+    <button id="residentsTab" size="28 22" pos="0 54" label="R" textcolor="black"/>
+    <button id="buildingsTab" size="28 22" pos="0 78" label="B" textcolor="black"/>
+    <button id="economyTab" size="28 22" pos="0 102" label="E" textcolor="black"/>
+
+    <!-- Main panel -->
+    <switch id="pages" size="280 220" pos="32 0">
+
+        <!-- Overview page -->
+        <view id="pageOverview" size="100% 100%">
+            <text id="townName" size="240 16" pos="10 10" color="black" textalign="MIDDLE"/>
+            <text size="60 11" pos="10 34" color="gray" label="Nation:"/>
+            <text id="nationName" size="180 11" pos="74 34" color="black"/>
+            <text size="60 11" pos="10 48" color="gray" label="Mayor:"/>
+            <text id="mayorName" size="180 11" pos="74 48" color="black"/>
+            <text size="60 11" pos="10 62" color="gray" label="Residents:"/>
+            <text id="residentCount" size="180 11" pos="74 62" color="black"/>
+            <text size="60 11" pos="10 76" color="gray" label="Buildings:"/>
+            <text id="buildingCount" size="180 11" pos="74 76" color="black"/>
+            <text size="60 11" pos="10 90" color="gray" label="Treasury:"/>
+            <text id="treasury" size="180 11" pos="74 90" color="gold"/>
+        </view>
+
+        <!-- Residents page -->
+        <view id="pageResidents" size="100% 100%">
+            <text size="240 14" pos="10 6" color="black" textalign="MIDDLE" label="§lResidents"/>
+            <list id="residentsList" size="256 170" pos="8 24">
+                <view size="100% 20">
+                    <text id="rName" size="100 11" pos="4 4" color="black"/>
+                    <text id="rJob" size="60 11" pos="108 4" color="gray"/>
+                    <text id="rHappy" size="30 11" pos="172 4" color="green" textalign="MIDDLE_RIGHT"/>
+                    <button id="rDetail" size="28 14" pos="210 3" label=">>>" textcolor="black"/>
+                </view>
+            </list>
+        </view>
+
+        <!-- Buildings page -->
+        <view id="pageBuildings" size="100% 100%">
+            <text size="240 14" pos="10 6" color="black" textalign="MIDDLE" label="§lBuildings"/>
+            <list id="buildingsList" size="256 150" pos="8 24">
+                <view size="100% 22">
+                    <text id="bType" size="80 11" pos="4 5" color="black"/>
+                    <text id="bLevel" size="50 11" pos="88 5" color="blue"/>
+                    <text id="bStatus" size="50 11" pos="142 5" color="green"/>
+                    <button id="bUpgrade" size="30 14" pos="196 4" label="Up" textcolor="black"/>
+                    <button id="bDemolish" size="30 14" pos="230 4" label="Del" textcolor="red"/>
+                </view>
+            </list>
+            <button id="buildNew" size="90 16" pos="90 180" label="Build New" textcolor="black"/>
+        </view>
+
+        <!-- Economy page -->
+        <view id="pageEconomy" size="100% 100%">
+            <text size="240 14" pos="10 6" color="black" textalign="MIDDLE" label="§lEconomy"/>
+            <text size="60 11" pos="10 30" color="gray" label="Treasury:"/>
+            <text id="eTreasury" size="180 11" pos="74 30" color="gold"/>
+            <text size="60 11" pos="10 48" color="gray" label="Income:"/>
+            <text id="eIncome" size="180 11" pos="74 48" color="green"/>
+            <text size="60 11" pos="10 66" color="gray" label="Expenses:"/>
+            <text id="eExpenses" size="180 11" pos="74 66" color="red"/>
+
+            <text size="240 14" pos="10 88" color="black" textalign="MIDDLE" label="§lPopulation Health"/>
+            <text size="80 11" pos="10 106" color="gray" label="Avg Happiness:"/>
+            <text id="eAvgHappiness" size="100 11" pos="94 106" color="green"/>
+            <text size="80 11" pos="10 120" color="gray" label="Sick Count:"/>
+            <text id="eSickCount" size="100 11" pos="94 120" color="red"/>
+            <text size="80 11" pos="10 134" color="gray" label="Hungry Count:"/>
+            <text id="eHungryCount" size="100 11" pos="94 134" color="orange"/>
+            <text size="80 11" pos="10 148" color="gray" label="Unemployed:"/>
+            <text id="eUnemployed" size="100 11" pos="94 148" color="gray"/>
+        </view>
+    </switch>
+
+    <!-- Close button -->
+    <button id="close" size="14 15" pos="300 4" label="X" textcolor="black"/>
+</window>

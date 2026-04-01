@@ -1,0 +1,29 @@
+<window size="300 230" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/ldtteam/BlockUI/version/1.20.1/src/main/resources/assets/blockui/gui/block_ui.xsd"
+        lightbox="true">
+
+    <!-- Title bar -->
+    <text id="title" size="260 14" pos="20 8" color="black" textalign="MIDDLE"
+          label="Town Buildings"/>
+    <button id="close" size="14 15" pos="278 6" label="X" textcolor="black"/>
+
+    <!-- Column headers -->
+    <text size="80 10" pos="20 26" color="gray" label="Building"/>
+    <text size="50 10" pos="104 26" color="gray" label="Level"/>
+    <text size="50 10" pos="158 26" color="gray" label="Status"/>
+
+    <!-- Building scrolling list -->
+    <list id="buildings" size="268 155" pos="16 38">
+        <view size="100% 24">
+            <text id="type" size="80 11" pos="4 6" color="black"/>
+            <text id="level" size="50 11" pos="88 6" color="blue"/>
+            <text id="status" size="50 11" pos="142 6" color="green"/>
+            <button id="upgrade" size="32 16" pos="196 4" label="Up" textcolor="black"/>
+            <button id="demolish" size="32 16" pos="232 4" label="Del" textcolor="red"/>
+        </view>
+    </list>
+
+    <!-- Footer -->
+    <text id="footer" size="260 10" pos="20 200" color="gray" textalign="MIDDLE"/>
+    <button id="buildNew" size="100 16" pos="100 212" label="Build New" textcolor="black"/>
+</window>

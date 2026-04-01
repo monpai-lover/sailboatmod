@@ -1,8 +1,17 @@
 package com.monpai.sailboatmod.resident.entity;
 
 import com.monpai.sailboatmod.resident.entity.goal.BuildGoal;
+import com.monpai.sailboatmod.resident.entity.goal.BuilderJobGoal;
+import com.monpai.sailboatmod.resident.entity.goal.GuardPatrolGoal;
+import com.monpai.sailboatmod.resident.entity.goal.SeekFoodGoal;
+import com.monpai.sailboatmod.resident.entity.goal.SleepAtHomeGoal;
+import com.monpai.sailboatmod.resident.entity.goal.Victoria3StudyGoal;
+import com.monpai.sailboatmod.resident.entity.goal.WanderAroundHomeGoal;
 import com.monpai.sailboatmod.resident.model.Culture;
+import com.monpai.sailboatmod.resident.model.DiseaseData;
+import com.monpai.sailboatmod.resident.model.EducationLevel;
 import com.monpai.sailboatmod.resident.model.Gender;
+import com.monpai.sailboatmod.resident.model.HappinessData;
 import com.monpai.sailboatmod.resident.model.Profession;
 import com.monpai.sailboatmod.resident.model.ResidentRecord;
 import net.minecraft.nbt.CompoundTag;
@@ -39,7 +48,19 @@ public class ResidentEntity extends PathfinderMob {
             SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Boolean> DATA_EDUCATED =
             SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.BOOLEAN);
+    private static final EntityDataAccessor<Float> DATA_LITERACY =
+            SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.FLOAT);
+    private static final EntityDataAccessor<String> DATA_EDUCATION_LEVEL =
+            SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.STRING);
     private static final EntityDataAccessor<String> DATA_CULTURE =
+            SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.STRING);
+    private static final EntityDataAccessor<Integer> DATA_LEARNING =
+            SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> DATA_MARTIAL =
+            SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> DATA_STEWARDSHIP =
+            SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<String> DATA_ASSIGNED_BED =
             SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.STRING);
 
     public ResidentEntity(EntityType<? extends ResidentEntity> type, Level level) {
@@ -65,15 +86,87 @@ public class ResidentEntity extends PathfinderMob {
         this.entityData.define(DATA_AGE, 25);
         this.entityData.define(DATA_HUNGER, ResidentRecord.MAX_HUNGER);
         this.entityData.define(DATA_EDUCATED, false);
+        this.entityData.define(DATA_LITERACY, 0.0f);
+        this.entityData.define(DATA_EDUCATION_LEVEL, EducationLevel.ILLITERATE.id());
         this.entityData.define(DATA_CULTURE, Culture.EUROPEAN.id());
+        this.entityData.define(DATA_LEARNING, 5 + this.random.nextInt(11));
+        this.entityData.define(DATA_MARTIAL, 5 + this.random.nextInt(11));
+        this.entityData.define(DATA_STEWARDSHIP, 5 + this.random.nextInt(11));
+        this.entityData.define(DATA_ASSIGNED_BED, "");
     }
     @Override
     protected void registerGoals() {
         this.goalSelector.addGoal(0, new FloatGoal(this));
-        this.goalSelector.addGoal(1, new BuildGoal(this));
-        this.goalSelector.addGoal(5, new WaterAvoidingRandomStrollGoal(this, 0.6D));
-        this.goalSelector.addGoal(6, new LookAtPlayerGoal(this, Player.class, 8.0F));
-        this.goalSelector.addGoal(7, new RandomLookAroundGoal(this));
+        this.goalSelector.addGoal(1, new SleepAtHomeGoal(this));
+        this.goalSelector.addGoal(2, new SeekFoodGoal(this));
+        this.goalSelector.addGoal(3, new BuilderJobGoal(this));
+        this.goalSelector.addGoal(3, new GuardPatrolGoal(this));
+        this.goalSelector.addGoal(4, new Victoria3StudyGoal(this));
+        this.goalSelector.addGoal(4, new BuildGoal(this));
+        this.goalSelector.addGoal(5, new WanderAroundHomeGoal(this));
+        this.goalSelector.addGoal(6, new WaterAvoidingRandomStrollGoal(this, 0.6D));
+        this.goalSelector.addGoal(7, new LookAtPlayerGoal(this, Player.class, 8.0F));
+        this.goalSelector.addGoal(8, new RandomLookAroundGoal(this));
+    }
+
+    private HappinessData happinessData = new HappinessData();
+    private DiseaseData diseaseData = new DiseaseData();
+
+    @Override
+    public void aiStep() {
+        super.aiStep();
+        if (!this.level().isClientSide) {
+            // Disease tick every tick
+            if (diseaseData.isSick()) {
+                diseaseData.tick();
+                // Sick residents move slower
+                this.setSpeed(0.15f);
+            } else {
+                this.setSpeed(0.25f);
+            }
+
+            // Every 200 ticks: hunger, happiness, disease check
+            if (this.tickCount % 200 == 0) {
+                String id = getResidentId();
+                if (!id.isEmpty() && this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                    com.monpai.sailboatmod.resident.data.ResidentSavedData data =
+                        com.monpai.sailboatmod.resident.data.ResidentSavedData.get(serverLevel);
+                    ResidentRecord record = data.getResident(id);
+                    if (record != null) {
+                        // Decrease hunger
+                        if (record.hunger() > 0) {
+                            record = record.withHunger(record.hunger() - (diseaseData.isSick() ? 2 : 1));
+                        }
+                        // Random sickness check
+                        boolean hasHome = record.assignedBed() != null && !record.assignedBed().equals(net.minecraft.core.BlockPos.ZERO);
+                        diseaseData.processRandomSickness(record.hunger(), hasHome);
+
+                        // Disease factor affects happiness
+                        happinessData.setModifier("health", diseaseData.isSick() ? -20 : 5);
+
+                        // Update happiness
+                        happinessData.processDailyUpdate(record);
+                        record = record.withHappiness(happinessData.calculateHappiness());
+                        data.putResident(record);
+                    }
+                }
+            }
+        }
+    }
+
+    public HappinessData getHappinessData() { return happinessData; }
+    public DiseaseData getDiseaseData() { return diseaseData; }
+
+    @Override
+    public void die(net.minecraft.world.damagesource.DamageSource source) {
+        if (!this.level().isClientSide && this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            String cause = source.getLocalizedDeathMessage(this).getString();
+            com.monpai.sailboatmod.resident.service.ResidentDeathService.onResidentDeath(
+                serverLevel, getResidentId(), this.blockPosition(), cause);
+            com.monpai.sailboatmod.resident.service.ResidentDeathService.triggerMourning(
+                serverLevel, getTownId(), this.blockPosition());
+        }
+        super.die(source);
     }
 
     // --- Synched data accessors ---
@@ -105,8 +198,36 @@ public class ResidentEntity extends PathfinderMob {
     public boolean isEducated() { return this.entityData.get(DATA_EDUCATED); }
     public void setEducated(boolean e) { this.entityData.set(DATA_EDUCATED, e); }
 
+    public float getLiteracy() { return this.entityData.get(DATA_LITERACY); }
+    public void setLiteracy(float l) { this.entityData.set(DATA_LITERACY, Math.max(0.0f, Math.min(1.0f, l))); }
+
+    public EducationLevel getEducationLevel() { return EducationLevel.fromId(this.entityData.get(DATA_EDUCATION_LEVEL)); }
+    public void setEducationLevel(EducationLevel level) { this.entityData.set(DATA_EDUCATION_LEVEL, level == null ? EducationLevel.ILLITERATE.id() : level.id()); }
+
     public Culture getCulture() { return Culture.fromId(this.entityData.get(DATA_CULTURE)); }
     public void setCulture(Culture c) { this.entityData.set(DATA_CULTURE, c == null ? Culture.EUROPEAN.id() : c.id()); }
+
+    public int getLearning() { return this.entityData.get(DATA_LEARNING); }
+    public void setLearning(int l) { this.entityData.set(DATA_LEARNING, Math.max(0, Math.min(20, l))); }
+
+    public int getMartial() { return this.entityData.get(DATA_MARTIAL); }
+    public void setMartial(int m) { this.entityData.set(DATA_MARTIAL, Math.max(0, Math.min(20, m))); }
+
+    public int getStewardship() { return this.entityData.get(DATA_STEWARDSHIP); }
+    public void setStewardship(int s) { this.entityData.set(DATA_STEWARDSHIP, Math.max(0, Math.min(20, s))); }
+
+    public net.minecraft.core.BlockPos getAssignedBed() {
+        String raw = this.entityData.get(DATA_ASSIGNED_BED);
+        if (raw == null || raw.isEmpty()) return null;
+        try {
+            return net.minecraft.core.BlockPos.of(Long.parseLong(raw));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+    public void setAssignedBed(net.minecraft.core.BlockPos pos) {
+        this.entityData.set(DATA_ASSIGNED_BED, pos == null || pos.equals(net.minecraft.core.BlockPos.ZERO) ? "" : String.valueOf(pos.asLong()));
+    }
 
     // --- NBT persistence ---
 
@@ -122,7 +243,18 @@ public class ResidentEntity extends PathfinderMob {
         tag.putInt("Age", getAge());
         tag.putInt("Hunger", getHunger());
         tag.putBoolean("Educated", isEducated());
+        tag.putFloat("Literacy", getLiteracy());
+        tag.putString("EducationLevel", getEducationLevel().id());
         tag.putString("Culture", getCulture().id());
+        tag.putInt("Learning", getLearning());
+        tag.putInt("Martial", getMartial());
+        tag.putInt("Stewardship", getStewardship());
+        net.minecraft.core.BlockPos bed = getAssignedBed();
+        if (bed != null) {
+            tag.putLong("AssignedBed", bed.asLong());
+        }
+        tag.put("Happiness", happinessData.save());
+        tag.put("Disease", diseaseData.save());
     }
 
     @Override
@@ -137,7 +269,21 @@ public class ResidentEntity extends PathfinderMob {
         setAge(tag.contains("Age") ? tag.getInt("Age") : 25);
         setHunger(tag.contains("Hunger") ? tag.getInt("Hunger") : ResidentRecord.MAX_HUNGER);
         setEducated(tag.getBoolean("Educated"));
+        setLiteracy(tag.contains("Literacy") ? tag.getFloat("Literacy") : 0.0f);
+        setEducationLevel(EducationLevel.fromId(tag.getString("EducationLevel")));
         setCulture(Culture.fromId(tag.getString("Culture")));
+        setLearning(tag.contains("Learning") ? tag.getInt("Learning") : 5 + this.random.nextInt(11));
+        setMartial(tag.contains("Martial") ? tag.getInt("Martial") : 5 + this.random.nextInt(11));
+        setStewardship(tag.contains("Stewardship") ? tag.getInt("Stewardship") : 5 + this.random.nextInt(11));
+        if (tag.contains("AssignedBed")) {
+            setAssignedBed(net.minecraft.core.BlockPos.of(tag.getLong("AssignedBed")));
+        }
+        if (tag.contains("Happiness")) {
+            happinessData = HappinessData.load(tag.getCompound("Happiness"));
+        }
+        if (tag.contains("Disease")) {
+            diseaseData = DiseaseData.load(tag.getCompound("Disease"));
+        }
     }
 
     @Override
@@ -149,14 +295,20 @@ public class ResidentEntity extends PathfinderMob {
 
     @Override
     protected net.minecraft.world.InteractionResult mobInteract(Player player, net.minecraft.world.InteractionHand hand) {
-        if (!player.level().isClientSide) {
-            String genderStr = getGender().displayName();
-            String profStr = getProfession().displayName();
-            String eduStr = isEducated() ? "\u2713" : "\u2717";
-            String hungerBar = getHunger() + "/" + ResidentRecord.MAX_HUNGER;
-            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
-                    "entity.sailboatmod.resident.info",
-                    getResidentName(), genderStr, getAge(), profStr, hungerBar, eduStr, getCulture().displayName()));
+        if (!player.level().isClientSide && player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
+            String id = getResidentId();
+            if (!id.isEmpty()) {
+                com.monpai.sailboatmod.resident.data.ResidentSavedData data =
+                    com.monpai.sailboatmod.resident.data.ResidentSavedData.get(serverPlayer.serverLevel());
+                ResidentRecord record = data.getResident(id);
+                if (record != null) {
+                    com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendTo(
+                        new com.monpai.sailboatmod.network.packet.OpenResidentScreenPacket(record),
+                        serverPlayer.connection.connection,
+                        net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                    );
+                }
+            }
         }
         return net.minecraft.world.InteractionResult.sidedSuccess(player.level().isClientSide);
     }

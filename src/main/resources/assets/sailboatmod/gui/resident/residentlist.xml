@@ -1,0 +1,28 @@
+<window size="280 220" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/ldtteam/BlockUI/version/1.20.1/src/main/resources/assets/blockui/gui/block_ui.xsd"
+        lightbox="true">
+
+    <!-- Title bar -->
+    <text id="title" size="240 14" pos="20 8" color="black" textalign="MIDDLE"
+          label="Town Residents"/>
+    <text id="count" size="30 12" pos="230 9" color="gray"/>
+    <button id="close" size="14 15" pos="258 6" label="X" textcolor="black"/>
+
+    <!-- Column headers -->
+    <text size="100 10" pos="20 26" color="gray" textalign="MIDDLE_LEFT" label="Name"/>
+    <text size="60 10" pos="124 26" color="gray" textalign="MIDDLE_LEFT" label="Profession"/>
+    <text size="30 10" pos="188 26" color="gray" textalign="MIDDLE_RIGHT" label="Happy"/>
+
+    <!-- Resident scrolling list -->
+    <list id="residents" size="248 150" pos="16 38">
+        <view size="100% 22">
+            <text id="name" size="100 11" pos="4 5" color="black"/>
+            <text id="job" size="60 11" pos="108 5" color="gray"/>
+            <text id="happiness" size="30 11" pos="172 5" color="green" textalign="MIDDLE_RIGHT"/>
+            <button id="detail" size="28 16" pos="210 3" label=">>>" textcolor="black"/>
+        </view>
+    </list>
+
+    <!-- Footer info -->
+    <text id="footer" size="240 10" pos="20 196" color="gray" textalign="MIDDLE"/>
+</window>

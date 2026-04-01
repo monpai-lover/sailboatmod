@@ -121,6 +121,10 @@ repositories {
         name = "GeckoLib"
         url = "https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/"
     }
+    maven {
+        name = "LDTTeam"
+        url = "https://ldtteam.jfrog.io/ldtteam/modding/"
+    }
 }
 
 dependencies {
@@ -131,6 +135,11 @@ dependencies {
     // then special handling is done to allow a setup of a vanilla dependency without the use of an external repository.
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
     implementation fg.deobf("software.bernie.geckolib:geckolib-forge-1.20.1:4.4.9")
+
+    // BlockUI library
+    implementation(fg.deobf("com.ldtteam:blockui:1.20.1-1.0.190-snapshot")) {
+        transitive = false
+    }
 
     // AI pathfinding library
     implementation 'com.badlogicgames.gdx:gdx-ai:1.8.2'

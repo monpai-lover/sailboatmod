@@ -15,7 +15,8 @@ public record BuildingConstructionRecord(
     int currentLayer,
     int totalLayers,
     List<String> assignedBuilders,
-    long startTime
+    long startTime,
+    List<BlockPos> scaffoldPositions
 ) {
     public boolean isComplete() {
         return currentLayer >= totalLayers;
@@ -40,6 +41,16 @@ public record BuildingConstructionRecord(
         }
         tag.put("Builders", builders);
         tag.putLong("StartTime", startTime);
+
+        ListTag scaffolds = new ListTag();
+        for (BlockPos pos : scaffoldPositions) {
+            CompoundTag posTag = new CompoundTag();
+            posTag.putInt("X", pos.getX());
+            posTag.putInt("Y", pos.getY());
+            posTag.putInt("Z", pos.getZ());
+            scaffolds.add(posTag);
+        }
+        tag.put("Scaffolds", scaffolds);
         return tag;
     }
 
@@ -49,6 +60,16 @@ public record BuildingConstructionRecord(
         for (int i = 0; i < builderList.size(); i++) {
             builders.add(builderList.getString(i));
         }
+
+        List<BlockPos> scaffolds = new ArrayList<>();
+        if (tag.contains("Scaffolds")) {
+            ListTag scaffoldList = tag.getList("Scaffolds", 10);
+            for (int i = 0; i < scaffoldList.size(); i++) {
+                CompoundTag posTag = scaffoldList.getCompound(i);
+                scaffolds.add(new BlockPos(posTag.getInt("X"), posTag.getInt("Y"), posTag.getInt("Z")));
+            }
+        }
+
         return new BuildingConstructionRecord(
             tag.getString("BuildingId"),
             tag.getString("StructureType"),
@@ -56,7 +77,8 @@ public record BuildingConstructionRecord(
             tag.getInt("CurrentLayer"),
             tag.getInt("TotalLayers"),
             builders,
-            tag.getLong("StartTime")
+            tag.getLong("StartTime"),
+            scaffolds
         );
     }
 }

@@ -19,8 +19,8 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlac
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 
 import java.io.InputStream;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class StructureConstructionManager {
 
@@ -30,10 +30,9 @@ public final class StructureConstructionManager {
         NATION_CAPITOL("nation_capitol", "item.sailboatmod.structure.nation_capitol", 25, 14, 25),
         OPEN_AIR_MARKETPLACE("open_air_marketplace", "item.sailboatmod.structure.open_air_marketplace", 17, 9, 15),
         WATERFRONT_DOCK("waterfront_dock", "item.sailboatmod.structure.waterfront_dock", 16, 8, 12),
-        COTTAGE_SMALL("cottage_small", "item.sailboatmod.structure.cottage_small", 7, 6, 7),
-        COTTAGE_MEDIUM("cottage_medium", "item.sailboatmod.structure.cottage_medium", 9, 7, 9),
-        COTTAGE_LARGE("cottage_large", "item.sailboatmod.structure.cottage_large", 11, 8, 11),
-        TAVERN("tavern", "item.sailboatmod.structure.tavern", 13, 9, 11);
+        COTTAGE("cottage", "item.sailboatmod.structure.cottage", 9, 7, 9),
+        TAVERN("tavern", "item.sailboatmod.structure.tavern", 13, 9, 11),
+        SCHOOL("school", "item.sailboatmod.structure.school", 15, 10, 13);
 
         private final String nbtName;
         private final String translationKey;
@@ -56,11 +55,26 @@ public final class StructureConstructionManager {
         public static final List<StructureType> ALL = List.of(values());
     }
 
-    private static final int BUILD_DURATION_TICKS = 200; // ~10 seconds
+    private record ConstructionJob(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type,
+                                    List<List<StructureTemplate.StructureBlockInfo>> layers, int currentLayer,
+                                    long startTick) {}
+
+    private record RoadConstructionJob(ServerLevel level, List<BlockPos> path, int currentIndex, long startTick) {}
+
+    private static final Map<String, ConstructionJob> ACTIVE_CONSTRUCTIONS = new ConcurrentHashMap<>();
+    private static final Map<String, RoadConstructionJob> ACTIVE_ROAD_CONSTRUCTIONS = new ConcurrentHashMap<>();
+    private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
+    private static final int ROAD_BUILD_DURATION_TICKS = 200; // ~10 seconds for roads
 
     private StructureConstructionManager() {}
 
     public static boolean placeStructureAnimated(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type, int rotation) {
+        // Check for collisions first
+        if (!isAreaClear(level, origin, type)) {
+            player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.blocked"));
+            return false;
+        }
+
         StructureTemplate template = loadTemplate(level, type.nbtName());
         if (template == null) return false;
 
@@ -73,30 +87,121 @@ public final class StructureConstructionManager {
         StructurePlaceSettings settings = new StructurePlaceSettings().setRotation(mcRotation);
 
         // Collect blocks by Y layer for animated placement
-        net.minecraft.core.Vec3i size = template.getSize();
-        java.util.List<java.util.List<BlockPos>> layers = new java.util.ArrayList<>();
-        // Place immediately but track for animation effect - use a simpler approach:
-        // Place foundation instantly, then animate upper layers
-        template.placeInWorld(level, origin, origin, settings, level.getRandom(), Block.UPDATE_ALL);
+        List<StructureTemplate.StructureBlockInfo> allBlocks = template.filterBlocks(origin, settings, net.minecraft.world.level.block.Blocks.AIR, true);
 
-        placeCoreBlock(level, origin, type);
-        fixCoreOwnership(level, origin, template, player, type);
-
-        NationSavedData data = NationSavedData.get(level);
-        NationMemberRecord member = data.getMember(player.getUUID());
-        if (member != null) {
-            TownRecord town = TownService.getTownForMember(data, member);
-            String structureId = java.util.UUID.randomUUID().toString().substring(0, 8);
-            com.monpai.sailboatmod.nation.model.PlacedStructureRecord record = new com.monpai.sailboatmod.nation.model.PlacedStructureRecord(
-                    structureId, member.nationId(), town == null ? "" : town.townId(),
-                    type.nbtName(), level.dimension().location().toString(),
-                    origin.asLong(), type.w(), type.h(), type.d(), System.currentTimeMillis());
-            data.putPlacedStructure(record);
-            generateRoadToNearest(level, data, record);
+        // Organize blocks by Y layer
+        Map<Integer, List<StructureTemplate.StructureBlockInfo>> blocksByLayer = new HashMap<>();
+        for (StructureTemplate.StructureBlockInfo info : allBlocks) {
+            int y = info.pos().getY();
+            blocksByLayer.computeIfAbsent(y, k -> new ArrayList<>()).add(info);
         }
 
-        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(type.translationKey())));
+        List<List<StructureTemplate.StructureBlockInfo>> layers = new ArrayList<>();
+        for (int y = 0; y < type.h(); y++) {
+            layers.add(blocksByLayer.getOrDefault(origin.getY() + y, new ArrayList<>()));
+        }
+
+        // Start construction job
+        String jobId = origin.toShortString() + "_" + System.currentTimeMillis();
+        ACTIVE_CONSTRUCTIONS.put(jobId, new ConstructionJob(level, origin, player, type, layers, 0, level.getGameTime()));
+
+        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.started"));
         return true;
+    }
+
+    public static void tick(ServerLevel level) {
+        if (!ACTIVE_CONSTRUCTIONS.isEmpty()) {
+            tickConstructions(level);
+        }
+        if (!ACTIVE_ROAD_CONSTRUCTIONS.isEmpty()) {
+            tickRoadConstructions(level);
+        }
+    }
+
+    private static void tickConstructions(ServerLevel level) {
+        List<String> completed = new ArrayList<>();
+        for (Map.Entry<String, ConstructionJob> entry : ACTIVE_CONSTRUCTIONS.entrySet()) {
+            ConstructionJob job = entry.getValue();
+            if (job.level != level) continue;
+
+            long elapsed = level.getGameTime() - job.startTick;
+            int targetLayer = (int) (elapsed * job.layers.size() / BUILD_DURATION_TICKS);
+
+            // Place layers up to target
+            for (int y = job.currentLayer; y <= Math.min(targetLayer, job.layers.size() - 1); y++) {
+                for (StructureTemplate.StructureBlockInfo info : job.layers.get(y)) {
+                    level.setBlock(info.pos(), info.state(), Block.UPDATE_CLIENTS);
+                }
+            }
+
+            int newLayer = Math.min(targetLayer + 1, job.layers.size());
+
+            // Send progress updates every 10 layers
+            if (newLayer > job.currentLayer && newLayer % 10 == 0 && newLayer < job.layers.size()) {
+                int progress = (newLayer * 100) / job.layers.size();
+                job.player.displayClientMessage(Component.literal("Building: " + progress + "%"), true);
+            }
+
+            if (newLayer >= job.layers.size()) {
+                // Construction complete
+                placeCoreBlock(level, job.origin, job.type);
+                fixCoreOwnership(level, job.origin, loadTemplate(level, job.type.nbtName()), job.player, job.type);
+
+                NationSavedData data = NationSavedData.get(level);
+                NationMemberRecord member = data.getMember(job.player.getUUID());
+                if (member != null) {
+                    TownRecord town = TownService.getTownForMember(data, member);
+                    String structureId = UUID.randomUUID().toString().substring(0, 8);
+                    com.monpai.sailboatmod.nation.model.PlacedStructureRecord record = new com.monpai.sailboatmod.nation.model.PlacedStructureRecord(
+                            structureId, member.nationId(), town == null ? "" : town.townId(),
+                            job.type.nbtName(), level.dimension().location().toString(),
+                            job.origin.asLong(), job.type.w(), job.type.h(), job.type.d(), System.currentTimeMillis(),
+                            1, true);
+                    data.putPlacedStructure(record);
+                    generateRoadToNearest(level, data, record);
+                }
+
+                job.player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(job.type.translationKey())));
+                completed.add(entry.getKey());
+            } else {
+                ACTIVE_CONSTRUCTIONS.put(entry.getKey(), new ConstructionJob(job.level, job.origin, job.player, job.type, job.layers, newLayer, job.startTick));
+            }
+        }
+
+        completed.forEach(ACTIVE_CONSTRUCTIONS::remove);
+    }
+
+    public static void tickRoadConstructions(ServerLevel level) {
+        BlockState roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState();
+        List<String> completed = new ArrayList<>();
+
+        for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
+            RoadConstructionJob job = entry.getValue();
+            if (job.level != level) continue;
+
+            long elapsed = level.getGameTime() - job.startTick;
+            int targetIndex = (int) (elapsed * job.path.size() / ROAD_BUILD_DURATION_TICKS);
+
+            for (int i = job.currentIndex; i <= Math.min(targetIndex, job.path.size() - 1); i++) {
+                BlockPos pos = job.path.get(i);
+                BlockPos roadPos = pos.above();
+                BlockState atRoad = level.getBlockState(roadPos);
+                if (atRoad.isAir() || atRoad.liquid()) {
+                    level.setBlock(roadPos, roadBlock, Block.UPDATE_ALL);
+                    tryPlaceRoad(level, roadPos.north(), roadBlock);
+                    tryPlaceRoad(level, roadPos.south(), roadBlock);
+                }
+            }
+
+            int newIndex = Math.min(targetIndex + 1, job.path.size());
+            if (newIndex >= job.path.size()) {
+                completed.add(entry.getKey());
+            } else {
+                ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), new RoadConstructionJob(job.level, job.path, newIndex, job.startTick));
+            }
+        }
+
+        completed.forEach(ACTIVE_ROAD_CONSTRUCTIONS::remove);
     }
 
     // Keep old method for backward compat
@@ -172,7 +277,7 @@ public final class StructureConstructionManager {
             case NATION_CAPITOL -> level.setBlock(center, ModBlocks.NATION_CORE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
             case OPEN_AIR_MARKETPLACE -> level.setBlock(center, ModBlocks.MARKET_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
             case WATERFRONT_DOCK -> level.setBlock(center, ModBlocks.DOCK_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
-            case COTTAGE_SMALL, COTTAGE_MEDIUM, COTTAGE_LARGE -> level.setBlock(center, ModBlocks.COTTAGE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+            case COTTAGE -> level.setBlock(center, ModBlocks.COTTAGE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
             case TAVERN -> level.setBlock(center, ModBlocks.BAR_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
         }
     }
@@ -225,7 +330,7 @@ public final class StructureConstructionManager {
     }
 
     private static void generateRoadToNearest(ServerLevel level, NationSavedData data, com.monpai.sailboatmod.nation.model.PlacedStructureRecord placed) {
-        BlockPos center = placed.center();
+        BlockPos entrance = getEntrancePos(placed);
         String dim = placed.dimensionId();
         com.monpai.sailboatmod.nation.model.PlacedStructureRecord nearest = null;
         double nearestDist = Double.MAX_VALUE;
@@ -233,47 +338,28 @@ public final class StructureConstructionManager {
             if (s.structureId().equals(placed.structureId())) continue;
             if (!dim.equals(s.dimensionId())) continue;
             if (!placed.townId().equals(s.townId()) && !placed.nationId().equals(s.nationId())) continue;
-            double dist = center.distSqr(s.center());
+            double dist = entrance.distSqr(getEntrancePos(s));
             if (dist < nearestDist) {
                 nearestDist = dist;
                 nearest = s;
             }
         }
-        if (nearest == null || nearestDist > 10000) return; // max 100 blocks
-        buildRoad(level, center, nearest.center());
+        if (nearest == null || nearestDist > 10000) return;
+        buildRoad(level, entrance, getEntrancePos(nearest));
+    }
+
+    private static BlockPos getEntrancePos(com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure) {
+        BlockPos origin = structure.origin();
+        // Return front-center position (entrance is typically at front)
+        return origin.offset(structure.sizeW() / 2, 0, 0);
     }
 
     private static void buildRoad(ServerLevel level, BlockPos from, BlockPos to) {
-        BlockState roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState();
-        int dx = to.getX() - from.getX();
-        int dz = to.getZ() - from.getZ();
-        int steps = Math.max(Math.abs(dx), Math.abs(dz));
-        if (steps == 0) return;
-        for (int i = 0; i <= steps; i++) {
-            int x = from.getX() + Math.round((float) dx * i / steps);
-            int z = from.getZ() + Math.round((float) dz * i / steps);
-            // Find surface Y
-            BlockPos surface = level.getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below();
-            BlockState existing = level.getBlockState(surface);
-            if (existing.isAir() || existing.liquid()) surface = surface.below();
-            // Only place road on natural ground, not inside structures
-            BlockState below = level.getBlockState(surface);
-            if (!below.isAir() && !below.liquid()) {
-                BlockPos roadPos = surface.above();
-                BlockState atRoad = level.getBlockState(roadPos);
-                if (atRoad.isAir() || atRoad.liquid()) {
-                    level.setBlock(roadPos, roadBlock, Block.UPDATE_ALL);
-                    // Place 3-wide road
-                    if (Math.abs(dx) >= Math.abs(dz)) {
-                        tryPlaceRoad(level, roadPos.north(), roadBlock);
-                        tryPlaceRoad(level, roadPos.south(), roadBlock);
-                    } else {
-                        tryPlaceRoad(level, roadPos.east(), roadBlock);
-                        tryPlaceRoad(level, roadPos.west(), roadBlock);
-                    }
-                }
-            }
-        }
+        List<BlockPos> path = RoadPathfinder.findPath(level, from, to);
+        if (path.isEmpty()) return;
+
+        String jobId = UUID.randomUUID().toString();
+        ACTIVE_ROAD_CONSTRUCTIONS.put(jobId, new RoadConstructionJob(level, path, 0, level.getGameTime()));
     }
 
     private static void tryPlaceRoad(ServerLevel level, BlockPos pos, BlockState roadBlock) {
@@ -344,5 +430,19 @@ public final class StructureConstructionManager {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static boolean isAreaClear(ServerLevel level, BlockPos origin, StructureType type) {
+        for (int y = 0; y < type.h(); y++) {
+            for (int z = 0; z < type.d(); z++) {
+                for (int x = 0; x < type.w(); x++) {
+                    BlockPos pos = origin.offset(x, y, z);
+                    if (!level.getBlockState(pos).isAir() && !level.getBlockState(pos).canBeReplaced()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
     }
 }

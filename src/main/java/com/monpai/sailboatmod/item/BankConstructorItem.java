@@ -63,6 +63,10 @@ public class BankConstructorItem extends Item {
         stack.getOrCreateTag().putInt("StructureIndex", next);
     }
 
+    public static void setSelectedIndex(ItemStack stack, int index) {
+        stack.getOrCreateTag().putInt("StructureIndex", index);
+    }
+
     public static AdjustMode getAdjustMode(ItemStack stack) {
         if (stack.hasTag() && stack.getTag().contains("AdjustMode")) {
             int idx = stack.getTag().getInt("AdjustMode");
@@ -117,12 +121,11 @@ public class BankConstructorItem extends Item {
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
 
-        // Shift+right-click: open structure selection (cycle for now, menu later)
+        // Shift+right-click: open structure selection menu
         if (player.isShiftKeyDown()) {
-            if (!level.isClientSide) {
-                cycleStructure(stack, 1);
-                StructureType type = getSelectedType(stack);
-                player.displayClientMessage(Component.translatable("item.sailboatmod.structure.selected", Component.translatable(type.translationKey())), true);
+            if (level.isClientSide) {
+                net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(net.minecraftforge.api.distmarker.Dist.CLIENT,
+                    () -> () -> openStructureScreen(stack));
             }
             return InteractionResultHolder.success(stack);
         }
@@ -131,40 +134,24 @@ public class BankConstructorItem extends Item {
         if (hit.getType() != HitResult.Type.BLOCK) {
             return InteractionResultHolder.pass(stack);
         }
-        BlockPos target = applyOffsets(stack, hit.getBlockPos().above());
+
         if (level.isClientSide) {
+            // Send packet to server with all settings
+            BlockPos target = hit.getBlockPos().above();
+            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(
+                new com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket(
+                    target,
+                    getSelectedIndex(stack),
+                    getOffsetX(stack),
+                    getOffsetY(stack),
+                    getOffsetZ(stack),
+                    getRotation(stack)
+                )
+            );
             return InteractionResultHolder.success(stack);
         }
-        if (!(player instanceof ServerPlayer serverPlayer) || !(level instanceof ServerLevel serverLevel)) {
-            return InteractionResultHolder.pass(stack);
-        }
 
-        StructureType type = getSelectedType(stack);
-
-        // Town Hall in wilderness = create new town
-        if (type == StructureType.VICTORIAN_TOWN_HALL && TownService.getTownAt(level, target) == null) {
-            String townName = serverPlayer.getGameProfile().getName() + "'s Town";
-            com.monpai.sailboatmod.nation.service.NationResult createResult = TownService.createTownAt(serverPlayer, townName, target);
-            if (!createResult.success()) {
-                serverPlayer.sendSystemMessage(createResult.message());
-                return InteractionResultHolder.fail(stack);
-            }
-            serverPlayer.sendSystemMessage(createResult.message());
-        } else if (TownService.getTownAt(level, target) == null) {
-            serverPlayer.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.facility.missing_town"));
-            return InteractionResultHolder.fail(stack);
-        }
-
-        int rotation = getRotation(stack);
-        boolean started = StructureConstructionManager.placeStructureAnimated(serverLevel, target, serverPlayer, type, rotation);
-        if (!started) {
-            serverPlayer.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.failed"));
-            return InteractionResultHolder.fail(stack);
-        }
-        if (!player.getAbilities().instabuild) {
-            stack.shrink(1);
-        }
-        return InteractionResultHolder.consume(stack);
+        return InteractionResultHolder.pass(stack);
     }
 
     @Override
@@ -178,5 +165,12 @@ public class BankConstructorItem extends Item {
             tooltip.add(Component.translatable("item.sailboatmod.constructor.offsets", oX, oY, oZ, rot * 90));
         }
         tooltip.add(Component.translatable("item.sailboatmod.constructor.hint"));
+    }
+
+    @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
+    private static void openStructureScreen(ItemStack stack) {
+        net.minecraft.client.Minecraft.getInstance().setScreen(
+            new com.monpai.sailboatmod.client.screen.StructureSelectionScreen(stack)
+        );
     }
 }

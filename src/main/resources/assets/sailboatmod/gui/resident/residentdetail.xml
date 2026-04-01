@@ -1,0 +1,53 @@
+<window size="230 260" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/ldtteam/BlockUI/version/1.20.1/src/main/resources/assets/blockui/gui/block_ui.xsd"
+        lightbox="true">
+
+    <!-- Header -->
+    <text id="name" size="190 14" pos="20 10" color="black" textalign="MIDDLE"/>
+    <button id="back" size="14 15" pos="208 8" label="X" textcolor="black"/>
+
+    <!-- Bars: health, hunger, happiness -->
+    <view id="healthBar" size="140 11" pos="50 30"/>
+    <text size="40 11" pos="8 30" color="gray" textalign="MIDDLE_RIGHT" label="HP"/>
+
+    <view id="hungerBar" size="140 11" pos="50 44"/>
+    <text size="40 11" pos="8 44" color="gray" textalign="MIDDLE_RIGHT" label="Food"/>
+
+    <view id="happinessBar" size="140 11" pos="50 58"/>
+    <text size="40 11" pos="8 58" color="gray" textalign="MIDDLE_RIGHT" label="Happy"/>
+
+    <!-- Info section -->
+    <text size="60 11" pos="16 78" color="gray" label="Gender:"/>
+    <text id="gender" size="120 11" pos="80 78" color="black"/>
+
+    <text size="60 11" pos="16 92" color="gray" label="Age:"/>
+    <text id="age" size="120 11" pos="80 92" color="black"/>
+
+    <text size="60 11" pos="16 106" color="gray" label="Culture:"/>
+    <text id="culture" size="120 11" pos="80 106" color="black"/>
+
+    <text size="60 11" pos="16 120" color="gray" label="Profession:"/>
+    <text id="job" size="120 11" pos="80 120" color="black"/>
+
+    <text size="60 11" pos="16 134" color="gray" label="Level:"/>
+    <text id="level" size="120 11" pos="80 134" color="black"/>
+
+    <text size="60 11" pos="16 148" color="gray" label="Educated:"/>
+    <text id="educated" size="120 11" pos="80 148" color="black"/>
+
+    <!-- Skills -->
+    <text size="190 11" pos="16 168" color="black" textalign="MIDDLE_LEFT" label="§lSkills"/>
+    <text size="60 11" pos="16 182" color="gray" label="Learning:"/>
+    <text id="learning" size="40 11" pos="80 182" color="black"/>
+    <text size="60 11" pos="120 182" color="gray" label="Martial:"/>
+    <text id="martial" size="40 11" pos="180 182" color="black"/>
+    <text size="60 11" pos="16 196" color="gray" label="Steward:"/>
+    <text id="stewardship" size="40 11" pos="80 196" color="black"/>
+
+    <!-- Action buttons -->
+    <button id="assignJob" size="90 16" pos="16 218" label="Assign Job" textcolor="black"/>
+    <button id="assignHome" size="90 16" pos="116 218" label="Assign Home" textcolor="black"/>
+
+    <button id="familyTree" size="90 16" pos="16 240" label="Family Tree" textcolor="blue"/>
+    <button id="dismiss" size="90 16" pos="116 240" label="Dismiss" textcolor="red"/>
+</window>

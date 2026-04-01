@@ -3,6 +3,10 @@ package com.monpai.sailboatmod.network;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
+import com.monpai.sailboatmod.network.packet.BuildingUpgradePacket;
+import com.monpai.sailboatmod.network.packet.OpenResidentScreenPacket;
+import com.monpai.sailboatmod.network.packet.ResidentActionPacket;
 import com.monpai.sailboatmod.network.packet.PlaceBankStructurePacket;
 import com.monpai.sailboatmod.network.packet.SyncTreasuryPacket;
 import com.monpai.sailboatmod.network.packet.OpenTradeScreenPacket;
@@ -27,12 +31,15 @@ import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.RenameDockPacket;
 import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
+import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
 import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
+import com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetTownClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetDockZonePacket;
 import com.monpai.sailboatmod.network.packet.SetHandlingPresetPacket;
 import com.monpai.sailboatmod.network.packet.SetSailboatRentalPricePacket;
+import com.monpai.sailboatmod.network.packet.SyncAutoRouteDocksPacket;
 import com.monpai.sailboatmod.network.packet.SyncNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.TownGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.ToggleSailPacket;
@@ -313,6 +320,55 @@ public final class ModNetwork {
                 TradeScreenActionPacket::encode,
                 TradeScreenActionPacket::decode,
                 TradeScreenActionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncConstructorSettingsPacket.class,
+                SyncConstructorSettingsPacket::encode,
+                SyncConstructorSettingsPacket::decode,
+                SyncConstructorSettingsPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RequestAutoRouteDocksPacket.class,
+                RequestAutoRouteDocksPacket::encode,
+                RequestAutoRouteDocksPacket::decode,
+                RequestAutoRouteDocksPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncAutoRouteDocksPacket.class,
+                SyncAutoRouteDocksPacket::encode,
+                SyncAutoRouteDocksPacket::decode,
+                SyncAutoRouteDocksPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CreateAutoRoutePacket.class,
+                CreateAutoRoutePacket::encode,
+                CreateAutoRoutePacket::decode,
+                CreateAutoRoutePacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                BuildingUpgradePacket.class,
+                BuildingUpgradePacket::encode,
+                BuildingUpgradePacket::decode,
+                BuildingUpgradePacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                ResidentActionPacket.class,
+                ResidentActionPacket::encode,
+                ResidentActionPacket::decode,
+                ResidentActionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenResidentScreenPacket.class,
+                OpenResidentScreenPacket::encode,
+                OpenResidentScreenPacket::decode,
+                OpenResidentScreenPacket::handle
         );
     }
 

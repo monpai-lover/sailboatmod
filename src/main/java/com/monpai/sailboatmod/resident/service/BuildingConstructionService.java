@@ -11,8 +11,15 @@ public class BuildingConstructionService {
     public static void startConstruction(Level level, String townId, String structureType, BlockPos pos, int totalLayers) {
         BuildingConstructionSavedData data = BuildingConstructionSavedData.get(level);
         String buildingId = UUID.randomUUID().toString();
+
+        // Place scaffolding
+        List<BlockPos> scaffolds = new ArrayList<>();
+        if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            scaffolds = ConstructionScaffoldingService.placeScaffolding(serverLevel, pos, 10, 6, 10);
+        }
+
         BuildingConstructionRecord record = new BuildingConstructionRecord(
-            buildingId, structureType, pos, 0, totalLayers, new ArrayList<>(), System.currentTimeMillis()
+            buildingId, structureType, pos, 0, totalLayers, new ArrayList<>(), System.currentTimeMillis(), scaffolds
         );
         data.getConstructions().put(buildingId, record);
         data.setDirty();
@@ -32,10 +39,15 @@ public class BuildingConstructionService {
         if (old != null) {
             BuildingConstructionRecord updated = new BuildingConstructionRecord(
                 old.buildingId(), old.structureType(), old.position(),
-                currentLayer, old.totalLayers(), old.assignedBuilders(), old.startTime()
+                currentLayer, old.totalLayers(), old.assignedBuilders(), old.startTime(), old.scaffoldPositions()
             );
             data.getConstructions().put(buildingId, updated);
+
             if (updated.isComplete()) {
+                // Remove scaffolding when construction is complete
+                if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                    ConstructionScaffoldingService.removeScaffolding(serverLevel, updated.scaffoldPositions());
+                }
                 data.getConstructions().remove(buildingId);
             }
             data.setDirty();
@@ -50,7 +62,7 @@ public class BuildingConstructionService {
             builders.add(residentId);
             BuildingConstructionRecord updated = new BuildingConstructionRecord(
                 old.buildingId(), old.structureType(), old.position(),
-                old.currentLayer(), old.totalLayers(), builders, old.startTime()
+                old.currentLayer(), old.totalLayers(), builders, old.startTime(), old.scaffoldPositions()
             );
             data.getConstructions().put(buildingId, updated);
             data.setDirty();

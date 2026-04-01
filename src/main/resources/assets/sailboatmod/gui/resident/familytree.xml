@@ -1,0 +1,44 @@
+<window size="300 220" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/ldtteam/BlockUI/version/1.20.1/src/main/resources/assets/blockui/gui/block_ui.xsd"
+        lightbox="true">
+
+    <!-- Title -->
+    <text id="title" size="260 14" pos="20 6" color="black" textalign="MIDDLE" label="§lFamily Tree"/>
+    <button id="back" size="14 15" pos="278 4" label="X" textcolor="black"/>
+
+    <!-- Parents row -->
+    <text size="260 11" pos="20 24" color="gray" textalign="MIDDLE" label="Parents"/>
+    <view id="parentA" size="110 18" pos="25 36">
+        <text id="parentAName" size="110 11" pos="0 3" color="blue" textalign="MIDDLE"/>
+    </view>
+    <text size="20 18" pos="140 36" color="black" textalign="MIDDLE" label="&amp;"/>
+    <view id="parentB" size="110 18" pos="165 36">
+        <text id="parentBName" size="110 11" pos="0 3" color="blue" textalign="MIDDLE"/>
+    </view>
+
+    <!-- Connector line -->
+    <text size="10 11" pos="145 56" color="gray" textalign="MIDDLE" label="|"/>
+
+    <!-- Self row -->
+    <view size="160 22" pos="70 66">
+        <text id="selfName" size="160 14" pos="0 4" color="black" textalign="MIDDLE"/>
+    </view>
+
+    <!-- Partner -->
+    <text size="260 11" pos="20 92" color="gray" textalign="MIDDLE" label="Partner"/>
+    <view id="partnerView" size="160 18" pos="70 104">
+        <text id="partnerName" size="160 11" pos="0 3" color="red" textalign="MIDDLE"/>
+    </view>
+
+    <!-- Children -->
+    <text size="260 11" pos="20 128" color="gray" textalign="MIDDLE" label="Children"/>
+    <list id="childrenList" size="260 50" pos="20 140">
+        <view size="100% 16">
+            <text id="childName" size="200 11" pos="30 2" color="green"/>
+        </view>
+    </list>
+
+    <!-- Siblings -->
+    <text size="260 11" pos="20 192" color="gray" textalign="MIDDLE" label="Siblings"/>
+    <text id="siblingsText" size="260 11" pos="20 204" color="purple" textalign="MIDDLE"/>
+</window>
