@@ -18,8 +18,11 @@ public record TownOverviewData(
         String coreDimension,
         long corePos,
         int totalClaims,
+        int residentCount,
         int currentChunkX,
         int currentChunkZ,
+        int previewCenterChunkX,
+        int previewCenterChunkZ,
         boolean currentChunkClaimed,
         boolean currentChunkOwnedByTown,
         String currentChunkOwnerName,
@@ -45,7 +48,9 @@ public record TownOverviewData(
         List<Integer> nearbyTerrainColors,
         List<NationOverviewClaim> nearbyClaims,
         String cultureId,
-        Map<String, Integer> cultureDistribution
+        Map<String, Integer> cultureDistribution,
+        float averageLiteracy,
+        Map<String, Integer> educationLevelDistribution
 ) {
     public TownOverviewData {
         townId = sanitize(townId, 40);
@@ -69,10 +74,13 @@ public record TownOverviewData(
         flagHash = sanitize(flagHash, 80);
         cultureId = sanitize(cultureId, 32);
         totalClaims = Math.max(0, totalClaims);
+        residentCount = Math.max(0, residentCount);
         flagWidth = Math.max(0, flagWidth);
         flagHeight = Math.max(0, flagHeight);
         flagByteSize = Math.max(0L, flagByteSize);
+        averageLiteracy = Math.max(0.0f, Math.min(1.0f, averageLiteracy));
         cultureDistribution = cultureDistribution == null ? Map.of() : Map.copyOf(cultureDistribution);
+        educationLevelDistribution = educationLevelDistribution == null ? Map.of() : Map.copyOf(educationLevelDistribution);
         members = members == null ? List.of() : members.stream()
                 .map(member -> new NationOverviewMember(
                         sanitize(member.playerUuid(), 40),
@@ -122,6 +130,9 @@ public record TownOverviewData(
                 0,
                 0,
                 0,
+                0,
+                0,
+                0,
                 false,
                 false,
                 "",
@@ -147,6 +158,8 @@ public record TownOverviewData(
                 List.of(),
                 List.of(),
                 "european",
+                Map.of(),
+                0.0f,
                 Map.of());
     }
 

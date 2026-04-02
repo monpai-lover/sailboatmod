@@ -32,6 +32,10 @@ public final class NationOverviewService {
     private static int claimPreviewRadius() { return com.monpai.sailboatmod.ModConfig.claimPreviewRadius(); }
 
     public static NationOverviewData buildFor(ServerPlayer player) {
+        return buildFor(player, player == null ? null : player.chunkPosition());
+    }
+
+    public static NationOverviewData buildFor(ServerPlayer player, ChunkPos previewCenterChunk) {
         if (player == null) {
             return NationOverviewData.empty();
         }
@@ -49,6 +53,7 @@ public final class NationOverviewService {
 
         long now = System.currentTimeMillis();
         ChunkPos playerChunk = player.chunkPosition();
+        ChunkPos previewChunk = previewCenterChunk == null ? playerChunk : previewCenterChunk;
         NationClaimRecord currentClaim = data.getClaim(player.level(), playerChunk);
         NationRecord currentClaimNation = currentClaim == null ? null : data.getNation(currentClaim.nationId());
         NationWarRecord activeWar = NationWarService.getActiveWarForNation(data, nation.nationId());
@@ -112,10 +117,10 @@ public final class NationOverviewService {
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>();
         for (NationClaimRecord claim : data.getClaimsInArea(
                 player.level().dimension().location().toString(),
-                playerChunk.x - claimPreviewRadius(),
-                playerChunk.x + claimPreviewRadius(),
-                playerChunk.z - claimPreviewRadius(),
-                playerChunk.z + claimPreviewRadius())) {
+                previewChunk.x - claimPreviewRadius(),
+                previewChunk.x + claimPreviewRadius(),
+                previewChunk.z - claimPreviewRadius(),
+                previewChunk.z + claimPreviewRadius())) {
             NationRecord owner = data.getNation(claim.nationId());
             TownRecord claimTown = claim.townId().isBlank() ? null : data.getTown(claim.townId());
             nearbyClaims.add(new NationOverviewClaim(
@@ -137,7 +142,7 @@ public final class NationOverviewService {
             ));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), playerChunk, claimPreviewRadius());
+        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), previewChunk, claimPreviewRadius());
 
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>();
         for (NationDiplomacyRecord relation : data.getDiplomacyForNation(nation.nationId())) {
@@ -201,6 +206,8 @@ public final class NationOverviewService {
                 data.getClaimsForNation(nation.nationId()).size(),
                 playerChunk.x,
                 playerChunk.z,
+                previewChunk.x,
+                previewChunk.z,
                 currentClaim != null,
                 currentClaim != null && nation.nationId().equals(currentClaim.nationId()),
                 nameOrFallback(currentClaimNation, currentClaim == null ? "" : currentClaim.nationId()),
@@ -248,6 +255,7 @@ public final class NationOverviewService {
                 treasury == null ? 500 : treasury.salesTaxBasisPoints(),
                 treasury == null ? 1000 : treasury.importTariffBasisPoints(),
                 treasury == null ? 0 : treasury.recentTradeCount(),
+                treasury == null ? net.minecraft.core.NonNullList.withSize(com.monpai.sailboatmod.nation.model.NationTreasuryRecord.TREASURY_SLOTS, net.minecraft.world.item.ItemStack.EMPTY) : treasury.items(),
                 officerOffice == null ? "Officer" : officeName(data, nation.nationId(), NationOfficeIds.OFFICER),
                 diplomacyRelations,
                 incomingDiplomacyRequests,

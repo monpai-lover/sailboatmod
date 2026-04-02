@@ -1,24 +1,22 @@
 package com.monpai.sailboatmod.nation.service;
 
-import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
+import com.monpai.sailboatmod.resident.service.ConstructionScaffoldingService;
 import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.NbtIo;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 
-import java.io.InputStream;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -57,37 +55,44 @@ public final class StructureConstructionManager {
 
     private record ConstructionJob(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type,
                                     List<List<StructureTemplate.StructureBlockInfo>> layers, int currentLayer,
-                                    long startTick) {}
+                                    long startTick, BlueprintService.PlacementBounds bounds, int rotation,
+                                    List<BlockPos> scaffoldPositions) {}
+
+    public record AssistPlacementResult(boolean success, boolean completed, Component message) {}
 
     private record RoadConstructionJob(ServerLevel level, List<BlockPos> path, int currentIndex, long startTick) {}
 
     private static final Map<String, ConstructionJob> ACTIVE_CONSTRUCTIONS = new ConcurrentHashMap<>();
     private static final Map<String, RoadConstructionJob> ACTIVE_ROAD_CONSTRUCTIONS = new ConcurrentHashMap<>();
+    private static final Map<String, List<BlockPos>> ACTIVE_ASSIST_SITES = new ConcurrentHashMap<>();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
     private static final int ROAD_BUILD_DURATION_TICKS = 200; // ~10 seconds for roads
 
     private StructureConstructionManager() {}
 
     public static boolean placeStructureAnimated(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type, int rotation) {
-        // Check for collisions first
-        if (!isAreaClear(level, origin, type)) {
+        BlueprintService.BlueprintPlacement placement = BlueprintService.preparePlacement(level, type.nbtName(), origin, rotation);
+        if (placement == null) {
+            return false;
+        }
+
+        if (!isAreaClear(level, placement.blocks())) {
             player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.blocked"));
             return false;
         }
 
-        StructureTemplate template = loadTemplate(level, type.nbtName());
-        if (template == null) return false;
+        clearAssistSite(level, origin, type, rotation);
 
-        net.minecraft.world.level.block.Rotation mcRotation = switch (rotation % 4) {
-            case 1 -> net.minecraft.world.level.block.Rotation.CLOCKWISE_90;
-            case 2 -> net.minecraft.world.level.block.Rotation.CLOCKWISE_180;
-            case 3 -> net.minecraft.world.level.block.Rotation.COUNTERCLOCKWISE_90;
-            default -> net.minecraft.world.level.block.Rotation.NONE;
-        };
-        StructurePlaceSettings settings = new StructurePlaceSettings().setRotation(mcRotation);
+        ConstructionCostService.PaymentResult payment = ConstructionCostService.chargeForBlueprint(level, player, placement);
+        if (!payment.success()) {
+            player.sendSystemMessage(payment.message());
+            return false;
+        }
+        if (!payment.message().getString().isBlank()) {
+            player.sendSystemMessage(payment.message());
+        }
 
-        // Collect blocks by Y layer for animated placement
-        List<StructureTemplate.StructureBlockInfo> allBlocks = template.filterBlocks(origin, settings, net.minecraft.world.level.block.Blocks.AIR, true);
+        List<StructureTemplate.StructureBlockInfo> allBlocks = placement.blocks();
 
         // Organize blocks by Y layer
         Map<Integer, List<StructureTemplate.StructureBlockInfo>> blocksByLayer = new HashMap<>();
@@ -97,16 +102,93 @@ public final class StructureConstructionManager {
         }
 
         List<List<StructureTemplate.StructureBlockInfo>> layers = new ArrayList<>();
-        for (int y = 0; y < type.h(); y++) {
-            layers.add(blocksByLayer.getOrDefault(origin.getY() + y, new ArrayList<>()));
+        for (int y = placement.bounds().min().getY(); y <= placement.bounds().max().getY(); y++) {
+            layers.add(blocksByLayer.getOrDefault(y, List.of()));
         }
+
+        List<BlockPos> scaffoldPositions = ConstructionScaffoldingService.placeScaffolding(level, placement.bounds());
 
         // Start construction job
         String jobId = origin.toShortString() + "_" + System.currentTimeMillis();
-        ACTIVE_CONSTRUCTIONS.put(jobId, new ConstructionJob(level, origin, player, type, layers, 0, level.getGameTime()));
+        ACTIVE_CONSTRUCTIONS.put(jobId, new ConstructionJob(
+                level, origin, player, type, layers, 0, level.getGameTime(), placement.bounds(), placement.rotation(), scaffoldPositions));
 
         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.started"));
         return true;
+    }
+
+    public static AssistPlacementResult assistPlaceNextBlock(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type, int rotation) {
+        BlueprintService.BlueprintPlacement placement = BlueprintService.preparePlacement(level, type.nbtName(), origin, rotation);
+        if (placement == null) {
+            return new AssistPlacementResult(false, false,
+                    Component.translatable("command.sailboatmod.nation.bank_constructor.failed"));
+        }
+
+        ensureAssistSite(level, origin, type, rotation, placement.bounds());
+
+        StructureTemplate.StructureBlockInfo nextBlock = null;
+        boolean hasBlockedMismatch = false;
+        double bestDistance = Double.MAX_VALUE;
+
+        for (StructureTemplate.StructureBlockInfo info : placement.blocks()) {
+            BlockState currentState = level.getBlockState(info.pos());
+            if (currentState.equals(info.state())) {
+                continue;
+            }
+            if (!currentState.isAir() && !currentState.canBeReplaced() && !currentState.liquid()) {
+                hasBlockedMismatch = true;
+                continue;
+            }
+
+            double distance = info.pos().distToCenterSqr(player.getX(), player.getEyeY(), player.getZ());
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                nextBlock = info;
+            }
+        }
+
+        if (nextBlock == null) {
+            if (isPlacementComplete(level, placement.blocks())) {
+                completeStructure(level, player, type, placement.bounds(), placement.rotation(),
+                        clearAssistSite(level, origin, type, rotation));
+                return new AssistPlacementResult(true, true,
+                        Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(type.translationKey())));
+            }
+
+            Component message = hasBlockedMismatch
+                    ? Component.translatable("command.sailboatmod.nation.structure.blocked")
+                    : Component.literal("No placeable missing blueprint blocks remain.");
+            return new AssistPlacementResult(false, false, message);
+        }
+
+        ConstructionCostService.PaymentResult payment = new ConstructionCostService.PaymentResult(true, 0L, 0L, 0L, Component.empty());
+        if (!player.getAbilities().instabuild && !consumeConstructionItem(player, nextBlock.state().getBlock().asItem())) {
+            ItemStack purchaseStack = toConstructionItem(nextBlock.state());
+            payment = ConstructionCostService.chargeForSingleItem(level, player, purchaseStack);
+            if (!payment.success()) {
+                return new AssistPlacementResult(false, false, payment.message());
+            }
+        }
+
+        level.setBlock(nextBlock.pos(), nextBlock.state(), Block.UPDATE_ALL);
+
+        boolean completed = isPlacementComplete(level, placement.blocks());
+        if (completed) {
+            completeStructure(level, player, type, placement.bounds(), placement.rotation(),
+                    clearAssistSite(level, origin, type, rotation));
+        }
+
+        if (!payment.message().getString().isBlank()) {
+            player.sendSystemMessage(payment.message());
+        }
+
+        Component resultMessage = Component.translatable(
+                completed ? "command.sailboatmod.nation.structure.placed" : "command.sailboatmod.nation.structure.placed",
+                nextBlock.state().getBlock().getName());
+        if (!completed) {
+            resultMessage = Component.literal("Placed " + nextBlock.state().getBlock().getName().getString() + " into the blueprint.");
+        }
+        return new AssistPlacementResult(true, completed, resultMessage);
     }
 
     public static void tick(ServerLevel level) {
@@ -144,27 +226,12 @@ public final class StructureConstructionManager {
 
             if (newLayer >= job.layers.size()) {
                 // Construction complete
-                placeCoreBlock(level, job.origin, job.type);
-                fixCoreOwnership(level, job.origin, loadTemplate(level, job.type.nbtName()), job.player, job.type);
-
-                NationSavedData data = NationSavedData.get(level);
-                NationMemberRecord member = data.getMember(job.player.getUUID());
-                if (member != null) {
-                    TownRecord town = TownService.getTownForMember(data, member);
-                    String structureId = UUID.randomUUID().toString().substring(0, 8);
-                    com.monpai.sailboatmod.nation.model.PlacedStructureRecord record = new com.monpai.sailboatmod.nation.model.PlacedStructureRecord(
-                            structureId, member.nationId(), town == null ? "" : town.townId(),
-                            job.type.nbtName(), level.dimension().location().toString(),
-                            job.origin.asLong(), job.type.w(), job.type.h(), job.type.d(), System.currentTimeMillis(),
-                            1, true);
-                    data.putPlacedStructure(record);
-                    generateRoadToNearest(level, data, record);
-                }
-
+                completeStructure(level, job.player, job.type, job.bounds, job.rotation, job.scaffoldPositions);
                 job.player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(job.type.translationKey())));
                 completed.add(entry.getKey());
             } else {
-                ACTIVE_CONSTRUCTIONS.put(entry.getKey(), new ConstructionJob(job.level, job.origin, job.player, job.type, job.layers, newLayer, job.startTick));
+                ACTIVE_CONSTRUCTIONS.put(entry.getKey(), new ConstructionJob(
+                        job.level, job.origin, job.player, job.type, job.layers, newLayer, job.startTick, job.bounds, job.rotation, job.scaffoldPositions));
             }
         }
 
@@ -255,6 +322,84 @@ public final class StructureConstructionManager {
         return placeStructure(level, newOrigin, player, type);
     }
 
+    private static void ensureAssistSite(ServerLevel level, BlockPos origin, StructureType type, int rotation,
+                                         BlueprintService.PlacementBounds bounds) {
+        String key = assistSiteKey(level, origin, type, rotation);
+        ACTIVE_ASSIST_SITES.computeIfAbsent(key, ignored -> ConstructionScaffoldingService.placeScaffolding(level, bounds));
+    }
+
+    private static List<BlockPos> clearAssistSite(ServerLevel level, BlockPos origin, StructureType type, int rotation) {
+        String key = assistSiteKey(level, origin, type, rotation);
+        List<BlockPos> scaffolds = ACTIVE_ASSIST_SITES.remove(key);
+        if (scaffolds != null && !scaffolds.isEmpty()) {
+            ConstructionScaffoldingService.removeScaffolding(level, scaffolds);
+        }
+        return scaffolds == null ? List.of() : scaffolds;
+    }
+
+    private static String assistSiteKey(ServerLevel level, BlockPos origin, StructureType type, int rotation) {
+        return level.dimension().location() + "|" + origin.asLong() + "|" + type.nbtName() + "|" + Math.floorMod(rotation, 4);
+    }
+
+    private static void completeStructure(ServerLevel level, ServerPlayer player, StructureType type,
+                                          BlueprintService.PlacementBounds bounds, int rotation,
+                                          List<BlockPos> scaffoldPositions) {
+        placeCoreBlock(level, bounds, type);
+        fixCoreOwnership(level, bounds, player);
+        if (scaffoldPositions != null && !scaffoldPositions.isEmpty()) {
+            ConstructionScaffoldingService.removeScaffolding(level, scaffoldPositions);
+        }
+
+        NationSavedData data = NationSavedData.get(level);
+        if (findStructureByOrigin(data, level, bounds.min(), type.nbtName()) != null) {
+            return;
+        }
+
+        NationMemberRecord member = data.getMember(player.getUUID());
+        if (member == null) {
+            return;
+        }
+
+        TownRecord town = TownService.getTownForMember(data, member);
+        String structureId = UUID.randomUUID().toString().substring(0, 8);
+        com.monpai.sailboatmod.nation.model.PlacedStructureRecord record = new com.monpai.sailboatmod.nation.model.PlacedStructureRecord(
+                structureId, member.nationId(), town == null ? "" : town.townId(),
+                type.nbtName(), level.dimension().location().toString(),
+                bounds.min().asLong(), bounds.width(), bounds.height(), bounds.depth(),
+                System.currentTimeMillis(), 1, true, rotation);
+        data.putPlacedStructure(record);
+        generateRoadToNearest(level, data, record);
+    }
+
+    private static boolean isPlacementComplete(ServerLevel level, List<StructureTemplate.StructureBlockInfo> blocks) {
+        for (StructureTemplate.StructureBlockInfo info : blocks) {
+            if (!level.getBlockState(info.pos()).equals(info.state())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean consumeConstructionItem(ServerPlayer player, Item item) {
+        if (item == Items.AIR) {
+            return true;
+        }
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (!stack.isEmpty() && stack.is(item)) {
+                stack.shrink(1);
+                player.getInventory().setChanged();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static ItemStack toConstructionItem(BlockState state) {
+        Item item = state.getBlock().asItem();
+        return item == Items.AIR ? ItemStack.EMPTY : new ItemStack(item);
+    }
+
     private static com.monpai.sailboatmod.nation.model.PlacedStructureRecord findStructureAt(NationSavedData data, ServerLevel level, BlockPos pos) {
         String dim = level.dimension().location().toString();
         for (com.monpai.sailboatmod.nation.model.PlacedStructureRecord s : data.getPlacedStructures()) {
@@ -269,8 +414,20 @@ public final class StructureConstructionManager {
         return null;
     }
 
-    private static void placeCoreBlock(ServerLevel level, BlockPos origin, StructureType type) {
-        BlockPos center = new BlockPos(origin.getX() + type.w() / 2, origin.getY() + 1, origin.getZ() + type.d() / 2);
+    private static com.monpai.sailboatmod.nation.model.PlacedStructureRecord findStructureByOrigin(
+            NationSavedData data, ServerLevel level, BlockPos origin, String structureType) {
+        String dim = level.dimension().location().toString();
+        for (com.monpai.sailboatmod.nation.model.PlacedStructureRecord s : data.getPlacedStructures()) {
+            if (!dim.equals(s.dimensionId())) continue;
+            if (!origin.equals(s.origin())) continue;
+            if (!structureType.equals(s.structureType())) continue;
+            return s;
+        }
+        return null;
+    }
+
+    private static void placeCoreBlock(ServerLevel level, BlueprintService.PlacementBounds bounds, StructureType type) {
+        BlockPos center = bounds.centerAtY(bounds.min().getY() + 1);
         switch (type) {
             case VICTORIAN_BANK -> level.setBlock(center, ModBlocks.BANK_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
             case VICTORIAN_TOWN_HALL -> level.setBlock(center, ModBlocks.TOWN_CORE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
@@ -282,16 +439,17 @@ public final class StructureConstructionManager {
         }
     }
 
-    private static void fixCoreOwnership(ServerLevel level, BlockPos origin, StructureTemplate template, ServerPlayer player, StructureType type) {
-        net.minecraft.core.Vec3i size = template.getSize();
+    private static void fixCoreOwnership(ServerLevel level, BlueprintService.PlacementBounds bounds, ServerPlayer player) {
         NationSavedData data = NationSavedData.get(level);
         NationMemberRecord member = data.getMember(player.getUUID());
-        if (member == null) return;
+        if (member == null) {
+            return;
+        }
 
-        for (int y = 0; y < size.getY(); y++) {
-            for (int z = 0; z < size.getZ(); z++) {
-                for (int x = 0; x < size.getX(); x++) {
-                    BlockPos pos = origin.offset(x, y, z);
+        for (int y = bounds.min().getY(); y <= bounds.max().getY(); y++) {
+            for (int z = bounds.min().getZ(); z <= bounds.max().getZ(); z++) {
+                for (int x = bounds.min().getX(); x <= bounds.max().getX(); x++) {
+                    BlockPos pos = new BlockPos(x, y, z);
                     BlockState state = level.getBlockState(pos);
                     if (state.is(ModBlocks.TOWN_CORE_BLOCK.get())) {
                         TownRecord town = TownService.getTownForMember(data, member);
@@ -411,36 +569,14 @@ public final class StructureConstructionManager {
         }
     }
 
-    private static StructureTemplate loadTemplate(ServerLevel level, String nbtName) {
-        ResourceLocation id = new ResourceLocation(SailboatMod.MODID, nbtName);
-        StructureTemplate template = level.getStructureManager().get(id).orElse(null);
-        if (template != null) return template;
-        try {
-            String path = "/data/" + SailboatMod.MODID + "/structures/" + nbtName + ".nbt";
-            InputStream is = StructureConstructionManager.class.getResourceAsStream(path);
-            if (is == null) {
-                is = Thread.currentThread().getContextClassLoader().getResourceAsStream("data/" + SailboatMod.MODID + "/structures/" + nbtName + ".nbt");
+    private static boolean isAreaClear(ServerLevel level, List<StructureTemplate.StructureBlockInfo> blocks) {
+        for (StructureTemplate.StructureBlockInfo info : blocks) {
+            BlockState current = level.getBlockState(info.pos());
+            if (current.equals(info.state())) {
+                continue;
             }
-            if (is == null) return null;
-            CompoundTag tag = NbtIo.readCompressed(is);
-            is.close();
-            template = new StructureTemplate();
-            template.load(level.holderLookup(net.minecraft.core.registries.Registries.BLOCK), tag);
-            return template;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static boolean isAreaClear(ServerLevel level, BlockPos origin, StructureType type) {
-        for (int y = 0; y < type.h(); y++) {
-            for (int z = 0; z < type.d(); z++) {
-                for (int x = 0; x < type.w(); x++) {
-                    BlockPos pos = origin.offset(x, y, z);
-                    if (!level.getBlockState(pos).isAir() && !level.getBlockState(pos).canBeReplaced()) {
-                        return false;
-                    }
-                }
+            if (!current.isAir() && !current.canBeReplaced()) {
+                return false;
             }
         }
         return true;

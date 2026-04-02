@@ -17,7 +17,8 @@ public record PlacedStructureRecord(
         int sizeD,
         long placedAt,
         int buildingLevel,
-        boolean isBuilt
+        boolean isBuilt,
+        int rotation
 ) {
     public PlacedStructureRecord {
         structureId = structureId == null ? "" : structureId.trim();
@@ -26,6 +27,7 @@ public record PlacedStructureRecord(
         structureType = structureType == null ? "" : structureType.trim();
         dimensionId = dimensionId == null ? "" : dimensionId.trim();
         buildingLevel = Math.max(1, Math.min(3, buildingLevel));
+        rotation = Math.floorMod(rotation, 4);
     }
 
     public int getMaxLevel() {
@@ -61,6 +63,7 @@ public record PlacedStructureRecord(
         tag.putLong("PlacedAt", placedAt);
         tag.putInt("Level", buildingLevel);
         tag.putBoolean("Built", isBuilt);
+        tag.putInt("Rotation", rotation);
         return tag;
     }
 
@@ -77,7 +80,8 @@ public record PlacedStructureRecord(
                 tag.getInt("D"),
                 tag.getLong("PlacedAt"),
                 tag.contains("Level") ? tag.getInt("Level") : 1,
-                tag.contains("Built") ? tag.getBoolean("Built") : true
+                tag.contains("Built") ? tag.getBoolean("Built") : true,
+                tag.contains("Rotation") ? tag.getInt("Rotation") : 0
         );
     }
 }

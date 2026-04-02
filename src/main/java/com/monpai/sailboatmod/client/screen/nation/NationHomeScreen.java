@@ -25,11 +25,10 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.FluidTags;
-
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 
@@ -50,6 +49,8 @@ public class NationHomeScreen extends Screen {
     private static final int MEMBER_LIST_W = 192;
     private static final int MEMBER_ROW_H = 14;
     private static final int MEMBER_VISIBLE_ROWS = 12;
+    private static final int TREASURY_ITEM_ROW_H = 20;
+    private static final int TREASURY_ITEM_VISIBLE_ROWS = 6;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
     private int claimRadius() {
@@ -105,6 +106,7 @@ public class NationHomeScreen extends Screen {
     private Button appointMayorButton;
     private Button saveOfficerTitleButton;
     private int memberScroll;
+    private int treasuryItemScroll;
     private int autoRefreshTicks;
     private String selectedMemberUuid = "";
     private String selectedTownId = "";
@@ -131,13 +133,22 @@ public class NationHomeScreen extends Screen {
     private Button salesTaxDownButton;
     private Button tariffUpButton;
     private Button tariffDownButton;
-    private Button radiusUpButton;
-    private Button radiusDownButton;
+    private Button treasuryCommandsButton;
+    private boolean showTreasuryCommands;
     private Button proposeCeasefireButton;
     private Button proposeCedeButton;
     private Button proposeReparationButton;
     private Button acceptPeaceButton;
     private Button rejectPeaceButton;
+    private Button resetMapButton;
+    private int mapOffsetX = 0;
+    private int mapOffsetZ = 0;
+    private boolean isDraggingMap = false;
+    private double dragStartX = 0;
+    private double dragStartY = 0;
+    private final java.util.Map<Long, Integer> terrainColorCache = new java.util.HashMap<>();
+    private int pendingPreviewCenterX = Integer.MIN_VALUE;
+    private int pendingPreviewCenterZ = Integer.MIN_VALUE;
     private static final int DIP_ROW_H = 20;
     private static final int DIP_VISIBLE_ROWS = 9;
 
@@ -149,7 +160,15 @@ public class NationHomeScreen extends Screen {
     }
 
     public void updateData(NationOverviewData updated) {
+        int visibleCenterX = mapCenterX();
+        int visibleCenterZ = mapCenterZ();
         this.data = updated == null ? NationOverviewData.empty() : updated;
+        if (this.data.previewCenterChunkX() == this.pendingPreviewCenterX && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ) {
+            this.pendingPreviewCenterX = Integer.MIN_VALUE;
+            this.pendingPreviewCenterZ = Integer.MIN_VALUE;
+        }
+        this.mapOffsetX = visibleCenterX - this.data.previewCenterChunkX();
+        this.mapOffsetZ = visibleCenterZ - this.data.previewCenterChunkZ();
         this.memberScroll = clampMemberScroll(this.memberScroll);
         syncSelections();
         syncTownSelection();
@@ -238,10 +257,10 @@ public class NationHomeScreen extends Screen {
         this.salesTaxDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustSalesTax(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 72, 20, 14).build());
         this.tariffUpButton = this.addRenderableWidget(Button.builder(Component.literal("+"), b -> adjustTariff(100)).bounds(left + BODY_X + 200, top + BODY_Y + 90, 20, 14).build());
         this.tariffDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustTariff(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 90, 20, 14).build());
+        this.treasuryCommandsButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.treasury.commands"), b -> this.showTreasuryCommands = !this.showTreasuryCommands).bounds(left + BODY_X + BODY_W - 90, top + BODY_Y + 34, 78, 18).build());
 
         // Claim radius buttons
-        this.radiusUpButton = this.addRenderableWidget(Button.builder(Component.literal("R+"), b -> adjustRadius(5)).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
-        this.radiusDownButton = this.addRenderableWidget(Button.builder(Component.literal("R-"), b -> adjustRadius(-5)).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W + 12, top + BODY_Y + 10, 24, 14).build());
+        this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
 
         // Peace proposal buttons
         this.proposeCeasefireButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.ceasefire"), b -> submitPeaceProposal("ceasefire", 0, 0)).bounds(left + BODY_X + 12, top + BODY_Y + 148, 90, 18).build());
@@ -295,7 +314,7 @@ public class NationHomeScreen extends Screen {
             return;
         }
         this.autoRefreshTicks = 0;
-        ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket());
+        requestRefresh();
     }
 
     @Override
@@ -330,6 +349,16 @@ public class NationHomeScreen extends Screen {
                 return true;
             }
         }
+        if (this.currentPage == Page.TREASURY) {
+            int itemListX = left() + BODY_X + 12;
+            int itemListY = top() + BODY_Y + 124;
+            int itemListW = BODY_W - 24;
+            int itemListH = TREASURY_ITEM_VISIBLE_ROWS * TREASURY_ITEM_ROW_H;
+            if (mouseX >= itemListX && mouseX < itemListX + itemListW && mouseY >= itemListY && mouseY < itemListY + itemListH) {
+                this.treasuryItemScroll = Math.max(0, this.treasuryItemScroll + (delta > 0 ? -1 : 1));
+                return true;
+            }
+        }
         if (this.currentPage == Page.DIPLOMACY) {
             int listX = left() + BODY_X + 8;
             int listY = top() + BODY_Y + 28;
@@ -349,7 +378,53 @@ public class NationHomeScreen extends Screen {
         if (button == 0 && this.currentPage == Page.MEMBERS && trySelectMember(mouseX, mouseY)) return true;
         if (button == 0 && this.currentPage == Page.CLAIMS && trySelectClaim(mouseX, mouseY)) return true;
         if (button == 0 && this.currentPage == Page.DIPLOMACY && trySelectDiplomacyNation(mouseX, mouseY)) return true;
+        if (button == 2 && this.currentPage == Page.CLAIMS) {
+            int left = left();
+            int top = top();
+            int mapX = left + BODY_X + BODY_W - CLAIM_MAP_W - 8;
+            int mapY = top + BODY_Y + 28;
+            if (mouseX >= mapX && mouseX < mapX + CLAIM_MAP_W && mouseY >= mapY && mouseY < mapY + CLAIM_MAP_H) {
+                this.isDraggingMap = true;
+                this.dragStartX = mouseX;
+                this.dragStartY = mouseY;
+                return true;
+            }
+        }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 2 && this.isDraggingMap) {
+            this.isDraggingMap = false;
+            requestRefresh(mapCenterX(), mapCenterZ());
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (button == 2 && this.isDraggingMap && this.currentPage == Page.CLAIMS) {
+            int diameter = claimRadius() * 2 + 1;
+            double cellW = (double) CLAIM_MAP_W / diameter;
+            double cellH = (double) CLAIM_MAP_H / diameter;
+            double dx = mouseX - this.dragStartX;
+            double dy = mouseY - this.dragStartY;
+            if (Math.abs(dx) >= cellW) {
+                int chunks = (int) (dx / cellW);
+                this.mapOffsetX -= chunks;
+                this.dragStartX += chunks * cellW;
+            }
+            if (Math.abs(dy) >= cellH) {
+                int chunks = (int) (dy / cellH);
+                this.mapOffsetZ -= chunks;
+                this.dragStartY += chunks * cellH;
+            }
+            maybeRequestPreviewRefresh();
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
     @Override
@@ -628,13 +703,34 @@ public class NationHomeScreen extends Screen {
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.trade_count_label"), x + 12, y + 92, 0xFFB8C0C8);
         g.drawString(this.font, String.valueOf(this.data.recentTradeCount()), x + 140, y + 92, 0xFFDCEEFF);
 
-        drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.bank_hint"), x + 12, y + 120, BODY_W - 24, 0xFF8D98A3);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.items_label"), x + 12, y + 110, 0xFFB8C0C8);
 
-        if (this.data.canManageTreasury()) {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.tax_hint"), x + 12, y + 150, BODY_W - 24, 0xFF8D98A3);
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, y + 180, BODY_W - 24, 0xFF8D98A3);
-        } else {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.no_permission"), x + 12, y + 150, BODY_W - 24, 0xFF8D98A3);
+        int itemListX = x + 12;
+        int itemListY = y + 124;
+        int itemListW = BODY_W - 24;
+        g.fill(itemListX, itemListY, itemListX + itemListW, itemListY + TREASURY_ITEM_VISIBLE_ROWS * TREASURY_ITEM_ROW_H, 0x44000000);
+
+        int startIdx = Math.max(0, treasuryItemScroll);
+        int drawn = 0;
+        for (int i = 0; i < this.data.treasuryItems().size() && drawn < TREASURY_ITEM_VISIBLE_ROWS; i++) {
+            net.minecraft.world.item.ItemStack stack = this.data.treasuryItems().get(i);
+            if (stack.isEmpty()) continue;
+            if (startIdx > 0) { startIdx--; continue; }
+            int rowY = itemListY + drawn * TREASURY_ITEM_ROW_H + 2;
+            g.renderItem(stack, itemListX + 2, rowY);
+            String name = stack.getHoverName().getString();
+            if (name.length() > 30) name = name.substring(0, 30) + "...";
+            g.drawString(this.font, name, itemListX + 22, rowY + 4, 0xFFDCEEFF);
+            g.drawString(this.font, "x" + stack.getCount(), itemListX + itemListW - 40, rowY + 4, 0xFFE7C977);
+            drawn++;
+        }
+
+        if (this.showTreasuryCommands) {
+            int cmdY = y + 246;
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.bank_hint"), x + 12, cmdY, BODY_W - 24, 0xFF8D98A3);
+            if (this.data.canManageTreasury()) {
+                drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, cmdY + 24, BODY_W - 24, 0xFF8D98A3);
+            }
         }
     }
 
@@ -812,9 +908,10 @@ public class NationHomeScreen extends Screen {
         if (this.salesTaxDownButton != null) { this.salesTaxDownButton.visible = treasuryPage; this.salesTaxDownButton.active = canTreasury; }
         if (this.tariffUpButton != null) { this.tariffUpButton.visible = treasuryPage; this.tariffUpButton.active = canTreasury; }
         if (this.tariffDownButton != null) { this.tariffDownButton.visible = treasuryPage; this.tariffDownButton.active = canTreasury; }
+        if (this.treasuryCommandsButton != null) { this.treasuryCommandsButton.visible = treasuryPage && this.data.hasNation(); this.treasuryCommandsButton.active = treasuryPage; }
+        if (this.tariffDownButton != null) { this.tariffDownButton.visible = treasuryPage; this.tariffDownButton.active = canTreasury; }
 
-        if (this.radiusUpButton != null) { this.radiusUpButton.visible = claimsPage; this.radiusUpButton.active = claimsPage; }
-        if (this.radiusDownButton != null) { this.radiusDownButton.visible = claimsPage; this.radiusDownButton.active = claimsPage; }
+        if (this.resetMapButton != null) { this.resetMapButton.visible = claimsPage; this.resetMapButton.active = claimsPage; }
 
         boolean hasWar = this.data.hasActiveWar();
         boolean canWar = warPage && this.data.hasNation() && this.data.canDeclareWar() && hasWar;
@@ -840,17 +937,22 @@ public class NationHomeScreen extends Screen {
         }
     }
 
+    private int mapCenterX() { return this.data.previewCenterChunkX() + this.mapOffsetX; }
+    private int mapCenterZ() { return this.data.previewCenterChunkZ() + this.mapOffsetZ; }
+
     private void drawClaimMap(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
         g.fill(mapX - 1, mapY - 1, mapX + CLAIM_MAP_W + 1, mapY + CLAIM_MAP_H + 1, 0xFF6F8390);
         g.fill(mapX, mapY, mapX + CLAIM_MAP_W, mapY + CLAIM_MAP_H, 0xFF22323C);
+        int centerX = mapCenterX();
+        int centerZ = mapCenterZ();
         for (int gz = 0; gz <= claimRadius() * 2; gz++) {
             int y1 = mapY + gz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
             int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (claimRadius() * 2 + 1);
-            int chunkZ = this.data.currentChunkZ() + gz - claimRadius();
+            int chunkZ = centerZ + gz - claimRadius();
             for (int gx = 0; gx <= claimRadius() * 2; gx++) {
                 int x1 = mapX + gx * CLAIM_MAP_W / (claimRadius() * 2 + 1);
                 int x2 = mapX + (gx + 1) * CLAIM_MAP_W / (claimRadius() * 2 + 1);
-                int chunkX = this.data.currentChunkX() + gx - claimRadius();
+                int chunkX = centerX + gx - claimRadius();
                 int color = sampleClaimTerrainColor(chunkX, chunkZ);
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim != null) {
@@ -863,11 +965,11 @@ public class NationHomeScreen extends Screen {
         for (int gz = 0; gz <= claimRadius() * 2; gz++) {
             int y1 = mapY + gz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
             int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (claimRadius() * 2 + 1);
-            int chunkZ = this.data.currentChunkZ() + gz - claimRadius();
+            int chunkZ = centerZ + gz - claimRadius();
             for (int gx = 0; gx <= claimRadius() * 2; gx++) {
                 int x1 = mapX + gx * CLAIM_MAP_W / (claimRadius() * 2 + 1);
                 int x2 = mapX + (gx + 1) * CLAIM_MAP_W / (claimRadius() * 2 + 1);
-                int chunkX = this.data.currentChunkX() + gx - claimRadius();
+                int chunkX = centerX + gx - claimRadius();
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim == null) continue;
                 int borderColor = 0xFF000000 | claim.secondaryColorRgb();
@@ -900,8 +1002,8 @@ public class NationHomeScreen extends Screen {
         if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return;
         int cellX = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseX - mapX) * (claimRadius() * 2 + 1) / CLAIM_MAP_W)));
         int cellZ = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseY - mapY) * (claimRadius() * 2 + 1) / CLAIM_MAP_H)));
-        int hoverChunkX = this.data.currentChunkX() + cellX - claimRadius();
-        int hoverChunkZ = this.data.currentChunkZ() + cellZ - claimRadius();
+        int hoverChunkX = mapCenterX() + cellX - claimRadius();
+        int hoverChunkZ = mapCenterZ() + cellZ - claimRadius();
         NationOverviewClaim hoverClaim = findClaim(hoverChunkX, hoverChunkZ);
         if (hoverClaim == null) return;
         String hoverId = hoverClaim.nationId();
@@ -921,18 +1023,18 @@ public class NationHomeScreen extends Screen {
     }
 
     private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
-        int gridX = chunkX - this.data.currentChunkX() + claimRadius();
-        int gridZ = chunkZ - this.data.currentChunkZ() + claimRadius();
+        int gridX = chunkX - this.data.previewCenterChunkX() + claimRadius();
+        int gridZ = chunkZ - this.data.previewCenterChunkZ() + claimRadius();
         int diameter = claimRadius() * 2 + 1;
-        if (gridX < 0 || gridX >= diameter || gridZ < 0 || gridZ >= diameter) {
-            return 0xFF33414A;
+        if (gridX >= 0 && gridX < diameter && gridZ >= 0 && gridZ < diameter) {
+            int index = gridZ * diameter + gridX;
+            if (index >= 0 && index < this.data.nearbyTerrainColors().size()) {
+                return this.data.nearbyTerrainColors().get(index);
+            }
         }
-        int index = gridZ * diameter + gridX;
-        if (index < 0 || index >= this.data.nearbyTerrainColors().size()) {
-            return 0xFF33414A;
-        }
-        return this.data.nearbyTerrainColors().get(index);
+        return sampleLocalTerrainColor(chunkX, chunkZ);
     }
+
 
     private int blendColor(int base, int overlay, double factor) {
         double clamped = Math.max(0.0D, Math.min(1.0D, factor));
@@ -949,8 +1051,8 @@ public class NationHomeScreen extends Screen {
     }
 
     private void drawClaimMarker(GuiGraphics g, int mapX, int mapY, int chunkX, int chunkZ, int color) {
-        int lx = chunkX - this.data.currentChunkX() + claimRadius();
-        int lz = chunkZ - this.data.currentChunkZ() + claimRadius();
+        int lx = chunkX - mapCenterX() + claimRadius();
+        int lz = chunkZ - mapCenterZ() + claimRadius();
         if (lx < 0 || lx > claimRadius() * 2 || lz < 0 || lz > claimRadius() * 2) return;
         int x1 = mapX + lx * CLAIM_MAP_W / (claimRadius() * 2 + 1);
         int y1 = mapY + lz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
@@ -1028,7 +1130,18 @@ public class NationHomeScreen extends Screen {
     }
 
     private void switchPage(Page page) { this.currentPage = page == null ? Page.OVERVIEW : page; updateButtonState(); }
-    private void requestRefresh() { ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket()); this.statusLine = Component.translatable("screen.sailboatmod.nation.status.refreshing"); }
+    private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ()); }
+    private void requestRefresh(int centerChunkX, int centerChunkZ) { this.pendingPreviewCenterX = centerChunkX; this.pendingPreviewCenterZ = centerChunkZ; ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket(centerChunkX, centerChunkZ)); this.statusLine = Component.translatable("screen.sailboatmod.nation.status.refreshing"); }
+    private void maybeRequestPreviewRefresh() {
+        int centerChunkX = mapCenterX();
+        int centerChunkZ = mapCenterZ();
+        int refreshDistance = Math.max(2, claimRadius() / 2);
+        boolean farFromPreview = Math.abs(centerChunkX - this.data.previewCenterChunkX()) >= refreshDistance
+                || Math.abs(centerChunkZ - this.data.previewCenterChunkZ()) >= refreshDistance;
+        if (!farFromPreview) return;
+        if (centerChunkX == this.pendingPreviewCenterX && centerChunkZ == this.pendingPreviewCenterZ) return;
+        requestRefresh(centerChunkX, centerChunkZ);
+    }
     private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
     private void previousTownSelection() { cycleTownSelection(-1); }
     private void nextTownSelection() { cycleTownSelection(1); }
@@ -1123,7 +1236,14 @@ public class NationHomeScreen extends Screen {
         int current = com.monpai.sailboatmod.ModConfig.CLAIM_PREVIEW_RADIUS.get();
         int next = Math.max(5, Math.min(60, current + delta));
         com.monpai.sailboatmod.ModConfig.CLAIM_PREVIEW_RADIUS.set(next);
+        com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.clearCache();
         requestRefresh();
+    }
+
+    private void resetMapOffset() {
+        this.mapOffsetX = 0;
+        this.mapOffsetZ = 0;
+        requestRefresh(this.data.currentChunkX(), this.data.currentChunkZ());
     }
 
     private void submitPeaceProposal(String type, int cede, long reparation) {
@@ -1204,8 +1324,8 @@ public class NationHomeScreen extends Screen {
         if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false;
         int cellX = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseX - mapX) * (claimRadius() * 2 + 1) / CLAIM_MAP_W)));
         int cellZ = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseY - mapY) * (claimRadius() * 2 + 1) / CLAIM_MAP_H)));
-        int chunkX = this.data.currentChunkX() + cellX - claimRadius();
-        int chunkZ = this.data.currentChunkZ() + cellZ - claimRadius();
+        int chunkX = mapCenterX() + cellX - claimRadius();
+        int chunkZ = mapCenterZ() + cellZ - claimRadius();
         if (hasShiftDown() && this.areaCorner1X != Integer.MIN_VALUE) {
             this.areaCorner2X = chunkX; this.areaCorner2Z = chunkZ;
         } else {
@@ -1231,6 +1351,43 @@ public class NationHomeScreen extends Screen {
     private void syncTownSelection() { if (this.data.towns().isEmpty()) { this.selectedTownId = ""; return; } if (!this.selectedTownId.isBlank()) { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return; } if (!this.data.capitalTownId().isBlank()) { for (NationOverviewTown town : this.data.towns()) { if (town.townId().equals(this.data.capitalTownId())) { this.selectedTownId = town.townId(); return; } } } this.selectedTownId = this.data.towns().get(0).townId(); }
     private NationOverviewTown selectedTown() { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return town; return this.data.towns().isEmpty() ? null : this.data.towns().get(0); }
     private void cycleTownSelection(int delta) { if (this.data.towns().isEmpty()) return; int index = 0; for (int i = 0; i < this.data.towns().size(); i++) { if (this.data.towns().get(i).townId().equals(this.selectedTownId)) { index = i; break; } } int size = this.data.towns().size(); int next = Math.floorMod(index + delta, size); this.selectedTownId = this.data.towns().get(next).townId(); updateButtonState(); }
+
+    private int sampleLocalTerrainColor(int chunkX, int chunkZ) {
+        long cacheKey = (((long) chunkX) << 32) ^ (chunkZ & 0xFFFFFFFFL);
+        Integer cached = this.terrainColorCache.get(cacheKey);
+        if (cached != null) return cached;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return 0xFF33414A;
+
+        int color = 0xFF33414A;
+        try {
+            int worldX = (chunkX << 4) + 8;
+            int worldZ = (chunkZ << 4) + 8;
+            int worldY = minecraft.level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ) - 1;
+            if (worldY >= minecraft.level.getMinBuildHeight()) {
+                BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
+                BlockState state = minecraft.level.getBlockState(pos);
+                while (state.isAir() && worldY > minecraft.level.getMinBuildHeight()) {
+                    worldY--;
+                    pos.set(worldX, worldY, worldZ);
+                    state = minecraft.level.getBlockState(pos);
+                }
+                if (state.getFluidState().is(FluidTags.WATER)) {
+                    color = 0xFF2F8FBF;
+                } else {
+                    MapColor mapColor = state.getMapColor(minecraft.level, pos);
+                    int base = mapColor == null ? 0x55606A : mapColor.col;
+                    color = 0xFF000000 | (base & 0x00FFFFFF);
+                }
+            }
+        } catch (Exception ignored) {
+            color = 0xFF33414A;
+        }
+
+        if (this.terrainColorCache.size() > 4096) this.terrainColorCache.clear();
+        this.terrainColorCache.put(cacheKey, color);
+        return color;
+    }
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }
     private void drawWrappedLine(GuiGraphics g, Component line, int x, int y, int w, int color) { int drawY = y; for (FormattedCharSequence seq : wrap(line, w)) { g.drawString(this.font, seq, x, drawY, color); drawY += 10; } }

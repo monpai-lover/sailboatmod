@@ -50,6 +50,8 @@ public class OpenNationScreenPacket {
         buffer.writeVarInt(data.totalClaims());
         buffer.writeInt(data.currentChunkX());
         buffer.writeInt(data.currentChunkZ());
+        buffer.writeInt(data.previewCenterChunkX());
+        buffer.writeInt(data.previewCenterChunkZ());
         buffer.writeBoolean(data.currentChunkClaimed());
         buffer.writeBoolean(data.currentChunkOwnedByNation());
         writeUtfSafe(buffer, data.currentChunkOwnerName(), 64);
@@ -97,6 +99,17 @@ public class OpenNationScreenPacket {
         buffer.writeVarInt(data.salesTaxBasisPoints());
         buffer.writeVarInt(data.importTariffBasisPoints());
         buffer.writeVarInt(data.recentTradeCount());
+        int itemCount = 0;
+        for (int i = 0; i < data.treasuryItems().size(); i++) {
+            if (!data.treasuryItems().get(i).isEmpty()) itemCount++;
+        }
+        buffer.writeVarInt(itemCount);
+        for (int i = 0; i < data.treasuryItems().size(); i++) {
+            if (!data.treasuryItems().get(i).isEmpty()) {
+                buffer.writeVarInt(i);
+                buffer.writeItem(data.treasuryItems().get(i));
+            }
+        }
         writeUtfSafe(buffer, data.officerTitle(), 64);
         buffer.writeVarInt(data.diplomacyRelations().size());
         for (NationOverviewDiplomacyEntry relation : data.diplomacyRelations()) {
@@ -181,6 +194,8 @@ public class OpenNationScreenPacket {
         int totalClaims = buffer.readVarInt();
         int currentChunkX = buffer.readInt();
         int currentChunkZ = buffer.readInt();
+        int previewCenterChunkX = buffer.readInt();
+        int previewCenterChunkZ = buffer.readInt();
         boolean currentChunkClaimed = buffer.readBoolean();
         boolean currentChunkOwnedByNation = buffer.readBoolean();
         String currentChunkOwnerName = buffer.readUtf(64);
@@ -228,6 +243,15 @@ public class OpenNationScreenPacket {
         int salesTaxBasisPoints = buffer.readVarInt();
         int importTariffBasisPoints = buffer.readVarInt();
         int recentTradeCount = buffer.readVarInt();
+        net.minecraft.core.NonNullList<net.minecraft.world.item.ItemStack> treasuryItems = net.minecraft.core.NonNullList.withSize(com.monpai.sailboatmod.nation.model.NationTreasuryRecord.TREASURY_SLOTS, net.minecraft.world.item.ItemStack.EMPTY);
+        int treasuryItemCount = buffer.readVarInt();
+        for (int i = 0; i < treasuryItemCount; i++) {
+            int slot = buffer.readVarInt();
+            net.minecraft.world.item.ItemStack stack = buffer.readItem();
+            if (slot >= 0 && slot < treasuryItems.size()) {
+                treasuryItems.set(slot, stack);
+            }
+        }
         String officerTitle = buffer.readUtf(64);
         int diplomacyRelationSize = buffer.readVarInt();
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>(diplomacyRelationSize);
@@ -328,6 +352,8 @@ public class OpenNationScreenPacket {
                 totalClaims,
                 currentChunkX,
                 currentChunkZ,
+                previewCenterChunkX,
+                previewCenterChunkZ,
                 currentChunkClaimed,
                 currentChunkOwnedByNation,
                 currentChunkOwnerName,
@@ -375,6 +401,7 @@ public class OpenNationScreenPacket {
                 salesTaxBasisPoints,
                 importTariffBasisPoints,
                 recentTradeCount,
+                treasuryItems,
                 officerTitle,
                 diplomacyRelations,
                 incomingDiplomacyRequests,

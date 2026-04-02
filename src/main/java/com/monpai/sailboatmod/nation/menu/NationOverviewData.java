@@ -1,5 +1,8 @@
 package com.monpai.sailboatmod.nation.menu;
 
+import net.minecraft.core.NonNullList;
+import net.minecraft.world.item.ItemStack;
+
 import java.util.List;
 
 public record NationOverviewData(
@@ -20,6 +23,8 @@ public record NationOverviewData(
         int totalClaims,
         int currentChunkX,
         int currentChunkZ,
+        int previewCenterChunkX,
+        int previewCenterChunkZ,
         boolean currentChunkClaimed,
         boolean currentChunkOwnedByNation,
         String currentChunkOwnerName,
@@ -67,6 +72,7 @@ public record NationOverviewData(
         int salesTaxBasisPoints,
         int importTariffBasisPoints,
         int recentTradeCount,
+        NonNullList<ItemStack> treasuryItems,
         String officerTitle,
         List<NationOverviewDiplomacyEntry> diplomacyRelations,
         List<NationOverviewDiplomacyRequest> incomingDiplomacyRequests,
@@ -112,6 +118,7 @@ public record NationOverviewData(
         flagHeight = Math.max(0, flagHeight);
         flagByteSize = Math.max(0L, flagByteSize);
         treasuryBalance = Math.max(0L, treasuryBalance);
+        treasuryItems = treasuryItems == null ? NonNullList.withSize(com.monpai.sailboatmod.nation.model.NationTreasuryRecord.TREASURY_SLOTS, ItemStack.EMPTY) : treasuryItems;
         diplomacyRelations = diplomacyRelations == null ? List.of() : diplomacyRelations.stream()
                 .map(entry -> new NationOverviewDiplomacyEntry(
                         sanitize(entry.nationId(), 40),
@@ -194,6 +201,8 @@ public record NationOverviewData(
                 0,
                 0,
                 0,
+                0,
+                0,
                 false,
                 false,
                 "",
@@ -241,6 +250,7 @@ public record NationOverviewData(
                 0,
                 0,
                 0,
+                NonNullList.withSize(com.monpai.sailboatmod.nation.model.NationTreasuryRecord.TREASURY_SLOTS, ItemStack.EMPTY),
                 "",
                 List.of(),
                 List.of(),

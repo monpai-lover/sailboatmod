@@ -36,8 +36,11 @@ public class OpenTownScreenPacket {
         PacketStringCodec.writeUtfSafe(buffer, data.coreDimension(), 128);
         buffer.writeLong(data.corePos());
         buffer.writeVarInt(data.totalClaims());
+        buffer.writeVarInt(data.residentCount());
         buffer.writeInt(data.currentChunkX());
         buffer.writeInt(data.currentChunkZ());
+        buffer.writeInt(data.previewCenterChunkX());
+        buffer.writeInt(data.previewCenterChunkZ());
         buffer.writeBoolean(data.currentChunkClaimed());
         buffer.writeBoolean(data.currentChunkOwnedByTown());
         PacketStringCodec.writeUtfSafe(buffer, data.currentChunkOwnerName(), 64);
@@ -95,6 +98,12 @@ public class OpenTownScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, entry.getKey(), 32);
             buffer.writeVarInt(entry.getValue());
         }
+        buffer.writeFloat(data.averageLiteracy());
+        buffer.writeVarInt(data.educationLevelDistribution().size());
+        for (var entry : data.educationLevelDistribution().entrySet()) {
+            PacketStringCodec.writeUtfSafe(buffer, entry.getKey(), 32);
+            buffer.writeVarInt(entry.getValue());
+        }
     }
 
     public static OpenTownScreenPacket decode(FriendlyByteBuf buffer) {
@@ -112,8 +121,11 @@ public class OpenTownScreenPacket {
         String coreDimension = buffer.readUtf(128);
         long corePos = buffer.readLong();
         int totalClaims = buffer.readVarInt();
+        int residentCount = buffer.readVarInt();
         int currentChunkX = buffer.readInt();
         int currentChunkZ = buffer.readInt();
+        int previewCenterChunkX = buffer.readInt();
+        int previewCenterChunkZ = buffer.readInt();
         boolean currentChunkClaimed = buffer.readBoolean();
         boolean currentChunkOwnedByTown = buffer.readBoolean();
         String currentChunkOwnerName = buffer.readUtf(64);
@@ -178,6 +190,12 @@ public class OpenTownScreenPacket {
         for (int i = 0; i < cultureDistSize; i++) {
             cultureDistribution.put(buffer.readUtf(32), buffer.readVarInt());
         }
+        float averageLiteracy = buffer.readFloat();
+        int eduDistSize = buffer.readVarInt();
+        java.util.Map<String, Integer> educationLevelDistribution = new java.util.HashMap<>();
+        for (int i = 0; i < eduDistSize; i++) {
+            educationLevelDistribution.put(buffer.readUtf(32), buffer.readVarInt());
+        }
         return new OpenTownScreenPacket(new TownOverviewData(
                 hasTown,
                 townId,
@@ -193,8 +211,11 @@ public class OpenTownScreenPacket {
                 coreDimension,
                 corePos,
                 totalClaims,
+                residentCount,
                 currentChunkX,
                 currentChunkZ,
+                previewCenterChunkX,
+                previewCenterChunkZ,
                 currentChunkClaimed,
                 currentChunkOwnedByTown,
                 currentChunkOwnerName,
@@ -220,7 +241,9 @@ public class OpenTownScreenPacket {
                 nearbyTerrainColors,
                 nearbyClaims,
                 cultureId,
-                cultureDistribution
+                cultureDistribution,
+                averageLiteracy,
+                educationLevelDistribution
         ));
     }
 

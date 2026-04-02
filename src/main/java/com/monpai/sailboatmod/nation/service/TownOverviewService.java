@@ -25,6 +25,10 @@ public final class TownOverviewService {
     private static final int DEFAULT_SECONDARY_COLOR = 0xD8B35A;
 
     public static TownOverviewData buildFor(ServerPlayer player, String townId) {
+        return buildFor(player, townId, player == null ? null : player.chunkPosition());
+    }
+
+    public static TownOverviewData buildFor(ServerPlayer player, String townId, ChunkPos previewCenterChunk) {
         if (player == null || townId == null || townId.isBlank()) {
             return TownOverviewData.empty();
         }
@@ -37,6 +41,7 @@ public final class TownOverviewService {
 
         NationRecord nation = town.hasNation() ? data.getNation(town.nationId()) : null;
         ChunkPos playerChunk = player.chunkPosition();
+        ChunkPos previewChunk = previewCenterChunk == null ? playerChunk : previewCenterChunk;
         NationClaimRecord currentClaim = data.getClaim(player.level(), playerChunk);
         TownRecord currentTown = currentClaim == null || currentClaim.townId().isBlank() ? null : data.getTown(currentClaim.townId());
         NationRecord currentNation = currentClaim == null || currentClaim.nationId().isBlank() ? null : data.getNation(currentClaim.nationId());
@@ -63,10 +68,10 @@ public final class TownOverviewService {
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>();
         for (NationClaimRecord claim : data.getClaimsInArea(
                 player.level().dimension().location().toString(),
-                playerChunk.x - claimPreviewRadius(),
-                playerChunk.x + claimPreviewRadius(),
-                playerChunk.z - claimPreviewRadius(),
-                playerChunk.z + claimPreviewRadius())) {
+                previewChunk.x - claimPreviewRadius(),
+                previewChunk.x + claimPreviewRadius(),
+                previewChunk.z - claimPreviewRadius(),
+                previewChunk.z + claimPreviewRadius())) {
             TownRecord claimTown = claim.townId().isBlank() ? null : data.getTown(claim.townId());
             NationRecord claimNation = claim.nationId().isBlank() ? null : data.getNation(claim.nationId());
             nearbyClaims.add(new NationOverviewClaim(
@@ -87,7 +92,7 @@ public final class TownOverviewService {
                     claim.entityDamageAccessLevel()));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), playerChunk, claimPreviewRadius());
+        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), previewChunk, claimPreviewRadius());
 
         boolean canManageTown = TownService.canManageTown(player, data, town);
         boolean canAssignMayor = nation != null && player.getUUID().equals(nation.leaderUuid());
@@ -113,8 +118,11 @@ public final class TownOverviewService {
                 town.coreDimension(),
                 town.corePos(),
                 countClaimsManagedByTown(data, town, nation),
+                com.monpai.sailboatmod.resident.data.ResidentSavedData.get(player.level()).countResidentsForTown(town.townId()),
                 playerChunk.x,
                 playerChunk.z,
+                previewChunk.x,
+                previewChunk.z,
                 currentClaim != null,
                 isClaimManagedByTown(currentClaim, town, nation),
                 ownerName,
@@ -140,7 +148,9 @@ public final class TownOverviewService {
                 nearbyTerrainColors,
                 nearbyClaims,
                 town.cultureId(),
-                TownCultureService.getCultureDistribution(player.level(), town.townId()));
+                TownCultureService.getCultureDistribution(player.level(), town.townId()),
+                calculateAverageLiteracy(player.level(), town.townId()),
+                calculateEducationDistribution(player.level(), town.townId()));
     }
 
     private static int countClaimsManagedByTown(NationSavedData data, TownRecord town, NationRecord nation) {
@@ -241,6 +251,45 @@ public final class TownOverviewService {
             return nation.name();
         }
         return fallbackId == null || fallbackId.isBlank() ? "-" : fallbackId;
+    }
+
+    private static float calculateAverageLiteracy(net.minecraft.world.level.Level level, String townId) {
+        if (!(level instanceof net.minecraft.server.level.ServerLevel serverLevel) || townId == null || townId.isBlank()) {
+            return 0.0f;
+        }
+
+        float totalLiteracy = 0.0f;
+        int count = 0;
+
+        for (net.minecraft.world.entity.Entity entity : serverLevel.getAllEntities()) {
+            if (entity instanceof com.monpai.sailboatmod.resident.entity.ResidentEntity resident) {
+                if (townId.equals(resident.getTownId())) {
+                    totalLiteracy += resident.getLiteracy();
+                    count++;
+                }
+            }
+        }
+
+        return count > 0 ? totalLiteracy / count : 0.0f;
+    }
+
+    private static java.util.Map<String, Integer> calculateEducationDistribution(net.minecraft.world.level.Level level, String townId) {
+        if (!(level instanceof net.minecraft.server.level.ServerLevel serverLevel) || townId == null || townId.isBlank()) {
+            return java.util.Map.of();
+        }
+
+        java.util.Map<String, Integer> distribution = new java.util.HashMap<>();
+
+        for (net.minecraft.world.entity.Entity entity : serverLevel.getAllEntities()) {
+            if (entity instanceof com.monpai.sailboatmod.resident.entity.ResidentEntity resident) {
+                if (townId.equals(resident.getTownId())) {
+                    String levelId = resident.getEducationLevel().id();
+                    distribution.put(levelId, distribution.getOrDefault(levelId, 0) + 1);
+                }
+            }
+        }
+
+        return distribution;
     }
 
     private TownOverviewService() {

@@ -145,7 +145,8 @@ public class BankConstructorItem extends Item {
                     getOffsetX(stack),
                     getOffsetY(stack),
                     getOffsetZ(stack),
-                    getRotation(stack)
+                    getRotation(stack),
+                    player.isSprinting()
                 )
             );
             return InteractionResultHolder.success(stack);
@@ -165,6 +166,7 @@ public class BankConstructorItem extends Item {
             tooltip.add(Component.translatable("item.sailboatmod.constructor.offsets", oX, oY, oZ, rot * 90));
         }
         tooltip.add(Component.translatable("item.sailboatmod.constructor.hint"));
+        tooltip.add(Component.literal("Sprint+Right click: assist-place next blueprint block"));
     }
 
     @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
