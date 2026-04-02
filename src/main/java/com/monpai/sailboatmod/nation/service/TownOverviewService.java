@@ -306,6 +306,17 @@ public final class TownOverviewService {
         return distribution;
     }
 
+    public static ChunkPos getCoreCenterOrPlayer(ServerPlayer player, String townId) {
+        if (player == null || townId == null || townId.isBlank()) return player == null ? new ChunkPos(0, 0) : player.chunkPosition();
+        NationSavedData data = NationSavedData.get(player.level());
+        TownRecord town = data.getTown(townId);
+        if (town != null && town.hasCore()) {
+            net.minecraft.core.BlockPos corePos = net.minecraft.core.BlockPos.of(town.corePos());
+            return new ChunkPos(corePos.getX() >> 4, corePos.getZ() >> 4);
+        }
+        return player.chunkPosition();
+    }
+
     private TownOverviewService() {
     }
 }

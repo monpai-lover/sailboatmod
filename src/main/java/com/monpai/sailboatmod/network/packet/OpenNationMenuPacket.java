@@ -40,9 +40,13 @@ public class OpenNationMenuPacket {
             if (player == null) {
                 return;
             }
-            ChunkPos previewCenter = packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE
-                    ? player.chunkPosition()
-                    : new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
+            ChunkPos previewCenter;
+            if (packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE) {
+                // First open: center on nation core if available, else player position
+                previewCenter = NationOverviewService.getCoreCenterOrPlayer(player);
+            } else {
+                previewCenter = new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
+            }
             NationOverviewData data = NationOverviewService.buildFor(player, previewCenter);
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
         });

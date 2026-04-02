@@ -6,6 +6,11 @@ import net.minecraft.client.Minecraft;
 
 public final class TownClientHooks {
     private static TownOverviewData lastSyncedData = TownOverviewData.empty();
+    private static boolean expectingOpen = false;
+
+    public static void requestOpen() {
+        expectingOpen = true;
+    }
 
     public static void openOrUpdate(TownOverviewData data) {
         lastSyncedData = data == null ? TownOverviewData.empty() : data;
@@ -14,11 +19,15 @@ public final class TownClientHooks {
             townHomeScreen.updateData(lastSyncedData);
             return;
         }
-        minecraft.setScreen(new TownHomeScreen(lastSyncedData));
+        if (expectingOpen) {
+            expectingOpen = false;
+            minecraft.setScreen(new TownHomeScreen(lastSyncedData));
+        }
     }
 
     public static void clearCache() {
         lastSyncedData = TownOverviewData.empty();
+        expectingOpen = false;
     }
 
     private TownClientHooks() {

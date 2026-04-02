@@ -12,9 +12,8 @@ public final class TradeClientHooks {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof TradeScreen tradeScreen) {
             tradeScreen.updateData(lastSyncedData);
-            return;
         }
-        minecraft.setScreen(new TradeScreen(lastSyncedData));
+        // Do not open a new screen here — only update if already open.
     }
 
     public static void updateIfOpen(TradeScreenData data) {

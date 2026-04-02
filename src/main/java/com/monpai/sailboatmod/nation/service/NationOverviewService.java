@@ -305,6 +305,20 @@ public final class NationOverviewService {
         return fallbackId == null || fallbackId.isBlank() ? "-" : fallbackId;
     }
 
+    public static ChunkPos getCoreCenterOrPlayer(ServerPlayer player) {
+        if (player == null) return new ChunkPos(0, 0);
+        NationSavedData data = NationSavedData.get(player.level());
+        NationMemberRecord selfMember = data.getMember(player.getUUID());
+        if (selfMember != null) {
+            NationRecord nation = data.getNation(selfMember.nationId());
+            if (nation != null && nation.hasCore()) {
+                net.minecraft.core.BlockPos corePos = net.minecraft.core.BlockPos.of(nation.corePos());
+                return new ChunkPos(corePos.getX() >> 4, corePos.getZ() >> 4);
+            }
+        }
+        return player.chunkPosition();
+    }
+
     private NationOverviewService() {
     }
 }

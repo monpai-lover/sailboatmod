@@ -1135,14 +1135,13 @@ public class NationHomeScreen extends Screen {
     private void maybeRequestPreviewRefresh() {
         int centerChunkX = mapCenterX();
         int centerChunkZ = mapCenterZ();
-        int refreshDistance = Math.max(2, claimRadius() / 2);
-        boolean farFromPreview = Math.abs(centerChunkX - this.data.previewCenterChunkX()) >= refreshDistance
-                || Math.abs(centerChunkZ - this.data.previewCenterChunkZ()) >= refreshDistance;
+        boolean farFromPreview = Math.abs(centerChunkX - this.data.previewCenterChunkX()) >= 1
+                || Math.abs(centerChunkZ - this.data.previewCenterChunkZ()) >= 1;
         if (!farFromPreview) return;
         if (centerChunkX == this.pendingPreviewCenterX && centerChunkZ == this.pendingPreviewCenterZ) return;
         requestRefresh(centerChunkX, centerChunkZ);
     }
-    private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
+    private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } com.monpai.sailboatmod.client.TownClientHooks.requestOpen(); ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
     private void previousTownSelection() { cycleTownSelection(-1); }
     private void nextTownSelection() { cycleTownSelection(1); }
     private void claimSelectedChunk() {
@@ -1243,7 +1242,12 @@ public class NationHomeScreen extends Screen {
     private void resetMapOffset() {
         this.mapOffsetX = 0;
         this.mapOffsetZ = 0;
-        requestRefresh(this.data.currentChunkX(), this.data.currentChunkZ());
+        if (this.data.hasCore()) {
+            net.minecraft.core.BlockPos corePos = net.minecraft.core.BlockPos.of(this.data.corePos());
+            requestRefresh(corePos.getX() >> 4, corePos.getZ() >> 4);
+        } else {
+            requestRefresh(this.data.currentChunkX(), this.data.currentChunkZ());
+        }
     }
 
     private void submitPeaceProposal(String type, int cede, long reparation) {

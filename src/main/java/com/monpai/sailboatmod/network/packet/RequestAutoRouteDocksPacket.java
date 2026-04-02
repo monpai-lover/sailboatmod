@@ -35,23 +35,27 @@ public class RequestAutoRouteDocksPacket {
         ctx.get().enqueueWork(() -> {
             ServerPlayer player = ctx.get().getSender();
             if (player == null) return;
+            if (!(player.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
 
-            if (!(player.level().getBlockEntity(msg.sourceDockPos) instanceof DockBlockEntity sourceDock)) return;
+            if (!(serverLevel.getBlockEntity(msg.sourceDockPos) instanceof DockBlockEntity sourceDock)) return;
 
             List<AvailableDockEntry> available = new ArrayList<>();
 
-            for (BlockPos dockPos : DockRegistry.get(player.level())) {
+            for (BlockPos dockPos : DockRegistry.get(serverLevel)) {
                 if (dockPos.equals(msg.sourceDockPos)) continue;
-                if (!(player.level().getBlockEntity(dockPos) instanceof DockBlockEntity targetDock)) continue;
 
-                if (!AutoRouteService.canCreateAutoRoute(player.level(), sourceDock, targetDock)) continue;
+                // Force-load chunk to access dock block entity
+                serverLevel.getChunkSource().getChunk(dockPos.getX() >> 4, dockPos.getZ() >> 4, net.minecraft.world.level.chunk.ChunkStatus.FULL, true);
+                if (!(serverLevel.getBlockEntity(dockPos) instanceof DockBlockEntity targetDock)) continue;
+
+                if (!AutoRouteService.canCreateAutoRoute(serverLevel, sourceDock, targetDock)) continue;
 
                 int distance = (int) Math.sqrt(msg.sourceDockPos.distSqr(dockPos));
                 available.add(new AvailableDockEntry(
                     dockPos,
                     targetDock.getDockName(),
                     targetDock.getOwnerName(),
-                    getNationName(player.level(), targetDock),
+                    getNationName(serverLevel, targetDock),
                     distance
                 ));
             }

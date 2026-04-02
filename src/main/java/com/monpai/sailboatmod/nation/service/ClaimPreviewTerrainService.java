@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentMap;
 public final class ClaimPreviewTerrainService {
     private static final int DEFAULT_COLOR = 0xFF33414A;
     private static final int WATER_COLOR = 0xFF2F8FBF;
-    private static final long CACHE_TTL_MILLIS = 10_000L;
+    private static final long CACHE_TTL_MILLIS = 2_000L;
     private static final int MAX_CACHE_ENTRIES = 64;
     private static final ConcurrentMap<String, CachedSnapshot> CACHE = new ConcurrentHashMap<>();
 

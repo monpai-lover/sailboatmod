@@ -19,8 +19,8 @@ public final class AutoRouteService {
         String startNationId = startDock.getNationId();
         String endNationId = endDock.getNationId();
 
+        if (startNationId.equals(endNationId) && !startNationId.isBlank()) return true;
         if (startNationId.isBlank() || endNationId.isBlank()) return false;
-        if (startNationId.equals(endNationId)) return true;
 
         NationSavedData data = NationSavedData.get(level);
         NationDiplomacyRecord relation = data.getDiplomacy(startNationId, endNationId);

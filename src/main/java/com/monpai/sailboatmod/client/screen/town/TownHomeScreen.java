@@ -726,15 +726,19 @@ public class TownHomeScreen extends Screen {
     private void resetMapOffset() {
         this.mapOffsetX = 0;
         this.mapOffsetZ = 0;
-        requestRefresh(this.data.currentChunkX(), this.data.currentChunkZ());
+        if (this.data.hasCore()) {
+            net.minecraft.core.BlockPos corePos = net.minecraft.core.BlockPos.of(this.data.corePos());
+            requestRefresh(corePos.getX() >> 4, corePos.getZ() >> 4);
+        } else {
+            requestRefresh(this.data.currentChunkX(), this.data.currentChunkZ());
+        }
     }
 
     private void maybeRequestPreviewRefresh() {
         int centerChunkX = mapCenterX();
         int centerChunkZ = mapCenterZ();
-        int refreshDistance = Math.max(2, claimRadius() / 2);
-        boolean farFromPreview = Math.abs(centerChunkX - this.data.previewCenterChunkX()) >= refreshDistance
-                || Math.abs(centerChunkZ - this.data.previewCenterChunkZ()) >= refreshDistance;
+        boolean farFromPreview = Math.abs(centerChunkX - this.data.previewCenterChunkX()) >= 1
+                || Math.abs(centerChunkZ - this.data.previewCenterChunkZ()) >= 1;
         if (!farFromPreview) return;
         if (centerChunkX == this.pendingPreviewCenterX && centerChunkZ == this.pendingPreviewCenterZ) return;
         requestRefresh(centerChunkX, centerChunkZ);

@@ -8,8 +8,10 @@ import net.minecraft.network.chat.Component;
 
 public final class NationClientHooks {
     private static NationOverviewData lastSyncedData = NationOverviewData.empty();
+    private static boolean expectingOpen = false;
 
     public static void openCachedOrEmpty() {
+        expectingOpen = true;
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
             nationHomeScreen.updateData(lastSyncedData);
@@ -25,7 +27,10 @@ public final class NationClientHooks {
             nationHomeScreen.updateData(lastSyncedData);
             return;
         }
-        minecraft.setScreen(new NationHomeScreen(lastSyncedData));
+        if (expectingOpen) {
+            expectingOpen = false;
+            minecraft.setScreen(new NationHomeScreen(lastSyncedData));
+        }
     }
 
     public static void updateIfOpen(NationOverviewData data) {
@@ -52,6 +57,7 @@ public final class NationClientHooks {
 
     public static void clearCache() {
         lastSyncedData = NationOverviewData.empty();
+        expectingOpen = false;
     }
 
     private NationClientHooks() {
