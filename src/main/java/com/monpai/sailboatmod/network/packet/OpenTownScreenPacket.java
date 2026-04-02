@@ -113,6 +113,10 @@ public class OpenTownScreenPacket {
         buffer.writeLong(data.totalIncome());
         buffer.writeLong(data.totalExpense());
         buffer.writeLong(data.netBalance());
+        writeLines(buffer, data.stockpilePreviewLines(), 80);
+        writeLines(buffer, data.demandPreviewLines(), 80);
+        writeLines(buffer, data.procurementPreviewLines(), 80);
+        writeLines(buffer, data.financePreviewLines(), 80);
     }
 
     public static OpenTownScreenPacket decode(FriendlyByteBuf buffer) {
@@ -214,6 +218,10 @@ public class OpenTownScreenPacket {
         long totalIncome = buffer.readLong();
         long totalExpense = buffer.readLong();
         long netBalance = buffer.readLong();
+        List<String> stockpilePreviewLines = readLines(buffer, 80);
+        List<String> demandPreviewLines = readLines(buffer, 80);
+        List<String> procurementPreviewLines = readLines(buffer, 80);
+        List<String> financePreviewLines = readLines(buffer, 80);
         return new OpenTownScreenPacket(new TownOverviewData(
                 hasTown,
                 townId,
@@ -270,7 +278,11 @@ public class OpenTownScreenPacket {
                 activeProcurementCount,
                 totalIncome,
                 totalExpense,
-                netBalance
+                netBalance,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines
         ));
     }
 
@@ -278,5 +290,22 @@ public class OpenTownScreenPacket {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> TownClientHooks.openOrUpdate(packet.data)));
         context.setPacketHandled(true);
+    }
+
+    private static void writeLines(FriendlyByteBuf buffer, List<String> lines, int maxLength) {
+        List<String> safeLines = lines == null ? List.of() : lines;
+        buffer.writeVarInt(safeLines.size());
+        for (String line : safeLines) {
+            PacketStringCodec.writeUtfSafe(buffer, line, maxLength);
+        }
+    }
+
+    private static List<String> readLines(FriendlyByteBuf buffer, int maxLength) {
+        int size = buffer.readVarInt();
+        List<String> lines = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            lines.add(buffer.readUtf(maxLength));
+        }
+        return lines;
     }
 }

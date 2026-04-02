@@ -160,7 +160,11 @@ public final class TownOverviewService {
                 economy.activeProcurementCount(),
                 economy.totalIncome(),
                 economy.totalExpense(),
-                economy.netBalance());
+                economy.netBalance(),
+                economy.stockpilePreviewLines(),
+                economy.demandPreviewLines(),
+                economy.procurementPreviewLines(),
+                economy.financePreviewLines());
     }
 
     private static int countClaimsManagedByTown(NationSavedData data, TownRecord town, NationRecord nation) {

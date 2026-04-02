@@ -1,7 +1,6 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.screen.MarketScreen;
-import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -14,10 +13,6 @@ public final class MarketClientHooks {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof MarketScreen marketScreen && marketScreen.isForMarket(data.marketPos())) {
             marketScreen.updateData(data);
-            return;
-        }
-        if (ModernUiCompat.isAvailable()) {
-            ModernUiRuntimeBridge.updateCurrentMarket(data);
         }
     }
 

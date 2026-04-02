@@ -1,7 +1,6 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.screen.nation.NationHomeScreen;
-import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
@@ -16,10 +15,6 @@ public final class NationClientHooks {
             nationHomeScreen.updateData(lastSyncedData);
             return;
         }
-        if (ModernUiCompat.isAvailable()) {
-            ModernUiRuntimeBridge.openNationScreen(lastSyncedData);
-            return;
-        }
         minecraft.setScreen(new NationHomeScreen(lastSyncedData));
     }
 
@@ -30,12 +25,6 @@ public final class NationClientHooks {
             nationHomeScreen.updateData(lastSyncedData);
             return;
         }
-        if (ModernUiCompat.isAvailable()) {
-            if (!ModernUiRuntimeBridge.updateCurrentNation(lastSyncedData)) {
-                ModernUiRuntimeBridge.openNationScreen(lastSyncedData);
-            }
-            return;
-        }
         minecraft.setScreen(new NationHomeScreen(lastSyncedData));
     }
 
@@ -44,8 +33,6 @@ public final class NationClientHooks {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
             nationHomeScreen.updateData(lastSyncedData);
-        } else if (ModernUiCompat.isAvailable()) {
-            ModernUiRuntimeBridge.updateCurrentNation(lastSyncedData);
         }
     }
 

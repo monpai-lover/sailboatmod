@@ -1,6 +1,5 @@
 package com.monpai.sailboatmod.client;
 
-import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.client.screen.nation.TradeScreen;
 import com.monpai.sailboatmod.nation.menu.TradeScreenData;
 import net.minecraft.client.Minecraft;
@@ -15,12 +14,6 @@ public final class TradeClientHooks {
             tradeScreen.updateData(lastSyncedData);
             return;
         }
-        if (ModernUiCompat.isAvailable()) {
-            if (!ModernUiRuntimeBridge.updateCurrentTrade(lastSyncedData)) {
-                ModernUiRuntimeBridge.openTradeScreen(lastSyncedData);
-            }
-            return;
-        }
         minecraft.setScreen(new TradeScreen(lastSyncedData));
     }
 
@@ -29,8 +22,6 @@ public final class TradeClientHooks {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof TradeScreen tradeScreen) {
             tradeScreen.updateData(lastSyncedData);
-        } else if (ModernUiCompat.isAvailable()) {
-            ModernUiRuntimeBridge.updateCurrentTrade(lastSyncedData);
         }
     }
 

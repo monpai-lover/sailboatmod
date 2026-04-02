@@ -1,7 +1,5 @@
 package com.monpai.sailboatmod.network.packet;
 
-import com.monpai.sailboatmod.client.ModernUiCompat;
-import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import net.minecraft.core.NonNullList;
 import net.minecraft.network.FriendlyByteBuf;
@@ -64,9 +62,6 @@ public class SyncTreasuryPacket {
     public static void handle(SyncTreasuryPacket msg, Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> {
             ClientTreasuryCache.update(msg.balance, msg.items, msg.depositors);
-            if (ModernUiCompat.isAvailable()) {
-                ModernUiRuntimeBridge.updateCurrentBank();
-            }
         });
         ctx.get().setPacketHandled(true);
     }

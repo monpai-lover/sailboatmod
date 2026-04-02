@@ -59,7 +59,11 @@ public record TownOverviewData(
         int activeProcurementCount,
         long totalIncome,
         long totalExpense,
-        long netBalance
+        long netBalance,
+        List<String> stockpilePreviewLines,
+        List<String> demandPreviewLines,
+        List<String> procurementPreviewLines,
+        List<String> financePreviewLines
 ) {
     public TownOverviewData {
         townId = sanitize(townId, 40);
@@ -98,6 +102,10 @@ public record TownOverviewData(
         totalExpense = Math.max(0L, totalExpense);
         cultureDistribution = cultureDistribution == null ? Map.of() : Map.copyOf(cultureDistribution);
         educationLevelDistribution = educationLevelDistribution == null ? Map.of() : Map.copyOf(educationLevelDistribution);
+        stockpilePreviewLines = sanitizeLines(stockpilePreviewLines, 80);
+        demandPreviewLines = sanitizeLines(demandPreviewLines, 80);
+        procurementPreviewLines = sanitizeLines(procurementPreviewLines, 80);
+        financePreviewLines = sanitizeLines(financePreviewLines, 80);
         members = members == null ? List.of() : members.stream()
                 .map(member -> new NationOverviewMember(
                         sanitize(member.playerUuid(), 40),
@@ -186,7 +194,11 @@ public record TownOverviewData(
                 0,
                 0L,
                 0L,
-                0L);
+                0L,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     private static String sanitize(String value, int maxLength) {
@@ -195,5 +207,9 @@ public record TownOverviewData(
         }
         String trimmed = value.trim();
         return trimmed.length() <= maxLength ? trimmed : trimmed.substring(0, maxLength);
+    }
+
+    private static List<String> sanitizeLines(List<String> lines, int maxLength) {
+        return lines == null ? List.of() : lines.stream().map(line -> sanitize(line, maxLength)).toList();
     }
 }

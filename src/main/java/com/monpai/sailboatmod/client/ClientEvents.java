@@ -14,7 +14,6 @@ import com.monpai.sailboatmod.client.renderer.blockentity.MarketBlockEntityRende
 import com.monpai.sailboatmod.client.renderer.blockentity.NationFlagBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.TownCoreBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.TownFlagBlockEntityRenderer;
-import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.client.screen.BankScreen;
 import com.monpai.sailboatmod.client.screen.DockScreen;
 import com.monpai.sailboatmod.client.screen.MarketScreen;
@@ -50,13 +49,9 @@ public final class ClientEvents {
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
-            if (ModernUiCompat.isAvailable()) {
-                ModernUiRuntimeBridge.registerMenuScreens();
-            } else {
-                MenuScreens.register(ModMenus.BANK_MENU.get(), BankScreen::new);
-                MenuScreens.register(ModMenus.DOCK_MENU.get(), DockScreen::new);
-                MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
-            }
+            MenuScreens.register(ModMenus.BANK_MENU.get(), BankScreen::new);
+            MenuScreens.register(ModMenus.DOCK_MENU.get(), DockScreen::new);
+            MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
         });
     }
 

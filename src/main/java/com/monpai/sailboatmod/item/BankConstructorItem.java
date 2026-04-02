@@ -1,7 +1,5 @@
 package com.monpai.sailboatmod.item;
 
-import com.monpai.sailboatmod.client.ModernUiCompat;
-import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import com.monpai.sailboatmod.nation.service.TownService;
@@ -173,10 +171,6 @@ public class BankConstructorItem extends Item {
 
     @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
     private static void openStructureScreen(ItemStack stack) {
-        if (ModernUiCompat.isAvailable()) {
-            ModernUiRuntimeBridge.openStructureSelectionScreen(stack);
-            return;
-        }
         net.minecraft.client.Minecraft.getInstance().setScreen(
                 new com.monpai.sailboatmod.client.screen.StructureSelectionScreen(stack)
         );

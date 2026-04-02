@@ -1,7 +1,6 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.screen.town.TownHomeScreen;
-import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
 import net.minecraft.client.Minecraft;
 
@@ -13,12 +12,6 @@ public final class TownClientHooks {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
             townHomeScreen.updateData(lastSyncedData);
-            return;
-        }
-        if (ModernUiCompat.isAvailable()) {
-            if (!ModernUiRuntimeBridge.updateCurrentTown(lastSyncedData)) {
-                ModernUiRuntimeBridge.openTownScreen(lastSyncedData);
-            }
             return;
         }
         minecraft.setScreen(new TownHomeScreen(lastSyncedData));
