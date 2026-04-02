@@ -2,12 +2,16 @@ package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.economy.VaultEconomyBridge;
 import com.monpai.sailboatmod.market.MarketSavedData;
+import com.monpai.sailboatmod.market.ProcurementRecord;
+import com.monpai.sailboatmod.market.ProcurementService;
+import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
+import com.monpai.sailboatmod.nation.model.TownRecord;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -37,17 +41,26 @@ public final class ConstructionCostService {
     public record PaymentResult(boolean success, long totalCost, long treasurySpent, long walletSpent, Component message) {
     }
 
+    private record CommodityDemand(String commodityKey, ItemStack template, int requiredCount) {
+    }
+
+    private record StockpileAllocation(String commodityKey, ItemStack template, int requiredCount,
+                                       int stockpileUsedCount, int purchasedCount, long purchaseCost) {
+    }
+
+    private record PurchasePlan(String townId, List<StockpileAllocation> allocations, long totalPurchaseCost) {
+    }
+
     private ConstructionCostService() {
     }
 
     public static BlueprintCostEstimate estimateBlueprintCost(ServerLevel level, BlueprintService.BlueprintPlacement placement) {
-        Map<Item, Integer> requiredCounts = collectRequiredCounts(placement);
+        List<CommodityDemand> requiredDemands = collectRequiredDemands(placement);
         List<MaterialCost> materials = new ArrayList<>();
         long totalCost = 0L;
-        for (Map.Entry<Item, Integer> entry : requiredCounts.entrySet()) {
-            ItemStack stack = new ItemStack(entry.getKey(), entry.getValue());
-            long materialCost = estimatePurchaseCost(MarketSavedData.get(level), stack, entry.getValue());
-            materials.add(new MaterialCost(new ItemStack(entry.getKey()), entry.getValue(), materialCost));
+        for (CommodityDemand demand : requiredDemands) {
+            long materialCost = estimatePurchaseCost(MarketSavedData.get(level), demand.template(), demand.requiredCount());
+            materials.add(new MaterialCost(demand.template(), demand.requiredCount(), materialCost));
             totalCost += materialCost;
         }
         materials.sort(Comparator.comparing(material -> material.stack().getHoverName().getString(), String.CASE_INSENSITIVE_ORDER));
@@ -55,30 +68,43 @@ public final class ConstructionCostService {
     }
 
     public static PaymentResult chargeForBlueprint(ServerLevel level, ServerPlayer player, BlueprintService.BlueprintPlacement placement) {
-        Map<Item, Integer> requiredCounts = collectRequiredCounts(placement);
-        BlueprintCostEstimate estimate = estimateBlueprintCost(level, placement);
-        PaymentResult result = chargeAmount(level, player, estimate.totalCost(),
+        return chargeForBlueprint(level, player, placement, defaultProjectId(placement));
+    }
+
+    public static PaymentResult chargeForBlueprint(ServerLevel level, ServerPlayer player,
+                                                   BlueprintService.BlueprintPlacement placement, String projectId) {
+        PurchasePlan purchasePlan = buildPurchasePlan(level, player, collectRequiredDemands(placement));
+        PaymentResult result = chargeAmount(level, player, purchasePlan.totalPurchaseCost(),
                 "Construction cost is too large to process.",
                 "Not enough treasury/wallet funds for this blueprint.",
                 "Construction cost paid: %d (treasury %d, wallet %d).");
-        if (result.success()) {
-            applyCommodityPurchases(level, player, requiredCounts);
+        if (result.success() && !player.getAbilities().instabuild) {
+            applyPurchasePlan(level, player, purchasePlan, projectId);
         }
         return result;
     }
 
     public static PaymentResult chargeForSingleItem(ServerLevel level, ServerPlayer player, ItemStack stack) {
+        return chargeForSingleItem(level, player, stack, defaultProjectId(stack));
+    }
+
+    public static PaymentResult chargeForSingleItem(ServerLevel level, ServerPlayer player, ItemStack stack, String projectId) {
         if (stack == null || stack.isEmpty()) {
             return new PaymentResult(true, 0L, 0L, 0L, Component.empty());
         }
-        long totalCost = estimateCommodityCost(stack, stack.getCount());
+        PurchasePlan purchasePlan = buildPurchasePlan(level, player, List.of(new CommodityDemand(
+                CommodityKeyResolver.resolve(stack),
+                CommodityKeyResolver.normalizedTemplate(stack),
+                stack.getCount()
+        )));
+        long totalCost = purchasePlan.totalPurchaseCost();
         String itemName = stack.getHoverName().getString();
         PaymentResult result = chargeAmount(level, player, totalCost,
                 "Construction material cost is too large to process.",
                 "Not enough treasury/wallet funds for " + itemName + ".",
                 "Auto-purchased " + itemName + " for " + totalCost + " (treasury %d, wallet %d).");
-        if (result.success()) {
-            applyCommodityPurchase(level, player, stack, stack.getCount());
+        if (result.success() && !player.getAbilities().instabuild) {
+            applyPurchasePlan(level, player, purchasePlan, projectId);
         }
         return result;
     }
@@ -131,16 +157,24 @@ public final class ConstructionCostService {
         return defaultUnitPrice(stack);
     }
 
-    private static Map<Item, Integer> collectRequiredCounts(BlueprintService.BlueprintPlacement placement) {
-        Map<Item, Integer> requiredCounts = new LinkedHashMap<>();
+    private static List<CommodityDemand> collectRequiredDemands(BlueprintService.BlueprintPlacement placement) {
+        Map<String, CommodityDemandAccumulator> requiredCounts = new LinkedHashMap<>();
         for (StructureTemplate.StructureBlockInfo info : placement.blocks()) {
             Item item = info.state().getBlock().asItem();
             if (item == Items.AIR) {
                 continue;
             }
-            requiredCounts.merge(item, 1, Integer::sum);
+            ItemStack template = new ItemStack(item);
+            String commodityKey = CommodityKeyResolver.resolve(template);
+            requiredCounts.computeIfAbsent(commodityKey,
+                    ignored -> new CommodityDemandAccumulator(commodityKey, CommodityKeyResolver.normalizedTemplate(template)))
+                    .increment();
         }
-        return requiredCounts;
+        List<CommodityDemand> demands = new ArrayList<>(requiredCounts.size());
+        for (CommodityDemandAccumulator accumulator : requiredCounts.values()) {
+            demands.add(accumulator.toDemand());
+        }
+        return List.copyOf(demands);
     }
 
     private static long estimateCommodityCost(ItemStack stack, int quantity) {
@@ -152,15 +186,6 @@ public final class ConstructionCostService {
             return quote.buyPrice();
         } catch (SQLException ignored) {
             return (long) quantity * defaultUnitPrice(stack);
-        }
-    }
-
-    private static void applyCommodityPurchases(ServerLevel level, ServerPlayer player, Map<Item, Integer> requiredCounts) {
-        String actorUuid = player == null ? "" : player.getUUID().toString();
-        String actorName = player == null ? "" : player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
-        String nationId = resolveNationId(level, player);
-        for (Map.Entry<Item, Integer> entry : requiredCounts.entrySet()) {
-            applyCommodityPurchase(level, actorUuid, actorName, nationId, new ItemStack(entry.getKey()), entry.getValue());
         }
     }
 
@@ -200,6 +225,108 @@ public final class ConstructionCostService {
         return member == null ? "" : member.nationId();
     }
 
+    private static String resolveTownId(ServerLevel level, ServerPlayer player) {
+        if (level == null || player == null) {
+            return "";
+        }
+        NationSavedData nationData = NationSavedData.get(level);
+        NationMemberRecord member = nationData.getMember(player.getUUID());
+        TownRecord town = TownService.getTownForMember(nationData, member);
+        return town == null ? "" : town.townId();
+    }
+
+    private static PurchasePlan buildPurchasePlan(ServerLevel level, ServerPlayer player, List<CommodityDemand> demands) {
+        String townId = resolveTownId(level, player);
+        List<StockpileAllocation> allocations = new ArrayList<>(demands.size());
+        long totalPurchaseCost = 0L;
+        for (CommodityDemand demand : demands) {
+            int stockpileAvailable = townId.isBlank() ? 0 : TownStockpileService.getAvailable(level, townId, demand.commodityKey());
+            int stockpileUsed = Math.min(stockpileAvailable, demand.requiredCount());
+            int purchasedCount = Math.max(0, demand.requiredCount() - stockpileUsed);
+            long purchaseCost = 0L;
+            if (purchasedCount > 0) {
+                purchaseCost = estimateCommodityCost(demand.template(), purchasedCount);
+                totalPurchaseCost += purchaseCost;
+            }
+            allocations.add(new StockpileAllocation(
+                    demand.commodityKey(),
+                    demand.template(),
+                    demand.requiredCount(),
+                    stockpileUsed,
+                    purchasedCount,
+                    purchaseCost
+            ));
+        }
+        return new PurchasePlan(townId, List.copyOf(allocations), totalPurchaseCost);
+    }
+
+    private static void applyPurchasePlan(ServerLevel level, ServerPlayer player, PurchasePlan purchasePlan, String projectId) {
+        for (StockpileAllocation allocation : purchasePlan.allocations()) {
+            ConstructionMaterialRequestService.recordRequest(
+                    level,
+                    projectId,
+                    purchasePlan.townId(),
+                    allocation.commodityKey(),
+                    allocation.requiredCount(),
+                    allocation.stockpileUsedCount(),
+                    allocation.purchasedCount()
+            );
+            if (allocation.stockpileUsedCount() > 0 && !purchasePlan.townId().isBlank()) {
+                TownStockpileService.remove(level, purchasePlan.townId(), allocation.commodityKey(), allocation.stockpileUsedCount());
+            }
+            if (allocation.purchasedCount() > 0) {
+                ProcurementRecord procurement = ProcurementService.createProcurement(
+                        level,
+                        purchasePlan.townId(),
+                        "",
+                        allocation.commodityKey(),
+                        allocation.purchasedCount(),
+                        allocation.purchasedCount() <= 0 ? 0L : allocation.purchaseCost() / allocation.purchasedCount(),
+                        allocation.purchaseCost(),
+                        "CONSTRUCTION",
+                        projectId,
+                        "",
+                        "",
+                        ""
+                );
+                if (!purchasePlan.townId().isBlank() && allocation.purchaseCost() > 0L) {
+                    TownFinanceLedgerService.recordExpense(
+                            level,
+                            purchasePlan.townId(),
+                            "CONSTRUCTION_EXPENSE",
+                            allocation.purchaseCost(),
+                            "EMERALD",
+                            allocation.commodityKey(),
+                            allocation.purchasedCount(),
+                            procurement == null ? projectId : procurement.procurementId()
+                    );
+                }
+                applyCommodityPurchase(level, player, allocation.template(), allocation.purchasedCount());
+                TownDeliveryService.deliverDirectProcurement(
+                        level,
+                        purchasePlan.townId(),
+                        allocation.template(),
+                        allocation.purchasedCount(),
+                        procurement == null ? "" : procurement.procurementId()
+                );
+                if (!purchasePlan.townId().isBlank()) {
+                    TownStockpileService.remove(level, purchasePlan.townId(), allocation.commodityKey(), allocation.purchasedCount());
+                }
+            }
+        }
+    }
+
+    private static String defaultProjectId(BlueprintService.BlueprintPlacement placement) {
+        if (placement == null || placement.bounds() == null) {
+            return "construction:" + System.currentTimeMillis();
+        }
+        return "construction:" + placement.blueprintId() + ":" + placement.bounds().min().asLong() + ":" + placement.rotation();
+    }
+
+    private static String defaultProjectId(ItemStack stack) {
+        return "construction_item:" + CommodityKeyResolver.resolve(stack);
+    }
+
     private static int defaultUnitPrice(ItemStack stack) {
         String path = BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath();
         if (path.contains("diamond") || path.contains("emerald") || path.contains("beacon")) {
@@ -218,5 +345,25 @@ public final class ConstructionCostService {
             return 5;
         }
         return 10;
+    }
+
+    private static final class CommodityDemandAccumulator {
+        private final String commodityKey;
+        private final ItemStack template;
+        private int requiredCount;
+
+        private CommodityDemandAccumulator(String commodityKey, ItemStack template) {
+            this.commodityKey = commodityKey;
+            this.template = template;
+        }
+
+        private CommodityDemandAccumulator increment() {
+            requiredCount++;
+            return this;
+        }
+
+        private CommodityDemand toDemand() {
+            return new CommodityDemand(commodityKey, template, requiredCount);
+        }
     }
 }

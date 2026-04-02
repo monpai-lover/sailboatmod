@@ -99,6 +99,7 @@ public final class TownOverviewService {
         boolean isMayor = player.getUUID().equals(town.mayorUuid());
         int primaryColor = nation == null ? DEFAULT_PRIMARY_COLOR : nation.primaryColorRgb();
         int secondaryColor = nation == null ? DEFAULT_SECONDARY_COLOR : nation.secondaryColorRgb();
+        TownEconomySnapshotService.TownEconomySnapshot economy = TownEconomySnapshotService.build(player.level(), town.townId());
         String ownerName = currentTown != null
                 ? currentTown.name()
                 : displayClaimName(null, currentNation, town, nation, currentClaim);
@@ -150,7 +151,16 @@ public final class TownOverviewService {
                 town.cultureId(),
                 TownCultureService.getCultureDistribution(player.level(), town.townId()),
                 calculateAverageLiteracy(player.level(), town.townId()),
-                calculateEducationDistribution(player.level(), town.townId()));
+                calculateEducationDistribution(player.level(), town.townId()),
+                economy.employmentRate(),
+                economy.stockpileCommodityTypes(),
+                economy.stockpileTotalUnits(),
+                economy.openDemandCount(),
+                economy.openDemandUnits(),
+                economy.activeProcurementCount(),
+                economy.totalIncome(),
+                economy.totalExpense(),
+                economy.netBalance());
     }
 
     private static int countClaimsManagedByTown(NationSavedData data, TownRecord town, NationRecord nation) {

@@ -1,46 +1,60 @@
 # Sailboat Vehicle Mod
 
-Minecraft Forge 1.20.1 多人航海、国家、城镇、市场与建筑蓝图模组。
+Minecraft Forge 1.20.1 模组，核心方向是航海运输、国家城镇治理、领地控制、市场贸易和蓝图建筑。
 
-## 功能概览
+## 当前内容
 
-- 多人帆船、自动航线、停靠与货运
+- 多人帆船、停靠、货运、自动航线
 - 国家 / 城镇 / 领地 / 外交 / 战争系统
-- 市场、国库、银行、港口物流
-- 建筑蓝图、脚手架工地、结构预览与辅助放置
-- ModernUI 现代化界面接入
+- 市场、港口、银行、国库与物流联动
+- 建筑蓝图、脚手架工地、结构预览、辅助放置
+- ModernUI 现代化界面
 
-## 环境
+## 环境要求
 
 - Minecraft: `1.20.1`
 - Forge: `47.2.0`
 - Java: `17`
 
-## 依赖库列表
+## 依赖库
 
 ### 必需依赖
 
 - Forge `47.2.0`
 - GeckoLib `4.4.9`
 
-### 运行时 / 打包依赖
+### 项目依赖
 
 - BlockUI `1.20.1-1.0.190-snapshot`
-- SQLite JDBC `3.46.1.3`
 - gdx-ai `1.8.2`
+- SQLite JDBC `3.46.1.3`
 - webp-imageio `0.1.6`（JarJar 打包）
 
 ### 可选依赖
 
 - ModernUI `3.12.x`
-  - 客户端可选
-  - 已接入市场、国家、城镇、港口、银行、贸易、船只信息、自动航线选择、路线命名、建筑结构选择等新 UI
+  - 客户端可选依赖
+  - 已接入市场、国家、城镇、港口、银行、贸易、船只信息、路线命名、自动航线选择、建筑结构选择等界面
 - Vault
-  - 经济桥接为可选集成，无硬依赖
+  - 可选经济桥接，无硬依赖
 - BlueMap
-  - 地图展示为可选集成
+  - 可选地图展示集成
 
-## 开发说明
+## 安装说明
+
+### 玩家使用
+
+1. 安装 Minecraft `1.20.1`
+2. 安装 Forge `47.2.0`
+3. 将本模组 jar 放入 `mods/`
+4. 如需新 UI，额外将 ModernUI 对应版本 jar 放入客户端 `mods/`
+
+### 开发环境
+
+- `ModernUI-Forge-1.20.1-3.12.0.1-universal.jar` 放到系统 `Downloads` 目录
+- 项目会在开发运行时自动同步到 `run/mods`
+
+## 开发命令
 
 ### 构建
 
@@ -60,16 +74,35 @@ Minecraft Forge 1.20.1 多人航海、国家、城镇、市场与建筑蓝图模
 ./gradlew runClient
 ```
 
-### ModernUI 本地开发
+### 运行服务端
 
-- 将 `ModernUI-Forge-1.20.1-3.12.0.1-universal.jar` 放到系统 `Downloads` 目录
-- 运行时开发环境会自动同步到 `run/mods`
+```bash
+./gradlew runServer
+```
 
-## 输出
+### 数据生成
 
-- 构建产物位于 `build/libs/`
-- `-reobf.jar` 为发布产物
+```bash
+./gradlew runData
+```
 
-## 许可证
+## 构建输出
+
+- 产物目录: `build/libs/`
+- 发布包: `*-reobf.jar`
+
+## 当前进展
+
+- 市场主界面已升级为更完整的现代布局
+- Nation / Town / Dock / Bank / Trade 已接入 ModernUI
+- 建筑蓝图相关 UI 已补到现代界面路径
+- 市场后端已开始接入 SQLite 方向，为后续真实浮动市场做准备
+
+## 说明
+
+- ModernUI 是可选前置，没有安装时会自动回退到旧界面
+- 一部分复杂交互仍保留了 classic screen 入口，用于临时兼容老流程
+
+## License
 
 MIT

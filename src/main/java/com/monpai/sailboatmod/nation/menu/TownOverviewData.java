@@ -50,7 +50,16 @@ public record TownOverviewData(
         String cultureId,
         Map<String, Integer> cultureDistribution,
         float averageLiteracy,
-        Map<String, Integer> educationLevelDistribution
+        Map<String, Integer> educationLevelDistribution,
+        float employmentRate,
+        int stockpileCommodityTypes,
+        int stockpileTotalUnits,
+        int openDemandCount,
+        int openDemandUnits,
+        int activeProcurementCount,
+        long totalIncome,
+        long totalExpense,
+        long netBalance
 ) {
     public TownOverviewData {
         townId = sanitize(townId, 40);
@@ -79,6 +88,14 @@ public record TownOverviewData(
         flagHeight = Math.max(0, flagHeight);
         flagByteSize = Math.max(0L, flagByteSize);
         averageLiteracy = Math.max(0.0f, Math.min(1.0f, averageLiteracy));
+        employmentRate = Math.max(0.0f, Math.min(1.0f, employmentRate));
+        stockpileCommodityTypes = Math.max(0, stockpileCommodityTypes);
+        stockpileTotalUnits = Math.max(0, stockpileTotalUnits);
+        openDemandCount = Math.max(0, openDemandCount);
+        openDemandUnits = Math.max(0, openDemandUnits);
+        activeProcurementCount = Math.max(0, activeProcurementCount);
+        totalIncome = Math.max(0L, totalIncome);
+        totalExpense = Math.max(0L, totalExpense);
         cultureDistribution = cultureDistribution == null ? Map.of() : Map.copyOf(cultureDistribution);
         educationLevelDistribution = educationLevelDistribution == null ? Map.of() : Map.copyOf(educationLevelDistribution);
         members = members == null ? List.of() : members.stream()
@@ -160,7 +177,16 @@ public record TownOverviewData(
                 "european",
                 Map.of(),
                 0.0f,
-                Map.of());
+                Map.of(),
+                0.0f,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0L,
+                0L,
+                0L);
     }
 
     private static String sanitize(String value, int maxLength) {

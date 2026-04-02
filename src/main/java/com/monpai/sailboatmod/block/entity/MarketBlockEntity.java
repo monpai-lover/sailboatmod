@@ -6,13 +6,18 @@ import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketSavedData;
+import com.monpai.sailboatmod.market.ProcurementRecord;
+import com.monpai.sailboatmod.market.ProcurementService;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
 import com.monpai.sailboatmod.menu.MarketMenu;
+import com.monpai.sailboatmod.nation.service.DockTownResolver;
+import com.monpai.sailboatmod.nation.service.TownFinanceLedgerService;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
@@ -212,6 +217,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         adjustCommoditySupply(listed, amount);
         int price = currentCommodityUnitPrice(listed, 1, fallbackPrice);
         MarketSavedData market = MarketSavedData.get(level);
+        String listingTownId = dock.getTownId();
+        String listingNationId = dock.getNationId();
+        var dockBinding = DockTownResolver.resolve(level, dock);
+        if (dockBinding != null) {
+            listingTownId = dockBinding.townId();
+            listingNationId = dockBinding.nationId();
+        }
         market.putListing(new MarketListing(
                 market.nextId(),
                 player.getUUID().toString(),
@@ -222,8 +234,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 0,
                 linkedDockPos,
                 dock.getDockName(),
-                dock.getTownId(),
-                dock.getNationId()
+                listingTownId,
+                listingNationId
         ));
         return true;
     }
@@ -286,6 +298,47 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 "WAITING_SHIPMENT"
         );
         market.putPurchaseOrder(createdOrder);
+        String buyerTownId = DockTownResolver.resolveTownForArrival(level, linkedDockPos, dock.getTownId());
+        String sourceTownId = DockTownResolver.resolveTownForSource(level, listing.sourceDockPos(), listing.townId());
+        ProcurementRecord procurement = ProcurementService.createProcurement(
+                level,
+                buyerTownId,
+                sourceTownId,
+                CommodityKeyResolver.resolve(listing.itemStack()),
+                amount,
+                amount <= 0 ? 0L : total / amount,
+                total,
+                "STOCK_REPLENISH",
+                createdOrder.orderId(),
+                createdOrder.orderId(),
+                "",
+                DockTownResolver.dockId(level, linkedDockPos)
+        );
+        String sourceRef = procurement == null ? createdOrder.orderId() : procurement.procurementId();
+        if (!buyerTownId.isBlank()) {
+            TownFinanceLedgerService.recordExpense(
+                    level,
+                    buyerTownId,
+                    "MARKET_PURCHASE",
+                    total,
+                    "EMERALD",
+                    CommodityKeyResolver.resolve(listing.itemStack()),
+                    amount,
+                    sourceRef
+            );
+        }
+        if (!sourceTownId.isBlank()) {
+            TownFinanceLedgerService.recordIncome(
+                    level,
+                    sourceTownId,
+                    "MARKET_SALE",
+                    sellerPayout,
+                    "EMERALD",
+                    CommodityKeyResolver.resolve(listing.itemStack()),
+                    amount,
+                    sourceRef
+            );
+        }
         tryAutoDispatchOrders(player, createdOrder.sourceDockPos());
         return true;
     }
@@ -671,6 +724,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         applyListingReservationDeltas(market, listingReservationDeltas);
         for (ShippingOrder shippingOrder : shippingOrders) {
             market.putShippingOrder(shippingOrder);
+            ProcurementService.markInTransit(level, shippingOrder.purchaseOrderId(), shippingOrder.shippingOrderId());
         }
         return true;
     }

@@ -101,7 +101,7 @@ public final class CommodityMarketService {
     private CommodityDefinition definitionFrom(ItemStack itemStack) {
         ItemStack safeStack = itemStack == null ? ItemStack.EMPTY : itemStack;
         ResourceLocation itemKey = ForgeRegistries.ITEMS.getKey(safeStack.getItem());
-        String itemId = itemKey == null ? "minecraft:air" : itemKey.toString();
+        String itemId = CommodityKeyResolver.resolve(safeStack);
         String displayName = safeStack.isEmpty() ? itemId : safeStack.getHoverName().getString();
         return new CommodityDefinition(itemId, itemId, "", displayName, 1, "", true);
     }

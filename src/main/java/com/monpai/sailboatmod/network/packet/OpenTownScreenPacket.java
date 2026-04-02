@@ -104,6 +104,15 @@ public class OpenTownScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, entry.getKey(), 32);
             buffer.writeVarInt(entry.getValue());
         }
+        buffer.writeFloat(data.employmentRate());
+        buffer.writeVarInt(data.stockpileCommodityTypes());
+        buffer.writeVarInt(data.stockpileTotalUnits());
+        buffer.writeVarInt(data.openDemandCount());
+        buffer.writeVarInt(data.openDemandUnits());
+        buffer.writeVarInt(data.activeProcurementCount());
+        buffer.writeLong(data.totalIncome());
+        buffer.writeLong(data.totalExpense());
+        buffer.writeLong(data.netBalance());
     }
 
     public static OpenTownScreenPacket decode(FriendlyByteBuf buffer) {
@@ -196,6 +205,15 @@ public class OpenTownScreenPacket {
         for (int i = 0; i < eduDistSize; i++) {
             educationLevelDistribution.put(buffer.readUtf(32), buffer.readVarInt());
         }
+        float employmentRate = buffer.readFloat();
+        int stockpileCommodityTypes = buffer.readVarInt();
+        int stockpileTotalUnits = buffer.readVarInt();
+        int openDemandCount = buffer.readVarInt();
+        int openDemandUnits = buffer.readVarInt();
+        int activeProcurementCount = buffer.readVarInt();
+        long totalIncome = buffer.readLong();
+        long totalExpense = buffer.readLong();
+        long netBalance = buffer.readLong();
         return new OpenTownScreenPacket(new TownOverviewData(
                 hasTown,
                 townId,
@@ -243,7 +261,16 @@ public class OpenTownScreenPacket {
                 cultureId,
                 cultureDistribution,
                 averageLiteracy,
-                educationLevelDistribution
+                educationLevelDistribution,
+                employmentRate,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance
         ));
     }
 

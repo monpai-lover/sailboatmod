@@ -8,9 +8,13 @@ import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketSavedData;
+import com.monpai.sailboatmod.market.ProcurementService;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.nation.service.DockTownResolver;
+import com.monpai.sailboatmod.nation.service.TownDeliveryService;
+import com.monpai.sailboatmod.nation.service.TownStockpileService;
 import com.monpai.sailboatmod.menu.DockMenu;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.route.RouteDefinition;
@@ -84,6 +88,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public void onLoad() {
         super.onLoad();
         if (level != null && !level.isClientSide) {
+            DockTownResolver.resolve(level, worldPosition);
             DockRegistry.register(level, worldPosition);
             BlueMapIntegration.syncDock(this);
         }
@@ -745,7 +750,15 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             ), true);
             return false;
         }
+        String stockpileTownId = resolvedTownId();
+        if (!stockpileTownId.isBlank() && !TownStockpileService.canRemoveCargo(level, stockpileTownId, removed.cargo)) {
+            player.displayClientMessage(Component.literal("Town stockpile no longer has this shipment available."), true);
+            return false;
+        }
         waybills.remove(idx);
+        if (!stockpileTownId.isBlank()) {
+            TownStockpileService.removeCargo(level, stockpileTownId, removed.cargo);
+        }
         for (ItemStack cargo : removed.cargo) {
             if (cargo.isEmpty()) {
                 continue;
@@ -803,10 +816,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (packed.isEmpty()) {
             return;
         }
-
         List<ShipmentManifestEntry> safeManifest = manifest == null ? List.of() : manifest.stream()
                 .filter(entry -> entry != null)
                 .toList();
+        TownDeliveryService.deliverDockArrival(level, worldPosition, townId, packed, safeManifest);
         if (safeManifest.isEmpty()) {
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, packed,
@@ -960,7 +973,17 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (slot < 0 || slot >= storage.size()) {
             return;
         }
+        ItemStack previous = storage.get(slot).copy();
         storage.set(slot, stack);
+        String stockpileTownId = resolvedTownId();
+        if (!stockpileTownId.isBlank()) {
+            if (!previous.isEmpty()) {
+                TownStockpileService.removeItemStack(level, stockpileTownId, previous, previous.getCount());
+            }
+            if (stack != null && !stack.isEmpty()) {
+                TownStockpileService.addItemStack(level, stockpileTownId, stack, stack.getCount());
+            }
+        }
         setChanged();
     }
 
@@ -970,6 +993,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         ItemStack removed = net.minecraft.world.ContainerHelper.removeItem(storage, slot, amount);
         if (!removed.isEmpty()) {
+            String stockpileTownId = resolvedTownId();
+            if (!stockpileTownId.isBlank()) {
+                TownStockpileService.removeItemStack(level, stockpileTownId, removed, removed.getCount());
+            }
             setChanged();
         }
         return removed;
@@ -981,6 +1008,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         ItemStack removed = net.minecraft.world.ContainerHelper.takeItem(storage, slot);
         if (!removed.isEmpty()) {
+            String stockpileTownId = resolvedTownId();
+            if (!stockpileTownId.isBlank()) {
+                TownStockpileService.removeItemStack(level, stockpileTownId, removed, removed.getCount());
+            }
             setChanged();
         }
         return removed;
@@ -1023,6 +1054,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
             remaining -= consume;
         }
+        String stockpileTownId = resolvedTownId();
+        if (!stockpileTownId.isBlank()) {
+            TownStockpileService.removeItemStack(level, stockpileTownId, sample, quantity);
+        }
         setChanged();
         return remaining <= 0;
     }
@@ -1058,6 +1093,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
             ItemStack remaining = stack.copy();
             mergeIntoStorage(remaining, storage);
+        }
+        String stockpileTownId = resolvedTownId();
+        if (!stockpileTownId.isBlank()) {
+            TownStockpileService.addCargo(level, stockpileTownId, cargo);
         }
         setChanged();
         return true;
@@ -1187,6 +1226,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     0,
                     "SAILING"
             ));
+            ProcurementService.markInTransit(level, order.orderId(), shippingOrderId);
         }
         applyListingReservationDeltas(market, listingReservationDeltas);
         boat.setPendingShipmentManifest(manifest);
@@ -1756,6 +1796,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
+    private String resolvedTownId() {
+        return DockTownResolver.resolveTownForArrival(level, worldPosition, townId);
+    }
+
     private void mergeIntoStorage(ItemStack remaining, NonNullList<ItemStack> targetStorage) {
         for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
             ItemStack slot = targetStorage.get(i);
@@ -1967,4 +2011,3 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 }
-

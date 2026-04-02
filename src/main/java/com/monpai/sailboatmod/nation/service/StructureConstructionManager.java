@@ -54,7 +54,7 @@ public final class StructureConstructionManager {
     }
 
     private record ConstructionJob(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type,
-                                    List<List<StructureTemplate.StructureBlockInfo>> layers, int currentLayer,
+                                    String projectId, List<List<StructureTemplate.StructureBlockInfo>> layers, int currentLayer,
                                     long startTick, BlueprintService.PlacementBounds bounds, int rotation,
                                     List<BlockPos> scaffoldPositions) {}
 
@@ -83,7 +83,8 @@ public final class StructureConstructionManager {
 
         clearAssistSite(level, origin, type, rotation);
 
-        ConstructionCostService.PaymentResult payment = ConstructionCostService.chargeForBlueprint(level, player, placement);
+        String projectId = createProjectId(origin, type, rotation);
+        ConstructionCostService.PaymentResult payment = ConstructionCostService.chargeForBlueprint(level, player, placement, projectId);
         if (!payment.success()) {
             player.sendSystemMessage(payment.message());
             return false;
@@ -111,7 +112,7 @@ public final class StructureConstructionManager {
         // Start construction job
         String jobId = origin.toShortString() + "_" + System.currentTimeMillis();
         ACTIVE_CONSTRUCTIONS.put(jobId, new ConstructionJob(
-                level, origin, player, type, layers, 0, level.getGameTime(), placement.bounds(), placement.rotation(), scaffoldPositions));
+                level, origin, player, type, projectId, layers, 0, level.getGameTime(), placement.bounds(), placement.rotation(), scaffoldPositions));
 
         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.started"));
         return true;
@@ -168,7 +169,8 @@ public final class StructureConstructionManager {
         ConstructionCostService.PaymentResult payment = new ConstructionCostService.PaymentResult(true, 0L, 0L, 0L, Component.empty());
         if (!player.getAbilities().instabuild && !consumeConstructionItem(player, nextBlock.state().getBlock().asItem())) {
             ItemStack purchaseStack = toConstructionItem(nextBlock.state());
-            payment = ConstructionCostService.chargeForSingleItem(level, player, purchaseStack);
+            payment = ConstructionCostService.chargeForSingleItem(level, player, purchaseStack,
+                    "assist:" + assistSiteKey(level, origin, type, rotation));
             if (!payment.success()) {
                 return new AssistPlacementResult(false, false, payment.message());
             }
@@ -235,7 +237,7 @@ public final class StructureConstructionManager {
                 completed.add(entry.getKey());
             } else {
                 ACTIVE_CONSTRUCTIONS.put(entry.getKey(), new ConstructionJob(
-                        job.level, job.origin, job.player, job.type, job.layers, newLayer, job.startTick, job.bounds, job.rotation, job.scaffoldPositions));
+                        job.level, job.origin, job.player, job.type, job.projectId(), job.layers, newLayer, job.startTick, job.bounds, job.rotation, job.scaffoldPositions));
             }
         }
 
@@ -594,5 +596,9 @@ public final class StructureConstructionManager {
             }
         }
         return true;
+    }
+
+    private static String createProjectId(BlockPos origin, StructureType type, int rotation) {
+        return type.nbtName() + "|" + origin.asLong() + "|" + Math.floorMod(rotation, 4) + "|" + System.currentTimeMillis();
     }
 }

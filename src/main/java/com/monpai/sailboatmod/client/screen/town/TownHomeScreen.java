@@ -400,23 +400,33 @@ public class TownHomeScreen extends Screen {
             return;
         }
 
-        // Statistics
         g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.population", this.data.residentCount()), x + 12, y + 30, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.employment", "71%"), x + 12, y + 44, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.literacy", "40%"), x + 12, y + 58, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.employment", formatPercent(this.data.employmentRate())), x + 12, y + 44, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.literacy", formatPercent(this.data.averageLiteracy())), x + 12, y + 58, 0xFFDCEEFF);
 
-        // Pie chart - Profession distribution
-        int pieX = x + 30;
-        int pieY = y + 90;
-        int pieR = 40;
-        drawProfessionPieChart(g, pieX, pieY, pieR, mouseX, mouseY);
+        int leftX = x + 12;
+        int rightX = x + 224;
+        int baseY = y + 92;
+        int rowH = 14;
 
-        // Line chart - Economic trends
-        int lineX = x + 200;
-        int lineY = y + 80;
-        int lineW = 200;
-        int lineH = 100;
-        drawEconomyLineChart(g, lineX, lineY, lineW, lineH, mouseX, mouseY);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.stockpile_types", this.data.stockpileCommodityTypes()), leftX, baseY, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.stockpile_units", this.data.stockpileTotalUnits()), leftX, baseY + rowH, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.open_demands", this.data.openDemandCount()), leftX, baseY + rowH * 2, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.shortage_units", this.data.openDemandUnits()), leftX, baseY + rowH * 3, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.active_procurements", this.data.activeProcurementCount()), leftX, baseY + rowH * 4, 0xFFDCEEFF);
+
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.total_income", formatMoney(this.data.totalIncome())), rightX, baseY, 0xFFBDF5C8);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.total_expense", formatMoney(this.data.totalExpense())), rightX, baseY + rowH, 0xFFFFC7C7);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.net_balance", formatMoney(this.data.netBalance())), rightX, baseY + rowH * 2, this.data.netBalance() >= 0L ? 0xFFBDF5C8 : 0xFFFFC7C7);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.summary_hint"), leftX, y + BODY_H - 32, 0xFFB8C0C8);
+    }
+
+    private static String formatPercent(float ratio) {
+        return Math.round(Math.max(0.0f, Math.min(1.0f, ratio)) * 100.0f) + "%";
+    }
+
+    private static String formatMoney(long value) {
+        return Long.toString(value);
     }
 
     private void drawProfessionPieChart(GuiGraphics g, int cx, int cy, int r, int mouseX, int mouseY) {
