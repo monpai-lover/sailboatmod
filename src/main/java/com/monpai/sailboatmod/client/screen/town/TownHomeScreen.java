@@ -168,6 +168,12 @@ public class TownHomeScreen extends Screen {
     }
 
     @Override
+    public void removed() {
+        super.removed();
+        com.monpai.sailboatmod.client.TownClientHooks.onScreenClosed();
+    }
+
+    @Override
     public void tick() {
         super.tick();
         if (this.townNameInput != null) this.townNameInput.tick();

@@ -180,6 +180,12 @@ public class TradeScreen extends Screen {
     }
 
     @Override
+    public void removed() {
+        super.removed();
+        com.monpai.sailboatmod.client.TradeClientHooks.onScreenClosed();
+    }
+
+    @Override
     public void tick() {
         super.tick();
         if (offerCurrencyInput != null) offerCurrencyInput.tick();

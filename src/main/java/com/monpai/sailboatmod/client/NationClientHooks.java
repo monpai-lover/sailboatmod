@@ -8,10 +8,11 @@ import net.minecraft.network.chat.Component;
 
 public final class NationClientHooks {
     private static NationOverviewData lastSyncedData = NationOverviewData.empty();
-    private static boolean expectingOpen = false;
+    private static long closedAtMillis = 0;
+    private static final long REOPEN_COOLDOWN_MS = 1500;
 
     public static void openCachedOrEmpty() {
-        expectingOpen = true;
+        closedAtMillis = 0;
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
             nationHomeScreen.updateData(lastSyncedData);
@@ -27,10 +28,10 @@ public final class NationClientHooks {
             nationHomeScreen.updateData(lastSyncedData);
             return;
         }
-        if (expectingOpen) {
-            expectingOpen = false;
-            minecraft.setScreen(new NationHomeScreen(lastSyncedData));
+        if (System.currentTimeMillis() - closedAtMillis < REOPEN_COOLDOWN_MS) {
+            return;
         }
+        minecraft.setScreen(new NationHomeScreen(lastSyncedData));
     }
 
     public static void updateIfOpen(NationOverviewData data) {
@@ -39,6 +40,10 @@ public final class NationClientHooks {
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
             nationHomeScreen.updateData(lastSyncedData);
         }
+    }
+
+    public static void onScreenClosed() {
+        closedAtMillis = System.currentTimeMillis();
     }
 
     public static void showToast(String title, String message) {
@@ -57,7 +62,6 @@ public final class NationClientHooks {
 
     public static void clearCache() {
         lastSyncedData = NationOverviewData.empty();
-        expectingOpen = false;
     }
 
     private NationClientHooks() {

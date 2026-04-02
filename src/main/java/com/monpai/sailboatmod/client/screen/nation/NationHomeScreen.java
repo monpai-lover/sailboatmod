@@ -290,6 +290,12 @@ public class NationHomeScreen extends Screen {
     }
 
     @Override
+    public void removed() {
+        super.removed();
+        com.monpai.sailboatmod.client.NationClientHooks.onScreenClosed();
+    }
+
+    @Override
     public void tick() {
         super.tick();
         if (this.nationNameInput != null) this.nationNameInput.tick();
@@ -1141,7 +1147,7 @@ public class NationHomeScreen extends Screen {
         if (centerChunkX == this.pendingPreviewCenterX && centerChunkZ == this.pendingPreviewCenterZ) return;
         requestRefresh(centerChunkX, centerChunkZ);
     }
-    private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } com.monpai.sailboatmod.client.TownClientHooks.requestOpen(); ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
+    private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
     private void previousTownSelection() { cycleTownSelection(-1); }
     private void nextTownSelection() { cycleTownSelection(1); }
     private void claimSelectedChunk() {
