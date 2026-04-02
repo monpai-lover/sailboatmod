@@ -1,8 +1,10 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.economy.VaultEconomyBridge;
-import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketSavedData;
+import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.commodity.CommodityQuote;
+import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
@@ -15,6 +17,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -23,8 +26,7 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class ConstructionCostService {
-    private record PurchaseSlice(String listingId, int quantity, long totalCost) {
-    }
+    private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
 
     public record MaterialCost(ItemStack stack, int count, long totalCost) {
     }
@@ -39,23 +41,13 @@ public final class ConstructionCostService {
     }
 
     public static BlueprintCostEstimate estimateBlueprintCost(ServerLevel level, BlueprintService.BlueprintPlacement placement) {
-        Map<Item, Integer> requiredCounts = new LinkedHashMap<>();
-        for (StructureTemplate.StructureBlockInfo info : placement.blocks()) {
-            Item item = info.state().getBlock().asItem();
-            if (item == Items.AIR) {
-                continue;
-            }
-            requiredCounts.merge(item, 1, Integer::sum);
-        }
-
+        Map<Item, Integer> requiredCounts = collectRequiredCounts(placement);
         List<MaterialCost> materials = new ArrayList<>();
         long totalCost = 0L;
-        MarketSavedData marketData = MarketSavedData.get(level);
         for (Map.Entry<Item, Integer> entry : requiredCounts.entrySet()) {
-            ItemStack stack = new ItemStack(entry.getKey());
-            int count = entry.getValue();
-            long materialCost = estimatePurchaseCost(marketData, stack, count);
-            materials.add(new MaterialCost(stack, count, materialCost));
+            ItemStack stack = new ItemStack(entry.getKey(), entry.getValue());
+            long materialCost = estimatePurchaseCost(MarketSavedData.get(level), stack, entry.getValue());
+            materials.add(new MaterialCost(new ItemStack(entry.getKey()), entry.getValue(), materialCost));
             totalCost += materialCost;
         }
         materials.sort(Comparator.comparing(material -> material.stack().getHoverName().getString(), String.CASE_INSENSITIVE_ORDER));
@@ -63,30 +55,14 @@ public final class ConstructionCostService {
     }
 
     public static PaymentResult chargeForBlueprint(ServerLevel level, ServerPlayer player, BlueprintService.BlueprintPlacement placement) {
+        Map<Item, Integer> requiredCounts = collectRequiredCounts(placement);
         BlueprintCostEstimate estimate = estimateBlueprintCost(level, placement);
-        Map<Item, Integer> requiredCounts = new LinkedHashMap<>();
-        for (StructureTemplate.StructureBlockInfo info : placement.blocks()) {
-            Item item = info.state().getBlock().asItem();
-            if (item != Items.AIR) {
-                requiredCounts.merge(item, 1, Integer::sum);
-            }
-        }
-
-        List<PurchaseSlice> consumedListings = new ArrayList<>();
-        long listingCost = 0L;
-        MarketSavedData marketData = MarketSavedData.get(level);
-        for (Map.Entry<Item, Integer> entry : requiredCounts.entrySet()) {
-            PurchasePlan plan = buildPurchasePlan(marketData, new ItemStack(entry.getKey()), entry.getValue());
-            consumedListings.addAll(plan.slices());
-            listingCost += plan.marketCost();
-        }
-
         PaymentResult result = chargeAmount(level, player, estimate.totalCost(),
                 "Construction cost is too large to process.",
                 "Not enough treasury/wallet funds for this blueprint.",
                 "Construction cost paid: %d (treasury %d, wallet %d).");
         if (result.success()) {
-            applyPurchaseSlices(marketData, consumedListings);
+            applyCommodityPurchases(level, player, requiredCounts);
         }
         return result;
     }
@@ -95,16 +71,14 @@ public final class ConstructionCostService {
         if (stack == null || stack.isEmpty()) {
             return new PaymentResult(true, 0L, 0L, 0L, Component.empty());
         }
-        MarketSavedData marketData = MarketSavedData.get(level);
-        PurchasePlan plan = buildPurchasePlan(marketData, stack, stack.getCount());
-        long totalCost = plan.marketCost() + plan.fallbackCost();
+        long totalCost = estimateCommodityCost(stack, stack.getCount());
         String itemName = stack.getHoverName().getString();
         PaymentResult result = chargeAmount(level, player, totalCost,
                 "Construction material cost is too large to process.",
                 "Not enough treasury/wallet funds for " + itemName + ".",
                 "Auto-purchased " + itemName + " for " + totalCost + " (treasury %d, wallet %d).");
         if (result.success()) {
-            applyPurchaseSlices(marketData, plan.slices());
+            applyCommodityPurchase(level, player, stack, stack.getCount());
         }
         return result;
     }
@@ -150,69 +124,80 @@ public final class ConstructionCostService {
     }
 
     public static long estimatePurchaseCost(MarketSavedData marketData, ItemStack targetStack, int quantity) {
-        PurchasePlan plan = buildPurchasePlan(marketData, targetStack, quantity);
-        return plan.marketCost() + plan.fallbackCost();
+        return estimateCommodityCost(targetStack, quantity);
     }
 
     public static int estimateFallbackUnitPrice(ItemStack stack) {
         return defaultUnitPrice(stack);
     }
 
-    private static PurchasePlan buildPurchasePlan(MarketSavedData marketData, ItemStack targetStack, int quantity) {
-        int remaining = Math.max(0, quantity);
-        long marketCost = 0L;
-        List<MarketListing> matchingListings = new ArrayList<>();
-        for (MarketListing listing : marketData.getListings()) {
-            if (ItemStack.isSameItem(listing.itemStack(), targetStack)) {
-                matchingListings.add(listing);
+    private static Map<Item, Integer> collectRequiredCounts(BlueprintService.BlueprintPlacement placement) {
+        Map<Item, Integer> requiredCounts = new LinkedHashMap<>();
+        for (StructureTemplate.StructureBlockInfo info : placement.blocks()) {
+            Item item = info.state().getBlock().asItem();
+            if (item == Items.AIR) {
+                continue;
             }
+            requiredCounts.merge(item, 1, Integer::sum);
         }
-        matchingListings.sort(Comparator.comparingInt(MarketListing::unitPrice));
-        List<PurchaseSlice> slices = new ArrayList<>();
-
-        for (MarketListing listing : matchingListings) {
-            if (remaining <= 0) {
-                break;
-            }
-            int purchased = Math.min(remaining, listing.availableCount());
-            long sliceCost = (long) purchased * Math.max(1, listing.unitPrice());
-            marketCost += sliceCost;
-            slices.add(new PurchaseSlice(listing.listingId(), purchased, sliceCost));
-            remaining -= purchased;
-        }
-
-        long fallbackCost = 0L;
-        if (remaining > 0) {
-            fallbackCost = (long) remaining * defaultUnitPrice(targetStack);
-        }
-        return new PurchasePlan(List.copyOf(slices), marketCost, fallbackCost);
+        return requiredCounts;
     }
 
-    private static void applyPurchaseSlices(MarketSavedData marketData, List<PurchaseSlice> slices) {
-        for (PurchaseSlice slice : slices) {
-            MarketListing listing = marketData.getListing(slice.listingId());
-            if (listing == null) {
-                continue;
-            }
-            int nextAvailable = Math.max(0, listing.availableCount() - slice.quantity());
-            if (nextAvailable <= 0 && listing.reservedCount() <= 0) {
-                marketData.removeListing(listing.listingId());
-                continue;
-            }
-            marketData.putListing(new MarketListing(
-                    listing.listingId(),
-                    listing.sellerUuid(),
-                    listing.sellerName(),
-                    listing.itemStack(),
-                    listing.unitPrice(),
-                    nextAvailable,
-                    listing.reservedCount(),
-                    listing.sourceDockPos(),
-                    listing.sourceDockName(),
-                    listing.townId(),
-                    listing.nationId()
-            ));
+    private static long estimateCommodityCost(ItemStack stack, int quantity) {
+        if (stack == null || stack.isEmpty() || quantity <= 0) {
+            return 0L;
         }
+        try {
+            CommodityQuote quote = COMMODITY_MARKET.quote(stack, quantity);
+            return quote.buyPrice();
+        } catch (SQLException ignored) {
+            return (long) quantity * defaultUnitPrice(stack);
+        }
+    }
+
+    private static void applyCommodityPurchases(ServerLevel level, ServerPlayer player, Map<Item, Integer> requiredCounts) {
+        String actorUuid = player == null ? "" : player.getUUID().toString();
+        String actorName = player == null ? "" : player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+        String nationId = resolveNationId(level, player);
+        for (Map.Entry<Item, Integer> entry : requiredCounts.entrySet()) {
+            applyCommodityPurchase(level, actorUuid, actorName, nationId, new ItemStack(entry.getKey()), entry.getValue());
+        }
+    }
+
+    private static void applyCommodityPurchase(ServerLevel level, ServerPlayer player, ItemStack stack, int quantity) {
+        String actorUuid = player == null ? "" : player.getUUID().toString();
+        String actorName = player == null ? "" : player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+        String nationId = resolveNationId(level, player);
+        applyCommodityPurchase(level, actorUuid, actorName, nationId, stack, quantity);
+    }
+
+    private static void applyCommodityPurchase(ServerLevel level, String actorUuid, String actorName, String nationId,
+                                               ItemStack stack, int quantity) {
+        if (stack == null || stack.isEmpty() || quantity <= 0) {
+            return;
+        }
+        try {
+            COMMODITY_MARKET.applyTrade(
+                    stack,
+                    MarketTradeSide.BUY,
+                    quantity,
+                    "construction",
+                    nationId,
+                    nationId,
+                    actorUuid,
+                    actorName
+            );
+        } catch (SQLException ignored) {
+        }
+    }
+
+    private static String resolveNationId(ServerLevel level, ServerPlayer player) {
+        if (level == null || player == null) {
+            return "";
+        }
+        NationSavedData nationData = NationSavedData.get(level);
+        NationMemberRecord member = nationData.getMember(player.getUUID());
+        return member == null ? "" : member.nationId();
     }
 
     private static int defaultUnitPrice(ItemStack stack) {
@@ -233,8 +218,5 @@ public final class ConstructionCostService {
             return 5;
         }
         return 10;
-    }
-
-    private record PurchasePlan(List<PurchaseSlice> slices, long marketCost, long fallbackCost) {
     }
 }

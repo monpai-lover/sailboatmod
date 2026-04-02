@@ -2,6 +2,8 @@ package com.monpai.sailboatmod;
 
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
+import com.monpai.sailboatmod.market.db.MarketDatabase;
+import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
@@ -10,11 +12,19 @@ import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.server.ServerLifecycleHooks;
+import org.slf4j.Logger;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class ServerEvents {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     @SubscribeEvent
     public static void onServerStarted(ServerStartedEvent event) {
+        try {
+            MarketDatabase.initialize(event.getServer());
+        } catch (Exception e) {
+            LOGGER.error("Failed to initialize market SQLite database", e);
+        }
         BlueMapIntegration.onServerStarted(event.getServer());
     }
 
@@ -66,6 +76,7 @@ public final class ServerEvents {
 
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
+        MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
     }
 

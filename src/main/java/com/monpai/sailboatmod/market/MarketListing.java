@@ -66,13 +66,17 @@ public record MarketListing(
     }
 
     public String toSummaryLine() {
+        return toSummaryLine(unitPrice);
+    }
+
+    public String toSummaryLine(int displayUnitPrice) {
         String itemName = itemStack.isEmpty() ? "-" : itemStack.getHoverName().getString();
         return String.format(
                 Locale.ROOT,
                 "%s x%d | %d ea | %s",
                 itemName,
                 availableCount,
-                unitPrice,
+                Math.max(0, displayUnitPrice),
                 sourceDockName.isBlank() ? sourceDockPos.toShortString() : sourceDockName
         );
     }

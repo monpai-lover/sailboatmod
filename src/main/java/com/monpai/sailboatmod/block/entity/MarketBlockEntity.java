@@ -3,14 +3,18 @@ package com.monpai.sailboatmod.block.entity;
 import com.monpai.sailboatmod.dock.DockScreenData;
 import com.monpai.sailboatmod.economy.VaultEconomyBridge;
 import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
-import com.monpai.sailboatmod.market.MarketListing;
+import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.commodity.CommodityQuote;
+import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
 import com.monpai.sailboatmod.menu.MarketMenu;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -24,7 +28,9 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,8 +38,9 @@ import java.util.Map;
 import java.util.UUID;
 
 public class MarketBlockEntity extends BlockEntity implements MenuProvider {
+    private static final Logger MARKET_LOGGER = LogUtils.getLogger();
     private static final double LINK_DOCK_RADIUS = 24.0D;
-
+    private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
     private String marketName = "";
     private String ownerName = "";
     private String ownerUuid = "";
@@ -89,8 +96,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         String dockPosText = "-";
         boolean linked = false;
         List<String> boatLines = new ArrayList<>();
+        List<MarketOverviewData.ShippingEntry> shippingEntries = new ArrayList<>();
         boolean dockStorageAccessible = false;
         List<String> dockStorageLines = List.of();
+        List<MarketOverviewData.StorageEntry> storageEntries = new ArrayList<>();
         if (level != null && linkedDockPos != null && level.getBlockEntity(linkedDockPos) instanceof DockBlockEntity dock) {
             dockName = dock.getDockName();
             dockPosText = linkedDockPos.toShortString();
@@ -100,20 +109,62 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 boatLines.addAll(dockData.nearbyBoatNames());
                 dockStorageAccessible = dockData.canManageDock();
                 dockStorageLines = dockData.storageLines();
+                for (String boatLine : boatLines) {
+                    shippingEntries.add(new MarketOverviewData.ShippingEntry(boatLine, boatLine, "", ""));
+                }
+                if (dockStorageAccessible) {
+                    int storageCount = dock.getVisibleStorageCount(player);
+                    for (int i = 0; i < storageCount; i++) {
+                        ItemStack stack = dock.getStorageItemForVisibleIndex(player, i);
+                        if (stack.isEmpty()) {
+                            continue;
+                        }
+                        String itemName = stack.getHoverName().getString();
+                        String label = itemName + " x" + stack.getCount();
+                        storageEntries.add(new MarketOverviewData.StorageEntry(
+                                label,
+                                itemName,
+                                stack.getCount(),
+                                currentCommodityUnitPrice(stack, 1, 1),
+                                "Stored at " + dock.getDockName()
+                        ));
+                    }
+                }
             }
         }
 
         List<String> listingLines = new ArrayList<>();
+        List<MarketOverviewData.ListingEntry> listingEntries = new ArrayList<>();
         List<String> orderLines = new ArrayList<>();
+        List<MarketOverviewData.OrderEntry> orderEntries = new ArrayList<>();
         List<String> shippingLines = new ArrayList<>(boatLines);
         if (level != null && !level.isClientSide) {
             MarketSavedData market = MarketSavedData.get(level);
             for (MarketListing listing : market.getListings()) {
-                listingLines.add(listing.toSummaryLine());
+                String line = describeListingLine(listing);
+                listingLines.add(line);
+                listingEntries.add(new MarketOverviewData.ListingEntry(
+                        line,
+                        listing.itemStack().isEmpty() ? "-" : listing.itemStack().getHoverName().getString(),
+                        listing.availableCount(),
+                        listing.reservedCount(),
+                        currentCommodityUnitPrice(listing.itemStack(), 1, listing.unitPrice()),
+                        listing.sellerName(),
+                        listing.sourceDockName().isBlank() ? listing.sourceDockPos().toShortString() : listing.sourceDockName(),
+                        listing.nationId()
+                ));
             }
             List<PurchaseOrder> openOrders = linkedDockPos == null ? List.<PurchaseOrder>of() : market.getOpenOrdersForSourceDock(linkedDockPos);
             for (PurchaseOrder order : openOrders) {
-                orderLines.add(order.toSummaryLine());
+                String line = order.toSummaryLine();
+                orderLines.add(line);
+                orderEntries.add(new MarketOverviewData.OrderEntry(
+                        line,
+                        order.sourceDockName().isBlank() ? order.sourceDockPos().toShortString() : order.sourceDockName(),
+                        order.targetDockName().isBlank() ? order.targetDockPos().toShortString() : order.targetDockName(),
+                        order.quantity(),
+                        order.status()
+                ));
             }
         }
 
@@ -131,7 +182,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 dockStorageLines,
                 listingLines,
                 orderLines,
-                shippingLines
+                shippingLines,
+                storageEntries,
+                listingEntries,
+                orderEntries,
+                shippingEntries
         );
     }
 
@@ -147,13 +202,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
         int stocked = selected.getCount();
         int amount = Math.max(1, Math.min(quantity, stocked));
-        int price = Math.max(1, unitPrice);
+        int fallbackPrice = Math.max(1, unitPrice);
         ItemStack listed = selected.copy();
         listed.setCount(1);
         if (!dock.extractVisibleStorage(player, visibleStorageIndex, amount)) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.market.storage_empty"), true);
             return false;
         }
+        adjustCommoditySupply(listed, amount);
+        int price = currentCommodityUnitPrice(listed, 1, fallbackPrice);
         MarketSavedData market = MarketSavedData.get(level);
         market.putListing(new MarketListing(
                 market.nextId(),
@@ -186,11 +243,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         int amount = Math.max(1, Math.min(quantity, listing.availableCount()));
-        int total = amount * Math.max(1, listing.unitPrice());
+        CommodityQuote quote = quoteCommodity(listing.itemStack(), amount);
+        int total = quote != null ? Math.max(0, quote.buyPrice()) : amount * Math.max(1, listing.unitPrice());
         if (!chargePlayer(player, total)) {
             player.displayClientMessage(Component.literal("Not enough funds."), true);
             return false;
         }
+        applyCommodityDemand(listing, amount, player);
         int sellerPayout = total;
         com.monpai.sailboatmod.nation.service.TaxService.TaxResult salesTaxResult =
                 com.monpai.sailboatmod.nation.service.TaxService.applySalesTax(level, total, this.worldPosition);
@@ -205,7 +264,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sellerUuid(),
                 listing.sellerName(),
                 listing.itemStack(),
-                listing.unitPrice(),
+                currentCommodityUnitPrice(listing.itemStack(), 1, listing.unitPrice()),
                 Math.max(0, listing.availableCount() - amount),
                 listing.reservedCount() + amount,
                 listing.sourceDockPos(),
@@ -258,6 +317,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             player.displayClientMessage(Component.literal("Source dock storage is full."), true);
             return false;
         }
+        adjustCommoditySupply(listing.itemStack(), -listing.availableCount());
         if (listing.reservedCount() <= 0) {
             market.removeListing(listing.listingId());
         } else {
@@ -783,6 +843,63 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return;
         }
         market.addPendingCredits(sellerUuid, amount);
+    }
+
+    private String describeListingLine(MarketListing listing) {
+        CommodityQuote quote = quoteCommodity(listing.itemStack(), 1);
+        if (quote != null) {
+            return listing.toSummaryLine(quote.buyUnitPrice());
+        }
+        return listing.toSummaryLine();
+    }
+
+    private int currentCommodityUnitPrice(ItemStack stack, int quantity, int fallbackPrice) {
+        CommodityQuote quote = quoteCommodity(stack, quantity);
+        if (quote == null) {
+            return Math.max(1, fallbackPrice);
+        }
+        return Math.max(1, quote.buyUnitPrice());
+    }
+
+    @Nullable
+    private CommodityQuote quoteCommodity(ItemStack stack, int quantity) {
+        try {
+            return COMMODITY_MARKET.quote(stack, Math.max(1, quantity));
+        } catch (SQLException exception) {
+            MARKET_LOGGER.debug("Failed to query commodity quote", exception);
+            return null;
+        }
+    }
+
+    private void adjustCommoditySupply(ItemStack stack, int delta) {
+        if (stack == null || stack.isEmpty() || delta == 0) {
+            return;
+        }
+        try {
+            COMMODITY_MARKET.adjustStock(stack, delta);
+        } catch (SQLException exception) {
+            MARKET_LOGGER.warn("Failed to adjust commodity supply by {} for {}", delta, stack.getHoverName().getString(), exception);
+        }
+    }
+
+    private void applyCommodityDemand(MarketListing listing, int amount, Player buyer) {
+        if (listing == null || amount <= 0 || buyer == null) {
+            return;
+        }
+        try {
+            COMMODITY_MARKET.applyTrade(
+                    listing.itemStack(),
+                    MarketTradeSide.BUY,
+                    amount,
+                    worldPosition.toShortString(),
+                    listing.nationId(),
+                    getLinkedDock() == null ? "" : getLinkedDock().getNationId(),
+                    buyer.getUUID().toString(),
+                    buyer.getGameProfile() == null ? buyer.getName().getString() : buyer.getGameProfile().getName()
+            );
+        } catch (SQLException exception) {
+            MARKET_LOGGER.warn("Failed to record commodity purchase for market listing {}", listing.listingId(), exception);
+        }
     }
 
     @Nullable

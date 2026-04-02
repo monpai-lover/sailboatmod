@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.client.modernui.ModernUiRuntimeBridge;
 import com.monpai.sailboatmod.client.screen.SailboatInfoScreen;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.entity.SailboatEntity;
@@ -45,6 +46,10 @@ public final class ClientInputHandler {
         }
 
         if (player.getVehicle() instanceof SailboatEntity sailboat && ClientKeyMappings.OPEN_SAILBOAT_INFO.consumeClick()) {
+            if (ModernUiCompat.isAvailable()) {
+                ModernUiRuntimeBridge.openSailboatInfoScreen(sailboat);
+                return;
+            }
             minecraft.setScreen(new SailboatInfoScreen(sailboat));
         }
     }
