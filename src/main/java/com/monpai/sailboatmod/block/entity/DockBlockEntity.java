@@ -435,7 +435,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         SailboatEntity boat = boats.get(safeBoatIndex);
         List<ItemStack> cargo = List.of(stack.copy());
         if (!boat.canLoadCargo(cargo)) {
-            player.displayClientMessage(Component.literal("Boat cargo hold is full."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.boat_cargo_full"), true);
             return false;
         }
         ItemStack removed = removeStorageItemNoUpdate(slot);
@@ -446,7 +446,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         cargo = List.of(removed.copy());
         if (!boat.loadCargo(cargo)) {
             setStorageItem(slot, removed);
-            player.displayClientMessage(Component.literal("Boat cargo load failed."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.boat_load_failed"), true);
             return false;
         }
         boat.setPendingMarketDelivery(
@@ -752,7 +752,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         String stockpileTownId = resolvedTownId();
         if (!stockpileTownId.isBlank() && !TownStockpileService.canRemoveCargo(level, stockpileTownId, removed.cargo)) {
-            player.displayClientMessage(Component.literal("Town stockpile no longer has this shipment available."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.stockpile_shipment_missing"), true);
             return false;
         }
         waybills.remove(idx);
@@ -1350,7 +1350,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sourceDockPos(),
                     listing.sourceDockName(),
                     listing.townId(),
-                    listing.nationId()
+                    listing.nationId(),
+                    listing.priceAdjustmentBp()
             ));
         }
     }

@@ -11,22 +11,27 @@ import net.minecraftforge.network.NetworkEvent;
 import java.util.function.Supplier;
 
 public class SyncConstructorSettingsPacket {
+    public enum Action {
+        PROJECT_OR_CONFIRM,
+        ASSIST
+    }
+
     private final BlockPos targetPos;
     private final int structureIndex;
     private final int offsetX;
     private final int offsetY;
     private final int offsetZ;
     private final int rotation;
-    private final boolean assistMode;
+    private final Action action;
 
-    public SyncConstructorSettingsPacket(BlockPos targetPos, int structureIndex, int offsetX, int offsetY, int offsetZ, int rotation, boolean assistMode) {
+    public SyncConstructorSettingsPacket(BlockPos targetPos, int structureIndex, int offsetX, int offsetY, int offsetZ, int rotation, Action action) {
         this.targetPos = targetPos;
         this.structureIndex = structureIndex;
         this.offsetX = offsetX;
         this.offsetY = offsetY;
         this.offsetZ = offsetZ;
         this.rotation = rotation;
-        this.assistMode = assistMode;
+        this.action = action;
     }
 
     public static void encode(SyncConstructorSettingsPacket msg, FriendlyByteBuf buf) {
@@ -36,7 +41,7 @@ public class SyncConstructorSettingsPacket {
         buf.writeInt(msg.offsetY);
         buf.writeInt(msg.offsetZ);
         buf.writeInt(msg.rotation);
-        buf.writeBoolean(msg.assistMode);
+        buf.writeEnum(msg.action);
     }
 
     public static SyncConstructorSettingsPacket decode(FriendlyByteBuf buf) {
@@ -47,7 +52,7 @@ public class SyncConstructorSettingsPacket {
                 buf.readInt(),
                 buf.readInt(),
                 buf.readInt(),
-                buf.readBoolean()
+                buf.readEnum(Action.class)
         );
     }
 
@@ -60,24 +65,19 @@ public class SyncConstructorSettingsPacket {
             StructureConstructionManager.StructureType type = StructureConstructionManager.StructureType.ALL.get(
                     Math.floorMod(msg.structureIndex, StructureConstructionManager.StructureType.ALL.size())
             );
-
-            // Town Hall in wilderness = create new town
-            if (type == StructureConstructionManager.StructureType.VICTORIAN_TOWN_HALL
-                && com.monpai.sailboatmod.nation.service.TownService.getTownAt(level, origin) == null) {
-                String townName = player.getGameProfile().getName() + "'s Town";
-                com.monpai.sailboatmod.nation.service.NationResult createResult =
-                    com.monpai.sailboatmod.nation.service.TownService.createTownAt(player, townName, origin);
-                if (!createResult.success()) {
-                    player.sendSystemMessage(createResult.message());
-                    return;
-                }
-                player.sendSystemMessage(createResult.message());
-            } else if (com.monpai.sailboatmod.nation.service.TownService.getTownAt(level, origin) == null) {
-                player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("command.sailboatmod.nation.town.facility.missing_town"));
+            net.minecraft.world.item.ItemStack held = player.getMainHandItem().is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())
+                    ? player.getMainHandItem()
+                    : player.getOffhandItem().is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())
+                    ? player.getOffhandItem()
+                    : net.minecraft.world.item.ItemStack.EMPTY;
+            if (held.isEmpty()) {
                 return;
             }
 
-            if (msg.assistMode) {
+            if (msg.action == Action.ASSIST) {
+                if (!validateConstructionPlacement(level, player, type, origin)) {
+                    return;
+                }
                 StructureConstructionManager.AssistPlacementResult assistResult =
                         StructureConstructionManager.assistPlaceNextBlock(level, origin, player, type, msg.rotation);
                 if (!assistResult.message().getString().isBlank()) {
@@ -86,19 +86,53 @@ public class SyncConstructorSettingsPacket {
                 return;
             }
 
+            if (!BankConstructorItem.matchesPendingProjection(held, level, origin, type, msg.rotation)) {
+                BankConstructorItem.setPendingProjection(held, level.dimension(), origin, type, msg.rotation);
+                player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                        "message.sailboatmod.constructor.projected",
+                        net.minecraft.network.chat.Component.translatable(type.translationKey()),
+                        origin.getX(), origin.getY(), origin.getZ()
+                ));
+                return;
+            }
+
+            if (!validateConstructionPlacement(level, player, type, origin)) {
+                return;
+            }
+
             boolean started = StructureConstructionManager.placeStructureAnimated(level, origin, player, type, msg.rotation);
             if (started) {
+                BankConstructorItem.clearPendingProjection(held);
                 // Consume item if not in creative
                 if (!player.getAbilities().instabuild) {
-                    net.minecraft.world.item.ItemStack held = player.getMainHandItem().is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())
-                        ? player.getMainHandItem()
-                        : player.getOffhandItem();
-                    if (!held.isEmpty()) {
-                        held.shrink(1);
-                    }
+                    held.shrink(1);
                 }
             }
         });
         ctx.get().setPacketHandled(true);
+    }
+
+    private static boolean validateConstructionPlacement(ServerLevel level,
+                                                         ServerPlayer player,
+                                                         StructureConstructionManager.StructureType type,
+                                                         BlockPos origin) {
+        if (type == StructureConstructionManager.StructureType.VICTORIAN_TOWN_HALL
+                && com.monpai.sailboatmod.nation.service.TownService.getTownAt(level, origin) == null) {
+            String townName = player.getGameProfile().getName() + "'s Town";
+            com.monpai.sailboatmod.nation.service.NationResult createResult =
+                    com.monpai.sailboatmod.nation.service.TownService.createTownAt(player, townName, origin);
+            if (!createResult.success()) {
+                player.sendSystemMessage(createResult.message());
+                return false;
+            }
+            player.sendSystemMessage(createResult.message());
+            return true;
+        }
+        if (type != StructureConstructionManager.StructureType.VICTORIAN_TOWN_HALL
+                && com.monpai.sailboatmod.nation.service.TownService.getTownAt(level, origin) == null) {
+            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("command.sailboatmod.nation.town.facility.missing_town"));
+            return false;
+        }
+        return true;
     }
 }

@@ -35,10 +35,12 @@ public class OpenMarketScreenPacket {
         writeLines(buffer, data.listingLines(), 192);
         writeLines(buffer, data.orderLines(), 192);
         writeLines(buffer, data.shippingLines(), 192);
+        writeLines(buffer, data.buyOrderLines(), 192);
         writeStorageEntries(buffer, data.dockStorageEntries());
         writeListingEntries(buffer, data.listingEntries());
         writeOrderEntries(buffer, data.orderEntries());
         writeShippingEntries(buffer, data.shippingEntries());
+        writeBuyOrderEntries(buffer, data.buyOrderEntries());
     }
 
     public static OpenMarketScreenPacket decode(FriendlyByteBuf buffer) {
@@ -56,10 +58,12 @@ public class OpenMarketScreenPacket {
         List<String> listingLines = readLines(buffer, 192);
         List<String> orderLines = readLines(buffer, 192);
         List<String> shippingLines = readLines(buffer, 192);
+        List<String> buyOrderLines = readLines(buffer, 192);
         List<MarketOverviewData.StorageEntry> dockStorageEntries = readStorageEntries(buffer);
         List<MarketOverviewData.ListingEntry> listingEntries = readListingEntries(buffer);
         List<MarketOverviewData.OrderEntry> orderEntries = readOrderEntries(buffer);
         List<MarketOverviewData.ShippingEntry> shippingEntries = readShippingEntries(buffer);
+        List<MarketOverviewData.BuyOrderEntry> buyOrderEntries = readBuyOrderEntries(buffer);
         return new OpenMarketScreenPacket(new MarketOverviewData(
                 marketPos,
                 marketName,
@@ -75,10 +79,12 @@ public class OpenMarketScreenPacket {
                 listingLines,
                 orderLines,
                 shippingLines,
+                buyOrderLines,
                 dockStorageEntries,
                 listingEntries,
                 orderEntries,
-                shippingEntries
+                shippingEntries,
+                buyOrderEntries
         ));
     }
 
@@ -207,6 +213,38 @@ public class OpenMarketScreenPacket {
                     buffer.readUtf(64),
                     buffer.readUtf(64),
                     buffer.readUtf(48)
+            ));
+        }
+        return entries;
+    }
+
+    private static void writeBuyOrderEntries(FriendlyByteBuf buffer, List<MarketOverviewData.BuyOrderEntry> entries) {
+        buffer.writeVarInt(entries.size());
+        for (MarketOverviewData.BuyOrderEntry entry : entries) {
+            PacketStringCodec.writeUtfSafe(buffer, entry.orderId(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, entry.label(), 192);
+            PacketStringCodec.writeUtfSafe(buffer, entry.commodityKey(), 128);
+            buffer.writeVarInt(entry.quantity());
+            buffer.writeVarInt(entry.minPriceBp());
+            buffer.writeVarInt(entry.maxPriceBp());
+            PacketStringCodec.writeUtfSafe(buffer, entry.buyerName(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, entry.status(), 32);
+        }
+    }
+
+    private static List<MarketOverviewData.BuyOrderEntry> readBuyOrderEntries(FriendlyByteBuf buffer) {
+        int count = buffer.readVarInt();
+        List<MarketOverviewData.BuyOrderEntry> entries = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            entries.add(new MarketOverviewData.BuyOrderEntry(
+                    buffer.readUtf(64),
+                    buffer.readUtf(192),
+                    buffer.readUtf(128),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readUtf(64),
+                    buffer.readUtf(32)
             ));
         }
         return entries;

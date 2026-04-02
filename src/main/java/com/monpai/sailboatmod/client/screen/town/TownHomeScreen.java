@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen.town;
 
+import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.TownFlagUploadClient;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
@@ -93,9 +94,10 @@ public class TownHomeScreen extends Screen {
     private boolean isDraggingMap = false;
     private double dragStartX = 0;
     private double dragStartY = 0;
-    private final java.util.Map<Long, Integer> terrainColorCache = new java.util.HashMap<>();
     private int pendingPreviewCenterX = Integer.MIN_VALUE;
     private int pendingPreviewCenterZ = Integer.MIN_VALUE;
+    private boolean resetPending = false;
+    private boolean refreshPending;
 
     public TownHomeScreen(TownOverviewData data) {
         super(Component.translatable("screen.sailboatmod.town.home.title"));
@@ -107,15 +109,34 @@ public class TownHomeScreen extends Screen {
         int visibleCenterX = mapCenterX();
         int visibleCenterZ = mapCenterZ();
         this.data = updated == null ? TownOverviewData.empty() : updated;
+        this.refreshPending = false;
+        this.autoRefreshTicks = 0;
         if (this.data.previewCenterChunkX() == this.pendingPreviewCenterX && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ) {
             this.pendingPreviewCenterX = Integer.MIN_VALUE;
             this.pendingPreviewCenterZ = Integer.MIN_VALUE;
         }
-        this.mapOffsetX = visibleCenterX - this.data.previewCenterChunkX();
-        this.mapOffsetZ = visibleCenterZ - this.data.previewCenterChunkZ();
+        if (this.resetPending) {
+            this.mapOffsetX = 0;
+            this.mapOffsetZ = 0;
+            this.resetPending = false;
+        } else {
+            this.mapOffsetX = visibleCenterX - this.data.previewCenterChunkX();
+            this.mapOffsetZ = visibleCenterZ - this.data.previewCenterChunkZ();
+        }
         this.memberScroll = clampMemberScroll(this.memberScroll);
         syncSelections();
         syncTownNameInput();
+        int diameter = claimRadius() * 2 + 1;
+        for (int gz = 0; gz < diameter; gz++) {
+            for (int gx = 0; gx < diameter; gx++) {
+                int idx = gz * diameter + gx;
+                if (idx < this.data.nearbyTerrainColors().size()) {
+                    int cx = this.data.previewCenterChunkX() + gx - claimRadius();
+                    int cz = this.data.previewCenterChunkZ() + gz - claimRadius();
+                    TerrainColorClientCache.put(cx, cz, this.data.nearbyTerrainColors().get(idx));
+                }
+            }
+        }
         this.statusLine = Component.translatable("screen.sailboatmod.town.status.synced");
         updateButtonState();
     }
@@ -183,7 +204,7 @@ public class TownHomeScreen extends Screen {
     }
 
     private void tickAutoRefresh() {
-        if (!this.data.hasTown()) {
+        if (!this.data.hasTown() || this.refreshPending) {
             this.autoRefreshTicks = 0;
             return;
         }
@@ -685,6 +706,8 @@ public class TownHomeScreen extends Screen {
                 return this.data.nearbyTerrainColors().get(index);
             }
         }
+        Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
+        if (cached != null) return cached;
         return sampleLocalTerrainColor(chunkX, chunkZ);
     }
 
@@ -723,6 +746,10 @@ public class TownHomeScreen extends Screen {
     }
 
     private void requestRefresh(int centerChunkX, int centerChunkZ) {
+        if (this.refreshPending) {
+            return;
+        }
+        this.refreshPending = true;
         this.pendingPreviewCenterX = centerChunkX;
         this.pendingPreviewCenterZ = centerChunkZ;
         ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(this.data.townId(), centerChunkX, centerChunkZ));
@@ -732,6 +759,7 @@ public class TownHomeScreen extends Screen {
     private void resetMapOffset() {
         this.mapOffsetX = 0;
         this.mapOffsetZ = 0;
+        this.resetPending = true;
         if (this.data.hasCore()) {
             net.minecraft.core.BlockPos corePos = net.minecraft.core.BlockPos.of(this.data.corePos());
             requestRefresh(corePos.getX() >> 4, corePos.getZ() >> 4);
@@ -962,8 +990,7 @@ public class TownHomeScreen extends Screen {
     private int top() { return (this.height - SCREEN_H) / 2; }
 
     private int sampleLocalTerrainColor(int chunkX, int chunkZ) {
-        long cacheKey = (((long) chunkX) << 32) ^ (chunkZ & 0xFFFFFFFFL);
-        Integer cached = this.terrainColorCache.get(cacheKey);
+        Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return 0xFF33414A;
@@ -993,8 +1020,7 @@ public class TownHomeScreen extends Screen {
             color = 0xFF33414A;
         }
 
-        if (this.terrainColorCache.size() > 4096) this.terrainColorCache.clear();
-        this.terrainColorCache.put(cacheKey, color);
+        TerrainColorClientCache.put(chunkX, chunkZ, color);
         return color;
     }
 

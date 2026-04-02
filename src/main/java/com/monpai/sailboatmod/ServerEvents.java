@@ -41,7 +41,10 @@ public final class ServerEvents {
             com.monpai.sailboatmod.nation.service.NationWarService.tickWars(server);
             com.monpai.sailboatmod.nation.service.NationWarService.tickProposalExpiry(
                     com.monpai.sailboatmod.nation.data.NationSavedData.get(server.overworld()));
-            server.getAllLevels().forEach(com.monpai.sailboatmod.nation.service.StructureConstructionManager::tick);
+            server.getAllLevels().forEach(level -> {
+                com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
+                com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
+            });
             if (++cleanupTickCounter >= 6000) {
                 cleanupTickCounter = 0;
                 cleanupOrphanClaims(server);

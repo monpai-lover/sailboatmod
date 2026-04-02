@@ -14,10 +14,14 @@ import com.monpai.sailboatmod.resident.model.Gender;
 import com.monpai.sailboatmod.resident.model.HappinessData;
 import com.monpai.sailboatmod.resident.model.Profession;
 import com.monpai.sailboatmod.resident.model.ResidentRecord;
+import com.monpai.sailboatmod.resident.service.ResidentSkinService;
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
@@ -28,6 +32,7 @@ import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
 import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 public class ResidentEntity extends PathfinderMob {
     private static final EntityDataAccessor<String> DATA_RESIDENT_ID =
@@ -175,7 +180,12 @@ public class ResidentEntity extends PathfinderMob {
     public void setResidentId(String id) { this.entityData.set(DATA_RESIDENT_ID, id == null ? "" : id); }
 
     public String getResidentName() { return this.entityData.get(DATA_RESIDENT_NAME); }
-    public void setResidentName(String name) { this.entityData.set(DATA_RESIDENT_NAME, name == null ? "Villager" : name); }
+    public void setResidentName(String name) {
+        String resolvedName = (name == null || name.isBlank()) ? "Villager" : name;
+        this.entityData.set(DATA_RESIDENT_NAME, resolvedName);
+        this.setCustomName(net.minecraft.network.chat.Component.literal(resolvedName));
+        this.setCustomNameVisible(true);
+    }
 
     public Profession getProfession() { return Profession.fromId(this.entityData.get(DATA_PROFESSION)); }
     public void setProfession(Profession p) { this.entityData.set(DATA_PROFESSION, p == null ? Profession.UNEMPLOYED.id() : p.id()); }
@@ -184,7 +194,14 @@ public class ResidentEntity extends PathfinderMob {
     public void setTownId(String id) { this.entityData.set(DATA_TOWN_ID, id == null ? "" : id); }
 
     public String getSkinHash() { return this.entityData.get(DATA_SKIN_HASH); }
-    public void setSkinHash(String hash) { this.entityData.set(DATA_SKIN_HASH, hash == null ? "" : hash); }
+    public void setSkinHash(String hash) {
+        this.entityData.set(DATA_SKIN_HASH, ResidentSkinService.resolveSkinHash(
+                hash,
+                getResidentId(),
+                getProfession(),
+                getGender()
+        ));
+    }
 
     public Gender getGender() { return Gender.fromId(this.entityData.get(DATA_GENDER)); }
     public void setGender(Gender g) { this.entityData.set(DATA_GENDER, g == null ? Gender.MALE.id() : g.id()); }
@@ -294,23 +311,26 @@ public class ResidentEntity extends PathfinderMob {
     }
 
     @Override
-    protected net.minecraft.world.InteractionResult mobInteract(Player player, net.minecraft.world.InteractionHand hand) {
+    protected InteractionResult mobInteract(Player player, InteractionHand hand) {
+        if (hand != InteractionHand.MAIN_HAND) {
+            return super.mobInteract(player, hand);
+        }
         if (!player.level().isClientSide && player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
-            String id = getResidentId();
-            if (!id.isEmpty()) {
-                com.monpai.sailboatmod.resident.data.ResidentSavedData data =
-                    com.monpai.sailboatmod.resident.data.ResidentSavedData.get(serverPlayer.serverLevel());
-                ResidentRecord record = data.getResident(id);
-                if (record != null) {
-                    com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendTo(
-                        new com.monpai.sailboatmod.network.packet.OpenResidentScreenPacket(record),
-                        serverPlayer.connection.connection,
-                        net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                    );
-                }
+            ResidentRecord record = buildInteractionRecord(serverPlayer.serverLevel());
+            if (record != null) {
+                com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendTo(
+                    new com.monpai.sailboatmod.network.packet.OpenResidentScreenPacket(record),
+                    serverPlayer.connection.connection,
+                    net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                );
             }
         }
-        return net.minecraft.world.InteractionResult.sidedSuccess(player.level().isClientSide);
+        return InteractionResult.sidedSuccess(player.level().isClientSide);
+    }
+
+    @Override
+    public InteractionResult interactAt(Player player, Vec3 hitVec, InteractionHand hand) {
+        return mobInteract(player, hand);
     }
 
     @Override
@@ -318,4 +338,44 @@ public class ResidentEntity extends PathfinderMob {
 
     @Override
     public boolean removeWhenFarAway(double distance) { return false; }
+
+    private ResidentRecord buildInteractionRecord(net.minecraft.server.level.ServerLevel level) {
+        String residentId = getResidentId();
+        com.monpai.sailboatmod.resident.data.ResidentSavedData data =
+                com.monpai.sailboatmod.resident.data.ResidentSavedData.get(level);
+        ResidentRecord record = residentId.isEmpty() ? null : data.getResident(residentId);
+        if (record != null) {
+            String resolvedSkin = ResidentSkinService.resolveSkinHash(
+                    record.skinHash(),
+                    record.residentId(),
+                    record.profession(),
+                    record.gender()
+            );
+            if (!resolvedSkin.equals(record.skinHash())) {
+                record = record.withSkinHash(resolvedSkin);
+                data.putResident(record);
+            }
+            return record;
+        }
+        if (residentId.isEmpty()) {
+            return null;
+        }
+        return new ResidentRecord(
+                residentId,
+                getTownId(),
+                getResidentName(),
+                ResidentSkinService.resolveSkinHash(getSkinHash(), residentId, getProfession(), getGender()),
+                getProfession(),
+                getGender(),
+                getAge(),
+                getHunger(),
+                isEducated(),
+                getCulture(),
+                1,
+                50,
+                BlockPos.ZERO,
+                getAssignedBed() == null ? BlockPos.ZERO : getAssignedBed(),
+                System.currentTimeMillis()
+        );
+    }
 }

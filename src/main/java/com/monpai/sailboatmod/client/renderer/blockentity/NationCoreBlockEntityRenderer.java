@@ -49,4 +49,14 @@ public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<Nation
         Matrix4f matrix = poseStack.last().pose();
         this.font.drawInBatch(line, x, y, color, false, matrix, bufferSource, Font.DisplayMode.SEE_THROUGH, 0x66000000, packedLight);
     }
+
+    @Override
+    public boolean shouldRenderOffScreen(NationCoreBlockEntity blockEntity) {
+        return true;
+    }
+
+    @Override
+    public int getViewDistance() {
+        return 128;
+    }
 }

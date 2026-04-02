@@ -17,7 +17,8 @@ public record MarketListing(
         BlockPos sourceDockPos,
         String sourceDockName,
         String townId,
-        String nationId
+        String nationId,
+        int priceAdjustmentBp
 ) {
     public MarketListing {
         listingId = sanitize(listingId);
@@ -31,6 +32,7 @@ public record MarketListing(
         sourceDockName = sanitize(sourceDockName);
         townId = sanitize(townId);
         nationId = sanitize(nationId);
+        priceAdjustmentBp = Math.max(-1000, Math.min(1000, priceAdjustmentBp));
     }
 
     public CompoundTag save() {
@@ -46,6 +48,7 @@ public record MarketListing(
         tag.putString("SourceDockName", sourceDockName);
         tag.putString("TownId", townId);
         tag.putString("NationId", nationId);
+        tag.putInt("PriceAdjustmentBp", priceAdjustmentBp);
         return tag;
     }
 
@@ -61,7 +64,8 @@ public record MarketListing(
                 BlockPos.of(tag.getLong("SourceDockPos")),
                 tag.getString("SourceDockName"),
                 tag.contains("TownId") ? tag.getString("TownId") : "",
-                tag.contains("NationId") ? tag.getString("NationId") : ""
+                tag.contains("NationId") ? tag.getString("NationId") : "",
+                tag.contains("PriceAdjustmentBp") ? tag.getInt("PriceAdjustmentBp") : 0
         );
     }
 

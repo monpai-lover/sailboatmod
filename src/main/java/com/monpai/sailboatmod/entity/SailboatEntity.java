@@ -2117,7 +2117,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                             listing.sourceDockPos(),
                             listing.sourceDockName(),
                             listing.townId(),
-                            listing.nationId()
+                            listing.nationId(),
+                            listing.priceAdjustmentBp()
                     ));
                 }
             }

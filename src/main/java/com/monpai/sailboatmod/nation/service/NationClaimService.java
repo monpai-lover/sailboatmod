@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -19,6 +20,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -31,6 +33,7 @@ public final class NationClaimService {
             Level.NETHER.location().toString(),
             Level.END.location().toString()
     );
+    private static final Set<String> SUPPRESSED_CORE_REMOVALS = new HashSet<>();
 
     public static int claimCost() {
         return CLAIM_COST;
@@ -139,8 +142,58 @@ public final class NationClaimService {
                 nation.name()));
     }
 
+    public static NationResult pickupCore(ServerPlayer player, BlockPos pos) {
+        NationSavedData data = NationSavedData.get(player.level());
+        NationMemberRecord member = data.getMember(player.getUUID());
+        if (member == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.no_nation"));
+        }
+        if (!NationService.hasPermission(player.level(), player.getUUID(), NationPermission.PLACE_CORE)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.no_permission"));
+        }
+
+        NationRecord nation = data.getNation(member.nationId());
+        if (nation == null || !nation.hasCore()) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.not_placed"));
+        }
+        if (!isNationCore(player.level(), pos, nation)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.not_active"));
+        }
+
+        NationRecord updated = new NationRecord(
+                nation.nationId(),
+                nation.name(),
+                nation.shortName(),
+                nation.primaryColorRgb(),
+                nation.secondaryColorRgb(),
+                nation.leaderUuid(),
+                nation.createdAt(),
+                nation.capitalTownId(),
+                "",
+                NationRecord.noCorePos(),
+                nation.flagId()
+        );
+        data.putNation(updated);
+        suppressCoreRemoval(player.level(), pos);
+        player.level().removeBlock(pos, false);
+
+        ItemStack relocatedCore = new ItemStack(ModBlocks.NATION_CORE_BLOCK.get());
+        CompoundTag tag = relocatedCore.getOrCreateTag();
+        tag.putString("RelocatingNationId", nation.nationId());
+        tag.putString("RelocatingNationName", nation.name());
+        if (!player.getInventory().add(relocatedCore)) {
+            player.drop(relocatedCore, false);
+        } else {
+            player.containerMenu.broadcastChanges();
+        }
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.core.picked_up"));
+    }
+
     public static void onCoreRemoved(Level level, BlockPos pos) {
         if (level == null || level.isClientSide || pos == null) {
+            return;
+        }
+        if (consumeSuppressedCoreRemoval(level, pos)) {
             return;
         }
         NationSavedData data = NationSavedData.get(level);
@@ -475,6 +528,18 @@ public final class NationClaimService {
         }
         return level.dimension().location().toString().equalsIgnoreCase(nation.coreDimension())
                 && pos.asLong() == nation.corePos();
+    }
+
+    private static void suppressCoreRemoval(Level level, BlockPos pos) {
+        SUPPRESSED_CORE_REMOVALS.add(coreRemovalKey(level, pos));
+    }
+
+    private static boolean consumeSuppressedCoreRemoval(Level level, BlockPos pos) {
+        return SUPPRESSED_CORE_REMOVALS.remove(coreRemovalKey(level, pos));
+    }
+
+    private static String coreRemovalKey(Level level, BlockPos pos) {
+        return level.dimension().location() + "|" + pos.asLong();
     }
 
     private static boolean isSameChunk(ChunkPos left, ChunkPos right) {

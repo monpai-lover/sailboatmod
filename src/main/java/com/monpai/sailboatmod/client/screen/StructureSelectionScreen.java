@@ -69,7 +69,7 @@ public class StructureSelectionScreen extends Screen {
         g.fill(left + 2, top + FOOTER_Y, right - 2, bottom - 28, 0xCC0F151D);
 
         g.drawString(this.font, this.title, left + 14, top + 11, 0xFFF1D98A);
-        g.drawString(this.font, Component.literal("Preview the blueprint before placement and choose a build target."),
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.subtitle"),
                 left + 14, top + 22, 0xFF91A4B7);
 
         renderListPanel(g, mouseX, mouseY);
@@ -87,7 +87,7 @@ public class StructureSelectionScreen extends Screen {
 
         g.fill(x, y, x2, y2, 0xAA10171E);
         g.fill(x + 1, y + 1, x2 - 1, y2 - 1, 0x99222F3B);
-        g.drawString(this.font, Component.literal("Structure Catalog"), x + 8, y - 12, 0xFFBFD1E2);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.catalog"), x + 8, y - 12, 0xFFBFD1E2);
 
         int start = clampScroll(this.scrollOffset);
         int end = Math.min(start + VISIBLE_ROWS, StructureType.ALL.size());
@@ -113,7 +113,7 @@ public class StructureSelectionScreen extends Screen {
                     selected ? 0xFFF7F3D0 : 0xFFD8E4EF);
             g.drawString(this.font, Component.literal(type.w() + "x" + type.h() + "x" + type.d()), x + 30, rowY + 14,
                     0xFF91A4B7);
-            g.drawString(this.font, Component.literal(sizeLabel(type)), x2 - 54, rowY + 9, 0xFFE7C977);
+            g.drawString(this.font, sizeLabel(type), x2 - 54, rowY + 9, 0xFFE7C977);
         }
 
         renderScrollBar(g, x2 - 7, y + 4, LIST_H - 8, StructureType.ALL.size(), VISIBLE_ROWS, start);
@@ -130,40 +130,40 @@ public class StructureSelectionScreen extends Screen {
         g.fill(x + 1, y + 1, x2 - 1, y2 - 1, 0x9924303D);
 
         g.drawString(this.font, Component.translatable(type.translationKey()), x + 12, y + 10, 0xFFF5E7AF);
-        g.drawString(this.font, Component.literal(roleLabel(type)), x + 12, y + 22, 0xFF8CB5C1);
+        g.drawString(this.font, roleLabel(type), x + 12, y + 22, 0xFF8CB5C1);
 
         renderHeroIcon(g, type, x + DETAIL_W - 42, y + 10);
-        renderMetricChip(g, x + 12, y + 38, 50, "Width", Integer.toString(type.w()));
-        renderMetricChip(g, x + 68, y + 38, 50, "Height", Integer.toString(type.h()));
-        renderMetricChip(g, x + 124, y + 38, 50, "Depth", Integer.toString(type.d()));
+        renderMetricChip(g, x + 12, y + 38, 50, Component.translatable("screen.sailboatmod.structure_selection.metric.width"), Integer.toString(type.w()));
+        renderMetricChip(g, x + 68, y + 38, 50, Component.translatable("screen.sailboatmod.structure_selection.metric.height"), Integer.toString(type.h()));
+        renderMetricChip(g, x + 124, y + 38, 50, Component.translatable("screen.sailboatmod.structure_selection.metric.depth"), Integer.toString(type.d()));
 
         renderFootprintPreview(g, type, x + 12, y + 68, 90, 72);
         renderHeightPreview(g, type, x + 112, y + 68, 20, 72);
 
-        drawWrappedText(g, Component.literal(description(type)), x + 140, y + 70, 48, 0xFFD5E0E9);
-        g.drawString(this.font, Component.literal("Placement"), x + 12, y + 146, 0xFFE7C977);
-        g.drawString(this.font, Component.literal("Preview first, then confirm with Done."), x + 68, y + 146, 0xFFB4C2CD);
+        drawWrappedText(g, description(type), x + 140, y + 70, 48, 0xFFD5E0E9);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.placement"), x + 12, y + 146, 0xFFE7C977);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.placement_hint"), x + 68, y + 146, 0xFFB4C2CD);
     }
 
     private void renderFooter(GuiGraphics g) {
         int x = left() + 14;
         int y = top() + FOOTER_Y + 8;
-        g.drawString(this.font, Component.literal("Controls"), x, y, 0xFFF1D98A);
-        g.drawString(this.font, Component.literal("Click: select   Wheel: scroll list   Up/Down: change   Enter: confirm"),
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.controls"), x, y, 0xFFF1D98A);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.controls_hint"),
                 x + 54, y, 0xFFB9C6D2);
-        g.drawString(this.font, Component.literal("Selected blueprint updates the constructor item when you press Done."),
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.controls_hint_2"),
                 x, y + 12, 0xFF8798A7);
     }
 
-    private void renderMetricChip(GuiGraphics g, int x, int y, int w, String label, String value) {
+    private void renderMetricChip(GuiGraphics g, int x, int y, int w, Component label, String value) {
         g.fill(x, y, x + w, y + 18, 0x5532404D);
-        g.drawCenteredString(this.font, Component.literal(label), x + w / 2, y + 3, 0xFF96A8B7);
+        g.drawCenteredString(this.font, label, x + w / 2, y + 3, 0xFF96A8B7);
         g.drawCenteredString(this.font, Component.literal(value), x + w / 2, y + 10, 0xFFF4E2A0);
     }
 
     private void renderFootprintPreview(GuiGraphics g, StructureType type, int x, int y, int w, int h) {
         g.fill(x, y, x + w, y + h, 0x66111A22);
-        g.drawString(this.font, Component.literal("Footprint"), x + 4, y + 4, 0xFFBFD1E2);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.footprint"), x + 4, y + 4, 0xFFBFD1E2);
 
         int previewX = x + 12;
         int previewY = y + 18;
@@ -353,43 +353,43 @@ public class StructureSelectionScreen extends Screen {
         };
     }
 
-    private String sizeLabel(StructureType type) {
+    private Component sizeLabel(StructureType type) {
         int volume = type.w() * type.h() * type.d();
         if (volume >= 7000) {
-            return "Grand";
+            return Component.translatable("screen.sailboatmod.structure_selection.size.grand");
         }
         if (volume >= 2500) {
-            return "Major";
+            return Component.translatable("screen.sailboatmod.structure_selection.size.major");
         }
         if (volume >= 1000) {
-            return "Medium";
+            return Component.translatable("screen.sailboatmod.structure_selection.size.medium");
         }
-        return "Small";
+        return Component.translatable("screen.sailboatmod.structure_selection.size.small");
     }
 
-    private String roleLabel(StructureType type) {
+    private Component roleLabel(StructureType type) {
         return switch (type) {
-            case VICTORIAN_BANK -> "Treasury and storage hub";
-            case VICTORIAN_TOWN_HALL -> "Town core and management";
-            case NATION_CAPITOL -> "Nation center and authority";
-            case OPEN_AIR_MARKETPLACE -> "Trade and exchange district";
-            case WATERFRONT_DOCK -> "Shipping and route terminal";
-            case COTTAGE -> "Basic resident housing";
-            case TAVERN -> "Service and leisure building";
-            case SCHOOL -> "Education and training";
+            case VICTORIAN_BANK -> Component.translatable("screen.sailboatmod.structure_selection.role.victorian_bank");
+            case VICTORIAN_TOWN_HALL -> Component.translatable("screen.sailboatmod.structure_selection.role.victorian_town_hall");
+            case NATION_CAPITOL -> Component.translatable("screen.sailboatmod.structure_selection.role.nation_capitol");
+            case OPEN_AIR_MARKETPLACE -> Component.translatable("screen.sailboatmod.structure_selection.role.open_air_marketplace");
+            case WATERFRONT_DOCK -> Component.translatable("screen.sailboatmod.structure_selection.role.waterfront_dock");
+            case COTTAGE -> Component.translatable("screen.sailboatmod.structure_selection.role.cottage");
+            case TAVERN -> Component.translatable("screen.sailboatmod.structure_selection.role.tavern");
+            case SCHOOL -> Component.translatable("screen.sailboatmod.structure_selection.role.school");
         };
     }
 
-    private String description(StructureType type) {
+    private Component description(StructureType type) {
         return switch (type) {
-            case VICTORIAN_BANK -> "Best for starting treasury operations and enabling blueprint-backed material spending.";
-            case VICTORIAN_TOWN_HALL -> "Use this as the first major civic structure for a town center.";
-            case NATION_CAPITOL -> "Large ceremonial build suited for national administration and landmark placement.";
-            case OPEN_AIR_MARKETPLACE -> "Compact commercial square for orders, listings, and supply movement.";
-            case WATERFRONT_DOCK -> "Coastal logistics point for boats, routes, and imported construction goods.";
-            case COTTAGE -> "Low-cost housing choice with a small footprint and fast placement.";
-            case TAVERN -> "Useful mid-size public venue that adds a social-service building to the district.";
-            case SCHOOL -> "Education-focused building that supports more advanced settlement progression.";
+            case VICTORIAN_BANK -> Component.translatable("screen.sailboatmod.structure_selection.description.victorian_bank");
+            case VICTORIAN_TOWN_HALL -> Component.translatable("screen.sailboatmod.structure_selection.description.victorian_town_hall");
+            case NATION_CAPITOL -> Component.translatable("screen.sailboatmod.structure_selection.description.nation_capitol");
+            case OPEN_AIR_MARKETPLACE -> Component.translatable("screen.sailboatmod.structure_selection.description.open_air_marketplace");
+            case WATERFRONT_DOCK -> Component.translatable("screen.sailboatmod.structure_selection.description.waterfront_dock");
+            case COTTAGE -> Component.translatable("screen.sailboatmod.structure_selection.description.cottage");
+            case TAVERN -> Component.translatable("screen.sailboatmod.structure_selection.description.tavern");
+            case SCHOOL -> Component.translatable("screen.sailboatmod.structure_selection.description.school");
         };
     }
 

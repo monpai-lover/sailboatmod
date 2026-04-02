@@ -10,7 +10,7 @@ import java.sql.SQLException;
 public final class CommodityMarketRepository {
     public CommodityDefinition getDefinition(String commodityKey) throws SQLException {
         try (PreparedStatement statement = connection().prepareStatement(
-                "SELECT commodity_key, item_id, variant_key, display_name, unit_size, category, trade_enabled FROM commodity_definition WHERE commodity_key = ?")) {
+                "SELECT commodity_key, item_id, variant_key, display_name, unit_size, category, trade_enabled, rarity, importance, volume, elasticity, base_volatility FROM commodity_definition WHERE commodity_key = ?")) {
             statement.setString(1, commodityKey);
             try (ResultSet resultSet = statement.executeQuery()) {
                 if (!resultSet.next()) {
@@ -23,7 +23,12 @@ public final class CommodityMarketRepository {
                         resultSet.getString("display_name"),
                         resultSet.getInt("unit_size"),
                         resultSet.getString("category"),
-                        resultSet.getInt("trade_enabled") == 1
+                        resultSet.getInt("trade_enabled") == 1,
+                        resultSet.getInt("rarity"),
+                        resultSet.getInt("importance"),
+                        resultSet.getInt("volume"),
+                        resultSet.getInt("elasticity"),
+                        resultSet.getInt("base_volatility")
                 );
             }
         }
@@ -58,15 +63,20 @@ public final class CommodityMarketRepository {
     public void upsertDefinition(CommodityDefinition definition) throws SQLException {
         try (PreparedStatement statement = connection().prepareStatement(
                 """
-                INSERT INTO commodity_definition (commodity_key, item_id, variant_key, display_name, unit_size, category, trade_enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO commodity_definition (commodity_key, item_id, variant_key, display_name, unit_size, category, trade_enabled, rarity, importance, volume, elasticity, base_volatility)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(commodity_key) DO UPDATE SET
                     item_id = excluded.item_id,
                     variant_key = excluded.variant_key,
                     display_name = excluded.display_name,
                     unit_size = excluded.unit_size,
                     category = excluded.category,
-                    trade_enabled = excluded.trade_enabled
+                    trade_enabled = excluded.trade_enabled,
+                    rarity = excluded.rarity,
+                    importance = excluded.importance,
+                    volume = excluded.volume,
+                    elasticity = excluded.elasticity,
+                    base_volatility = excluded.base_volatility
                 """)) {
             statement.setString(1, definition.commodityKey());
             statement.setString(2, definition.itemId());
@@ -75,6 +85,11 @@ public final class CommodityMarketRepository {
             statement.setInt(5, definition.unitSize());
             statement.setString(6, definition.category());
             statement.setInt(7, definition.tradeEnabled() ? 1 : 0);
+            statement.setInt(8, definition.rarity());
+            statement.setInt(9, definition.importance());
+            statement.setInt(10, definition.volume());
+            statement.setInt(11, definition.elasticity());
+            statement.setInt(12, definition.baseVolatility());
             statement.executeUpdate();
         }
     }
@@ -130,6 +145,115 @@ public final class CommodityMarketRepository {
             statement.setString(9, tradeRecord.actorUuid());
             statement.setString(10, tradeRecord.actorName());
             statement.setLong(11, tradeRecord.createdAt());
+            statement.executeUpdate();
+        }
+    }
+
+    public PlayerMarketSettings getPlayerSettings(String playerUuid) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                "SELECT player_uuid, buy_price_adjustment_bp, sell_price_adjustment_bp FROM player_market_settings WHERE player_uuid = ?")) {
+            statement.setString(1, playerUuid);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (!resultSet.next()) {
+                    return null;
+                }
+                return new PlayerMarketSettings(
+                        resultSet.getString("player_uuid"),
+                        resultSet.getInt("buy_price_adjustment_bp"),
+                        resultSet.getInt("sell_price_adjustment_bp")
+                );
+            }
+        }
+    }
+
+    public void upsertPlayerSettings(PlayerMarketSettings settings) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                INSERT INTO player_market_settings (player_uuid, buy_price_adjustment_bp, sell_price_adjustment_bp)
+                VALUES (?, ?, ?)
+                ON CONFLICT(player_uuid) DO UPDATE SET
+                    buy_price_adjustment_bp = excluded.buy_price_adjustment_bp,
+                    sell_price_adjustment_bp = excluded.sell_price_adjustment_bp
+                """)) {
+            statement.setString(1, settings.playerUuid());
+            statement.setInt(2, settings.buyPriceAdjustmentBp());
+            statement.setInt(3, settings.sellPriceAdjustmentBp());
+            statement.executeUpdate();
+        }
+    }
+
+    public void createBuyOrder(BuyOrder order) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                INSERT INTO buy_order (order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """)) {
+            statement.setString(1, order.orderId());
+            statement.setString(2, order.buyerUuid());
+            statement.setString(3, order.buyerName());
+            statement.setString(4, order.commodityKey());
+            statement.setInt(5, order.quantity());
+            statement.setInt(6, order.minPriceBp());
+            statement.setInt(7, order.maxPriceBp());
+            statement.setLong(8, order.createdAt());
+            statement.setString(9, order.status());
+            statement.executeUpdate();
+        }
+    }
+
+    public java.util.List<BuyOrder> listActiveBuyOrders(String commodityKey) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                "SELECT order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, created_at, status FROM buy_order WHERE commodity_key = ? AND status = 'ACTIVE' ORDER BY created_at DESC")) {
+            statement.setString(1, commodityKey);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                java.util.List<BuyOrder> orders = new java.util.ArrayList<>();
+                while (resultSet.next()) {
+                    orders.add(new BuyOrder(
+                            resultSet.getString("order_id"),
+                            resultSet.getString("buyer_uuid"),
+                            resultSet.getString("buyer_name"),
+                            resultSet.getString("commodity_key"),
+                            resultSet.getInt("quantity"),
+                            resultSet.getInt("min_price_bp"),
+                            resultSet.getInt("max_price_bp"),
+                            resultSet.getLong("created_at"),
+                            resultSet.getString("status")
+                    ));
+                }
+                return orders;
+            }
+        }
+    }
+
+    public java.util.List<BuyOrder> listActiveBuyOrdersForBuyer(String buyerUuid) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                "SELECT order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, created_at, status FROM buy_order WHERE buyer_uuid = ? AND status = 'ACTIVE' ORDER BY created_at DESC")) {
+            statement.setString(1, buyerUuid);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                java.util.List<BuyOrder> orders = new java.util.ArrayList<>();
+                while (resultSet.next()) {
+                    orders.add(new BuyOrder(
+                            resultSet.getString("order_id"),
+                            resultSet.getString("buyer_uuid"),
+                            resultSet.getString("buyer_name"),
+                            resultSet.getString("commodity_key"),
+                            resultSet.getInt("quantity"),
+                            resultSet.getInt("min_price_bp"),
+                            resultSet.getInt("max_price_bp"),
+                            resultSet.getLong("created_at"),
+                            resultSet.getString("status")
+                    ));
+                }
+                return orders;
+            }
+        }
+    }
+
+    public void updateBuyOrderStatus(String orderId, String status) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                "UPDATE buy_order SET status = ? WHERE order_id = ?")) {
+            statement.setString(1, status);
+            statement.setString(2, orderId);
             statement.executeUpdate();
         }
     }

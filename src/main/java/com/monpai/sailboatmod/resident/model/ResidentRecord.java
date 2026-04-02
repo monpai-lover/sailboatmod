@@ -70,6 +70,9 @@ public record ResidentRecord(
     public ResidentRecord withProfession(Profession p) {
         return new ResidentRecord(residentId, townId, name, skinHash, p, gender, age, hunger, educated, culture, level, happiness, assignedWorkplace, assignedBed, createdAt);
     }
+    public ResidentRecord withSkinHash(String hash) {
+        return new ResidentRecord(residentId, townId, name, hash, profession, gender, age, hunger, educated, culture, level, happiness, assignedWorkplace, assignedBed, createdAt);
+    }
     public ResidentRecord withHunger(int h) {
         return new ResidentRecord(residentId, townId, name, skinHash, profession, gender, age, h, educated, culture, level, happiness, assignedWorkplace, assignedBed, createdAt);
     }

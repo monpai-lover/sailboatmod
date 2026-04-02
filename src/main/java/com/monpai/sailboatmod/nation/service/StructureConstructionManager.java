@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
@@ -16,6 +18,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
+import net.minecraftforge.network.NetworkDirection;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -53,20 +56,23 @@ public final class StructureConstructionManager {
         public static final List<StructureType> ALL = List.of(values());
     }
 
-    private record ConstructionJob(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type,
-                                    String projectId, List<List<StructureTemplate.StructureBlockInfo>> layers, int currentLayer,
-                                    long startTick, BlueprintService.PlacementBounds bounds, int rotation,
-                                    List<BlockPos> scaffoldPositions) {}
+    private record ConstructionJob(ServerLevel level, ServerPlayer player, StructureType type,
+                                   String projectId, StructureConstructionSite site) {}
 
     public record AssistPlacementResult(boolean success, boolean completed, Component message) {}
+    public record WorkerSiteAssignment(String jobId, BlockPos anchorPos, BlockPos approachPos, BlockPos focusPos,
+                                       int progressPercent, int activeWorkers) {}
 
     private record RoadConstructionJob(ServerLevel level, List<BlockPos> path, int currentIndex, long startTick) {}
+    private record ActiveWorker(BlockPos position, long lastSeenTick, boolean specialist) {}
 
     private static final Map<String, ConstructionJob> ACTIVE_CONSTRUCTIONS = new ConcurrentHashMap<>();
     private static final Map<String, RoadConstructionJob> ACTIVE_ROAD_CONSTRUCTIONS = new ConcurrentHashMap<>();
     private static final Map<String, List<BlockPos>> ACTIVE_ASSIST_SITES = new ConcurrentHashMap<>();
+    private static final Map<String, Map<String, ActiveWorker>> ACTIVE_SITE_WORKERS = new ConcurrentHashMap<>();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
     private static final int ROAD_BUILD_DURATION_TICKS = 200; // ~10 seconds for roads
+    private static final long ACTIVE_WORKER_TIMEOUT_TICKS = 40L;
 
     private StructureConstructionManager() {}
 
@@ -93,28 +99,16 @@ public final class StructureConstructionManager {
             player.sendSystemMessage(payment.message());
         }
 
-        List<StructureTemplate.StructureBlockInfo> allBlocks = placement.blocks();
-
-        // Organize blocks by Y layer
-        Map<Integer, List<StructureTemplate.StructureBlockInfo>> blocksByLayer = new HashMap<>();
-        for (StructureTemplate.StructureBlockInfo info : allBlocks) {
-            int y = info.pos().getY();
-            blocksByLayer.computeIfAbsent(y, k -> new ArrayList<>()).add(info);
-        }
-
-        List<List<StructureTemplate.StructureBlockInfo>> layers = new ArrayList<>();
-        for (int y = placement.bounds().min().getY(); y <= placement.bounds().max().getY(); y++) {
-            layers.add(blocksByLayer.getOrDefault(y, List.of()));
-        }
-
         List<BlockPos> scaffoldPositions = ConstructionScaffoldingService.placeScaffolding(level, placement.bounds());
+        StructureConstructionSite site = StructureConstructionSite.create(level, origin, placement, scaffoldPositions, true);
 
-        // Start construction job
         String jobId = origin.toShortString() + "_" + System.currentTimeMillis();
-        ACTIVE_CONSTRUCTIONS.put(jobId, new ConstructionJob(
-                level, origin, player, type, projectId, layers, 0, level.getGameTime(), placement.bounds(), placement.rotation(), scaffoldPositions));
+        ACTIVE_CONSTRUCTIONS.put(jobId, new ConstructionJob(level, player, type, projectId, site));
 
-        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.started"));
+        player.sendSystemMessage(Component.translatable(
+                "command.sailboatmod.nation.structure.started",
+                Component.translatable(type.translationKey())
+        ));
         return true;
     }
 
@@ -208,40 +202,121 @@ public final class StructureConstructionManager {
 
     private static void tickConstructions(ServerLevel level) {
         List<String> completed = new ArrayList<>();
+        Set<ServerPlayer> playersToSync = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Map.Entry<String, ConstructionJob> entry : ACTIVE_CONSTRUCTIONS.entrySet()) {
             ConstructionJob job = entry.getValue();
             if (job.level != level) continue;
+            playersToSync.add(job.player);
 
-            long elapsed = level.getGameTime() - job.startTick;
-            int targetLayer = (int) (elapsed * job.layers.size() / BUILD_DURATION_TICKS);
-
-            // Place layers up to target
-            for (int y = job.currentLayer; y <= Math.min(targetLayer, job.layers.size() - 1); y++) {
-                for (StructureTemplate.StructureBlockInfo info : job.layers.get(y)) {
-                    level.setBlock(info.pos(), info.state(), Block.UPDATE_CLIENTS);
-                }
+            int activeWorkers = getActiveWorkerCount(level, entry.getKey());
+            job.site.tick(activeWorkers, false);
+            if (job.site.consumeProgressUpdate()) {
+                job.player.displayClientMessage(Component.translatable(
+                        "message.sailboatmod.constructor.progress",
+                        Component.translatable(job.type.translationKey()),
+                        job.site.progressPercent()
+                ), true);
             }
 
-            int newLayer = Math.min(targetLayer + 1, job.layers.size());
-
-            // Send progress updates every 10 layers
-            if (newLayer > job.currentLayer && newLayer % 10 == 0 && newLayer < job.layers.size()) {
-                int progress = (newLayer * 100) / job.layers.size();
-                job.player.displayClientMessage(Component.literal("Building: " + progress + "%"), true);
-            }
-
-            if (newLayer >= job.layers.size()) {
-                // Construction complete
-                completeStructure(level, job.player, job.type, job.bounds, job.rotation, job.scaffoldPositions);
+            if (job.site.isComplete()) {
+                completeStructure(level, job.player, job.type, job.site.bounds(), job.site.rotation(), job.site.scaffoldPositions());
                 job.player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(job.type.translationKey())));
                 completed.add(entry.getKey());
-            } else {
-                ACTIVE_CONSTRUCTIONS.put(entry.getKey(), new ConstructionJob(
-                        job.level, job.origin, job.player, job.type, job.projectId(), job.layers, newLayer, job.startTick, job.bounds, job.rotation, job.scaffoldPositions));
             }
         }
 
-        completed.forEach(ACTIVE_CONSTRUCTIONS::remove);
+        completed.forEach(jobId -> {
+            ACTIVE_CONSTRUCTIONS.remove(jobId);
+            ACTIVE_SITE_WORKERS.remove(jobId);
+        });
+        syncConstructionProgress(level, playersToSync);
+    }
+
+    public static WorkerSiteAssignment findNearestSite(ServerLevel level, BlockPos workerPos, int maxDistance) {
+        WorkerSiteAssignment best = null;
+        double bestScore = Double.MAX_VALUE;
+        double maxDistanceSqr = maxDistance <= 0 ? Double.MAX_VALUE : (double) maxDistance * (double) maxDistance;
+
+        for (Map.Entry<String, ConstructionJob> entry : ACTIVE_CONSTRUCTIONS.entrySet()) {
+            ConstructionJob job = entry.getValue();
+            if (job.level != level || job.site.isComplete()) {
+                continue;
+            }
+
+            BlockPos focusPos = job.site.focusPos();
+            BlockPos approachPos = job.site.approachPos(workerPos);
+            double distance = workerPos.distSqr(approachPos);
+            if (distance > maxDistanceSqr) {
+                continue;
+            }
+
+            int activeWorkers = getActiveWorkerCount(level, entry.getKey());
+            double score = distance + (activeWorkers * 64.0D);
+            if (score < bestScore) {
+                bestScore = score;
+                best = new WorkerSiteAssignment(
+                        entry.getKey(),
+                        job.site.anchorPos(),
+                        approachPos,
+                        focusPos,
+                        job.site.progressPercent(),
+                        activeWorkers
+                );
+            }
+        }
+
+        return best;
+    }
+
+    public static WorkerSiteAssignment getSiteAssignment(ServerLevel level, String jobId, BlockPos workerPos) {
+        if (jobId == null || jobId.isBlank()) {
+            return null;
+        }
+        ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
+        if (job == null || job.level != level || job.site.isComplete()) {
+            return null;
+        }
+        BlockPos approachPos = job.site.approachPos(workerPos);
+        return new WorkerSiteAssignment(
+                jobId,
+                job.site.anchorPos(),
+                approachPos,
+                job.site.focusPos(),
+                job.site.progressPercent(),
+                getActiveWorkerCount(level, jobId)
+        );
+    }
+
+    public static void reportWorkerActivity(ServerLevel level, String jobId, String workerId, BlockPos position, boolean specialist) {
+        if (workerId == null || workerId.isBlank() || position == null) {
+            return;
+        }
+        ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
+        if (job == null || job.level != level || job.site.isComplete()) {
+            return;
+        }
+        ACTIVE_SITE_WORKERS
+                .computeIfAbsent(jobId, ignored -> new ConcurrentHashMap<>())
+                .put(workerId, new ActiveWorker(position.immutable(), level.getGameTime(), specialist));
+    }
+
+    public static void releaseWorker(String jobId, String workerId) {
+        if (jobId == null || jobId.isBlank() || workerId == null || workerId.isBlank()) {
+            return;
+        }
+        Map<String, ActiveWorker> workers = ACTIVE_SITE_WORKERS.get(jobId);
+        if (workers == null) {
+            return;
+        }
+        workers.remove(workerId);
+        if (workers.isEmpty()) {
+            ACTIVE_SITE_WORKERS.remove(jobId);
+        }
+    }
+
+    public static boolean hasActiveConstruction(ServerLevel level, String jobId) {
+        ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
+        return job != null && job.level == level && !job.site.isComplete();
     }
 
     public static void tickRoadConstructions(ServerLevel level) {
@@ -443,16 +518,13 @@ public final class StructureConstructionManager {
     }
 
     private static void placeCoreBlock(ServerLevel level, BlueprintService.PlacementBounds bounds, StructureType type) {
-        BlockPos center = bounds.centerAtY(bounds.min().getY() + 1);
-        switch (type) {
-            case VICTORIAN_BANK -> level.setBlock(center, ModBlocks.BANK_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
-            case VICTORIAN_TOWN_HALL -> level.setBlock(center, ModBlocks.TOWN_CORE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
-            case NATION_CAPITOL -> level.setBlock(center, ModBlocks.NATION_CORE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
-            case OPEN_AIR_MARKETPLACE -> level.setBlock(center, ModBlocks.MARKET_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
-            case WATERFRONT_DOCK -> level.setBlock(center, ModBlocks.DOCK_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
-            case COTTAGE -> level.setBlock(center, ModBlocks.COTTAGE_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
-            case TAVERN -> level.setBlock(center, ModBlocks.BAR_BLOCK.get().defaultBlockState(), Block.UPDATE_ALL);
+        Block block = requiredFunctionalBlock(type);
+        if (block == null || containsBlock(level, bounds, block)) {
+            return;
         }
+
+        BlockPos fallbackPos = bounds.centerAtY(bounds.min().getY() + 1);
+        level.setBlock(fallbackPos, block.defaultBlockState(), Block.UPDATE_ALL);
     }
 
     private static void fixCoreOwnership(ServerLevel level, BlueprintService.PlacementBounds bounds, ServerPlayer player) {
@@ -600,5 +672,83 @@ public final class StructureConstructionManager {
 
     private static String createProjectId(BlockPos origin, StructureType type, int rotation) {
         return type.nbtName() + "|" + origin.asLong() + "|" + Math.floorMod(rotation, 4) + "|" + System.currentTimeMillis();
+    }
+
+    private static void syncConstructionProgress(ServerLevel level, Set<ServerPlayer> players) {
+        if (players.isEmpty()) {
+            return;
+        }
+
+        for (ServerPlayer player : players) {
+            List<SyncConstructionProgressPacket.Entry> entries = new ArrayList<>();
+            for (Map.Entry<String, ConstructionJob> activeEntry : ACTIVE_CONSTRUCTIONS.entrySet()) {
+                ConstructionJob job = activeEntry.getValue();
+                if (job.level != level || job.player != player) {
+                    continue;
+                }
+                entries.add(new SyncConstructionProgressPacket.Entry(
+                        job.site.origin(),
+                        job.type.nbtName(),
+                        job.site.progressPercent(),
+                        getActiveWorkerCount(level, activeEntry.getKey())
+                ));
+            }
+            ModNetwork.CHANNEL.sendTo(
+                    new SyncConstructionProgressPacket(entries),
+                    player.connection.connection,
+                    NetworkDirection.PLAY_TO_CLIENT
+            );
+        }
+    }
+
+    private static int getActiveWorkerCount(ServerLevel level, String jobId) {
+        Map<String, ActiveWorker> workers = ACTIVE_SITE_WORKERS.get(jobId);
+        if (workers == null || workers.isEmpty()) {
+            return 0;
+        }
+
+        long currentTick = level.getGameTime();
+        int count = 0;
+        Iterator<Map.Entry<String, ActiveWorker>> iterator = workers.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, ActiveWorker> entry = iterator.next();
+            ActiveWorker worker = entry.getValue();
+            if (worker == null || currentTick - worker.lastSeenTick > ACTIVE_WORKER_TIMEOUT_TICKS) {
+                iterator.remove();
+                continue;
+            }
+            count += worker.specialist ? 2 : 1;
+        }
+
+        if (workers.isEmpty()) {
+            ACTIVE_SITE_WORKERS.remove(jobId);
+        }
+        return count;
+    }
+
+    private static Block requiredFunctionalBlock(StructureType type) {
+        return switch (type) {
+            case VICTORIAN_BANK -> ModBlocks.BANK_BLOCK.get();
+            case VICTORIAN_TOWN_HALL -> ModBlocks.TOWN_CORE_BLOCK.get();
+            case NATION_CAPITOL -> ModBlocks.NATION_CORE_BLOCK.get();
+            case OPEN_AIR_MARKETPLACE -> ModBlocks.MARKET_BLOCK.get();
+            case WATERFRONT_DOCK -> ModBlocks.DOCK_BLOCK.get();
+            case COTTAGE -> ModBlocks.COTTAGE_BLOCK.get();
+            case TAVERN -> ModBlocks.BAR_BLOCK.get();
+            case SCHOOL -> ModBlocks.SCHOOL_BLOCK.get();
+        };
+    }
+
+    private static boolean containsBlock(ServerLevel level, BlueprintService.PlacementBounds bounds, Block targetBlock) {
+        for (int y = bounds.min().getY(); y <= bounds.max().getY(); y++) {
+            for (int z = bounds.min().getZ(); z <= bounds.max().getZ(); z++) {
+                for (int x = bounds.min().getX(); x <= bounds.max().getX(); x++) {
+                    if (level.getBlockState(new BlockPos(x, y, z)).is(targetBlock)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 }

@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.network;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
+import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
 import com.monpai.sailboatmod.network.packet.BuildingUpgradePacket;
@@ -13,6 +14,7 @@ import com.monpai.sailboatmod.network.packet.OpenTradeScreenPacket;
 import com.monpai.sailboatmod.network.packet.TradeScreenActionPacket;
 import com.monpai.sailboatmod.network.packet.ClaimMarketCreditsPacket;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
+import com.monpai.sailboatmod.network.packet.CreateBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
 import com.monpai.sailboatmod.network.packet.DockGuiActionPacket;
@@ -33,6 +35,7 @@ import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
 import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
 import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
+import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetTownClaimPermissionPacket;
@@ -49,6 +52,8 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkRegistry;
 import net.minecraftforge.network.simple.SimpleChannel;
+
+import java.util.Optional;
 
 public final class ModNetwork {
     private static final String PROTOCOL_VERSION = "1";
@@ -369,6 +374,28 @@ public final class ModNetwork {
                 OpenResidentScreenPacket::encode,
                 OpenResidentScreenPacket::decode,
                 OpenResidentScreenPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncConstructionProgressPacket.class,
+                SyncConstructionProgressPacket::encode,
+                SyncConstructionProgressPacket::decode,
+                SyncConstructionProgressPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CreateBuyOrderPacket.class,
+                CreateBuyOrderPacket::encode,
+                CreateBuyOrderPacket::decode,
+                CreateBuyOrderPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CancelBuyOrderPacket.class,
+                CancelBuyOrderPacket::encode,
+                CancelBuyOrderPacket::decode,
+                CancelBuyOrderPacket::handle
         );
     }
 

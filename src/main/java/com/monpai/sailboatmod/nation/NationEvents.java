@@ -9,12 +9,14 @@ import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.service.BankConstructionManager;
+import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationFlagBlockTracker;
 import com.monpai.sailboatmod.nation.service.NationFlagSyncService;
 import com.monpai.sailboatmod.nation.service.NationFlagUploadService;
 import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.NationWarService;
+import com.monpai.sailboatmod.nation.service.TerrainCacheInvalidator;
 import com.monpai.sailboatmod.nation.service.TownFlagBlockTracker;
 import com.monpai.sailboatmod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
@@ -91,6 +93,11 @@ public final class NationEvents {
         TerritoryPresence previous = LAST_TERRITORY.put(player.getUUID(), current);
         if ((player.tickCount % 20) == 0) {
             syncPlayerNames(player, false);
+            ClaimPreviewTerrainService.queueAround(
+                    player.serverLevel(),
+                    player.chunkPosition(),
+                    com.monpai.sailboatmod.ModConfig.claimPreviewRadius() + 1
+            );
         }
         if (previous != null && previous.sameChunk(current)) {
             return;
@@ -147,15 +154,11 @@ public final class NationEvents {
         }
         boolean allowed;
         if (event.getState().getBlock() instanceof TownCoreBlock) {
-            allowed = TownService.canBreakCore(player.level(), player.getUUID(), event.getPos());
-            if (!allowed) {
-                player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.core.break_denied"));
-            }
+            allowed = false;
+            player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.core.break_denied"));
         } else if (event.getState().getBlock() instanceof NationCoreBlock) {
-            allowed = NationClaimService.canBreakCore(player.level(), player.getUUID(), event.getPos());
-            if (!allowed) {
-                player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.core.break_denied"));
-            }
+            allowed = false;
+            player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.core.break_denied"));
         } else {
             allowed = NationClaimService.canBreak(player.level(), player.getUUID(), event.getPos());
             if (!allowed) {
@@ -165,6 +168,7 @@ public final class NationEvents {
         if (!allowed) {
             event.setCanceled(true);
         }
+        TerrainCacheInvalidator.onBlockBreak(event);
     }
 
     @SubscribeEvent
@@ -176,6 +180,7 @@ public final class NationEvents {
             player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.protect.place_denied"));
             event.setCanceled(true);
         }
+        TerrainCacheInvalidator.onBlockPlace(event);
     }
 
     @SubscribeEvent
@@ -272,7 +277,9 @@ public final class NationEvents {
         if (event.getLevel().isClientSide()) {
             return;
         }
-        event.getAffectedBlocks().removeIf(pos -> NationClaimService.isClaimed(event.getLevel(), pos));
+        event.getAffectedBlocks().removeIf(pos -> NationClaimService.isClaimed(event.getLevel(), pos)
+                || event.getLevel().getBlockState(pos).getBlock() instanceof TownCoreBlock
+                || event.getLevel().getBlockState(pos).getBlock() instanceof NationCoreBlock);
     }
 
     @SubscribeEvent
@@ -312,6 +319,7 @@ public final class NationEvents {
         NationFlagUploadService.clearSessions();
         NationFlagBlockTracker.clearTrackedFlags();
         TownFlagBlockTracker.clearTrackedFlags();
+        ClaimPreviewTerrainService.clearCache();
     }
 
     private static void rememberContainerAccess(ServerPlayer player, BlockPos pos) {

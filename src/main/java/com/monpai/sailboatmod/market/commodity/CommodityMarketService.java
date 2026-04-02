@@ -15,8 +15,19 @@ public final class CommodityMarketService {
     private final CommodityMarketRepository repository = new CommodityMarketRepository();
 
     public CommodityQuote quote(ItemStack itemStack, int quantity) throws SQLException {
+        return quote(itemStack, quantity, null);
+    }
+
+    public CommodityQuote quote(ItemStack itemStack, int quantity, String playerUuid) throws SQLException {
         CommoditySnapshot snapshot = ensureCommodity(itemStack);
-        return buildQuote(snapshot.state(), Math.max(1, quantity));
+        PlayerMarketSettings playerSettings = null;
+        if (playerUuid != null && !playerUuid.isEmpty()) {
+            playerSettings = repository.getPlayerSettings(playerUuid);
+            if (playerSettings == null) {
+                playerSettings = PlayerMarketSettings.defaultSettings(playerUuid);
+            }
+        }
+        return buildQuote(snapshot, Math.max(1, quantity), playerSettings);
     }
 
     public CommodityMarketState adjustStock(ItemStack itemStack, int delta) throws SQLException {
@@ -45,7 +56,14 @@ public final class CommodityMarketService {
                                      String actorUuid, String actorName) throws SQLException {
         CommoditySnapshot snapshot = ensureCommodity(itemStack);
         CommodityMarketState current = snapshot.state();
-        CommodityQuote chargedQuote = buildQuote(current, Math.max(1, quantity));
+        PlayerMarketSettings playerSettings = null;
+        if (actorUuid != null && !actorUuid.isEmpty()) {
+            playerSettings = repository.getPlayerSettings(actorUuid);
+            if (playerSettings == null) {
+                playerSettings = PlayerMarketSettings.defaultSettings(actorUuid);
+            }
+        }
+        CommodityQuote chargedQuote = buildQuote(snapshot, Math.max(1, quantity), playerSettings);
         int nextStock = tradeSide == MarketTradeSide.BUY
                 ? current.currentStock() - chargedQuote.quantity()
                 : current.currentStock() + chargedQuote.quantity();
@@ -81,6 +99,75 @@ public final class CommodityMarketService {
         return chargedQuote;
     }
 
+    public void setPlayerPriceAdjustment(String playerUuid, int buyAdjustmentBp, int sellAdjustmentBp) throws SQLException {
+        PlayerMarketSettings settings = new PlayerMarketSettings(playerUuid, buyAdjustmentBp, sellAdjustmentBp);
+        repository.upsertPlayerSettings(settings);
+    }
+
+    public PlayerMarketSettings getPlayerSettings(String playerUuid) throws SQLException {
+        PlayerMarketSettings settings = repository.getPlayerSettings(playerUuid);
+        return settings != null ? settings : PlayerMarketSettings.defaultSettings(playerUuid);
+    }
+
+    public CommodityQuote quoteWithoutStockChange(ItemStack itemStack, MarketTradeSide tradeSide, int quantity,
+                                                   String sourceMarketPos, String sourceNationId, String targetNationId,
+                                                   String actorUuid, String actorName) throws SQLException {
+        CommoditySnapshot snapshot = ensureCommodity(itemStack);
+        PlayerMarketSettings playerSettings = null;
+        if (actorUuid != null && !actorUuid.isEmpty()) {
+            playerSettings = repository.getPlayerSettings(actorUuid);
+            if (playerSettings == null) {
+                playerSettings = PlayerMarketSettings.defaultSettings(actorUuid);
+            }
+        }
+        CommodityQuote quote = buildQuote(snapshot, Math.max(1, quantity), playerSettings);
+        repository.appendTrade(new CommodityTradeRecord(
+                snapshot.state().commodityKey(),
+                tradeSide,
+                quote.quantity(),
+                tradeSide == MarketTradeSide.BUY ? quote.buyUnitPrice() : quote.sellUnitPrice(),
+                tradeSide == MarketTradeSide.BUY ? quote.buyPrice() : quote.sellPrice(),
+                sourceMarketPos,
+                sourceNationId,
+                targetNationId,
+                actorUuid,
+                actorName,
+                System.currentTimeMillis()
+        ));
+        return quote;
+    }
+
+    public BuyOrder createBuyOrder(ItemStack itemStack, int quantity, int minPriceBp, int maxPriceBp,
+                                   String buyerUuid, String buyerName) throws SQLException {
+        CommoditySnapshot snapshot = ensureCommodity(itemStack);
+        String orderId = java.util.UUID.randomUUID().toString();
+        BuyOrder order = new BuyOrder(
+                orderId,
+                buyerUuid,
+                buyerName,
+                snapshot.definition().commodityKey(),
+                quantity,
+                minPriceBp,
+                maxPriceBp,
+                System.currentTimeMillis(),
+                "ACTIVE"
+        );
+        repository.createBuyOrder(order);
+        return order;
+    }
+
+    public java.util.List<BuyOrder> listBuyOrders(String commodityKey) throws SQLException {
+        return repository.listActiveBuyOrders(commodityKey);
+    }
+
+    public java.util.List<BuyOrder> listBuyOrdersForBuyer(String buyerUuid) throws SQLException {
+        return repository.listActiveBuyOrdersForBuyer(buyerUuid);
+    }
+
+    public void cancelBuyOrder(String orderId) throws SQLException {
+        repository.updateBuyOrderStatus(orderId, "CANCELLED");
+    }
+
     public CommoditySnapshot ensureCommodity(ItemStack itemStack) throws SQLException {
         CommodityDefinition definition = definitionFrom(itemStack);
         CommodityDefinition storedDefinition = repository.getDefinition(definition.commodityKey());
@@ -100,10 +187,9 @@ public final class CommodityMarketService {
 
     private CommodityDefinition definitionFrom(ItemStack itemStack) {
         ItemStack safeStack = itemStack == null ? ItemStack.EMPTY : itemStack;
-        ResourceLocation itemKey = ForgeRegistries.ITEMS.getKey(safeStack.getItem());
         String itemId = CommodityKeyResolver.resolve(safeStack);
         String displayName = safeStack.isEmpty() ? itemId : safeStack.getHoverName().getString();
-        return new CommodityDefinition(itemId, itemId, "", displayName, 1, "", true);
+        return CommodityInitializer.createDefault(itemId, itemId, displayName);
     }
 
     private CommodityMarketState defaultState(String commodityKey) {
@@ -124,10 +210,18 @@ public final class CommodityMarketService {
         );
     }
 
-    private CommodityQuote buildQuote(CommodityMarketState state, int quantity) {
+    private CommodityQuote buildQuote(CommoditySnapshot snapshot, int quantity, PlayerMarketSettings playerSettings) {
+        CommodityMarketState state = snapshot.state();
+        CommodityDefinition definition = snapshot.definition();
         int safeQuantity = Math.max(1, quantity);
-        int buyPrice = (int) Math.round(Math.ceil(getBatchPrice(state, state.currentStock(), state.currentStock() - safeQuantity + 1)));
-        int sellPrice = (int) Math.round(Math.floor(applySpread(state, getBatchPrice(state, state.currentStock() + safeQuantity, state.currentStock() + 1))));
+        int buyPrice = (int) Math.round(Math.ceil(getBatchPrice(definition, state, state.currentStock(), state.currentStock() - safeQuantity + 1)));
+        int sellPrice = (int) Math.round(Math.floor(applySpread(state, getBatchPrice(definition, state, state.currentStock() + safeQuantity, state.currentStock() + 1))));
+
+        if (playerSettings != null) {
+            buyPrice = (int) Math.round(buyPrice * (1 + playerSettings.buyPriceAdjustmentBp() / 10000.0));
+            sellPrice = (int) Math.round(sellPrice * (1 + playerSettings.sellPriceAdjustmentBp() / 10000.0));
+        }
+
         return new CommodityQuote(
                 state.commodityKey(),
                 safeQuantity,
@@ -140,7 +234,7 @@ public final class CommodityMarketService {
         );
     }
 
-    private double getBatchPrice(CommodityMarketState state, int startStock, int endStock) {
+    private double getBatchPrice(CommodityDefinition definition, CommodityMarketState state, int startStock, int endStock) {
         int lowStock = Math.min(startStock, endStock);
         int highStock = Math.max(startStock, endStock);
         int numTerms = highStock - lowStock + 1;
@@ -149,23 +243,23 @@ public final class CommodityMarketService {
         int fixedStockLimit;
 
         if (state.volatility() == 0) {
-            return numTerms * getStockPrice(state, state.currentStock());
+            return numTerms * getStockPrice(definition, state, state.currentStock());
         }
         if (highStock <= state.stockFloor()) {
-            return numTerms * getStockPrice(state, state.stockFloor());
+            return numTerms * getStockPrice(definition, state, state.stockFloor());
         }
         if (lowStock >= state.stockCeil()) {
-            return numTerms * getStockPrice(state, state.stockCeil());
+            return numTerms * getStockPrice(definition, state, state.stockCeil());
         }
         if (lowStock < state.stockFloor()) {
-            return ((state.stockFloor() - lowStock) * getStockPrice(state, state.stockFloor())) + getBatchPrice(state, state.stockFloor(), highStock);
+            return ((state.stockFloor() - lowStock) * getStockPrice(definition, state, state.stockFloor())) + getBatchPrice(definition, state, state.stockFloor(), highStock);
         }
         if (highStock > state.stockCeil()) {
-            return ((highStock - state.stockCeil()) * getStockPrice(state, state.stockCeil())) + getBatchPrice(state, lowStock, state.stockCeil());
+            return ((highStock - state.stockCeil()) * getStockPrice(definition, state, state.stockCeil())) + getBatchPrice(definition, state, lowStock, state.stockCeil());
         }
 
-        lowStockPrice = getStockPrice(state, lowStock);
-        highStockPrice = getStockPrice(state, highStock);
+        lowStockPrice = getStockPrice(definition, state, lowStock);
+        highStockPrice = getStockPrice(definition, state, highStock);
 
         if (lowStockPrice <= state.priceFloor()) {
             return numTerms * state.priceFloor();
@@ -174,39 +268,48 @@ public final class CommodityMarketService {
             return numTerms * state.priceCeil();
         }
         if (highStockPrice < state.priceFloor()) {
-            fixedStockLimit = (int) Math.round(Math.floor(stockAtPrice(state, state.priceFloor())));
-            return ((highStock - fixedStockLimit) * state.priceFloor()) + getBatchPrice(state, lowStock, fixedStockLimit);
+            fixedStockLimit = (int) Math.round(Math.floor(stockAtPrice(definition, state, state.priceFloor())));
+            return ((highStock - fixedStockLimit) * state.priceFloor()) + getBatchPrice(definition, state, lowStock, fixedStockLimit);
         }
         if (lowStockPrice > state.priceCeil()) {
-            fixedStockLimit = (int) Math.round(Math.ceil(stockAtPrice(state, state.priceCeil())));
-            return ((fixedStockLimit - lowStock) * state.priceCeil()) + getBatchPrice(state, fixedStockLimit, highStock);
+            fixedStockLimit = (int) Math.round(Math.ceil(stockAtPrice(definition, state, state.priceCeil())));
+            return ((fixedStockLimit - lowStock) * state.priceCeil()) + getBatchPrice(definition, state, fixedStockLimit, highStock);
         }
-        return Math.round(lowStockPrice * (1 - Math.pow(1 / getVolFactor(state), numTerms)) / (1 - (1 / getVolFactor(state))));
+        return Math.round(lowStockPrice * (1 - Math.pow(1 / getVolFactor(definition, state), numTerms)) / (1 - (1 / getVolFactor(definition, state))));
     }
 
-    private double getStockPrice(CommodityMarketState state, int stockLevel) {
+    private double getStockPrice(CommodityDefinition definition, CommodityMarketState state, int stockLevel) {
+        double basePrice = calculateBasePrice(definition, state.basePrice());
         return rangeCrop(
-                state.basePrice() * Math.pow(getVolFactor(state), -rangeCrop(stockLevel, state.stockFloor(), state.stockCeil())),
+                basePrice * Math.pow(getVolFactor(definition, state), -rangeCrop(stockLevel, state.stockFloor(), state.stockCeil())),
                 state.priceFloor(),
                 state.priceCeil()
         );
     }
 
-    private double stockAtPrice(CommodityMarketState state, int targetPrice) {
+    private double stockAtPrice(CommodityDefinition definition, CommodityMarketState state, int targetPrice) {
+        double basePrice = calculateBasePrice(definition, state.basePrice());
         if (state.volatility() == 0) {
-            if (targetPrice > state.basePrice()) {
+            if (targetPrice > basePrice) {
                 return Integer.MIN_VALUE;
             }
-            if (targetPrice < state.basePrice()) {
+            if (targetPrice < basePrice) {
                 return Integer.MAX_VALUE;
             }
             return state.currentStock();
         }
-        return -(Math.log((double) targetPrice / state.basePrice()) / Math.log(getVolFactor(state)));
+        return -(Math.log(targetPrice / basePrice) / Math.log(getVolFactor(definition, state)));
     }
 
-    private double getVolFactor(CommodityMarketState state) {
-        return 1 + (double) state.volatility() / INT_SCALE;
+    private double calculateBasePrice(CommodityDefinition definition, int stateBasePrice) {
+        double rarityCoeff = 1 + (definition.rarity() * 0.5);
+        double importanceCoeff = 1 + (definition.importance() * 0.3);
+        return stateBasePrice * rarityCoeff * importanceCoeff;
+    }
+
+    private double getVolFactor(CommodityDefinition definition, CommodityMarketState state) {
+        double adjustedVolatility = definition.baseVolatility() * (1 + definition.elasticity() * 0.2);
+        return 1 + adjustedVolatility / INT_SCALE;
     }
 
     private double applySpread(CommodityMarketState state, double grossPrice) {

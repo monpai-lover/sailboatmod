@@ -15,10 +15,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.Explosion;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.RenderShape;
@@ -27,7 +29,9 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.network.PacketDistributor;
+import net.minecraftforge.fml.DistExecutor;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -79,7 +83,13 @@ public class NationCoreBlock extends BaseEntityBlock {
 
     @Override
     public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
-        if (level.isClientSide || !(player instanceof ServerPlayer serverPlayer)) {
+        if (level.isClientSide) {
+            if (!player.isShiftKeyDown() && shouldOpenNationScreenClient(level, pos)) {
+                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> com.monpai.sailboatmod.client.NationClientHooks.openCachedOrEmpty());
+            }
+            return InteractionResult.SUCCESS;
+        }
+        if (!(player instanceof ServerPlayer serverPlayer)) {
             return InteractionResult.SUCCESS;
         }
 
@@ -89,6 +99,14 @@ public class NationCoreBlock extends BaseEntityBlock {
 
         NationRecord playerNation = NationService.getPlayerNation(level, serverPlayer.getUUID());
         NationRecord clickedNation = NationClaimService.getNationAt(level, pos);
+        if (player.isShiftKeyDown()
+                && playerNation != null
+                && clickedNation != null
+                && playerNation.nationId().equals(clickedNation.nationId())) {
+            NationResult pickupResult = NationClaimService.pickupCore(serverPlayer, pos);
+            serverPlayer.sendSystemMessage(pickupResult.message());
+            return InteractionResult.CONSUME;
+        }
         if (playerNation != null && clickedNation != null && playerNation.nationId().equals(clickedNation.nationId())) {
             NationOverviewData data = NationOverviewService.buildFor(serverPlayer);
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> serverPlayer), new OpenNationScreenPacket(data));
@@ -105,6 +123,17 @@ public class NationCoreBlock extends BaseEntityBlock {
         return InteractionResult.CONSUME;
     }
 
+    private static boolean shouldOpenNationScreenClient(Level level, BlockPos pos) {
+        NationOverviewData cached = com.monpai.sailboatmod.client.NationClientHooks.lastSyncedData();
+        return cached != null
+                && cached.hasNation()
+                && cached.hasCore()
+                && pos != null
+                && pos.asLong() == cached.corePos()
+                && level != null
+                && level.dimension().location().toString().equalsIgnoreCase(cached.coreDimension());
+    }
+
     @Override
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock()) && !level.isClientSide) {
@@ -115,6 +144,21 @@ public class NationCoreBlock extends BaseEntityBlock {
 
     @Override
     public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+        return false;
+    }
+
+    @Override
+    public float getDestroyProgress(BlockState state, Player player, BlockGetter level, BlockPos pos) {
+        return 0.0F;
+    }
+
+    @Override
+    public boolean canEntityDestroy(BlockState state, BlockGetter level, BlockPos pos, Entity entity) {
+        return false;
+    }
+
+    @Override
+    public boolean dropFromExplosion(Explosion explosion) {
         return false;
     }
 }

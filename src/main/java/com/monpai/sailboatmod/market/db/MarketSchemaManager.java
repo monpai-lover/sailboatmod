@@ -74,6 +74,48 @@ final class MarketSchemaManager {
                             "CREATE INDEX IF NOT EXISTS idx_trade_history_commodity_time ON commodity_trade_history (commodity_key, created_at DESC)",
                             "CREATE INDEX IF NOT EXISTS idx_trade_history_created_at ON commodity_trade_history (created_at DESC)"
                     )
+            ),
+            new SchemaPatch(
+                    "002_add_commodity_attributes",
+                    List.of(
+                            "ALTER TABLE commodity_definition ADD COLUMN rarity INTEGER NOT NULL DEFAULT 0",
+                            "ALTER TABLE commodity_definition ADD COLUMN importance INTEGER NOT NULL DEFAULT 1",
+                            "ALTER TABLE commodity_definition ADD COLUMN volume INTEGER NOT NULL DEFAULT 2",
+                            "ALTER TABLE commodity_definition ADD COLUMN elasticity INTEGER NOT NULL DEFAULT 1",
+                            "ALTER TABLE commodity_definition ADD COLUMN base_volatility INTEGER NOT NULL DEFAULT 100"
+                    )
+            ),
+            new SchemaPatch(
+                    "003_player_market_settings",
+                    List.of(
+                            """
+                            CREATE TABLE IF NOT EXISTS player_market_settings (
+                                player_uuid TEXT PRIMARY KEY,
+                                buy_price_adjustment_bp INTEGER NOT NULL DEFAULT 0,
+                                sell_price_adjustment_bp INTEGER NOT NULL DEFAULT 0
+                            )
+                            """
+                    )
+            ),
+            new SchemaPatch(
+                    "004_buy_orders",
+                    List.of(
+                            """
+                            CREATE TABLE IF NOT EXISTS buy_order (
+                                order_id TEXT PRIMARY KEY,
+                                buyer_uuid TEXT NOT NULL,
+                                buyer_name TEXT NOT NULL,
+                                commodity_key TEXT NOT NULL,
+                                quantity INTEGER NOT NULL,
+                                min_price_bp INTEGER NOT NULL,
+                                max_price_bp INTEGER NOT NULL,
+                                created_at INTEGER NOT NULL,
+                                status TEXT NOT NULL DEFAULT 'ACTIVE'
+                            )
+                            """,
+                            "CREATE INDEX IF NOT EXISTS idx_buy_order_commodity ON buy_order (commodity_key, status)",
+                            "CREATE INDEX IF NOT EXISTS idx_buy_order_buyer ON buy_order (buyer_uuid, status)"
+                    )
             )
     );
 

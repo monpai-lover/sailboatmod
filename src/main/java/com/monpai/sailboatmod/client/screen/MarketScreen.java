@@ -6,8 +6,10 @@ import com.monpai.sailboatmod.client.MarketOverviewConsumer;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.menu.MarketMenu;
 import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.ClaimMarketCreditsPacket;
+import com.monpai.sailboatmod.network.packet.CreateBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
 import com.monpai.sailboatmod.network.packet.MarketGuiActionPacket;
@@ -36,6 +38,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
     private static final int PAGE_SELL = 1;
     private static final int PAGE_DISPATCH = 2;
     private static final int PAGE_FINANCE = 3;
+    private static final int PAGE_BUY_ORDERS = 4;
 
     private static final int SUMMARY_Y = 84;
     private static final int SUMMARY_W = 126;
@@ -58,15 +61,22 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
     private int selectedOrderIndex = 0;
     private int selectedBoatIndex = 0;
     private int selectedStorageIndex = 0;
+    private int selectedBuyOrderIndex = 0;
     private int listingScroll = 0;
     private int orderScroll = 0;
     private int boatScroll = 0;
     private int storageScroll = 0;
+    private int buyOrderScroll = 0;
     private String hoveredLine;
 
     private EditBox listingQtyInput;
+    private EditBox listingPriceAdjustInput;
     private EditBox buyQtyInput;
     private EditBox marketNameInput;
+    private EditBox buyOrderCommodityInput;
+    private EditBox buyOrderQtyInput;
+    private EditBox buyOrderMinPriceInput;
+    private EditBox buyOrderMaxPriceInput;
 
     private Button listButton;
     private Button buyButton;
@@ -77,9 +87,12 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
     private Button sellTabButton;
     private Button dispatchTabButton;
     private Button financeTabButton;
+    private Button buyOrdersTabButton;
     private Button refreshButton;
     private Button bindDockButton;
     private Button saveNameButton;
+    private Button createBuyOrderButton;
+    private Button cancelBuyOrderButton;
 
     public MarketScreen(MarketMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -99,10 +112,12 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         selectedOrderIndex = clampSelection(selectedOrderIndex, data.orderLines());
         selectedBoatIndex = clampSelection(selectedBoatIndex, data.shippingLines());
         selectedStorageIndex = clampSelection(selectedStorageIndex, data.dockStorageLines());
+        selectedBuyOrderIndex = clampSelection(selectedBuyOrderIndex, data.buyOrderLines());
         listingScroll = clampScroll(listingScroll, data.listingLines());
         orderScroll = clampScroll(orderScroll, data.orderLines());
         boatScroll = clampScroll(boatScroll, data.shippingLines());
         storageScroll = clampScroll(storageScroll, data.dockStorageLines());
+        buyOrderScroll = clampScroll(buyOrderScroll, data.buyOrderLines());
         ensureSelectionVisible();
     }
 
@@ -110,13 +125,15 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
     protected void init() {
         super.init();
         goodsTabButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.page.goods"), b -> activePage = PAGE_GOODS)
-                .bounds(leftPos + 18, topPos + TAB_Y, 78, 16).build());
+                .bounds(leftPos + 18, topPos + TAB_Y, 70, 16).build());
         sellTabButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.page.sell"), b -> activePage = PAGE_SELL)
-                .bounds(leftPos + 100, topPos + TAB_Y, 78, 16).build());
+                .bounds(leftPos + 90, topPos + TAB_Y, 70, 16).build());
         dispatchTabButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.page.dispatch"), b -> activePage = PAGE_DISPATCH)
-                .bounds(leftPos + 182, topPos + TAB_Y, 92, 16).build());
+                .bounds(leftPos + 162, topPos + TAB_Y, 70, 16).build());
         financeTabButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.page.finance"), b -> activePage = PAGE_FINANCE)
-                .bounds(leftPos + 278, topPos + TAB_Y, 78, 16).build());
+                .bounds(leftPos + 234, topPos + TAB_Y, 70, 16).build());
+        buyOrdersTabButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.page.buy_orders"), b -> activePage = PAGE_BUY_ORDERS)
+                .bounds(leftPos + 306, topPos + TAB_Y, 70, 16).build());
         refreshButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.refresh"), b ->
                 send(MarketGuiActionPacket.Action.REFRESH)).bounds(leftPos + 330, topPos + 18, 84, 16).build());
         bindDockButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.bind_dock"), b ->
@@ -132,15 +149,30 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
 
         int actionInnerX = leftPos + RIGHT_X + 60;
         int actionInputY = topPos + CONTENT_Y + 46;
-        listingQtyInput = addRenderableWidget(new EditBox(font, actionInnerX, actionInputY, 44, 16, Component.literal("Qty")));
+        listingQtyInput = addRenderableWidget(new EditBox(font, actionInnerX, actionInputY, 44, 16, Component.translatable("screen.sailboatmod.market.qty")));
         listingQtyInput.setValue("1");
         listingQtyInput.setMaxLength(3);
-        buyQtyInput = addRenderableWidget(new EditBox(font, actionInnerX, actionInputY, 44, 16, Component.literal("Buy Qty")));
+        listingPriceAdjustInput = addRenderableWidget(new EditBox(font, actionInnerX, actionInputY + 20, 44, 16, Component.translatable("screen.sailboatmod.market.price_adjust")));
+        listingPriceAdjustInput.setValue("0");
+        listingPriceAdjustInput.setMaxLength(4);
+        buyQtyInput = addRenderableWidget(new EditBox(font, actionInnerX, actionInputY, 44, 16, Component.translatable("screen.sailboatmod.market.buy_qty")));
         buyQtyInput.setValue("1");
         buyQtyInput.setMaxLength(3);
 
+        buyOrderCommodityInput = addRenderableWidget(new EditBox(font, leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 22, 104, 14, Component.translatable("screen.sailboatmod.market.buy_order.commodity")));
+        buyOrderCommodityInput.setMaxLength(64);
+        buyOrderQtyInput = addRenderableWidget(new EditBox(font, leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 38, 104, 14, Component.translatable("screen.sailboatmod.market.buy_order.qty")));
+        buyOrderQtyInput.setValue("1");
+        buyOrderQtyInput.setMaxLength(5);
+        buyOrderMinPriceInput = addRenderableWidget(new EditBox(font, leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 54, 50, 14, Component.translatable("screen.sailboatmod.market.buy_order.min_price")));
+        buyOrderMinPriceInput.setValue("-1000");
+        buyOrderMinPriceInput.setMaxLength(6);
+        buyOrderMaxPriceInput = addRenderableWidget(new EditBox(font, leftPos + RIGHT_X + 64, topPos + CONTENT_Y + 54, 50, 14, Component.translatable("screen.sailboatmod.market.buy_order.max_price")));
+        buyOrderMaxPriceInput.setValue("1000");
+        buyOrderMaxPriceInput.setMaxLength(6);
+
         listButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.list_hand"), b ->
-                ModNetwork.CHANNEL.sendToServer(new CreateMarketListingPacket(data.marketPos(), selectedStorageIndex, parsePositive(listingQtyInput.getValue(), 1), 0)))
+                ModNetwork.CHANNEL.sendToServer(new CreateMarketListingPacket(data.marketPos(), selectedStorageIndex, parsePositive(listingQtyInput.getValue(), 1), 0, parsePriceAdjustment(listingPriceAdjustInput.getValue()))))
                 .bounds(leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 68, 104, 16).build());
         cancelButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.cancel"), b ->
                 ModNetwork.CHANNEL.sendToServer(new CancelMarketListingPacket(data.marketPos(), selectedListingIndex)))
@@ -154,6 +186,17 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         claimButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.claim"), b ->
                 ModNetwork.CHANNEL.sendToServer(new ClaimMarketCreditsPacket(data.marketPos())))
                 .bounds(leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 76, 104, 16).build());
+        createBuyOrderButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.buy_order.create"), b ->
+                ModNetwork.CHANNEL.sendToServer(new CreateBuyOrderPacket(data.marketPos(), buyOrderCommodityInput.getValue(),
+                        parsePositive(buyOrderQtyInput.getValue(), 1), parsePriceAdjustment(buyOrderMinPriceInput.getValue()),
+                        parsePriceAdjustment(buyOrderMaxPriceInput.getValue()))))
+                .bounds(leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 72, 104, 16).build());
+        cancelBuyOrderButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.buy_order.cancel"), b -> {
+                    if (selectedBuyOrderIndex >= 0 && selectedBuyOrderIndex < data.buyOrderEntries().size()) {
+                        ModNetwork.CHANNEL.sendToServer(new CancelBuyOrderPacket(data.marketPos(), data.buyOrderEntries().get(selectedBuyOrderIndex).orderId()));
+                    }
+                })
+                .bounds(leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 90, 104, 16).build());
 
         send(MarketGuiActionPacket.Action.REFRESH);
     }
@@ -178,6 +221,10 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             drawListPanel(guiGraphics, leftPos + LEFT_X, topPos + CONTENT_Y, LEFT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.tab.orders"), data.orderLines(), selectedOrderIndex, orderScroll, mouseX, mouseY);
             drawListPanel(guiGraphics, leftPos + CENTER_X, topPos + CONTENT_Y, CENTER_W, PANEL_H, Component.translatable("screen.sailboatmod.market.tab.shipping"), data.shippingLines(), selectedBoatIndex, boatScroll, mouseX, mouseY);
             drawActionPanel(guiGraphics, leftPos + RIGHT_X, topPos + CONTENT_Y, RIGHT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.page.dispatch"), buildDispatchActionLines());
+        } else if (activePage == PAGE_BUY_ORDERS) {
+            drawListPanel(guiGraphics, leftPos + LEFT_X, topPos + CONTENT_Y, LEFT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.tab.buy_orders"), data.buyOrderLines(), selectedBuyOrderIndex, buyOrderScroll, mouseX, mouseY);
+            drawDetailPanel(guiGraphics, leftPos + CENTER_X, topPos + CONTENT_Y, CENTER_W, PANEL_H, Component.translatable("screen.sailboatmod.market.detail"), buildBuyOrderDetailLines());
+            drawActionPanel(guiGraphics, leftPos + RIGHT_X, topPos + CONTENT_Y, RIGHT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.page.buy_orders"), buildBuyOrderActionLines());
         } else {
             drawDetailPanel(guiGraphics, leftPos + LEFT_X, topPos + CONTENT_Y, LEFT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.page.finance"), buildFinanceSummaryLines());
             drawDetailPanel(guiGraphics, leftPos + CENTER_X, topPos + CONTENT_Y, CENTER_W, PANEL_H, Component.translatable("screen.sailboatmod.market.detail"), buildFinanceDetailLines());
@@ -216,6 +263,9 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
                     return true;
                 }
             }
+            if (activePage == PAGE_BUY_ORDERS && trySelectFromList(mouseX, mouseY, leftPos + LEFT_X, topPos + CONTENT_Y, LEFT_W, PANEL_H, data.buyOrderLines(), 4, buyOrderScroll)) {
+                return true;
+            }
         }
         return super.mouseClicked(mouseX, mouseY, button);
     }
@@ -241,6 +291,10 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
                 return true;
             }
         }
+        if (activePage == PAGE_BUY_ORDERS && isInsideList(mouseX, mouseY, leftPos + LEFT_X, topPos + CONTENT_Y, LEFT_W, PANEL_H)) {
+            buyOrderScroll = clampScroll(buyOrderScroll + direction, data.buyOrderLines());
+            return true;
+        }
         return super.mouseScrolled(mouseX, mouseY, delta);
     }
     private void drawHeader(GuiGraphics g) {
@@ -257,8 +311,8 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
 
     private void drawSummaryStrip(GuiGraphics g) {
         drawSummaryCard(g, leftPos + 18, topPos + SUMMARY_Y, SUMMARY_W, SUMMARY_H, pageTitle(), pageStatusText(), 0xC08D6B3F);
-        drawSummaryCard(g, leftPos + 154, topPos + SUMMARY_Y, SUMMARY_W, SUMMARY_H, Component.literal("Pending"), String.valueOf(data.pendingCredits()), 0xC06C7E49);
-        drawSummaryCard(g, leftPos + 290, topPos + SUMMARY_Y, SUMMARY_W, SUMMARY_H, Component.literal("Dock"), data.linkedDock() ? trimToWidth(data.linkedDockName(), 92) : "Unlinked", 0xC0576C7A);
+        drawSummaryCard(g, leftPos + 154, topPos + SUMMARY_Y, SUMMARY_W, SUMMARY_H, Component.translatable("screen.sailboatmod.market.summary.pending"), String.valueOf(data.pendingCredits()), 0xC06C7E49);
+        drawSummaryCard(g, leftPos + 290, topPos + SUMMARY_Y, SUMMARY_W, SUMMARY_H, Component.translatable("screen.sailboatmod.market.summary.dock"), data.linkedDock() ? trimToWidth(data.linkedDockName(), 92) : Component.translatable("screen.sailboatmod.market.summary.unlinked").getString(), 0xC0576C7A);
     }
 
     private void drawSummaryCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {
@@ -307,12 +361,22 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
     private void drawActionPanel(GuiGraphics g, int x, int y, int w, int h, Component title, List<String> lines) {
         drawPanelFrame(g, x, y, w, h);
         g.drawString(font, title, x + 8, y + 7, 0xFFD8BC86);
-        drawParagraphLines(g, x + 8, y + 22, w - 16, y + h - 48, lines, 0xFFF0E2C4);
-        g.fill(x + 8, y + h - 44, x + w - 8, y + h - 43, 0x66543B22);
+        int textBottom = switch (activePage) {
+            case PAGE_GOODS, PAGE_SELL -> y + 42;
+            case PAGE_BUY_ORDERS -> y + 20;
+            default -> y + h - 48;
+        };
+        drawParagraphLines(g, x + 8, y + 22, w - 16, textBottom, lines, 0xFFF0E2C4);
+        if (activePage != PAGE_BUY_ORDERS) {
+            g.fill(x + 8, y + h - 44, x + w - 8, y + h - 43, 0x66543B22);
+        }
         if (activePage == PAGE_GOODS) {
             g.drawString(font, Component.translatable("screen.sailboatmod.market.buy_qty"), x + 10, y + 50, 0xFFD8BC86);
         } else if (activePage == PAGE_SELL) {
             g.drawString(font, Component.translatable("screen.sailboatmod.market.qty"), x + 10, y + 50, 0xFFD8BC86);
+            g.drawString(font, Component.translatable("screen.sailboatmod.market.price_adjust"), x + 10, y + 70, 0xFFD8BC86);
+        } else if (activePage == PAGE_BUY_ORDERS) {
+            g.drawString(font, Component.translatable("screen.sailboatmod.market.buy_order.create_hint"), x + 8, y + 20, 0xFFD8BC86);
         }
     }
 
@@ -358,8 +422,10 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             selectedOrderIndex = idx;
         } else if (listType == 2) {
             selectedBoatIndex = idx;
-        } else {
+        } else if (listType == 3) {
             selectedStorageIndex = idx;
+        } else {
+            selectedBuyOrderIndex = idx;
         }
         ensureSelectionVisible();
         return true;
@@ -378,6 +444,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         boolean onSell = activePage == PAGE_SELL;
         boolean onDispatch = activePage == PAGE_DISPATCH;
         boolean onFinance = activePage == PAGE_FINANCE;
+        boolean onBuyOrders = activePage == PAGE_BUY_ORDERS;
         boolean canManage = data.canManage();
 
         if (marketNameInput != null) {
@@ -399,6 +466,10 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         if (listingQtyInput != null) {
             listingQtyInput.visible = onSell;
             listingQtyInput.active = onSell;
+        }
+        if (listingPriceAdjustInput != null) {
+            listingPriceAdjustInput.visible = onSell;
+            listingPriceAdjustInput.active = onSell;
         }
         if (buyQtyInput != null) {
             buyQtyInput.visible = onGoods;
@@ -424,6 +495,30 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             claimButton.visible = onFinance;
             claimButton.active = onFinance && data.pendingCredits() > 0;
         }
+        if (buyOrderCommodityInput != null) {
+            buyOrderCommodityInput.visible = onBuyOrders;
+            buyOrderCommodityInput.active = onBuyOrders;
+        }
+        if (buyOrderQtyInput != null) {
+            buyOrderQtyInput.visible = onBuyOrders;
+            buyOrderQtyInput.active = onBuyOrders;
+        }
+        if (buyOrderMinPriceInput != null) {
+            buyOrderMinPriceInput.visible = onBuyOrders;
+            buyOrderMinPriceInput.active = onBuyOrders;
+        }
+        if (buyOrderMaxPriceInput != null) {
+            buyOrderMaxPriceInput.visible = onBuyOrders;
+            buyOrderMaxPriceInput.active = onBuyOrders;
+        }
+        if (createBuyOrderButton != null) {
+            createBuyOrderButton.visible = onBuyOrders;
+            createBuyOrderButton.active = onBuyOrders && !buyOrderCommodityInput.getValue().isBlank();
+        }
+        if (cancelBuyOrderButton != null) {
+            cancelBuyOrderButton.visible = onBuyOrders;
+            cancelBuyOrderButton.active = onBuyOrders && !data.buyOrderEntries().isEmpty();
+        }
         if (goodsTabButton != null) {
             goodsTabButton.active = !onGoods;
         }
@@ -436,6 +531,9 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         if (financeTabButton != null) {
             financeTabButton.active = !onFinance;
         }
+        if (buyOrdersTabButton != null) {
+            buyOrdersTabButton.active = activePage != PAGE_BUY_ORDERS;
+        }
     }
     private Component pageTitle() {
         return Component.translatable(pageTitleKey());
@@ -446,16 +544,18 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             case PAGE_SELL -> "screen.sailboatmod.market.page.sell";
             case PAGE_DISPATCH -> "screen.sailboatmod.market.page.dispatch";
             case PAGE_FINANCE -> "screen.sailboatmod.market.page.finance";
+            case PAGE_BUY_ORDERS -> "screen.sailboatmod.market.page.buy_orders";
             default -> "screen.sailboatmod.market.page.goods";
         };
     }
 
     private String pageStatusText() {
         return switch (activePage) {
-            case PAGE_SELL -> data.dockStorageAccessible() ? "Ready to post" : "Owner access required";
-            case PAGE_DISPATCH -> data.linkedDock() ? "Dock logistics online" : "Bind a dock first";
-            case PAGE_FINANCE -> data.pendingCredits() > 0 ? "Credits waiting" : "No pending credits";
-            default -> data.linkedDock() ? "Live market feed" : "Dock required to buy";
+            case PAGE_SELL -> Component.translatable(data.dockStorageAccessible() ? "screen.sailboatmod.market.status.ready_to_post" : "screen.sailboatmod.market.status.owner_required").getString();
+            case PAGE_DISPATCH -> Component.translatable(data.linkedDock() ? "screen.sailboatmod.market.status.dock_online" : "screen.sailboatmod.market.status.bind_dock_first").getString();
+            case PAGE_FINANCE -> Component.translatable(data.pendingCredits() > 0 ? "screen.sailboatmod.market.status.credits_waiting" : "screen.sailboatmod.market.status.no_credits").getString();
+            case PAGE_BUY_ORDERS -> Component.translatable("screen.sailboatmod.market.status.buy_orders_active").getString();
+            default -> Component.translatable(data.linkedDock() ? "screen.sailboatmod.market.status.live_feed" : "screen.sailboatmod.market.status.dock_required").getString();
         };
     }
 
@@ -465,15 +565,15 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             MarketOverviewData.ListingEntry entry = data.listingEntries().get(selectedListingIndex);
             int qty = parsePositive(buyQtyInput == null ? "1" : buyQtyInput.getValue(), 1);
             lines.add(entry.itemName());
-            lines.add("Unit price: " + entry.unitPrice());
-            lines.add("Available: " + entry.availableCount());
-            lines.add("Reserved: " + entry.reservedCount());
-            lines.add("Seller: " + entry.sellerName());
-            lines.add("Dock: " + entry.sourceDockName());
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.unit_price", entry.unitPrice()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.available", entry.availableCount()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.reserved", entry.reservedCount()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.seller", entry.sellerName()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.dock", entry.sourceDockName()).getString());
             if (!entry.nationId().isBlank()) {
-                lines.add("Nation: " + entry.nationId());
+                lines.add(Component.translatable("screen.sailboatmod.market.detail.nation", entry.nationId()).getString());
             }
-            lines.add("Estimate x" + qty + ": " + (entry.unitPrice() * qty));
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.estimate", qty, entry.unitPrice() * qty).getString());
             return lines;
         }
         lines.add(Component.translatable("screen.sailboatmod.market.empty").getString());
@@ -491,9 +591,9 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             MarketOverviewData.StorageEntry entry = data.dockStorageEntries().get(selectedStorageIndex);
             int qty = parsePositive(listingQtyInput == null ? "1" : listingQtyInput.getValue(), 1);
             lines.add(entry.itemName());
-            lines.add("In storage: " + entry.quantity());
-            lines.add("Suggested price: " + entry.suggestedUnitPrice());
-            lines.add("Estimate x" + qty + ": " + (entry.suggestedUnitPrice() * qty));
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.in_storage", entry.quantity()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.suggested_price", entry.suggestedUnitPrice()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.estimate", qty, entry.suggestedUnitPrice() * qty).getString());
             lines.add(entry.detail());
             lines.add(Component.translatable("screen.sailboatmod.market.auto_price_help").getString());
             return lines;
@@ -507,15 +607,15 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         List<String> lines = new ArrayList<>();
         if (!data.linkedDock()) {
             lines.add(Component.translatable("screen.sailboatmod.market.linked_dock_missing").getString());
-            lines.add("Bind a dock to receive purchased cargo.");
+            lines.add(Component.translatable("screen.sailboatmod.market.action.bind_dock_hint").getString());
             return lines;
         }
         if (selectedListingIndex >= 0 && selectedListingIndex < data.listingEntries().size()) {
             MarketOverviewData.ListingEntry entry = data.listingEntries().get(selectedListingIndex);
             int qty = parsePositive(buyQtyInput == null ? "1" : buyQtyInput.getValue(), 1);
             lines.add(trimToWidth(entry.itemName(), RIGHT_W - 20));
-            lines.add("Buy " + qty + " for " + (entry.unitPrice() * qty));
-            lines.add("Use cancel to withdraw your own listing.");
+            lines.add(Component.translatable("screen.sailboatmod.market.action.buy_for", qty, entry.unitPrice() * qty).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.action.cancel_hint").getString());
             return lines;
         }
         lines.add(Component.translatable("screen.sailboatmod.market.empty").getString());
@@ -536,7 +636,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             MarketOverviewData.StorageEntry entry = data.dockStorageEntries().get(selectedStorageIndex);
             int qty = parsePositive(listingQtyInput == null ? "1" : listingQtyInput.getValue(), 1);
             lines.add(trimToWidth(entry.itemName(), RIGHT_W - 20));
-            lines.add("Post " + qty + " at live market rate.");
+            lines.add(Component.translatable("screen.sailboatmod.market.action.post_at_rate", qty).getString());
             lines.add(Component.translatable("screen.sailboatmod.market.sell_help").getString());
             return lines;
         }
@@ -549,52 +649,74 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         if (selectedOrderIndex >= 0 && selectedOrderIndex < data.orderEntries().size()) {
             MarketOverviewData.OrderEntry order = data.orderEntries().get(selectedOrderIndex);
             lines.add(order.sourceDockName() + " -> " + order.targetDockName());
-            lines.add("Qty: " + order.quantity());
-            lines.add("Status: " + order.status());
+            lines.add(Component.translatable("screen.sailboatmod.market.dispatch.qty", order.quantity()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.dispatch.status", order.status()).getString());
         } else {
-            lines.add("Select an order.");
+            lines.add(Component.translatable("screen.sailboatmod.market.dispatch.select_order").getString());
         }
         if (selectedBoatIndex >= 0 && selectedBoatIndex < data.shippingEntries().size()) {
             MarketOverviewData.ShippingEntry boat = data.shippingEntries().get(selectedBoatIndex);
-            lines.add("Boat: " + boat.boatName());
+            lines.add(Component.translatable("screen.sailboatmod.market.dispatch.boat", boat.boatName()).getString());
             if (!boat.routeName().isBlank()) {
-                lines.add("Route: " + boat.routeName());
+                lines.add(Component.translatable("screen.sailboatmod.market.dispatch.route", boat.routeName()).getString());
             }
             if (!boat.mode().isBlank()) {
-                lines.add("Mode: " + boat.mode());
+                lines.add(Component.translatable("screen.sailboatmod.market.dispatch.mode", boat.mode()).getString());
             }
         } else {
-            lines.add("Select a boat.");
+            lines.add(Component.translatable("screen.sailboatmod.market.dispatch.select_boat").getString());
         }
         return lines;
     }
 
     private List<String> buildFinanceSummaryLines() {
         List<String> lines = new ArrayList<>();
-        lines.add("Pending credits: " + data.pendingCredits());
-        lines.add("Owner: " + data.ownerName());
-        lines.add(data.canManage() ? "Owner controls available." : "Read-only market access.");
+        lines.add(Component.translatable("screen.sailboatmod.market.finance.pending_credits", data.pendingCredits()).getString());
+        lines.add(Component.translatable("screen.sailboatmod.market.finance.owner", data.ownerName()).getString());
+        lines.add(Component.translatable(data.canManage() ? "screen.sailboatmod.market.finance.owner_controls" : "screen.sailboatmod.market.finance.read_only").getString());
         lines.add(Component.translatable("screen.sailboatmod.market.finance_help").getString());
         return lines;
     }
 
     private List<String> buildFinanceDetailLines() {
         List<String> lines = new ArrayList<>();
-        lines.add("Market: " + data.marketName());
+        lines.add(Component.translatable("screen.sailboatmod.market.finance.market_name", data.marketName()).getString());
         lines.add(currentDockLine());
-        lines.add(data.dockStorageAccessible() ? "Dock storage can be listed here." : "Dock storage listing is locked.");
-        lines.add("Use refresh to sync market state.");
+        lines.add(Component.translatable(data.dockStorageAccessible() ? "screen.sailboatmod.market.finance.storage_available" : "screen.sailboatmod.market.finance.storage_locked").getString());
+        lines.add(Component.translatable("screen.sailboatmod.market.finance.refresh_hint").getString());
         return lines;
     }
 
     private List<String> buildFinanceActionLines() {
         List<String> lines = new ArrayList<>();
         if (data.pendingCredits() > 0) {
-            lines.add("Claim pending sales credits.");
-            lines.add("Funds stay here if direct deposit fails.");
+            lines.add(Component.translatable("screen.sailboatmod.market.finance.claim_hint").getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.finance.deposit_fail_hint").getString());
         } else {
-            lines.add("No pending credits to claim.");
+            lines.add(Component.translatable("screen.sailboatmod.market.finance.no_credits_hint").getString());
         }
+        return lines;
+    }
+
+    private List<String> buildBuyOrderDetailLines() {
+        List<String> lines = new ArrayList<>();
+        if (selectedBuyOrderIndex >= 0 && selectedBuyOrderIndex < data.buyOrderEntries().size()) {
+            MarketOverviewData.BuyOrderEntry entry = data.buyOrderEntries().get(selectedBuyOrderIndex);
+            lines.add(Component.translatable("screen.sailboatmod.market.buy_order.commodity", entry.commodityKey()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.buy_order.quantity", entry.quantity()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.buy_order.price_range", entry.minPriceBp(), entry.maxPriceBp()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.buy_order.buyer", entry.buyerName()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.buy_order.status", entry.status()).getString());
+            return lines;
+        }
+        lines.add(Component.translatable("screen.sailboatmod.market.empty").getString());
+        return lines;
+    }
+
+    private List<String> buildBuyOrderActionLines() {
+        List<String> lines = new ArrayList<>();
+        lines.add(Component.translatable("screen.sailboatmod.market.buy_order.create_hint").getString());
+        lines.add(Component.translatable("screen.sailboatmod.market.buy_order.price_range_hint").getString());
         return lines;
     }
 
@@ -623,6 +745,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         orderScroll = ensureVisible(orderScroll, selectedOrderIndex, data.orderLines());
         boatScroll = ensureVisible(boatScroll, selectedBoatIndex, data.shippingLines());
         storageScroll = ensureVisible(storageScroll, selectedStorageIndex, data.dockStorageLines());
+        buyOrderScroll = ensureVisible(buyOrderScroll, selectedBuyOrderIndex, data.buyOrderLines());
     }
 
     private int ensureVisible(int scroll, int selectedIndex, List<String> lines) {
@@ -651,6 +774,15 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         }
     }
 
+    private int parsePriceAdjustment(String value) {
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return Math.max(-1000, Math.min(1000, parsed));
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
     private static List<FormattedCharSequence> wrapText(Font font, String text, int width) {
         return font.split(Component.literal(text), width);
     }
@@ -673,6 +805,6 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
 
     private MarketOverviewData empty(BlockPos pos) {
         return new MarketOverviewData(pos, "Market", "-", "", 0, false, "-", "-", false, false,
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
     }
 }

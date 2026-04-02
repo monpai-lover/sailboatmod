@@ -4,9 +4,11 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.item.CommandBatonItem;
 import com.monpai.sailboatmod.item.DescribedBlockItem;
+import com.monpai.sailboatmod.item.NationCoreItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.item.SailboatItem;
 import com.monpai.sailboatmod.item.StandingAndWallFlagBlockItem;
+import com.monpai.sailboatmod.item.TownCoreItem;
 import net.minecraft.world.item.Item;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -37,12 +39,12 @@ public final class ModItems {
 
     public static final RegistryObject<Item> TOWN_CORE_ITEM = ITEMS.register(
             "town_core",
-            () -> new DescribedBlockItem(ModBlocks.TOWN_CORE_BLOCK.get(), new Item.Properties().stacksTo(1), "item.sailboatmod.town_core.desc")
+            () -> new TownCoreItem(ModBlocks.TOWN_CORE_BLOCK.get(), new Item.Properties().stacksTo(1), "item.sailboatmod.town_core.desc")
     );
 
     public static final RegistryObject<Item> NATION_CORE_ITEM = ITEMS.register(
             "nation_core",
-            () -> new DescribedBlockItem(ModBlocks.NATION_CORE_BLOCK.get(), new Item.Properties().stacksTo(1), "item.sailboatmod.nation_core.desc")
+            () -> new NationCoreItem(ModBlocks.NATION_CORE_BLOCK.get(), new Item.Properties().stacksTo(1), "item.sailboatmod.nation_core.desc")
     );
 
     public static final RegistryObject<Item> BANK_ITEM = ITEMS.register(

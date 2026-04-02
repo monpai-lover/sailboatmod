@@ -15,12 +15,14 @@ public class CreateMarketListingPacket {
     private final int storageIndex;
     private final int quantity;
     private final int unitPrice;
+    private final int priceAdjustmentBp;
 
-    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice) {
+    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice, int priceAdjustmentBp) {
         this.marketPos = marketPos;
         this.storageIndex = storageIndex;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
+        this.priceAdjustmentBp = priceAdjustmentBp;
     }
 
     public static void encode(CreateMarketListingPacket packet, FriendlyByteBuf buffer) {
@@ -28,10 +30,11 @@ public class CreateMarketListingPacket {
         buffer.writeVarInt(packet.storageIndex);
         buffer.writeVarInt(packet.quantity);
         buffer.writeVarInt(packet.unitPrice);
+        buffer.writeVarInt(packet.priceAdjustmentBp);
     }
 
     public static CreateMarketListingPacket decode(FriendlyByteBuf buffer) {
-        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt());
+        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt());
     }
 
     public static void handle(CreateMarketListingPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -44,7 +47,7 @@ public class CreateMarketListingPacket {
             if (!(player.level().getBlockEntity(packet.marketPos) instanceof MarketBlockEntity market)) {
                 return;
             }
-            market.createListingFromDockStorage(player, packet.storageIndex, packet.quantity, packet.unitPrice);
+            market.createListingFromDockStorage(player, packet.storageIndex, packet.quantity, packet.unitPrice, packet.priceAdjustmentBp);
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> player),
                     new OpenMarketScreenPacket(market.buildOverview(player))

@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.model.TownNationRequestRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -19,11 +20,15 @@ import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 public final class TownService {
+    private static final Set<String> SUPPRESSED_CORE_REMOVALS = new HashSet<>();
+
     public static NationResult createTown(ServerPlayer actor, String rawName) {
         return tryCreateTown(actor, NationSavedData.get(actor.level()), rawName).result();
     }
@@ -185,17 +190,17 @@ public final class TownService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.no_permission"));
         }
         if (!town.hasCore()) {
-            return NationResult.failure(Component.literal("Town has no core block"));
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.none"));
         }
         Level level = actor.level();
         if (level.dimension().location().toString().equalsIgnoreCase(town.coreDimension())) {
             BlockPos corePos = BlockPos.of(town.corePos());
             if (level.hasChunkAt(corePos) && level.getBlockState(corePos).is(com.monpai.sailboatmod.registry.ModBlocks.TOWN_CORE_BLOCK.get())) {
                 level.removeBlock(corePos, false);
-                return NationResult.success(Component.literal("Town core block removed"));
+                return NationResult.success(Component.translatable("command.sailboatmod.nation.town.core.removed"));
             }
         }
-        return NationResult.failure(Component.literal("Core block not found at expected location"));
+        return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.expected_missing"));
     }
 
     public static NationResult assignMayorById(ServerPlayer actor, String townId, UUID targetUuid) {
@@ -327,8 +332,51 @@ public final class TownService {
         ));
     }
 
+    public static NationResult pickupCore(ServerPlayer actor, BlockPos pos) {
+        if (actor == null || pos == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.pickup_failed"));
+        }
+        NationSavedData data = NationSavedData.get(actor.level());
+        TownRecord town = getTownByCore(actor.level(), pos);
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.not_active"));
+        }
+        if (!canManageTown(actor, data, town)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.no_permission"));
+        }
+
+        TownRecord updated = new TownRecord(
+                town.townId(),
+                town.nationId(),
+                town.name(),
+                town.mayorUuid(),
+                town.createdAt(),
+                "",
+                TownRecord.noCorePos(),
+                town.flagId(),
+                town.cultureId()
+        );
+        data.putTown(updated);
+        suppressCoreRemoval(actor.level(), pos);
+        actor.level().removeBlock(pos, false);
+
+        ItemStack relocatedCore = new ItemStack(ModBlocks.TOWN_CORE_BLOCK.get());
+        CompoundTag tag = relocatedCore.getOrCreateTag();
+        tag.putString("RelocatingTownId", town.townId());
+        tag.putString("RelocatingTownName", town.name());
+        if (!actor.getInventory().add(relocatedCore)) {
+            actor.drop(relocatedCore, false);
+        } else {
+            actor.containerMenu.broadcastChanges();
+        }
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.town.core.picked_up"));
+    }
+
     public static void onCoreRemoved(Level level, BlockPos pos) {
         if (level == null || level.isClientSide || pos == null) {
+            return;
+        }
+        if (consumeSuppressedCoreRemoval(level, pos)) {
             return;
         }
         NationSavedData data = NationSavedData.get(level);
@@ -629,6 +677,11 @@ public final class TownService {
     }
 
     private static PlacementPreparation prepareTownForPlacement(ServerPlayer actor, NationSavedData data, ItemStack stack) {
+        TownRecord relocatingTown = relocatingTown(actor, data, stack);
+        if (relocatingTown != null) {
+            return new PlacementPreparation(relocatingTown, false, null);
+        }
+
         List<TownRecord> availableTowns = getManageableTowns(actor, data).stream()
                 .filter(town -> !town.hasCore())
                 .sorted(Comparator.comparingLong(TownRecord::createdAt).thenComparing(TownRecord::name, String.CASE_INSENSITIVE_ORDER))
@@ -668,6 +721,21 @@ public final class TownService {
             }
         }
         return result;
+    }
+
+    private static TownRecord relocatingTown(ServerPlayer actor, NationSavedData data, ItemStack stack) {
+        if (actor == null || data == null || stack == null || !stack.hasTag()) {
+            return null;
+        }
+        CompoundTag tag = stack.getTag();
+        if (tag == null || !tag.contains("RelocatingTownId")) {
+            return null;
+        }
+        TownRecord town = data.getTown(tag.getString("RelocatingTownId"));
+        if (town == null || town.hasCore()) {
+            return null;
+        }
+        return canManageTown(actor, data, town) ? town : null;
     }
 
     private static String requestedTownName(ItemStack stack) {
@@ -726,6 +794,18 @@ public final class TownService {
             return;
         }
         NationClaimService.onCoreRemoved(level, nationCorePos);
+    }
+
+    private static void suppressCoreRemoval(Level level, BlockPos pos) {
+        SUPPRESSED_CORE_REMOVALS.add(coreRemovalKey(level, pos));
+    }
+
+    private static boolean consumeSuppressedCoreRemoval(Level level, BlockPos pos) {
+        return SUPPRESSED_CORE_REMOVALS.remove(coreRemovalKey(level, pos));
+    }
+
+    private static String coreRemovalKey(Level level, BlockPos pos) {
+        return level.dimension().location() + "|" + pos.asLong();
     }
 
     private static String formatCoreLocation(TownRecord town) {

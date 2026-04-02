@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.block;
 
 import com.monpai.sailboatmod.block.entity.TownCoreBlockEntity;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.NationResult;
@@ -13,6 +14,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -20,12 +22,15 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.Explosion;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.network.PacketDistributor;
+import net.minecraftforge.fml.DistExecutor;
 import org.jetbrains.annotations.Nullable;
 
 public class TownCoreBlock extends BaseEntityBlock {
@@ -75,13 +80,24 @@ public class TownCoreBlock extends BaseEntityBlock {
 
     @Override
     public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
-        if (level.isClientSide || !(player instanceof ServerPlayer serverPlayer)) {
+        if (level.isClientSide) {
+            if (!player.isShiftKeyDown()) {
+                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> com.monpai.sailboatmod.client.TownClientHooks.openCachedOrEmpty());
+            }
+            return InteractionResult.SUCCESS;
+        }
+        if (!(player instanceof ServerPlayer serverPlayer)) {
             return InteractionResult.SUCCESS;
         }
         if (level.getBlockEntity(pos) instanceof TownCoreBlockEntity blockEntity) {
             blockEntity.refreshFromTown();
         }
         TownRecord town = TownService.getTownByCore(level, pos);
+        if (player.isShiftKeyDown() && town != null && TownService.canManageTown(serverPlayer, NationSavedData.get(level), town)) {
+            NationResult pickupResult = TownService.pickupCore(serverPlayer, pos);
+            serverPlayer.sendSystemMessage(pickupResult.message());
+            return InteractionResult.CONSUME;
+        }
         if (town == null) {
             town = TownService.getTownAt(level, pos);
         }
@@ -103,6 +119,21 @@ public class TownCoreBlock extends BaseEntityBlock {
 
     @Override
     public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+        return false;
+    }
+
+    @Override
+    public float getDestroyProgress(BlockState state, Player player, BlockGetter level, BlockPos pos) {
+        return 0.0F;
+    }
+
+    @Override
+    public boolean canEntityDestroy(BlockState state, BlockGetter level, BlockPos pos, Entity entity) {
+        return false;
+    }
+
+    @Override
+    public boolean dropFromExplosion(Explosion explosion) {
         return false;
     }
 }

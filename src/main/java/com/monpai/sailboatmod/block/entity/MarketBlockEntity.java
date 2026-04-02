@@ -153,7 +153,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         listing.itemStack().isEmpty() ? "-" : listing.itemStack().getHoverName().getString(),
                         listing.availableCount(),
                         listing.reservedCount(),
-                        currentCommodityUnitPrice(listing.itemStack(), 1, listing.unitPrice()),
+                        currentListingUnitPrice(listing, 1),
                         listing.sellerName(),
                         listing.sourceDockName().isBlank() ? listing.sourceDockPos().toShortString() : listing.sourceDockName(),
                         listing.nationId()
@@ -173,6 +173,30 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
 
+        List<String> buyOrderLines = new ArrayList<>();
+        List<MarketOverviewData.BuyOrderEntry> buyOrderEntries = new ArrayList<>();
+        if (level != null && !level.isClientSide && player != null) {
+            try {
+                List<com.monpai.sailboatmod.market.commodity.BuyOrder> buyOrders =
+                        COMMODITY_MARKET.listBuyOrdersForBuyer(player.getUUID().toString());
+                for (com.monpai.sailboatmod.market.commodity.BuyOrder order : buyOrders) {
+                    String line = order.commodityKey() + " x" + order.quantity() + " [" + order.minPriceBp() + "-" + order.maxPriceBp() + "bp]";
+                    buyOrderLines.add(line);
+                    buyOrderEntries.add(new MarketOverviewData.BuyOrderEntry(
+                            order.orderId(),
+                            line,
+                            order.commodityKey(),
+                            order.quantity(),
+                            order.minPriceBp(),
+                            order.maxPriceBp(),
+                            order.buyerName(),
+                            order.status()
+                    ));
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
         return new MarketOverviewData(
                 worldPosition,
                 getMarketName(),
@@ -188,14 +212,16 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listingLines,
                 orderLines,
                 shippingLines,
+                buyOrderLines,
                 storageEntries,
                 listingEntries,
                 orderEntries,
-                shippingEntries
+                shippingEntries,
+                buyOrderEntries
         );
     }
 
-    public boolean createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int unitPrice) {
+    public boolean createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int unitPrice, int priceAdjustmentBp) {
         DockBlockEntity dock = getLinkedDock();
         if (level == null || level.isClientSide || dock == null || player == null) {
             return false;
@@ -224,18 +250,20 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             listingTownId = dockBinding.townId();
             listingNationId = dockBinding.nationId();
         }
+        int adjustedPrice = (int) Math.round(price * (1 + priceAdjustmentBp / 10000.0));
         market.putListing(new MarketListing(
                 market.nextId(),
                 player.getUUID().toString(),
                 player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
                 listed,
-                price,
+                Math.max(1, adjustedPrice),
                 amount,
                 0,
                 linkedDockPos,
                 dock.getDockName(),
                 listingTownId,
-                listingNationId
+                listingNationId,
+                priceAdjustmentBp
         ));
         return true;
     }
@@ -255,10 +283,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         int amount = Math.max(1, Math.min(quantity, listing.availableCount()));
-        CommodityQuote quote = quoteCommodity(listing.itemStack(), amount);
-        int total = quote != null ? Math.max(0, quote.buyPrice()) : amount * Math.max(1, listing.unitPrice());
+        int total = currentListingTotalPrice(listing, amount);
         if (!chargePlayer(player, total)) {
-            player.displayClientMessage(Component.literal("Not enough funds."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.error.insufficient_funds"), true);
             return false;
         }
         applyCommodityDemand(listing, amount, player);
@@ -276,13 +303,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sellerUuid(),
                 listing.sellerName(),
                 listing.itemStack(),
-                currentCommodityUnitPrice(listing.itemStack(), 1, listing.unitPrice()),
+                currentListingUnitPrice(listing, 1),
                 Math.max(0, listing.availableCount() - amount),
                 listing.reservedCount() + amount,
                 listing.sourceDockPos(),
                 listing.sourceDockName(),
                 listing.townId(),
-                listing.nationId()
+                listing.nationId(),
+                listing.priceAdjustmentBp()
         ));
         PurchaseOrder createdOrder = new PurchaseOrder(
                 market.nextId(),
@@ -353,21 +381,21 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         if (!player.getUUID().toString().equals(listing.sellerUuid())) {
-            player.displayClientMessage(Component.literal("Only the seller can cancel this listing."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.error.cancel_not_seller"), true);
             return false;
         }
         if (listing.availableCount() <= 0) {
-            player.displayClientMessage(Component.literal("No unsold stock remains on this listing."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.error.no_unsold_stock"), true);
             return false;
         }
         DockBlockEntity sourceDock = level.getBlockEntity(listing.sourceDockPos()) instanceof DockBlockEntity dock ? dock : null;
         if (sourceDock == null) {
-            player.displayClientMessage(Component.literal("Source dock is unavailable."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.error.source_dock_unavailable"), true);
             return false;
         }
         List<ItemStack> cargo = splitCargo(listing.itemStack(), listing.availableCount());
         if (!sourceDock.insertCargo(cargo)) {
-            player.displayClientMessage(Component.literal("Source dock storage is full."), true);
+            player.displayClientMessage(Component.translatable("screen.sailboatmod.market.error.source_dock_full"), true);
             return false;
         }
         adjustCommoditySupply(listing.itemStack(), -listing.availableCount());
@@ -385,7 +413,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sourceDockPos(),
                     listing.sourceDockName(),
                     listing.townId(),
-                    listing.nationId()
+                    listing.nationId(),
+                    listing.priceAdjustmentBp()
             ));
         }
         return true;
@@ -751,7 +780,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sourceDockPos(),
                     listing.sourceDockName(),
                     listing.townId(),
-                    listing.nationId()
+                    listing.nationId(),
+                    listing.priceAdjustmentBp()
             ));
         }
     }
@@ -900,11 +930,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     private String describeListingLine(MarketListing listing) {
-        CommodityQuote quote = quoteCommodity(listing.itemStack(), 1);
-        if (quote != null) {
-            return listing.toSummaryLine(quote.buyUnitPrice());
-        }
-        return listing.toSummaryLine();
+        return listing.toSummaryLine(currentListingUnitPrice(listing, 1));
     }
 
     private int currentCommodityUnitPrice(ItemStack stack, int quantity, int fallbackPrice) {
@@ -913,6 +939,30 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return Math.max(1, fallbackPrice);
         }
         return Math.max(1, quote.buyUnitPrice());
+    }
+
+    private int currentListingUnitPrice(MarketListing listing, int quantity) {
+        if (listing == null) {
+            return 0;
+        }
+        CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
+        int basePrice = quote == null ? Math.max(1, listing.unitPrice()) : Math.max(1, quote.buyUnitPrice());
+        return applyPriceAdjustment(basePrice, listing.priceAdjustmentBp());
+    }
+
+    private int currentListingTotalPrice(MarketListing listing, int quantity) {
+        if (listing == null) {
+            return 0;
+        }
+        CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
+        int baseTotal = quote == null
+                ? Math.max(1, listing.unitPrice()) * Math.max(1, quantity)
+                : Math.max(0, quote.buyPrice());
+        return Math.max(0, applyPriceAdjustment(baseTotal, listing.priceAdjustmentBp()));
+    }
+
+    private int applyPriceAdjustment(int basePrice, int priceAdjustmentBp) {
+        return Math.max(1, (int) Math.round(basePrice * (1 + priceAdjustmentBp / 10000.0D)));
     }
 
     @Nullable

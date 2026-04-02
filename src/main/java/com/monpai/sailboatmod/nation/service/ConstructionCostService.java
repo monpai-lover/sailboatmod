@@ -202,7 +202,7 @@ public final class ConstructionCostService {
             return;
         }
         try {
-            COMMODITY_MARKET.applyTrade(
+            COMMODITY_MARKET.quoteWithoutStockChange(
                     stack,
                     MarketTradeSide.BUY,
                     quantity,

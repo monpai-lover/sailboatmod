@@ -3,17 +3,20 @@ package com.monpai.sailboatmod.client.renderer;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.client.ConstructorClientHooks;
 import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.nation.service.BlueprintService;
 import com.monpai.sailboatmod.nation.service.ConstructionCostService;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import com.monpai.sailboatmod.registry.ModItems;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -43,6 +46,7 @@ import java.util.Locale;
 public final class BankConstructorPreviewRenderer {
     private static final Map<String, BlueprintService.BlueprintPlacement> PLACEMENT_CACHE = new HashMap<>();
     private static PreviewSummary currentPreview;
+    private static ProjectionSummary currentProjection;
 
     private BankConstructorPreviewRenderer() {}
 
@@ -53,14 +57,19 @@ public final class BankConstructorPreviewRenderer {
         Player player = mc.player;
         if (player == null) {
             currentPreview = null;
+            currentProjection = null;
             return;
         }
         ItemStack held = player.getMainHandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getMainHandItem()
                 : player.getOffhandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getOffhandItem() : ItemStack.EMPTY;
         if (held.isEmpty()) {
             currentPreview = null;
+            currentProjection = null;
             return;
         }
+
+        StructureType heldType = BankConstructorItem.getSelectedType(held);
+        renderPendingProjection(event, mc, player, held, heldType);
 
         BlockHitResult hit = player.level().clip(new ClipContext(
                 player.getEyePosition(event.getPartialTick()),
@@ -71,7 +80,7 @@ public final class BankConstructorPreviewRenderer {
             return;
         }
 
-        StructureType type = BankConstructorItem.getSelectedType(held);
+        StructureType type = heldType;
         int rotation = BankConstructorItem.getRotation(held);
         int offsetX = BankConstructorItem.getOffsetX(held);
         int offsetY = BankConstructorItem.getOffsetY(held);
@@ -126,41 +135,141 @@ public final class BankConstructorPreviewRenderer {
     public static void onRenderOverlay(RenderGuiOverlayEvent.Post event) {
         PreviewSummary summary = currentPreview;
         Minecraft mc = Minecraft.getInstance();
-        if (summary == null || mc.player == null) {
+        if (mc.player == null) {
+            return;
+        }
+        StructureType selectedType = selectedType(mc.player);
+        ConstructorClientHooks.ConstructionProgress progress =
+                ConstructorClientHooks.findNearest(mc.player.blockPosition(), selectedType);
+        ProjectionSummary projection = currentProjection;
+        if (summary == null && progress == null && projection == null) {
             return;
         }
 
         int x = 12;
         int y = 18;
-        int width = 198;
-        int lineHeight = 11;
-        int progressBarY = y + 22;
-        int materialStartY = progressBarY + 16;
-        int boxHeight = 14 + summary.lines().size() * lineHeight + 26 + summary.materialLines().size() * 10;
+        int leftWidth = 210;
+        int rightWidth = 154;
+        int columnGap = 10;
+        int totalWidth = leftWidth + columnGap + rightWidth;
+        int padding = 8;
+        int lineHeight = 9;
+        int rowSpacing = 2;
         var g = event.getGuiGraphics();
-        g.fill(x - 6, y - 6, x + width, y + boxHeight, 0xB0151B22);
-        g.fill(x - 5, y - 5, x + width - 1, y + boxHeight - 1, 0xA9232D37);
-        g.fill(x - 6, y - 6, x + width, y - 5, 0xCC6BD4FF);
-
-        PreviewLine title = summary.lines().get(0);
-        g.drawString(mc.font, title.text(), x, y, title.color(), true);
-
-        int progressBarWidth = width - 20;
-        int filledWidth = Math.max(0, Math.min(progressBarWidth, (summary.completionPercent() * progressBarWidth) / 100));
-        g.fill(x, progressBarY, x + progressBarWidth, progressBarY + 7, 0x66303A44);
-        g.fill(x, progressBarY, x + filledWidth, progressBarY + 7, summary.blockedCount() > 0 ? 0xCCF0A020 : 0xCC56DDB4);
-        g.drawString(mc.font, String.format(Locale.ROOT, "%d%% complete", summary.completionPercent()), x + progressBarWidth - 72, y, 0xFFDCEEFF, false);
-
-        for (int i = 1; i < summary.lines().size(); i++) {
-            PreviewLine line = summary.lines().get(i);
-            g.drawString(mc.font, line.text(), x, progressBarY + 12 + (i - 1) * lineHeight, line.color(), true);
+        int topSectionHeight = 0;
+        if (summary != null) {
+            int leftSectionHeight = padding
+                    + measureWrappedPreviewLines(mc, List.of(summary.lines().get(0)), leftWidth - padding * 2, lineHeight, rowSpacing)
+                    + 10
+                    + 7
+                    + 6
+                    + measureWrappedPreviewLines(mc, summary.lines().subList(1, summary.lines().size()), leftWidth - padding * 2, lineHeight, rowSpacing)
+                    + padding;
+            int rightSectionHeight = padding
+                    + measureWrappedPreviewLines(mc,
+                    List.of(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.materials").getString(), 0xFFF3D486)),
+                    rightWidth - padding * 2,
+                    lineHeight,
+                    rowSpacing)
+                    + 4
+                    + measureWrappedPreviewLines(mc, summary.materialLines(), rightWidth - padding * 2, lineHeight, rowSpacing)
+                    + padding;
+            topSectionHeight = Math.max(leftSectionHeight, rightSectionHeight);
         }
 
-        if (!summary.materialLines().isEmpty()) {
-            g.drawString(mc.font, "Remaining materials", x, materialStartY, 0xFFF3D486, false);
-            for (int i = 0; i < summary.materialLines().size(); i++) {
-                PreviewLine line = summary.materialLines().get(i);
-                g.drawString(mc.font, line.text(), x + 4, materialStartY + 11 + i * 10, line.color(), false);
+        List<PreviewLine> projectionLines = projection == null
+                ? List.of()
+                : List.of(
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.projected").getString(), 0xFFFFD27A),
+                new PreviewLine(Component.translatable(
+                        "overlay.sailboatmod.constructor.projected_detail",
+                        Component.translatable(projection.type().translationKey()),
+                        projection.origin().getX(),
+                        projection.origin().getY(),
+                        projection.origin().getZ()).getString(), 0xFFDCEEFF),
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.projected_hint").getString(), 0xFF9ED5EA)
+        );
+
+        List<PreviewLine> progressLines = progress == null
+                ? List.of()
+                : List.of(
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.active").getString(), 0xFFF3D486),
+                new PreviewLine(Component.translatable(
+                        "overlay.sailboatmod.constructor.progress",
+                        Component.translatable("item.sailboatmod.structure." + progress.structureId()),
+                        progress.progressPercent()).getString(), 0xFFDCEEFF),
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.workers", progress.activeWorkers()).getString(), 0xFF9ED5EA)
+        );
+
+        int lowerSectionHeight = 0;
+        if (!projectionLines.isEmpty()) {
+            lowerSectionHeight += measureWrappedPreviewLines(mc, projectionLines, totalWidth - padding * 2, lineHeight, rowSpacing);
+        }
+        if (!progressLines.isEmpty()) {
+            if (lowerSectionHeight > 0) {
+                lowerSectionHeight += 6;
+            }
+            lowerSectionHeight += measureWrappedPreviewLines(mc, progressLines, totalWidth - padding * 2, lineHeight, rowSpacing);
+        }
+
+        int boxHeight = padding * 2 + topSectionHeight + (lowerSectionHeight > 0 ? lowerSectionHeight + (topSectionHeight > 0 ? 8 : 0) : 0);
+
+        g.fill(x - 6, y - 6, x + totalWidth, y + boxHeight, 0xB0151B22);
+        g.fill(x - 5, y - 5, x + totalWidth - 1, y + boxHeight - 1, 0xA9232D37);
+        g.fill(x - 6, y - 6, x + totalWidth, y - 5, 0xCC6BD4FF);
+
+        int currentY = y + padding;
+        if (summary != null) {
+            int leftX = x;
+            int rightX = x + leftWidth + columnGap;
+            int progressBarWidth = leftWidth - padding * 2;
+
+            currentY = y + padding;
+            currentY += drawWrappedPreviewLines(g, mc, List.of(summary.lines().get(0)), leftX + padding, currentY, leftWidth - padding * 2, lineHeight, rowSpacing, true);
+            g.drawString(mc.font,
+                    Component.translatable("overlay.sailboatmod.constructor.completion", summary.completionPercent()).getString(),
+                    leftX + padding,
+                    currentY,
+                    0xFFDCEEFF,
+                    false);
+            currentY += 10;
+
+            int filledWidth = Math.max(0, Math.min(progressBarWidth, (summary.completionPercent() * progressBarWidth) / 100));
+            g.fill(leftX + padding, currentY, leftX + padding + progressBarWidth, currentY + 7, 0x66303A44);
+            g.fill(leftX + padding, currentY, leftX + padding + filledWidth, currentY + 7,
+                    summary.blockedCount() > 0 ? 0xCCF0A020 : 0xCC56DDB4);
+            currentY += 13;
+            currentY += drawWrappedPreviewLines(g, mc, summary.lines().subList(1, summary.lines().size()),
+                    leftX + padding, currentY, leftWidth - padding * 2, lineHeight, rowSpacing, true);
+
+            int materialY = y + padding;
+            materialY += drawWrappedPreviewLines(g, mc,
+                    List.of(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.materials").getString(), 0xFFF3D486)),
+                    rightX + padding, materialY, rightWidth - padding * 2, lineHeight, rowSpacing, false);
+            materialY += 4;
+            drawWrappedPreviewLines(g, mc, summary.materialLines(),
+                    rightX + padding, materialY, rightWidth - padding * 2, lineHeight, rowSpacing, false);
+
+            g.fill(x + leftWidth + (columnGap / 2), y + 2, x + leftWidth + (columnGap / 2) + 1, y + topSectionHeight, 0x507F98AA);
+        }
+
+        currentY = y + padding + topSectionHeight;
+        if (lowerSectionHeight > 0) {
+            if (topSectionHeight > 0) {
+                currentY += 4;
+                g.fill(x, currentY, x + totalWidth - 6, currentY + 1, 0x507F98AA);
+                currentY += 4;
+            }
+            if (!projectionLines.isEmpty()) {
+                currentY += drawWrappedPreviewLines(g, mc, projectionLines, x + padding, currentY,
+                        totalWidth - padding * 2, lineHeight, rowSpacing, false);
+            }
+            if (!progressLines.isEmpty()) {
+                if (!projectionLines.isEmpty()) {
+                    currentY += 6;
+                }
+                drawWrappedPreviewLines(g, mc, progressLines, x + padding, currentY,
+                        totalWidth - padding * 2, lineHeight, rowSpacing, false);
             }
         }
     }
@@ -416,19 +525,29 @@ public final class BankConstructorPreviewRenderer {
 
         List<PreviewLine> lines = new ArrayList<>();
         lines.add(new PreviewLine(Component.translatable(type.translationKey()).getString(), 0xFFEAF6FF));
-        lines.add(new PreviewLine(String.format(Locale.ROOT, "Size: %dx%dx%d", placement.bounds().width(), placement.bounds().height(), placement.bounds().depth()), 0xFF9ED5EA));
+        lines.add(new PreviewLine(Component.translatable(
+                "overlay.sailboatmod.constructor.size",
+                placement.bounds().width(),
+                placement.bounds().height(),
+                placement.bounds().depth()).getString(), 0xFF9ED5EA));
         if (missing + blocked > 0) {
-            lines.add(new PreviewLine(String.format(Locale.ROOT, "Layer: %d / %d", analysis.currentLayerIndex(), analysis.totalLayers()), 0xFFFFE08A));
+            lines.add(new PreviewLine(Component.translatable(
+                    "overlay.sailboatmod.constructor.layer",
+                    analysis.currentLayerIndex(),
+                    analysis.totalLayers()).getString(), 0xFFFFE08A));
         } else {
-            lines.add(new PreviewLine("Layer: complete", 0xFF8FD7B4));
+            lines.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.layer_complete").getString(), 0xFF8FD7B4));
         }
-        lines.add(new PreviewLine(String.format(Locale.ROOT, "Blocks: %d  Matched: %d", total, matched), 0xFFD9E3EA));
-        lines.add(new PreviewLine(String.format(Locale.ROOT, "Missing: %d  Blocked: %d", missing, blocked), blocked > 0 ? 0xFFFF8A8A : 0xFF7DE0FF));
-        lines.add(new PreviewLine(String.format(Locale.ROOT, "Budget(est.): %d  Left: %d", totalBudget, remainingBudget), 0xFFF3D486));
+        lines.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.blocks", total, matched).getString(), 0xFFD9E3EA));
+        lines.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.missing_blocked", missing, blocked).getString(),
+                blocked > 0 ? 0xFFFF8A8A : 0xFF7DE0FF));
+        lines.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.budget", totalBudget, remainingBudget).getString(), 0xFFF3D486));
         if (analysis.nextTarget() != null) {
-            lines.add(new PreviewLine("Next: " + analysis.nextTarget().state().getBlock().getName().getString(), 0xFFFFE08A));
+            lines.add(new PreviewLine(Component.translatable(
+                    "overlay.sailboatmod.constructor.next",
+                    analysis.nextTarget().state().getBlock().getName()).getString(), 0xFFFFE08A));
         }
-        lines.add(new PreviewLine("RMB auto-build | Sprint+RMB assist", 0xFFB7C0CB));
+        lines.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.hint").getString(), 0xFFB7C0CB));
         return new PreviewSummary(List.copyOf(lines), buildMaterialLines(remainingBlocks), completion, blocked);
     }
 
@@ -442,8 +561,8 @@ public final class BankConstructorPreviewRenderer {
         }
         List<PreviewLine> lines = List.of(
                 new PreviewLine(Component.translatable(type.translationKey()).getString(), 0xFFEAF6FF),
-                new PreviewLine(String.format(Locale.ROOT, "Size: %dx%dx%d", width, type.h(), depth), 0xFF9ED5EA),
-                new PreviewLine("Preview fallback: bounds only", 0xFFE6B86A)
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.size", width, type.h(), depth).getString(), 0xFF9ED5EA),
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.preview_fallback").getString(), 0xFFE6B86A)
         );
         return new PreviewSummary(lines, List.of(), 0, 0);
     }
@@ -487,7 +606,7 @@ public final class BankConstructorPreviewRenderer {
 
     private static List<PreviewLine> buildMaterialLines(List<StructureTemplate.StructureBlockInfo> blocks) {
         if (blocks == null || blocks.isEmpty()) {
-            return List.of(new PreviewLine("No remaining materials", 0xFF8FD7B4));
+            return List.of(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.materials_none").getString(), 0xFF8FD7B4));
         }
 
         Map<ItemStack, Integer> counts = new LinkedHashMap<>();
@@ -519,6 +638,45 @@ public final class BankConstructorPreviewRenderer {
                         entry.getKey().getHoverName().getString() + " x" + entry.getValue(),
                         0xFFDCEEFF))
                 .toList();
+    }
+
+    private static int drawWrappedPreviewLines(GuiGraphics graphics,
+                                               Minecraft mc,
+                                               List<PreviewLine> lines,
+                                               int x,
+                                               int y,
+                                               int width,
+                                               int lineHeight,
+                                               int rowSpacing,
+                                               boolean shadow) {
+        int currentY = y;
+        for (PreviewLine line : lines) {
+            List<FormattedCharSequence> rows = wrapPreviewLine(mc, line, width);
+            for (FormattedCharSequence row : rows) {
+                graphics.drawString(mc.font, row, x, currentY, line.color(), shadow);
+                currentY += lineHeight + rowSpacing;
+            }
+        }
+        return Math.max(0, currentY - y);
+    }
+
+    private static int measureWrappedPreviewLines(Minecraft mc,
+                                                  List<PreviewLine> lines,
+                                                  int width,
+                                                  int lineHeight,
+                                                  int rowSpacing) {
+        int height = 0;
+        for (PreviewLine line : lines) {
+            height += wrapPreviewLine(mc, line, width).size() * (lineHeight + rowSpacing);
+        }
+        return height;
+    }
+
+    private static List<FormattedCharSequence> wrapPreviewLine(Minecraft mc, PreviewLine line, int width) {
+        if (line == null || line.text() == null || line.text().isBlank()) {
+            return List.of();
+        }
+        return mc.font.split(Component.literal(line.text()), Math.max(24, width));
     }
 
     private static ItemStack toCostStack(BlockState state) {
@@ -573,6 +731,9 @@ public final class BankConstructorPreviewRenderer {
     private record PreviewSummary(List<PreviewLine> lines, List<PreviewLine> materialLines, int completionPercent, int blockedCount) {
     }
 
+    private record ProjectionSummary(BlockPos origin, StructureType type) {
+    }
+
     private record PreviewLine(String text, int color) {
     }
 
@@ -588,5 +749,58 @@ public final class BankConstructorPreviewRenderer {
                              float r, float g, float b, float a) {
         vc.vertex(matrix, x1, y1, z1).color(r, g, b, a).normal(normal.x(), normal.y(), normal.z()).endVertex();
         vc.vertex(matrix, x2, y2, z2).color(r, g, b, a).normal(normal.x(), normal.y(), normal.z()).endVertex();
+    }
+
+    private static StructureType selectedType(Player player) {
+        ItemStack held = player.getMainHandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getMainHandItem()
+                : player.getOffhandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getOffhandItem() : ItemStack.EMPTY;
+        return held.isEmpty() ? null : BankConstructorItem.getSelectedType(held);
+    }
+
+    private static void renderPendingProjection(RenderLevelStageEvent event,
+                                                Minecraft mc,
+                                                Player player,
+                                                ItemStack held,
+                                                StructureType heldType) {
+        if (!BankConstructorItem.hasPendingProjection(held, player.level())) {
+            currentProjection = null;
+            return;
+        }
+
+        BlockPos projectionOrigin = BankConstructorItem.getPendingProjectionOrigin(held, player.level());
+        StructureType projectionType = BankConstructorItem.getPendingProjectionType(held);
+        int projectionRotation = BankConstructorItem.getPendingProjectionRotation(held);
+        if (projectionOrigin == null || projectionType == null) {
+            currentProjection = null;
+            return;
+        }
+
+        BlueprintService.BlueprintPlacement placement = getCachedPlacement(mc, projectionType, projectionRotation);
+        if (placement == null) {
+            currentProjection = new ProjectionSummary(projectionOrigin, projectionType);
+            return;
+        }
+
+        currentProjection = new ProjectionSummary(projectionOrigin, projectionType);
+        Vec3 cam = event.getCamera().getPosition();
+        PoseStack poseStack = event.getPoseStack();
+        MultiBufferSource.BufferSource bufferSource = mc.renderBuffers().bufferSource();
+        BlockRenderDispatcher blockRenderer = mc.getBlockRenderer();
+
+        poseStack.pushPose();
+        poseStack.translate(projectionOrigin.getX() - cam.x, projectionOrigin.getY() - cam.y, projectionOrigin.getZ() - cam.z);
+
+        PreviewAnalysis analysis = analyzePreview(player, projectionOrigin, placement);
+        Map<PreviewStatus, List<StructureTemplate.StructureBlockInfo>> groupedBlocks = analysis.groupedBlocks();
+        renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.MISSING), analysis, 1.0F, 0.72F, 0.24F, 0.26F);
+        renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.BLOCKED), analysis, 1.0F, 0.35F, 0.28F, 0.38F);
+
+        VertexConsumer lineVc = bufferSource.getBuffer(RenderType.lines());
+        Matrix4f matrix = poseStack.last().pose();
+        org.joml.Vector3f normal = new org.joml.Vector3f(0, 1, 0);
+        renderBounds(lineVc, matrix, normal, placement.bounds(), 1.0F, 0.72F, 0.24F, 0.85F);
+        renderFootprintGrid(lineVc, matrix, normal, placement.bounds(), 1.0F, 0.72F, 0.24F, 0.35F);
+        bufferSource.endBatch(RenderType.lines());
+        poseStack.popPose();
     }
 }

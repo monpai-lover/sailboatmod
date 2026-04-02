@@ -6,8 +6,21 @@ import net.minecraft.client.Minecraft;
 
 public final class TownClientHooks {
     private static TownOverviewData lastSyncedData = TownOverviewData.empty();
-    private static long closedAtMillis = 0;
-    private static final long REOPEN_COOLDOWN_MS = 1500;
+    private static boolean suppressReopen = false;
+
+    public static void requestOpen() {
+        suppressReopen = false;
+    }
+
+    public static void openCachedOrEmpty() {
+        suppressReopen = false;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
+            townHomeScreen.updateData(lastSyncedData);
+            return;
+        }
+        minecraft.setScreen(new TownHomeScreen(lastSyncedData));
+    }
 
     public static void openOrUpdate(TownOverviewData data) {
         lastSyncedData = data == null ? TownOverviewData.empty() : data;
@@ -16,18 +29,22 @@ public final class TownClientHooks {
             townHomeScreen.updateData(lastSyncedData);
             return;
         }
-        if (System.currentTimeMillis() - closedAtMillis < REOPEN_COOLDOWN_MS) {
+        if (suppressReopen) {
             return;
         }
         minecraft.setScreen(new TownHomeScreen(lastSyncedData));
     }
 
     public static void onScreenClosed() {
-        closedAtMillis = System.currentTimeMillis();
+        suppressReopen = true;
     }
 
     public static void clearCache() {
         lastSyncedData = TownOverviewData.empty();
+    }
+
+    public static TownOverviewData lastSyncedData() {
+        return lastSyncedData;
     }
 
     private TownClientHooks() {

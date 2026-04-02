@@ -21,6 +21,12 @@ public class ResidentService {
 
         // Create resident record
         ResidentRecord record = ResidentRecord.create(townId, name, "", culture);
+        record = record.withSkinHash(ResidentSkinService.resolveSkinHash(
+                record.skinHash(),
+                record.residentId(),
+                record.profession(),
+                record.gender()
+        ));
         data.putResident(record);
 
         // Spawn entity
@@ -33,6 +39,7 @@ public class ResidentService {
             entity.setProfession(record.profession());
             entity.setGender(record.gender());
             entity.setCulture(record.culture());
+            entity.setSkinHash(record.skinHash());
             entity.finalizeSpawn(level, level.getCurrentDifficultyAt(pos), MobSpawnType.COMMAND, null, null);
             level.addFreshEntity(entity);
         }

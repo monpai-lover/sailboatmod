@@ -53,7 +53,7 @@ public class BuildGoal extends Goal {
     @Override
     public void start() {
         if (targetConstruction != null) {
-            BuildingConstructionService.assignBuilder(resident.level(), targetConstruction.buildingId(), resident.getUUID().toString());
+            BuildingConstructionService.assignBuilder(resident.level(), targetConstruction.buildingId(), resident.getResidentId());
         }
     }
 

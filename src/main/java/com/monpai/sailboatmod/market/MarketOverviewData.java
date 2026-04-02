@@ -19,20 +19,24 @@ public record MarketOverviewData(
         List<String> listingLines,
         List<String> orderLines,
         List<String> shippingLines,
+        List<String> buyOrderLines,
         List<StorageEntry> dockStorageEntries,
         List<ListingEntry> listingEntries,
         List<OrderEntry> orderEntries,
-        List<ShippingEntry> shippingEntries
+        List<ShippingEntry> shippingEntries,
+        List<BuyOrderEntry> buyOrderEntries
 ) {
     public MarketOverviewData {
         dockStorageLines = dockStorageLines == null ? List.of() : List.copyOf(dockStorageLines);
         listingLines = listingLines == null ? List.of() : List.copyOf(listingLines);
         orderLines = orderLines == null ? List.of() : List.copyOf(orderLines);
         shippingLines = shippingLines == null ? List.of() : List.copyOf(shippingLines);
+        buyOrderLines = buyOrderLines == null ? List.of() : List.copyOf(buyOrderLines);
         dockStorageEntries = dockStorageEntries == null ? List.of() : List.copyOf(dockStorageEntries);
         listingEntries = listingEntries == null ? List.of() : List.copyOf(listingEntries);
         orderEntries = orderEntries == null ? List.of() : List.copyOf(orderEntries);
         shippingEntries = shippingEntries == null ? List.of() : List.copyOf(shippingEntries);
+        buyOrderEntries = buyOrderEntries == null ? List.of() : List.copyOf(buyOrderEntries);
     }
 
     public record StorageEntry(String label, String itemName, int quantity, int suggestedUnitPrice, String detail) {
@@ -46,5 +50,9 @@ public record MarketOverviewData(
     }
 
     public record ShippingEntry(String label, String boatName, String routeName, String mode) {
+    }
+
+    public record BuyOrderEntry(String orderId, String label, String commodityKey, int quantity,
+                                int minPriceBp, int maxPriceBp, String buyerName, String status) {
     }
 }
