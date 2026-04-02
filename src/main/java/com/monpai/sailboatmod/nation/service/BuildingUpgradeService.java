@@ -44,7 +44,8 @@ public class BuildingUpgradeService {
             structure.sizeD(),
             structure.placedAt(),
             structure.buildingLevel() + 1,
-            structure.isBuilt()
+            structure.isBuilt(),
+            structure.rotation()
         );
 
         data.putStructure(upgraded);

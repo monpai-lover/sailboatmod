@@ -15,7 +15,9 @@ public record MarketListing(
         int availableCount,
         int reservedCount,
         BlockPos sourceDockPos,
-        String sourceDockName
+        String sourceDockName,
+        String townId,
+        String nationId
 ) {
     public MarketListing {
         listingId = sanitize(listingId);
@@ -27,6 +29,8 @@ public record MarketListing(
         reservedCount = Math.max(0, reservedCount);
         sourceDockPos = sourceDockPos == null ? BlockPos.ZERO : sourceDockPos.immutable();
         sourceDockName = sanitize(sourceDockName);
+        townId = sanitize(townId);
+        nationId = sanitize(nationId);
     }
 
     public CompoundTag save() {
@@ -40,6 +44,8 @@ public record MarketListing(
         tag.putInt("ReservedCount", reservedCount);
         tag.putLong("SourceDockPos", sourceDockPos.asLong());
         tag.putString("SourceDockName", sourceDockName);
+        tag.putString("TownId", townId);
+        tag.putString("NationId", nationId);
         return tag;
     }
 
@@ -53,7 +59,9 @@ public record MarketListing(
                 tag.getInt("AvailableCount"),
                 tag.getInt("ReservedCount"),
                 BlockPos.of(tag.getLong("SourceDockPos")),
-                tag.getString("SourceDockName")
+                tag.getString("SourceDockName"),
+                tag.contains("TownId") ? tag.getString("TownId") : "",
+                tag.contains("NationId") ? tag.getString("NationId") : ""
         );
     }
 

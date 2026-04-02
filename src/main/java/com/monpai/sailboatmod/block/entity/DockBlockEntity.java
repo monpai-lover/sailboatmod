@@ -63,6 +63,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     private String dockName = "";
     private String ownerName = "";
     private String ownerUuid = "";
+    private String townId = "";
+    private String nationId = "";
     private int zoneMinX = -ZONE_HALF_X;
     private int zoneMaxX = ZONE_HALF_X;
     private int zoneMinZ = -ZONE_HALF_Z;
@@ -114,7 +116,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     public String getDockName() {
         if (dockName == null || dockName.isBlank()) {
-            return "Dock-" + worldPosition.getX() + "," + worldPosition.getZ();
+            return ownerName != null && !ownerName.isBlank() ? ownerName + "'s Dock" : "Dock";
         }
         return dockName;
     }
@@ -122,6 +124,19 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public void setDockName(String name) {
         dockName = name == null ? "" : name.trim();
         setChanged();
+        if (level != null && !level.isClientSide) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
+    }
+
+    @Override
+    public net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket getUpdatePacket() {
+        return net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(this);
+    }
+
+    @Override
+    public net.minecraft.nbt.CompoundTag getUpdateTag() {
+        return saveWithoutMetadata();
     }
 
     public void initializeOwnerIfAbsent(Player player) {
@@ -142,6 +157,24 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     public String getOwnerUuid() {
         return ownerUuid == null ? "" : ownerUuid;
+    }
+
+    public String getTownId() {
+        return townId == null ? "" : townId;
+    }
+
+    public void setTownId(String id) {
+        this.townId = id == null ? "" : id;
+        setChanged();
+    }
+
+    public String getNationId() {
+        return nationId == null ? "" : nationId;
+    }
+
+    public void setNationId(String id) {
+        this.nationId = id == null ? "" : id;
+        setChanged();
     }
 
     public boolean canManageDock(@Nullable Player player) {
@@ -1275,7 +1308,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     listing.availableCount(),
                     nextReserved,
                     listing.sourceDockPos(),
-                    listing.sourceDockName()
+                    listing.sourceDockName(),
+                    listing.townId(),
+                    listing.nationId()
             ));
         }
     }
@@ -1576,6 +1611,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         tag.putInt("SelectedWaybillIndex", selectedWaybillIndex);
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
         tag.putString("OwnerUuid", ownerUuid == null ? "" : ownerUuid);
+        tag.putString("TownId", townId == null ? "" : townId);
+        tag.putString("NationId", nationId == null ? "" : nationId);
         if (!routeBook.isEmpty()) {
             tag.put("RouteBook", routeBook.save(new CompoundTag()));
         }
@@ -1612,6 +1649,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         selectedWaybillIndex = Math.max(0, tag.getInt("SelectedWaybillIndex"));
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");
+        townId = tag.contains("TownId") ? tag.getString("TownId") : "";
+        nationId = tag.contains("NationId") ? tag.getString("NationId") : "";
         routeBook = tag.contains("RouteBook") ? ItemStack.of(tag.getCompound("RouteBook")) : ItemStack.EMPTY;
         dockName = tag.getString("DockName");
         nonOrderAutoReturnEnabled = tag.getBoolean("NonOrderAutoReturn");

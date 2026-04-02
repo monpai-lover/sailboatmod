@@ -329,8 +329,14 @@ public final class BlueMapIntegration {
             Map<String, Object> markers = (Map<String, Object>) this.markerSetGetMarkersMethod.invoke(markerSet);
             for (BlueMapMarkerSavedData.DockSnapshot dock : docks) {
                 BlockPos pos = dock.pos();
+                String displayName = dock.dockName();
+                if (displayName == null || displayName.isBlank()) {
+                    displayName = dock.ownerName() != null && !dock.ownerName().isBlank()
+                        ? dock.ownerName() + "'s Dock"
+                        : "Dock";
+                }
                 Object marker = buildPoiMarker(
-                        blankToFallback(dock.dockName(), "Dock-" + pos.getX() + "," + pos.getZ()),
+                        displayName,
                         pos.getX() + 0.5D,
                         pos.getY() + 1.0D,
                         pos.getZ() + 0.5D,

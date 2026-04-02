@@ -20,7 +20,7 @@ public class BuildGoal extends Goal {
 
     @Override
     public boolean canUse() {
-        if (resident.getProfession() != Profession.BUILDER) return false;
+        boolean isBuilder = resident.getProfession() == Profession.BUILDER;
 
         // Find nearest construction
         BuildingConstructionRecord nearest = null;
@@ -28,6 +28,9 @@ public class BuildGoal extends Goal {
 
         for (BuildingConstructionRecord construction : BuildingConstructionService.getAllConstructions(resident.level())) {
             if (construction.isComplete()) continue;
+            boolean requiresBuilder = com.monpai.sailboatmod.resident.service.BuildingComplexity.requiresBuilder(construction.structureType());
+            if (requiresBuilder && !isBuilder) continue;
+
             double dist = resident.blockPosition().distSqr(construction.position());
             if (dist < minDist) {
                 minDist = dist;
@@ -41,7 +44,10 @@ public class BuildGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
-        return targetConstruction != null && resident.getProfession() == Profession.BUILDER;
+        if (targetConstruction == null) return false;
+        boolean requiresBuilder = com.monpai.sailboatmod.resident.service.BuildingComplexity.requiresBuilder(targetConstruction.structureType());
+        boolean isBuilder = resident.getProfession() == Profession.BUILDER;
+        return !requiresBuilder || isBuilder;
     }
 
     @Override
@@ -74,7 +80,9 @@ public class BuildGoal extends Goal {
 
         // Build layer
         buildTicks++;
-        int speedMultiplier = Math.max(1, targetConstruction.assignedBuilders().size());
+        int workerCount = targetConstruction.assignedBuilders().size();
+        int speedMultiplier = Math.max(1, workerCount * (resident.getProfession() == Profession.BUILDER ?
+            com.monpai.sailboatmod.resident.service.BuildingComplexity.getBuilderSpeedBonus() : 1));
         if (buildTicks >= TICKS_PER_LAYER / speedMultiplier) {
             buildTicks = 0;
             int nextLayer = targetConstruction.currentLayer() + 1;

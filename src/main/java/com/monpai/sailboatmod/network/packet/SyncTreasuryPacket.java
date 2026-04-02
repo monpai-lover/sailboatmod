@@ -74,8 +74,13 @@ public class SyncTreasuryPacket {
 
         public static void update(long bal, NonNullList<ItemStack> it, String[] dep) {
             balance = bal;
-            items = it;
-            depositors = dep;
+            items.clear();
+            for (int i = 0; i < Math.min(it.size(), items.size()); i++) {
+                items.set(i, it.get(i).copy());
+            }
+            if (dep != null) {
+                System.arraycopy(dep, 0, depositors, 0, Math.min(dep.length, depositors.length));
+            }
         }
 
         public static long getBalance() { return balance; }

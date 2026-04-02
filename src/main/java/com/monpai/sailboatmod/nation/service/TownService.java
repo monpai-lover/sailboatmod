@@ -175,6 +175,29 @@ public final class TownService {
         return NationResult.success(Component.translatable("command.sailboatmod.nation.town.abandon.success", town.name()));
     }
 
+    public static NationResult removeCoreBlock(ServerPlayer actor, String townId) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        TownRecord town = data.getTown(townId);
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.not_found", townId));
+        }
+        if (!actor.getUUID().equals(town.mayorUuid())) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.no_permission"));
+        }
+        if (!town.hasCore()) {
+            return NationResult.failure(Component.literal("Town has no core block"));
+        }
+        Level level = actor.level();
+        if (level.dimension().location().toString().equalsIgnoreCase(town.coreDimension())) {
+            BlockPos corePos = BlockPos.of(town.corePos());
+            if (level.hasChunkAt(corePos) && level.getBlockState(corePos).is(com.monpai.sailboatmod.registry.ModBlocks.TOWN_CORE_BLOCK.get())) {
+                level.removeBlock(corePos, false);
+                return NationResult.success(Component.literal("Town core block removed"));
+            }
+        }
+        return NationResult.failure(Component.literal("Core block not found at expected location"));
+    }
+
     public static NationResult assignMayorById(ServerPlayer actor, String townId, UUID targetUuid) {
         NationSavedData data = NationSavedData.get(actor.level());
         TownRecord town = data.getTown(townId);
@@ -236,6 +259,12 @@ public final class TownService {
             }
         }
 
+        boolean relocating = selectedTown.hasCore()
+                && (!actor.level().dimension().location().toString().equalsIgnoreCase(selectedTown.coreDimension())
+                || selectedTown.corePos() != pos.asLong());
+        String previousCoreDimension = selectedTown.coreDimension();
+        long previousCorePos = selectedTown.corePos();
+
         TownRecord updated = new TownRecord(
                 selectedTown.townId(),
                 selectedTown.nationId(),
@@ -283,8 +312,15 @@ public final class TownService {
             ));
         }
 
+        if (relocating) {
+            removePreviousTownCoreBlock(actor, previousCoreDimension, previousCorePos);
+            refundRelocationCore(actor, ModBlocks.TOWN_CORE_BLOCK.get());
+        }
+
         return NationResult.success(Component.translatable(
-                preparation.createdNewTown()
+                relocating
+                        ? "command.sailboatmod.nation.town.core.moved"
+                        : preparation.createdNewTown()
                         ? "command.sailboatmod.nation.town.core.created_and_placed"
                         : "command.sailboatmod.nation.town.core.placed",
                 updated.name()
@@ -454,16 +490,28 @@ public final class TownService {
         }
         NationSavedData data = NationSavedData.get(level);
         TownRecord town = getTownByCore(level, pos);
-        if (town == null) {
+        if (town != null) {
+            if (playerUuid.equals(town.mayorUuid())) {
+                return true;
+            }
+            if (town.nationId().isBlank()) {
+                return false;
+            }
+            NationRecord nation = data.getNation(town.nationId());
+            return nation != null && playerUuid.equals(nation.leaderUuid());
+        }
+
+        TownRecord managedTown = getTownAt(level, pos);
+        if (managedTown == null) {
             return false;
         }
-        if (playerUuid.equals(town.mayorUuid())) {
+        if (playerUuid.equals(managedTown.mayorUuid())) {
             return true;
         }
-        if (town.nationId().isBlank()) {
+        if (managedTown.nationId().isBlank()) {
             return false;
         }
-        NationRecord nation = data.getNation(town.nationId());
+        NationRecord nation = data.getNation(managedTown.nationId());
         return nation != null && playerUuid.equals(nation.leaderUuid());
     }
 
@@ -1072,6 +1120,42 @@ public final class TownService {
                     NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
                     NationClaimAccessLevel.MEMBER.id(), System.currentTimeMillis()));
         }
+    }
+
+    private static void removePreviousTownCoreBlock(ServerPlayer actor, String dimensionId, long corePos) {
+        if (actor == null || actor.getServer() == null || dimensionId == null || dimensionId.isBlank() || corePos == TownRecord.noCorePos()) {
+            return;
+        }
+        ServerLevel coreLevel = resolveDimension(actor.getServer(), dimensionId);
+        if (coreLevel == null) {
+            return;
+        }
+        BlockPos oldPos = BlockPos.of(corePos);
+        if (!coreLevel.hasChunkAt(oldPos)) {
+            return;
+        }
+        if (coreLevel.getBlockState(oldPos).is(ModBlocks.TOWN_CORE_BLOCK.get())) {
+            coreLevel.removeBlock(oldPos, false);
+        }
+    }
+
+    private static void refundRelocationCore(ServerPlayer actor, net.minecraft.world.level.block.Block block) {
+        if (actor == null || actor.getAbilities().instabuild || block == null) {
+            return;
+        }
+        actor.getInventory().placeItemBackInInventory(new ItemStack(block));
+        actor.getInventory().setChanged();
+    }
+
+    private static ServerLevel resolveDimension(net.minecraft.server.MinecraftServer server, String dimensionId) {
+        if (server == null || dimensionId == null || dimensionId.isBlank()) {
+            return null;
+        }
+        net.minecraft.resources.ResourceLocation dimLoc = net.minecraft.resources.ResourceLocation.tryParse(dimensionId);
+        if (dimLoc == null) {
+            return null;
+        }
+        return server.getLevel(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, dimLoc));
     }
 
     private TownService() {

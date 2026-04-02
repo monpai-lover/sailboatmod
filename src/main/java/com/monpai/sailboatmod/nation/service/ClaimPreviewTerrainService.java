@@ -48,6 +48,10 @@ public final class ClaimPreviewTerrainService {
         return immutableColors;
     }
 
+    public static void clearCache() {
+        CACHE.clear();
+    }
+
     private static List<Integer> filledDefaults(int size) {
         List<Integer> colors = new ArrayList<>(Math.max(0, size));
         for (int i = 0; i < size; i++) {

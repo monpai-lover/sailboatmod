@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -49,9 +50,6 @@ public final class NationClaimService {
         if (nation == null) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.data_missing"));
         }
-        if (nation.hasCore()) {
-            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.already_set"));
-        }
 
         TownRecord capitalTown = TownService.getCapitalTown(data, nation);
         if (capitalTown == null) {
@@ -60,8 +58,8 @@ public final class NationClaimService {
         if (!capitalTown.hasCore()) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.need_capital_town_core", capitalTown.name()));
         }
-        if (!player.level().dimension().location().toString().equalsIgnoreCase(capitalTown.coreDimension())
-                || !isSameChunk(new ChunkPos(pos), new ChunkPos(BlockPos.of(capitalTown.corePos())))) {
+        TownRecord occupiedTown = TownService.getTownAt(player.level(), pos);
+        if (occupiedTown == null || !capitalTown.townId().equals(occupiedTown.townId())) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.must_place_in_capital_town", capitalTown.name()));
         }
 
@@ -77,6 +75,12 @@ public final class NationClaimService {
                 && !capitalTown.townId().equals(existingClaim.townId())) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.occupied"));
         }
+
+        boolean relocating = nation.hasCore()
+                && (!player.level().dimension().location().toString().equalsIgnoreCase(nation.coreDimension())
+                || nation.corePos() != pos.asLong());
+        String previousCoreDimension = nation.coreDimension();
+        long previousCorePos = nation.corePos();
 
         NationRecord updated = new NationRecord(
                 nation.nationId(),
@@ -126,7 +130,13 @@ public final class NationClaimService {
                     existingClaim.claimedAt()
             ));
         }
-        return NationResult.success(Component.translatable("command.sailboatmod.nation.core.placed", nation.name()));
+        if (relocating) {
+            removePreviousNationCoreBlock(player, previousCoreDimension, previousCorePos);
+            refundRelocationCore(player);
+        }
+        return NationResult.success(Component.translatable(
+                relocating ? "command.sailboatmod.nation.core.moved" : "command.sailboatmod.nation.core.placed",
+                nation.name()));
     }
 
     public static void onCoreRemoved(Level level, BlockPos pos) {
@@ -432,7 +442,23 @@ public final class NationClaimService {
     }
 
     public static boolean canBreakCore(Level level, UUID playerUuid, BlockPos pos) {
-        return NationPermissionService.canBreakCore(level, playerUuid, pos);
+        if (level == null || playerUuid == null || pos == null) {
+            return false;
+        }
+        NationSavedData data = NationSavedData.get(level);
+        NationMemberRecord member = data.getMember(playerUuid);
+        if (member == null) {
+            return false;
+        }
+        NationRecord playerNation = data.getNation(member.nationId());
+        if (playerNation == null || !NationService.hasPermission(level, playerUuid, NationPermission.PLACE_CORE)) {
+            return false;
+        }
+        if (isNationCore(level, pos, playerNation)) {
+            return true;
+        }
+        NationRecord territoryNation = getNationAt(level, pos);
+        return territoryNation != null && territoryNation.nationId().equals(playerNation.nationId());
     }
 
     public static NationRecord getNationAt(Level level, BlockPos pos) {
@@ -453,6 +479,42 @@ public final class NationClaimService {
 
     private static boolean isSameChunk(ChunkPos left, ChunkPos right) {
         return left != null && right != null && left.x == right.x && left.z == right.z;
+    }
+
+    private static void removePreviousNationCoreBlock(ServerPlayer player, String dimensionId, long corePos) {
+        if (player == null || player.getServer() == null || dimensionId == null || dimensionId.isBlank() || corePos == NationRecord.noCorePos()) {
+            return;
+        }
+        ServerLevel coreLevel = resolveDimension(player.getServer(), dimensionId);
+        if (coreLevel == null) {
+            return;
+        }
+        BlockPos oldPos = BlockPos.of(corePos);
+        if (!coreLevel.hasChunkAt(oldPos)) {
+            return;
+        }
+        if (coreLevel.getBlockState(oldPos).is(ModBlocks.NATION_CORE_BLOCK.get())) {
+            coreLevel.removeBlock(oldPos, false);
+        }
+    }
+
+    private static void refundRelocationCore(ServerPlayer player) {
+        if (player == null || player.getAbilities().instabuild) {
+            return;
+        }
+        player.getInventory().placeItemBackInInventory(new ItemStack(ModBlocks.NATION_CORE_BLOCK.get()));
+        player.getInventory().setChanged();
+    }
+
+    private static ServerLevel resolveDimension(net.minecraft.server.MinecraftServer server, String dimensionId) {
+        if (server == null || dimensionId == null || dimensionId.isBlank()) {
+            return null;
+        }
+        net.minecraft.resources.ResourceLocation dimLoc = net.minecraft.resources.ResourceLocation.tryParse(dimensionId);
+        if (dimLoc == null) {
+            return null;
+        }
+        return server.getLevel(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, dimLoc));
     }
 
     private static boolean isCoreChunk(Level level, ChunkPos chunkPos, NationRecord nation) {

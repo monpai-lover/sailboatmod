@@ -129,8 +129,12 @@ public final class StructureConstructionManager {
         StructureTemplate.StructureBlockInfo nextBlock = null;
         boolean hasBlockedMismatch = false;
         double bestDistance = Double.MAX_VALUE;
+        int currentLayerY = findCurrentPendingLayerY(level, placement.blocks());
 
         for (StructureTemplate.StructureBlockInfo info : placement.blocks()) {
+            if (currentLayerY >= 0 && info.pos().getY() != currentLayerY) {
+                continue;
+            }
             BlockState currentState = level.getBlockState(info.pos());
             if (currentState.equals(info.state())) {
                 continue;
@@ -157,7 +161,7 @@ public final class StructureConstructionManager {
 
             Component message = hasBlockedMismatch
                     ? Component.translatable("command.sailboatmod.nation.structure.blocked")
-                    : Component.literal("No placeable missing blueprint blocks remain.");
+                    : Component.literal("No placeable missing blueprint blocks remain on the current layer.");
             return new AssistPlacementResult(false, false, message);
         }
 
@@ -378,6 +382,16 @@ public final class StructureConstructionManager {
             }
         }
         return true;
+    }
+
+    private static int findCurrentPendingLayerY(ServerLevel level, List<StructureTemplate.StructureBlockInfo> blocks) {
+        int currentLayerY = Integer.MAX_VALUE;
+        for (StructureTemplate.StructureBlockInfo info : blocks) {
+            if (!level.getBlockState(info.pos()).equals(info.state())) {
+                currentLayerY = Math.min(currentLayerY, info.pos().getY());
+            }
+        }
+        return currentLayerY == Integer.MAX_VALUE ? -1 : currentLayerY;
     }
 
     private static boolean consumeConstructionItem(ServerPlayer player, Item item) {

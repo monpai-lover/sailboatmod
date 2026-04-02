@@ -95,6 +95,7 @@ public class TownGuiActionPacket {
                             ? NationResult.failure(Component.translatable("command.sailboatmod.nation.member.invalid"))
                             : TownService.assignMayorById(player, packet.townId, targetUuid);
                 }
+                case REMOVE_CORE -> TownService.removeCoreBlock(player, packet.townId);
             };
 
             if (!result.message().getString().isBlank()) {
@@ -134,7 +135,8 @@ public class TownGuiActionPacket {
         RENAME_TOWN,
         TOGGLE_FLAG_MIRROR,
         ABANDON_TOWN,
-        APPOINT_MAYOR
+        APPOINT_MAYOR,
+        REMOVE_CORE
     }
 
     private static int[] parseAreaBounds(String text) {

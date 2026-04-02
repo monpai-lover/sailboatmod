@@ -164,7 +164,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 amount,
                 0,
                 linkedDockPos,
-                dock.getDockName()
+                dock.getDockName(),
+                dock.getTownId(),
+                dock.getNationId()
         ));
         return true;
     }
@@ -207,7 +209,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 Math.max(0, listing.availableCount() - amount),
                 listing.reservedCount() + amount,
                 listing.sourceDockPos(),
-                listing.sourceDockName()
+                listing.sourceDockName(),
+                listing.townId(),
+                listing.nationId()
         ));
         PurchaseOrder createdOrder = new PurchaseOrder(
                 market.nextId(),
@@ -266,7 +270,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     0,
                     listing.reservedCount(),
                     listing.sourceDockPos(),
-                    listing.sourceDockName()
+                    listing.sourceDockName(),
+                    listing.townId(),
+                    listing.nationId()
             ));
         }
         return true;
@@ -297,7 +303,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     public String getMarketName() {
         if (marketName == null || marketName.isBlank()) {
-            return "Market-" + worldPosition.getX() + "," + worldPosition.getZ();
+            return ownerName != null && !ownerName.isBlank() ? ownerName + "'s Market" : "Market";
         }
         return marketName;
     }
@@ -305,6 +311,19 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     public void setMarketName(String name) {
         this.marketName = name == null ? "" : name.trim();
         setChanged();
+        if (level != null && !level.isClientSide) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
+    }
+
+    @Override
+    public net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket getUpdatePacket() {
+        return net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(this);
+    }
+
+    @Override
+    public net.minecraft.nbt.CompoundTag getUpdateTag() {
+        return saveWithoutMetadata();
     }
 
     public String getOwnerName() {
@@ -616,7 +635,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.availableCount(),
                     nextReserved,
                     listing.sourceDockPos(),
-                    listing.sourceDockName()
+                    listing.sourceDockName(),
+                    listing.townId(),
+                    listing.nationId()
             ));
         }
     }

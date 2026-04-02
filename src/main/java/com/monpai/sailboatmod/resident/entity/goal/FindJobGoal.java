@@ -23,18 +23,31 @@ public class FindJobGoal extends Goal {
     @Override
     public void start() {
         BlockPos pos = resident.blockPosition();
+        BlockPos bestMatch = null;
+        int bestTier = -1;
+
         for (int x = -64; x <= 64; x++) {
             for (int y = -16; y <= 16; y++) {
                 for (int z = -64; z <= 64; z++) {
                     BlockPos check = pos.offset(x, y, z);
                     BlockState state = resident.level().getBlockState(check);
                     if (state.getBlock() instanceof WorkstationBlock ws) {
-                        targetWorkstation = check;
-                        resident.getNavigation().moveTo(check.getX(), check.getY(), check.getZ(), 1.0);
-                        return;
+                        Profession prof = ws.getProfession();
+                        if (prof.qualifiesFor(resident.getEducationLevel())) {
+                            int tier = prof.minEducation().tier();
+                            if (tier > bestTier) {
+                                bestTier = tier;
+                                bestMatch = check;
+                            }
+                        }
                     }
                 }
             }
+        }
+
+        if (bestMatch != null) {
+            targetWorkstation = bestMatch;
+            resident.getNavigation().moveTo(bestMatch.getX(), bestMatch.getY(), bestMatch.getZ(), 1.0);
         }
     }
 

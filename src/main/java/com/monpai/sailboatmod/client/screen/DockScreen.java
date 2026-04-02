@@ -80,6 +80,8 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     private Button nonOrderAutoReturnButton;
     @Nullable
     private Button nonOrderAutoUnloadButton;
+    @Nullable
+    private Button autoRouteButton;
 
     public DockScreen(DockMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -120,8 +122,11 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
                 .bounds(panelX + 146, top + 44, 40, 16).build());
         this.reverseButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.reverse"), b -> send(DockGuiActionPacket.Action.REVERSE_ROUTE))
                 .bounds(panelX + 146, top + 66, 40, 16).build());
+        this.autoRouteButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.auto_route"), b -> {
+            ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket(data.dockPos()));
+        }).bounds(panelX + 146, top + 124, 40, 16).build());
         this.deleteButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.delete"), b -> send(DockGuiActionPacket.Action.DELETE_ROUTE))
-                .bounds(panelX + 146, top + 124, 40, 16).build());
+                .bounds(panelX + 146, top + 142, 40, 16).build());
         this.assignButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.assign"), b -> send(DockGuiActionPacket.Action.ASSIGN_SELECTED))
                 .bounds(panelX + 8, top + 44, 60, 16).build());
         this.dispatchCargoButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.ship_cargo"), b -> send(DockGuiActionPacket.Action.DISPATCH_SELECTED_CARGO))
@@ -681,6 +686,10 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         if (reverseButton != null) {
             reverseButton.visible = onRoute;
             reverseButton.active = onRoute && data.canManageDock();
+        }
+        if (autoRouteButton != null) {
+            autoRouteButton.visible = onRoute;
+            autoRouteButton.active = onRoute && data.canManageDock();
         }
         if (deleteButton != null) {
             deleteButton.visible = onRoute;

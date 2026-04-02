@@ -209,7 +209,6 @@ public final class BankConstructorPreviewRenderer {
         }
         List<StructureTemplate.StructureBlockInfo> blocks = placement.blocks();
         StructureTemplate.StructureBlockInfo nextTarget = null;
-        double bestDistance = Double.MAX_VALUE;
         int currentLayerY = Integer.MAX_VALUE;
 
         for (StructureTemplate.StructureBlockInfo info : blocks) {
@@ -220,11 +219,6 @@ public final class BankConstructorPreviewRenderer {
             } else if (currentState.isAir() || currentState.canBeReplaced() || currentState.liquid()) {
                 grouped.get(PreviewStatus.MISSING).add(info);
                 currentLayerY = Math.min(currentLayerY, info.pos().getY());
-                double distance = worldPos.distToCenterSqr(player.getX(), player.getEyeY(), player.getZ());
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    nextTarget = info;
-                }
             } else {
                 grouped.get(PreviewStatus.BLOCKED).add(info);
                 currentLayerY = Math.min(currentLayerY, info.pos().getY());
@@ -232,6 +226,19 @@ public final class BankConstructorPreviewRenderer {
         }
         if (currentLayerY == Integer.MAX_VALUE) {
             currentLayerY = -1;
+        } else {
+            double bestDistance = Double.MAX_VALUE;
+            for (StructureTemplate.StructureBlockInfo info : grouped.get(PreviewStatus.MISSING)) {
+                if (info.pos().getY() != currentLayerY) {
+                    continue;
+                }
+                BlockPos worldPos = origin.offset(info.pos());
+                double distance = worldPos.distToCenterSqr(player.getX(), player.getEyeY(), player.getZ());
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    nextTarget = info;
+                }
+            }
         }
 
         int totalLayers = Math.max(placement.bounds().height(), 1);
