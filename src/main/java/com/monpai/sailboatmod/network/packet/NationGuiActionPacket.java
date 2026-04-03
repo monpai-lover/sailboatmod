@@ -99,6 +99,7 @@ public class NationGuiActionPacket {
                             ? NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_owned"))
                             : NationClaimService.unclaimArea(player, Math.min(packet.chunkX, bounds[0]), Math.max(packet.chunkX, bounds[0]), Math.min(packet.chunkZ, bounds[1]), Math.max(packet.chunkZ, bounds[1]));
                 }
+                case REMOVE_CORE -> NationClaimService.removeCoreBlock(player);
                 case APPOINT_OFFICER -> {
                     UUID targetUuid = parseUuid(packet.memberUuid);
                     yield targetUuid == null
@@ -202,6 +203,7 @@ public class NationGuiActionPacket {
         UNCLAIM_CHUNK,
         CLAIM_AREA,
         UNCLAIM_AREA,
+        REMOVE_CORE,
         APPOINT_OFFICER,
         REMOVE_OFFICER,
         APPOINT_MAYOR,

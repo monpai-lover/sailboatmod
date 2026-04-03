@@ -25,8 +25,10 @@ public class FollowCommandGoal extends Goal {
     public boolean canUse() {
         ArmyRecord army = soldier.getArmy();
         if (army == null) return false;
+        if (army.state() == ArmyState.ATTACKING && soldier.getTarget() != null && soldier.getTarget().isAlive()) return false;
         return army.state() == ArmyState.RALLYING
                 || army.state() == ArmyState.MARCHING
+                || army.state() == ArmyState.ATTACKING
                 || army.state() == ArmyState.RETREATING;
     }
 
@@ -47,7 +49,10 @@ public class FollowCommandGoal extends Goal {
         if (idx < 0) return;
 
         targetPos = ArmyCommandManager.getSoldierTargetPos(army, idx);
-        soldier.getNavigation().moveTo(targetPos.getX() + 0.5, targetPos.getY(), targetPos.getZ() + 0.5, 1.0D);
+        double dist = soldier.distanceToSqr(targetPos.getX() + 0.5D, targetPos.getY(), targetPos.getZ() + 0.5D);
+        if (dist > 2.25D) {
+            soldier.getNavigation().moveTo(targetPos.getX() + 0.5D, targetPos.getY(), targetPos.getZ() + 0.5D, 1.0D);
+        }
     }
 
     @Override

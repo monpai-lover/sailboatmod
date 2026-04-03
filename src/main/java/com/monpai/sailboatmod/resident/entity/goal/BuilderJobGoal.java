@@ -47,6 +47,7 @@ public class BuilderJobGoal extends Goal {
     public void start() {
         retargetCooldown = 0;
         workAnimationCooldown = 0;
+        resident.setBuildingActive(false);
         moveTowardAssignment();
     }
 
@@ -80,6 +81,7 @@ public class BuilderJobGoal extends Goal {
         }
 
         if (assignment == null) {
+            resident.setBuildingActive(false);
             stop();
             return;
         }
@@ -87,11 +89,13 @@ public class BuilderJobGoal extends Goal {
         BlockPos approachPos = assignment.approachPos();
         BlockPos focusPos = assignment.focusPos();
         if (resident.blockPosition().distSqr(approachPos) > WORK_RANGE_SQR) {
+            resident.setBuildingActive(false);
             resident.getNavigation().moveTo(approachPos.getX() + 0.5D, approachPos.getY(), approachPos.getZ() + 0.5D, 0.9D);
             return;
         }
 
         resident.getNavigation().stop();
+        resident.setBuildingActive(true);
         resident.getLookControl().setLookAt(
                 focusPos.getX() + 0.5D,
                 focusPos.getY() + 0.5D,
@@ -124,6 +128,7 @@ public class BuilderJobGoal extends Goal {
     @Override
     public void stop() {
         resident.getNavigation().stop();
+        resident.setBuildingActive(false);
         if (assignment != null) {
             StructureConstructionManager.releaseWorker(assignment.jobId(), resident.getResidentId());
         }

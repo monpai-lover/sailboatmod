@@ -31,11 +31,26 @@ public class OpenMarketScreenPacket {
         PacketStringCodec.writeUtfSafe(buffer, data.linkedDockPosText(), 64);
         buffer.writeBoolean(data.dockStorageAccessible());
         buffer.writeBoolean(data.canManage());
+        PacketStringCodec.writeUtfSafe(buffer, data.townId(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.townName(), 64);
+        buffer.writeVarInt(data.stockpileCommodityTypes());
+        buffer.writeVarInt(data.stockpileTotalUnits());
+        buffer.writeVarInt(data.openDemandCount());
+        buffer.writeVarInt(data.openDemandUnits());
+        buffer.writeVarInt(data.activeProcurementCount());
+        buffer.writeLong(data.totalIncome());
+        buffer.writeLong(data.totalExpense());
+        buffer.writeLong(data.netBalance());
+        buffer.writeFloat(data.employmentRate());
         writeLines(buffer, data.dockStorageLines(), 160);
         writeLines(buffer, data.listingLines(), 192);
         writeLines(buffer, data.orderLines(), 192);
         writeLines(buffer, data.shippingLines(), 192);
         writeLines(buffer, data.buyOrderLines(), 192);
+        writeLines(buffer, data.stockpilePreviewLines(), 192);
+        writeLines(buffer, data.demandPreviewLines(), 192);
+        writeLines(buffer, data.procurementPreviewLines(), 192);
+        writeLines(buffer, data.financePreviewLines(), 192);
         writeStorageEntries(buffer, data.dockStorageEntries());
         writeListingEntries(buffer, data.listingEntries());
         writeOrderEntries(buffer, data.orderEntries());
@@ -54,11 +69,26 @@ public class OpenMarketScreenPacket {
         String linkedDockPosText = buffer.readUtf(64);
         boolean dockStorageAccessible = buffer.readBoolean();
         boolean canManage = buffer.readBoolean();
+        String townId = buffer.readUtf(64);
+        String townName = buffer.readUtf(64);
+        int stockpileCommodityTypes = buffer.readVarInt();
+        int stockpileTotalUnits = buffer.readVarInt();
+        int openDemandCount = buffer.readVarInt();
+        int openDemandUnits = buffer.readVarInt();
+        int activeProcurementCount = buffer.readVarInt();
+        long totalIncome = buffer.readLong();
+        long totalExpense = buffer.readLong();
+        long netBalance = buffer.readLong();
+        float employmentRate = buffer.readFloat();
         List<String> dockStorageLines = readLines(buffer, 160);
         List<String> listingLines = readLines(buffer, 192);
         List<String> orderLines = readLines(buffer, 192);
         List<String> shippingLines = readLines(buffer, 192);
         List<String> buyOrderLines = readLines(buffer, 192);
+        List<String> stockpilePreviewLines = readLines(buffer, 192);
+        List<String> demandPreviewLines = readLines(buffer, 192);
+        List<String> procurementPreviewLines = readLines(buffer, 192);
+        List<String> financePreviewLines = readLines(buffer, 192);
         List<MarketOverviewData.StorageEntry> dockStorageEntries = readStorageEntries(buffer);
         List<MarketOverviewData.ListingEntry> listingEntries = readListingEntries(buffer);
         List<MarketOverviewData.OrderEntry> orderEntries = readOrderEntries(buffer);
@@ -75,11 +105,26 @@ public class OpenMarketScreenPacket {
                 linkedDockPosText,
                 dockStorageAccessible,
                 canManage,
+                townId,
+                townName,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance,
+                employmentRate,
                 dockStorageLines,
                 listingLines,
                 orderLines,
                 shippingLines,
                 buyOrderLines,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines,
                 dockStorageEntries,
                 listingEntries,
                 orderEntries,

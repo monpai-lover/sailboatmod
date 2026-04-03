@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager;
+import com.monpai.sailboatmod.nation.service.StructurePlacementValidationService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerLevel;
@@ -12,35 +13,51 @@ import java.util.function.Supplier;
 
 public class SyncConstructorSettingsPacket {
     public enum Action {
+        SYNC_ONLY,
         PROJECT_OR_CONFIRM,
-        ASSIST
+        ASSIST,
+        CONFIRM_PENDING
     }
 
     private final BlockPos targetPos;
     private final int structureIndex;
+    private final int adjustModeIndex;
     private final int offsetX;
     private final int offsetY;
     private final int offsetZ;
     private final int rotation;
+    private final boolean hasPendingProjection;
     private final Action action;
 
-    public SyncConstructorSettingsPacket(BlockPos targetPos, int structureIndex, int offsetX, int offsetY, int offsetZ, int rotation, Action action) {
+    public SyncConstructorSettingsPacket(BlockPos targetPos,
+                                         int structureIndex,
+                                         int adjustModeIndex,
+                                         int offsetX,
+                                         int offsetY,
+                                         int offsetZ,
+                                         int rotation,
+                                         boolean hasPendingProjection,
+                                         Action action) {
         this.targetPos = targetPos;
         this.structureIndex = structureIndex;
+        this.adjustModeIndex = adjustModeIndex;
         this.offsetX = offsetX;
         this.offsetY = offsetY;
         this.offsetZ = offsetZ;
         this.rotation = rotation;
+        this.hasPendingProjection = hasPendingProjection;
         this.action = action;
     }
 
     public static void encode(SyncConstructorSettingsPacket msg, FriendlyByteBuf buf) {
         buf.writeBlockPos(msg.targetPos);
         buf.writeInt(msg.structureIndex);
+        buf.writeInt(msg.adjustModeIndex);
         buf.writeInt(msg.offsetX);
         buf.writeInt(msg.offsetY);
         buf.writeInt(msg.offsetZ);
         buf.writeInt(msg.rotation);
+        buf.writeBoolean(msg.hasPendingProjection);
         buf.writeEnum(msg.action);
     }
 
@@ -52,6 +69,8 @@ public class SyncConstructorSettingsPacket {
                 buf.readInt(),
                 buf.readInt(),
                 buf.readInt(),
+                buf.readInt(),
+                buf.readBoolean(),
                 buf.readEnum(Action.class)
         );
     }
@@ -73,9 +92,47 @@ public class SyncConstructorSettingsPacket {
             if (held.isEmpty()) {
                 return;
             }
+            BankConstructorItem.applySettings(
+                    held,
+                    msg.structureIndex,
+                    msg.adjustModeIndex,
+                    msg.offsetX,
+                    msg.offsetY,
+                    msg.offsetZ,
+                    msg.rotation
+            );
+            if (msg.hasPendingProjection) {
+                BankConstructorItem.setPendingProjection(held, level.dimension(), msg.targetPos, type, msg.rotation);
+            } else {
+                BankConstructorItem.clearPendingProjection(held);
+            }
+
+            if (msg.action == Action.SYNC_ONLY) {
+                return;
+            }
+
+            if (msg.action == Action.CONFIRM_PENDING) {
+                BlockPos pendingOrigin = BankConstructorItem.getPendingProjectionOrigin(held, level);
+                StructureConstructionManager.StructureType pendingType = BankConstructorItem.getPendingProjectionType(held);
+                int pendingRotation = BankConstructorItem.getPendingProjectionRotation(held);
+                if (pendingOrigin == null || pendingType == null) {
+                    return;
+                }
+                if (!validateConstructionPlacement(level, player, pendingType, pendingOrigin, pendingRotation)) {
+                    return;
+                }
+                boolean started = StructureConstructionManager.placeStructureAnimated(level, pendingOrigin, player, pendingType, pendingRotation);
+                if (started) {
+                    BankConstructorItem.clearPendingProjection(held);
+                    if (!player.getAbilities().instabuild) {
+                        held.shrink(1);
+                    }
+                }
+                return;
+            }
 
             if (msg.action == Action.ASSIST) {
-                if (!validateConstructionPlacement(level, player, type, origin)) {
+                if (!validateConstructionPlacement(level, player, type, origin, msg.rotation)) {
                     return;
                 }
                 StructureConstructionManager.AssistPlacementResult assistResult =
@@ -96,7 +153,7 @@ public class SyncConstructorSettingsPacket {
                 return;
             }
 
-            if (!validateConstructionPlacement(level, player, type, origin)) {
+            if (!validateConstructionPlacement(level, player, type, origin, msg.rotation)) {
                 return;
             }
 
@@ -115,7 +172,8 @@ public class SyncConstructorSettingsPacket {
     private static boolean validateConstructionPlacement(ServerLevel level,
                                                          ServerPlayer player,
                                                          StructureConstructionManager.StructureType type,
-                                                         BlockPos origin) {
+                                                         BlockPos origin,
+                                                         int rotation) {
         if (type == StructureConstructionManager.StructureType.VICTORIAN_TOWN_HALL
                 && com.monpai.sailboatmod.nation.service.TownService.getTownAt(level, origin) == null) {
             String townName = player.getGameProfile().getName() + "'s Town";
@@ -126,11 +184,14 @@ public class SyncConstructorSettingsPacket {
                 return false;
             }
             player.sendSystemMessage(createResult.message());
-            return true;
         }
-        if (type != StructureConstructionManager.StructureType.VICTORIAN_TOWN_HALL
-                && com.monpai.sailboatmod.nation.service.TownService.getTownAt(level, origin) == null) {
-            player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("command.sailboatmod.nation.town.facility.missing_town"));
+
+        StructurePlacementValidationService.ValidationResult validation =
+                StructurePlacementValidationService.validate(level, type, origin, rotation);
+        if (!validation.valid()) {
+            if (!validation.message().getString().isBlank()) {
+                player.sendSystemMessage(validation.message());
+            }
             return false;
         }
         return true;

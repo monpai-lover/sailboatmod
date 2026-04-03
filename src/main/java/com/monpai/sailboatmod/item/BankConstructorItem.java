@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.item;
 
+import com.monpai.sailboatmod.nation.service.BlueprintService;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -13,8 +14,11 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -73,7 +77,7 @@ public class BankConstructorItem extends Item {
     }
 
     public static void setSelectedIndex(ItemStack stack, int index) {
-        stack.getOrCreateTag().putInt(TAG_STRUCTURE_INDEX, index);
+        stack.getOrCreateTag().putInt(TAG_STRUCTURE_INDEX, Math.floorMod(index, StructureType.ALL.size()));
     }
 
     public static AdjustMode getAdjustMode(ItemStack stack) {
@@ -90,6 +94,17 @@ public class BankConstructorItem extends Item {
         stack.getOrCreateTag().putInt(TAG_ADJUST_MODE, next);
     }
 
+    public static int getAdjustModeIndex(ItemStack stack) {
+        if (stack.hasTag() && stack.getTag().contains(TAG_ADJUST_MODE)) {
+            return Math.floorMod(stack.getTag().getInt(TAG_ADJUST_MODE), AdjustMode.ALL.size());
+        }
+        return 0;
+    }
+
+    public static void setAdjustModeIndex(ItemStack stack, int index) {
+        stack.getOrCreateTag().putInt(TAG_ADJUST_MODE, Math.floorMod(index, AdjustMode.ALL.size()));
+    }
+
     public static int getOffsetY(ItemStack stack) {
         return stack.hasTag() ? stack.getTag().getInt(TAG_OFFSET_Y) : 0;
     }
@@ -103,19 +118,51 @@ public class BankConstructorItem extends Item {
     }
 
     public static int getRotation(ItemStack stack) {
-        return stack.hasTag() ? stack.getTag().getInt(TAG_ROTATION) : 0;
+        return stack.hasTag() ? Math.floorMod(stack.getTag().getInt(TAG_ROTATION), 4) : 0;
+    }
+
+    public static void applySettings(ItemStack stack,
+                                     int structureIndex,
+                                     int adjustModeIndex,
+                                     int offsetX,
+                                     int offsetY,
+                                     int offsetZ,
+                                     int rotation) {
+        if (stack == null || stack.isEmpty()) {
+            return;
+        }
+        CompoundTag tag = stack.getOrCreateTag();
+        tag.putInt(TAG_STRUCTURE_INDEX, Math.floorMod(structureIndex, StructureType.ALL.size()));
+        tag.putInt(TAG_ADJUST_MODE, Math.floorMod(adjustModeIndex, AdjustMode.ALL.size()));
+        tag.putInt(TAG_OFFSET_X, offsetX);
+        tag.putInt(TAG_OFFSET_Y, offsetY);
+        tag.putInt(TAG_OFFSET_Z, offsetZ);
+        tag.putInt(TAG_ROTATION, Math.floorMod(rotation, 4));
     }
 
     public static void adjustValue(ItemStack stack, int delta) {
         AdjustMode mode = getAdjustMode(stack);
         CompoundTag tag = stack.getOrCreateTag();
         switch (mode) {
-            case OFFSET_Y -> tag.putInt(TAG_OFFSET_Y, tag.getInt(TAG_OFFSET_Y) + delta);
-            case OFFSET_XZ -> {
-                // delta applied to X; use facing direction in actual placement
-                tag.putInt(TAG_OFFSET_X, tag.getInt(TAG_OFFSET_X) + delta);
+            case OFFSET_Y -> {
+                tag.putInt(TAG_OFFSET_Y, tag.getInt(TAG_OFFSET_Y) + delta);
+                if (tag.contains(TAG_PENDING_Y)) {
+                    tag.putInt(TAG_PENDING_Y, tag.getInt(TAG_PENDING_Y) + delta);
+                }
             }
-            case ROTATION -> tag.putInt(TAG_ROTATION, Math.floorMod(tag.getInt(TAG_ROTATION) + delta, 4));
+            case OFFSET_XZ -> {
+                tag.putInt(TAG_OFFSET_X, tag.getInt(TAG_OFFSET_X) + delta);
+                if (tag.contains(TAG_PENDING_X)) {
+                    tag.putInt(TAG_PENDING_X, tag.getInt(TAG_PENDING_X) + delta);
+                }
+            }
+            case ROTATION -> {
+                int rotation = Math.floorMod(tag.getInt(TAG_ROTATION) + delta, 4);
+                tag.putInt(TAG_ROTATION, rotation);
+                if (tag.contains(TAG_PENDING_ROTATION)) {
+                    tag.putInt(TAG_PENDING_ROTATION, rotation);
+                }
+            }
             default -> {} // BUILD mode: scroll does nothing
         }
     }
@@ -209,6 +256,47 @@ public class BankConstructorItem extends Item {
         }
     }
 
+    public static boolean isTargetingPendingProjection(Level level, Player player, ItemStack stack) {
+        if (level == null || player == null || stack == null || stack.isEmpty() || !hasPendingProjection(stack, level)) {
+            return false;
+        }
+        BlockPos origin = getPendingProjectionOrigin(stack, level);
+        StructureType type = getPendingProjectionType(stack);
+        int rotation = getPendingProjectionRotation(stack);
+        if (origin == null || type == null) {
+            return false;
+        }
+
+        BlueprintService.BlueprintPlacement placement = BlueprintService.preparePlacement(
+                level.holderLookup(net.minecraft.core.registries.Registries.BLOCK),
+                type.nbtName(),
+                BlockPos.ZERO,
+                rotation
+        );
+        if (placement == null) {
+            return false;
+        }
+
+        AABB box = pendingProjectionBox(origin, placement);
+        Vec3 start = player.getEyePosition();
+        Vec3 end = start.add(player.getViewVector(1.0F).scale(8.0D));
+        return box.clip(start, end).isPresent() || box.contains(start);
+    }
+
+    private static AABB pendingProjectionBox(BlockPos origin, BlueprintService.BlueprintPlacement placement) {
+        BlueprintService.PlacementBounds bounds = placement.bounds();
+        BlockPos min = origin.offset(bounds.min());
+        BlockPos max = origin.offset(bounds.max());
+        return new AABB(
+                min.getX(),
+                min.getY(),
+                min.getZ(),
+                max.getX() + 1.0D,
+                max.getY() + 1.0D,
+                max.getZ() + 1.0D
+        ).inflate(0.15D);
+    }
+
     // --- Interaction ---
 
     @Override
@@ -224,6 +312,26 @@ public class BankConstructorItem extends Item {
             return InteractionResultHolder.success(stack);
         }
 
+        if (level.isClientSide
+                && !player.isSprinting()
+                && isTargetingPendingProjection(level, player, stack)) {
+            BlockPos pendingOrigin = getPendingProjectionOrigin(stack, level);
+            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(
+                    new com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket(
+                            pendingOrigin == null ? BlockPos.ZERO : pendingOrigin,
+                            getSelectedIndex(stack),
+                            getAdjustModeIndex(stack),
+                            getOffsetX(stack),
+                            getOffsetY(stack),
+                            getOffsetZ(stack),
+                            getRotation(stack),
+                            pendingOrigin != null,
+                            com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket.Action.CONFIRM_PENDING
+                    )
+            );
+            return InteractionResultHolder.success(stack);
+        }
+
         BlockHitResult hit = getPlayerPOVHitResult(level, player, ClipContext.Fluid.NONE);
         if (hit.getType() != HitResult.Type.BLOCK) {
             return InteractionResultHolder.pass(stack);
@@ -235,10 +343,12 @@ public class BankConstructorItem extends Item {
                 new com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket(
                     target,
                     getSelectedIndex(stack),
+                    getAdjustModeIndex(stack),
                     getOffsetX(stack),
                     getOffsetY(stack),
                     getOffsetZ(stack),
                     getRotation(stack),
+                    hasPendingProjection(stack, level),
                     player.isSprinting()
                             ? com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket.Action.ASSIST
                             : com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket.Action.PROJECT_OR_CONFIRM
@@ -273,6 +383,7 @@ public class BankConstructorItem extends Item {
             }
         }
         tooltip.add(Component.translatable("item.sailboatmod.constructor.confirm_hint"));
+        tooltip.add(Component.translatable("item.sailboatmod.constructor.adjust_pending_hint"));
         tooltip.add(Component.translatable("item.sailboatmod.constructor.assist_hint"));
     }
 

@@ -2,24 +2,30 @@ package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.TerrainPreviewSavedData;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkStatus;
+import net.minecraft.world.level.chunk.storage.ChunkSerializer;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CompletableFuture;
 
 public final class ClaimPreviewTerrainService {
     private static final int DEFAULT_COLOR = 0xFF33414A;
@@ -28,12 +34,16 @@ public final class ClaimPreviewTerrainService {
     private static final int MAX_CHUNK_CACHE = 4096;
     private static final int PREWARM_BUDGET_PER_TICK = 6;
     private static final int PREWARM_RADIUS_PADDING = 2;
+    private static final int STORAGE_COMPLETION_BUDGET_PER_TICK = 12;
+    private static final Method READ_CHUNK_METHOD = resolveReadChunkMethod();
 
     private record ChunkColorEntry(long createdAt, int color) {}
     private record PrewarmRequest(int chunkX, int chunkZ) {}
+    private record StorageReadTask(ResourceKey<Level> dimension, int chunkX, int chunkZ, CompletableFuture<Optional<CompoundTag>> future) {}
 
     private static final ConcurrentMap<String, ChunkColorEntry> CHUNK_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, Queue<PrewarmRequest>> PREWARM_QUEUES = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, StorageReadTask> STORAGE_READS = new ConcurrentHashMap<>();
     private static final java.util.Set<String> QUEUED_CHUNKS = ConcurrentHashMap.newKeySet();
 
     public static List<Integer> sample(ServerLevel level, ChunkPos centerChunk, int radius) {
@@ -44,6 +54,7 @@ public final class ClaimPreviewTerrainService {
 
         TerrainPreviewSavedData savedData = TerrainPreviewSavedData.get(level);
         queueAround(level, centerChunk, radius + PREWARM_RADIUS_PADDING);
+        drainCompletedStorageReads(level, savedData, STORAGE_COMPLETION_BUDGET_PER_TICK);
 
         Integer[] colors = new Integer[diameter * diameter];
         int index = 0;
@@ -71,6 +82,7 @@ public final class ClaimPreviewTerrainService {
         }
 
         TerrainPreviewSavedData savedData = TerrainPreviewSavedData.get(level);
+        drainCompletedStorageReads(level, savedData, STORAGE_COMPLETION_BUDGET_PER_TICK);
         for (int i = 0; i < PREWARM_BUDGET_PER_TICK && !queue.isEmpty(); i++) {
             PrewarmRequest request = queue.poll();
             if (request == null) {
@@ -84,13 +96,18 @@ public final class ClaimPreviewTerrainService {
             Integer sampled = sampleChunkColorIfAvailable(level, request.chunkX(), request.chunkZ());
             if (sampled != null) {
                 cacheColor(level, savedData, request.chunkX(), request.chunkZ(), sampled);
+                continue;
             }
+            startStorageRead(level, request.chunkX(), request.chunkZ());
         }
+        drainCompletedStorageReads(level, savedData, STORAGE_COMPLETION_BUDGET_PER_TICK);
     }
 
     public static void invalidateChunk(ResourceKey<Level> dimension, int chunkX, int chunkZ) {
-        CHUNK_CACHE.remove(chunkKey(dimension, chunkX, chunkZ));
-        QUEUED_CHUNKS.remove(chunkKey(dimension, chunkX, chunkZ));
+        String key = chunkKey(dimension, chunkX, chunkZ);
+        CHUNK_CACHE.remove(key);
+        QUEUED_CHUNKS.remove(key);
+        STORAGE_READS.remove(key);
     }
 
     public static void invalidateChunk(ServerLevel level, int chunkX, int chunkZ) {
@@ -126,7 +143,7 @@ public final class ClaimPreviewTerrainService {
                         continue;
                     }
                     String key = chunkKey(level.dimension(), chunkX, chunkZ);
-                    if (CHUNK_CACHE.containsKey(key) || !QUEUED_CHUNKS.add(key)) {
+                    if (CHUNK_CACHE.containsKey(key) || STORAGE_READS.containsKey(key) || !QUEUED_CHUNKS.add(key)) {
                         continue;
                     }
                     queue.add(new PrewarmRequest(chunkX, chunkZ));
@@ -153,8 +170,15 @@ public final class ClaimPreviewTerrainService {
         Integer color = sampleChunkColorIfAvailable(level, chunkX, chunkZ);
         if (color != null) {
             cacheColor(level, savedData, chunkX, chunkZ, color);
+            return color;
         }
-        return color;
+
+        color = consumeCompletedStorageRead(level, savedData, chunkX, chunkZ);
+        if (color != null) {
+            return color;
+        }
+
+        return null;
     }
 
     private static void evictIfNeeded() {
@@ -182,28 +206,122 @@ public final class ClaimPreviewTerrainService {
 
     private static Integer sampleChunkColorIfAvailable(ServerLevel level, int chunkX, int chunkZ) {
         try {
-            if (level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false) == null) {
+            ChunkAccess chunk = level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+            if (chunk == null) {
                 return null;
             }
-            int worldX = (chunkX << 4) + 8;
-            int worldZ = (chunkZ << 4) + 8;
-            int worldY = level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ) - 1;
-            if (worldY < level.getMinBuildHeight()) {
-                return DEFAULT_COLOR;
+            return sampleChunkColor(chunk, chunkX, chunkZ);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static Integer consumeCompletedStorageRead(ServerLevel level, TerrainPreviewSavedData savedData, int chunkX, int chunkZ) {
+        String key = chunkKey(level.dimension(), chunkX, chunkZ);
+        StorageReadTask task = STORAGE_READS.get(key);
+        if (task == null || !task.future().isDone()) {
+            return null;
+        }
+        return finishStorageRead(level, savedData, key, task);
+    }
+
+    private static void drainCompletedStorageReads(ServerLevel level, TerrainPreviewSavedData savedData, int budget) {
+        if (budget <= 0 || STORAGE_READS.isEmpty()) {
+            return;
+        }
+        int processed = 0;
+        for (Map.Entry<String, StorageReadTask> entry : STORAGE_READS.entrySet()) {
+            if (processed >= budget) {
+                break;
             }
-            BlockPos pos = new BlockPos(worldX, worldY, worldZ);
-            BlockState state = level.getBlockState(pos);
-            while (state.isAir() && worldY > level.getMinBuildHeight()) {
-                worldY--;
-                pos = new BlockPos(worldX, worldY, worldZ);
-                state = level.getBlockState(pos);
+            StorageReadTask task = entry.getValue();
+            if (task == null || task.dimension() != level.dimension() || !task.future().isDone()) {
+                continue;
             }
-            if (state.getFluidState().is(FluidTags.WATER)) {
-                return WATER_COLOR;
+            finishStorageRead(level, savedData, entry.getKey(), task);
+            processed++;
+        }
+    }
+
+    private static Integer finishStorageRead(ServerLevel level, TerrainPreviewSavedData savedData, String key, StorageReadTask task) {
+        if (task == null || !STORAGE_READS.remove(key, task)) {
+            return null;
+        }
+        QUEUED_CHUNKS.remove(key);
+        try {
+            Optional<CompoundTag> chunkTag = task.future().join();
+            if (chunkTag.isEmpty()) {
+                return null;
             }
-            MapColor mapColor = state.getMapColor(level, pos);
-            int base = mapColor == null ? 0x55606A : mapColor.col;
-            return 0xFF000000 | (base & 0x00FFFFFF);
+            Integer color = sampleChunkColorFromStorage(level, task.chunkX(), task.chunkZ(), chunkTag.get());
+            if (color != null) {
+                cacheColor(level, savedData, task.chunkX(), task.chunkZ(), color);
+            }
+            return color;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static void startStorageRead(ServerLevel level, int chunkX, int chunkZ) {
+        if (READ_CHUNK_METHOD == null || level == null) {
+            return;
+        }
+        String key = chunkKey(level.dimension(), chunkX, chunkZ);
+        STORAGE_READS.computeIfAbsent(key, ignored -> {
+            try {
+                Object result = READ_CHUNK_METHOD.invoke(level.getChunkSource().chunkMap, new ChunkPos(chunkX, chunkZ));
+                if (result instanceof CompletableFuture<?> future) {
+                    @SuppressWarnings("unchecked")
+                    CompletableFuture<Optional<CompoundTag>> typedFuture = (CompletableFuture<Optional<CompoundTag>>) future;
+                    return new StorageReadTask(level.dimension(), chunkX, chunkZ, typedFuture);
+                }
+            } catch (Exception ignoredException) {
+                QUEUED_CHUNKS.remove(key);
+            }
+            return null;
+        });
+    }
+
+    private static Integer sampleChunkColorFromStorage(ServerLevel level, int chunkX, int chunkZ, CompoundTag chunkTag) {
+        try {
+            ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
+            ChunkAccess chunk = ChunkSerializer.read(level, level.getChunkSource().getPoiManager(), chunkPos, chunkTag);
+            return sampleChunkColor(chunk, chunkX, chunkZ);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static Integer sampleChunkColor(ChunkAccess chunk, int chunkX, int chunkZ) {
+        int worldX = (chunkX << 4) + 8;
+        int worldZ = (chunkZ << 4) + 8;
+        int localX = worldX & 15;
+        int localZ = worldZ & 15;
+        int worldY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, localX, localZ) - 1;
+        if (worldY < chunk.getMinBuildHeight()) {
+            return DEFAULT_COLOR;
+        }
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
+        BlockState state = chunk.getBlockState(pos);
+        while (state.isAir() && worldY > chunk.getMinBuildHeight()) {
+            worldY--;
+            pos.set(worldX, worldY, worldZ);
+            state = chunk.getBlockState(pos);
+        }
+        if (state.getFluidState().is(FluidTags.WATER)) {
+            return WATER_COLOR;
+        }
+        MapColor mapColor = state.getMapColor(chunk, pos);
+        int base = mapColor == null ? 0x55606A : mapColor.col;
+        return 0xFF000000 | (base & 0x00FFFFFF);
+    }
+
+    private static Method resolveReadChunkMethod() {
+        try {
+            Method method = net.minecraft.server.level.ChunkMap.class.getDeclaredMethod("readChunk", ChunkPos.class);
+            method.setAccessible(true);
+            return method;
         } catch (Exception ignored) {
             return null;
         }
@@ -227,10 +345,8 @@ public final class ClaimPreviewTerrainService {
                 }
                 int x = index % diameter;
                 int z = index / diameter;
-                int sumR = 0;
-                int sumG = 0;
-                int sumB = 0;
-                int count = 0;
+                Integer best = null;
+                int bestDistance = Integer.MAX_VALUE;
                 for (int dz = -1; dz <= 1; dz++) {
                     for (int dx = -1; dx <= 1; dx++) {
                         if (dx == 0 && dz == 0) {
@@ -245,17 +361,15 @@ public final class ClaimPreviewTerrainService {
                         if (neighbor == null) {
                             continue;
                         }
-                        sumR += (neighbor >> 16) & 0xFF;
-                        sumG += (neighbor >> 8) & 0xFF;
-                        sumB += neighbor & 0xFF;
-                        count++;
+                        int distance = dx * dx + dz * dz;
+                        if (best == null || distance < bestDistance) {
+                            best = neighbor;
+                            bestDistance = distance;
+                        }
                     }
                 }
-                if (count > 0) {
-                    next[index] = 0xFF000000
-                            | ((sumR / count) << 16)
-                            | ((sumG / count) << 8)
-                            | (sumB / count);
+                if (best != null) {
+                    next[index] = best;
                     changed = true;
                 }
             }

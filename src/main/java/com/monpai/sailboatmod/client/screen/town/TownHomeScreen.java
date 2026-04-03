@@ -77,6 +77,7 @@ public class TownHomeScreen extends Screen {
     private Button browseButton;
     private Button toggleMirrorButton;
     private Button abandonTownButton;
+    private Button removeCoreButton;
     private int selectedClaimChunkX = Integer.MIN_VALUE;
     private int selectedClaimChunkZ = Integer.MIN_VALUE;
     private int areaCorner1X = Integer.MIN_VALUE;
@@ -133,7 +134,7 @@ public class TownHomeScreen extends Screen {
                 if (idx < this.data.nearbyTerrainColors().size()) {
                     int cx = this.data.previewCenterChunkX() + gx - claimRadius();
                     int cz = this.data.previewCenterChunkZ() + gz - claimRadius();
-                    TerrainColorClientCache.put(cx, cz, this.data.nearbyTerrainColors().get(idx));
+                    TerrainColorClientCache.putIfAbsent(cx, cz, this.data.nearbyTerrainColors().get(idx));
                 }
             }
         }
@@ -157,6 +158,7 @@ public class TownHomeScreen extends Screen {
         this.addRenderableWidget(this.townNameInput);
         this.saveTownNameButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.save_info"), b -> submitRenameTown()).bounds(left + BODY_X + 162, top + BODY_Y + 148, 96, 18).build());
         this.abandonTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.abandon"), b -> submitAbandonTown()).bounds(left + BODY_X + 266, top + BODY_Y + 148, 96, 18).build());
+        this.removeCoreButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.remove_core"), b -> submitRemoveCore()).bounds(left + BODY_X + 266, top + BODY_Y + 172, 96, 18).build());
         this.appointMayorButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.appoint_mayor"), b -> appointSelectedMayor()).bounds(left + BODY_X + 222, top + BODY_Y + 196, 180, 18).build());
 
         this.claimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.claim"), b -> claimSelectedChunk()).bounds(left + BODY_X + 12, top + BODY_Y + BODY_H - 26, 72, 18).build());
@@ -583,6 +585,7 @@ public class TownHomeScreen extends Screen {
         if (this.townNameInput != null) { this.townNameInput.visible = overviewPage; this.townNameInput.setEditable(overviewPage && canManageTown); }
         if (this.saveTownNameButton != null) { this.saveTownNameButton.visible = overviewPage; this.saveTownNameButton.active = overviewPage && canManageTown && townNameChanged(); }
         if (this.abandonTownButton != null) { this.abandonTownButton.visible = overviewPage && hasTown; this.abandonTownButton.active = overviewPage && hasTown && this.data.isMayor(); }
+        if (this.removeCoreButton != null) { this.removeCoreButton.visible = overviewPage && hasTown; this.removeCoreButton.active = overviewPage && hasTown && this.data.isMayor() && this.data.hasCore(); }
         if (this.appointMayorButton != null) { this.appointMayorButton.visible = membersPage; this.appointMayorButton.active = membersPage && hasTown && canAssignSelectedMemberAsMayor(); }
 
         boolean claimsPage = this.currentPage == Page.CLAIMS;
@@ -697,18 +700,24 @@ public class TownHomeScreen extends Screen {
     }
 
     private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
+        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
+        if (local != null) {
+            return local;
+        }
         int gridX = chunkX - this.data.previewCenterChunkX() + claimRadius();
         int gridZ = chunkZ - this.data.previewCenterChunkZ() + claimRadius();
         int diameter = claimRadius() * 2 + 1;
         if (gridX >= 0 && gridX < diameter && gridZ >= 0 && gridZ < diameter) {
             int index = gridZ * diameter + gridX;
             if (index >= 0 && index < this.data.nearbyTerrainColors().size()) {
-                return this.data.nearbyTerrainColors().get(index);
+                int color = this.data.nearbyTerrainColors().get(index);
+                TerrainColorClientCache.putIfAbsent(chunkX, chunkZ, color);
+                return color;
             }
         }
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
-        return sampleLocalTerrainColor(chunkX, chunkZ);
+        return 0xFF33414A;
     }
 
     private int blendColor(int base, int overlay, double factor) {
@@ -841,6 +850,11 @@ public class TownHomeScreen extends Screen {
         if (!this.data.hasTown() || !this.data.isMayor()) return;
         sendTownAction(new TownGuiActionPacket(TownGuiActionPacket.Action.ABANDON_TOWN, this.data.townId()), Component.translatable("screen.sailboatmod.town.abandon.submitting", this.data.townName()));
         this.onClose();
+    }
+
+    private void submitRemoveCore() {
+        if (!this.data.hasTown() || !this.data.isMayor() || !this.data.hasCore()) return;
+        sendTownAction(new TownGuiActionPacket(TownGuiActionPacket.Action.REMOVE_CORE, this.data.townId()), Component.translatable("screen.sailboatmod.town.core.removing"));
     }
 
     private void cycleClaimPermission(String actionId, String currentLevelId) {
@@ -990,10 +1004,18 @@ public class TownHomeScreen extends Screen {
     private int top() { return (this.height - SCREEN_H) / 2; }
 
     private int sampleLocalTerrainColor(int chunkX, int chunkZ) {
+        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
+        if (local != null) {
+            return local;
+        }
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
+        return 0xFF33414A;
+    }
+
+    private Integer sampleLoadedTerrainColor(int chunkX, int chunkZ) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return 0xFF33414A;
+        if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return null;
 
         int color = 0xFF33414A;
         try {

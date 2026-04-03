@@ -185,7 +185,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
                 .bounds(leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 84, 104, 16).build());
         claimButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.claim"), b ->
                 ModNetwork.CHANNEL.sendToServer(new ClaimMarketCreditsPacket(data.marketPos())))
-                .bounds(leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 76, 104, 16).build());
+                .bounds(leftPos + RIGHT_X + 10, topPos + CONTENT_Y + 84, 104, 14).build());
         createBuyOrderButton = addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.market.buy_order.create"), b ->
                 ModNetwork.CHANNEL.sendToServer(new CreateBuyOrderPacket(data.marketPos(), buyOrderCommodityInput.getValue(),
                         parsePositive(buyOrderQtyInput.getValue(), 1), parsePriceAdjustment(buyOrderMinPriceInput.getValue()),
@@ -226,9 +226,7 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             drawDetailPanel(guiGraphics, leftPos + CENTER_X, topPos + CONTENT_Y, CENTER_W, PANEL_H, Component.translatable("screen.sailboatmod.market.detail"), buildBuyOrderDetailLines());
             drawActionPanel(guiGraphics, leftPos + RIGHT_X, topPos + CONTENT_Y, RIGHT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.page.buy_orders"), buildBuyOrderActionLines());
         } else {
-            drawDetailPanel(guiGraphics, leftPos + LEFT_X, topPos + CONTENT_Y, LEFT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.page.finance"), buildFinanceSummaryLines());
-            drawDetailPanel(guiGraphics, leftPos + CENTER_X, topPos + CONTENT_Y, CENTER_W, PANEL_H, Component.translatable("screen.sailboatmod.market.detail"), buildFinanceDetailLines());
-            drawActionPanel(guiGraphics, leftPos + RIGHT_X, topPos + CONTENT_Y, RIGHT_W, PANEL_H, Component.translatable("screen.sailboatmod.market.claim"), buildFinanceActionLines());
+            renderFinancePage(guiGraphics, mouseX, mouseY);
         }
     }
 
@@ -377,6 +375,90 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
             g.drawString(font, Component.translatable("screen.sailboatmod.market.price_adjust"), x + 10, y + 70, 0xFFD8BC86);
         } else if (activePage == PAGE_BUY_ORDERS) {
             g.drawString(font, Component.translatable("screen.sailboatmod.market.buy_order.create_hint"), x + 8, y + 20, 0xFFD8BC86);
+        }
+    }
+
+    private void renderFinancePage(GuiGraphics g, int mouseX, int mouseY) {
+        int panelY = topPos + CONTENT_Y;
+        drawFinanceOverviewPanel(g, leftPos + LEFT_X, panelY, LEFT_W, PANEL_H);
+        drawFinanceSplitPanel(g, leftPos + CENTER_X, panelY, CENTER_W, PANEL_H,
+                Component.translatable("screen.sailboatmod.market.finance.stockpile_title"),
+                data.stockpilePreviewLines(),
+                Component.translatable("screen.sailboatmod.market.finance.demand_title"),
+                data.demandPreviewLines(),
+                mouseX,
+                mouseY);
+        drawFinanceSplitPanel(g, leftPos + RIGHT_X, panelY, RIGHT_W, PANEL_H,
+                Component.translatable("screen.sailboatmod.market.finance.procurement_title"),
+                data.procurementPreviewLines(),
+                Component.translatable("screen.sailboatmod.market.finance.ledger_title"),
+                data.financePreviewLines(),
+                mouseX,
+                mouseY);
+    }
+
+    private void drawFinanceOverviewPanel(GuiGraphics g, int x, int y, int w, int h) {
+        drawPanelFrame(g, x, y, w, h);
+        g.drawString(font, Component.translatable("screen.sailboatmod.market.finance.overview"), x + 8, y + 7, 0xFFD8BC86);
+
+        int cardX = x + 8;
+        int cardY = y + 20;
+        int cardGap = 6;
+        int cardW = (w - 16 - cardGap) / 2;
+        int cardH = 18;
+        drawMetricCard(g, cardX, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.market.finance.metric.stockpile"),
+                data.stockpileCommodityTypes() + " / " + data.stockpileTotalUnits(),
+                0xC06F8A54);
+        drawMetricCard(g, cardX + cardW + cardGap, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.market.finance.metric.demand"),
+                data.openDemandCount() + " / " + data.openDemandUnits(),
+                0xC08A544F);
+        drawMetricCard(g, cardX, cardY + cardH + 4, cardW, cardH,
+                Component.translatable("screen.sailboatmod.market.finance.metric.procurement"),
+                String.valueOf(data.activeProcurementCount()),
+                0xC0587A66);
+        drawMetricCard(g, cardX + cardW + cardGap, cardY + cardH + 4, cardW, cardH,
+                Component.translatable("screen.sailboatmod.market.finance.metric.balance"),
+                formatSignedLong(data.netBalance()),
+                0xC07A6540);
+        drawCompactList(g, x + 8, y + 62, w - 16, y + h - 10, buildFinanceOverviewLines(), -1, -1);
+    }
+
+    private void drawMetricCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {
+        g.fill(x, y, x + w, y + h, 0x6E19120D);
+        g.fill(x, y, x + w, y + 1, accent);
+        g.fill(x, y + h - 1, x + w, y + h, 0xAA3E2B18);
+        g.drawString(font, Component.literal(trimToWidth(label.getString(), w - 8)), x + 4, y + 3, 0xFFD0BA8C);
+        g.drawString(font, Component.literal(trimToWidth(value, w - 8)), x + 4, y + 10, 0xFFF6E9CA);
+    }
+
+    private void drawFinanceSplitPanel(GuiGraphics g, int x, int y, int w, int h, Component topTitle, List<String> topLines,
+                                       Component bottomTitle, List<String> bottomLines, int mouseX, int mouseY) {
+        drawPanelFrame(g, x, y, w, h);
+        int innerX = x + 8;
+        int innerW = w - 16;
+        int splitY = y + 50;
+        g.drawString(font, topTitle, innerX, y + 7, 0xFFD8BC86);
+        drawCompactList(g, innerX, y + 19, innerW, splitY - 6, topLines, mouseX, mouseY);
+        g.fill(x + 6, splitY, x + w - 6, splitY + 1, 0x66543B22);
+        g.drawString(font, bottomTitle, innerX, splitY + 6, 0xFFD8BC86);
+        drawCompactList(g, innerX, splitY + 18, innerW, y + h - 10, bottomLines, mouseX, mouseY);
+    }
+
+    private void drawCompactList(GuiGraphics g, int x, int startY, int width, int maxY, List<String> lines, int mouseX, int mouseY) {
+        List<String> safeLines = lines == null || lines.isEmpty() ? List.of(Component.translatable("screen.sailboatmod.market.empty").getString()) : lines;
+        int drawY = startY;
+        for (String line : safeLines) {
+            if (drawY > maxY) {
+                return;
+            }
+            String trimmed = trimToWidth(line, width);
+            g.drawString(font, Component.literal(trimmed), x, drawY, 0xFFE2D3B3);
+            if (mouseX >= x && mouseX < x + width && mouseY >= drawY - 1 && mouseY < drawY + 9) {
+                hoveredLine = line;
+            }
+            drawY += 10;
         }
     }
 
@@ -678,6 +760,20 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         return lines;
     }
 
+    private List<String> buildFinanceOverviewLines() {
+        List<String> lines = new ArrayList<>();
+        lines.add(Component.translatable("screen.sailboatmod.market.finance.market_name", data.marketName()).getString());
+        lines.add(Component.translatable("screen.sailboatmod.market.finance.owner", data.ownerName()).getString());
+        if (data.hasTownEconomy()) {
+            lines.add(Component.translatable("screen.sailboatmod.market.finance.town", data.townName()).getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.finance.employment", formatPercent(data.employmentRate())).getString());
+        } else {
+            lines.add(Component.translatable("screen.sailboatmod.market.finance.no_town").getString());
+        }
+        lines.add(Component.translatable("screen.sailboatmod.market.finance.pending_credits", data.pendingCredits()).getString());
+        return lines;
+    }
+
     private List<String> buildFinanceDetailLines() {
         List<String> lines = new ArrayList<>();
         lines.add(Component.translatable("screen.sailboatmod.market.finance.market_name", data.marketName()).getString());
@@ -724,6 +820,14 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
         return data.linkedDock()
                 ? Component.translatable("screen.sailboatmod.market.linked_dock_value", data.linkedDockName(), data.linkedDockPosText()).getString()
                 : Component.translatable("screen.sailboatmod.market.linked_dock_missing").getString();
+    }
+
+    private String formatPercent(float value) {
+        return Math.round(Math.max(0.0F, value) * 100.0F) + "%";
+    }
+
+    private String formatSignedLong(long value) {
+        return value > 0L ? "+" + value : String.valueOf(value);
     }
 
     private int clampSelection(int current, List<String> lines) {
@@ -805,6 +909,9 @@ public class MarketScreen extends AbstractContainerScreen<MarketMenu> implements
 
     private MarketOverviewData empty(BlockPos pos) {
         return new MarketOverviewData(pos, "Market", "-", "", 0, false, "-", "-", false, false,
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                "", "", 0, 0, 0, 0, 0, 0L, 0L, 0L, 0.0F,
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of());
     }
 }

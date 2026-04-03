@@ -16,7 +16,11 @@ import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
 import com.monpai.sailboatmod.menu.MarketMenu;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.DockTownBindingRecord;
+import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.DockTownResolver;
+import com.monpai.sailboatmod.nation.service.TownEconomySnapshotService;
 import com.monpai.sailboatmod.nation.service.TownFinanceLedgerService;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.mojang.logging.LogUtils;
@@ -99,6 +103,21 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     public MarketOverviewData buildOverview(Player player) {
         String dockName = "-";
         String dockPosText = "-";
+        String townId = "";
+        String townName = "";
+        int stockpileCommodityTypes = 0;
+        int stockpileTotalUnits = 0;
+        int openDemandCount = 0;
+        int openDemandUnits = 0;
+        int activeProcurementCount = 0;
+        long totalIncome = 0L;
+        long totalExpense = 0L;
+        long netBalance = 0L;
+        float employmentRate = 0.0F;
+        List<String> stockpilePreviewLines = List.of();
+        List<String> demandPreviewLines = List.of();
+        List<String> procurementPreviewLines = List.of();
+        List<String> financePreviewLines = List.of();
         boolean linked = false;
         List<String> boatLines = new ArrayList<>();
         List<MarketOverviewData.ShippingEntry> shippingEntries = new ArrayList<>();
@@ -109,6 +128,26 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             dockName = dock.getDockName();
             dockPosText = linkedDockPos.toShortString();
             linked = true;
+            DockTownBindingRecord dockBinding = DockTownResolver.resolve(level, dock);
+            if (dockBinding != null && !dockBinding.townId().isBlank()) {
+                townId = dockBinding.townId();
+                TownRecord town = NationSavedData.get(level).getTown(townId);
+                townName = town == null ? townId : town.name();
+                TownEconomySnapshotService.TownEconomySnapshot economy = TownEconomySnapshotService.build(level, townId);
+                stockpileCommodityTypes = economy.stockpileCommodityTypes();
+                stockpileTotalUnits = economy.stockpileTotalUnits();
+                openDemandCount = economy.openDemandCount();
+                openDemandUnits = economy.openDemandUnits();
+                activeProcurementCount = economy.activeProcurementCount();
+                totalIncome = economy.totalIncome();
+                totalExpense = economy.totalExpense();
+                netBalance = economy.netBalance();
+                employmentRate = economy.employmentRate();
+                stockpilePreviewLines = economy.stockpilePreviewLines();
+                demandPreviewLines = economy.demandPreviewLines();
+                procurementPreviewLines = economy.procurementPreviewLines();
+                financePreviewLines = economy.financePreviewLines();
+            }
             if (player != null) {
                 DockScreenData dockData = dock.buildScreenData(player);
                 boatLines.addAll(dockData.nearbyBoatNames());
@@ -208,11 +247,26 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 dockPosText,
                 dockStorageAccessible,
                 canManageMarket(player),
+                townId,
+                townName,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance,
+                employmentRate,
                 dockStorageLines,
                 listingLines,
                 orderLines,
                 shippingLines,
                 buyOrderLines,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines,
                 storageEntries,
                 listingEntries,
                 orderEntries,

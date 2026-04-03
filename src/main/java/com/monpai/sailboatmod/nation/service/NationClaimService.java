@@ -189,6 +189,31 @@ public final class NationClaimService {
         return NationResult.success(Component.translatable("command.sailboatmod.nation.core.picked_up"));
     }
 
+    public static NationResult removeCoreBlock(ServerPlayer player) {
+        NationSavedData data = NationSavedData.get(player.level());
+        NationMemberRecord member = data.getMember(player.getUUID());
+        if (member == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.no_nation"));
+        }
+        if (!NationService.hasPermission(player.level(), player.getUUID(), NationPermission.PLACE_CORE)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.no_permission"));
+        }
+        NationRecord nation = data.getNation(member.nationId());
+        if (nation == null || !nation.hasCore()) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.not_placed"));
+        }
+        if (!player.level().dimension().location().toString().equalsIgnoreCase(nation.coreDimension())) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.not_active"));
+        }
+        BlockPos corePos = BlockPos.of(nation.corePos());
+        if (!player.level().hasChunkAt(corePos)
+                || !player.level().getBlockState(corePos).is(ModBlocks.NATION_CORE_BLOCK.get())) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.expected_missing"));
+        }
+        player.level().removeBlock(corePos, false);
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.town.core.removed"));
+    }
+
     public static void onCoreRemoved(Level level, BlockPos pos) {
         if (level == null || level.isClientSide || pos == null) {
             return;

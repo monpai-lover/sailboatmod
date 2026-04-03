@@ -92,6 +92,7 @@ public class NationHomeScreen extends Screen {
     private Button joinNationButton;
     private Button nationHelpButton;
     private Button openCapitalTownButton;
+    private Button removeCoreButton;
     private Button previousTownButton;
     private Button nextTownButton;
     private Button toggleMirrorButton;
@@ -192,7 +193,7 @@ public class NationHomeScreen extends Screen {
                 if (idx < this.data.nearbyTerrainColors().size()) {
                     int cx = this.data.previewCenterChunkX() + gx - claimRadius();
                     int cz = this.data.previewCenterChunkZ() + gz - claimRadius();
-                    TerrainColorClientCache.put(cx, cz, this.data.nearbyTerrainColors().get(idx));
+                    TerrainColorClientCache.putIfAbsent(cx, cz, this.data.nearbyTerrainColors().get(idx));
                 }
             }
         }
@@ -255,6 +256,7 @@ public class NationHomeScreen extends Screen {
         this.joinNationButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.join"), b -> submitJoinNation()).bounds(left + BODY_X + 300, top + BODY_Y + 176, 110, 18).build());
         this.nationHelpButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.help"), b -> runCommand("nation help")).bounds(left + BODY_X + 300, top + BODY_Y + 204, 110, 18).build());
         this.openCapitalTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.open_town"), b -> openCapitalTown()).bounds(left + BODY_X + 300, top + BODY_Y + 204, 110, 18).build());
+        this.removeCoreButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.remove_core"), b -> submitRemoveCore()).bounds(left + BODY_X + 300, top + BODY_Y + 226, 110, 18).build());
         this.previousTownButton = this.addRenderableWidget(Button.builder(Component.literal("<"), b -> previousTownSelection()).bounds(left + BODY_X + 300, top + BODY_Y + 176, 52, 18).build());
         this.nextTownButton = this.addRenderableWidget(Button.builder(Component.literal(">"), b -> nextTownSelection()).bounds(left + BODY_X + 358, top + BODY_Y + 176, 52, 18).build());
 
@@ -879,6 +881,7 @@ public class NationHomeScreen extends Screen {
         if (this.joinNationButton != null) { this.joinNationButton.visible = noNationOverview; this.joinNationButton.active = noNationOverview && !valueOf(this.joinNationInput).trim().isBlank(); }
         if (this.nationHelpButton != null) { this.nationHelpButton.visible = noNationOverview; this.nationHelpButton.active = noNationOverview; }
         if (this.openCapitalTownButton != null) { this.openCapitalTownButton.visible = overviewPage && hasNation; this.openCapitalTownButton.active = overviewPage && hasNation && selectedTown() != null; this.openCapitalTownButton.setMessage(Component.translatable("screen.sailboatmod.nation.action.open_town")); }
+        if (this.removeCoreButton != null) { this.removeCoreButton.visible = overviewPage && hasNation; this.removeCoreButton.active = overviewPage && hasNation && this.data.hasCore() && this.data.canManageClaims(); }
         if (this.previousTownButton != null) { this.previousTownButton.visible = overviewPage && hasNation; this.previousTownButton.active = overviewPage && hasNation && this.data.towns().size() > 1; }
         if (this.nextTownButton != null) { this.nextTownButton.visible = overviewPage && hasNation; this.nextTownButton.active = overviewPage && hasNation && this.data.towns().size() > 1; }
 
@@ -1050,18 +1053,24 @@ public class NationHomeScreen extends Screen {
     }
 
     private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
+        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
+        if (local != null) {
+            return local;
+        }
         int gridX = chunkX - this.data.previewCenterChunkX() + claimRadius();
         int gridZ = chunkZ - this.data.previewCenterChunkZ() + claimRadius();
         int diameter = claimRadius() * 2 + 1;
         if (gridX >= 0 && gridX < diameter && gridZ >= 0 && gridZ < diameter) {
             int index = gridZ * diameter + gridX;
             if (index >= 0 && index < this.data.nearbyTerrainColors().size()) {
-                return this.data.nearbyTerrainColors().get(index);
+                int color = this.data.nearbyTerrainColors().get(index);
+                TerrainColorClientCache.putIfAbsent(chunkX, chunkZ, color);
+                return color;
             }
         }
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
-        return sampleLocalTerrainColor(chunkX, chunkZ);
+        return 0xFF33414A;
     }
 
 
@@ -1252,6 +1261,11 @@ public class NationHomeScreen extends Screen {
         sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.JOIN_NATION, targetNation, true), Component.translatable("screen.sailboatmod.nation.overview.join_submitting", targetNation));
     }
 
+    private void submitRemoveCore() {
+        if (!this.data.hasNation() || !this.data.hasCore() || !this.data.canManageClaims()) return;
+        sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.REMOVE_CORE), Component.translatable("screen.sailboatmod.nation.core.removing"));
+    }
+
     private void submitMirrorToggle() {
         if (!this.data.hasNation() || !this.data.canUploadFlag() || this.data.flagId().isBlank()) return;
         sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.TOGGLE_FLAG_MIRROR), Component.translatable("screen.sailboatmod.nation.flag.mirror.toggling"));
@@ -1396,10 +1410,18 @@ public class NationHomeScreen extends Screen {
     private void cycleTownSelection(int delta) { if (this.data.towns().isEmpty()) return; int index = 0; for (int i = 0; i < this.data.towns().size(); i++) { if (this.data.towns().get(i).townId().equals(this.selectedTownId)) { index = i; break; } } int size = this.data.towns().size(); int next = Math.floorMod(index + delta, size); this.selectedTownId = this.data.towns().get(next).townId(); updateButtonState(); }
 
     private int sampleLocalTerrainColor(int chunkX, int chunkZ) {
+        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
+        if (local != null) {
+            return local;
+        }
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
+        return 0xFF33414A;
+    }
+
+    private Integer sampleLoadedTerrainColor(int chunkX, int chunkZ) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return 0xFF33414A;
+        if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return null;
 
         int color = 0xFF33414A;
         try {

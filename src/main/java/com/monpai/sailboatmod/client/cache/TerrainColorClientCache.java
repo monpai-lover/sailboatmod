@@ -20,6 +20,10 @@ public final class TerrainColorClientCache {
         CACHE.put(packKey(chunkX, chunkZ), color);
     }
 
+    public static void putIfAbsent(int chunkX, int chunkZ, int color) {
+        CACHE.putIfAbsent(packKey(chunkX, chunkZ), color);
+    }
+
     public static void clear() {
         CACHE.clear();
     }

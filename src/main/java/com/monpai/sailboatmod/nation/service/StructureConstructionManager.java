@@ -5,19 +5,26 @@ import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
+import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
 import com.monpai.sailboatmod.resident.service.ConstructionScaffoldingService;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraftforge.network.NetworkDirection;
 
 import java.util.*;
@@ -62,17 +69,69 @@ public final class StructureConstructionManager {
     public record AssistPlacementResult(boolean success, boolean completed, Component message) {}
     public record WorkerSiteAssignment(String jobId, BlockPos anchorPos, BlockPos approachPos, BlockPos focusPos,
                                        int progressPercent, int activeWorkers) {}
+    public enum PreviewRoadTargetKind {
+        NONE,
+        ROAD,
+        STRUCTURE
+    }
+    public record PreviewRoadConnection(List<BlockPos> path, PreviewRoadTargetKind targetKind, BlockPos targetPos) {
+        public PreviewRoadConnection {
+            path = path == null ? List.of() : List.copyOf(path);
+        }
+    }
+    public record PreviewRoadHint(List<PreviewRoadConnection> connections) {
+        public PreviewRoadHint {
+            connections = connections == null ? List.of() : List.copyOf(connections);
+        }
 
-    private record RoadConstructionJob(ServerLevel level, List<BlockPos> path, int currentIndex, long startTick) {}
+        public boolean hasPath() {
+            return !connections.isEmpty();
+        }
+
+        public List<BlockPos> path() {
+            return connections.isEmpty() ? List.of() : connections.get(0).path();
+        }
+
+        public PreviewRoadTargetKind targetKind() {
+            return connections.isEmpty() ? PreviewRoadTargetKind.NONE : connections.get(0).targetKind();
+        }
+
+        public BlockPos targetPos() {
+            return connections.isEmpty() ? null : connections.get(0).targetPos();
+        }
+
+        public int connectionCount() {
+            return connections.size();
+        }
+    }
+
+    private record RoadConstructionJob(ServerLevel level, String roadId, List<BlockPos> path, int currentIndex, double progress) {}
     private record ActiveWorker(BlockPos position, long lastSeenTick, boolean specialist) {}
+    private record RoadCandidate(com.monpai.sailboatmod.nation.model.PlacedStructureRecord left,
+                                 com.monpai.sailboatmod.nation.model.PlacedStructureRecord right,
+                                 double distanceSqr) {}
+    private record RoadPlan(RoadNetworkRecord road) {}
+    private record RoadAnchor(BlockPos pos, Direction side) {}
+    private record PreviewRoadTarget(BlockPos pos, PreviewRoadTargetKind kind) {}
+    private record DisjointSet(Map<String, String> parent) {
+        DisjointSet() {
+            this(new HashMap<>());
+        }
+    }
 
     private static final Map<String, ConstructionJob> ACTIVE_CONSTRUCTIONS = new ConcurrentHashMap<>();
     private static final Map<String, RoadConstructionJob> ACTIVE_ROAD_CONSTRUCTIONS = new ConcurrentHashMap<>();
     private static final Map<String, List<BlockPos>> ACTIVE_ASSIST_SITES = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, ActiveWorker>> ACTIVE_SITE_WORKERS = new ConcurrentHashMap<>();
+    private static final Map<String, Map<String, ActiveWorker>> ACTIVE_ROAD_WORKERS = new ConcurrentHashMap<>();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
     private static final int ROAD_BUILD_DURATION_TICKS = 200; // ~10 seconds for roads
     private static final long ACTIVE_WORKER_TIMEOUT_TICKS = 40L;
+    private static final double ROAD_CONNECT_RANGE_SQR = 128.0D * 128.0D;
+    private static final double ROAD_EXTRA_EDGE_RANGE_SQR = 56.0D * 56.0D;
+    private static final int PREVIEW_ROAD_SEARCH_RADIUS = 48;
+    private static final int PREVIEW_ROAD_CANDIDATE_LIMIT = 18;
+    private static final int PREVIEW_ROAD_CONNECTION_LIMIT = 3;
 
     private StructureConstructionManager() {}
 
@@ -98,6 +157,7 @@ public final class StructureConstructionManager {
         if (!payment.message().getString().isBlank()) {
             player.sendSystemMessage(payment.message());
         }
+        prepareConstructionSite(level, placement.bounds());
 
         List<BlockPos> scaffoldPositions = ConstructionScaffoldingService.placeScaffolding(level, placement.bounds());
         StructureConstructionSite site = StructureConstructionSite.create(level, origin, placement, scaffoldPositions, true);
@@ -265,6 +325,34 @@ public final class StructureConstructionManager {
             }
         }
 
+        for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
+            RoadConstructionJob job = entry.getValue();
+            if (job.level != level || job.path.isEmpty()) {
+                continue;
+            }
+            BlockPos focusPos = getRoadFocusPos(job);
+            BlockPos approachPos = getRoadApproachPos(level, focusPos);
+            double distance = workerPos.distSqr(approachPos);
+            if (distance > maxDistanceSqr) {
+                continue;
+            }
+
+            int activeWorkers = getActiveRoadWorkerCount(level, entry.getKey());
+            int progressPercent = roadProgressPercent(job);
+            double score = distance + (activeWorkers * 48.0D) + 12.0D;
+            if (score < bestScore) {
+                bestScore = score;
+                best = new WorkerSiteAssignment(
+                        entry.getKey(),
+                        focusPos,
+                        approachPos,
+                        focusPos.above(),
+                        progressPercent,
+                        activeWorkers
+                );
+            }
+        }
+
         return best;
     }
 
@@ -273,17 +361,31 @@ public final class StructureConstructionManager {
             return null;
         }
         ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
-        if (job == null || job.level != level || job.site.isComplete()) {
+        if (job != null && job.level == level && !job.site.isComplete()) {
+            BlockPos approachPos = job.site.approachPos(workerPos);
+            return new WorkerSiteAssignment(
+                    jobId,
+                    job.site.anchorPos(),
+                    approachPos,
+                    job.site.focusPos(),
+                    job.site.progressPercent(),
+                    getActiveWorkerCount(level, jobId)
+            );
+        }
+
+        RoadConstructionJob roadJob = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
+        if (roadJob == null || roadJob.level != level || roadJob.path.isEmpty()) {
             return null;
         }
-        BlockPos approachPos = job.site.approachPos(workerPos);
+        BlockPos focusPos = getRoadFocusPos(roadJob);
+        BlockPos approachPos = getRoadApproachPos(level, focusPos);
         return new WorkerSiteAssignment(
                 jobId,
-                job.site.anchorPos(),
+                focusPos,
                 approachPos,
-                job.site.focusPos(),
-                job.site.progressPercent(),
-                getActiveWorkerCount(level, jobId)
+                focusPos.above(),
+                roadProgressPercent(roadJob),
+                getActiveRoadWorkerCount(level, jobId)
         );
     }
 
@@ -292,10 +394,17 @@ public final class StructureConstructionManager {
             return;
         }
         ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
-        if (job == null || job.level != level || job.site.isComplete()) {
+        if (job != null && job.level == level && !job.site.isComplete()) {
+            ACTIVE_SITE_WORKERS
+                    .computeIfAbsent(jobId, ignored -> new ConcurrentHashMap<>())
+                    .put(workerId, new ActiveWorker(position.immutable(), level.getGameTime(), specialist));
             return;
         }
-        ACTIVE_SITE_WORKERS
+        RoadConstructionJob roadJob = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
+        if (roadJob == null || roadJob.level != level || roadJob.path.isEmpty()) {
+            return;
+        }
+        ACTIVE_ROAD_WORKERS
                 .computeIfAbsent(jobId, ignored -> new ConcurrentHashMap<>())
                 .put(workerId, new ActiveWorker(position.immutable(), level.getGameTime(), specialist));
     }
@@ -305,18 +414,29 @@ public final class StructureConstructionManager {
             return;
         }
         Map<String, ActiveWorker> workers = ACTIVE_SITE_WORKERS.get(jobId);
-        if (workers == null) {
-            return;
+        if (workers != null) {
+            workers.remove(workerId);
+            if (workers.isEmpty()) {
+                ACTIVE_SITE_WORKERS.remove(jobId);
+            }
         }
-        workers.remove(workerId);
-        if (workers.isEmpty()) {
-            ACTIVE_SITE_WORKERS.remove(jobId);
+
+        Map<String, ActiveWorker> roadWorkers = ACTIVE_ROAD_WORKERS.get(jobId);
+        if (roadWorkers != null) {
+            roadWorkers.remove(workerId);
+            if (roadWorkers.isEmpty()) {
+                ACTIVE_ROAD_WORKERS.remove(jobId);
+            }
         }
     }
 
     public static boolean hasActiveConstruction(ServerLevel level, String jobId) {
         ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
-        return job != null && job.level == level && !job.site.isComplete();
+        if (job != null && job.level == level && !job.site.isComplete()) {
+            return true;
+        }
+        RoadConstructionJob roadJob = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
+        return roadJob != null && roadJob.level == level && !roadJob.path.isEmpty();
     }
 
     public static void tickRoadConstructions(ServerLevel level) {
@@ -327,29 +447,91 @@ public final class StructureConstructionManager {
             RoadConstructionJob job = entry.getValue();
             if (job.level != level) continue;
 
-            long elapsed = level.getGameTime() - job.startTick;
-            int targetIndex = (int) (elapsed * job.path.size() / ROAD_BUILD_DURATION_TICKS);
+            int activeWorkers = getActiveRoadWorkerCount(level, entry.getKey());
+            double speedMultiplier = activeWorkers > 0 ? (activeWorkers + 2.0D) / 3.0D : 1.0D;
+            double progressPerTick = (job.path.size() / (double) ROAD_BUILD_DURATION_TICKS) * speedMultiplier;
+            double targetProgress = job.progress + progressPerTick;
+            int targetIndex = Math.min(job.path.size() - 1, (int) targetProgress);
 
             for (int i = job.currentIndex; i <= Math.min(targetIndex, job.path.size() - 1); i++) {
-                BlockPos pos = job.path.get(i);
-                BlockPos roadPos = pos.above();
-                BlockState atRoad = level.getBlockState(roadPos);
-                if (atRoad.isAir() || atRoad.liquid()) {
-                    level.setBlock(roadPos, roadBlock, Block.UPDATE_ALL);
-                    tryPlaceRoad(level, roadPos.north(), roadBlock);
-                    tryPlaceRoad(level, roadPos.south(), roadBlock);
-                }
+                placeRoadSlice(level, job.path, i, roadBlock);
             }
 
             int newIndex = Math.min(targetIndex + 1, job.path.size());
             if (newIndex >= job.path.size()) {
                 completed.add(entry.getKey());
             } else {
-                ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), new RoadConstructionJob(job.level, job.path, newIndex, job.startTick));
+                ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), new RoadConstructionJob(job.level, job.roadId, job.path, newIndex, targetProgress));
             }
         }
 
-        completed.forEach(ACTIVE_ROAD_CONSTRUCTIONS::remove);
+        completed.forEach(jobId -> {
+            ACTIVE_ROAD_CONSTRUCTIONS.remove(jobId);
+            ACTIVE_ROAD_WORKERS.remove(jobId);
+        });
+    }
+
+    private static BlockPos getRoadFocusPos(RoadConstructionJob job) {
+        int index = Math.max(0, Math.min(job.currentIndex, Math.max(0, job.path.size() - 1)));
+        return job.path.get(index);
+    }
+
+    private static BlockPos getRoadApproachPos(ServerLevel level, BlockPos focusPos) {
+        BlockPos best = focusPos;
+        double bestScore = Double.MAX_VALUE;
+        for (BlockPos candidate : List.of(focusPos.north(), focusPos.south(), focusPos.east(), focusPos.west(), focusPos)) {
+            if (!isRoadWorkerStandable(level, candidate)) {
+                continue;
+            }
+            double score = candidate.distSqr(focusPos);
+            if (score < bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    private static boolean isRoadWorkerStandable(ServerLevel level, BlockPos pos) {
+        BlockState feet = level.getBlockState(pos);
+        BlockState head = level.getBlockState(pos.above());
+        BlockState below = level.getBlockState(pos.below());
+        return (feet.isAir() || feet.canBeReplaced() || feet.liquid())
+                && (head.isAir() || head.canBeReplaced() || head.liquid())
+                && !below.isAir()
+                && !below.liquid();
+    }
+
+    private static int roadProgressPercent(RoadConstructionJob job) {
+        if (job.path.isEmpty()) {
+            return 100;
+        }
+        return Math.max(0, Math.min(100, (job.currentIndex * 100) / job.path.size()));
+    }
+
+    private static int getActiveRoadWorkerCount(ServerLevel level, String jobId) {
+        Map<String, ActiveWorker> workers = ACTIVE_ROAD_WORKERS.get(jobId);
+        if (workers == null || workers.isEmpty()) {
+            return 0;
+        }
+
+        long currentTick = level.getGameTime();
+        int count = 0;
+        Iterator<Map.Entry<String, ActiveWorker>> iterator = workers.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, ActiveWorker> entry = iterator.next();
+            ActiveWorker worker = entry.getValue();
+            if (worker == null || currentTick - worker.lastSeenTick > ACTIVE_WORKER_TIMEOUT_TICKS) {
+                iterator.remove();
+                continue;
+            }
+            count += worker.specialist ? 2 : 1;
+        }
+
+        if (workers.isEmpty()) {
+            ACTIVE_ROAD_WORKERS.remove(jobId);
+        }
+        return count;
     }
 
     // Keep old method for backward compat
@@ -372,9 +554,8 @@ public final class StructureConstructionManager {
             }
         }
 
-        // Remove roads connected to this structure
-        removeRoadsForStructure(level, data, target);
         data.removePlacedStructure(target.structureId());
+        syncRoadNetwork(level, data, target.townId(), target.nationId(), target.dimensionId());
         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.demolished"));
         return true;
     }
@@ -396,8 +577,8 @@ public final class StructureConstructionManager {
                 }
             }
         }
-        removeRoadsForStructure(level, data, target);
         data.removePlacedStructure(target.structureId());
+        syncRoadNetwork(level, data, target.townId(), target.nationId(), target.dimensionId());
 
         // Place at new location
         return placeStructure(level, newOrigin, player, type);
@@ -449,7 +630,7 @@ public final class StructureConstructionManager {
                 bounds.min().asLong(), bounds.width(), bounds.height(), bounds.depth(),
                 System.currentTimeMillis(), 1, true, rotation);
         data.putPlacedStructure(record);
-        generateRoadToNearest(level, data, record);
+        syncRoadNetwork(level, data, record.townId(), record.nationId(), record.dimensionId());
     }
 
     private static boolean isPlacementComplete(ServerLevel level, List<StructureTemplate.StructureBlockInfo> blocks) {
@@ -575,78 +756,341 @@ public final class StructureConstructionManager {
         }
     }
 
-    private static void generateRoadToNearest(ServerLevel level, NationSavedData data, com.monpai.sailboatmod.nation.model.PlacedStructureRecord placed) {
-        BlockPos entrance = getEntrancePos(placed);
-        String dim = placed.dimensionId();
-        com.monpai.sailboatmod.nation.model.PlacedStructureRecord nearest = null;
-        double nearestDist = Double.MAX_VALUE;
-        for (com.monpai.sailboatmod.nation.model.PlacedStructureRecord s : data.getPlacedStructures()) {
-            if (s.structureId().equals(placed.structureId())) continue;
-            if (!dim.equals(s.dimensionId())) continue;
-            if (!placed.townId().equals(s.townId()) && !placed.nationId().equals(s.nationId())) continue;
-            double dist = entrance.distSqr(getEntrancePos(s));
-            if (dist < nearestDist) {
-                nearestDist = dist;
-                nearest = s;
+    private static void syncRoadNetwork(ServerLevel level, NationSavedData data, String townId, String nationId, String dimensionId) {
+        Map<String, RoadNetworkRecord> existing = new LinkedHashMap<>();
+        for (RoadNetworkRecord road : data.getRoadNetworks()) {
+            if (road.sameScope(townId, nationId, dimensionId)) {
+                existing.put(road.roadId(), road);
             }
         }
-        if (nearest == null || nearestDist > 10000) return;
-        buildRoad(level, entrance, getEntrancePos(nearest));
-    }
 
-    private static BlockPos getEntrancePos(com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure) {
-        BlockPos origin = structure.origin();
-        // Return front-center position (entrance is typically at front)
-        return origin.offset(structure.sizeW() / 2, 0, 0);
-    }
+        Map<String, RoadNetworkRecord> desired = planRoadNetwork(level, data, townId, nationId, dimensionId);
+        Set<BlockPos> desiredCoverage = collectRoadCoverage(desired.values());
 
-    private static void buildRoad(ServerLevel level, BlockPos from, BlockPos to) {
-        List<BlockPos> path = RoadPathfinder.findPath(level, from, to);
-        if (path.isEmpty()) return;
-
-        String jobId = UUID.randomUUID().toString();
-        ACTIVE_ROAD_CONSTRUCTIONS.put(jobId, new RoadConstructionJob(level, path, 0, level.getGameTime()));
-    }
-
-    private static void tryPlaceRoad(ServerLevel level, BlockPos pos, BlockState roadBlock) {
-        BlockState at = level.getBlockState(pos);
-        if (at.isAir() || at.liquid()) {
-            BlockState below = level.getBlockState(pos.below());
-            if (!below.isAir() && !below.liquid()) {
-                level.setBlock(pos, roadBlock, Block.UPDATE_ALL);
+        for (RoadNetworkRecord road : existing.values()) {
+            RoadNetworkRecord desiredRoad = desired.get(road.roadId());
+            if (desiredRoad != null && road.path().equals(desiredRoad.path())) {
+                continue;
             }
+            clearRoad(level, road, desiredCoverage);
+            ACTIVE_ROAD_CONSTRUCTIONS.remove(road.roadId());
+            data.removeRoadNetwork(road.roadId());
+        }
+
+        for (RoadNetworkRecord road : desired.values()) {
+            RoadNetworkRecord existingRoad = existing.get(road.roadId());
+            if (existingRoad != null && existingRoad.path().equals(road.path())) {
+                continue;
+            }
+            data.putRoadNetwork(road);
+            scheduleRoadConstruction(level, road);
         }
     }
 
-    private static void removeRoadsForStructure(ServerLevel level, NationSavedData data, com.monpai.sailboatmod.nation.model.PlacedStructureRecord removed) {
-        BlockPos center = removed.center();
-        String dim = removed.dimensionId();
-        BlockState roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState();
-        for (com.monpai.sailboatmod.nation.model.PlacedStructureRecord s : data.getPlacedStructures()) {
-            if (s.structureId().equals(removed.structureId())) continue;
-            if (!dim.equals(s.dimensionId())) continue;
-            clearRoadBetween(level, center, s.center(), roadBlock);
+    private static Map<String, RoadNetworkRecord> planRoadNetwork(ServerLevel level,
+                                                                  NationSavedData data,
+                                                                  String townId,
+                                                                  String nationId,
+                                                                  String dimensionId) {
+        List<com.monpai.sailboatmod.nation.model.PlacedStructureRecord> structures = getRoadScopeStructures(data, townId, nationId, dimensionId);
+        if (structures.size() < 2) {
+            return Map.of();
         }
-    }
 
-    private static void clearRoadBetween(ServerLevel level, BlockPos from, BlockPos to, BlockState roadBlock) {
-        int dx = to.getX() - from.getX();
-        int dz = to.getZ() - from.getZ();
-        int steps = Math.max(Math.abs(dx), Math.abs(dz));
-        if (steps == 0) return;
-        for (int i = 0; i <= steps; i++) {
-            int x = from.getX() + Math.round((float) dx * i / steps);
-            int z = from.getZ() + Math.round((float) dz * i / steps);
-            for (int dy = -2; dy <= 2; dy++) {
-                BlockPos surface = level.getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).above(dy);
-                removeRoadAt(level, surface, roadBlock);
-                if (Math.abs(dx) >= Math.abs(dz)) {
-                    removeRoadAt(level, surface.north(), roadBlock);
-                    removeRoadAt(level, surface.south(), roadBlock);
-                } else {
-                    removeRoadAt(level, surface.east(), roadBlock);
-                    removeRoadAt(level, surface.west(), roadBlock);
+        List<RoadCandidate> candidates = new ArrayList<>();
+        for (int i = 0; i < structures.size(); i++) {
+            for (int j = i + 1; j < structures.size(); j++) {
+                com.monpai.sailboatmod.nation.model.PlacedStructureRecord left = structures.get(i);
+                com.monpai.sailboatmod.nation.model.PlacedStructureRecord right = structures.get(j);
+                double distanceSqr = left.center().distSqr(right.center());
+                if (distanceSqr <= ROAD_CONNECT_RANGE_SQR) {
+                    candidates.add(new RoadCandidate(left, right, distanceSqr));
                 }
+            }
+        }
+        candidates.sort(Comparator.comparingDouble(RoadCandidate::distanceSqr));
+
+        Map<String, Integer> degrees = new HashMap<>();
+        Map<String, RoadNetworkRecord> desired = new LinkedHashMap<>();
+        DisjointSet disjointSet = new DisjointSet();
+
+        for (RoadCandidate candidate : candidates) {
+            String key = RoadNetworkRecord.edgeKey(candidate.left.structureId(), candidate.right.structureId());
+            if (key.isBlank() || isConnected(disjointSet, candidate.left.structureId(), candidate.right.structureId())) {
+                continue;
+            }
+            RoadPlan plan = planRoad(level, candidate.left, candidate.right, townId, nationId, dimensionId);
+            if (plan == null) {
+                continue;
+            }
+            union(disjointSet, candidate.left.structureId(), candidate.right.structureId());
+            desired.put(key, plan.road());
+            degrees.merge(candidate.left.structureId(), 1, Integer::sum);
+            degrees.merge(candidate.right.structureId(), 1, Integer::sum);
+            if (desired.size() >= structures.size() - 1) {
+                break;
+            }
+        }
+
+        int extrasAllowed = Math.max(1, structures.size() / 4);
+        int extrasAdded = 0;
+        for (RoadCandidate candidate : candidates) {
+            if (extrasAdded >= extrasAllowed || candidate.distanceSqr() > ROAD_EXTRA_EDGE_RANGE_SQR) {
+                break;
+            }
+            String key = RoadNetworkRecord.edgeKey(candidate.left.structureId(), candidate.right.structureId());
+            if (key.isBlank() || desired.containsKey(key)) {
+                continue;
+            }
+            if (degrees.getOrDefault(candidate.left.structureId(), 0) >= 3
+                    || degrees.getOrDefault(candidate.right.structureId(), 0) >= 3) {
+                continue;
+            }
+            RoadPlan plan = planRoad(level, candidate.left, candidate.right, townId, nationId, dimensionId);
+            if (plan == null) {
+                continue;
+            }
+            desired.put(key, plan.road());
+            degrees.merge(candidate.left.structureId(), 1, Integer::sum);
+            degrees.merge(candidate.right.structureId(), 1, Integer::sum);
+            extrasAdded++;
+        }
+
+        return desired;
+    }
+
+    private static List<com.monpai.sailboatmod.nation.model.PlacedStructureRecord> getRoadScopeStructures(NationSavedData data,
+                                                                                                           String townId,
+                                                                                                           String nationId,
+                                                                                                           String dimensionId) {
+        List<com.monpai.sailboatmod.nation.model.PlacedStructureRecord> result = new ArrayList<>();
+        for (com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure : data.getPlacedStructures()) {
+            if (!dimensionId.equals(structure.dimensionId())) {
+                continue;
+            }
+            if (townId != null && !townId.isBlank()) {
+                if (townId.equals(structure.townId())) {
+                    result.add(structure);
+                }
+            } else if (nationId != null && !nationId.isBlank() && nationId.equalsIgnoreCase(structure.nationId())) {
+                result.add(structure);
+            }
+        }
+        return result;
+    }
+
+    private static RoadPlan planRoad(ServerLevel level,
+                                     com.monpai.sailboatmod.nation.model.PlacedStructureRecord first,
+                                     com.monpai.sailboatmod.nation.model.PlacedStructureRecord second,
+                                     String townId,
+                                     String nationId,
+                                     String dimensionId) {
+        String leftId = first.structureId();
+        String rightId = second.structureId();
+        if (leftId.compareToIgnoreCase(rightId) > 0) {
+            com.monpai.sailboatmod.nation.model.PlacedStructureRecord swap = first;
+            first = second;
+            second = swap;
+            leftId = first.structureId();
+            rightId = second.structureId();
+        }
+        List<BlockPos> path = findBestRoadPath(level, first, second);
+        if (path.size() < 2) {
+            return null;
+        }
+        return new RoadPlan(new RoadNetworkRecord(
+                RoadNetworkRecord.edgeKey(leftId, rightId),
+                nationId,
+                townId,
+                dimensionId,
+                leftId,
+                rightId,
+                path,
+                System.currentTimeMillis()
+        ));
+    }
+
+    private static List<BlockPos> findBestRoadPath(ServerLevel level,
+                                                   com.monpai.sailboatmod.nation.model.PlacedStructureRecord first,
+                                                   com.monpai.sailboatmod.nation.model.PlacedStructureRecord second) {
+        List<RoadAnchor> firstAnchors = getRoadAnchors(first);
+        List<RoadAnchor> secondAnchors = getRoadAnchors(second);
+        List<BlockPos> bestPath = List.of();
+        double bestScore = Double.MAX_VALUE;
+
+        for (RoadAnchor firstAnchor : firstAnchors) {
+            for (RoadAnchor secondAnchor : secondAnchors) {
+                double directDistance = firstAnchor.pos().distSqr(secondAnchor.pos());
+                List<BlockPos> path = RoadPathfinder.findPath(level, firstAnchor.pos(), secondAnchor.pos());
+                if (path.size() < 2) {
+                    continue;
+                }
+                double score = path.size() + (directDistance * 0.05D);
+                if (firstAnchor.side() == primaryRoadSide(first.rotation())) {
+                    score -= 2.0D;
+                }
+                if (secondAnchor.side() == primaryRoadSide(second.rotation())) {
+                    score -= 2.0D;
+                }
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestPath = path;
+                }
+            }
+        }
+
+        if (!bestPath.isEmpty()) {
+            return bestPath;
+        }
+        return RoadPathfinder.findPath(level, first.center(), second.center());
+    }
+
+    private static List<RoadAnchor> getRoadAnchors(com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure) {
+        List<RoadAnchor> anchors = new ArrayList<>();
+        Direction front = primaryRoadSide(structure.rotation());
+        addRoadAnchors(anchors, structure, front);
+        addRoadAnchors(anchors, structure, front.getClockWise());
+        addRoadAnchors(anchors, structure, front.getCounterClockWise());
+        addRoadAnchors(anchors, structure, front.getOpposite());
+        return anchors;
+    }
+
+    private static void addRoadAnchors(List<RoadAnchor> anchors,
+                                       com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure,
+                                       Direction side) {
+        BlockPos origin = structure.origin();
+        int[] offsets = side == Direction.NORTH || side == Direction.SOUTH
+                ? buildSideOffsets(structure.sizeW())
+                : buildSideOffsets(structure.sizeD());
+        for (int offset : offsets) {
+            BlockPos pos = switch (side) {
+                case NORTH -> origin.offset(clampRoadOffset(structure.sizeW() / 2 + offset, structure.sizeW()), 0, -1);
+                case SOUTH -> origin.offset(clampRoadOffset(structure.sizeW() / 2 + offset, structure.sizeW()), 0, structure.sizeD());
+                case EAST -> origin.offset(structure.sizeW(), 0, clampRoadOffset(structure.sizeD() / 2 + offset, structure.sizeD()));
+                case WEST -> origin.offset(-1, 0, clampRoadOffset(structure.sizeD() / 2 + offset, structure.sizeD()));
+                default -> origin;
+            };
+            if (anchors.stream().noneMatch(existing -> existing.pos().equals(pos))) {
+                anchors.add(new RoadAnchor(pos, side));
+            }
+        }
+    }
+
+    private static int[] buildSideOffsets(int span) {
+        int edgeOffset = Math.max(1, span / 4);
+        return new int[]{0, -edgeOffset, edgeOffset};
+    }
+
+    private static int clampRoadOffset(int value, int span) {
+        return Math.max(0, Math.min(Math.max(0, span - 1), value));
+    }
+
+    private static Direction primaryRoadSide(int rotation) {
+        return switch (Math.floorMod(rotation, 4)) {
+            case 1 -> Direction.EAST;
+            case 2 -> Direction.SOUTH;
+            case 3 -> Direction.WEST;
+            default -> Direction.NORTH;
+        };
+    }
+
+    private static void scheduleRoadConstruction(ServerLevel level, RoadNetworkRecord road) {
+        if (road.path().size() < 2) {
+            ACTIVE_ROAD_CONSTRUCTIONS.remove(road.roadId());
+            return;
+        }
+        ACTIVE_ROAD_CONSTRUCTIONS.put(road.roadId(), new RoadConstructionJob(level, road.roadId(), road.path(), 0, 0.0D));
+    }
+
+    private static void placeRoadSlice(ServerLevel level, List<BlockPos> path, int index, BlockState roadBlock) {
+        boolean placedAny = false;
+        for (BlockPos roadPos : collectRoadSlicePositions(path, index)) {
+            placedAny |= tryPlaceRoad(level, roadPos, roadBlock);
+        }
+        if (placedAny) {
+            BlockPos center = path.get(index).above();
+            level.sendParticles(ParticleTypes.CLOUD,
+                    center.getX() + 0.5D,
+                    center.getY() + 0.25D,
+                    center.getZ() + 0.5D,
+                    4, 0.2D, 0.1D, 0.2D, 0.01D);
+            level.playSound(null, center, roadBlock.getSoundType().getPlaceSound(), SoundSource.BLOCKS, 0.35F, 0.95F);
+        }
+    }
+
+    private static Set<BlockPos> collectRoadCoverage(Collection<RoadNetworkRecord> roads) {
+        Set<BlockPos> coverage = new HashSet<>();
+        for (RoadNetworkRecord road : roads) {
+            coverage.addAll(collectRoadPlacementPositions(road.path()));
+        }
+        return coverage;
+    }
+
+    private static Set<BlockPos> collectRoadPlacementPositions(List<BlockPos> path) {
+        Set<BlockPos> positions = new HashSet<>();
+        for (int i = 0; i < path.size(); i++) {
+            positions.addAll(collectRoadSlicePositions(path, i));
+        }
+        return positions;
+    }
+
+    private static Set<BlockPos> collectRoadSlicePositions(List<BlockPos> path, int index) {
+        Set<BlockPos> positions = new LinkedHashSet<>();
+        BlockPos current = path.get(index).above();
+        positions.add(current);
+
+        BlockPos previous = index > 0 ? path.get(index - 1) : path.get(index);
+        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : path.get(index);
+        int dx = Integer.compare(next.getX(), previous.getX());
+        int dz = Integer.compare(next.getZ(), previous.getZ());
+        if (dx != 0 && dz == 0) {
+            positions.add(current.north());
+            positions.add(current.south());
+        } else if (dz != 0 && dx == 0) {
+            positions.add(current.east());
+            positions.add(current.west());
+        } else if (dx != 0 && dz != 0) {
+            positions.add(dx > 0 ? current.east() : current.west());
+            positions.add(dz > 0 ? current.south() : current.north());
+        }
+
+        if (index > 0 && index + 1 < path.size()) {
+            BlockPos surface = path.get(index);
+            int prevDx = Integer.compare(surface.getX(), previous.getX());
+            int prevDz = Integer.compare(surface.getZ(), previous.getZ());
+            int nextDx = Integer.compare(next.getX(), surface.getX());
+            int nextDz = Integer.compare(next.getZ(), surface.getZ());
+            if (prevDx != nextDx || prevDz != nextDz) {
+                positions.add(current.north());
+                positions.add(current.south());
+                positions.add(current.east());
+                positions.add(current.west());
+            }
+        }
+        return positions;
+    }
+
+    private static boolean tryPlaceRoad(ServerLevel level, BlockPos pos, BlockState roadBlock) {
+        BlockState at = level.getBlockState(pos);
+        if (at.is(roadBlock.getBlock())) {
+            return false;
+        }
+        if (!at.isAir() && !at.canBeReplaced() && !at.liquid()) {
+            return false;
+        }
+        BlockState below = level.getBlockState(pos.below());
+        if (below.isAir() || below.liquid()) {
+            return false;
+        }
+        level.setBlock(pos, roadBlock, Block.UPDATE_ALL);
+        return true;
+    }
+
+    private static void clearRoad(ServerLevel level, RoadNetworkRecord road, Set<BlockPos> preservedCoverage) {
+        BlockState roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState();
+        for (BlockPos pos : collectRoadPlacementPositions(road.path())) {
+            if (!preservedCoverage.contains(pos)) {
+                removeRoadAt(level, pos, roadBlock);
             }
         }
     }
@@ -657,17 +1101,236 @@ public final class StructureConstructionManager {
         }
     }
 
+    public static PreviewRoadHint estimatePreviewRoad(Level level, BlockPos origin, StructureType type, int rotation) {
+        if (level == null || origin == null || type == null) {
+            return new PreviewRoadHint(List.of());
+        }
+
+        List<RoadAnchor> anchors = getPreviewRoadAnchors(origin, type, rotation);
+        if (anchors.isEmpty()) {
+            return new PreviewRoadHint(List.of());
+        }
+
+        List<PreviewRoadTarget> targets = collectPreviewRoadTargets(level, origin, type, rotation);
+        if (targets.isEmpty()) {
+            return new PreviewRoadHint(List.of());
+        }
+
+        record ScoredConnection(PreviewRoadConnection connection, double score) {}
+        List<ScoredConnection> scored = new ArrayList<>();
+
+        for (RoadAnchor anchor : anchors) {
+            for (PreviewRoadTarget target : targets) {
+                if (anchor.pos().distSqr(target.pos()) > ROAD_CONNECT_RANGE_SQR) {
+                    continue;
+                }
+                List<BlockPos> path = RoadPathfinder.findPath(level, anchor.pos(), target.pos());
+                if (path.size() < 2) {
+                    continue;
+                }
+                double score = path.size() + (anchor.pos().distSqr(target.pos()) * 0.02D);
+                if (target.kind() == PreviewRoadTargetKind.ROAD) {
+                    score -= 2.5D;
+                }
+                if (anchor.side() == primaryRoadSide(rotation)) {
+                    score -= 1.0D;
+                }
+                scored.add(new ScoredConnection(new PreviewRoadConnection(path, target.kind(), target.pos()), score));
+            }
+        }
+
+        if (scored.isEmpty()) {
+            return new PreviewRoadHint(List.of());
+        }
+
+        List<PreviewRoadConnection> chosen = new ArrayList<>();
+        Set<Long> usedTargets = new HashSet<>();
+        scored.stream()
+                .sorted(Comparator.comparingDouble(ScoredConnection::score))
+                .forEach(candidate -> {
+                    if (chosen.size() >= PREVIEW_ROAD_CONNECTION_LIMIT) {
+                        return;
+                    }
+                    BlockPos targetPos = candidate.connection().targetPos();
+                    long key = targetPos == null ? Long.MIN_VALUE : targetPos.asLong();
+                    if (!usedTargets.add(key)) {
+                        return;
+                    }
+                    chosen.add(candidate.connection());
+                });
+
+        return new PreviewRoadHint(chosen);
+    }
+
+    private static List<PreviewRoadTarget> collectPreviewRoadTargets(Level level, BlockPos origin, StructureType type, int rotation) {
+        Map<Long, PreviewRoadTarget> targets = new LinkedHashMap<>();
+        int half = PREVIEW_ROAD_SEARCH_RADIUS;
+        BlockPos min = previewMin(origin, type, rotation);
+        BlockPos max = previewMax(origin, type, rotation);
+
+        for (int x = origin.getX() - half; x <= origin.getX() + half; x++) {
+            for (int z = origin.getZ() - half; z <= origin.getZ() + half; z++) {
+                BlockPos surface = level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below();
+                if (isInsidePreviewFootprint(surface, min, max)) {
+                    continue;
+                }
+                if (level.getBlockState(surface.above()).is(net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB)) {
+                    targets.putIfAbsent(surface.asLong(), new PreviewRoadTarget(surface, PreviewRoadTargetKind.ROAD));
+                }
+                for (int yOffset = 0; yOffset <= 3; yOffset++) {
+                    BlockPos checkPos = surface.above(yOffset);
+                    if (isFunctionalRoadTarget(level.getBlockState(checkPos))) {
+                        targets.putIfAbsent(surface.asLong(), new PreviewRoadTarget(surface, PreviewRoadTargetKind.STRUCTURE));
+                        break;
+                    }
+                }
+            }
+        }
+
+        return targets.values().stream()
+                .sorted(Comparator.comparingDouble(target -> target.pos().distSqr(origin)))
+                .limit(PREVIEW_ROAD_CANDIDATE_LIMIT)
+                .toList();
+    }
+
+    private static boolean isFunctionalRoadTarget(BlockState state) {
+        return state.is(ModBlocks.BANK_BLOCK.get())
+                || state.is(ModBlocks.TOWN_CORE_BLOCK.get())
+                || state.is(ModBlocks.NATION_CORE_BLOCK.get())
+                || state.is(ModBlocks.MARKET_BLOCK.get())
+                || state.is(ModBlocks.DOCK_BLOCK.get())
+                || state.is(ModBlocks.COTTAGE_BLOCK.get())
+                || state.is(ModBlocks.BAR_BLOCK.get())
+                || state.is(ModBlocks.SCHOOL_BLOCK.get());
+    }
+
+    private static boolean isInsidePreviewFootprint(BlockPos pos, BlockPos min, BlockPos max) {
+        return pos.getX() >= min.getX() - 1
+                && pos.getX() <= max.getX() + 1
+                && pos.getZ() >= min.getZ() - 1
+                && pos.getZ() <= max.getZ() + 1;
+    }
+
+    private static List<RoadAnchor> getPreviewRoadAnchors(BlockPos origin, StructureType type, int rotation) {
+        List<RoadAnchor> anchors = new ArrayList<>();
+        Direction front = primaryRoadSide(rotation);
+        addPreviewRoadAnchors(anchors, origin, rotatedWidth(type, rotation), rotatedDepth(type, rotation), front);
+        addPreviewRoadAnchors(anchors, origin, rotatedWidth(type, rotation), rotatedDepth(type, rotation), front.getClockWise());
+        addPreviewRoadAnchors(anchors, origin, rotatedWidth(type, rotation), rotatedDepth(type, rotation), front.getCounterClockWise());
+        return anchors;
+    }
+
+    private static void addPreviewRoadAnchors(List<RoadAnchor> anchors,
+                                              BlockPos origin,
+                                              int width,
+                                              int depth,
+                                              Direction side) {
+        int[] offsets = side == Direction.NORTH || side == Direction.SOUTH
+                ? buildSideOffsets(width)
+                : buildSideOffsets(depth);
+        for (int offset : offsets) {
+            BlockPos pos = switch (side) {
+                case NORTH -> origin.offset(clampRoadOffset(width / 2 + offset, width), 0, -1);
+                case SOUTH -> origin.offset(clampRoadOffset(width / 2 + offset, width), 0, depth);
+                case EAST -> origin.offset(width, 0, clampRoadOffset(depth / 2 + offset, depth));
+                case WEST -> origin.offset(-1, 0, clampRoadOffset(depth / 2 + offset, depth));
+                default -> origin;
+            };
+            if (anchors.stream().noneMatch(existing -> existing.pos().equals(pos))) {
+                anchors.add(new RoadAnchor(pos, side));
+            }
+        }
+    }
+
+    private static int rotatedWidth(StructureType type, int rotation) {
+        return (Math.floorMod(rotation, 4) == 1 || Math.floorMod(rotation, 4) == 3) ? type.d() : type.w();
+    }
+
+    private static int rotatedDepth(StructureType type, int rotation) {
+        return (Math.floorMod(rotation, 4) == 1 || Math.floorMod(rotation, 4) == 3) ? type.w() : type.d();
+    }
+
+    private static BlockPos previewMin(BlockPos origin, StructureType type, int rotation) {
+        return origin;
+    }
+
+    private static BlockPos previewMax(BlockPos origin, StructureType type, int rotation) {
+        return origin.offset(rotatedWidth(type, rotation) - 1, type.h() - 1, rotatedDepth(type, rotation) - 1);
+    }
+
+    private static boolean isConnected(DisjointSet set, String left, String right) {
+        return findRoot(set, left).equals(findRoot(set, right));
+    }
+
+    private static void union(DisjointSet set, String left, String right) {
+        String leftRoot = findRoot(set, left);
+        String rightRoot = findRoot(set, right);
+        if (!leftRoot.equals(rightRoot)) {
+            set.parent().put(leftRoot, rightRoot);
+        }
+    }
+
+    private static String findRoot(DisjointSet set, String id) {
+        String current = set.parent().get(id);
+        if (current == null) {
+            set.parent().put(id, id);
+            return id;
+        }
+        if (current.equals(id)) {
+            return current;
+        }
+        String root = findRoot(set, current);
+        set.parent().put(id, root);
+        return root;
+    }
+
     private static boolean isAreaClear(ServerLevel level, List<StructureTemplate.StructureBlockInfo> blocks) {
         for (StructureTemplate.StructureBlockInfo info : blocks) {
             BlockState current = level.getBlockState(info.pos());
             if (current.equals(info.state())) {
                 continue;
             }
-            if (!current.isAir() && !current.canBeReplaced()) {
+            if (!StructurePlacementValidationService.canAutoClear(level, info.pos(), current)) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static void prepareConstructionSite(ServerLevel level, BlueprintService.PlacementBounds bounds) {
+        if (level == null || bounds == null) {
+            return;
+        }
+        int baseY = bounds.min().getY();
+        for (int z = bounds.min().getZ(); z <= bounds.max().getZ(); z++) {
+            for (int x = bounds.min().getX(); x <= bounds.max().getX(); x++) {
+                stabilizeFoundation(level, new BlockPos(x, baseY - 1, z));
+                for (int y = baseY; y <= bounds.max().getY(); y++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = level.getBlockState(pos);
+                    if (StructurePlacementValidationService.canAutoClear(level, pos, state) && !state.isAir()) {
+                        level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void stabilizeFoundation(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return;
+        }
+        int minBuildHeight = level.getMinBuildHeight();
+        int placed = 0;
+        for (int y = pos.getY(); y >= minBuildHeight && placed < 8; y--) {
+            BlockPos currentPos = new BlockPos(pos.getX(), y, pos.getZ());
+            BlockState currentState = level.getBlockState(currentPos);
+            if (!StructurePlacementValidationService.canAutoClear(level, currentPos, currentState)) {
+                break;
+            }
+            level.setBlock(currentPos, (y == pos.getY() ? Blocks.GRASS_BLOCK : Blocks.DIRT).defaultBlockState(), Block.UPDATE_ALL);
+            placed++;
+        }
     }
 
     private static String createProjectId(BlockPos origin, StructureType type, int rotation) {

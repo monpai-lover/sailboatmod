@@ -67,6 +67,8 @@ public class ResidentEntity extends PathfinderMob {
             SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<String> DATA_ASSIGNED_BED =
             SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.STRING);
+    private static final EntityDataAccessor<Boolean> DATA_BUILDING_ACTIVE =
+            SynchedEntityData.defineId(ResidentEntity.class, EntityDataSerializers.BOOLEAN);
 
     public ResidentEntity(EntityType<? extends ResidentEntity> type, Level level) {
         super(type, level);
@@ -98,6 +100,7 @@ public class ResidentEntity extends PathfinderMob {
         this.entityData.define(DATA_MARTIAL, 5 + this.random.nextInt(11));
         this.entityData.define(DATA_STEWARDSHIP, 5 + this.random.nextInt(11));
         this.entityData.define(DATA_ASSIGNED_BED, "");
+        this.entityData.define(DATA_BUILDING_ACTIVE, false);
     }
     @Override
     protected void registerGoals() {
@@ -120,7 +123,11 @@ public class ResidentEntity extends PathfinderMob {
     @Override
     public void aiStep() {
         super.aiStep();
-        if (!this.level().isClientSide) {
+        if (this.level().isClientSide) {
+            if (isBuildingActive() && this.tickCount % 10 == 0 && !this.swinging) {
+                this.swing(InteractionHand.MAIN_HAND);
+            }
+        } else {
             // Disease tick every tick
             if (diseaseData.isSick()) {
                 diseaseData.tick();
@@ -244,6 +251,14 @@ public class ResidentEntity extends PathfinderMob {
     }
     public void setAssignedBed(net.minecraft.core.BlockPos pos) {
         this.entityData.set(DATA_ASSIGNED_BED, pos == null || pos.equals(net.minecraft.core.BlockPos.ZERO) ? "" : String.valueOf(pos.asLong()));
+    }
+
+    public boolean isBuildingActive() {
+        return this.entityData.get(DATA_BUILDING_ACTIVE);
+    }
+
+    public void setBuildingActive(boolean active) {
+        this.entityData.set(DATA_BUILDING_ACTIVE, active);
     }
 
     // --- NBT persistence ---

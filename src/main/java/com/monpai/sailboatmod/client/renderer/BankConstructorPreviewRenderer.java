@@ -7,10 +7,13 @@ import com.monpai.sailboatmod.client.ConstructorClientHooks;
 import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.nation.service.BlueprintService;
 import com.monpai.sailboatmod.nation.service.ConstructionCostService;
+import com.monpai.sailboatmod.nation.service.StructureConstructionManager;
+import com.monpai.sailboatmod.nation.service.StructurePlacementValidationService;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import com.monpai.sailboatmod.registry.ModItems;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -44,7 +47,10 @@ import java.util.Locale;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class BankConstructorPreviewRenderer {
+    private static final long ANALYSIS_REFRESH_TICKS = 5L;
     private static final Map<String, BlueprintService.BlueprintPlacement> PLACEMENT_CACHE = new HashMap<>();
+    private static final Map<String, StructureConstructionManager.PreviewRoadHint> ROAD_HINT_CACHE = new HashMap<>();
+    private static PreviewCacheEntry previewCache;
     private static PreviewSummary currentPreview;
     private static ProjectionSummary currentProjection;
 
@@ -56,6 +62,7 @@ public final class BankConstructorPreviewRenderer {
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
         if (player == null) {
+            previewCache = null;
             currentPreview = null;
             currentProjection = null;
             return;
@@ -63,6 +70,7 @@ public final class BankConstructorPreviewRenderer {
         ItemStack held = player.getMainHandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getMainHandItem()
                 : player.getOffhandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getOffhandItem() : ItemStack.EMPTY;
         if (held.isEmpty()) {
+            previewCache = null;
             currentPreview = null;
             currentProjection = null;
             return;
@@ -76,6 +84,7 @@ public final class BankConstructorPreviewRenderer {
                 player.getEyePosition(event.getPartialTick()).add(player.getViewVector(event.getPartialTick()).scale(5.0D)),
                 ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
         if (hit.getType() != HitResult.Type.BLOCK) {
+            previewCache = null;
             currentPreview = null;
             return;
         }
@@ -96,9 +105,12 @@ public final class BankConstructorPreviewRenderer {
             return;
         }
 
-        PreviewAnalysis analysis = analyzePreview(player, origin, placement);
+        StructureConstructionManager.PreviewRoadHint roadHint = getCachedRoadHint(player.level(), origin, type, rotation);
+        PreviewCacheEntry cacheEntry = getPreviewCacheEntry(player, type, origin, rotation, placement, roadHint);
+        PreviewAnalysis analysis = cacheEntry.analysis();
         Map<PreviewStatus, List<StructureTemplate.StructureBlockInfo>> groupedBlocks = analysis.groupedBlocks();
-        currentPreview = buildPreviewSummary(type, placement, analysis);
+        currentPreview = cacheEntry.summary();
+        boolean detailMode = Screen.hasAltDown();
 
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = mc.renderBuffers().bufferSource();
@@ -107,8 +119,10 @@ public final class BankConstructorPreviewRenderer {
         poseStack.pushPose();
         poseStack.translate(origin.getX() - cam.x, origin.getY() - cam.y, origin.getZ() - cam.z);
 
-        renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.MATCHED), analysis, 0.45F, 1.0F, 0.45F, 0.16F);
-        renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.MISSING), analysis, 0.20F, 0.85F, 1.0F, 0.48F);
+        if (detailMode) {
+            renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.MATCHED), analysis, 0.45F, 1.0F, 0.45F, 0.16F);
+        }
+        renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.MISSING), analysis, 0.20F, 0.85F, 1.0F, detailMode ? 0.48F : 0.34F);
         renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.BLOCKED), analysis, 1.0F, 0.28F, 0.28F, 0.62F);
 
         // Draw wireframe outline on top
@@ -124,6 +138,7 @@ public final class BankConstructorPreviewRenderer {
             renderLayerHighlight(lineVc, matrix, normal, placement.bounds(), analysis.currentLayerY(), 1.0F, 0.88F, 0.35F, 0.85F);
         }
         renderBounds(lineVc, matrix, normal, placement.bounds(), 0.2F, 0.8F, 1.0F, 0.6F);
+        renderRoadHint(lineVc, matrix, normal, origin, roadHint, 0.32F, 0.88F, 1.0F, 0.82F);
         if (analysis.nextTarget() != null) {
             renderTargetMarker(lineVc, matrix, normal, analysis.nextTarget().pos(), 1.0F, 0.86F, 0.2F, 0.95F);
         }
@@ -139,10 +154,18 @@ public final class BankConstructorPreviewRenderer {
             return;
         }
         StructureType selectedType = selectedType(mc.player);
-        ConstructorClientHooks.ConstructionProgress progress =
-                ConstructorClientHooks.findNearest(mc.player.blockPosition(), selectedType);
         ProjectionSummary projection = currentProjection;
+        BlockPos preferredOrigin = projection == null ? null : projection.origin();
+        ConstructorClientHooks.ConstructionProgress progress =
+                ConstructorClientHooks.findNearest(mc.player.blockPosition(), selectedType, preferredOrigin);
         if (summary == null && progress == null && projection == null) {
+            return;
+        }
+
+        List<PreviewLine> projectionLines = buildProjectionLines(projection);
+        List<PreviewLine> progressLines = buildProgressLines(progress);
+        if (!Screen.hasAltDown()) {
+            renderCompactOverlay(event.getGuiGraphics(), mc, summary, projectionLines, progressLines);
             return;
         }
 
@@ -176,30 +199,6 @@ public final class BankConstructorPreviewRenderer {
                     + padding;
             topSectionHeight = Math.max(leftSectionHeight, rightSectionHeight);
         }
-
-        List<PreviewLine> projectionLines = projection == null
-                ? List.of()
-                : List.of(
-                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.projected").getString(), 0xFFFFD27A),
-                new PreviewLine(Component.translatable(
-                        "overlay.sailboatmod.constructor.projected_detail",
-                        Component.translatable(projection.type().translationKey()),
-                        projection.origin().getX(),
-                        projection.origin().getY(),
-                        projection.origin().getZ()).getString(), 0xFFDCEEFF),
-                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.projected_hint").getString(), 0xFF9ED5EA)
-        );
-
-        List<PreviewLine> progressLines = progress == null
-                ? List.of()
-                : List.of(
-                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.active").getString(), 0xFFF3D486),
-                new PreviewLine(Component.translatable(
-                        "overlay.sailboatmod.constructor.progress",
-                        Component.translatable("item.sailboatmod.structure." + progress.structureId()),
-                        progress.progressPercent()).getString(), 0xFFDCEEFF),
-                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.workers", progress.activeWorkers()).getString(), 0xFF9ED5EA)
-        );
 
         int lowerSectionHeight = 0;
         if (!projectionLines.isEmpty()) {
@@ -274,6 +273,121 @@ public final class BankConstructorPreviewRenderer {
         }
     }
 
+    private static List<PreviewLine> buildProjectionLines(ProjectionSummary projection) {
+        if (projection == null) {
+            return List.of();
+        }
+        return List.of(
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.projected").getString(), 0xFFFFD27A),
+                new PreviewLine(Component.translatable(
+                        "overlay.sailboatmod.constructor.projected_detail",
+                        Component.translatable(projection.type().translationKey()),
+                        projection.origin().getX(),
+                        projection.origin().getY(),
+                        projection.origin().getZ()).getString(), 0xFFDCEEFF),
+                projection.roadHint().hasPath()
+                        ? new PreviewLine(Component.translatable(
+                        "overlay.sailboatmod.constructor.road_preview_detail",
+                        Component.translatable(projection.roadHint().targetKind() == StructureConstructionManager.PreviewRoadTargetKind.ROAD
+                                ? "overlay.sailboatmod.constructor.road_target_network"
+                                : "overlay.sailboatmod.constructor.road_target_structure"),
+                        projection.roadHint().connectionCount()).getString(), 0xFF8DE7D5)
+                        : new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.road_preview_none").getString(), 0xFFB7C0CB),
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.projected_hint").getString(), 0xFF9ED5EA)
+        );
+    }
+
+    private static List<PreviewLine> buildProgressLines(ConstructorClientHooks.ConstructionProgress progress) {
+        if (progress == null) {
+            return List.of();
+        }
+        return List.of(
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.active").getString(), 0xFFF3D486),
+                new PreviewLine(Component.translatable(
+                        "overlay.sailboatmod.constructor.progress",
+                        Component.translatable("item.sailboatmod.structure." + progress.structureId()),
+                        progress.progressPercent()).getString(), 0xFFDCEEFF),
+                new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.workers", progress.activeWorkers()).getString(), 0xFF9ED5EA)
+        );
+    }
+
+    private static void renderCompactOverlay(GuiGraphics g,
+                                             Minecraft mc,
+                                             PreviewSummary summary,
+                                             List<PreviewLine> projectionLines,
+                                             List<PreviewLine> progressLines) {
+        int x = 12;
+        int y = 14;
+        int width = 188;
+        int padding = 6;
+        int lineHeight = 9;
+        int rowSpacing = 1;
+        int currentY = y + padding;
+
+        List<PreviewLine> summaryLines = summary == null ? List.of() : buildCompactSummaryLines(summary);
+        int sections = 0;
+        int totalHeight = padding * 2;
+        if (!summaryLines.isEmpty()) {
+            totalHeight += measureWrappedPreviewLines(mc, summaryLines, width - padding * 2, lineHeight, rowSpacing);
+            sections++;
+        }
+        if (!projectionLines.isEmpty()) {
+            if (sections > 0) {
+                totalHeight += 4;
+            }
+            totalHeight += measureWrappedPreviewLines(mc, projectionLines.subList(0, Math.min(2, projectionLines.size())),
+                    width - padding * 2, lineHeight, rowSpacing);
+            sections++;
+        }
+        if (!progressLines.isEmpty()) {
+            if (sections > 0) {
+                totalHeight += 4;
+            }
+            totalHeight += measureWrappedPreviewLines(mc, progressLines.subList(0, Math.min(2, progressLines.size())),
+                    width - padding * 2, lineHeight, rowSpacing);
+        }
+
+        g.fill(x - 4, y - 4, x + width, y + totalHeight, 0x9E12181F);
+        g.fill(x - 4, y - 4, x + width, y - 3, 0xCC6BD4FF);
+        g.fill(x - 3, y - 3, x + width - 1, y + totalHeight - 1, 0xAA1D2730);
+
+        if (!summaryLines.isEmpty()) {
+            currentY += drawWrappedPreviewLines(g, mc, summaryLines, x + padding, currentY, width - padding * 2, lineHeight, rowSpacing, false);
+        }
+        if (!projectionLines.isEmpty()) {
+            if (currentY > y + padding) {
+                currentY += 2;
+                g.fill(x + padding, currentY, x + width - padding, currentY + 1, 0x505F7A8D);
+                currentY += 3;
+            }
+            currentY += drawWrappedPreviewLines(g, mc, projectionLines.subList(0, Math.min(2, projectionLines.size())),
+                    x + padding, currentY, width - padding * 2, lineHeight, rowSpacing, false);
+        }
+        if (!progressLines.isEmpty()) {
+            if (currentY > y + padding) {
+                currentY += 2;
+                g.fill(x + padding, currentY, x + width - padding, currentY + 1, 0x505F7A8D);
+                currentY += 3;
+            }
+            drawWrappedPreviewLines(g, mc, progressLines.subList(0, Math.min(2, progressLines.size())),
+                    x + padding, currentY, width - padding * 2, lineHeight, rowSpacing, false);
+        }
+    }
+
+    private static List<PreviewLine> buildCompactSummaryLines(PreviewSummary summary) {
+        List<PreviewLine> compact = new ArrayList<>();
+        if (summary == null || summary.lines().isEmpty()) {
+            return compact;
+        }
+        compact.add(summary.lines().get(0));
+        compact.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.completion", summary.completionPercent()).getString(), 0xFFDCEEFF));
+        for (int i = 1; i < summary.lines().size() && compact.size() < 4; i++) {
+            compact.add(summary.lines().get(i));
+        }
+        compact.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.expand_hint").getString(), 0xFF93AAB9));
+        return compact;
+    }
+
     private static void renderWireframe(RenderLevelStageEvent event, StructureType type, int rotation, BlockPos origin, Vec3 cam) {
         Minecraft mc = Minecraft.getInstance();
         PoseStack poseStack = event.getPoseStack();
@@ -309,6 +423,44 @@ public final class BankConstructorPreviewRenderer {
             PLACEMENT_CACHE.put(cacheKey, placement);
         }
         return placement;
+    }
+
+    private static StructureConstructionManager.PreviewRoadHint getCachedRoadHint(net.minecraft.world.level.Level level,
+                                                                                  BlockPos origin,
+                                                                                  StructureType type,
+                                                                                  int rotation) {
+        if (level == null || origin == null || type == null) {
+            return new StructureConstructionManager.PreviewRoadHint(List.of());
+        }
+        String cacheKey = level.dimension().location() + "|" + origin.asLong() + "|" + type.nbtName() + "|" + Math.floorMod(rotation, 4);
+        StructureConstructionManager.PreviewRoadHint cached = ROAD_HINT_CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        StructureConstructionManager.PreviewRoadHint hint =
+                StructureConstructionManager.estimatePreviewRoad(level, origin, type, rotation);
+        if (ROAD_HINT_CACHE.size() > 512) {
+            ROAD_HINT_CACHE.clear();
+        }
+        ROAD_HINT_CACHE.put(cacheKey, hint);
+        return hint;
+    }
+
+    private static PreviewCacheEntry getPreviewCacheEntry(Player player,
+                                                          StructureType type,
+                                                          BlockPos origin,
+                                                          int rotation,
+                                                          BlueprintService.BlueprintPlacement placement,
+                                                          StructureConstructionManager.PreviewRoadHint roadHint) {
+        long bucket = player.level().getGameTime() / ANALYSIS_REFRESH_TICKS;
+        String key = player.level().dimension().location() + "|" + origin.asLong() + "|" + type.nbtName() + "|" + Math.floorMod(rotation, 4);
+        if (previewCache != null && previewCache.key().equals(key) && previewCache.tickBucket() == bucket) {
+            return previewCache;
+        }
+        PreviewAnalysis analysis = analyzePreview(player, origin, placement);
+        PreviewSummary summary = buildPreviewSummary(player, type, origin, placement, analysis, roadHint);
+        previewCache = new PreviewCacheEntry(key, bucket, analysis, summary);
+        return previewCache;
     }
 
     private static PreviewAnalysis analyzePreview(Player player, BlockPos origin, BlueprintService.BlueprintPlacement placement) {
@@ -509,8 +661,47 @@ public final class BankConstructorPreviewRenderer {
         line(vc, matrix, normal, x, minY, z, x, maxY, z, r, g, b, a);
     }
 
-    private static PreviewSummary buildPreviewSummary(StructureType type, BlueprintService.BlueprintPlacement placement,
-                                                      PreviewAnalysis analysis) {
+    private static void renderRoadHint(VertexConsumer vc,
+                                       Matrix4f matrix,
+                                       org.joml.Vector3f normal,
+                                       BlockPos renderOrigin,
+                                       StructureConstructionManager.PreviewRoadHint roadHint,
+                                       float r,
+                                       float g,
+                                       float b,
+                                       float a) {
+        if (roadHint == null || !roadHint.hasPath() || roadHint.path().size() < 2) {
+            return;
+        }
+        int connectionIndex = 0;
+        for (StructureConstructionManager.PreviewRoadConnection connection : roadHint.connections()) {
+            List<BlockPos> path = connection.path();
+            if (path.size() < 2) {
+                continue;
+            }
+            float connectionAlpha = Math.max(0.22F, a - (connectionIndex * 0.16F));
+            for (int i = 1; i < path.size(); i++) {
+                BlockPos from = path.get(i - 1).subtract(renderOrigin);
+                BlockPos to = path.get(i).subtract(renderOrigin);
+                line(vc, matrix, normal,
+                        from.getX() + 0.5F, from.getY() + 1.08F, from.getZ() + 0.5F,
+                        to.getX() + 0.5F, to.getY() + 1.08F, to.getZ() + 0.5F,
+                        r, g, b, connectionAlpha);
+            }
+            BlockPos start = path.get(0).subtract(renderOrigin);
+            BlockPos end = path.get(path.size() - 1).subtract(renderOrigin);
+            renderTargetMarker(vc, matrix, normal, start, r, g, b, connectionAlpha * 0.85F);
+            renderTargetMarker(vc, matrix, normal, end, r, g, b, connectionAlpha);
+            connectionIndex++;
+        }
+    }
+
+    private static PreviewSummary buildPreviewSummary(Player player,
+                                                      StructureType type,
+                                                      BlockPos origin,
+                                                      BlueprintService.BlueprintPlacement placement,
+                                                      PreviewAnalysis analysis,
+                                                      StructureConstructionManager.PreviewRoadHint roadHint) {
         Map<PreviewStatus, List<StructureTemplate.StructureBlockInfo>> groupedBlocks = analysis.groupedBlocks();
         int matched = sizeOf(groupedBlocks.get(PreviewStatus.MATCHED));
         int missing = sizeOf(groupedBlocks.get(PreviewStatus.MISSING));
@@ -546,6 +737,24 @@ public final class BankConstructorPreviewRenderer {
             lines.add(new PreviewLine(Component.translatable(
                     "overlay.sailboatmod.constructor.next",
                     analysis.nextTarget().state().getBlock().getName()).getString(), 0xFFFFE08A));
+        }
+        if (roadHint != null && roadHint.hasPath()) {
+            lines.add(new PreviewLine(Component.translatable(
+                    "overlay.sailboatmod.constructor.road_preview",
+                    roadHint.connectionCount()).getString(), 0xFF8DE7D5));
+            lines.add(new PreviewLine(Component.translatable(
+                    "overlay.sailboatmod.constructor.road_preview_detail",
+                    Component.translatable(roadHint.targetKind() == StructureConstructionManager.PreviewRoadTargetKind.ROAD
+                            ? "overlay.sailboatmod.constructor.road_target_network"
+                            : "overlay.sailboatmod.constructor.road_target_structure"),
+                    roadHint.connectionCount()).getString(), 0xFF7ED1C7));
+        } else {
+            lines.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.road_preview_none").getString(), 0xFFB7C0CB));
+        }
+        StructurePlacementValidationService.ValidationResult validation =
+                StructurePlacementValidationService.validate(player.level(), type, origin, placement);
+        if (!validation.valid() && !validation.message().getString().isBlank()) {
+            lines.add(new PreviewLine(validation.message().getString(), 0xFFFF8A8A));
         }
         lines.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.hint").getString(), 0xFFB7C0CB));
         return new PreviewSummary(List.copyOf(lines), buildMaterialLines(remainingBlocks), completion, blocked);
@@ -731,7 +940,15 @@ public final class BankConstructorPreviewRenderer {
     private record PreviewSummary(List<PreviewLine> lines, List<PreviewLine> materialLines, int completionPercent, int blockedCount) {
     }
 
-    private record ProjectionSummary(BlockPos origin, StructureType type) {
+    private record ProjectionSummary(BlockPos origin,
+                                     StructureType type,
+                                     StructureConstructionManager.PreviewRoadHint roadHint) {
+    }
+
+    private record PreviewCacheEntry(String key,
+                                     long tickBucket,
+                                     PreviewAnalysis analysis,
+                                     PreviewSummary summary) {
     }
 
     private record PreviewLine(String text, int color) {
@@ -774,25 +991,28 @@ public final class BankConstructorPreviewRenderer {
             currentProjection = null;
             return;
         }
+        StructureConstructionManager.PreviewRoadHint roadHint =
+                getCachedRoadHint(player.level(), projectionOrigin, projectionType, projectionRotation);
 
         BlueprintService.BlueprintPlacement placement = getCachedPlacement(mc, projectionType, projectionRotation);
         if (placement == null) {
-            currentProjection = new ProjectionSummary(projectionOrigin, projectionType);
+            currentProjection = new ProjectionSummary(projectionOrigin, projectionType, roadHint);
             return;
         }
 
-        currentProjection = new ProjectionSummary(projectionOrigin, projectionType);
+        currentProjection = new ProjectionSummary(projectionOrigin, projectionType, roadHint);
         Vec3 cam = event.getCamera().getPosition();
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = mc.renderBuffers().bufferSource();
         BlockRenderDispatcher blockRenderer = mc.getBlockRenderer();
+        boolean detailMode = Screen.hasAltDown();
 
         poseStack.pushPose();
         poseStack.translate(projectionOrigin.getX() - cam.x, projectionOrigin.getY() - cam.y, projectionOrigin.getZ() - cam.z);
 
-        PreviewAnalysis analysis = analyzePreview(player, projectionOrigin, placement);
+        PreviewAnalysis analysis = getPreviewCacheEntry(player, projectionType, projectionOrigin, projectionRotation, placement, roadHint).analysis();
         Map<PreviewStatus, List<StructureTemplate.StructureBlockInfo>> groupedBlocks = analysis.groupedBlocks();
-        renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.MISSING), analysis, 1.0F, 0.72F, 0.24F, 0.26F);
+        renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.MISSING), analysis, 1.0F, 0.72F, 0.24F, detailMode ? 0.26F : 0.18F);
         renderPreviewGroup(poseStack, bufferSource, blockRenderer, groupedBlocks.get(PreviewStatus.BLOCKED), analysis, 1.0F, 0.35F, 0.28F, 0.38F);
 
         VertexConsumer lineVc = bufferSource.getBuffer(RenderType.lines());
@@ -800,6 +1020,7 @@ public final class BankConstructorPreviewRenderer {
         org.joml.Vector3f normal = new org.joml.Vector3f(0, 1, 0);
         renderBounds(lineVc, matrix, normal, placement.bounds(), 1.0F, 0.72F, 0.24F, 0.85F);
         renderFootprintGrid(lineVc, matrix, normal, placement.bounds(), 1.0F, 0.72F, 0.24F, 0.35F);
+        renderRoadHint(lineVc, matrix, normal, projectionOrigin, roadHint, 1.0F, 0.78F, 0.24F, 0.9F);
         bufferSource.endBatch(RenderType.lines());
         poseStack.popPose();
     }

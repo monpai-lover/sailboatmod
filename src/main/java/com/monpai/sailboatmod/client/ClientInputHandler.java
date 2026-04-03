@@ -65,12 +65,14 @@ public final class ClientInputHandler {
         if (shift) {
             // Shift+scroll: cycle structure type
             BankConstructorItem.cycleStructure(held, delta);
+            ConstructorClientHooks.syncHeldSettings(held);
             var type = BankConstructorItem.getSelectedType(held);
             player.displayClientMessage(Component.translatable("item.sailboatmod.structure.selected", Component.translatable(type.translationKey())), true);
             event.setCanceled(true);
         } else if (alt) {
             // Alt+scroll: cycle adjust mode
             BankConstructorItem.cycleAdjustMode(held, delta);
+            ConstructorClientHooks.syncHeldSettings(held);
             var mode = BankConstructorItem.getAdjustMode(held);
             player.displayClientMessage(Component.translatable("item.sailboatmod.constructor.mode_changed", Component.translatable(mode.translationKey())), true);
             event.setCanceled(true);
@@ -79,6 +81,7 @@ public final class ClientInputHandler {
             var mode = BankConstructorItem.getAdjustMode(held);
             if (mode != BankConstructorItem.AdjustMode.BUILD) {
                 BankConstructorItem.adjustValue(held, delta);
+                ConstructorClientHooks.syncHeldSettings(held);
                 int oY = BankConstructorItem.getOffsetY(held);
                 int oX = BankConstructorItem.getOffsetX(held);
                 int rot = BankConstructorItem.getRotation(held);

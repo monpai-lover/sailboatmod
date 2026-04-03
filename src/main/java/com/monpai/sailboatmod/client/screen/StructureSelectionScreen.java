@@ -293,6 +293,7 @@ public class StructureSelectionScreen extends Screen {
 
     private void saveAndClose() {
         BankConstructorItem.setSelectedIndex(this.constructorStack, this.selectedIndex);
+        com.monpai.sailboatmod.client.ConstructorClientHooks.syncHeldSettings(this.constructorStack);
         onClose();
     }
 

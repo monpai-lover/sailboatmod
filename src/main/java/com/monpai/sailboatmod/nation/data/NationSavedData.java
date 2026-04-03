@@ -47,6 +47,7 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationTreasuryRecord> treasuries = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.PeaceProposalRecord> peaceProposals = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.PlacedStructureRecord> placedStructures = new LinkedHashMap<>();
+    private final Map<String, com.monpai.sailboatmod.nation.model.RoadNetworkRecord> roadNetworks = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.TradeProposalRecord> tradeProposals = new LinkedHashMap<>();
 
     public static NationSavedData get(Level level) {
@@ -152,6 +153,16 @@ public class NationSavedData extends SavedData {
                 com.monpai.sailboatmod.nation.model.PlacedStructureRecord s = com.monpai.sailboatmod.nation.model.PlacedStructureRecord.load(compound);
                 if (!s.structureId().isBlank()) {
                     data.placedStructures.put(s.structureId(), s);
+                }
+            }
+        }
+
+        ListTag roadsLoadTag = tag.getList("RoadNetworks", Tag.TAG_COMPOUND);
+        for (Tag raw : roadsLoadTag) {
+            if (raw instanceof CompoundTag compound) {
+                com.monpai.sailboatmod.nation.model.RoadNetworkRecord road = com.monpai.sailboatmod.nation.model.RoadNetworkRecord.load(compound);
+                if (!road.roadId().isBlank()) {
+                    data.roadNetworks.put(road.roadId(), road);
                 }
             }
         }
@@ -287,6 +298,12 @@ public class NationSavedData extends SavedData {
             structuresTag.add(s.save());
         }
         tag.put("PlacedStructures", structuresTag);
+
+        ListTag roadsTag = new ListTag();
+        for (com.monpai.sailboatmod.nation.model.RoadNetworkRecord road : roadNetworks.values()) {
+            roadsTag.add(road.save());
+        }
+        tag.put("RoadNetworks", roadsTag);
 
         ListTag tradeTag = new ListTag();
         for (com.monpai.sailboatmod.nation.model.TradeProposalRecord t : tradeProposals.values()) {
@@ -1019,6 +1036,30 @@ public class NationSavedData extends SavedData {
     public java.util.List<com.monpai.sailboatmod.nation.model.PlacedStructureRecord> getPlacedStructuresForTown(String townId) {
         if (townId == null || townId.isBlank()) return List.of();
         return placedStructures.values().stream().filter(s -> townId.equals(s.townId())).toList();
+    }
+
+    public com.monpai.sailboatmod.nation.model.RoadNetworkRecord getRoadNetwork(String roadId) {
+        if (roadId == null || roadId.isBlank()) return null;
+        return roadNetworks.get(roadId);
+    }
+
+    public void putRoadNetwork(com.monpai.sailboatmod.nation.model.RoadNetworkRecord record) {
+        if (record == null || record.roadId().isBlank()) return;
+        roadNetworks.put(record.roadId(), record);
+        setDirty();
+    }
+
+    public void removeRoadNetwork(String roadId) {
+        if (roadId != null && !roadId.isBlank() && roadNetworks.remove(roadId) != null) setDirty();
+    }
+
+    public java.util.Collection<com.monpai.sailboatmod.nation.model.RoadNetworkRecord> getRoadNetworks() {
+        return List.copyOf(roadNetworks.values());
+    }
+
+    public java.util.List<com.monpai.sailboatmod.nation.model.RoadNetworkRecord> getRoadNetworksForStructure(String structureId) {
+        if (structureId == null || structureId.isBlank()) return List.of();
+        return roadNetworks.values().stream().filter(road -> road.connects(structureId)).toList();
     }
 
     /**
