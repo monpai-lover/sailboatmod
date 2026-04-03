@@ -92,6 +92,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String listingPriceAdjustValue = "0";
     private String buyQtyValue = "1";
     private String goodsSearchValue = "";
+    private String storageSearchValue = "";
     private String buyOrderCommodityValue = "";
     private String buyOrderQtyValue = "1";
     private String buyOrderMinPriceValue = "-1000";
@@ -334,10 +335,20 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         UIRoundedRectangle listPanel = createSection(parent, x, y, listWidth, height,
                 Component.translatable("screen.sailboatmod.market.storage_title").getString(),
                 "Inventory");
+
+        UITextInput searchInput = createInput(listPanel, 14, 44, Math.min(200, listWidth - 42), 24,
+                Component.translatable("screen.sailboatmod.market.catalog.search").getString(),
+                storageSearchValue, value -> storageSearchValue = value);
+        searchInput.onActivate(value -> {
+            storageSearchValue = value;
+            rebuildUi();
+            return Unit.INSTANCE;
+        });
+
         buildListPanel(listPanel, data.dockStorageEntries().isEmpty()
                         ? List.of(rowSpec(Component.translatable("screen.sailboatmod.market.storage_empty").getString(), "", "", false, null))
-                        : buildStorageRows(),
-                listWidth - 28, height - 68);
+                        : buildFilteredStorageRows(),
+                listWidth - 28, height - 96, 72);
 
         UIRoundedRectangle actionPanel = createSection(parent, x + listWidth + SECTION_GAP, y, sidebarWidth, height,
                 selectedStorage() == null ? Component.translatable("screen.sailboatmod.market.page.sell").getString() : selectedStorage().itemName(),
@@ -1154,6 +1165,32 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         List<RowSpec> rows = new ArrayList<>();
         for (int i = 0; i < data.dockStorageEntries().size(); i++) {
             MarketOverviewData.StorageEntry entry = data.dockStorageEntries().get(i);
+            int index = i;
+            rows.add(rowSpec(
+                    entry.itemName(),
+                    entry.detail(),
+                    "x" + entry.quantity(),
+                    index == selectedStorageIndex,
+                    () -> {
+                        selectedStorageIndex = index;
+                        rebuildUi();
+                    }
+            ));
+        }
+        return rows;
+    }
+
+    private List<RowSpec> buildFilteredStorageRows() {
+        String query = storageSearchValue == null ? "" : storageSearchValue.trim().toLowerCase(Locale.ROOT);
+        List<RowSpec> rows = new ArrayList<>();
+        for (int i = 0; i < data.dockStorageEntries().size(); i++) {
+            MarketOverviewData.StorageEntry entry = data.dockStorageEntries().get(i);
+            if (!query.isBlank()) {
+                String haystack = (entry.itemName() + " " + entry.detail()).toLowerCase(Locale.ROOT);
+                if (!haystack.contains(query)) {
+                    continue;
+                }
+            }
             int index = i;
             rows.add(rowSpec(
                     entry.itemName(),
