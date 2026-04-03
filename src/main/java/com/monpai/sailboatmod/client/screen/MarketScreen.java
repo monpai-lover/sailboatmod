@@ -2094,19 +2094,19 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void syncLiveScrollOffsets() {
-        if (goodsViewportScrollRef != null) {
+        if (goodsViewportScrollRef != null && pendingGoodsViewportScrollTicks <= 0) {
             goodsViewportScrollOffset = goodsViewportScrollRef.getVerticalOffset();
             goodsViewportScrollProgress = computeScrollProgress(goodsViewportScrollRef, goodsViewportScrollOffset);
         }
-        if (buyOrdersViewportScrollRef != null) {
+        if (buyOrdersViewportScrollRef != null && pendingBuyOrdersViewportScrollTicks <= 0) {
             buyOrdersViewportScrollOffset = buyOrdersViewportScrollRef.getVerticalOffset();
             buyOrdersViewportScrollProgress = computeScrollProgress(buyOrdersViewportScrollRef, buyOrdersViewportScrollOffset);
         }
-        if (goodsCatalogScrollRef != null) {
+        if (goodsCatalogScrollRef != null && pendingGoodsCatalogScrollTicks <= 0) {
             goodsCatalogScrollOffset = goodsCatalogScrollRef.getVerticalOffset();
             goodsCatalogScrollProgress = computeScrollProgress(goodsCatalogScrollRef, goodsCatalogScrollOffset);
         }
-        if (buyOrdersListScrollRef != null) {
+        if (buyOrdersListScrollRef != null && pendingBuyOrdersListScrollTicks <= 0) {
             buyOrdersListScrollOffset = buyOrdersListScrollRef.getVerticalOffset();
             buyOrdersListScrollProgress = computeScrollProgress(buyOrdersListScrollRef, buyOrdersListScrollOffset);
         }
@@ -2204,7 +2204,6 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             pendingBuyOrdersListScrollProgress = progress;
             pendingBuyOrdersListScrollTicks = 8;
         }
-        scroll.scrollTo(scroll.getHorizontalOffset(), resolveScrollRestoreTarget(scroll, verticalOffset, progress), false);
     }
 
     private void applyPendingScrollRestores() {
@@ -2333,9 +2332,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
             float value = scrollPercentageToOffset(scroll, updatedProgress);
             if (goodsPage) {
+                if (pendingGoodsViewportScrollTicks > 0) {
+                    return Unit.INSTANCE;
+                }
                 goodsViewportScrollOffset = value;
                 goodsViewportScrollProgress = updatedProgress;
             } else {
+                if (pendingBuyOrdersViewportScrollTicks > 0) {
+                    return Unit.INSTANCE;
+                }
                 buyOrdersViewportScrollOffset = value;
                 buyOrdersViewportScrollProgress = updatedProgress;
             }
@@ -2360,9 +2365,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
             float value = scrollPercentageToOffset(scroll, updatedProgress);
             if (goodsCatalog) {
+                if (pendingGoodsCatalogScrollTicks > 0) {
+                    return Unit.INSTANCE;
+                }
                 goodsCatalogScrollOffset = value;
                 goodsCatalogScrollProgress = updatedProgress;
             } else {
+                if (pendingBuyOrdersListScrollTicks > 0) {
+                    return Unit.INSTANCE;
+                }
                 buyOrdersListScrollOffset = value;
                 buyOrdersListScrollProgress = updatedProgress;
             }
