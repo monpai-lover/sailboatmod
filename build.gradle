@@ -79,6 +79,11 @@ minecraft {
             // Please read: https://stackoverflow.com/questions/2031163/when-to-use-the-different-log-levels
             property 'forge.logging.console.level', 'debug'
 
+            // Remap SRG-based refmaps from third-party mixins (for example GeckoLib) into the
+            // current dev naming environment so they keep working with official mappings.
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', file('build/createSrgToMcp/output.srg').absolutePath
+
             mods {
                 "${mod_id}" {
                     source sourceSets.main

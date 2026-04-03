@@ -198,9 +198,6 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (getWindow() != null) {
-            getWindow().keyType(keyCode, scanCode, modifiers);
-        }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
