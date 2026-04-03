@@ -46,11 +46,11 @@ import java.util.function.Consumer;
 public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>, MarketOverviewConsumer {
     private static final int MAX_PANEL_WIDTH = 2400;
     private static final int MAX_PANEL_HEIGHT = 1600;
-    private static final int NAV_WIDTH = 120;
-    private static final int HEADER_HEIGHT = 48;
-    private static final int PANEL_PADDING = 12;
-    private static final int SECTION_GAP = 8;
-    private static final int ROW_HEIGHT = 32;
+    private static final int NAV_WIDTH = 80;
+    private static final int HEADER_HEIGHT = 36;
+    private static final int PANEL_PADDING = 8;
+    private static final int SECTION_GAP = 5;
+    private static final int ROW_HEIGHT = 24;
     private static final int GOODS_CATALOG_PAGE_SIZE = 10;
     private static final DateTimeFormatter CHART_TIME_FORMAT = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     private static final DateTimeFormatter CHART_SHORT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
@@ -668,27 +668,34 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
         List<Integer> filtered = filteredListingIndices();
         goodsCatalogPage = clampGoodsCatalogPage(filtered.size());
-        buildGoodsCatalogSummary(panel, innerWidth, filtered.size(), data.listingEntries().size());
-        buildGoodsCatalogHeader(panel, innerWidth);
-        buildGoodsCatalogRows(panel, innerWidth, Math.max(120, height - 172), filtered);
+
+        int dropdownHeight = 0;
+        if (showCategoryFilter) dropdownHeight = GoodsCategoryFilter.values().length * 24;
+        if (showPriceFilter) dropdownHeight = 80;
+
+        buildGoodsCatalogSummary(panel, innerWidth, filtered.size(), data.listingEntries().size(), dropdownHeight);
+        buildGoodsCatalogHeader(panel, innerWidth, dropdownHeight);
+        buildGoodsCatalogRows(panel, innerWidth, Math.max(120, height - 172 - dropdownHeight), filtered, dropdownHeight);
     }
 
-    private void buildGoodsCatalogSummary(UIComponent panel, int innerWidth, int filteredCount, int totalCount) {
-        createText(panel, 14, 100, buildGoodsCatalogSummaryText(filteredCount, totalCount), 0.76f, TEXT_MUTED);
-        createText(panel, 14, 114, buildGoodsCatalogFilterSummary(), 0.7f, TEXT_SOFT);
+    private void buildGoodsCatalogSummary(UIComponent panel, int innerWidth, int filteredCount, int totalCount, int dropdownHeight) {
+        int baseY = 100 + dropdownHeight;
+        createText(panel, 14, baseY, buildGoodsCatalogSummaryText(filteredCount, totalCount), 0.76f, TEXT_MUTED);
+        createText(panel, 14, baseY + 14, buildGoodsCatalogFilterSummary(), 0.7f, TEXT_SOFT);
 
         int pageCount = goodsCatalogPageCount(filteredCount);
         int baseX = innerWidth - 190;
-        createButton(panel, baseX, 98, 58, 22,
+        int buttonY = baseY - 2;
+        createButton(panel, baseX, buttonY, 58, 22,
                 Component.translatable("screen.sailboatmod.market.catalog.prev").getString(),
                 goodsCatalogPage > 0, true, () -> {
                     goodsCatalogPage = Math.max(0, goodsCatalogPage - 1);
                     rebuildUi();
                 });
-        createText(panel, baseX + 66, 105,
+        createText(panel, baseX + 66, buttonY + 7,
                 Component.translatable("screen.sailboatmod.market.catalog.page", goodsCatalogPage + 1, pageCount).getString(),
                 0.74f, TEXT_MUTED);
-        createButton(panel, baseX + 126, 98, 58, 22,
+        createButton(panel, baseX + 126, buttonY, 58, 22,
                 Component.translatable("screen.sailboatmod.market.catalog.next").getString(),
                 goodsCatalogPage + 1 < pageCount, true, () -> {
                     goodsCatalogPage = Math.min(pageCount - 1, goodsCatalogPage + 1);
@@ -696,23 +703,25 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 });
     }
 
-    private void buildGoodsCatalogHeader(UIComponent panel, int innerWidth) {
-        UIRoundedRectangle header = createPanel(panel, 14, 132, innerWidth, 20, 8f, CHROME_MUTED);
+    private void buildGoodsCatalogHeader(UIComponent panel, int innerWidth, int dropdownHeight) {
+        int headerY = 132 + dropdownHeight;
+        UIRoundedRectangle header = createPanel(panel, 14, headerY, innerWidth, 20, 8f, CHROME_MUTED);
         createText(header, 12, 5, Component.translatable("screen.sailboatmod.market.catalog.column.item").getString(), 0.68f, TEXT_SOFT);
         createText(header, goodsCatalogSellerX(innerWidth), 5, Component.translatable("screen.sailboatmod.market.catalog.column.seller").getString(), 0.68f, TEXT_SOFT);
         createText(header, goodsCatalogStockX(innerWidth), 5, Component.translatable("screen.sailboatmod.market.catalog.column.stock").getString(), 0.68f, TEXT_SOFT);
         createText(header, goodsCatalogPriceX(innerWidth), 5, Component.translatable("screen.sailboatmod.market.catalog.column.price").getString(), 0.68f, TEXT_SOFT);
     }
 
-    private void buildGoodsCatalogRows(UIComponent panel, int width, int height, List<Integer> filtered) {
+    private void buildGoodsCatalogRows(UIComponent panel, int width, int height, List<Integer> filtered, int dropdownHeight) {
         List<Integer> visible = pagedListingIndices(filtered);
         if (!visible.isEmpty() && !visible.contains(selectedListingIndex)) {
             selectedListingIndex = visible.get(0);
         }
 
+        int scrollY = 156 + dropdownHeight;
         ScrollComponent scroll = new ScrollComponent();
         scroll.setX(new PixelConstraint(14));
-        scroll.setY(new PixelConstraint(156));
+        scroll.setY(new PixelConstraint(scrollY));
         scroll.setWidth(new PixelConstraint(width));
         scroll.setHeight(new PixelConstraint(height));
         scroll.setChildOf(panel);
@@ -1124,7 +1133,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         createAccentBar(row, 0, 0, spec.selected ? 6 : 4, ROW_HEIGHT, spec.selected ? ACCENT : new Color(255, 255, 255, 18));
         createText(row, 18, 12, shorten(spec.title, 46), 1.0f, TEXT_PRIMARY);
         if (!spec.trailing.isBlank()) {
-            createText(row, width - 104, 12, shorten(spec.trailing, 14), 0.9f, spec.selected ? ACCENT : TEXT_MUTED);
+            createText(row, width - 60, 12, shorten(spec.trailing, 14), 0.9f, spec.selected ? ACCENT : TEXT_MUTED);
         }
         if (!spec.subtitle.isBlank()) {
             UIWrappedText subtitle = new UIWrappedText(spec.subtitle);
@@ -2181,10 +2190,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
             UIWrappedText text = new UIWrappedText(line);
             text.setX(new PixelConstraint(0));
-            text.setY(new CramSiblingConstraint(7f));
+            text.setY(new CramSiblingConstraint(6f));
             text.setWidth(new PixelConstraint(width));
             text.setHeight(new ChildBasedSizeConstraint(0f));
-            text.setTextScale(new PixelConstraint(0.7f));
+            text.setTextScale(new PixelConstraint(0.6f));
             text.setColor(color);
             text.setChildOf(holder);
         }
