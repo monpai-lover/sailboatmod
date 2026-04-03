@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.nation.service;
 
-import com.monpai.sailboatmod.economy.VaultEconomyBridge;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.ProcurementRecord;
 import com.monpai.sailboatmod.market.ProcurementService;
@@ -133,7 +133,7 @@ public final class ConstructionCostService {
         long walletSpent = totalCost - treasurySpent;
 
         if (walletSpent > 0L) {
-            Boolean walletResult = VaultEconomyBridge.tryWithdraw(player, (int) walletSpent);
+            Boolean walletResult = GoldStandardEconomy.tryWithdraw(player, walletSpent);
             if (!Boolean.TRUE.equals(walletResult)) {
                 return new PaymentResult(false, totalCost, treasurySpent, walletSpent,
                         Component.literal(insufficientFundsMessage));
@@ -146,7 +146,9 @@ public final class ConstructionCostService {
         }
 
         return new PaymentResult(true, totalCost, treasurySpent, walletSpent,
-                Component.literal(String.format(Locale.ROOT, successFormat, treasurySpent, walletSpent)));
+                Component.literal(String.format(Locale.ROOT, successFormat,
+                        GoldStandardEconomy.formatBalance(treasurySpent),
+                        GoldStandardEconomy.formatBalance(walletSpent))));
     }
 
     public static long estimatePurchaseCost(MarketSavedData marketData, ItemStack targetStack, int quantity) {
@@ -295,7 +297,7 @@ public final class ConstructionCostService {
                             purchasePlan.townId(),
                             "CONSTRUCTION_EXPENSE",
                             allocation.purchaseCost(),
-                            "EMERALD",
+                            GoldStandardEconomy.LEDGER_CURRENCY,
                             allocation.commodityKey(),
                             allocation.purchasedCount(),
                             procurement == null ? projectId : procurement.procurementId()
@@ -344,7 +346,7 @@ public final class ConstructionCostService {
         if (path.contains("log") || path.contains("plank") || path.contains("wood") || path.contains("fence") || path.contains("door")) {
             return 5;
         }
-        return 10;
+        return GoldStandardEconomy.BALANCE_PER_GOLD_INGOT;
     }
 
     private static final class CommodityDemandAccumulator {

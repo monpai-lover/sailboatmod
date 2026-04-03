@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.screen.town;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.TownFlagUploadClient;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
@@ -14,6 +15,7 @@ import com.monpai.sailboatmod.network.packet.SetTownClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.TownGuiActionPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -89,6 +91,7 @@ public class TownHomeScreen extends Screen {
     private Button resetMapButton;
     private int autoRefreshTicks;
     private int memberScroll;
+    private int pageScroll;
     private String selectedMemberUuid = "";
     private int mapOffsetX = 0;
     private int mapOffsetZ = 0;
@@ -97,6 +100,8 @@ public class TownHomeScreen extends Screen {
     private double dragStartY = 0;
     private int pendingPreviewCenterX = Integer.MIN_VALUE;
     private int pendingPreviewCenterZ = Integer.MIN_VALUE;
+    private int queuedPreviewCenterX = Integer.MIN_VALUE;
+    private int queuedPreviewCenterZ = Integer.MIN_VALUE;
     private boolean resetPending = false;
     private boolean refreshPending;
 
@@ -140,6 +145,7 @@ public class TownHomeScreen extends Screen {
         }
         this.statusLine = Component.translatable("screen.sailboatmod.town.status.synced");
         updateButtonState();
+        flushQueuedPreviewRefresh();
     }
 
     @Override
@@ -153,12 +159,12 @@ public class TownHomeScreen extends Screen {
         this.flagTabButton = addTabButton(left + 306, top + 34, Page.FLAG, Component.translatable("screen.sailboatmod.town.section.flag"));
         this.economyTabButton = addTabButton(left + 12, top + 54, Page.ECONOMY, Component.translatable("screen.sailboatmod.town.section.economy"));
 
-        this.townNameInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 148, 144, 18, Component.translatable("screen.sailboatmod.town.name"));
+        this.townNameInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 154, 144, 18, Component.translatable("screen.sailboatmod.town.name"));
         this.townNameInput.setMaxLength(24);
         this.addRenderableWidget(this.townNameInput);
-        this.saveTownNameButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.save_info"), b -> submitRenameTown()).bounds(left + BODY_X + 162, top + BODY_Y + 148, 96, 18).build());
-        this.abandonTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.abandon"), b -> submitAbandonTown()).bounds(left + BODY_X + 266, top + BODY_Y + 148, 96, 18).build());
-        this.removeCoreButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.remove_core"), b -> submitRemoveCore()).bounds(left + BODY_X + 266, top + BODY_Y + 172, 96, 18).build());
+        this.saveTownNameButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.save_info"), b -> submitRenameTown()).bounds(left + BODY_X + 162, top + BODY_Y + 154, 96, 18).build());
+        this.abandonTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.abandon"), b -> submitAbandonTown()).bounds(left + BODY_X + 266, top + BODY_Y + 154, 96, 18).build());
+        this.removeCoreButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.remove_core"), b -> submitRemoveCore()).bounds(left + BODY_X + 266, top + BODY_Y + 178, 96, 18).build());
         this.appointMayorButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.appoint_mayor"), b -> appointSelectedMayor()).bounds(left + BODY_X + 222, top + BODY_Y + 196, 180, 18).build());
 
         this.claimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.claim"), b -> claimSelectedChunk()).bounds(left + BODY_X + 12, top + BODY_Y + BODY_H - 26, 72, 18).build());
@@ -236,6 +242,11 @@ public class TownHomeScreen extends Screen {
                 return true;
             }
         }
+        if (isInsideBodyViewport(mouseX, mouseY) && maxPageScroll() > 0) {
+            this.pageScroll = Math.max(0, Math.min(maxPageScroll(), this.pageScroll + (delta > 0 ? -16 : 16)));
+            updateButtonState();
+            return true;
+        }
         return super.mouseScrolled(mouseX, mouseY, delta);
     }
 
@@ -307,9 +318,19 @@ public class TownHomeScreen extends Screen {
         g.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xCC101820);
         g.fill(left + 1, top + 1, left + SCREEN_W - 1, top + SCREEN_H - 1, 0xCC182632);
         g.drawString(this.font, this.title, left + 12, top + 18, 0xFFE7C977);
-        g.drawString(this.font, headerText(), left + 136, top + 18, 0xFFDCEEFF);
+        String economyBar = buildEconomyHeaderLine();
+        int reserveRight = 96;
+        int economyX = left + SCREEN_W - reserveRight - this.font.width(economyBar);
+        int headerWidth = Math.max(48, economyX - (left + 136) - 8);
+        g.drawString(this.font, trimToWidth(headerText(), headerWidth), left + 136, top + 18, 0xFFDCEEFF);
+        if (!economyBar.isBlank()) {
+            g.drawString(this.font, economyBar, economyX, top + 18, 0xFFB8C0C8);
+        }
         drawPanelFrame(g, left + BODY_X, top + BODY_Y, BODY_W, BODY_H);
         g.drawString(this.font, this.currentPage.title(), left + BODY_X + 10, top + BODY_Y + 10, 0xFFE7C977);
+        g.enableScissor(left + BODY_X + 1, bodyViewportTop(), left + BODY_X + BODY_W - 1, top + BODY_Y + BODY_H - 1);
+        g.pose().pushPose();
+        g.pose().translate(0.0F, -this.pageScroll, 0.0F);
         switch (this.currentPage) {
             case OVERVIEW -> drawOverviewPage(g, left + BODY_X, top + BODY_Y);
             case MEMBERS -> drawMembersPage(g, left + BODY_X, top + BODY_Y);
@@ -317,17 +338,66 @@ public class TownHomeScreen extends Screen {
             case FLAG -> drawFlagPage(g, left + BODY_X, top + BODY_Y);
             case ECONOMY -> drawEconomyPage(g, left + BODY_X, top + BODY_Y, mouseX, mouseY);
         }
+        g.pose().popPose();
+        g.disableScissor();
         if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
     }
 
     private void drawOverviewPage(GuiGraphics g, int x, int y) {
-        int drawY = y + 34;
+        int cardX = x + 12;
+        int cardY = y + 30;
+        int cardGap = 6;
+        int cardW = (BODY_W - 24 - cardGap * 3) / 4;
+        int cardH = 22;
+        drawMetricCard(g, cardX, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.economy.metric.population"),
+                Integer.toString(this.data.residentCount()),
+                0xC06A8BA1);
+        drawMetricCard(g, cardX + (cardW + cardGap), cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.economy.metric.employment"),
+                formatPercent(this.data.employmentRate()),
+                0xC05D8B6D);
+        drawMetricCard(g, cardX + (cardW + cardGap) * 2, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.economy.metric.literacy"),
+                formatPercent(this.data.averageLiteracy()),
+                0xC08A7D52);
+        drawMetricCard(g, cardX + (cardW + cardGap) * 3, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.overview.claims_card"),
+                Integer.toString(this.data.totalClaims()),
+                0xC06F8A54);
+
+        int infoX = x + 12;
+        int infoY = y + 60;
+        int infoW = 174;
+        int infoH = 84;
+        drawPanelFrame(g, infoX, infoY, infoW, infoH);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.overview.city_stats"), infoX + 8, infoY + 8, 0xFFE7C977);
+        int lineY = infoY + 22;
         for (Component line : buildOverviewLines()) {
-            drawWrappedLine(g, line, x + 12, drawY, BODY_W - 24, 0xFFDCEEFF);
-            drawY += wrappedHeight(line, BODY_W - 24) + 6;
+            drawWrappedLine(g, line, infoX + 8, lineY, infoW - 16, 0xFFDCEEFF);
+            lineY += wrappedHeight(line, infoW - 16) + 2;
+            if (lineY > infoY + infoH - 16) {
+                break;
+            }
         }
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.name"), x + 12, y + 126, 0xFFB8C0C8);
-        drawWrappedLine(g, Component.translatable("screen.sailboatmod.town.overview.manage_hint"), x + 12, y + 176, BODY_W - 24, 0xFF8D98A3);
+
+        int chartX = x + 194;
+        int chartW = BODY_W - 206;
+        drawDistributionPanel(g, chartX, y + 60, chartW, 40,
+                Component.translatable("screen.sailboatmod.town.overview.culture_chart"),
+                buildSortedDistribution(this.data.cultureDistribution()),
+                cultureDisplayName(this.data.cultureId()),
+                0xFF6FA4C1,
+                0xFF4B7088);
+        drawDistributionPanel(g, chartX, y + 104, chartW, 40,
+                Component.translatable("screen.sailboatmod.town.overview.education_chart"),
+                buildSortedDistribution(this.data.educationLevelDistribution()),
+                dominantEducationName(),
+                0xFFB68D56,
+                0xFF7C5D36);
+
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.name"), x + 12, y + 142, 0xFFB8C0C8);
+        drawWrappedLine(g, Component.translatable("screen.sailboatmod.town.overview.manage_hint"), x + 12, y + 204, BODY_W - 24, 0xFF8D98A3);
     }
 
     private void drawMembersPage(GuiGraphics g, int x, int y) {
@@ -429,25 +499,82 @@ public class TownHomeScreen extends Screen {
             return;
         }
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.population", this.data.residentCount()), x + 12, y + 30, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.employment", formatPercent(this.data.employmentRate())), x + 12, y + 44, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.literacy", formatPercent(this.data.averageLiteracy())), x + 12, y + 58, 0xFFDCEEFF);
+        int cardX = x + 12;
+        int cardY = y + 30;
+        int cardGap = 6;
+        int cardW = (BODY_W - 24 - cardGap * 3) / 4;
+        int cardH = 22;
+        drawMetricCard(g, cardX, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.economy.metric.population"),
+                Integer.toString(this.data.residentCount()),
+                0xC06A8BA1);
+        drawMetricCard(g, cardX + (cardW + cardGap), cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.economy.metric.employment"),
+                formatPercent(this.data.employmentRate()),
+                0xC05D8B6D);
+        drawMetricCard(g, cardX + (cardW + cardGap) * 2, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.economy.metric.literacy"),
+                formatPercent(this.data.averageLiteracy()),
+                0xC08A7D52);
+        drawMetricCard(g, cardX + (cardW + cardGap) * 3, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.town.economy.metric.net"),
+                formatMoney(this.data.netBalance()),
+                this.data.netBalance() >= 0L ? 0xC05D8667 : 0xC08D6057);
 
-        int leftX = x + 12;
-        int rightX = x + 224;
-        int baseY = y + 92;
-        int rowH = 14;
+        int statusX = x + 12;
+        int statusY = y + 62;
+        int statusW = BODY_W - 24;
+        int statusH = 44;
+        drawPanelFrame(g, statusX, statusY, statusW, statusH);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.status_title"), statusX + 8, statusY + 8, 0xFFE7C977);
+        drawStatusBar(g, statusX + 8, statusY + 20, 190,
+                Component.translatable("screen.sailboatmod.town.economy.bar.cashflow"),
+                Math.max(0L, this.data.totalIncome()),
+                Math.max(0L, this.data.totalIncome()) + Math.max(0L, this.data.totalExpense()),
+                this.data.netBalance() >= 0L ? 0xFF5DA06A : 0xFFA05D5D,
+                formatMoney(this.data.totalIncome()) + " / -" + formatMoney(this.data.totalExpense()));
+        drawStatusBar(g, statusX + 210, statusY + 20, 186,
+                Component.translatable("screen.sailboatmod.town.economy.bar.coverage"),
+                Math.max(0, this.data.stockpileTotalUnits()),
+                Math.max(1, this.data.stockpileTotalUnits() + this.data.openDemandUnits()),
+                0xFF7A9D62,
+                this.data.stockpileTotalUnits() + " / " + this.data.openDemandUnits());
+        drawStatusBar(g, statusX + 8, statusY + 32, 190,
+                Component.translatable("screen.sailboatmod.town.economy.bar.workforce"),
+                Math.round(this.data.employmentRate() * 100.0f),
+                100,
+                0xFF5D8FA0,
+                formatPercent(this.data.employmentRate()));
+        drawStatusBar(g, statusX + 210, statusY + 32, 186,
+                Component.translatable("screen.sailboatmod.town.economy.bar.education"),
+                Math.round(this.data.averageLiteracy() * 100.0f),
+                100,
+                0xFFB68D56,
+                formatPercent(this.data.averageLiteracy()));
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.stockpile_types", this.data.stockpileCommodityTypes()), leftX, baseY, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.stockpile_units", this.data.stockpileTotalUnits()), leftX, baseY + rowH, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.open_demands", this.data.openDemandCount()), leftX, baseY + rowH * 2, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.shortage_units", this.data.openDemandUnits()), leftX, baseY + rowH * 3, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.active_procurements", this.data.activeProcurementCount()), leftX, baseY + rowH * 4, 0xFFDCEEFF);
+        int panelY = y + 112;
+        int panelW = (BODY_W - 24 - 8) / 2;
+        int panelH = 82;
+        drawSplitPreviewPanel(g, x + 12, panelY, panelW, panelH,
+                Component.translatable("screen.sailboatmod.town.economy.section.stockpile"),
+                previewLines(this.data.stockpilePreviewLines(),
+                        Component.translatable("screen.sailboatmod.town.economy.stockpile_types", this.data.stockpileCommodityTypes()),
+                        Component.translatable("screen.sailboatmod.town.economy.stockpile_units", this.data.stockpileTotalUnits())),
+                Component.translatable("screen.sailboatmod.town.economy.section.demands"),
+                previewLines(this.data.demandPreviewLines(),
+                        Component.translatable("screen.sailboatmod.town.economy.open_demands", this.data.openDemandCount()),
+                        Component.translatable("screen.sailboatmod.town.economy.shortage_units", this.data.openDemandUnits())));
+        drawSplitPreviewPanel(g, x + 20 + panelW, panelY, panelW, panelH,
+                Component.translatable("screen.sailboatmod.town.economy.section.procurements"),
+                previewLines(this.data.procurementPreviewLines(),
+                        Component.translatable("screen.sailboatmod.town.economy.active_procurements", this.data.activeProcurementCount())),
+                Component.translatable("screen.sailboatmod.town.economy.section.finance"),
+                previewLines(this.data.financePreviewLines(),
+                        Component.translatable("screen.sailboatmod.town.economy.total_income", formatMoney(this.data.totalIncome())),
+                        Component.translatable("screen.sailboatmod.town.economy.total_expense", formatMoney(this.data.totalExpense())),
+                        Component.translatable("screen.sailboatmod.town.economy.net_balance", formatMoney(this.data.netBalance()))));
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.total_income", formatMoney(this.data.totalIncome())), rightX, baseY, 0xFFBDF5C8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.total_expense", formatMoney(this.data.totalExpense())), rightX, baseY + rowH, 0xFFFFC7C7);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.net_balance", formatMoney(this.data.netBalance())), rightX, baseY + rowH * 2, this.data.netBalance() >= 0L ? 0xFFBDF5C8 : 0xFFFFC7C7);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.economy.summary_hint"), leftX, y + BODY_H - 32, 0xFFB8C0C8);
+        drawWrappedLine(g, Component.translatable("screen.sailboatmod.town.economy.summary_hint"), x + 12, y + 198, BODY_W - 24, 0xFFB8C0C8);
     }
 
     private static String formatPercent(float ratio) {
@@ -455,75 +582,7 @@ public class TownHomeScreen extends Screen {
     }
 
     private static String formatMoney(long value) {
-        return Long.toString(value);
-    }
-
-    private void drawProfessionPieChart(GuiGraphics g, int cx, int cy, int r, int mouseX, int mouseY) {
-        int[] colors = {0xFF4A9EFF, 0xFFFF6B6B, 0xFF4ECDC4, 0xFFFFA07A, 0xFF98D8C8, 0xFFFFD93D, 0xFFB4A7D6, 0xFFE0E0E0};
-        String[] labels = {"Farmer", "Miner", "Lumberjack", "Fisherman", "Blacksmith", "Baker", "Guard", "Unemployed"};
-        int[] values = {8, 6, 5, 4, 3, 3, 3, 13};
-
-        int total = 0;
-        for (int v : values) total += v;
-
-        float angle = 0;
-        for (int i = 0; i < values.length; i++) {
-            float sweep = (float) values[i] / total * 360;
-            drawPieSlice(g, cx, cy, r, angle, sweep, colors[i]);
-
-            // Tooltip
-            if (isMouseInPieSlice(mouseX, mouseY, cx, cy, r, angle, sweep)) {
-                g.renderTooltip(this.font, Component.literal(labels[i] + ": " + values[i]), mouseX, mouseY);
-            }
-            angle += sweep;
-        }
-    }
-
-    private void drawPieSlice(GuiGraphics g, int cx, int cy, int r, float startAngle, float sweep, int color) {
-        for (float a = startAngle; a < startAngle + sweep; a += 1) {
-            double rad = Math.toRadians(a - 90);
-            int x1 = cx + (int)(Math.cos(rad) * r);
-            int y1 = cy + (int)(Math.sin(rad) * r);
-            g.fill(cx, cy, x1, y1, color);
-        }
-    }
-
-    private boolean isMouseInPieSlice(int mx, int my, int cx, int cy, int r, float startAngle, float sweep) {
-        int dx = mx - cx;
-        int dy = my - cy;
-        double dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > r) return false;
-        double angle = Math.toDegrees(Math.atan2(dy, dx)) + 90;
-        if (angle < 0) angle += 360;
-        return angle >= startAngle && angle < startAngle + sweep;
-    }
-
-    private void drawEconomyLineChart(GuiGraphics g, int x, int y, int w, int h, int mouseX, int mouseY) {
-        g.fill(x, y, x + w, y + h, 0xFF2A3540);
-        g.fill(x, y + h - 1, x + w, y + h, 0xFF8090A0);
-        g.fill(x, y, x + 1, y + h, 0xFF8090A0);
-
-        // Sample data points
-        int[] popData = {20, 25, 30, 35, 40, 42, 45};
-        int[] empData = {60, 65, 68, 70, 72, 71, 71};
-
-        drawLine(g, x, y, w, h, popData, 0xFF4A9EFF);
-        drawLine(g, x, y, w, h, empData, 0xFF4ECDC4);
-
-        if (mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h) {
-            g.renderTooltip(this.font, Component.literal("Population: " + this.data.residentCount() + ", Employment: 71%"), mouseX, mouseY);
-        }
-    }
-
-    private void drawLine(GuiGraphics g, int x, int y, int w, int h, int[] data, int color) {
-        int step = w / (data.length - 1);
-        for (int i = 0; i < data.length - 1; i++) {
-            int x1 = x + i * step;
-            int y1 = y + h - (data[i] * h / 100);
-            int x2 = x + (i + 1) * step;
-            int y2 = y + h - (data[i + 1] * h / 100);
-            g.fill(x1, y1, x2, y1 + 2, color);
-        }
+        return GoldStandardEconomy.formatBalance(value);
     }
 
     private List<Component> buildOverviewLines() {
@@ -535,7 +594,7 @@ public class TownHomeScreen extends Screen {
         lines.add(Component.translatable("screen.sailboatmod.town.overview.name", this.data.townName()));
         lines.add(Component.translatable("screen.sailboatmod.town.overview.nation", this.data.nationName().isBlank() ? "-" : this.data.nationName()));
         lines.add(Component.translatable("screen.sailboatmod.town.overview.mayor", this.data.mayorName()));
-        lines.add(Component.translatable("screen.sailboatmod.town.overview.claims", this.data.totalClaims()));
+        lines.add(Component.translatable("screen.sailboatmod.town.overview.culture", cultureDisplayName(this.data.cultureId())));
         lines.add(this.data.hasCore() ? Component.translatable("screen.sailboatmod.town.overview.core", formatCoreLocation()) : Component.translatable("screen.sailboatmod.town.overview.core_missing"));
         return lines;
     }
@@ -615,6 +674,7 @@ public class TownHomeScreen extends Screen {
             this.toggleMirrorButton.active = canMirror;
             this.toggleMirrorButton.setMessage(Component.translatable(this.data.flagMirrored() ? "screen.sailboatmod.nation.action.unmirror" : "screen.sailboatmod.nation.action.mirror"));
         }
+        layoutScrollableWidgets();
     }
     private void drawClaimMap(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
         g.fill(mapX - 1, mapY - 1, mapX + CLAIM_MAP_W + 1, mapY + CLAIM_MAP_H + 1, 0xFF6F8390);
@@ -747,7 +807,86 @@ public class TownHomeScreen extends Screen {
 
     private void switchPage(Page page) {
         this.currentPage = page;
+        this.pageScroll = 0;
         updateButtonState();
+    }
+
+    private void layoutScrollableWidgets() {
+        boolean overviewPage = this.currentPage == Page.OVERVIEW;
+        boolean membersPage = this.currentPage == Page.MEMBERS;
+        boolean claimsPage = this.currentPage == Page.CLAIMS;
+        boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
+        boolean claimsMapView = claimsPage && this.claimsSubPage == 0;
+        boolean flagPage = this.currentPage == Page.FLAG;
+
+        layoutWidget(this.townNameInput, 12, 154, 18, overviewPage);
+        layoutWidget(this.saveTownNameButton, 162, 154, 18, overviewPage);
+        layoutWidget(this.abandonTownButton, 266, 154, 18, overviewPage);
+        layoutWidget(this.removeCoreButton, 266, 178, 18, overviewPage);
+
+        layoutWidget(this.appointMayorButton, 222, 196, 18, membersPage);
+
+        layoutWidget(this.claimButton, 12, BODY_H - 26, 18, claimsMapView);
+        layoutWidget(this.unclaimButton, 90, BODY_H - 26, 18, claimsMapView);
+        layoutWidget(this.claimsSubPageButton, 184, BODY_H - 26, 18, claimsPage);
+        layoutWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, 14, claimsPage);
+        layoutWidget(this.breakPermissionButton, 12, 50, 18, claimsPermView);
+        layoutWidget(this.placePermissionButton, 120, 50, 18, claimsPermView);
+        layoutWidget(this.usePermissionButton, 12, 74, 18, claimsPermView);
+        layoutWidget(this.containerPermissionButton, 120, 74, 18, claimsPermView);
+        layoutWidget(this.redstonePermissionButton, 12, 98, 18, claimsPermView);
+        layoutWidget(this.entityUsePermissionButton, 120, 98, 18, claimsPermView);
+        layoutWidget(this.entityDamagePermissionButton, 12, 122, 18, claimsPermView);
+
+        layoutWidget(this.flagPathInput, 12, BODY_H - 54, 18, flagPage);
+        layoutWidget(this.browseButton, 268, BODY_H - 54, 18, flagPage);
+        layoutWidget(this.uploadButton, 330, BODY_H - 54, 18, flagPage);
+        layoutWidget(this.toggleMirrorButton, 170, 82, 18, flagPage);
+    }
+
+    private void layoutWidget(AbstractWidget widget, int bodyLocalX, int bodyLocalY, int height, boolean pageVisible) {
+        if (widget == null) {
+            return;
+        }
+        int absoluteX = left() + BODY_X + bodyLocalX;
+        int absoluteY = top() + BODY_Y + bodyLocalY - this.pageScroll;
+        widget.setPosition(absoluteX, absoluteY);
+        if (!pageVisible) {
+            widget.visible = false;
+            return;
+        }
+        int viewportTop = bodyViewportTop();
+        int viewportBottom = bodyViewportBottom();
+        widget.visible = widget.visible && absoluteY + height > viewportTop && absoluteY < viewportBottom;
+    }
+
+    private boolean isInsideBodyViewport(double mouseX, double mouseY) {
+        return mouseX >= left() + BODY_X
+                && mouseX < left() + BODY_X + BODY_W
+                && mouseY >= bodyViewportTop()
+                && mouseY < bodyViewportBottom();
+    }
+
+    private int bodyViewportTop() {
+        return top() + BODY_Y + 24;
+    }
+
+    private int bodyViewportBottom() {
+        return top() + BODY_Y + BODY_H - 1;
+    }
+
+    private int maxPageScroll() {
+        return Math.max(0, pageContentHeight(this.currentPage) - (BODY_H - 26));
+    }
+
+    private int pageContentHeight(Page page) {
+        return switch (page) {
+            case OVERVIEW -> 240;
+            case MEMBERS -> 236;
+            case CLAIMS -> 224;
+            case FLAG -> 228;
+            case ECONOMY -> 252;
+        };
     }
 
     private void requestRefresh() {
@@ -756,6 +895,8 @@ public class TownHomeScreen extends Screen {
 
     private void requestRefresh(int centerChunkX, int centerChunkZ) {
         if (this.refreshPending) {
+            this.queuedPreviewCenterX = centerChunkX;
+            this.queuedPreviewCenterZ = centerChunkZ;
             return;
         }
         this.refreshPending = true;
@@ -763,6 +904,23 @@ public class TownHomeScreen extends Screen {
         this.pendingPreviewCenterZ = centerChunkZ;
         ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(this.data.townId(), centerChunkX, centerChunkZ));
         this.statusLine = Component.translatable("screen.sailboatmod.town.status.refreshing");
+    }
+
+    private void flushQueuedPreviewRefresh() {
+        if (this.refreshPending) {
+            return;
+        }
+        if (this.queuedPreviewCenterX == Integer.MIN_VALUE || this.queuedPreviewCenterZ == Integer.MIN_VALUE) {
+            return;
+        }
+        int queuedX = this.queuedPreviewCenterX;
+        int queuedZ = this.queuedPreviewCenterZ;
+        this.queuedPreviewCenterX = Integer.MIN_VALUE;
+        this.queuedPreviewCenterZ = Integer.MIN_VALUE;
+        if (queuedX == this.data.previewCenterChunkX() && queuedZ == this.data.previewCenterChunkZ()) {
+            return;
+        }
+        requestRefresh(queuedX, queuedZ);
     }
 
     private void resetMapOffset() {
@@ -997,6 +1155,16 @@ public class TownHomeScreen extends Screen {
     private String shortText(String value, int maxLength) { if (value == null || value.isBlank()) return "-"; return value.length() <= maxLength ? value : value.substring(0, Math.max(0, maxLength)) + "..."; }
     private String trimToWidth(String src, int maxPixels) { if (src == null || src.isEmpty() || maxPixels <= 0 || this.font.width(src) <= maxPixels) return src == null ? "" : src; String ellipsis = "..."; int ew = this.font.width(ellipsis); int end = src.length(); while (end > 0 && this.font.width(src.substring(0, end)) + ew > maxPixels) end--; return src.substring(0, Math.max(0, end)) + ellipsis; }
     private String headerText() { return !this.data.hasTown() ? Component.translatable("screen.sailboatmod.town.header.none").getString() : Component.translatable("screen.sailboatmod.town.header.value", this.data.townName(), this.data.nationName().isBlank() ? "-" : this.data.nationName()).getString(); }
+    private String buildEconomyHeaderLine() {
+        if (!this.data.hasTown()) {
+            return "";
+        }
+        return String.join("   ",
+                Component.translatable("screen.sailboatmod.econbar.net", formatMoney(this.data.netBalance())).getString(),
+                Component.translatable("screen.sailboatmod.econbar.income", formatMoney(this.data.totalIncome())).getString(),
+                Component.translatable("screen.sailboatmod.econbar.jobs", formatPercent(this.data.employmentRate())).getString(),
+                Component.translatable("screen.sailboatmod.econbar.literacy", formatPercent(this.data.averageLiteracy())).getString());
+    }
     private Component firstLine(List<Component> lines) { return lines.size() > 0 ? lines.get(0) : Component.empty(); }
     private Component secondLine(List<Component> lines) { return lines.size() > 1 ? lines.get(1) : Component.empty(); }
     private Component thirdLine(List<Component> lines) { return lines.size() > 2 ? lines.get(2) : Component.empty(); }
@@ -1047,9 +1215,126 @@ public class TownHomeScreen extends Screen {
     }
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }
+    private void drawMetricCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {
+        g.fill(x, y, x + w, y + h, 0x6E19120D);
+        g.fill(x, y, x + w, y + 1, accent);
+        g.fill(x, y + h - 1, x + w, y + h, 0xAA3E2B18);
+        g.drawString(this.font, Component.literal(trimToWidth(label.getString().replace(":", ""), w - 8)), x + 4, y + 3, 0xFFD0BA8C);
+        g.drawString(this.font, Component.literal(trimToWidth(value, w - 8)), x + 4, y + 11, 0xFFF6E9CA);
+    }
+    private void drawSplitPreviewPanel(GuiGraphics g, int x, int y, int w, int h, Component topTitle, List<String> topLines, Component bottomTitle, List<String> bottomLines) {
+        drawPanelFrame(g, x, y, w, h);
+        int innerX = x + 8;
+        int innerW = w - 16;
+        int splitY = y + 60;
+        g.drawString(this.font, topTitle, innerX, y + 8, 0xFFE7C977);
+        drawCompactList(g, innerX, y + 22, innerW, splitY - 6, topLines);
+        g.fill(x + 6, splitY, x + w - 6, splitY + 1, 0x66543B22);
+        g.drawString(this.font, bottomTitle, innerX, splitY + 8, 0xFFE7C977);
+        drawCompactList(g, innerX, splitY + 22, innerW, y + h - 8, bottomLines);
+    }
+    private void drawCompactList(GuiGraphics g, int x, int startY, int width, int maxY, List<String> lines) {
+        List<String> safeLines = (lines == null || lines.isEmpty()) ? List.of(Component.translatable("screen.sailboatmod.market.empty").getString()) : lines;
+        int drawY = startY;
+        for (String line : safeLines) {
+            if (drawY > maxY) {
+                return;
+            }
+            g.drawString(this.font, Component.literal(trimToWidth(line, width)), x, drawY, 0xFFE2D3B3);
+            drawY += 10;
+        }
+    }
+    private void drawDistributionPanel(GuiGraphics g, int x, int y, int w, int h, Component title, List<java.util.Map.Entry<String, Integer>> entries, String focusLabel, int accent, int accentDark) {
+        drawPanelFrame(g, x, y, w, h);
+        g.drawString(this.font, title, x + 8, y + 8, 0xFFE7C977);
+        String focus = focusLabel == null || focusLabel.isBlank() ? Component.translatable("screen.sailboatmod.town.overview.chart_none").getString() : focusLabel;
+        g.drawString(this.font, Component.literal(trimToWidth(focus, w - 16)), x + 8, y + 20, 0xFFDCEEFF);
+        int total = 0;
+        for (java.util.Map.Entry<String, Integer> entry : entries) {
+            total += Math.max(0, entry.getValue());
+        }
+        if (entries.isEmpty() || total <= 0) {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.town.overview.chart_none"), x + 8, y + 30, 0xFF8D98A3);
+            return;
+        }
+        int maxRows = Math.min(2, entries.size());
+        for (int i = 0; i < maxRows; i++) {
+            java.util.Map.Entry<String, Integer> entry = entries.get(i);
+            int rowY = y + 30 + i * 10;
+            String label = overviewCategoryName(entry.getKey());
+            int barX = x + 72;
+            int barW = Math.max(24, w - 106);
+            int fillW = Math.max(1, Math.round((entry.getValue() / (float) total) * barW));
+            g.drawString(this.font, Component.literal(trimToWidth(label, 58)), x + 8, rowY, 0xFFB8C0C8);
+            g.fill(barX, rowY + 1, barX + barW, rowY + 7, 0x3326333D);
+            g.fill(barX, rowY + 1, barX + fillW, rowY + 7, i == 0 ? accent : accentDark);
+            g.drawString(this.font, Component.literal((int) Math.round((entry.getValue() * 100.0) / total) + "%"), x + w - 24, rowY, 0xFFDCEEFF);
+        }
+    }
+    private void drawStatusBar(GuiGraphics g, int x, int y, int w, Component label, long value, long max, int accent, String suffix) {
+        int labelW = 58;
+        int barX = x + labelW;
+        int barW = Math.max(24, w - labelW - 42);
+        int safeMax = (int) Math.max(1L, max);
+        int safeValue = (int) Math.max(0L, Math.min(max, value));
+        int fillW = Math.max(1, Math.round((safeValue / (float) safeMax) * barW));
+        g.drawString(this.font, Component.literal(trimToWidth(label.getString(), labelW - 4)), x, y - 1, 0xFFB8C0C8);
+        g.fill(barX, y + 2, barX + barW, y + 8, 0x3326333D);
+        g.fill(barX, y + 2, barX + fillW, y + 8, accent);
+        g.fill(barX, y + 7, barX + barW, y + 8, 0x66465863);
+        g.drawString(this.font, Component.literal(trimToWidth(suffix, 40)), x + w - 40, y - 1, 0xFFDCEEFF);
+    }
     private void drawWrappedLine(GuiGraphics g, Component line, int x, int y, int w, int color) { int drawY = y; for (FormattedCharSequence seq : this.font.split(line, w)) { g.drawString(this.font, seq, x, drawY, color); drawY += 10; } }
     private int wrappedHeight(Component line, int width) { return Math.max(10, this.font.split(line, width).size() * 10); }
     private void drawRect(GuiGraphics g, int x1, int y1, int x2, int y2, int color) { int minX = Math.min(x1, x2), maxX = Math.max(x1, x2), minY = Math.min(y1, y2), maxY = Math.max(y1, y2); g.fill(minX, minY, maxX + 1, minY + 1, color); g.fill(minX, maxY, maxX + 1, maxY + 1, color); g.fill(minX, minY, minX + 1, maxY + 1, color); g.fill(maxX, minY, maxX + 1, maxY + 1, color); }
+    private List<java.util.Map.Entry<String, Integer>> buildSortedDistribution(java.util.Map<String, Integer> distribution) {
+        if (distribution == null || distribution.isEmpty()) {
+            return List.of();
+        }
+        return distribution.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(Math.max(0, b.getValue()), Math.max(0, a.getValue())))
+                .toList();
+    }
+    private String cultureDisplayName(String id) { return overviewCategoryName(id); }
+    private String dominantEducationName() {
+        List<java.util.Map.Entry<String, Integer>> entries = buildSortedDistribution(this.data.educationLevelDistribution());
+        return entries.isEmpty() ? Component.translatable("screen.sailboatmod.town.overview.chart_none").getString() : overviewCategoryName(entries.get(0).getKey());
+    }
+    private String overviewCategoryName(String id) {
+        if (id == null || id.isBlank()) {
+            return Component.translatable("screen.sailboatmod.town.overview.chart_none").getString();
+        }
+        String normalized = id.toLowerCase(Locale.ROOT);
+        String key = "screen.sailboatmod.town.overview.category." + normalized;
+        Component translated = Component.translatable(key);
+        String resolved = translated.getString();
+        if (!resolved.equals(key)) {
+            return resolved;
+        }
+        String spaced = normalized.replace('_', ' ').replace('-', ' ');
+        String[] parts = spaced.split(" ");
+        StringBuilder builder = new StringBuilder();
+        for (String part : parts) {
+            if (part.isBlank()) continue;
+            if (builder.length() > 0) builder.append(' ');
+            builder.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return builder.isEmpty() ? id : builder.toString();
+    }
+    private List<String> previewLines(List<String> lines, Component... fallback) {
+        if (lines != null && !lines.isEmpty()) {
+            return lines;
+        }
+        List<String> generated = new ArrayList<>();
+        if (fallback != null) {
+            for (Component component : fallback) {
+                if (component != null && !component.getString().isBlank()) {
+                    generated.add(component.getString());
+                }
+            }
+        }
+        return generated.isEmpty() ? List.of(Component.translatable("screen.sailboatmod.market.empty").getString()) : generated;
+    }
 
     private enum Page {
         OVERVIEW("screen.sailboatmod.town.section.overview"),

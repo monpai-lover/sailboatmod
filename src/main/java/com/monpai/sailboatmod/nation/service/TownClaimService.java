@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.nation.service;
 
-import com.monpai.sailboatmod.economy.VaultEconomyBridge;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimAccessLevel;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
@@ -73,7 +73,7 @@ public final class TownClaimService {
         int claimCost = batchClaimCost();
         if (claimCost > 0) {
             if (!chargePlayer(player, claimCost)) {
-                return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_enough_money", claimCost));
+                return NationResult.failure(Component.translatable("command.sailboatmod.nation.claim.not_enough_money", GoldStandardEconomy.formatBalance(claimCost)));
             }
         }
 
@@ -346,38 +346,7 @@ public final class TownClaimService {
         if (player == null || amount <= 0 || player.getAbilities().instabuild) {
             return true;
         }
-        Boolean vaultResult = VaultEconomyBridge.tryWithdraw(player, amount);
-        if (vaultResult != null) {
-            return vaultResult;
-        }
-        Inventory inventory = player.getInventory();
-        int remaining = amount;
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.is(Items.EMERALD)) {
-                continue;
-            }
-            remaining -= stack.getCount();
-            if (remaining <= 0) {
-                break;
-            }
-        }
-        if (remaining > 0) {
-            return false;
-        }
-        remaining = amount;
-        for (int i = 0; i < inventory.getContainerSize() && remaining > 0; i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.is(Items.EMERALD)) {
-                continue;
-            }
-            int consume = Math.min(stack.getCount(), remaining);
-            stack.shrink(consume);
-            remaining -= consume;
-        }
-        inventory.setChanged();
-        player.containerMenu.broadcastChanges();
-        return true;
+        return Boolean.TRUE.equals(GoldStandardEconomy.tryWithdraw(player, amount));
     }
 
     private TownClaimService() {

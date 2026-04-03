@@ -169,12 +169,12 @@ public final class BankConstructorPreviewRenderer {
             return;
         }
 
-        int x = 12;
         int y = 18;
-        int leftWidth = 210;
-        int rightWidth = 154;
+        int leftWidth = 196;
+        int rightWidth = 148;
         int columnGap = 10;
         int totalWidth = leftWidth + columnGap + rightWidth;
+        int x = Math.max(12, mc.getWindow().getGuiScaledWidth() - totalWidth - 16);
         int padding = 8;
         int lineHeight = 9;
         int rowSpacing = 2;
@@ -316,15 +316,19 @@ public final class BankConstructorPreviewRenderer {
                                              PreviewSummary summary,
                                              List<PreviewLine> projectionLines,
                                              List<PreviewLine> progressLines) {
+        int width = 176;
         int x = 12;
         int y = 14;
-        int width = 188;
         int padding = 6;
         int lineHeight = 9;
         int rowSpacing = 1;
         int currentY = y + padding;
+        int rightPadding = 12;
+        int materialsWidth = 140;
+        int materialsX = mc.getWindow().getGuiScaledWidth() - materialsWidth - rightPadding;
 
         List<PreviewLine> summaryLines = summary == null ? List.of() : buildCompactSummaryLines(summary);
+        List<PreviewLine> materialLines = summary == null ? List.of() : buildCompactMaterialLines(summary);
         int sections = 0;
         int totalHeight = padding * 2;
         if (!summaryLines.isEmpty()) {
@@ -372,6 +376,16 @@ public final class BankConstructorPreviewRenderer {
             drawWrappedPreviewLines(g, mc, progressLines.subList(0, Math.min(2, progressLines.size())),
                     x + padding, currentY, width - padding * 2, lineHeight, rowSpacing, false);
         }
+
+        if (!materialLines.isEmpty()) {
+            int materialsHeight = padding * 2
+                    + measureWrappedPreviewLines(mc, materialLines, materialsWidth - padding * 2, lineHeight, rowSpacing);
+            g.fill(materialsX - 4, y - 4, materialsX + materialsWidth, y + materialsHeight, 0x9812171D);
+            g.fill(materialsX - 4, y - 4, materialsX + materialsWidth, y - 3, 0xCCE7C977);
+            g.fill(materialsX - 3, y - 3, materialsX + materialsWidth - 1, y + materialsHeight - 1, 0xAA1D2730);
+            drawWrappedPreviewLines(g, mc, materialLines, materialsX + padding, y + padding,
+                    materialsWidth - padding * 2, lineHeight, rowSpacing, false);
+        }
     }
 
     private static List<PreviewLine> buildCompactSummaryLines(PreviewSummary summary) {
@@ -385,6 +399,20 @@ public final class BankConstructorPreviewRenderer {
             compact.add(summary.lines().get(i));
         }
         compact.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.expand_hint").getString(), 0xFF93AAB9));
+        return compact;
+    }
+
+    private static List<PreviewLine> buildCompactMaterialLines(PreviewSummary summary) {
+        if (summary == null) {
+            return List.of();
+        }
+        List<PreviewLine> compact = new ArrayList<>();
+        compact.add(new PreviewLine(Component.translatable("overlay.sailboatmod.constructor.materials").getString(), 0xFFF3D486));
+        List<PreviewLine> materials = summary.materialLines();
+        int limit = Math.min(4, materials.size());
+        for (int i = 0; i < limit; i++) {
+            compact.add(materials.get(i));
+        }
         return compact;
     }
 

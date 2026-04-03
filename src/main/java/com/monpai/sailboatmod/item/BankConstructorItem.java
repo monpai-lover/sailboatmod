@@ -326,6 +326,8 @@ public class BankConstructorItem extends Item {
                             getOffsetZ(stack),
                             getRotation(stack),
                             pendingOrigin != null,
+                            hand == InteractionHand.MAIN_HAND ? player.getInventory().selected : 40,
+                            hand == InteractionHand.OFF_HAND,
                             com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket.Action.CONFIRM_PENDING
                     )
             );
@@ -349,6 +351,8 @@ public class BankConstructorItem extends Item {
                     getOffsetZ(stack),
                     getRotation(stack),
                     hasPendingProjection(stack, level),
+                    hand == InteractionHand.MAIN_HAND ? player.getInventory().selected : 40,
+                    hand == InteractionHand.OFF_HAND,
                     player.isSprinting()
                             ? com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket.Action.ASSIST
                             : com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket.Action.PROJECT_OR_CONFIRM

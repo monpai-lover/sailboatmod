@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -26,9 +27,14 @@ public final class NationTreasuryService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.no_permission"));
         }
 
+        Boolean withdrawn = GoldStandardEconomy.tryWithdraw(player, amount);
+        if (!Boolean.TRUE.equals(withdrawn)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.bank.insufficient_personal"));
+        }
+
         NationTreasuryRecord treasury = data.getOrCreateTreasury(member.nationId());
         data.putTreasury(treasury.withBalance(treasury.currencyBalance() + amount));
-        return NationResult.success(Component.translatable("command.sailboatmod.nation.treasury.deposit.success", amount));
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.treasury.deposit.success", GoldStandardEconomy.formatBalance(amount)));
     }
 
     public static NationResult withdrawCurrency(ServerPlayer player, long amount) {
@@ -47,10 +53,11 @@ public final class NationTreasuryService {
 
         NationTreasuryRecord treasury = data.getOrCreateTreasury(member.nationId());
         if (treasury.currencyBalance() < amount) {
-            return NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.insufficient", treasury.currencyBalance()));
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.insufficient", GoldStandardEconomy.formatBalance(treasury.currencyBalance())));
         }
+        GoldStandardEconomy.tryDeposit(player, amount);
         data.putTreasury(treasury.withBalance(treasury.currencyBalance() - amount));
-        return NationResult.success(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", amount));
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", GoldStandardEconomy.formatBalance(amount)));
     }
 
     public static NationResult setSalesTax(ServerPlayer player, int basisPoints) {
@@ -103,7 +110,7 @@ public final class NationTreasuryService {
         return NationResult.success(Component.translatable(
                 "command.sailboatmod.nation.treasury.status",
                 nation.name(),
-                treasury.currencyBalance()
+                GoldStandardEconomy.formatBalance(treasury.currencyBalance())
         ));
     }
 }

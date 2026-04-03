@@ -27,6 +27,8 @@ public class SyncConstructorSettingsPacket {
     private final int offsetZ;
     private final int rotation;
     private final boolean hasPendingProjection;
+    private final int inventorySlot;
+    private final boolean offhand;
     private final Action action;
 
     public SyncConstructorSettingsPacket(BlockPos targetPos,
@@ -37,6 +39,8 @@ public class SyncConstructorSettingsPacket {
                                          int offsetZ,
                                          int rotation,
                                          boolean hasPendingProjection,
+                                         int inventorySlot,
+                                         boolean offhand,
                                          Action action) {
         this.targetPos = targetPos;
         this.structureIndex = structureIndex;
@@ -46,6 +50,8 @@ public class SyncConstructorSettingsPacket {
         this.offsetZ = offsetZ;
         this.rotation = rotation;
         this.hasPendingProjection = hasPendingProjection;
+        this.inventorySlot = inventorySlot;
+        this.offhand = offhand;
         this.action = action;
     }
 
@@ -58,6 +64,8 @@ public class SyncConstructorSettingsPacket {
         buf.writeInt(msg.offsetZ);
         buf.writeInt(msg.rotation);
         buf.writeBoolean(msg.hasPendingProjection);
+        buf.writeVarInt(msg.inventorySlot);
+        buf.writeBoolean(msg.offhand);
         buf.writeEnum(msg.action);
     }
 
@@ -70,6 +78,8 @@ public class SyncConstructorSettingsPacket {
                 buf.readInt(),
                 buf.readInt(),
                 buf.readInt(),
+                buf.readBoolean(),
+                buf.readVarInt(),
                 buf.readBoolean(),
                 buf.readEnum(Action.class)
         );
@@ -84,11 +94,7 @@ public class SyncConstructorSettingsPacket {
             StructureConstructionManager.StructureType type = StructureConstructionManager.StructureType.ALL.get(
                     Math.floorMod(msg.structureIndex, StructureConstructionManager.StructureType.ALL.size())
             );
-            net.minecraft.world.item.ItemStack held = player.getMainHandItem().is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())
-                    ? player.getMainHandItem()
-                    : player.getOffhandItem().is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())
-                    ? player.getOffhandItem()
-                    : net.minecraft.world.item.ItemStack.EMPTY;
+            net.minecraft.world.item.ItemStack held = findTargetConstructorStack(player, msg.inventorySlot, msg.offhand);
             if (held.isEmpty()) {
                 return;
             }
@@ -195,5 +201,30 @@ public class SyncConstructorSettingsPacket {
             return false;
         }
         return true;
+    }
+
+    private static net.minecraft.world.item.ItemStack findTargetConstructorStack(ServerPlayer player, int inventorySlot, boolean offhand) {
+        if (player == null) {
+            return net.minecraft.world.item.ItemStack.EMPTY;
+        }
+        if (offhand) {
+            net.minecraft.world.item.ItemStack offhandStack = player.getOffhandItem();
+            if (offhandStack.is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())) {
+                return offhandStack;
+            }
+        }
+        if (inventorySlot >= 0 && inventorySlot < player.getInventory().getContainerSize()) {
+            net.minecraft.world.item.ItemStack inventoryStack = player.getInventory().getItem(inventorySlot);
+            if (inventoryStack.is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())) {
+                return inventoryStack;
+            }
+        }
+        if (player.getMainHandItem().is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())) {
+            return player.getMainHandItem();
+        }
+        if (player.getOffhandItem().is(com.monpai.sailboatmod.registry.ModItems.BANK_CONSTRUCTOR_ITEM.get())) {
+            return player.getOffhandItem();
+        }
+        return net.minecraft.world.item.ItemStack.EMPTY;
     }
 }

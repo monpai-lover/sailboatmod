@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
-import com.monpai.sailboatmod.nation.service.BankConstructionManager;
+import com.monpai.sailboatmod.nation.service.StructureConstructionManager;
 import com.monpai.sailboatmod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -37,7 +37,13 @@ public class PlaceBankStructurePacket {
                 return;
             }
 
-            boolean started = BankConstructionManager.startConstruction(serverLevel, msg.pos, player);
+            boolean started = StructureConstructionManager.placeStructureAnimated(
+                    serverLevel,
+                    msg.pos,
+                    player,
+                    StructureConstructionManager.StructureType.VICTORIAN_BANK,
+                    0
+            );
             if (!started) {
                 player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank_constructor.failed"));
             }

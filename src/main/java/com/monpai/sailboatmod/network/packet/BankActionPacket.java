@@ -7,7 +7,7 @@ import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.TownService;
-import com.monpai.sailboatmod.economy.VaultEconomyBridge;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.network.FriendlyByteBuf;
@@ -76,13 +76,13 @@ public class BankActionPacket {
                         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.no_permission"));
                         return;
                     }
-                    Boolean withdrawn = VaultEconomyBridge.tryWithdraw(player, (int) msg.amount);
+                    Boolean withdrawn = GoldStandardEconomy.tryWithdraw(player, msg.amount);
                     if (withdrawn == null || !withdrawn) {
                         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.insufficient_personal"));
                         return;
                     }
                     data.putTreasury(treasury.withBalance(treasury.currencyBalance() + msg.amount));
-                    player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.deposit.success", msg.amount));
+                    player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.deposit.success", GoldStandardEconomy.formatBalance(msg.amount)));
                 }
                 case WITHDRAW_CURRENCY -> {
                     if (msg.amount <= 0) return;
@@ -91,12 +91,12 @@ public class BankActionPacket {
                         return;
                     }
                     if (treasury.currencyBalance() < msg.amount) {
-                        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.insufficient", treasury.currencyBalance()));
+                        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.insufficient", GoldStandardEconomy.formatBalance(treasury.currencyBalance())));
                         return;
                     }
-                    VaultEconomyBridge.tryDeposit(player, (int) msg.amount);
+                    GoldStandardEconomy.tryDeposit(player, msg.amount);
                     data.putTreasury(treasury.withBalance(treasury.currencyBalance() - msg.amount));
-                    player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", msg.amount));
+                    player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", GoldStandardEconomy.formatBalance(msg.amount)));
                 }
                 case DEPOSIT_ITEM -> {
                     if (!NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_TREASURY)) {

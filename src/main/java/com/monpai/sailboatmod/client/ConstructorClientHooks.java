@@ -53,6 +53,7 @@ public final class ConstructorClientHooks {
             if (bestTyped != null) {
                 return bestTyped;
             }
+            return null;
         }
 
         ConstructionProgress best = null;
@@ -75,6 +76,16 @@ public final class ConstructorClientHooks {
         if (minecraft.player == null || minecraft.level == null) {
             return;
         }
+        int inventorySlot = minecraft.player.getInventory().selected;
+        boolean offhand = stack == minecraft.player.getOffhandItem();
+        if (!offhand) {
+            for (int slot = 0; slot < minecraft.player.getInventory().getContainerSize(); slot++) {
+                if (minecraft.player.getInventory().getItem(slot) == stack) {
+                    inventorySlot = slot;
+                    break;
+                }
+            }
+        }
         net.minecraft.core.BlockPos pendingOrigin = com.monpai.sailboatmod.item.BankConstructorItem.getPendingProjectionOrigin(stack, minecraft.level);
         com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(
                 new com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket(
@@ -86,6 +97,8 @@ public final class ConstructorClientHooks {
                         com.monpai.sailboatmod.item.BankConstructorItem.getOffsetZ(stack),
                         com.monpai.sailboatmod.item.BankConstructorItem.getRotation(stack),
                         pendingOrigin != null,
+                        inventorySlot,
+                        offhand,
                         com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket.Action.SYNC_ONLY
                 )
         );

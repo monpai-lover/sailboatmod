@@ -56,6 +56,8 @@ public class OpenMarketScreenPacket {
         writeOrderEntries(buffer, data.orderEntries());
         writeShippingEntries(buffer, data.shippingEntries());
         writeBuyOrderEntries(buffer, data.buyOrderEntries());
+        writePriceChartSeries(buffer, data.priceChartSeries());
+        writeCommodityBuyBooks(buffer, data.commodityBuyBooks());
     }
 
     public static OpenMarketScreenPacket decode(FriendlyByteBuf buffer) {
@@ -94,6 +96,8 @@ public class OpenMarketScreenPacket {
         List<MarketOverviewData.OrderEntry> orderEntries = readOrderEntries(buffer);
         List<MarketOverviewData.ShippingEntry> shippingEntries = readShippingEntries(buffer);
         List<MarketOverviewData.BuyOrderEntry> buyOrderEntries = readBuyOrderEntries(buffer);
+        List<MarketOverviewData.PriceChartSeries> priceChartSeries = readPriceChartSeries(buffer);
+        List<MarketOverviewData.CommodityBuyBook> commodityBuyBooks = readCommodityBuyBooks(buffer);
         return new OpenMarketScreenPacket(new MarketOverviewData(
                 marketPos,
                 marketName,
@@ -129,7 +133,9 @@ public class OpenMarketScreenPacket {
                 listingEntries,
                 orderEntries,
                 shippingEntries,
-                buyOrderEntries
+                buyOrderEntries,
+                priceChartSeries,
+                commodityBuyBooks
         ));
     }
 
@@ -185,6 +191,7 @@ public class OpenMarketScreenPacket {
         buffer.writeVarInt(entries.size());
         for (MarketOverviewData.ListingEntry entry : entries) {
             PacketStringCodec.writeUtfSafe(buffer, entry.label(), 192);
+            PacketStringCodec.writeUtfSafe(buffer, entry.commodityKey(), 128);
             PacketStringCodec.writeUtfSafe(buffer, entry.itemName(), 96);
             buffer.writeVarInt(entry.availableCount());
             buffer.writeVarInt(entry.reservedCount());
@@ -192,6 +199,8 @@ public class OpenMarketScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, entry.sellerName(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.sourceDockName(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.nationId(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, entry.sellerNote(), 128);
+            PacketStringCodec.writeUtfSafe(buffer, entry.category(), 48);
         }
     }
 
@@ -201,13 +210,16 @@ public class OpenMarketScreenPacket {
         for (int i = 0; i < count; i++) {
             entries.add(new MarketOverviewData.ListingEntry(
                     buffer.readUtf(192),
+                    buffer.readUtf(128),
                     buffer.readUtf(96),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readUtf(64),
                     buffer.readUtf(64),
-                    buffer.readUtf(64)
+                    buffer.readUtf(64),
+                    buffer.readUtf(128),
+                    buffer.readUtf(48)
             ));
         }
         return entries;
@@ -274,6 +286,7 @@ public class OpenMarketScreenPacket {
             buffer.writeVarInt(entry.maxPriceBp());
             PacketStringCodec.writeUtfSafe(buffer, entry.buyerName(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.status(), 32);
+            buffer.writeLong(entry.createdAt());
         }
     }
 
@@ -289,9 +302,92 @@ public class OpenMarketScreenPacket {
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readUtf(64),
-                    buffer.readUtf(32)
+                    buffer.readUtf(32),
+                    buffer.readLong()
             ));
         }
         return entries;
+    }
+
+    private static void writePriceChartSeries(FriendlyByteBuf buffer, List<MarketOverviewData.PriceChartSeries> seriesList) {
+        buffer.writeVarInt(seriesList.size());
+        for (MarketOverviewData.PriceChartSeries series : seriesList) {
+            PacketStringCodec.writeUtfSafe(buffer, series.commodityKey(), 128);
+            PacketStringCodec.writeUtfSafe(buffer, series.displayName(), 96);
+            buffer.writeVarInt(series.points().size());
+            for (MarketOverviewData.PriceChartPoint point : series.points()) {
+                buffer.writeLong(point.bucketAt());
+                buffer.writeVarInt(point.averageUnitPrice());
+                buffer.writeVarInt(point.minUnitPrice());
+                buffer.writeVarInt(point.maxUnitPrice());
+                buffer.writeVarInt(point.volume());
+                buffer.writeVarInt(point.tradeCount());
+            }
+        }
+    }
+
+    private static List<MarketOverviewData.PriceChartSeries> readPriceChartSeries(FriendlyByteBuf buffer) {
+        int count = buffer.readVarInt();
+        List<MarketOverviewData.PriceChartSeries> seriesList = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String commodityKey = buffer.readUtf(128);
+            String displayName = buffer.readUtf(96);
+            int pointCount = buffer.readVarInt();
+            List<MarketOverviewData.PriceChartPoint> points = new ArrayList<>(pointCount);
+            for (int j = 0; j < pointCount; j++) {
+                points.add(new MarketOverviewData.PriceChartPoint(
+                        buffer.readLong(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt()
+                ));
+            }
+            seriesList.add(new MarketOverviewData.PriceChartSeries(commodityKey, displayName, points));
+        }
+        return seriesList;
+    }
+
+    private static void writeCommodityBuyBooks(FriendlyByteBuf buffer, List<MarketOverviewData.CommodityBuyBook> buyBooks) {
+        buffer.writeVarInt(buyBooks.size());
+        for (MarketOverviewData.CommodityBuyBook book : buyBooks) {
+            PacketStringCodec.writeUtfSafe(buffer, book.commodityKey(), 128);
+            PacketStringCodec.writeUtfSafe(buffer, book.displayName(), 96);
+            buffer.writeVarInt(book.entries().size());
+            for (MarketOverviewData.CommodityBuyEntry entry : book.entries()) {
+                PacketStringCodec.writeUtfSafe(buffer, entry.orderId(), 64);
+                PacketStringCodec.writeUtfSafe(buffer, entry.buyerName(), 64);
+                buffer.writeVarInt(entry.quantity());
+                buffer.writeVarInt(entry.minPriceBp());
+                buffer.writeVarInt(entry.maxPriceBp());
+                buffer.writeLong(entry.createdAt());
+                PacketStringCodec.writeUtfSafe(buffer, entry.status(), 32);
+            }
+        }
+    }
+
+    private static List<MarketOverviewData.CommodityBuyBook> readCommodityBuyBooks(FriendlyByteBuf buffer) {
+        int count = buffer.readVarInt();
+        List<MarketOverviewData.CommodityBuyBook> buyBooks = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String commodityKey = buffer.readUtf(128);
+            String displayName = buffer.readUtf(96);
+            int entryCount = buffer.readVarInt();
+            List<MarketOverviewData.CommodityBuyEntry> entries = new ArrayList<>(entryCount);
+            for (int j = 0; j < entryCount; j++) {
+                entries.add(new MarketOverviewData.CommodityBuyEntry(
+                        buffer.readUtf(64),
+                        buffer.readUtf(64),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readLong(),
+                        buffer.readUtf(32)
+                ));
+            }
+            buyBooks.add(new MarketOverviewData.CommodityBuyBook(commodityKey, displayName, entries));
+        }
+        return buyBooks;
     }
 }

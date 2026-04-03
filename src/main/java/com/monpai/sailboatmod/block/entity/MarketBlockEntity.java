@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.block.entity;
 
 import com.monpai.sailboatmod.dock.DockScreenData;
-import com.monpai.sailboatmod.economy.VaultEconomyBridge;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketOverviewData;
@@ -13,6 +13,7 @@ import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.commodity.CommodityPriceChartPoint;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
 import com.monpai.sailboatmod.menu.MarketMenu;
@@ -169,7 +170,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                                 label,
                                 itemName,
                                 stack.getCount(),
-                                currentCommodityUnitPrice(stack, 1, 1),
+                                currentCommodityUnitPrice(stack, 1, CommodityMarketService.estimateBaseUnitPrice(stack)),
                                 "Stored at " + dock.getDockName()
                         ));
                     }
@@ -179,6 +180,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
         List<String> listingLines = new ArrayList<>();
         List<MarketOverviewData.ListingEntry> listingEntries = new ArrayList<>();
+        Map<String, String> chartDisplayNames = new LinkedHashMap<>();
         List<String> orderLines = new ArrayList<>();
         List<MarketOverviewData.OrderEntry> orderEntries = new ArrayList<>();
         List<String> shippingLines = new ArrayList<>(boatLines);
@@ -186,17 +188,25 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             MarketSavedData market = MarketSavedData.get(level);
             for (MarketListing listing : market.getListings()) {
                 String line = describeListingLine(listing);
+                String category = resolveListingCategory(listing.itemStack());
                 listingLines.add(line);
                 listingEntries.add(new MarketOverviewData.ListingEntry(
                         line,
+                        CommodityKeyResolver.resolve(listing.itemStack()),
                         listing.itemStack().isEmpty() ? "-" : listing.itemStack().getHoverName().getString(),
                         listing.availableCount(),
                         listing.reservedCount(),
                         currentListingUnitPrice(listing, 1),
                         listing.sellerName(),
                         listing.sourceDockName().isBlank() ? listing.sourceDockPos().toShortString() : listing.sourceDockName(),
-                        listing.nationId()
+                        listing.nationId(),
+                        listing.sellerNote(),
+                        category
                 ));
+                chartDisplayNames.putIfAbsent(
+                        CommodityKeyResolver.resolve(listing.itemStack()),
+                        listing.itemStack().isEmpty() ? "-" : listing.itemStack().getHoverName().getString()
+                );
             }
             List<PurchaseOrder> openOrders = linkedDockPos == null ? List.<PurchaseOrder>of() : market.getOpenOrdersForSourceDock(linkedDockPos);
             for (PurchaseOrder order : openOrders) {
@@ -214,6 +224,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
         List<String> buyOrderLines = new ArrayList<>();
         List<MarketOverviewData.BuyOrderEntry> buyOrderEntries = new ArrayList<>();
+        List<MarketOverviewData.PriceChartSeries> priceChartSeries = new ArrayList<>();
+        List<MarketOverviewData.CommodityBuyBook> commodityBuyBooks = new ArrayList<>();
         if (level != null && !level.isClientSide && player != null) {
             try {
                 List<com.monpai.sailboatmod.market.commodity.BuyOrder> buyOrders =
@@ -229,10 +241,51 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                             order.minPriceBp(),
                             order.maxPriceBp(),
                             order.buyerName(),
-                            order.status()
+                            order.status(),
+                            order.createdAt()
                     ));
                 }
             } catch (Exception ignored) {
+            }
+        }
+
+        if (level != null && !level.isClientSide) {
+            for (Map.Entry<String, String> entry : chartDisplayNames.entrySet()) {
+                try {
+                    List<CommodityPriceChartPoint> points = COMMODITY_MARKET.listPriceChart(entry.getKey());
+                    List<MarketOverviewData.PriceChartPoint> chartPoints = new ArrayList<>(points.size());
+                    for (CommodityPriceChartPoint point : points) {
+                        chartPoints.add(new MarketOverviewData.PriceChartPoint(
+                                point.bucketAt(),
+                                point.averageUnitPrice(),
+                                point.minUnitPrice(),
+                                point.maxUnitPrice(),
+                                point.volume(),
+                                point.tradeCount()
+                        ));
+                    }
+                    priceChartSeries.add(new MarketOverviewData.PriceChartSeries(entry.getKey(), entry.getValue(), chartPoints));
+                } catch (SQLException exception) {
+                    MARKET_LOGGER.debug("Failed to load price chart history for {}", entry.getKey(), exception);
+                }
+                try {
+                    List<com.monpai.sailboatmod.market.commodity.BuyOrder> orders = COMMODITY_MARKET.listBuyOrders(entry.getKey());
+                    List<MarketOverviewData.CommodityBuyEntry> buyEntries = new ArrayList<>(orders.size());
+                    for (com.monpai.sailboatmod.market.commodity.BuyOrder order : orders) {
+                        buyEntries.add(new MarketOverviewData.CommodityBuyEntry(
+                                order.orderId(),
+                                order.buyerName(),
+                                order.quantity(),
+                                order.minPriceBp(),
+                                order.maxPriceBp(),
+                                order.createdAt(),
+                                order.status()
+                        ));
+                    }
+                    commodityBuyBooks.add(new MarketOverviewData.CommodityBuyBook(entry.getKey(), entry.getValue(), buyEntries));
+                } catch (SQLException exception) {
+                    MARKET_LOGGER.debug("Failed to load buy book for {}", entry.getKey(), exception);
+                }
             }
         }
 
@@ -271,11 +324,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listingEntries,
                 orderEntries,
                 shippingEntries,
-                buyOrderEntries
+                buyOrderEntries,
+                priceChartSeries,
+                commodityBuyBooks
         );
     }
 
-    public boolean createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int unitPrice, int priceAdjustmentBp) {
+    public boolean createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int unitPrice, int priceAdjustmentBp, String sellerNote) {
         DockBlockEntity dock = getLinkedDock();
         if (level == null || level.isClientSide || dock == null || player == null) {
             return false;
@@ -287,15 +342,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
         int stocked = selected.getCount();
         int amount = Math.max(1, Math.min(quantity, stocked));
-        int fallbackPrice = Math.max(1, unitPrice);
         ItemStack listed = selected.copy();
         listed.setCount(1);
+        int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listed), unitPrice);
         if (!dock.extractVisibleStorage(player, visibleStorageIndex, amount)) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.market.storage_empty"), true);
             return false;
         }
-        adjustCommoditySupply(listed, amount);
         int price = currentCommodityUnitPrice(listed, 1, fallbackPrice);
+        adjustCommoditySupply(listed, amount);
         MarketSavedData market = MarketSavedData.get(level);
         String listingTownId = dock.getTownId();
         String listingNationId = dock.getNationId();
@@ -317,7 +372,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 dock.getDockName(),
                 listingTownId,
                 listingNationId,
-                priceAdjustmentBp
+                priceAdjustmentBp,
+                sellerNote
         ));
         return true;
     }
@@ -364,7 +420,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sourceDockName(),
                 listing.townId(),
                 listing.nationId(),
-                listing.priceAdjustmentBp()
+                listing.priceAdjustmentBp(),
+                listing.sellerNote()
         ));
         PurchaseOrder createdOrder = new PurchaseOrder(
                 market.nextId(),
@@ -403,7 +460,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     buyerTownId,
                     "MARKET_PURCHASE",
                     total,
-                    "EMERALD",
+                    GoldStandardEconomy.LEDGER_CURRENCY,
                     CommodityKeyResolver.resolve(listing.itemStack()),
                     amount,
                     sourceRef
@@ -415,7 +472,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     sourceTownId,
                     "MARKET_SALE",
                     sellerPayout,
-                    "EMERALD",
+                    GoldStandardEconomy.LEDGER_CURRENCY,
                     CommodityKeyResolver.resolve(listing.itemStack()),
                     amount,
                     sourceRef
@@ -468,7 +525,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sourceDockName(),
                     listing.townId(),
                     listing.nationId(),
-                    listing.priceAdjustmentBp()
+                    listing.priceAdjustmentBp(),
+                    listing.sellerNote()
             ));
         }
         return true;
@@ -483,14 +541,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (pending <= 0) {
             return false;
         }
-        Boolean vaultResult = VaultEconomyBridge.tryDeposit(player, pending);
-        if (vaultResult != null && vaultResult) {
+        Boolean depositResult = GoldStandardEconomy.tryDeposit(player, pending);
+        if (depositResult != null && depositResult) {
             market.clearPendingCredits(player.getUUID().toString());
             return true;
         }
-        giveEmeraldPayout(player, pending);
         market.clearPendingCredits(player.getUUID().toString());
-        return true;
+        return depositResult != null && depositResult;
     }
 
     public boolean dispatchOrder(Player player, int orderIndex, int boatIndex) {
@@ -835,7 +892,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sourceDockName(),
                     listing.townId(),
                     listing.nationId(),
-                    listing.priceAdjustmentBp()
+                    listing.priceAdjustmentBp(),
+                    listing.sellerNote()
             ));
         }
     }
@@ -938,45 +996,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (player == null || amount <= 0 || player.getAbilities().instabuild) {
             return true;
         }
-        Boolean vaultResult = VaultEconomyBridge.tryWithdraw(player, amount);
-        if (vaultResult != null) {
-            return vaultResult;
-        }
-        Inventory inventory = player.getInventory();
-        int remaining = amount;
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.is(Items.EMERALD)) {
-                continue;
-            }
-            remaining -= stack.getCount();
-            if (remaining <= 0) {
-                break;
-            }
-        }
-        if (remaining > 0) {
-            return false;
-        }
-        remaining = amount;
-        for (int i = 0; i < inventory.getContainerSize() && remaining > 0; i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.is(Items.EMERALD)) {
-                continue;
-            }
-            int consume = Math.min(stack.getCount(), remaining);
-            stack.shrink(consume);
-            remaining -= consume;
-        }
-        inventory.setChanged();
-        player.containerMenu.broadcastChanges();
-        return true;
+        return Boolean.TRUE.equals(GoldStandardEconomy.tryWithdraw(player, amount));
     }
 
     private void paySeller(MarketSavedData market, String sellerUuid, String sellerName, int amount) {
         if (amount <= 0 || market == null || sellerUuid == null || sellerUuid.isBlank()) {
             return;
         }
-        Boolean deposited = VaultEconomyBridge.tryDepositByIdentity(parseUuid(sellerUuid), sellerName, amount);
+        Boolean deposited = GoldStandardEconomy.tryDepositByIdentity(parseUuid(sellerUuid), sellerName, amount);
         if (deposited != null && deposited) {
             return;
         }
@@ -985,6 +1012,18 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private String describeListingLine(MarketListing listing) {
         return listing.toSummaryLine(currentListingUnitPrice(listing, 1));
+    }
+
+    private String resolveListingCategory(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return "";
+        }
+        try {
+            return COMMODITY_MARKET.ensureCommodity(stack).definition().category();
+        } catch (SQLException exception) {
+            MARKET_LOGGER.debug("Failed to resolve commodity category for {}", stack.getHoverName().getString(), exception);
+            return "";
+        }
     }
 
     private int currentCommodityUnitPrice(ItemStack stack, int quantity, int fallbackPrice) {
@@ -1000,7 +1039,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return 0;
         }
         CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
-        int basePrice = quote == null ? Math.max(1, listing.unitPrice()) : Math.max(1, quote.buyUnitPrice());
+        int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listing.itemStack()), listing.unitPrice());
+        int basePrice = quote == null ? Math.max(1, fallbackPrice) : Math.max(1, quote.buyUnitPrice());
         return applyPriceAdjustment(basePrice, listing.priceAdjustmentBp());
     }
 
@@ -1009,8 +1049,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return 0;
         }
         CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
+        int fallbackUnitPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listing.itemStack()), listing.unitPrice());
         int baseTotal = quote == null
-                ? Math.max(1, listing.unitPrice()) * Math.max(1, quantity)
+                ? Math.max(1, fallbackUnitPrice) * Math.max(1, quantity)
                 : Math.max(0, quote.buyPrice());
         return Math.max(0, applyPriceAdjustment(baseTotal, listing.priceAdjustmentBp()));
     }
@@ -1072,18 +1113,4 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
-    private static void giveEmeraldPayout(Player player, int amount) {
-        int remaining = amount;
-        while (remaining > 0) {
-            int stackSize = Math.min(64, remaining);
-            ItemStack stack = new ItemStack(Items.EMERALD, stackSize);
-            boolean added = player.getInventory().add(stack);
-            if (!added || !stack.isEmpty()) {
-                player.drop(stack, false);
-            }
-            remaining -= stackSize;
-        }
-        player.getInventory().setChanged();
-        player.containerMenu.broadcastChanges();
-    }
 }

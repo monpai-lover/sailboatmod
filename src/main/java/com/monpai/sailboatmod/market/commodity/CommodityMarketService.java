@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.market.commodity;
 
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -8,9 +9,11 @@ import java.sql.SQLException;
 
 public final class CommodityMarketService {
     private static final int INT_SCALE = 10_000;
-    private static final int DEFAULT_BASE_PRICE = 10;
+    private static final int DEFAULT_BASE_PRICE = GoldStandardEconomy.BALANCE_PER_GOLD_INGOT;
     private static final int DEFAULT_VOLATILITY = 100;
     private static final int DEFAULT_SPREAD_BP = 500;
+    private static final long PRICE_CHART_BUCKET_MS = 60L * 60L * 1000L;
+    private static final int PRICE_CHART_BUCKET_COUNT = 24;
 
     private final CommodityMarketRepository repository = new CommodityMarketRepository();
 
@@ -168,6 +171,10 @@ public final class CommodityMarketService {
         repository.updateBuyOrderStatus(orderId, "CANCELLED");
     }
 
+    public java.util.List<CommodityPriceChartPoint> listPriceChart(String commodityKey) throws SQLException {
+        return repository.listTradeHistoryBuckets(commodityKey, PRICE_CHART_BUCKET_MS, PRICE_CHART_BUCKET_COUNT);
+    }
+
     public CommoditySnapshot ensureCommodity(ItemStack itemStack) throws SQLException {
         CommodityDefinition definition = definitionFrom(itemStack);
         CommodityDefinition storedDefinition = repository.getDefinition(definition.commodityKey());
@@ -178,7 +185,7 @@ public final class CommodityMarketService {
 
         CommodityMarketState state = repository.getState(definition.commodityKey());
         if (state == null) {
-            state = defaultState(definition.commodityKey());
+            state = defaultState(storedDefinition);
             repository.upsertState(state);
         }
 
@@ -192,11 +199,20 @@ public final class CommodityMarketService {
         return CommodityInitializer.createDefault(itemId, itemId, displayName);
     }
 
-    private CommodityMarketState defaultState(String commodityKey) {
+    public static int estimateBaseUnitPrice(ItemStack itemStack) {
+        CommodityDefinition definition = CommodityInitializer.createDefault(
+                CommodityKeyResolver.resolve(itemStack),
+                CommodityKeyResolver.resolve(itemStack),
+                itemStack == null || itemStack.isEmpty() ? CommodityKeyResolver.resolve(itemStack) : itemStack.getHoverName().getString()
+        );
+        return estimateBaseUnitPrice(definition);
+    }
+
+    private CommodityMarketState defaultState(CommodityDefinition definition) {
         long now = System.currentTimeMillis();
         return new CommodityMarketState(
-                commodityKey,
-                DEFAULT_BASE_PRICE,
+                definition.commodityKey(),
+                estimateBaseUnitPrice(definition),
                 0,
                 DEFAULT_VOLATILITY,
                 DEFAULT_SPREAD_BP,
@@ -208,6 +224,42 @@ public final class CommodityMarketService {
                 now,
                 0
         );
+    }
+
+    private static int estimateBaseUnitPrice(CommodityDefinition definition) {
+        String itemId = definition == null ? "" : definition.itemId().toLowerCase();
+        String category = definition == null ? "" : definition.category().toLowerCase();
+
+        if (itemId.contains("diamond") || itemId.contains("emerald") || itemId.contains("beacon")) {
+            return 64;
+        }
+        if (itemId.contains("netherite")) {
+            return 72;
+        }
+        if (itemId.contains("copper") || itemId.contains("iron") || itemId.contains("gold")) {
+            return 18;
+        }
+        if (itemId.contains("glass") || itemId.contains("lantern") || itemId.contains("torch")) {
+            return 8;
+        }
+        if (itemId.contains("brick") || itemId.contains("stone") || itemId.contains("slab") || itemId.contains("stairs")) {
+            return 6;
+        }
+        if (itemId.contains("log") || itemId.contains("planks") || itemId.contains("wood") || itemId.contains("fence") || itemId.contains("door")) {
+            return 5;
+        }
+
+        return switch (category) {
+            case "luxury" -> 32;
+            case "gems" -> 48;
+            case "metal" -> 18;
+            case "ore" -> 14;
+            case "tools" -> 16;
+            case "spices" -> 14;
+            case "wood" -> 5;
+            case "food" -> DEFAULT_BASE_PRICE;
+            default -> DEFAULT_BASE_PRICE;
+        };
     }
 
     private CommodityQuote buildQuote(CommoditySnapshot snapshot, int quantity, PlayerMarketSettings playerSettings) {

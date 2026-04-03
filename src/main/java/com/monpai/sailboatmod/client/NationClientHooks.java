@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.client.screen.nation.NationHomeScreen;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 
 public final class NationClientHooks {
@@ -50,8 +51,12 @@ public final class NationClientHooks {
         if (minecraft == null) {
             return;
         }
-        Component titleComponent = Component.literal(title == null || title.isBlank() ? "Nation" : title);
-        Component messageComponent = Component.literal(message == null || message.isBlank() ? "-" : message);
+        Component titleComponent = title == null || title.isBlank()
+                ? Component.translatable("screen.sailboatmod.nation.home.title")
+                : Component.literal(title);
+        Component messageComponent = message == null || message.isBlank()
+                ? CommonComponents.EMPTY
+                : Component.literal(message);
         SystemToast.add(minecraft.getToasts(), SystemToast.SystemToastIds.PERIODIC_NOTIFICATION, titleComponent, messageComponent);
     }
 

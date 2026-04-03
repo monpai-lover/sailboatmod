@@ -280,10 +280,9 @@ public class RouteBookItem extends Item {
         String startName = DockBlockEntity.getDockDisplayName(player.level(), startDock);
         String endName = DockBlockEntity.getDockDisplayName(player.level(), endDock);
         String suffix = name == null ? "" : name.trim();
-        String finalName = startName + "-" + endName + "路线";
-        if (!suffix.isBlank()) {
-            finalName = finalName + "-\"" + suffix + "\"";
-        }
+        String finalName = suffix.isBlank()
+                ? Component.translatable("item.sailboatmod.route_book.generated_name", startName, endName).getString()
+                : Component.translatable("item.sailboatmod.route_book.generated_name_with_suffix", startName, endName, suffix).getString();
         RouteDefinition finalized = new RouteDefinition(
                 finalName,
                 route.waypoints(),
@@ -338,7 +337,7 @@ public class RouteBookItem extends Item {
     }
 
     private static String nextRouteName(int index) {
-        return "Route-" + (index + 1);
+        return Component.translatable("item.sailboatmod.route_book.default_name", index + 1).getString();
     }
 
     private static String formatLength(double value) {

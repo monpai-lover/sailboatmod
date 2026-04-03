@@ -2,15 +2,16 @@ package com.monpai.sailboatmod.client.renderer.blockentity;
 
 import com.monpai.sailboatmod.block.entity.NationCoreBlockEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
-import org.joml.Matrix4f;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 import net.minecraft.network.chat.Component;
+import org.joml.Matrix4f;
 
 public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<NationCoreBlockEntity> {
+    private static final int HEADER_COLOR = 0xFFF3E7C7;
     private final Font font;
 
     public NationCoreBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
@@ -19,7 +20,7 @@ public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<Nation
 
     @Override
     public void render(NationCoreBlockEntity blockEntity, float partialTick, PoseStack poseStack, MultiBufferSource bufferSource, int packedLight, int packedOverlay) {
-        if (blockEntity == null || blockEntity.getNationId().isBlank()) {
+        if (blockEntity == null) {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
@@ -32,10 +33,16 @@ public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<Nation
         poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
         poseStack.scale(-0.025F, -0.025F, 0.025F);
 
-        drawCenteredLine(poseStack, bufferSource, Component.literal(blockEntity.getNationName()), 0, blockEntity.getPrimaryColor(), packedLight);
+        drawCenteredLine(poseStack, bufferSource, blockEntity.getDisplayName(), 0, HEADER_COLOR, packedLight);
+
+        String nationName = blockEntity.getNationName();
+        if (!nationName.isBlank() && !"-".equals(nationName)) {
+            drawCenteredLine(poseStack, bufferSource, Component.literal(nationName), 10, blockEntity.getPrimaryColor(), packedLight);
+        }
+
         if (blockEntity.isActiveWar()) {
             Component status = Component.translatable("command.sailboatmod.nation.war.status." + blockEntity.getWarCaptureState());
-            drawCenteredLine(poseStack, bufferSource, Component.translatable("screen.sailboatmod.nation.section.war").append(": ").append(status), 10, 0xE25A4F, packedLight);
+            drawCenteredLine(poseStack, bufferSource, Component.translatable("screen.sailboatmod.nation.section.war").append(": ").append(status), 20, 0xE25A4F, packedLight);
         }
         poseStack.popPose();
     }

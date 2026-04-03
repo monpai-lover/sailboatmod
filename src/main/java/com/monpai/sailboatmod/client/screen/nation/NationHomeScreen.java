@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.NationFlagUploadClient;
@@ -21,6 +22,7 @@ import com.monpai.sailboatmod.network.packet.OpenTownMenuPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -51,7 +53,7 @@ public class NationHomeScreen extends Screen {
     private static final int MEMBER_ROW_H = 14;
     private static final int MEMBER_VISIBLE_ROWS = 12;
     private static final int TREASURY_ITEM_ROW_H = 20;
-    private static final int TREASURY_ITEM_VISIBLE_ROWS = 6;
+    private static final int TREASURY_ITEM_VISIBLE_ROWS = 4;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
     private int claimRadius() {
@@ -121,6 +123,7 @@ public class NationHomeScreen extends Screen {
     private int claimsSubPage;
     private Button claimsSubPageButton;
     private int diplomacyScroll;
+    private int pageScroll;
     private String selectedDiplomacyNationId = "";
     private Button dipAllyButton;
     private Button dipTradeButton;
@@ -150,6 +153,8 @@ public class NationHomeScreen extends Screen {
     private double dragStartY = 0;
     private int pendingPreviewCenterX = Integer.MIN_VALUE;
     private int pendingPreviewCenterZ = Integer.MIN_VALUE;
+    private int queuedPreviewCenterX = Integer.MIN_VALUE;
+    private int queuedPreviewCenterZ = Integer.MIN_VALUE;
     private boolean resetPending = false;
     private boolean refreshPending;
     private static final int DIP_ROW_H = 20;
@@ -199,6 +204,7 @@ public class NationHomeScreen extends Screen {
         }
         this.statusLine = Component.translatable("screen.sailboatmod.nation.status.synced");
         updateButtonState();
+        flushQueuedPreviewRefresh();
     }
 
     @Override
@@ -280,7 +286,7 @@ public class NationHomeScreen extends Screen {
         this.salesTaxDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustSalesTax(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 72, 20, 14).build());
         this.tariffUpButton = this.addRenderableWidget(Button.builder(Component.literal("+"), b -> adjustTariff(100)).bounds(left + BODY_X + 200, top + BODY_Y + 90, 20, 14).build());
         this.tariffDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustTariff(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 90, 20, 14).build());
-        this.treasuryCommandsButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.treasury.commands"), b -> this.showTreasuryCommands = !this.showTreasuryCommands).bounds(left + BODY_X + BODY_W - 90, top + BODY_Y + 34, 78, 18).build());
+        this.treasuryCommandsButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.treasury.commands"), b -> this.showTreasuryCommands = !this.showTreasuryCommands).bounds(left + BODY_X + BODY_W - 90, top + BODY_Y + 68, 78, 18).build());
 
         // Claim radius buttons
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
@@ -379,8 +385,8 @@ public class NationHomeScreen extends Screen {
             }
         }
         if (this.currentPage == Page.TREASURY) {
-            int itemListX = left() + BODY_X + 12;
-            int itemListY = top() + BODY_Y + 124;
+            int itemListX = left() + BODY_X + 20;
+            int itemListY = top() + BODY_Y + 140;
             int itemListW = BODY_W - 24;
             int itemListH = TREASURY_ITEM_VISIBLE_ROWS * TREASURY_ITEM_ROW_H;
             if (mouseX >= itemListX && mouseX < itemListX + itemListW && mouseY >= itemListY && mouseY < itemListY + itemListH) {
@@ -398,6 +404,11 @@ public class NationHomeScreen extends Screen {
                 this.diplomacyScroll = Math.max(0, Math.min(maxScroll, this.diplomacyScroll + (delta > 0 ? -1 : 1)));
                 return true;
             }
+        }
+        if (isInsideBodyViewport(mouseX, mouseY) && maxPageScroll() > 0) {
+            this.pageScroll = Math.max(0, Math.min(maxPageScroll(), this.pageScroll + (delta > 0 ? -16 : 16)));
+            updateButtonState();
+            return true;
         }
         return super.mouseScrolled(mouseX, mouseY, delta);
     }
@@ -474,9 +485,19 @@ public class NationHomeScreen extends Screen {
         g.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xCC101820);
         g.fill(left + 1, top + 1, left + SCREEN_W - 1, top + SCREEN_H - 1, 0xCC182632);
         g.drawString(this.font, this.title, left + 12, top + 18, 0xFFE7C977);
-        g.drawString(this.font, headerText(), left + 132, top + 18, 0xFFDCEEFF);
+        String economyBar = buildEconomyHeaderLine();
+        int reserveRight = 96;
+        int economyX = left + SCREEN_W - reserveRight - this.font.width(economyBar);
+        int headerWidth = Math.max(48, economyX - (left + 132) - 8);
+        g.drawString(this.font, trimToWidth(headerText(), headerWidth), left + 132, top + 18, 0xFFDCEEFF);
+        if (!economyBar.isBlank()) {
+            g.drawString(this.font, economyBar, economyX, top + 18, 0xFFB8C0C8);
+        }
         drawPanelFrame(g, left + BODY_X, top + BODY_Y, BODY_W, BODY_H);
         g.drawString(this.font, currentPage.title(), left + BODY_X + 10, top + BODY_Y + 10, 0xFFE7C977);
+        g.enableScissor(left + BODY_X + 1, bodyViewportTop(), left + BODY_X + BODY_W - 1, top + BODY_Y + BODY_H - 1);
+        g.pose().pushPose();
+        g.pose().translate(0.0F, -this.pageScroll, 0.0F);
         switch (this.currentPage) {
             case OVERVIEW -> drawOverviewPage(g, left + BODY_X, top + BODY_Y);
             case MEMBERS -> drawMembersPage(g, left + BODY_X, top + BODY_Y);
@@ -486,6 +507,8 @@ public class NationHomeScreen extends Screen {
             case TREASURY -> drawTreasuryPage(g, left + BODY_X, top + BODY_Y);
             case FLAG -> drawFlagPage(g, left + BODY_X, top + BODY_Y);
         }
+        g.pose().popPose();
+        g.disableScissor();
         if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
     }
 
@@ -496,22 +519,23 @@ public class NationHomeScreen extends Screen {
             drawY += wrappedHeight(line, BODY_W - 24) + 6;
         }
         if (!this.data.hasNation()) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.create_label"), x + 12, y + 136, 0xFFB8C0C8);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.join_label"), x + 12, y + 164, 0xFFB8C0C8);
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.overview.help_hint"), x + 12, y + 208, 272, 0xFF8D98A3);
+            int formY = Math.max(y + 120, drawY + 8);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.create_label"), x + 12, formY, 0xFFB8C0C8);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.join_label"), x + 12, formY + 48, 0xFFB8C0C8);
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.overview.help_hint"), x + 12, formY + 94, 272, 0xFF8D98A3);
             return;
         }
-        int formY = y + 126;
+        int formY = Math.max(y + 118, drawY + 8);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.name"), x + 12, formY, 0xFFB8C0C8);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.short_name"), x + 216, formY, 0xFFB8C0C8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.manage_hint"), x + 12, y + 176, 0xFF8D98A3);
         NationOverviewTown selectedTown = selectedTown();
+        int townInfoY = formY + 104;
         if (selectedTown != null) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_selected", shortText(selectedTown.townName(), 18)), x + 12, y + 194, 0xFFDCEEFF);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_mayor", shortText(selectedTown.mayorName(), 18)), x + 12, y + 208, 0xFFB8C0C8);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_claims", selectedTown.claimCount(), selectedTown.capital() ? Component.translatable("screen.sailboatmod.nation.overview.town_capital").getString() : ""), x + 12, y + 222, 0xFF8D98A3);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_selected", shortText(selectedTown.townName(), 18)), x + 12, townInfoY, 0xFFDCEEFF);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_mayor", shortText(selectedTown.mayorName(), 18)), x + 12, townInfoY + 16, 0xFFB8C0C8);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_claims", selectedTown.claimCount(), selectedTown.capital() ? Component.translatable("screen.sailboatmod.nation.overview.town_capital").getString() : ""), x + 12, townInfoY + 32, 0xFF8D98A3);
         } else {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_none"), x + 12, y + 202, 0xFF8D98A3);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_none"), x + 12, townInfoY + 8, 0xFF8D98A3);
         }
     }
 
@@ -719,47 +743,101 @@ public class NationHomeScreen extends Screen {
     }
 
     private void drawTreasuryPage(GuiGraphics g, int x, int y) {
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.balance_label"), x + 12, y + 34, 0xFFB8C0C8);
-        String balanceText = String.format("%,d", this.data.treasuryBalance());
-        g.drawString(this.font, balanceText, x + 120, y + 34, 0xFFE7C977);
+        int cardX = x + 12;
+        int cardY = y + 32;
+        int cardGap = 6;
+        int cardW = (BODY_W - 24 - cardGap * 3) / 4;
+        int cardH = 22;
+        drawMetricCard(g, cardX, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.nation.treasury.metric.balance"),
+                formatCompactMoney(this.data.treasuryBalance()),
+                0xC08E7448);
+        drawMetricCard(g, cardX + (cardW + cardGap), cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.nation.treasury.metric.towns"),
+                Integer.toString(this.data.towns().size()),
+                0xC05C7F90);
+        drawMetricCard(g, cardX + (cardW + cardGap) * 2, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.nation.treasury.metric.trades"),
+                Integer.toString(this.data.recentTradeCount()),
+                0xC07F6750);
+        drawMetricCard(g, cardX + (cardW + cardGap) * 3, cardY, cardW, cardH,
+                Component.translatable("screen.sailboatmod.nation.treasury.metric.items"),
+                occupiedTreasurySlots() + " / " + this.data.treasuryItems().size(),
+                0xC0567164);
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.sales_tax_label"), x + 12, y + 56, 0xFFB8C0C8);
-        g.drawString(this.font, String.format("%.1f%%", this.data.salesTaxBasisPoints() / 100.0), x + 140, y + 56, 0xFFDCEEFF);
+        int policyX = x + 12;
+        int policyY = y + 62;
+        int policyW = 236;
+        int policyH = 58;
+        drawPanelFrame(g, policyX, policyY, policyW, policyH);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.policy_title"), policyX + 8, policyY + 8, 0xFFE7C977);
+        drawPolicyBar(g, policyX + 8, y + 72,
+                Component.translatable("screen.sailboatmod.nation.treasury.sales_tax_label"),
+                this.data.salesTaxBasisPoints(),
+                3000,
+                0xFF7AA2C6);
+        drawPolicyBar(g, policyX + 8, y + 90,
+                Component.translatable("screen.sailboatmod.nation.treasury.import_tariff_label"),
+                this.data.importTariffBasisPoints(),
+                5000,
+                0xFFC69263);
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.import_tariff_label"), x + 12, y + 74, 0xFFB8C0C8);
-        g.drawString(this.font, String.format("%.1f%%", this.data.importTariffBasisPoints() / 100.0), x + 140, y + 74, 0xFFDCEEFF);
+        int summaryX = x + 256;
+        int summaryY = y + 62;
+        int summaryW = BODY_W - 24 - policyW - 8;
+        int summaryH = 58;
+        drawPanelFrame(g, summaryX, summaryY, summaryW, summaryH);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.inventory_title"), summaryX + 8, summaryY + 8, 0xFFE7C977);
+        g.drawString(this.font, Component.literal(Component.translatable("screen.sailboatmod.nation.treasury.trade_count_label").getString() + " " + this.data.recentTradeCount()), summaryX + 8, summaryY + 22, 0xFFDCEEFF);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.item_slots", occupiedTreasurySlots(), this.data.treasuryItems().size()), summaryX + 8, summaryY + 34, 0xFFDCEEFF);
+        g.drawString(this.font, Component.literal(trimToWidth(Component.translatable("screen.sailboatmod.nation.treasury.bank_access_hint").getString(), summaryW - 16)), summaryX + 8, summaryY + 46, 0xFF8D98A3);
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.trade_count_label"), x + 12, y + 92, 0xFFB8C0C8);
-        g.drawString(this.font, String.valueOf(this.data.recentTradeCount()), x + 140, y + 92, 0xFFDCEEFF);
+        int itemPanelX = x + 12;
+        int itemPanelY = y + 128;
+        int itemPanelW = BODY_W - 24;
+        int itemPanelH = 88;
+        drawPanelFrame(g, itemPanelX, itemPanelY, itemPanelW, itemPanelH);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.items_label"), itemPanelX + 8, itemPanelY + 8, 0xFFE7C977);
 
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.items_label"), x + 12, y + 110, 0xFFB8C0C8);
-
-        int itemListX = x + 12;
-        int itemListY = y + 124;
-        int itemListW = BODY_W - 24;
+        int itemListX = itemPanelX + 8;
+        int itemListY = itemPanelY + 12;
+        int itemListW = itemPanelW - 16;
         g.fill(itemListX, itemListY, itemListX + itemListW, itemListY + TREASURY_ITEM_VISIBLE_ROWS * TREASURY_ITEM_ROW_H, 0x44000000);
 
-        int startIdx = Math.max(0, treasuryItemScroll);
+        int startIdx = Math.max(0, this.treasuryItemScroll);
         int drawn = 0;
         for (int i = 0; i < this.data.treasuryItems().size() && drawn < TREASURY_ITEM_VISIBLE_ROWS; i++) {
             net.minecraft.world.item.ItemStack stack = this.data.treasuryItems().get(i);
             if (stack.isEmpty()) continue;
-            if (startIdx > 0) { startIdx--; continue; }
+            if (startIdx > 0) {
+                startIdx--;
+                continue;
+            }
             int rowY = itemListY + drawn * TREASURY_ITEM_ROW_H + 2;
-            g.renderItem(stack, itemListX + 2, rowY);
-            String name = stack.getHoverName().getString();
-            if (name.length() > 30) name = name.substring(0, 30) + "...";
-            g.drawString(this.font, name, itemListX + 22, rowY + 4, 0xFFDCEEFF);
-            g.drawString(this.font, "x" + stack.getCount(), itemListX + itemListW - 40, rowY + 4, 0xFFE7C977);
+            int rowColor = (drawn & 1) == 0 ? 0x331F2D39 : 0x33293A48;
+            g.fill(itemListX + 2, rowY - 1, itemListX + itemListW - 2, rowY + TREASURY_ITEM_ROW_H - 3, rowColor);
+            g.renderItem(stack, itemListX + 4, rowY);
+            g.drawString(this.font, trimToWidth(stack.getHoverName().getString(), itemListW - 72), itemListX + 24, rowY + 4, 0xFFDCEEFF);
+            g.drawString(this.font, "x" + stack.getCount(), itemListX + itemListW - 30, rowY + 4, 0xFFE7C977);
             drawn++;
         }
+        if (drawn == 0) {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.market.empty"), itemListX + 4, itemListY + 6, 0xFF8D98A3);
+        }
 
+        int hintY = itemPanelY + itemPanelH + 4;
+        drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.detail_hint"), x + 12, hintY, BODY_W - 24, 0xFF8D98A3);
         if (this.showTreasuryCommands) {
-            int cmdY = y + 246;
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.bank_hint"), x + 12, cmdY, BODY_W - 24, 0xFF8D98A3);
-            if (this.data.canManageTreasury()) {
-                drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.commands_hint"), x + 12, cmdY + 24, BODY_W - 24, 0xFF8D98A3);
-            }
+            drawWrappedLine(g,
+                    Component.translatable(this.data.canManageTreasury()
+                            ? "screen.sailboatmod.nation.treasury.commands_hint"
+                            : "screen.sailboatmod.nation.treasury.bank_hint"),
+                    x + 12,
+                    hintY + 12,
+                    BODY_W - 24,
+                    0xFF8D98A3);
+        } else {
+            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.policy_hint"), x + 12, hintY + 12, BODY_W - 24, 0xFF8D98A3);
         }
     }
 
@@ -965,6 +1043,7 @@ public class NationHomeScreen extends Screen {
             this.toggleMirrorButton.active = canMirror;
             this.toggleMirrorButton.setMessage(Component.translatable(this.data.flagMirrored() ? "screen.sailboatmod.nation.action.unmirror" : "screen.sailboatmod.nation.action.mirror"));
         }
+        layoutScrollableWidgets();
     }
 
     private int mapCenterX() { return this.data.previewCenterChunkX() + this.mapOffsetX; }
@@ -1167,10 +1246,148 @@ public class NationHomeScreen extends Screen {
         return target.equalsIgnoreCase(nationId) || target.equalsIgnoreCase(nationName);
     }
 
-    private void switchPage(Page page) { this.currentPage = page == null ? Page.OVERVIEW : page; updateButtonState(); }
+    private void switchPage(Page page) { this.currentPage = page == null ? Page.OVERVIEW : page; this.pageScroll = 0; updateButtonState(); }
+
+    private void layoutScrollableWidgets() {
+        boolean overviewPage = this.currentPage == Page.OVERVIEW;
+        boolean noNationOverview = overviewPage && !this.data.hasNation();
+        boolean nationOverview = overviewPage && this.data.hasNation();
+        boolean membersPage = this.currentPage == Page.MEMBERS;
+        boolean claimsPage = this.currentPage == Page.CLAIMS;
+        boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
+        boolean claimsMapView = claimsPage && this.claimsSubPage == 0;
+        boolean warPage = this.currentPage == Page.WAR;
+        boolean dipPage = this.currentPage == Page.DIPLOMACY;
+        boolean treasuryPage = this.currentPage == Page.TREASURY;
+        boolean flagPage = this.currentPage == Page.FLAG;
+
+        int overviewFormY = overviewFormLocalY();
+        int nationTownButtonY = overviewFormY + 22;
+        int noNationJoinY = overviewFormY + 48;
+
+        layoutWidget(this.nationNameInput, 12, overviewFormY + 22, 18, overviewPage);
+        layoutWidget(this.shortNameInput, 216, overviewFormY + 22, 18, nationOverview);
+        layoutWidget(this.saveNationInfoButton, 300, overviewFormY + 22, 18, nationOverview);
+        layoutWidget(this.createNationButton, 300, overviewFormY + 22, 18, noNationOverview);
+        layoutWidget(this.joinNationInput, 12, noNationJoinY + 22, 18, noNationOverview);
+        layoutWidget(this.joinNationButton, 300, noNationJoinY + 22, 18, noNationOverview);
+        layoutWidget(this.nationHelpButton, 300, noNationJoinY + 50, 18, noNationOverview);
+        layoutWidget(this.previousTownButton, 300, nationTownButtonY, 18, nationOverview);
+        layoutWidget(this.nextTownButton, 358, nationTownButtonY, 18, nationOverview);
+        layoutWidget(this.openCapitalTownButton, 300, nationTownButtonY + 28, 18, nationOverview);
+        layoutWidget(this.removeCoreButton, 300, nationTownButtonY + 56, 18, nationOverview);
+
+        layoutWidget(this.officerTitleInput, 224, 152, 18, membersPage);
+        layoutWidget(this.saveOfficerTitleButton, 366, 152, 18, membersPage);
+        layoutWidget(this.appointOfficerButton, 224, 182, 18, membersPage);
+        layoutWidget(this.removeOfficerButton, 332, 182, 18, membersPage);
+        layoutWidget(this.appointMayorButton, 224, 206, 18, membersPage);
+
+        layoutWidget(this.claimButton, 12, BODY_H - 26, 18, claimsMapView);
+        layoutWidget(this.unclaimButton, 90, BODY_H - 26, 18, claimsMapView);
+        layoutWidget(this.claimsSubPageButton, 184, BODY_H - 26, 18, claimsPage);
+        layoutWidget(this.breakPermissionButton, 12, 50, 18, claimsPermView);
+        layoutWidget(this.placePermissionButton, 120, 50, 18, claimsPermView);
+        layoutWidget(this.usePermissionButton, 12, 74, 18, claimsPermView);
+        layoutWidget(this.containerPermissionButton, 120, 74, 18, claimsPermView);
+        layoutWidget(this.redstonePermissionButton, 12, 98, 18, claimsPermView);
+        layoutWidget(this.entityUsePermissionButton, 120, 98, 18, claimsPermView);
+        layoutWidget(this.entityDamagePermissionButton, 12, 122, 18, claimsPermView);
+        layoutWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, 14, claimsPage);
+
+        layoutWidget(this.warButton, 12, 164, 18, warPage);
+        layoutWidget(this.warTargetInput, 12, 192, 18, warPage);
+        layoutWidget(this.declareWarButton, 300, 192, 18, warPage);
+        layoutWidget(this.proposeCeasefireButton, 12, 148, 18, warPage && this.data.hasActiveWar() && !(this.data.hasPeaceProposal() && this.data.peaceProposalIncoming()));
+        layoutWidget(this.proposeCedeButton, 108, 148, 18, warPage && this.data.hasActiveWar() && !(this.data.hasPeaceProposal() && this.data.peaceProposalIncoming()));
+        layoutWidget(this.proposeReparationButton, 204, 148, 18, warPage && this.data.hasActiveWar() && !(this.data.hasPeaceProposal() && this.data.peaceProposalIncoming()));
+        layoutWidget(this.acceptPeaceButton, 12, 148, 18, warPage && this.data.hasPeaceProposal() && this.data.peaceProposalIncoming());
+        layoutWidget(this.rejectPeaceButton, 108, 148, 18, warPage && this.data.hasPeaceProposal() && this.data.peaceProposalIncoming());
+
+        layoutWidget(this.dipAllyButton, 234, 40, 18, dipPage);
+        layoutWidget(this.dipTradeButton, 340, 40, 18, dipPage);
+        layoutWidget(this.dipEnemyButton, 234, 64, 18, dipPage);
+        layoutWidget(this.dipNeutralButton, 340, 64, 18, dipPage);
+        layoutWidget(this.dipDeclareWarButton, 234, 88, 18, dipPage);
+        layoutWidget(this.dipAcceptAllyButton, 234, 112, 18, dipPage);
+        layoutWidget(this.dipRejectAllyButton, 340, 112, 18, dipPage);
+        layoutWidget(this.dipBackButton, 234, 136, 18, dipPage);
+        layoutWidget(this.dipOpenTradeButton, 234, 160, 18, dipPage);
+
+        layoutWidget(this.salesTaxUpButton, 200, 72, 14, treasuryPage);
+        layoutWidget(this.salesTaxDownButton, 224, 72, 14, treasuryPage);
+        layoutWidget(this.tariffUpButton, 200, 90, 14, treasuryPage);
+        layoutWidget(this.tariffDownButton, 224, 90, 14, treasuryPage);
+        layoutWidget(this.treasuryCommandsButton, BODY_W - 90, 68, 18, treasuryPage && this.data.hasNation());
+
+        layoutWidget(this.primaryColorInput, 170, 126, 18, flagPage);
+        layoutWidget(this.secondaryColorInput, 170, 154, 18, flagPage);
+        layoutWidget(this.applyColorsButton, 278, 139, 18, flagPage);
+        layoutWidget(this.flagPathInput, 12, BODY_H - 54, 18, flagPage);
+        layoutWidget(this.browseButton, 268, BODY_H - 54, 18, flagPage);
+        layoutWidget(this.uploadButton, 330, BODY_H - 54, 18, flagPage);
+        layoutWidget(this.toggleMirrorButton, 170, 82, 18, flagPage);
+    }
+
+    private void layoutWidget(AbstractWidget widget, int bodyLocalX, int bodyLocalY, int height, boolean pageVisible) {
+        if (widget == null) {
+            return;
+        }
+        int absoluteX = left() + BODY_X + bodyLocalX;
+        int absoluteY = top() + BODY_Y + bodyLocalY - this.pageScroll;
+        widget.setPosition(absoluteX, absoluteY);
+        if (!pageVisible) {
+            widget.visible = false;
+            return;
+        }
+        int viewportTop = bodyViewportTop();
+        int viewportBottom = bodyViewportBottom();
+        widget.visible = widget.visible && absoluteY + height > viewportTop && absoluteY < viewportBottom;
+    }
+
+    private int overviewFormLocalY() {
+        int drawY = 34;
+        for (Component line : buildOverviewLines()) {
+            drawY += wrappedHeight(line, BODY_W - 24) + 6;
+        }
+        return Math.max(118, drawY + 8);
+    }
+
+    private boolean isInsideBodyViewport(double mouseX, double mouseY) {
+        return mouseX >= left() + BODY_X
+                && mouseX < left() + BODY_X + BODY_W
+                && mouseY >= bodyViewportTop()
+                && mouseY < bodyViewportBottom();
+    }
+
+    private int bodyViewportTop() {
+        return top() + BODY_Y + 24;
+    }
+
+    private int bodyViewportBottom() {
+        return top() + BODY_Y + BODY_H - 1;
+    }
+
+    private int maxPageScroll() {
+        return Math.max(0, pageContentHeight(this.currentPage) - (BODY_H - 26));
+    }
+
+    private int pageContentHeight(Page page) {
+        return switch (page) {
+            case OVERVIEW -> this.data.hasNation() ? overviewFormLocalY() + 170 : overviewFormLocalY() + 150;
+            case MEMBERS -> 254;
+            case CLAIMS -> 228;
+            case WAR -> 252;
+            case DIPLOMACY -> 236;
+            case TREASURY -> 248;
+            case FLAG -> 230;
+        };
+    }
     private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ()); }
     private void requestRefresh(int centerChunkX, int centerChunkZ) {
         if (this.refreshPending) {
+            this.queuedPreviewCenterX = centerChunkX;
+            this.queuedPreviewCenterZ = centerChunkZ;
             return;
         }
         this.refreshPending = true;
@@ -1178,6 +1395,23 @@ public class NationHomeScreen extends Screen {
         this.pendingPreviewCenterZ = centerChunkZ;
         ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket(centerChunkX, centerChunkZ));
         this.statusLine = Component.translatable("screen.sailboatmod.nation.status.refreshing");
+    }
+
+    private void flushQueuedPreviewRefresh() {
+        if (this.refreshPending) {
+            return;
+        }
+        if (this.queuedPreviewCenterX == Integer.MIN_VALUE || this.queuedPreviewCenterZ == Integer.MIN_VALUE) {
+            return;
+        }
+        int queuedX = this.queuedPreviewCenterX;
+        int queuedZ = this.queuedPreviewCenterZ;
+        this.queuedPreviewCenterX = Integer.MIN_VALUE;
+        this.queuedPreviewCenterZ = Integer.MIN_VALUE;
+        if (queuedX == this.data.previewCenterChunkX() && queuedZ == this.data.previewCenterChunkZ()) {
+            return;
+        }
+        requestRefresh(queuedX, queuedZ);
     }
     private void maybeRequestPreviewRefresh() {
         int centerChunkX = mapCenterX();
@@ -1453,6 +1687,26 @@ public class NationHomeScreen extends Screen {
     }
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }
+    private void drawMetricCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {
+        g.fill(x, y, x + w, y + h, 0x6E19120D);
+        g.fill(x, y, x + w, y + 1, accent);
+        g.fill(x, y + h - 1, x + w, y + h, 0xAA3E2B18);
+        g.drawString(this.font, Component.literal(trimToWidth(label.getString().replace(":", ""), w - 8)), x + 4, y + 3, 0xFFD0BA8C);
+        g.drawString(this.font, Component.literal(trimToWidth(value, w - 8)), x + 4, y + 11, 0xFFF6E9CA);
+    }
+    private void drawPolicyBar(GuiGraphics g, int x, int y, Component label, int basisPoints, int maxBasisPoints, int accent) {
+        int labelW = 76;
+        int barW = 62;
+        int barH = 10;
+        int valueX = x + labelW + barW + 6;
+        int clamped = Math.max(0, Math.min(maxBasisPoints, basisPoints));
+        int fillW = Math.max(0, Math.min(barW, Math.round((clamped / (float) maxBasisPoints) * barW)));
+        g.drawString(this.font, Component.literal(trimToWidth(label.getString().replace(":", ""), labelW - 2)), x, y - 8, 0xFFB8C0C8);
+        g.fill(x + labelW, y, x + labelW + barW, y + barH, 0x4426333D);
+        g.fill(x + labelW, y, x + labelW + fillW, y + barH, accent);
+        g.fill(x + labelW, y + barH - 1, x + labelW + barW, y + barH, 0x66465863);
+        g.drawString(this.font, formatBasisPoints(basisPoints), valueX, y + 1, 0xFFDCEEFF);
+    }
     private void drawWrappedLine(GuiGraphics g, Component line, int x, int y, int w, int color) { int drawY = y; for (FormattedCharSequence seq : wrap(line, w)) { g.drawString(this.font, seq, x, drawY, color); drawY += 10; } }
     private int wrappedHeight(Component line, int width) { return Math.max(10, wrap(line, width).size() * 10); }
     private void drawRect(GuiGraphics g, int x1, int y1, int x2, int y2, int color) { int minX = Math.min(x1, x2), maxX = Math.max(x1, x2), minY = Math.min(y1, y2), maxY = Math.max(y1, y2); g.fill(minX, minY, maxX + 1, minY + 1, color); g.fill(minX, maxY, maxX + 1, maxY + 1, color); g.fill(minX, minY, minX + 1, maxY + 1, color); g.fill(maxX, minY, maxX + 1, maxY + 1, color); }
@@ -1478,6 +1732,19 @@ public class NationHomeScreen extends Screen {
     private int previewFlagWidth() { int width = this.data.flagWidth() <= 0 ? 96 : this.data.flagWidth(); int height = this.data.flagHeight() <= 0 ? 48 : this.data.flagHeight(); double scale = Math.min(140.0D / width, 96.0D / height); return Math.max(1, (int) Math.round(width * scale)); }
     private int previewFlagHeight() { int width = this.data.flagWidth() <= 0 ? 96 : this.data.flagWidth(); int height = this.data.flagHeight() <= 0 ? 48 : this.data.flagHeight(); double scale = Math.min(140.0D / width, 96.0D / height); return Math.max(1, (int) Math.round(height * scale)); }
     private String headerText() { return !this.data.hasNation() ? Component.translatable("screen.sailboatmod.nation.header.none").getString() : Component.translatable("screen.sailboatmod.nation.header.value", this.data.nationName(), this.data.officeName()).getString(); }
+    private String buildEconomyHeaderLine() {
+        if (!this.data.hasNation()) {
+            return "";
+        }
+        return String.join("   ",
+                Component.translatable("screen.sailboatmod.econbar.treasury", formatCompactMoney(this.data.treasuryBalance())).getString(),
+                Component.translatable("screen.sailboatmod.econbar.tax", formatBasisPoints(this.data.salesTaxBasisPoints())).getString(),
+                Component.translatable("screen.sailboatmod.econbar.tariff", formatBasisPoints(this.data.importTariffBasisPoints())).getString(),
+                Component.translatable("screen.sailboatmod.econbar.trades", this.data.recentTradeCount()).getString());
+    }
+    private String formatCompactMoney(long value) { return GoldStandardEconomy.formatBalance(value); }
+    private String formatBasisPoints(int basisPoints) { return String.format(Locale.ROOT, "%.1f%%", basisPoints / 100.0); }
+    private int occupiedTreasurySlots() { int count = 0; for (net.minecraft.world.item.ItemStack stack : this.data.treasuryItems()) if (!stack.isEmpty()) count++; return count; }
     private String formatCoreLocation() { if (!this.data.hasCore()) return "-"; BlockPos pos = BlockPos.of(this.data.corePos()); return shortText(this.data.coreDimension(), 24) + " @ " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ(); }
     private String accessName(String id) { return (id == null || id.isBlank()) ? Component.translatable("screen.sailboatmod.nation.access.unknown").getString() : Component.translatable("screen.sailboatmod.nation.access." + id.toLowerCase(Locale.ROOT)).getString(); }
     private String actionName(String id) { return (id == null || id.isBlank()) ? Component.translatable("screen.sailboatmod.nation.claims.action.unknown").getString() : Component.translatable("screen.sailboatmod.nation.claims.action." + id.toLowerCase(Locale.ROOT)).getString(); }

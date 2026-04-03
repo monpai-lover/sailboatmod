@@ -40,8 +40,11 @@ public class BankBlockEntity extends BlockEntity implements MenuProvider {
 
     @Override
     public Component getDisplayName() {
-        String label = townName.isBlank() ? "银行" : "[" + townName + "]银行";
-        return Component.literal(label);
+        if (townName == null || townName.isBlank()) {
+            return Component.translatable("block.sailboatmod.bank_block");
+        }
+        return Component.literal("[" + townName + "] ")
+                .append(Component.translatable("block.sailboatmod.bank_block"));
     }
 
     @Nullable

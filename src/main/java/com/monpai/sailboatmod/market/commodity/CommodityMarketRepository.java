@@ -6,6 +6,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class CommodityMarketRepository {
     public CommodityDefinition getDefinition(String commodityKey) throws SQLException {
@@ -146,6 +148,51 @@ public final class CommodityMarketRepository {
             statement.setString(10, tradeRecord.actorName());
             statement.setLong(11, tradeRecord.createdAt());
             statement.executeUpdate();
+        }
+    }
+
+    public List<CommodityPriceChartPoint> listTradeHistoryBuckets(String commodityKey, long bucketSizeMs, int bucketCount) throws SQLException {
+        if (commodityKey == null || commodityKey.isBlank() || bucketSizeMs <= 0 || bucketCount <= 0) {
+            return List.of();
+        }
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                WITH bucketed AS (
+                    SELECT
+                        (created_at / ?) * ? AS bucket_at,
+                        AVG(unit_price) AS avg_unit_price,
+                        MIN(unit_price) AS min_unit_price,
+                        MAX(unit_price) AS max_unit_price,
+                        SUM(quantity) AS total_volume,
+                        COUNT(*) AS trade_count
+                    FROM commodity_trade_history
+                    WHERE commodity_key = ?
+                    GROUP BY bucket_at
+                    ORDER BY bucket_at DESC
+                    LIMIT ?
+                )
+                SELECT bucket_at, avg_unit_price, min_unit_price, max_unit_price, total_volume, trade_count
+                FROM bucketed
+                ORDER BY bucket_at ASC
+                """)) {
+            statement.setLong(1, bucketSizeMs);
+            statement.setLong(2, bucketSizeMs);
+            statement.setString(3, commodityKey);
+            statement.setInt(4, bucketCount);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<CommodityPriceChartPoint> points = new ArrayList<>();
+                while (resultSet.next()) {
+                    points.add(new CommodityPriceChartPoint(
+                            resultSet.getLong("bucket_at"),
+                            (int) Math.round(resultSet.getDouble("avg_unit_price")),
+                            resultSet.getInt("min_unit_price"),
+                            resultSet.getInt("max_unit_price"),
+                            resultSet.getInt("total_volume"),
+                            resultSet.getInt("trade_count")
+                    ));
+                }
+                return points;
+            }
         }
     }
 

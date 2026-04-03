@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.market.db;
 
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.mojang.logging.LogUtils;
 import org.slf4j.Logger;
 
@@ -115,6 +116,44 @@ final class MarketSchemaManager {
                             """,
                             "CREATE INDEX IF NOT EXISTS idx_buy_order_commodity ON buy_order (commodity_key, status)",
                             "CREATE INDEX IF NOT EXISTS idx_buy_order_buyer ON buy_order (buyer_uuid, status)"
+                    )
+            ),
+            new SchemaPatch(
+                    "005_gold_standard_rebase",
+                    List.of(
+                            "UPDATE commodity_market_state SET base_price = " + GoldStandardEconomy.BALANCE_PER_GOLD_INGOT
+                                    + ", updated_at = (CAST(strftime('%s','now') AS INTEGER) * 1000) WHERE base_price < "
+                                    + GoldStandardEconomy.BALANCE_PER_GOLD_INGOT
+                    )
+            ),
+            new SchemaPatch(
+                    "006_reprice_existing_commodities",
+                    List.of(
+                            """
+                            UPDATE commodity_market_state
+                            SET base_price = (
+                                SELECT CASE
+                                    WHEN lower(item_id) LIKE '%diamond%' OR lower(item_id) LIKE '%emerald%' OR lower(item_id) LIKE '%beacon%' THEN 64
+                                    WHEN lower(item_id) LIKE '%netherite%' THEN 72
+                                    WHEN lower(item_id) LIKE '%copper%' OR lower(item_id) LIKE '%iron%' OR lower(item_id) LIKE '%gold%' THEN 18
+                                    WHEN lower(item_id) LIKE '%glass%' OR lower(item_id) LIKE '%lantern%' OR lower(item_id) LIKE '%torch%' THEN 8
+                                    WHEN lower(item_id) LIKE '%brick%' OR lower(item_id) LIKE '%stone%' OR lower(item_id) LIKE '%slab%' OR lower(item_id) LIKE '%stairs%' THEN 6
+                                    WHEN lower(item_id) LIKE '%log%' OR lower(item_id) LIKE '%planks%' OR lower(item_id) LIKE '%wood%' OR lower(item_id) LIKE '%fence%' OR lower(item_id) LIKE '%door%' THEN 5
+                                    WHEN lower(category) = 'luxury' THEN 32
+                                    WHEN lower(category) = 'gems' THEN 48
+                                    WHEN lower(category) = 'metal' THEN 18
+                                    WHEN lower(category) = 'ore' THEN 14
+                                    WHEN lower(category) = 'tools' THEN 16
+                                    WHEN lower(category) = 'spices' THEN 14
+                                    WHEN lower(category) = 'wood' THEN 5
+                                    ELSE 10
+                                END
+                                FROM commodity_definition
+                                WHERE commodity_definition.commodity_key = commodity_market_state.commodity_key
+                            ),
+                            updated_at = (CAST(strftime('%s','now') AS INTEGER) * 1000)
+                            WHERE base_price <= 10
+                            """
                     )
             )
     );

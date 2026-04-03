@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.nation.model;
 
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import net.minecraft.nbt.CompoundTag;
 
 import java.util.Locale;
@@ -24,7 +25,7 @@ public record TownFinanceEntryRecord(
         entryKind = sanitizeUpper(entryKind);
         type = sanitizeUpper(type);
         amount = Math.max(0L, amount);
-        currency = sanitizeUpper(currency).isBlank() ? "EMERALD" : sanitizeUpper(currency);
+        currency = sanitizeUpper(currency).isBlank() ? GoldStandardEconomy.LEDGER_CURRENCY : sanitizeUpper(currency);
         commodityKey = sanitizeCommodityKey(commodityKey);
         quantity = Math.max(0, quantity);
         sourceRef = sanitize(sourceRef);

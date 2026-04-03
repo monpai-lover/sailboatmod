@@ -116,7 +116,9 @@ public class TownMainWindow extends AbstractSailboatWindow {
                 rowPane.findPaneOfTypeByID("bLevel", Text.class)
                     .setText(Component.literal("Lv." + b.buildingLevel() + "/" + b.getMaxLevel()));
                 rowPane.findPaneOfTypeByID("bStatus", Text.class)
-                    .setText(Component.literal(b.isBuilt() ? "Built" : "Building..."));
+                    .setText(Component.translatable(b.isBuilt()
+                            ? "screen.sailboatmod.building.status.built"
+                            : "screen.sailboatmod.building.status.building"));
 
                 Button upgradeBtn = rowPane.findPaneOfTypeByID("bUpgrade", Button.class);
                 if (upgradeBtn != null) {

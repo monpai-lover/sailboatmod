@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.menu.BankMenu;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -93,7 +94,7 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
         g.drawString(this.font, this.title, 14, 10, 0xFFE7C977);
 
         NationTreasuryRecord treasury = getTreasury();
-        String balanceText = treasury == null ? "0" : String.format("%,d", treasury.currencyBalance());
+        String balanceText = treasury == null ? "0" : GoldStandardEconomy.formatBalance(treasury.currencyBalance());
         g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.currency_label"), 14, 34, 0xFFB8C0C8);
         g.drawString(this.font, balanceText, 100, 34, 0xFFE7C977);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.amount_label"), 14, 50, 0xFFDCEEFF);

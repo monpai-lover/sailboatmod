@@ -2118,7 +2118,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                             listing.sourceDockName(),
                             listing.townId(),
                             listing.nationId(),
-                            listing.priceAdjustmentBp()
+                            listing.priceAdjustmentBp(),
+                            listing.sellerNote()
                     ));
                 }
             }
@@ -2446,4 +2447,3 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         }
     }
 }
-

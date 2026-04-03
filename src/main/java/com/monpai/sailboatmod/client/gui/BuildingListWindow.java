@@ -71,7 +71,9 @@ public class BuildingListWindow extends AbstractSailboatWindow {
                 rowPane.findPaneOfTypeByID(LABEL_LEVEL, Text.class)
                     .setText(Component.literal("Lv." + b.buildingLevel() + "/" + b.getMaxLevel()));
                 rowPane.findPaneOfTypeByID(LABEL_STATUS, Text.class)
-                    .setText(Component.literal(b.isBuilt() ? "Built" : "Building..."));
+                    .setText(Component.translatable(b.isBuilt()
+                            ? "screen.sailboatmod.building.status.built"
+                            : "screen.sailboatmod.building.status.building"));
 
                 Button upgradeBtn = rowPane.findPaneOfTypeByID(BUTTON_UPGRADE, Button.class);
                 if (upgradeBtn != null) {

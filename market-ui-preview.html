@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sailboat Market Preview</title>
+  <style>
+    :root {
+      --bg:#081018; --panel:#14202b; --soft:#1d2c39; --line:rgba(255,255,255,.08);
+      --text:#eef4fb; --muted:#a9bacb; --hint:#76889b; --gold:#e8b465; --blue:#7eb3df; --green:#7dc89e; --red:#de7f77;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; color:var(--text); font:14px/1.45 "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+      background:
+        radial-gradient(circle at 14% 12%, rgba(232,180,101,.14), transparent 24%),
+        radial-gradient(circle at 86% 82%, rgba(126,179,223,.12), transparent 26%),
+        linear-gradient(180deg, #061018 0%, #0b1520 48%, #081018 100%);
+    }
+    .wrap { max-width:1380px; margin:0 auto; padding:28px 18px 40px; }
+    .window { border:1px solid var(--line); border-radius:26px; overflow:hidden; background:rgba(9,15,21,.88); box-shadow:0 28px 72px rgba(0,0,0,.36); }
+    .hero { padding:26px 28px 22px; background:linear-gradient(180deg, rgba(32,45,59,.95), rgba(15,24,34,.95)); border-bottom:1px solid var(--line); }
+    .hero-grid { display:grid; grid-template-columns:122px 1fr 430px; gap:18px; align-items:start; }
+    .brand { height:118px; padding:18px; border-radius:22px; border:1px solid var(--line); background:linear-gradient(180deg, rgba(40,56,71,.95), rgba(23,35,47,.95)); }
+    .brand strong { display:block; font-size:34px; letter-spacing:.08em; color:var(--gold); }
+    .brand span, .eyebrow, .label { color:var(--hint); font-size:11px; text-transform:uppercase; letter-spacing:.18em; }
+    h1 { margin:10px 0 8px; font-size:34px; line-height:1.1; }
+    .desc, .sub, .minor, .hint { color:var(--muted); }
+    .chips, .tabs, .toolbar, .filters, .subtabs, .actions { display:flex; flex-wrap:wrap; gap:10px; }
+    .chip, .tab, .button, .filter, .subtab { border:1px solid var(--line); border-radius:12px; padding:9px 12px; background:rgba(33,48,64,.92); color:var(--muted); cursor:pointer; }
+    .tab.active, .filter.active, .subtab.active { color:#fff; background:linear-gradient(180deg, #446984, #355164); }
+    .button.primary { color:#fff; background:linear-gradient(180deg, #557995, #3a596c); }
+    .stats, .metrics, .detail-grid, .order-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+    .stat, .metric, .info {
+      border:1px solid var(--line); border-radius:16px; padding:14px 14px 14px 16px; background:rgba(33,47,61,.96); position:relative;
+    }
+    .stat::before, .metric::before, .info::before { content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--gold); }
+    .blue::before { background:var(--blue); } .green::before { background:var(--green); } .red::before { background:var(--red); }
+    .value { margin-top:6px; font-size:22px; font-weight:700; }
+    .hero-bar, .summary, .chart-meta { display:flex; justify-content:space-between; gap:16px; align-items:center; margin-top:20px; }
+    .body { padding:24px 28px 28px; }
+    .page { display:none; } .page.active { display:block; }
+    .layout, .orders { display:grid; grid-template-columns:1.85fr .95fr; gap:18px; }
+    .stack { display:grid; gap:18px; }
+    .panel { border:1px solid var(--line); border-radius:22px; padding:18px; background:rgba(20,32,43,.96); }
+    .panel.soft { background:rgba(27,40,52,.92); }
+    .panel-head { display:flex; justify-content:space-between; gap:12px; align-items:baseline; margin-bottom:14px; }
+    .title { font-size:18px; font-weight:700; }
+    .hot { margin-top:14px; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+    .hot-card, .catalog-row { border:1px solid var(--line); border-radius:14px; background:rgba(30,44,57,.96); padding:12px 14px; cursor:pointer; }
+    .hot-meta { margin-top:6px; color:var(--hint); font-size:12px; }
+    .catalog-tools { display:grid; grid-template-columns:280px 1fr; gap:10px; margin-bottom:12px; }
+    .search, .field { width:100%; padding:11px 12px; color:#fff; border-radius:12px; border:1px solid var(--line); background:rgba(34,49,64,.96); }
+    .catalog-head, .catalog-row { display:grid; grid-template-columns:1.65fr .78fr .52fr .55fr; gap:12px; align-items:center; }
+    .catalog-head { padding:9px 12px; border-radius:10px; background:rgba(39,54,68,.96); color:var(--hint); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+    .catalog-list, .book, .buy-book, .order-list { display:grid; gap:8px; }
+    .catalog-row.active { background:linear-gradient(180deg, rgba(57,87,107,.95), rgba(44,70,88,.95)); }
+    .price { color:var(--gold); font-weight:700; } .positive { color:var(--green); }
+    .detail-head { display:grid; grid-template-columns:74px 1fr; gap:12px; align-items:center; margin-bottom:14px; }
+    .cover { height:74px; border-radius:18px; border:1px solid var(--line); background:linear-gradient(180deg, rgba(44,59,73,1), rgba(27,39,50,1)); }
+    .pane { display:none; margin-top:14px; } .pane.active { display:block; }
+    .book-row, .buy-row, .order-row { border:1px solid var(--line); border-radius:14px; background:rgba(17,26,35,.92); padding:11px 12px; display:grid; gap:10px; }
+    .book-row { grid-template-columns:1fr 1.1fr .52fr; }
+    .buy-row { grid-template-columns:.8fr .9fr .8fr; }
+    .order-row { grid-template-columns:1.45fr .9fr .72fr .82fr; }
+    .chart { margin-top:12px; padding:14px; border-radius:18px; border:1px solid var(--line); background:linear-gradient(180deg, rgba(14,22,30,1), rgba(11,19,27,1)); }
+    svg { display:block; width:100%; height:auto; }
+    .footer { margin-top:12px; padding:12px 14px; border-radius:14px; border:1px solid var(--line); background:rgba(14,21,29,.9); color:var(--muted); font-size:13px; }
+    @media (max-width:1180px) {
+      .hero-grid, .layout, .orders, .catalog-tools { grid-template-columns:1fr; }
+      .stats, .metrics, .detail-grid, .order-grid, .hot { grid-template-columns:repeat(2,1fr); }
+    }
+    @media (max-width:720px) {
+      .wrap { padding:14px 10px 22px; } .hero, .body { padding:16px; }
+      .stats, .metrics, .detail-grid, .order-grid, .hot, .catalog-head, .catalog-row, .book-row, .buy-row, .order-row { grid-template-columns:1fr; }
+      .hero-bar, .summary, .chart-meta { flex-direction:column; align-items:stretch; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="window">
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="brand">
+            <strong>BUFF</strong>
+            <span>market</span>
+            <span>preview</span>
+          </div>
+          <div>
+            <div class="eyebrow">elementa market-only ui preview</div>
+            <h1>Sailboat Market Terminal</h1>
+            <div class="desc">这是市场页的新静态预览，只演示市场 UI，不套到银行、港口、城镇等其他界面。布局方向参考 BUFF 的商城纵览、商品详情、求购页和价格走势图。</div>
+            <div class="chips" style="margin-top:14px;">
+              <div class="chip">Owner Controls</div>
+              <div class="chip">Linked Dock: East Harbor</div>
+              <div class="chip">Town: Port Ember</div>
+              <div class="chip">Nation: Ember Union</div>
+            </div>
+          </div>
+          <div class="stats">
+            <div class="stat green"><div class="label">Listings</div><div class="value">184</div></div>
+            <div class="stat"><div class="label">Pending Credits</div><div class="value">1,240g</div></div>
+            <div class="stat blue"><div class="label">Net Balance</div><div class="value">+3,820g</div></div>
+            <div class="stat red"><div class="label">Buy Orders</div><div class="value">27</div></div>
+          </div>
+        </div>
+        <div class="hero-bar">
+          <div class="tabs" id="main-tabs">
+            <div class="tab active" data-page="goods">Goods</div>
+            <div class="tab" data-page="buy-orders">Buy Orders</div>
+            <div class="tab" data-page="other">Sell</div>
+            <div class="tab" data-page="other">Dispatch</div>
+            <div class="tab" data-page="other">Finance</div>
+          </div>
+          <div class="toolbar">
+            <div class="button primary">Refresh</div>
+            <div class="button">Bind Dock</div>
+            <div class="button">Close</div>
+          </div>
+        </div>
+      </section>
+
+      <main class="body">
+        <section class="page active" data-page="goods">
+          <div class="layout">
+            <div class="stack">
+              <div class="panel soft">
+                <div class="panel-head">
+                  <div class="title">Market Overview</div>
+                  <div class="sub">商城纵览 + 热门商品卡片</div>
+                </div>
+                <div class="metrics">
+                  <div class="metric green"><div class="label">Visible Goods</div><div class="value">184</div></div>
+                  <div class="metric"><div class="label">Catalog Groups</div><div class="value">73</div></div>
+                  <div class="metric blue"><div class="label">Buy Depth</div><div class="value">27</div></div>
+                  <div class="metric red"><div class="label">Chart Window</div><div class="value">24h</div></div>
+                </div>
+                <div class="hot">
+                  <div class="hot-card" data-target="ak"><div>AK Pattern Steel</div><div class="hot-meta">182g | 买单 112 | 成交 29</div></div>
+                  <div class="hot-card" data-target="coil"><div>Refined Copper Coil</div><div class="hot-meta">94g | 买单 240 | 成交 33</div></div>
+                  <div class="hot-card" data-target="glass"><div>Harbor Glass</div><div class="hot-meta">48g | 买单 64 | 成交 18</div></div>
+                </div>
+                <div class="footer">这块对应模组里新增的市场概览区。热门卡片点击后会把右侧商品详情切到对应商品，模拟 BUFF 从纵览进入单品页的感觉。</div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head">
+                  <div class="title">Goods Catalog</div>
+                  <div class="sub">搜索、排序、分类、价格带、分页</div>
+                </div>
+                <div class="catalog-tools">
+                  <input class="search" value="steel" aria-label="search">
+                  <div class="filters">
+                    <div class="filter active">Price</div>
+                    <div class="filter">Stock</div>
+                    <div class="filter">Name</div>
+                    <div class="filter active">All</div>
+                    <div class="filter">Metal</div>
+                    <div class="filter">Wood</div>
+                    <div class="filter">Luxury</div>
+                    <div class="filter active">Any Price</div>
+                    <div class="filter">16g - 63g</div>
+                    <div class="filter">64g+</div>
+                  </div>
+                </div>
+                <div class="summary">
+                  <div>Showing 1-8 of 18 results, 184 listings total. Active filters: steel / all / any price / price desc.</div>
+                  <div class="toolbar"><div class="button">Prev</div><div class="button">1 / 3</div><div class="button">Next</div></div>
+                </div>
+                <div class="catalog-head"><div>Item</div><div>Seller</div><div>Stock</div><div>Price</div></div>
+                <div class="catalog-list">
+                  <div class="catalog-row active" data-target="ak">
+                    <div><div>AK Pattern Steel</div><div class="minor">East Harbor | Metal</div></div>
+                    <div>Northwind</div><div class="positive">46</div><div class="price">182g</div>
+                  </div>
+                  <div class="catalog-row" data-target="plate">
+                    <div><div>Refined Steel Plate</div><div class="minor">Forge Basin | Metal</div></div>
+                    <div>Iron Guild</div><div class="positive">38</div><div class="price">164g</div>
+                  </div>
+                  <div class="catalog-row" data-target="coil">
+                    <div><div>Refined Copper Coil</div><div class="minor">Forge Basin | Industry</div></div>
+                    <div>Copper Guild</div><div class="positive">84</div><div class="price">94g</div>
+                  </div>
+                  <div class="catalog-row" data-target="glass">
+                    <div><div>Harbor Glass</div><div class="minor">Sunpier | Luxury</div></div>
+                    <div>Blue Lantern</div><div class="positive">31</div><div class="price">48g</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="panel">
+              <div class="detail-head">
+                <div class="cover"></div>
+                <div>
+                  <div class="title" id="detail-title">AK Pattern Steel</div>
+                  <div class="sub" id="detail-line-1">East Harbor | Northwind Traders | Metal</div>
+                  <div class="sub" id="detail-line-2">右侧区域对应 BUFF 的商品详情页：出售 / 求购 / 价格走势图</div>
+                </div>
+              </div>
+
+              <div class="subtabs" id="detail-tabs">
+                <div class="subtab active" data-pane="selling">Selling</div>
+                <div class="subtab" data-pane="buying">Buying</div>
+                <div class="subtab" data-pane="chart">Price Chart</div>
+              </div>
+
+              <div class="detail-grid">
+                <div class="info"><div class="label">Unit Price</div><div class="value" id="detail-price">182g</div></div>
+                <div class="info green"><div class="label">Available</div><div class="value" id="detail-available">46</div></div>
+                <div class="info blue"><div class="label">Reserved</div><div class="value" id="detail-reserved">12</div></div>
+                <div class="info red"><div class="label">Depth</div><div class="value" id="detail-depth">112</div></div>
+              </div>
+
+              <div class="pane active" data-pane="selling">
+                <div class="book">
+                  <div class="book-row"><div>Northwind Traders</div><div>East Harbor Dock</div><div class="price">182g</div></div>
+                  <div class="book-row"><div>Ridge Forge</div><div>Forge Basin Dock</div><div class="price">186g</div></div>
+                  <div class="book-row"><div>Harbor Smith</div><div>South Wharf Dock</div><div class="price">189g</div></div>
+                </div>
+                <div class="footer">出售页对应当前市场中的卖单列表，玩家能直接看到卖家、码头和价格。</div>
+              </div>
+
+              <div class="pane" data-pane="buying">
+                <div class="buy-book">
+                  <div class="buy-row"><div>Captain Rowan</div><div>36 units</div><div class="price">178g</div></div>
+                  <div class="buy-row"><div>East Foundry</div><div>20 units</div><div class="price">175g</div></div>
+                  <div class="buy-row"><div>Union Broker</div><div>56 units</div><div class="price">169g</div></div>
+                </div>
+                <div class="footer">求购页展示同一商品的买单深度，便于判断是否值得挂卖或跑商。</div>
+              </div>
+
+              <div class="pane" data-pane="chart">
+                <div class="chart">
+                  <div class="chart-meta"><div>24h 成交价格 / 成交量</div><div>高 191g · 低 168g · 均价 181g</div></div>
+                  <svg viewBox="0 0 420 210" preserveAspectRatio="none" aria-label="chart">
+                    <g stroke="rgba(255,255,255,.08)" stroke-width="1">
+                      <line x1="24" y1="28" x2="396" y2="28"></line><line x1="24" y1="72" x2="396" y2="72"></line>
+                      <line x1="24" y1="116" x2="396" y2="116"></line><line x1="24" y1="160" x2="396" y2="160"></line>
+                    </g>
+                    <g fill="rgba(126,179,223,.44)">
+                      <rect x="38" y="130" width="16" height="42" rx="3"></rect><rect x="80" y="118" width="16" height="54" rx="3"></rect>
+                      <rect x="122" y="108" width="16" height="64" rx="3"></rect><rect x="164" y="114" width="16" height="58" rx="3"></rect>
+                      <rect x="206" y="92" width="16" height="80" rx="3"></rect><rect x="248" y="100" width="16" height="72" rx="3"></rect>
+                      <rect x="290" y="84" width="16" height="88" rx="3"></rect><rect x="332" y="96" width="16" height="76" rx="3"></rect>
+                    </g>
+                    <polyline fill="none" stroke="#e8b465" stroke-width="3" points="46,108 88,94 130,82 172,88 214,66 256,74 298,58 340,69"></polyline>
+                    <g fill="#e8b465">
+                      <circle cx="46" cy="108" r="4"></circle><circle cx="88" cy="94" r="4"></circle><circle cx="130" cy="82" r="4"></circle><circle cx="172" cy="88" r="4"></circle>
+                      <circle cx="214" cy="66" r="4"></circle><circle cx="256" cy="74" r="4"></circle><circle cx="298" cy="58" r="4"></circle><circle cx="340" cy="69" r="4"></circle>
+                    </g>
+                  </svg>
+                </div>
+                <div class="footer">这里模拟了你要复刻的价格图表页。正式版会读取模组已有的成交历史数据，而不是写死一条线。</div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" data-page="buy-orders">
+          <div class="orders">
+            <div class="stack">
+              <div class="panel soft">
+                <div class="panel-head">
+                  <div class="title">Buy Order Overview</div>
+                  <div class="sub">我的求购统计和管理入口</div>
+                </div>
+                <div class="metrics">
+                  <div class="metric"><div class="label">Orders</div><div class="value">8</div></div>
+                  <div class="metric green"><div class="label">Qty</div><div class="value">214</div></div>
+                  <div class="metric blue"><div class="label">Active</div><div class="value">8</div></div>
+                  <div class="metric red"><div class="label">Matched Goods</div><div class="value">5</div></div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head">
+                  <div class="title">My Buy Orders</div>
+                  <div class="sub">左侧列表，右侧详情和操作</div>
+                </div>
+                <div class="order-list">
+                  <div class="order-row"><div><div>AK Pattern Steel</div><div class="minor">Qty 36 | -120bp to +60bp</div></div><div>Captain Rowan</div><div class="positive">ACTIVE</div><div>04-03 06:20</div></div>
+                  <div class="order-row"><div><div>Refined Copper Coil</div><div class="minor">Qty 48 | -80bp to +40bp</div></div><div>Captain Rowan</div><div class="positive">ACTIVE</div><div>04-03 05:54</div></div>
+                  <div class="order-row"><div><div>Harbor Glass</div><div class="minor">Qty 24 | -60bp to +30bp</div></div><div>Azure House</div><div class="positive">ACTIVE</div><div>04-02 21:14</div></div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="panel">
+              <div class="panel-head">
+                <div><div class="title">AK Pattern Steel</div><div class="sub">Created: 04-03 06:20</div></div>
+              </div>
+              <div class="order-grid">
+                <div class="info"><div class="label">Qty</div><div class="value">36</div></div>
+                <div class="info green"><div class="label">Status</div><div class="value">ACTIVE</div></div>
+                <div class="info blue"><div class="label">Min Price Adjust</div><div class="value">-120bp</div></div>
+                <div class="info red"><div class="label">Max Price Adjust</div><div class="value">+60bp</div></div>
+              </div>
+              <div style="display:grid; gap:10px; margin-top:14px;">
+                <input class="field" value="minecraft:iron_ingot" aria-label="commodity">
+                <div class="button">Use Selected Goods</div>
+                <input class="field" value="24" aria-label="qty">
+                <input class="field" value="-100" aria-label="min">
+                <input class="field" value="80" aria-label="max">
+              </div>
+              <div class="actions" style="margin-top:12px;">
+                <div class="button primary">Create Order</div>
+                <div class="button">Cancel Order</div>
+              </div>
+              <div class="footer">这部分对应你发的 BUFF 求购页思路。左侧展示我的买单，右侧集中放创建、修改、取消操作。</div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" data-page="other">
+          <div class="panel">
+            <div class="panel-head">
+              <div class="title">Other Market Tabs</div>
+              <div class="sub">这里只做占位，表示 Sell / Dispatch / Finance 仍留在市场终端内部</div>
+            </div>
+            <div class="footer">当前这份 HTML 主要给你看市场页方向：纵览、商品详情、求购管理和价格图表。其他页签后面继续跟模组逻辑往下做。</div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const goods = {
+      ak: ["AK Pattern Steel", "East Harbor | Northwind Traders | Metal", "主推示例商品，展示卖单、买单和价格图表切页。", "182g", "46", "12", "112"],
+      plate: ["Refined Steel Plate", "Forge Basin | Iron Guild | Metal", "偏工业原料的详情展示。", "164g", "38", "8", "74"],
+      coil: ["Refined Copper Coil", "Forge Basin | Copper Guild | Industry", "热门生产材料，买单深度更高。", "94g", "84", "18", "240"],
+      glass: ["Harbor Glass", "Sunpier | Blue Lantern | Luxury", "轻奢类商品，价格低但供给少。", "48g", "31", "6", "64"]
+    };
+
+    document.querySelectorAll("#main-tabs .tab").forEach((tab) => {
+      tab.onclick = () => {
+        document.querySelectorAll("#main-tabs .tab").forEach((x) => x.classList.remove("active"));
+        document.querySelectorAll(".page").forEach((x) => x.classList.remove("active"));
+        tab.classList.add("active");
+        document.querySelector(`.page[data-page="${tab.dataset.page}"]`).classList.add("active");
+      };
+    });
+
+    document.querySelectorAll("#detail-tabs .subtab").forEach((tab) => {
+      tab.onclick = () => {
+        document.querySelectorAll("#detail-tabs .subtab").forEach((x) => x.classList.remove("active"));
+        document.querySelectorAll(".pane").forEach((x) => x.classList.remove("active"));
+        tab.classList.add("active");
+        document.querySelector(`.pane[data-pane="${tab.dataset.pane}"]`).classList.add("active");
+      };
+    });
+
+    function selectGood(key) {
+      const data = goods[key];
+      if (!data) return;
+      document.querySelectorAll(".catalog-row").forEach((row) => row.classList.toggle("active", row.dataset.target === key));
+      document.getElementById("detail-title").textContent = data[0];
+      document.getElementById("detail-line-1").textContent = data[1];
+      document.getElementById("detail-line-2").textContent = data[2];
+      document.getElementById("detail-price").textContent = data[3];
+      document.getElementById("detail-available").textContent = data[4];
+      document.getElementById("detail-reserved").textContent = data[5];
+      document.getElementById("detail-depth").textContent = data[6];
+    }
+
+    document.querySelectorAll(".catalog-row, .hot-card").forEach((node) => {
+      node.onclick = () => selectGood(node.dataset.target);
+    });
+  </script>
+</body>
+</html>

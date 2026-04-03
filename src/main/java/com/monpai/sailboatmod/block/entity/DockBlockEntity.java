@@ -3,7 +3,7 @@ package com.monpai.sailboatmod.block.entity;
 import com.monpai.sailboatmod.dock.DockRegistry;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.dock.DockScreenData;
-import com.monpai.sailboatmod.economy.VaultEconomyBridge;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.market.MarketListing;
@@ -1351,7 +1351,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sourceDockName(),
                     listing.townId(),
                     listing.nationId(),
-                    listing.priceAdjustmentBp()
+                    listing.priceAdjustmentBp(),
+                    listing.sellerNote()
             ));
         }
     }
@@ -1563,64 +1564,14 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (player == null || rentalFee <= 0 || player.getAbilities().instabuild) {
             return true;
         }
-        Boolean vaultResult = VaultEconomyBridge.tryWithdraw(player, rentalFee);
-        if (vaultResult != null) {
-            return vaultResult;
-        }
-        return chargeRentalFeeByEmerald(player, rentalFee);
-    }
-
-    private static boolean chargeRentalFeeByEmerald(Player player, int emeraldCost) {
-        Inventory inventory = player.getInventory();
-        int remaining = emeraldCost;
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.is(Items.EMERALD)) {
-                continue;
-            }
-            remaining -= stack.getCount();
-            if (remaining <= 0) {
-                break;
-            }
-        }
-        if (remaining > 0) {
-            return false;
-        }
-        remaining = emeraldCost;
-        for (int i = 0; i < inventory.getContainerSize() && remaining > 0; i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.is(Items.EMERALD)) {
-                continue;
-            }
-            int consume = Math.min(stack.getCount(), remaining);
-            stack.shrink(consume);
-            remaining -= consume;
-        }
-        inventory.setChanged();
-        player.containerMenu.broadcastChanges();
-        return true;
+        return Boolean.TRUE.equals(GoldStandardEconomy.tryWithdraw(player, rentalFee));
     }
 
     private static void refundRentalFee(Player player, int amount) {
         if (player == null || amount <= 0) {
             return;
         }
-        Boolean vaultResult = VaultEconomyBridge.tryDeposit(player, amount);
-        if (vaultResult != null && vaultResult) {
-            return;
-        }
-        int remaining = amount;
-        while (remaining > 0) {
-            int stackSize = Math.min(64, remaining);
-            ItemStack stack = new ItemStack(Items.EMERALD, stackSize);
-            boolean added = player.getInventory().add(stack);
-            if (!added || !stack.isEmpty()) {
-                player.drop(stack, false);
-            }
-            remaining -= stackSize;
-        }
-        player.getInventory().setChanged();
-        player.containerMenu.broadcastChanges();
+        GoldStandardEconomy.tryDeposit(player, amount);
     }
 
     public String getSelectedRouteName() {
