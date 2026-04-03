@@ -29,6 +29,7 @@ import gg.essential.elementa.constraints.ChildBasedSizeConstraint;
 import gg.essential.elementa.constraints.PixelConstraint;
 import gg.essential.elementa.effects.OutlineEffect;
 import kotlin.Unit;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.MenuAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -181,6 +182,59 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    // =========================================================================
+    // FIX 1: Pass Input Events to Elementa's Window to Enable Text Fields
+    // =========================================================================
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (getWindow() != null) {
+            getWindow().mouseClick(mouseX, mouseY, button);
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (getWindow() != null) {
+            getWindow().keyType(keyCode, scanCode, modifiers);
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        if (getWindow() != null) {
+            getWindow().keyType(chr, modifiers);
+        }
+        return super.charTyped(chr, modifiers);
+    }
+
+    // =========================================================================
+    // FIX 2: Apply Custom Rendering Scale to Fix "Giant UI" Problem
+    // =========================================================================
+
+    @Override
+    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        // Retrieve the current GUI scale set in the game options
+        double guiScale = this.minecraft.getWindow().getGuiScale();
+        
+        // Define a custom scale factor to reduce the massive size of the elements
+        float customScale = 0.70f; // Adjusted for a better visual balance
+
+        guiGraphics.pose().pushPose();
+        guiGraphics.pose().scale(customScale, customScale, 1.0f);
+
+        // Adjust the mouse coordinates so the hitboxes align with the scaled graphics
+        int scaledMouseX = (int) (mouseX / customScale);
+        int scaledMouseY = (int) (mouseY / customScale);
+
+        // Render the screen content
+        super.render(guiGraphics, scaledMouseX, scaledMouseY, partialTick);
+
+        guiGraphics.pose().popPose();
     }
 
     private void rebuildUi() {
@@ -678,6 +732,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         buildGoodsCatalogRows(panel, innerWidth, Math.max(120, height - 172 - dropdownHeight), filtered, dropdownHeight);
     }
 
+    // =========================================================================
+    // FIX 3: Reset scroll offset only when flipping pages
+    // =========================================================================
+
     private void buildGoodsCatalogSummary(UIComponent panel, int innerWidth, int filteredCount, int totalCount, int dropdownHeight) {
         int baseY = 100 + dropdownHeight;
         createText(panel, 14, baseY, buildGoodsCatalogSummaryText(filteredCount, totalCount), 0.76f, TEXT_MUTED);
@@ -690,6 +748,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 Component.translatable("screen.sailboatmod.market.catalog.prev").getString(),
                 goodsCatalogPage > 0, true, () -> {
                     goodsCatalogPage = Math.max(0, goodsCatalogPage - 1);
+                    goodsCatalogScrollOffset = 0f; // Force reset to top when flipping page
                     rebuildUi();
                 });
         createText(panel, baseX + 66, buttonY + 7,
@@ -699,6 +758,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 Component.translatable("screen.sailboatmod.market.catalog.next").getString(),
                 goodsCatalogPage + 1 < pageCount, true, () -> {
                     goodsCatalogPage = Math.min(pageCount - 1, goodsCatalogPage + 1);
+                    goodsCatalogScrollOffset = 0f; // Force reset to top when flipping page
                     rebuildUi();
                 });
     }
