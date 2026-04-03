@@ -375,12 +375,12 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             selectedStorageIndex = 0;
             return 0;
         }
-        List<Integer> occupiedSlots = getVisibleStorageSlots();
-        if (occupiedSlots.isEmpty()) {
+        List<StorageGroup> visibleGroups = getVisibleStorageGroups();
+        if (visibleGroups.isEmpty()) {
             selectedStorageIndex = 0;
             return 0;
         }
-        selectedStorageIndex = Mth.clamp(index, 0, occupiedSlots.size() - 1);
+        selectedStorageIndex = Mth.clamp(index, 0, visibleGroups.size() - 1);
         setChanged();
         return selectedStorageIndex;
     }
@@ -408,16 +408,16 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_owner_only"), true);
             return false;
         }
-        List<Integer> occupiedSlots = getVisibleStorageSlots();
-        if (occupiedSlots.isEmpty()) {
+        List<StorageGroup> visibleGroups = getVisibleStorageGroups();
+        if (visibleGroups.isEmpty()) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
             return false;
         }
-        int safeStorageIndex = Mth.clamp(selectedStorageIndex, 0, occupiedSlots.size() - 1);
+        int safeStorageIndex = Mth.clamp(selectedStorageIndex, 0, visibleGroups.size() - 1);
         selectedStorageIndex = safeStorageIndex;
-        int slot = occupiedSlots.get(safeStorageIndex);
-        ItemStack stack = getStorageItem(slot);
-        if (stack.isEmpty()) {
+        StorageGroup group = visibleGroups.get(safeStorageIndex);
+        ItemStack stack = group.displayStack();
+        if (stack.isEmpty() || group.totalCount() <= 0) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
             return false;
         }
@@ -433,19 +433,19 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         int safeBoatIndex = Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
         int safeRouteIndex = Mth.clamp(selectedRouteIndex, 0, routes.size() - 1);
         SailboatEntity boat = boats.get(safeBoatIndex);
-        List<ItemStack> cargo = List.of(stack.copy());
+        List<ItemStack> cargo = splitCargo(stack, group.totalCount());
         if (!boat.canLoadCargo(cargo)) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.boat_cargo_full"), true);
             return false;
         }
-        ItemStack removed = removeStorageItemNoUpdate(slot);
+        List<ItemStack> removed = removeVisibleStorageGroup(safeStorageIndex);
         if (removed.isEmpty()) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
             return false;
         }
-        cargo = List.of(removed.copy());
+        cargo = removed.stream().map(ItemStack::copy).toList();
         if (!boat.loadCargo(cargo)) {
-            setStorageItem(slot, removed);
+            insertCargo(removed);
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.boat_load_failed"), true);
             return false;
         }
@@ -491,22 +491,24 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_owner_only"), true);
             return false;
         }
-        List<Integer> occupiedSlots = getVisibleStorageSlots();
-        if (occupiedSlots.isEmpty()) {
+        List<StorageGroup> visibleGroups = getVisibleStorageGroups();
+        if (visibleGroups.isEmpty()) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
             return false;
         }
-        int safeStorageIndex = Mth.clamp(selectedStorageIndex, 0, occupiedSlots.size() - 1);
+        int safeStorageIndex = Mth.clamp(selectedStorageIndex, 0, visibleGroups.size() - 1);
         selectedStorageIndex = safeStorageIndex;
-        int slot = occupiedSlots.get(safeStorageIndex);
-        ItemStack removed = removeStorageItemNoUpdate(slot);
-        if (removed.isEmpty()) {
+        List<ItemStack> removedStacks = removeVisibleStorageGroup(safeStorageIndex);
+        if (removedStacks.isEmpty()) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_empty"), true);
             return false;
         }
-        boolean added = player.getInventory().add(removed);
-        if (!added || !removed.isEmpty()) {
-            player.drop(removed, false);
+        for (ItemStack removed : removedStacks) {
+            ItemStack remaining = removed.copy();
+            boolean added = player.getInventory().add(remaining);
+            if (!added || !remaining.isEmpty()) {
+                player.drop(remaining, false);
+            }
         }
         player.getInventory().setChanged();
         player.containerMenu.broadcastChanges();
@@ -673,9 +675,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         int safeBoatIndex = boats.isEmpty() ? 0 : Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
         selectedBoatIndex = safeBoatIndex;
-        List<Integer> visibleStorageSlots = canManageDock ? getVisibleStorageSlots() : List.of();
+        List<StorageGroup> visibleStorageGroups = canManageDock ? getVisibleStorageGroups() : List.of();
         List<String> storageLines = canManageDock ? getVisibleStorageLines(player) : List.of();
-        int safeStorageIndex = visibleStorageSlots.isEmpty() ? 0 : Mth.clamp(selectedStorageIndex, 0, visibleStorageSlots.size() - 1);
+        int safeStorageIndex = visibleStorageGroups.isEmpty() ? 0 : Mth.clamp(selectedStorageIndex, 0, visibleStorageGroups.size() - 1);
         selectedStorageIndex = safeStorageIndex;
         int safeWaybillIndex = waybills.isEmpty() ? 0 : Mth.clamp(selectedWaybillIndex, 0, waybills.size() - 1);
         selectedWaybillIndex = safeWaybillIndex;
@@ -1106,29 +1108,28 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (!canManageDock(player)) {
             return List.of();
         }
-        List<Integer> visibleSlots = getVisibleStorageSlots();
-        List<String> lines = new ArrayList<>(visibleSlots.size());
-        for (int slot : visibleSlots) {
-            ItemStack stack = storage.get(slot);
-            String itemName = stack.isEmpty() ? "-" : stack.getHoverName().getString();
-            lines.add(clampUtf(itemName + " x" + stack.getCount(), 150));
+        List<StorageGroup> visibleGroups = getVisibleStorageGroups();
+        List<String> lines = new ArrayList<>(visibleGroups.size());
+        for (StorageGroup group : visibleGroups) {
+            String itemName = group.displayStack().isEmpty() ? "-" : group.displayStack().getHoverName().getString();
+            lines.add(clampUtf(itemName + " x" + group.totalCount(), 150));
         }
         return lines;
     }
 
     public int getVisibleStorageCount(Player player) {
-        return canManageDock(player) ? getVisibleStorageSlots().size() : 0;
+        return canManageDock(player) ? getVisibleStorageGroups().size() : 0;
     }
 
     public ItemStack getStorageItemForVisibleIndex(Player player, int visibleIndex) {
         if (!canManageDock(player)) {
             return ItemStack.EMPTY;
         }
-        List<Integer> visibleSlots = getVisibleStorageSlots();
-        if (visibleIndex < 0 || visibleIndex >= visibleSlots.size()) {
+        List<StorageGroup> visibleGroups = getVisibleStorageGroups();
+        if (visibleIndex < 0 || visibleIndex >= visibleGroups.size()) {
             return ItemStack.EMPTY;
         }
-        return storage.get(visibleSlots.get(visibleIndex)).copy();
+        return visibleGroups.get(visibleIndex).displayStack().copy();
     }
 
     public boolean extractVisibleStorage(Player player, int visibleIndex, int quantity) {
@@ -1136,7 +1137,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (stack.isEmpty()) {
             return false;
         }
-        int amount = Math.max(1, Math.min(quantity, stack.getCount()));
+        int amount = Math.max(1, Math.min(quantity, countMatchingStock(stack)));
         return extractMatchingStock(stack, amount);
     }
 
@@ -1241,6 +1242,65 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
         return visible;
+    }
+
+    private List<StorageGroup> getVisibleStorageGroups() {
+        List<StorageGroupAccumulator> groups = new ArrayList<>();
+        for (int slot = 0; slot < storage.size(); slot++) {
+            ItemStack stack = storage.get(slot);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            StorageGroupAccumulator target = null;
+            for (StorageGroupAccumulator group : groups) {
+                if (ItemStack.isSameItemSameTags(group.template, stack)) {
+                    target = group;
+                    break;
+                }
+            }
+            if (target == null) {
+                target = new StorageGroupAccumulator(stack.copy());
+                groups.add(target);
+            }
+            target.slots.add(slot);
+            target.totalCount += stack.getCount();
+        }
+
+        List<StorageGroup> visibleGroups = new ArrayList<>(groups.size());
+        for (StorageGroupAccumulator group : groups) {
+            ItemStack displayStack = group.template.copy();
+            displayStack.setCount(group.totalCount);
+            visibleGroups.add(new StorageGroup(displayStack, List.copyOf(group.slots), group.totalCount));
+        }
+        return visibleGroups;
+    }
+
+    private List<ItemStack> removeVisibleStorageGroup(int visibleIndex) {
+        List<StorageGroup> groups = getVisibleStorageGroups();
+        if (visibleIndex < 0 || visibleIndex >= groups.size()) {
+            return List.of();
+        }
+        List<ItemStack> removed = new ArrayList<>();
+        for (int slot : groups.get(visibleIndex).slots()) {
+            ItemStack stack = removeStorageItemNoUpdate(slot);
+            if (!stack.isEmpty()) {
+                removed.add(stack);
+            }
+        }
+        return removed;
+    }
+
+    private record StorageGroup(ItemStack displayStack, List<Integer> slots, int totalCount) {
+    }
+
+    private static final class StorageGroupAccumulator {
+        private final ItemStack template;
+        private final List<Integer> slots = new ArrayList<>();
+        private int totalCount;
+
+        private StorageGroupAccumulator(ItemStack template) {
+            this.template = template;
+        }
     }
 
     private boolean isBoatAvailableForDispatch(SailboatEntity boat, @Nullable Player player) {

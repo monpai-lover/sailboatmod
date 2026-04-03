@@ -79,6 +79,7 @@ public final class ServerEvents {
 
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
+        com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
     }

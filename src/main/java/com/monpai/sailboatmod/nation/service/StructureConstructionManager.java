@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
+import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
@@ -20,6 +21,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -63,7 +65,7 @@ public final class StructureConstructionManager {
         public static final List<StructureType> ALL = List.of(values());
     }
 
-    private record ConstructionJob(ServerLevel level, ServerPlayer player, StructureType type,
+    private record ConstructionJob(ServerLevel level, UUID ownerUuid, StructureType type,
                                    String projectId, StructureConstructionSite site) {}
 
     public record AssistPlacementResult(boolean success, boolean completed, Component message) {}
@@ -124,6 +126,7 @@ public final class StructureConstructionManager {
     private static final Map<String, List<BlockPos>> ACTIVE_ASSIST_SITES = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, ActiveWorker>> ACTIVE_SITE_WORKERS = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, ActiveWorker>> ACTIVE_ROAD_WORKERS = new ConcurrentHashMap<>();
+    private static final Set<String> RESTORED_DIMENSIONS = ConcurrentHashMap.newKeySet();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
     private static final int ROAD_BUILD_DURATION_TICKS = 200; // ~10 seconds for roads
     private static final long ACTIVE_WORKER_TIMEOUT_TICKS = 40L;
@@ -136,6 +139,7 @@ public final class StructureConstructionManager {
     private StructureConstructionManager() {}
 
     public static boolean placeStructureAnimated(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type, int rotation) {
+        ensureRuntimeRestored(level);
         BlueprintService.BlueprintPlacement placement = BlueprintService.preparePlacement(level, type.nbtName(), origin, rotation);
         if (placement == null) {
             return false;
@@ -163,7 +167,9 @@ public final class StructureConstructionManager {
         StructureConstructionSite site = StructureConstructionSite.create(level, origin, placement, scaffoldPositions, true);
 
         String jobId = origin.toShortString() + "_" + System.currentTimeMillis();
-        ACTIVE_CONSTRUCTIONS.put(jobId, new ConstructionJob(level, player, type, projectId, site));
+        ConstructionJob job = new ConstructionJob(level, player.getUUID(), type, projectId, site);
+        ACTIVE_CONSTRUCTIONS.put(jobId, job);
+        persistConstructionJob(jobId, job);
 
         player.sendSystemMessage(Component.translatable(
                 "command.sailboatmod.nation.structure.started",
@@ -173,6 +179,7 @@ public final class StructureConstructionManager {
     }
 
     public static AssistPlacementResult assistPlaceNextBlock(ServerLevel level, BlockPos origin, ServerPlayer player, StructureType type, int rotation) {
+        ensureRuntimeRestored(level);
         BlueprintService.BlueprintPlacement placement = BlueprintService.preparePlacement(level, type.nbtName(), origin, rotation);
         if (placement == null) {
             return new AssistPlacementResult(false, false,
@@ -208,7 +215,7 @@ public final class StructureConstructionManager {
 
         if (nextBlock == null) {
             if (isPlacementComplete(level, placement.blocks())) {
-                completeStructure(level, player, type, placement.bounds(), placement.rotation(),
+                completeStructure(level, player.getUUID(), type, placement.bounds(), placement.rotation(),
                         clearAssistSite(level, origin, type, rotation));
                 return new AssistPlacementResult(true, true,
                         Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(type.translationKey())));
@@ -234,7 +241,7 @@ public final class StructureConstructionManager {
 
         boolean completed = isPlacementComplete(level, placement.blocks());
         if (completed) {
-            completeStructure(level, player, type, placement.bounds(), placement.rotation(),
+            completeStructure(level, player.getUUID(), type, placement.bounds(), placement.rotation(),
                     clearAssistSite(level, origin, type, rotation));
         }
 
@@ -252,6 +259,7 @@ public final class StructureConstructionManager {
     }
 
     public static void tick(ServerLevel level) {
+        ensureRuntimeRestored(level);
         if (!ACTIVE_CONSTRUCTIONS.isEmpty()) {
             tickConstructions(level);
         }
@@ -266,21 +274,28 @@ public final class StructureConstructionManager {
         for (Map.Entry<String, ConstructionJob> entry : ACTIVE_CONSTRUCTIONS.entrySet()) {
             ConstructionJob job = entry.getValue();
             if (job.level != level) continue;
-            playersToSync.add(job.player);
+            ServerPlayer owner = ownerPlayer(level, job.ownerUuid);
+            if (owner != null) {
+                playersToSync.add(owner);
+            }
 
             int activeWorkers = getActiveWorkerCount(level, entry.getKey());
             job.site.tick(activeWorkers, false);
             if (job.site.consumeProgressUpdate()) {
-                job.player.displayClientMessage(Component.translatable(
-                        "message.sailboatmod.constructor.progress",
-                        Component.translatable(job.type.translationKey()),
-                        job.site.progressPercent()
-                ), true);
+                if (owner != null) {
+                    owner.displayClientMessage(Component.translatable(
+                            "message.sailboatmod.constructor.progress",
+                            Component.translatable(job.type.translationKey()),
+                            job.site.progressPercent()
+                    ), true);
+                }
             }
 
             if (job.site.isComplete()) {
-                completeStructure(level, job.player, job.type, job.site.bounds(), job.site.rotation(), job.site.scaffoldPositions());
-                job.player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(job.type.translationKey())));
+                completeStructure(level, job.ownerUuid, job.type, job.site.bounds(), job.site.rotation(), job.site.scaffoldPositions());
+                if (owner != null) {
+                    owner.sendSystemMessage(Component.translatable("command.sailboatmod.nation.structure.placed", Component.translatable(job.type.translationKey())));
+                }
                 completed.add(entry.getKey());
             }
         }
@@ -288,11 +303,13 @@ public final class StructureConstructionManager {
         completed.forEach(jobId -> {
             ACTIVE_CONSTRUCTIONS.remove(jobId);
             ACTIVE_SITE_WORKERS.remove(jobId);
+            removePersistedConstructionJob(level, jobId);
         });
         syncConstructionProgress(level, playersToSync);
     }
 
     public static WorkerSiteAssignment findNearestSite(ServerLevel level, BlockPos workerPos, int maxDistance) {
+        ensureRuntimeRestored(level);
         WorkerSiteAssignment best = null;
         double bestScore = Double.MAX_VALUE;
         double maxDistanceSqr = maxDistance <= 0 ? Double.MAX_VALUE : (double) maxDistance * (double) maxDistance;
@@ -357,6 +374,7 @@ public final class StructureConstructionManager {
     }
 
     public static WorkerSiteAssignment getSiteAssignment(ServerLevel level, String jobId, BlockPos workerPos) {
+        ensureRuntimeRestored(level);
         if (jobId == null || jobId.isBlank()) {
             return null;
         }
@@ -390,6 +408,7 @@ public final class StructureConstructionManager {
     }
 
     public static void reportWorkerActivity(ServerLevel level, String jobId, String workerId, BlockPos position, boolean specialist) {
+        ensureRuntimeRestored(level);
         if (workerId == null || workerId.isBlank() || position == null) {
             return;
         }
@@ -431,6 +450,7 @@ public final class StructureConstructionManager {
     }
 
     public static boolean hasActiveConstruction(ServerLevel level, String jobId) {
+        ensureRuntimeRestored(level);
         ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
         if (job != null && job.level == level && !job.site.isComplete()) {
             return true;
@@ -468,6 +488,7 @@ public final class StructureConstructionManager {
         completed.forEach(jobId -> {
             ACTIVE_ROAD_CONSTRUCTIONS.remove(jobId);
             ACTIVE_ROAD_WORKERS.remove(jobId);
+            removePersistedRoadJob(level, jobId);
         });
     }
 
@@ -603,11 +624,11 @@ public final class StructureConstructionManager {
         return level.dimension().location() + "|" + origin.asLong() + "|" + type.nbtName() + "|" + Math.floorMod(rotation, 4);
     }
 
-    private static void completeStructure(ServerLevel level, ServerPlayer player, StructureType type,
+    private static void completeStructure(ServerLevel level, UUID ownerUuid, StructureType type,
                                           BlueprintService.PlacementBounds bounds, int rotation,
                                           List<BlockPos> scaffoldPositions) {
         placeCoreBlock(level, bounds, type);
-        fixCoreOwnership(level, bounds, player);
+        fixCoreOwnership(level, bounds, ownerUuid);
         if (scaffoldPositions != null && !scaffoldPositions.isEmpty()) {
             ConstructionScaffoldingService.removeScaffolding(level, scaffoldPositions);
         }
@@ -617,7 +638,7 @@ public final class StructureConstructionManager {
             return;
         }
 
-        NationMemberRecord member = data.getMember(player.getUUID());
+        NationMemberRecord member = data.getMember(ownerUuid);
         if (member == null) {
             return;
         }
@@ -708,9 +729,12 @@ public final class StructureConstructionManager {
         level.setBlock(fallbackPos, block.defaultBlockState(), Block.UPDATE_ALL);
     }
 
-    private static void fixCoreOwnership(ServerLevel level, BlueprintService.PlacementBounds bounds, ServerPlayer player) {
+    private static void fixCoreOwnership(ServerLevel level, BlueprintService.PlacementBounds bounds, UUID ownerUuid) {
+        if (ownerUuid == null) {
+            return;
+        }
         NationSavedData data = NationSavedData.get(level);
-        NationMemberRecord member = data.getMember(player.getUUID());
+        NationMemberRecord member = data.getMember(ownerUuid);
         if (member == null) {
             return;
         }
@@ -727,8 +751,15 @@ public final class StructureConstructionManager {
                         }
                     } else if (state.is(ModBlocks.NATION_CORE_BLOCK.get())) {
                         NationRecord nation = data.getNation(member.nationId());
-                        if (nation != null && !nation.hasCore()) {
-                            NationClaimService.placeCore(player, pos);
+                        TownRecord capitalTown = nation == null ? null : TownService.getCapitalTown(data, nation);
+                        TownRecord occupiedTown = TownService.getTownAt(level, pos);
+                        if (nation != null
+                                && !nation.hasCore()
+                                && capitalTown != null
+                                && capitalTown.hasCore()
+                                && occupiedTown != null
+                                && capitalTown.townId().equals(occupiedTown.townId())) {
+                            placeNationCoreForConstruction(data, level, nation, capitalTown, pos);
                         }
                     } else if (state.is(ModBlocks.MARKET_BLOCK.get()) || state.is(ModBlocks.DOCK_BLOCK.get())) {
                         // Market and dock blocks get their town association via chunk claim
@@ -997,9 +1028,17 @@ public final class StructureConstructionManager {
     private static void scheduleRoadConstruction(ServerLevel level, RoadNetworkRecord road) {
         if (road.path().size() < 2) {
             ACTIVE_ROAD_CONSTRUCTIONS.remove(road.roadId());
+            removePersistedRoadJob(level, road.roadId());
             return;
         }
-        ACTIVE_ROAD_CONSTRUCTIONS.put(road.roadId(), new RoadConstructionJob(level, road.roadId(), road.path(), 0, 0.0D));
+        int resumeIndex = findRoadResumeIndex(level, road.path());
+        if (resumeIndex >= road.path().size()) {
+            ACTIVE_ROAD_CONSTRUCTIONS.remove(road.roadId());
+            removePersistedRoadJob(level, road.roadId());
+            return;
+        }
+        ACTIVE_ROAD_CONSTRUCTIONS.put(road.roadId(), new RoadConstructionJob(level, road.roadId(), road.path(), resumeIndex, resumeIndex));
+        persistRoadConstruction(level, road.roadId(), road.path());
     }
 
     private static void placeRoadSlice(ServerLevel level, List<BlockPos> path, int index, BlockState roadBlock) {
@@ -1346,7 +1385,7 @@ public final class StructureConstructionManager {
             List<SyncConstructionProgressPacket.Entry> entries = new ArrayList<>();
             for (Map.Entry<String, ConstructionJob> activeEntry : ACTIVE_CONSTRUCTIONS.entrySet()) {
                 ConstructionJob job = activeEntry.getValue();
-                if (job.level != level || job.player != player) {
+                if (job.level != level || !player.getUUID().equals(job.ownerUuid)) {
                     continue;
                 }
                 entries.add(new SyncConstructionProgressPacket.Entry(
@@ -1413,5 +1452,242 @@ public final class StructureConstructionManager {
             }
         }
         return false;
+    }
+
+    public static void clearRuntimeState() {
+        ACTIVE_CONSTRUCTIONS.clear();
+        ACTIVE_ROAD_CONSTRUCTIONS.clear();
+        ACTIVE_ASSIST_SITES.clear();
+        ACTIVE_SITE_WORKERS.clear();
+        ACTIVE_ROAD_WORKERS.clear();
+        RESTORED_DIMENSIONS.clear();
+    }
+
+    private static void ensureRuntimeRestored(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        String dimensionId = level.dimension().location().toString();
+        if (!RESTORED_DIMENSIONS.add(dimensionId)) {
+            return;
+        }
+
+        ConstructionRuntimeSavedData runtimeData = ConstructionRuntimeSavedData.get(level);
+
+        List<String> staleStructureJobs = new ArrayList<>();
+        for (ConstructionRuntimeSavedData.StructureJobState state : runtimeData.getStructureJobs()) {
+            if (!dimensionId.equals(state.dimensionId()) || ACTIVE_CONSTRUCTIONS.containsKey(state.jobId())) {
+                continue;
+            }
+            UUID ownerUuid = parseUuid(state.ownerUuid());
+            StructureType type = findStructureType(state.typeId());
+            if (ownerUuid == null || type == null) {
+                staleStructureJobs.add(state.jobId());
+                continue;
+            }
+
+            BlockPos origin = BlockPos.of(state.origin());
+            BlueprintService.BlueprintPlacement placement = BlueprintService.preparePlacement(level, type.nbtName(), origin, state.rotation());
+            if (placement == null) {
+                staleStructureJobs.add(state.jobId());
+                continue;
+            }
+
+            List<BlockPos> scaffolds = toBlockPosList(state.scaffoldPositions());
+            StructureConstructionSite site = StructureConstructionSite.create(level, origin, placement, scaffolds, true);
+            if (site.isComplete()) {
+                completeStructure(level, ownerUuid, type, site.bounds(), site.rotation(), scaffolds);
+                staleStructureJobs.add(state.jobId());
+                continue;
+            }
+
+            ACTIVE_CONSTRUCTIONS.put(state.jobId(), new ConstructionJob(level, ownerUuid, type, state.projectId(), site));
+        }
+        staleStructureJobs.forEach(runtimeData::removeStructureJob);
+
+        List<String> staleRoadJobs = new ArrayList<>();
+        for (ConstructionRuntimeSavedData.RoadJobState state : runtimeData.getRoadJobs()) {
+            if (!dimensionId.equals(state.dimensionId()) || ACTIVE_ROAD_CONSTRUCTIONS.containsKey(state.roadId())) {
+                continue;
+            }
+            List<BlockPos> path = toBlockPosList(state.path());
+            if (path.size() < 2) {
+                staleRoadJobs.add(state.roadId());
+                continue;
+            }
+            int resumeIndex = findRoadResumeIndex(level, path);
+            if (resumeIndex >= path.size()) {
+                staleRoadJobs.add(state.roadId());
+                continue;
+            }
+            ACTIVE_ROAD_CONSTRUCTIONS.put(state.roadId(), new RoadConstructionJob(level, state.roadId(), path, resumeIndex, resumeIndex));
+        }
+        staleRoadJobs.forEach(runtimeData::removeRoadJob);
+    }
+
+    private static void persistConstructionJob(String jobId, ConstructionJob job) {
+        if (job == null || job.level == null || jobId == null || jobId.isBlank()) {
+            return;
+        }
+        ConstructionRuntimeSavedData.get(job.level).putStructureJob(
+                new ConstructionRuntimeSavedData.StructureJobState(
+                        jobId,
+                        job.level.dimension().location().toString(),
+                        job.ownerUuid.toString(),
+                        job.type.nbtName(),
+                        job.site.origin().asLong(),
+                        job.site.rotation(),
+                        job.projectId,
+                        toLongList(job.site.scaffoldPositions())
+                )
+        );
+    }
+
+    private static void removePersistedConstructionJob(ServerLevel level, String jobId) {
+        ConstructionRuntimeSavedData.get(level).removeStructureJob(jobId);
+    }
+
+    private static void persistRoadConstruction(ServerLevel level, String roadId, List<BlockPos> path) {
+        if (level == null || roadId == null || roadId.isBlank()) {
+            return;
+        }
+        ConstructionRuntimeSavedData.get(level).putRoadJob(
+                new ConstructionRuntimeSavedData.RoadJobState(
+                        roadId,
+                        level.dimension().location().toString(),
+                        toLongList(path)
+                )
+        );
+    }
+
+    private static void removePersistedRoadJob(ServerLevel level, String roadId) {
+        ConstructionRuntimeSavedData.get(level).removeRoadJob(roadId);
+    }
+
+    private static List<Long> toLongList(List<BlockPos> positions) {
+        if (positions == null || positions.isEmpty()) {
+            return List.of();
+        }
+        return positions.stream()
+                .filter(Objects::nonNull)
+                .map(BlockPos::asLong)
+                .toList();
+    }
+
+    private static List<BlockPos> toBlockPosList(List<Long> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> positions = new ArrayList<>(values.size());
+        for (Long value : values) {
+            if (value != null) {
+                positions.add(BlockPos.of(value));
+            }
+        }
+        return List.copyOf(positions);
+    }
+
+    private static UUID parseUuid(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private static StructureType findStructureType(String typeId) {
+        if (typeId == null || typeId.isBlank()) {
+            return null;
+        }
+        for (StructureType type : StructureType.ALL) {
+            if (type.nbtName().equals(typeId) || type.name().equalsIgnoreCase(typeId)) {
+                return type;
+            }
+        }
+        return null;
+    }
+
+    private static ServerPlayer ownerPlayer(ServerLevel level, UUID ownerUuid) {
+        return level == null || ownerUuid == null || level.getServer() == null
+                ? null
+                : level.getServer().getPlayerList().getPlayer(ownerUuid);
+    }
+
+    private static int findRoadResumeIndex(ServerLevel level, List<BlockPos> path) {
+        Block roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB;
+        for (int i = 0; i < path.size(); i++) {
+            boolean complete = true;
+            for (BlockPos pos : collectRoadSlicePositions(path, i)) {
+                if (!level.getBlockState(pos).is(roadBlock)) {
+                    complete = false;
+                    break;
+                }
+            }
+            if (!complete) {
+                return i;
+            }
+        }
+        return path.size();
+    }
+
+    private static void placeNationCoreForConstruction(NationSavedData data,
+                                                       ServerLevel level,
+                                                       NationRecord nation,
+                                                       TownRecord capitalTown,
+                                                       BlockPos pos) {
+        NationRecord updated = new NationRecord(
+                nation.nationId(),
+                nation.name(),
+                nation.shortName(),
+                nation.primaryColorRgb(),
+                nation.secondaryColorRgb(),
+                nation.leaderUuid(),
+                nation.createdAt(),
+                nation.capitalTownId(),
+                level.dimension().location().toString(),
+                pos.asLong(),
+                nation.flagId()
+        );
+        data.putNation(updated);
+
+        ChunkPos chunkPos = new ChunkPos(pos);
+        com.monpai.sailboatmod.nation.model.NationClaimRecord existingClaim = data.getClaim(level, chunkPos);
+        if (existingClaim == null) {
+            data.putClaim(new com.monpai.sailboatmod.nation.model.NationClaimRecord(
+                    level.dimension().location().toString(),
+                    chunkPos.x,
+                    chunkPos.z,
+                    nation.nationId(),
+                    capitalTown.townId(),
+                    com.monpai.sailboatmod.nation.model.NationClaimAccessLevel.MEMBER.id(),
+                    com.monpai.sailboatmod.nation.model.NationClaimAccessLevel.MEMBER.id(),
+                    com.monpai.sailboatmod.nation.model.NationClaimAccessLevel.MEMBER.id(),
+                    com.monpai.sailboatmod.nation.model.NationClaimAccessLevel.MEMBER.id(),
+                    com.monpai.sailboatmod.nation.model.NationClaimAccessLevel.MEMBER.id(),
+                    com.monpai.sailboatmod.nation.model.NationClaimAccessLevel.MEMBER.id(),
+                    com.monpai.sailboatmod.nation.model.NationClaimAccessLevel.MEMBER.id(),
+                    System.currentTimeMillis()
+            ));
+            return;
+        }
+
+        data.putClaim(new com.monpai.sailboatmod.nation.model.NationClaimRecord(
+                existingClaim.dimensionId(),
+                existingClaim.chunkX(),
+                existingClaim.chunkZ(),
+                nation.nationId(),
+                capitalTown.townId(),
+                existingClaim.breakAccessLevel(),
+                existingClaim.placeAccessLevel(),
+                existingClaim.useAccessLevel(),
+                existingClaim.containerAccessLevel(),
+                existingClaim.redstoneAccessLevel(),
+                existingClaim.entityUseAccessLevel(),
+                existingClaim.entityDamageAccessLevel(),
+                existingClaim.claimedAt()
+        ));
     }
 }

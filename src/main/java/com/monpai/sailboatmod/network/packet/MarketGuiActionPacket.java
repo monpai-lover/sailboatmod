@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.PacketDistributor;
@@ -40,7 +41,22 @@ public class MarketGuiActionPacket {
             }
             switch (packet.action) {
                 case REFRESH -> { }
-                case BIND_NEAREST_DOCK -> market.bindNearestDock();
+                case BIND_NEAREST_DOCK -> {
+                    boolean bound = market.bindNearestDock();
+                    String noticeMessage;
+                    if (bound) {
+                        String dockName = market.getLinkedDock() != null
+                                ? market.getLinkedDock().getDockName()
+                                : (market.getLinkedDockPos() == null ? "-" : market.getLinkedDockPos().toShortString());
+                        noticeMessage = Component.translatable("screen.sailboatmod.market.bind_dock.success", dockName).getString();
+                    } else {
+                        noticeMessage = Component.translatable("screen.sailboatmod.market.bind_dock.failed").getString();
+                    }
+                    ModNetwork.CHANNEL.send(
+                            PacketDistributor.PLAYER.with(() -> player),
+                            new MarketStatusNoticePacket(packet.marketPos, noticeMessage, bound)
+                    );
+                }
             }
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> player),

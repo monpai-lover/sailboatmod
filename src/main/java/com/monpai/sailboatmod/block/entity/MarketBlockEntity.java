@@ -23,6 +23,7 @@ import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.DockTownResolver;
 import com.monpai.sailboatmod.nation.service.TownEconomySnapshotService;
 import com.monpai.sailboatmod.nation.service.TownFinanceLedgerService;
+import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
@@ -133,7 +134,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (dockBinding != null && !dockBinding.townId().isBlank()) {
                 townId = dockBinding.townId();
                 TownRecord town = NationSavedData.get(level).getTown(townId);
-                townName = town == null ? townId : town.name();
+                if ((town == null || town.name().isBlank()) && linkedDockPos != null) {
+                    town = TownService.getTownAt(level, linkedDockPos);
+                }
+                townName = town != null && !town.name().isBlank()
+                        ? town.name()
+                        : fallbackTownLabel(townId);
                 TownEconomySnapshotService.TownEconomySnapshot economy = TownEconomySnapshotService.build(level, townId);
                 stockpileCommodityTypes = economy.stockpileCommodityTypes();
                 stockpileTotalUnits = economy.stockpileTotalUnits();
@@ -171,7 +177,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                                 itemName,
                                 stack.getCount(),
                                 currentCommodityUnitPrice(stack, 1, CommodityMarketService.estimateBaseUnitPrice(stack)),
-                                "Stored at " + dock.getDockName()
+                                Component.translatable("screen.sailboatmod.market.storage_at", dock.getDockName()).getString()
                         ));
                     }
                 }
@@ -329,6 +335,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 priceChartSeries,
                 commodityBuyBooks
         );
+    }
+
+    private static String fallbackTownLabel(String townId) {
+        if (townId == null || townId.isBlank()) {
+            return "";
+        }
+        return townId.length() > 24 ? townId.substring(0, 24) + "..." : townId;
     }
 
     public boolean createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int unitPrice, int priceAdjustmentBp, String sellerNote) {

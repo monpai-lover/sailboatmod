@@ -21,6 +21,7 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
@@ -82,6 +83,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     private Button nonOrderAutoUnloadButton;
     @Nullable
     private Button autoRouteButton;
+    private boolean closingContainer;
 
     public DockScreen(DockMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -194,6 +196,33 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         if (dockNameInput != null && !dockNameInput.isFocused()) {
             dockNameInput.setValue(data.dockName());
         }
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            onClose();
+            return true;
+        }
+        if (this.minecraft != null
+                && this.minecraft.options.keyInventory.matches(keyCode, scanCode)
+                && (dockNameInput == null || !dockNameInput.isFocused())) {
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public void onClose() {
+        try {
+            if (!closingContainer && minecraft != null && minecraft.player != null && minecraft.player.containerMenu == menu) {
+                closingContainer = true;
+                minecraft.player.closeContainer();
+            }
+        } finally {
+            closingContainer = false;
+        }
+        super.onClose();
     }
 
     private void drawRouteTab(GuiGraphics g, int mouseX, int mouseY) {

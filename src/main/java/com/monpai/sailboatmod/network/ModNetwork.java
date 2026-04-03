@@ -20,6 +20,7 @@ import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
 import com.monpai.sailboatmod.network.packet.DockGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.FinalizeRouteNamePacket;
 import com.monpai.sailboatmod.network.packet.MarketGuiActionPacket;
+import com.monpai.sailboatmod.network.packet.MarketStatusNoticePacket;
 import com.monpai.sailboatmod.network.packet.NationGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.NationToastPacket;
 import com.monpai.sailboatmod.network.packet.OpenDockScreenPacket;
@@ -164,6 +165,14 @@ public final class ModNetwork {
                 MarketGuiActionPacket::encode,
                 MarketGuiActionPacket::decode,
                 MarketGuiActionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                MarketStatusNoticePacket.class,
+                MarketStatusNoticePacket::encode,
+                MarketStatusNoticePacket::decode,
+                MarketStatusNoticePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
