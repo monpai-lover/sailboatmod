@@ -47,10 +47,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private static final int MAX_PANEL_WIDTH = 2400;
     private static final int MAX_PANEL_HEIGHT = 1600;
     private static final int NAV_WIDTH = 140;
-    private static final int HEADER_HEIGHT = 60;
-    private static final int PANEL_PADDING = 16;
-    private static final int SECTION_GAP = 12;
-    private static final int ROW_HEIGHT = 40;
+    private static final int HEADER_HEIGHT = 54;
+    private static final int PANEL_PADDING = 14;
+    private static final int SECTION_GAP = 10;
+    private static final int ROW_HEIGHT = 36;
     private static final int GOODS_CATALOG_PAGE_SIZE = 10;
     private static final DateTimeFormatter CHART_TIME_FORMAT = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     private static final DateTimeFormatter CHART_SHORT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
@@ -564,7 +564,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         UITextInput searchInput = createInput(panel, 14, 44, controlWidth, 24,
                 Component.translatable("screen.sailboatmod.market.catalog.search").getString(),
                 goodsSearchValue, value -> goodsSearchValue = value);
-        searchInput.onUpdate(value -> {
+        searchInput.onActivate(value -> {
             goodsSearchValue = value;
             goodsCatalogPage = 0;
             rebuildUi();
@@ -701,11 +701,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         });
 
         createAccentBar(row, 0, 0, selected ? 5 : 3, 36, selected ? ACCENT : new Color(255, 255, 255, 18));
-        createText(row, 12, 6, shorten(entry.itemName(), 30), 0.78f, TEXT_PRIMARY);
-        createText(row, 12, 19, shorten(entry.sourceDockName().isBlank() ? entry.commodityKey() : entry.sourceDockName(), 32), 0.62f, TEXT_SOFT);
-        createText(row, goodsCatalogSellerX(width), 11, shorten(entry.sellerName(), 16), 0.7f, TEXT_MUTED);
-        createText(row, goodsCatalogStockX(width), 11, Integer.toString(entry.availableCount()), 0.72f, entry.availableCount() > 0 ? POSITIVE : NEGATIVE);
-        createText(row, goodsCatalogPriceX(width), 11, formatCompactLong(entry.unitPrice()), 0.78f, selected ? ACCENT : TEXT_PRIMARY);
+        createText(row, 12, 5, shorten(entry.itemName(), 30), 0.72f, TEXT_PRIMARY);
+        createText(row, 12, 18, shorten(entry.sourceDockName().isBlank() ? entry.commodityKey() : entry.sourceDockName(), 32), 0.58f, TEXT_SOFT);
+        createText(row, goodsCatalogSellerX(width), 10, shorten(entry.sellerName(), 16), 0.65f, TEXT_MUTED);
+        createText(row, goodsCatalogStockX(width), 10, Integer.toString(entry.availableCount()), 0.68f, entry.availableCount() > 0 ? POSITIVE : NEGATIVE);
+        createText(row, goodsCatalogPriceX(width), 10, formatCompactLong(entry.unitPrice()), 0.72f, selected ? ACCENT : TEXT_PRIMARY);
     }
 
     private int goodsCatalogSellerX(int width) {
@@ -1053,10 +1053,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (!spec.subtitle.isBlank()) {
             UIWrappedText subtitle = new UIWrappedText(spec.subtitle);
             subtitle.setX(new PixelConstraint(18));
-            subtitle.setY(new PixelConstraint(24));
+            subtitle.setY(new PixelConstraint(22));
             subtitle.setWidth(new PixelConstraint(width - 36));
             subtitle.setHeight(new ChildBasedSizeConstraint(0f));
-            subtitle.setTextScale(new PixelConstraint(0.75f));
+            subtitle.setTextScale(new PixelConstraint(0.7f));
             subtitle.setColor(TEXT_MUTED);
             subtitle.setChildOf(row);
         }
@@ -2079,10 +2079,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
             UIWrappedText text = new UIWrappedText(line);
             text.setX(new PixelConstraint(0));
-            text.setY(new CramSiblingConstraint(8f));
+            text.setY(new CramSiblingConstraint(7f));
             text.setWidth(new PixelConstraint(width));
             text.setHeight(new ChildBasedSizeConstraint(0f));
-            text.setTextScale(new PixelConstraint(0.75f));
+            text.setTextScale(new PixelConstraint(0.7f));
             text.setColor(color);
             text.setChildOf(holder);
         }
