@@ -201,7 +201,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         listing.sourceDockName().isBlank() ? listing.sourceDockPos().toShortString() : listing.sourceDockName(),
                         listing.nationId(),
                         listing.sellerNote(),
-                        category
+                        category,
+                        0
                 ));
                 chartDisplayNames.putIfAbsent(
                         CommodityKeyResolver.resolve(listing.itemStack()),

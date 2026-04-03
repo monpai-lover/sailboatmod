@@ -46,11 +46,11 @@ import java.util.function.Consumer;
 public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>, MarketOverviewConsumer {
     private static final int MAX_PANEL_WIDTH = 2400;
     private static final int MAX_PANEL_HEIGHT = 1600;
-    private static final int NAV_WIDTH = 140;
-    private static final int HEADER_HEIGHT = 54;
-    private static final int PANEL_PADDING = 14;
-    private static final int SECTION_GAP = 10;
-    private static final int ROW_HEIGHT = 36;
+    private static final int NAV_WIDTH = 120;
+    private static final int HEADER_HEIGHT = 48;
+    private static final int PANEL_PADDING = 12;
+    private static final int SECTION_GAP = 8;
+    private static final int ROW_HEIGHT = 32;
     private static final int GOODS_CATALOG_PAGE_SIZE = 10;
     private static final DateTimeFormatter CHART_TIME_FORMAT = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     private static final DateTimeFormatter CHART_SHORT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
@@ -96,10 +96,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String buyOrderQtyValue = "1";
     private String buyOrderMinPriceValue = "-1000";
     private String buyOrderMaxPriceValue = "1000";
+    private String priceFilterMinValue = "";
+    private String priceFilterMaxValue = "";
     private GoodsCatalogSort goodsCatalogSort = GoodsCatalogSort.PRICE_DESC;
     private GoodsCategoryFilter goodsCategoryFilter = GoodsCategoryFilter.ALL;
     private GoodsPriceBandFilter goodsPriceBandFilter = GoodsPriceBandFilter.ALL;
     private int goodsCatalogPage;
+    private boolean showCategoryFilter = false;
+    private boolean showPriceFilter = false;
     private float goodsViewportScrollOffset;
     private float buyOrdersViewportScrollOffset;
     private float goodsCatalogScrollOffset;
@@ -584,27 +588,71 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
 
         int filterX = 14;
-        for (GoodsCategoryFilter filter : GoodsCategoryFilter.values()) {
-            int buttonWidth = Math.max(62, Component.translatable(filter.labelKey).getString().length() * 7 + 16);
-            createGoodsPanelTab(panel, filterX, 72, buttonWidth, Component.translatable(filter.labelKey).getString(),
-                    goodsCategoryFilter == filter, () -> {
-                        goodsCategoryFilter = filter;
-                        goodsCatalogPage = 0;
-                        rebuildUi();
-                    });
-            filterX += buttonWidth + 8;
+        String categoryLabel = Component.translatable("screen.sailboatmod.market.catalog.filter.category").getString()
+                + ": " + Component.translatable(goodsCategoryFilter.labelKey).getString();
+        int categoryWidth = Math.max(100, categoryLabel.length() * 7 + 16);
+        createGoodsPanelTab(panel, filterX, 72, categoryWidth, categoryLabel,
+                showCategoryFilter, () -> {
+                    showCategoryFilter = !showCategoryFilter;
+                    showPriceFilter = false;
+                    rebuildUi();
+                });
+
+        if (showCategoryFilter) {
+            int dropY = 96;
+            for (GoodsCategoryFilter filter : GoodsCategoryFilter.values()) {
+                createDropdownOption(panel, filterX, dropY, categoryWidth, filter.labelKey,
+                        goodsCategoryFilter == filter, () -> {
+                            goodsCategoryFilter = filter;
+                            showCategoryFilter = false;
+                            goodsCatalogPage = 0;
+                            rebuildUi();
+                        });
+                dropY += 24;
+            }
         }
 
-        int priceX = filterX + 10;
-        for (GoodsPriceBandFilter filter : GoodsPriceBandFilter.values()) {
-            int buttonWidth = Math.max(62, Component.translatable(filter.labelKey).getString().length() * 7 + 16);
-            createGoodsPanelTab(panel, priceX, 72, buttonWidth, Component.translatable(filter.labelKey).getString(),
-                    goodsPriceBandFilter == filter, () -> {
-                        goodsPriceBandFilter = filter;
+        int priceX = filterX + categoryWidth + 8;
+        String priceLabel = Component.translatable("screen.sailboatmod.market.catalog.filter.price").getString();
+        int priceWidth = Math.max(100, priceLabel.length() * 7 + 16);
+        createGoodsPanelTab(panel, priceX, 72, priceWidth, priceLabel,
+                showPriceFilter, () -> {
+                    showPriceFilter = !showPriceFilter;
+                    showCategoryFilter = false;
+                    rebuildUi();
+                });
+
+        if (showPriceFilter) {
+            UIRoundedRectangle pricePanel = createPanel(panel, priceX, 96, priceWidth + 120, 80, 10f, CARD_BG_SOFT);
+            pricePanel.enableEffect(new OutlineEffect(BORDER, 1f));
+
+            createText(pricePanel, 8, 6, Component.translatable("screen.sailboatmod.market.catalog.price.min").getString(), 0.7f, TEXT_SOFT);
+            UITextInput minInput = createInput(pricePanel, 8, 20, (priceWidth + 120) / 2 - 12, 22,
+                    "0", priceFilterMinValue, value -> priceFilterMinValue = value);
+            minInput.onActivate(value -> {
+                priceFilterMinValue = value;
+                goodsCatalogPage = 0;
+                rebuildUi();
+                return Unit.INSTANCE;
+            });
+
+            createText(pricePanel, (priceWidth + 120) / 2 + 4, 6, Component.translatable("screen.sailboatmod.market.catalog.price.max").getString(), 0.7f, TEXT_SOFT);
+            UITextInput maxInput = createInput(pricePanel, (priceWidth + 120) / 2 + 4, 20, (priceWidth + 120) / 2 - 12, 22,
+                    "999999", priceFilterMaxValue, value -> priceFilterMaxValue = value);
+            maxInput.onActivate(value -> {
+                priceFilterMaxValue = value;
+                goodsCatalogPage = 0;
+                rebuildUi();
+                return Unit.INSTANCE;
+            });
+
+            createButton(pricePanel, 8, 48, priceWidth + 104, 24,
+                    Component.translatable("screen.sailboatmod.market.catalog.price.apply").getString(),
+                    true, false, () -> {
+                        showPriceFilter = false;
                         goodsCatalogPage = 0;
                         rebuildUi();
                     });
-            priceX += buttonWidth + 8;
         }
 
         List<Integer> filtered = filteredListingIndices();
@@ -762,6 +810,23 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
         });
         button.onMouseClickConsumer(event -> action.run());
+    }
+
+    private void createDropdownOption(UIComponent parent, int x, int y, int width, String labelKey, boolean selected, Runnable action) {
+        UIRoundedRectangle option = createPanel(parent, x, y, width, 22, 8f, selected ? ROW_SELECTED : CARD_BG_SOFT);
+        option.enableEffect(new OutlineEffect(new Color(255, 255, 255, selected ? 20 : 8), 1f));
+        createText(option, 10, 6, Component.translatable(labelKey).getString(), 0.75f, selected ? ACCENT : TEXT_PRIMARY);
+        option.onMouseEnterRunnable(() -> {
+            if (!selected) {
+                option.setColor(ROW_HOVER);
+            }
+        });
+        option.onMouseLeaveRunnable(() -> {
+            if (!selected) {
+                option.setColor(CARD_BG_SOFT);
+            }
+        });
+        option.onMouseClickConsumer(event -> action.run());
     }
 
     private void buildPriceChartPanel(UIComponent panel, int innerWidth) {
@@ -1200,7 +1265,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             if (!goodsCategoryFilter.matches(entry)) {
                 continue;
             }
-            if (!goodsPriceBandFilter.matches(entry.unitPrice())) {
+            if (!matchesPriceFilter(entry.unitPrice())) {
                 continue;
             }
             indices.add(i);
@@ -2096,6 +2161,23 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         selectedBuyOrderIndex = clampSelection(selectedBuyOrderIndex, data.buyOrderEntries().size());
     }
 
+    private boolean matchesPriceFilter(int price) {
+        int minPrice = parsePrice(priceFilterMinValue, 0);
+        int maxPrice = parsePrice(priceFilterMaxValue, Integer.MAX_VALUE);
+        return price >= minPrice && price <= maxPrice;
+    }
+
+    private int parsePrice(String value, int fallback) {
+        if (value == null || value.trim().isEmpty()) {
+            return fallback;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(value.trim()));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
     private int clampSelection(int current, int size) {
         if (size <= 0) {
             return 0;
@@ -2404,10 +2486,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private enum GoodsCategoryFilter {
         ALL("screen.sailboatmod.market.catalog.filter.all"),
-        METAL("screen.sailboatmod.market.catalog.filter.metal"),
-        WOOD("screen.sailboatmod.market.catalog.filter.wood"),
-        LUXURY("screen.sailboatmod.market.catalog.filter.luxury"),
-        OTHER("screen.sailboatmod.market.catalog.filter.other");
+        COMMON("screen.sailboatmod.market.catalog.filter.common"),
+        UNCOMMON("screen.sailboatmod.market.catalog.filter.uncommon"),
+        RARE("screen.sailboatmod.market.catalog.filter.rare"),
+        EPIC("screen.sailboatmod.market.catalog.filter.epic");
 
         private final String labelKey;
 
@@ -2416,14 +2498,13 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
 
         private boolean matches(MarketOverviewData.ListingEntry entry) {
-            String category = entry == null || entry.category() == null ? "" : entry.category().toLowerCase(Locale.ROOT);
+            int rarity = entry == null ? 0 : entry.rarity();
             return switch (this) {
                 case ALL -> true;
-                case METAL -> category.equals("metal") || category.equals("ore");
-                case WOOD -> category.equals("wood");
-                case LUXURY -> category.equals("luxury") || category.equals("gems");
-                case OTHER -> !(category.equals("metal") || category.equals("ore")
-                        || category.equals("wood") || category.equals("luxury") || category.equals("gems"));
+                case COMMON -> rarity == 0;
+                case UNCOMMON -> rarity == 1;
+                case RARE -> rarity == 2;
+                case EPIC -> rarity == 3;
             };
         }
     }

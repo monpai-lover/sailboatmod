@@ -95,7 +95,7 @@ public record MarketOverviewData(
 
     public record ListingEntry(String label, String commodityKey, String itemName, int availableCount, int reservedCount,
                                int unitPrice, String sellerName, String sourceDockName, String nationId, String sellerNote,
-                               String category) {
+                               String category, int rarity) {
     }
 
     public record OrderEntry(String label, String sourceDockName, String targetDockName, int quantity, String status) {
