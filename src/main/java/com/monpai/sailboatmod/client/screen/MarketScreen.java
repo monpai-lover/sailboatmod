@@ -111,6 +111,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private float buyOrdersViewportScrollOffset;
     private float goodsCatalogScrollOffset;
     private float buyOrdersListScrollOffset;
+    private float goodsViewportScrollProgress = Float.NaN;
+    private float buyOrdersViewportScrollProgress = Float.NaN;
+    private float goodsCatalogScrollProgress = Float.NaN;
+    private float buyOrdersListScrollProgress = Float.NaN;
     private ScrollComponent goodsViewportScrollRef;
     private ScrollComponent buyOrdersViewportScrollRef;
     private ScrollComponent goodsCatalogScrollRef;
@@ -122,6 +126,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private float pendingBuyOrdersViewportScrollOffset = Float.NaN;
     private float pendingGoodsCatalogScrollOffset = Float.NaN;
     private float pendingBuyOrdersListScrollOffset = Float.NaN;
+    private float pendingGoodsViewportScrollProgress = Float.NaN;
+    private float pendingBuyOrdersViewportScrollProgress = Float.NaN;
+    private float pendingGoodsCatalogScrollProgress = Float.NaN;
+    private float pendingBuyOrdersListScrollProgress = Float.NaN;
     private int pendingGoodsViewportScrollTicks;
     private int pendingBuyOrdersViewportScrollTicks;
     private int pendingGoodsCatalogScrollTicks;
@@ -189,6 +197,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             closeMarketScreen();
             return;
         }
+        syncLiveScrollOffsets();
         applyPendingScrollRestores();
         if (!noticeMessage.isBlank() && System.currentTimeMillis() >= noticeExpiresAtMs) {
             noticeMessage = "";
@@ -372,13 +381,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (height < 350) {
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             goodsViewportScrollRef = scroll;
+            trackViewportScroll(scroll, true);
             buildGoodsPage(scroll, 0, 0, width, 450);
-            restoreScroll(scroll, goodsViewportScrollOffset);
+            restoreScroll(scroll, goodsViewportScrollOffset, goodsViewportScrollProgress);
             return;
         }
-        if (width < 850) {
+        if (width < 760) {
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             goodsViewportScrollRef = scroll;
+            trackViewportScroll(scroll, true);
             int overviewHeight = 140;
             int listHeight = 240;
             int actionHeight = Math.max(350, height - overviewHeight - listHeight - SECTION_GAP * 2);
@@ -397,7 +408,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     selectedListing() == null ? Component.translatable("screen.sailboatmod.market.page.goods").getString() : selectedListing().itemName(),
                     goodsPanelSubtitle());
             buildGoodsActionPanel(actionPanel, width);
-            restoreScroll(scroll, goodsViewportScrollOffset);
+            restoreScroll(scroll, goodsViewportScrollOffset, goodsViewportScrollProgress);
             return;
         }
 
@@ -525,13 +536,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (height < 350) {
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             buyOrdersViewportScrollRef = scroll;
+            trackViewportScroll(scroll, false);
             buildBuyOrdersPage(scroll, 0, 0, width, 520);
-            restoreScroll(scroll, buyOrdersViewportScrollOffset);
+            restoreScroll(scroll, buyOrdersViewportScrollOffset, buyOrdersViewportScrollProgress);
             return;
         }
         if (width < 780) {
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             buyOrdersViewportScrollRef = scroll;
+            trackViewportScroll(scroll, false);
             int overviewHeight = buyOrdersOverviewSectionHeight(width);
             int listHeight = compactBuyOrdersListHeight(height);
             int actionHeight = buyOrdersActionSectionHeight(width);
@@ -553,7 +566,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     selectedBuyOrder() == null ? Component.translatable("screen.sailboatmod.market.page.buy_orders").getString() : displayCommodityName(selectedBuyOrder().commodityKey()),
                     buildBuyOrdersSubtitle());
             buildBuyOrderActionPanel(actionPanel, width);
-            restoreScroll(scroll, buyOrdersViewportScrollOffset);
+            restoreScroll(scroll, buyOrdersViewportScrollOffset, buyOrdersViewportScrollProgress);
             return;
         }
 
@@ -823,6 +836,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         scroll.setChildOf(panel);
         scroll.setColor(new Color(0, 0, 0, 0));
         goodsCatalogScrollRef = scroll;
+        trackNestedScroll(scroll, true);
 
         if (visible.isEmpty()) {
             createRow(scroll, width - 8,
@@ -835,7 +849,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         for (int index : visible) {
             createGoodsCatalogRow(scroll, width - 8, data.listingEntries().get(index), index);
         }
-        restoreScroll(scroll, goodsCatalogScrollOffset);
+        restoreScroll(scroll, goodsCatalogScrollOffset, goodsCatalogScrollProgress);
     }
 
     private void createGoodsCatalogRow(UIComponent parent, int width, MarketOverviewData.ListingEntry entry, int index) {
@@ -1201,11 +1215,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         scroll.setChildOf(panel);
         scroll.setColor(new Color(0, 0, 0, 0));
         buyOrdersListScrollRef = scroll;
+        trackNestedScroll(scroll, false);
 
         for (RowSpec row : rows) {
             createRow(scroll, width - 8, row);
         }
-        restoreScroll(scroll, buyOrdersListScrollOffset);
+        restoreScroll(scroll, buyOrdersListScrollOffset, buyOrdersListScrollProgress);
     }
 
     private void buildListPanel(UIComponent panel, List<RowSpec> rows, int width, int height, int startY) {
@@ -2074,25 +2089,53 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void send(MarketGuiActionPacket.Action action) {
+        rememberScrollState();
         ModNetwork.CHANNEL.sendToServer(new MarketGuiActionPacket(data.marketPos(), action));
+    }
+
+    private void syncLiveScrollOffsets() {
+        if (goodsViewportScrollRef != null) {
+            goodsViewportScrollOffset = goodsViewportScrollRef.getVerticalOffset();
+            goodsViewportScrollProgress = computeScrollProgress(goodsViewportScrollRef, goodsViewportScrollOffset);
+        }
+        if (buyOrdersViewportScrollRef != null) {
+            buyOrdersViewportScrollOffset = buyOrdersViewportScrollRef.getVerticalOffset();
+            buyOrdersViewportScrollProgress = computeScrollProgress(buyOrdersViewportScrollRef, buyOrdersViewportScrollOffset);
+        }
+        if (goodsCatalogScrollRef != null) {
+            goodsCatalogScrollOffset = goodsCatalogScrollRef.getVerticalOffset();
+            goodsCatalogScrollProgress = computeScrollProgress(goodsCatalogScrollRef, goodsCatalogScrollOffset);
+        }
+        if (buyOrdersListScrollRef != null) {
+            buyOrdersListScrollOffset = buyOrdersListScrollRef.getVerticalOffset();
+            buyOrdersListScrollProgress = computeScrollProgress(buyOrdersListScrollRef, buyOrdersListScrollOffset);
+        }
     }
 
     private void rememberScrollState() {
         if (goodsViewportScrollRef != null) {
             goodsViewportScrollOffset = preservedScrollOffset(goodsViewportScrollRef,
                     goodsViewportScrollOffset, pendingGoodsViewportScrollOffset, pendingGoodsViewportScrollTicks);
+            goodsViewportScrollProgress = preservedScrollProgress(goodsViewportScrollRef,
+                    goodsViewportScrollProgress, pendingGoodsViewportScrollProgress, pendingGoodsViewportScrollTicks, goodsViewportScrollOffset);
         }
         if (buyOrdersViewportScrollRef != null) {
             buyOrdersViewportScrollOffset = preservedScrollOffset(buyOrdersViewportScrollRef,
                     buyOrdersViewportScrollOffset, pendingBuyOrdersViewportScrollOffset, pendingBuyOrdersViewportScrollTicks);
+            buyOrdersViewportScrollProgress = preservedScrollProgress(buyOrdersViewportScrollRef,
+                    buyOrdersViewportScrollProgress, pendingBuyOrdersViewportScrollProgress, pendingBuyOrdersViewportScrollTicks, buyOrdersViewportScrollOffset);
         }
         if (goodsCatalogScrollRef != null) {
             goodsCatalogScrollOffset = preservedScrollOffset(goodsCatalogScrollRef,
                     goodsCatalogScrollOffset, pendingGoodsCatalogScrollOffset, pendingGoodsCatalogScrollTicks);
+            goodsCatalogScrollProgress = preservedScrollProgress(goodsCatalogScrollRef,
+                    goodsCatalogScrollProgress, pendingGoodsCatalogScrollProgress, pendingGoodsCatalogScrollTicks, goodsCatalogScrollOffset);
         }
         if (buyOrdersListScrollRef != null) {
             buyOrdersListScrollOffset = preservedScrollOffset(buyOrdersListScrollRef,
                     buyOrdersListScrollOffset, pendingBuyOrdersListScrollOffset, pendingBuyOrdersListScrollTicks);
+            buyOrdersListScrollProgress = preservedScrollProgress(buyOrdersListScrollRef,
+                    buyOrdersListScrollProgress, pendingBuyOrdersListScrollProgress, pendingBuyOrdersListScrollTicks, buyOrdersListScrollOffset);
         }
         clearScrollRefs();
     }
@@ -2107,6 +2150,17 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return scroll.getVerticalOffset();
     }
 
+    private float preservedScrollProgress(ScrollComponent scroll, float storedProgress, float pendingProgress,
+                                          int pendingTicks, float resolvedOffset) {
+        if (pendingTicks > 0 && !Float.isNaN(pendingProgress)) {
+            return pendingProgress;
+        }
+        if (scroll == null) {
+            return storedProgress;
+        }
+        return computeScrollProgress(scroll, resolvedOffset);
+    }
+
     private void clearScrollRefs() {
         goodsViewportScrollRef = null;
         buyOrdersViewportScrollRef = null;
@@ -2119,69 +2173,120 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         pendingBuyOrdersViewportScrollOffset = Float.NaN;
         pendingGoodsCatalogScrollOffset = Float.NaN;
         pendingBuyOrdersListScrollOffset = Float.NaN;
+        pendingGoodsViewportScrollProgress = Float.NaN;
+        pendingBuyOrdersViewportScrollProgress = Float.NaN;
+        pendingGoodsCatalogScrollProgress = Float.NaN;
+        pendingBuyOrdersListScrollProgress = Float.NaN;
         pendingGoodsViewportScrollTicks = 0;
         pendingBuyOrdersViewportScrollTicks = 0;
         pendingGoodsCatalogScrollTicks = 0;
         pendingBuyOrdersListScrollTicks = 0;
     }
 
-    private void restoreScroll(ScrollComponent scroll, float verticalOffset) {
+    private void restoreScroll(ScrollComponent scroll, float verticalOffset, float progress) {
         if (scroll == null) {
             return;
         }
         if (scroll == goodsViewportScrollRef) {
             pendingGoodsViewportScrollOffset = verticalOffset;
+            pendingGoodsViewportScrollProgress = progress;
             pendingGoodsViewportScrollTicks = 8;
         } else if (scroll == buyOrdersViewportScrollRef) {
             pendingBuyOrdersViewportScrollOffset = verticalOffset;
+            pendingBuyOrdersViewportScrollProgress = progress;
             pendingBuyOrdersViewportScrollTicks = 8;
         } else if (scroll == goodsCatalogScrollRef) {
             pendingGoodsCatalogScrollOffset = verticalOffset;
+            pendingGoodsCatalogScrollProgress = progress;
             pendingGoodsCatalogScrollTicks = 8;
         } else if (scroll == buyOrdersListScrollRef) {
             pendingBuyOrdersListScrollOffset = verticalOffset;
+            pendingBuyOrdersListScrollProgress = progress;
             pendingBuyOrdersListScrollTicks = 8;
         }
-        scroll.scrollTo(scroll.getHorizontalOffset(), verticalOffset, false);
+        scroll.scrollTo(scroll.getHorizontalOffset(), resolveScrollRestoreTarget(scroll, verticalOffset, progress), false);
     }
 
     private void applyPendingScrollRestores() {
         if (pendingGoodsViewportScrollTicks > 0 && goodsViewportScrollRef != null && !Float.isNaN(pendingGoodsViewportScrollOffset)) {
-            goodsViewportScrollRef.scrollTo(goodsViewportScrollRef.getHorizontalOffset(), pendingGoodsViewportScrollOffset, false);
-            if (Math.abs(goodsViewportScrollRef.getVerticalOffset() - pendingGoodsViewportScrollOffset) <= 0.5f) {
+            float target = resolveScrollRestoreTarget(goodsViewportScrollRef, pendingGoodsViewportScrollOffset, pendingGoodsViewportScrollProgress);
+            goodsViewportScrollRef.scrollTo(goodsViewportScrollRef.getHorizontalOffset(), target, false);
+            if (Math.abs(goodsViewportScrollRef.getVerticalOffset() - target) <= 0.5f) {
                 pendingGoodsViewportScrollTicks = 0;
                 pendingGoodsViewportScrollOffset = Float.NaN;
+                pendingGoodsViewportScrollProgress = Float.NaN;
             } else {
                 pendingGoodsViewportScrollTicks--;
             }
         }
         if (pendingBuyOrdersViewportScrollTicks > 0 && buyOrdersViewportScrollRef != null && !Float.isNaN(pendingBuyOrdersViewportScrollOffset)) {
-            buyOrdersViewportScrollRef.scrollTo(buyOrdersViewportScrollRef.getHorizontalOffset(), pendingBuyOrdersViewportScrollOffset, false);
-            if (Math.abs(buyOrdersViewportScrollRef.getVerticalOffset() - pendingBuyOrdersViewportScrollOffset) <= 0.5f) {
+            float target = resolveScrollRestoreTarget(buyOrdersViewportScrollRef, pendingBuyOrdersViewportScrollOffset, pendingBuyOrdersViewportScrollProgress);
+            buyOrdersViewportScrollRef.scrollTo(buyOrdersViewportScrollRef.getHorizontalOffset(), target, false);
+            if (Math.abs(buyOrdersViewportScrollRef.getVerticalOffset() - target) <= 0.5f) {
                 pendingBuyOrdersViewportScrollTicks = 0;
                 pendingBuyOrdersViewportScrollOffset = Float.NaN;
+                pendingBuyOrdersViewportScrollProgress = Float.NaN;
             } else {
                 pendingBuyOrdersViewportScrollTicks--;
             }
         }
         if (pendingGoodsCatalogScrollTicks > 0 && goodsCatalogScrollRef != null && !Float.isNaN(pendingGoodsCatalogScrollOffset)) {
-            goodsCatalogScrollRef.scrollTo(goodsCatalogScrollRef.getHorizontalOffset(), pendingGoodsCatalogScrollOffset, false);
-            if (Math.abs(goodsCatalogScrollRef.getVerticalOffset() - pendingGoodsCatalogScrollOffset) <= 0.5f) {
+            float target = resolveScrollRestoreTarget(goodsCatalogScrollRef, pendingGoodsCatalogScrollOffset, pendingGoodsCatalogScrollProgress);
+            goodsCatalogScrollRef.scrollTo(goodsCatalogScrollRef.getHorizontalOffset(), target, false);
+            if (Math.abs(goodsCatalogScrollRef.getVerticalOffset() - target) <= 0.5f) {
                 pendingGoodsCatalogScrollTicks = 0;
                 pendingGoodsCatalogScrollOffset = Float.NaN;
+                pendingGoodsCatalogScrollProgress = Float.NaN;
             } else {
                 pendingGoodsCatalogScrollTicks--;
             }
         }
         if (pendingBuyOrdersListScrollTicks > 0 && buyOrdersListScrollRef != null && !Float.isNaN(pendingBuyOrdersListScrollOffset)) {
-            buyOrdersListScrollRef.scrollTo(buyOrdersListScrollRef.getHorizontalOffset(), pendingBuyOrdersListScrollOffset, false);
-            if (Math.abs(buyOrdersListScrollRef.getVerticalOffset() - pendingBuyOrdersListScrollOffset) <= 0.5f) {
+            float target = resolveScrollRestoreTarget(buyOrdersListScrollRef, pendingBuyOrdersListScrollOffset, pendingBuyOrdersListScrollProgress);
+            buyOrdersListScrollRef.scrollTo(buyOrdersListScrollRef.getHorizontalOffset(), target, false);
+            if (Math.abs(buyOrdersListScrollRef.getVerticalOffset() - target) <= 0.5f) {
                 pendingBuyOrdersListScrollTicks = 0;
                 pendingBuyOrdersListScrollOffset = Float.NaN;
+                pendingBuyOrdersListScrollProgress = Float.NaN;
             } else {
                 pendingBuyOrdersListScrollTicks--;
             }
         }
+    }
+
+    private float resolveScrollRestoreTarget(ScrollComponent scroll, float fallbackOffset, float progress) {
+        if (scroll == null) {
+            return fallbackOffset;
+        }
+        float overhang = Math.max(0f, scroll.getVerticalOverhang());
+        if (overhang <= 0f || Float.isNaN(progress)) {
+            return fallbackOffset;
+        }
+        float clampedProgress = Math.max(0f, Math.min(1f, progress));
+        return -clampedProgress * overhang;
+    }
+
+    private float computeScrollProgress(ScrollComponent scroll, float offset) {
+        if (scroll == null) {
+            return Float.NaN;
+        }
+        float overhang = Math.max(0f, scroll.getVerticalOverhang());
+        if (overhang <= 0f) {
+            return 0f;
+        }
+        return Math.max(0f, Math.min(1f, -offset / overhang));
+    }
+
+    private float scrollPercentageToOffset(ScrollComponent scroll, float progress) {
+        if (scroll == null) {
+            return 0f;
+        }
+        float overhang = Math.max(0f, scroll.getVerticalOverhang());
+        if (overhang <= 0f) {
+            return 0f;
+        }
+        float clampedProgress = Math.max(0f, Math.min(1f, progress));
+        return -clampedProgress * overhang;
     }
 
     public void showNotice(String message, boolean positive) {
@@ -2209,6 +2314,60 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         scroll.setColor(new Color(0, 0, 0, 0));
         scroll.setChildOf(parent);
         return scroll;
+    }
+
+    private void trackViewportScroll(ScrollComponent scroll, boolean goodsPage) {
+        if (scroll == null) {
+            return;
+        }
+        float current = scroll.getVerticalOffset();
+        float progress = computeScrollProgress(scroll, current);
+        if (goodsPage) {
+            goodsViewportScrollOffset = current;
+            goodsViewportScrollProgress = progress;
+        } else {
+            buyOrdersViewportScrollOffset = current;
+            buyOrdersViewportScrollProgress = progress;
+        }
+        scroll.addScrollAdjustEvent(false, (scrollPercentage, percentageOfParent) -> {
+            float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
+            float value = scrollPercentageToOffset(scroll, updatedProgress);
+            if (goodsPage) {
+                goodsViewportScrollOffset = value;
+                goodsViewportScrollProgress = updatedProgress;
+            } else {
+                buyOrdersViewportScrollOffset = value;
+                buyOrdersViewportScrollProgress = updatedProgress;
+            }
+            return Unit.INSTANCE;
+        });
+    }
+
+    private void trackNestedScroll(ScrollComponent scroll, boolean goodsCatalog) {
+        if (scroll == null) {
+            return;
+        }
+        float current = scroll.getVerticalOffset();
+        float progress = computeScrollProgress(scroll, current);
+        if (goodsCatalog) {
+            goodsCatalogScrollOffset = current;
+            goodsCatalogScrollProgress = progress;
+        } else {
+            buyOrdersListScrollOffset = current;
+            buyOrdersListScrollProgress = progress;
+        }
+        scroll.addScrollAdjustEvent(false, (scrollPercentage, percentageOfParent) -> {
+            float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
+            float value = scrollPercentageToOffset(scroll, updatedProgress);
+            if (goodsCatalog) {
+                goodsCatalogScrollOffset = value;
+                goodsCatalogScrollProgress = updatedProgress;
+            } else {
+                buyOrdersListScrollOffset = value;
+                buyOrdersListScrollProgress = updatedProgress;
+            }
+            return Unit.INSTANCE;
+        });
     }
 
     private int responsiveSidebarWidth(int width) {
