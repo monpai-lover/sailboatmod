@@ -94,6 +94,13 @@ public class TerrainPreviewSavedData extends SavedData {
         }
     }
 
+    public void clearAll() {
+        if (!colors.isEmpty()) {
+            colors.clear();
+            setDirty();
+        }
+    }
+
     private void trimToSize() {
         while (colors.size() > MAX_ENTRIES) {
             String eldest = colors.keySet().iterator().next();

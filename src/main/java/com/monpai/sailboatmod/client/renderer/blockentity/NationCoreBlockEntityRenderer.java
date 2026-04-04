@@ -54,7 +54,7 @@ public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<Nation
         }
         float x = -this.font.width(line) / 2.0F;
         Matrix4f matrix = poseStack.last().pose();
-        this.font.drawInBatch(line, x, y, color, false, matrix, bufferSource, Font.DisplayMode.SEE_THROUGH, 0x66000000, packedLight);
+        this.font.drawInBatch(line, x, y, color, false, matrix, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
     }
 
     @Override

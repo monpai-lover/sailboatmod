@@ -929,6 +929,7 @@
     "screen.sailboatmod.bank.withdraw":  "取出",
     "screen.sailboatmod.bank.deposit_item":  "存入手持物品",
     "screen.sailboatmod.bank.withdraw_item":  "取出选中物品",
+    "screen.sailboatmod.bank.withdraw_as_gold":  "提款换金",
     "screen.sailboatmod.bank.items_title":  "国库物品:",
     "screen.sailboatmod.bank.select_item":  "请先在列表中选择一个物品。",
     "screen.sailboatmod.bank.withdrawing_item":  "正在取出物品...",

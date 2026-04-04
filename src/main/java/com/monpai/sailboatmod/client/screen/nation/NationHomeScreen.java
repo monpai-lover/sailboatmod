@@ -32,7 +32,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.FormattedCharSequence;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
@@ -67,7 +66,9 @@ public class NationHomeScreen extends Screen {
     private int claimRadius() {
         int size = this.data.nearbyTerrainColors().size();
         if (size <= 0) return com.monpai.sailboatmod.ModConfig.claimPreviewRadius();
-        int diameter = (int) Math.round(Math.sqrt(size));
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        int chunkCount = size / (sub * sub);
+        int diameter = (int) Math.round(Math.sqrt(chunkCount));
         return (diameter - 1) / 2;
     }
 
@@ -485,7 +486,6 @@ public class NationHomeScreen extends Screen {
                 this.mapOffsetZ -= chunks;
                 this.dragStartY += chunks * cellH;
             }
-            maybeRequestPreviewRefresh();
             return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
@@ -1078,33 +1078,43 @@ public class NationHomeScreen extends Screen {
         g.fill(mapX, mapY, mapX + CLAIM_MAP_W, mapY + CLAIM_MAP_H, 0xAA0B110F);
         int centerX = mapCenterX();
         int centerZ = mapCenterZ();
-        for (int gz = 0; gz <= claimRadius() * 2; gz++) {
-            int y1 = mapY + gz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
-            int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (claimRadius() * 2 + 1);
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        int totalCells = claimRadius() * 2 + 1;
+        int totalSubCells = totalCells * sub;
+        for (int gz = 0; gz < totalCells; gz++) {
             int chunkZ = centerZ + gz - claimRadius();
-            for (int gx = 0; gx <= claimRadius() * 2; gx++) {
-                int x1 = mapX + gx * CLAIM_MAP_W / (claimRadius() * 2 + 1);
-                int x2 = mapX + (gx + 1) * CLAIM_MAP_W / (claimRadius() * 2 + 1);
+            for (int gx = 0; gx < totalCells; gx++) {
                 int chunkX = centerX + gx - claimRadius();
-                int color = sampleClaimTerrainColor(chunkX, chunkZ);
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
-                if (claim != null) {
-                    double overlayStrength = this.data.nationId().equals(claim.nationId()) ? 0.24D : 0.18D;
-                    color = blendColor(color, 0xFF000000 | claim.primaryColorRgb(), overlayStrength);
+                double overlayStrength = claim == null ? 0 : (this.data.nationId().equals(claim.nationId()) ? 0.24D : 0.18D);
+                int claimOverlay = claim == null ? 0 : (0xFF000000 | claim.primaryColorRgb());
+                for (int sz = 0; sz < sub; sz++) {
+                    int subCellZ = gz * sub + sz;
+                    int y1 = mapY + subCellZ * CLAIM_MAP_H / totalSubCells;
+                    int y2 = mapY + (subCellZ + 1) * CLAIM_MAP_H / totalSubCells;
+                    for (int sx = 0; sx < sub; sx++) {
+                        int subCellX = gx * sub + sx;
+                        int x1 = mapX + subCellX * CLAIM_MAP_W / totalSubCells;
+                        int x2 = mapX + (subCellX + 1) * CLAIM_MAP_W / totalSubCells;
+                        int color = sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
+                        if (claim != null) color = blendColor(color, claimOverlay, overlayStrength);
+                        g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
+                    }
                 }
-                g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
             }
         }
-        for (int gz = 0; gz <= claimRadius() * 2; gz++) {
-            int y1 = mapY + gz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
-            int y2 = mapY + (gz + 1) * CLAIM_MAP_H / (claimRadius() * 2 + 1);
+        for (int gz = 0; gz < totalCells; gz++) {
             int chunkZ = centerZ + gz - claimRadius();
-            for (int gx = 0; gx <= claimRadius() * 2; gx++) {
-                int x1 = mapX + gx * CLAIM_MAP_W / (claimRadius() * 2 + 1);
-                int x2 = mapX + (gx + 1) * CLAIM_MAP_W / (claimRadius() * 2 + 1);
+            for (int gx = 0; gx < totalCells; gx++) {
                 int chunkX = centerX + gx - claimRadius();
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim == null) continue;
+                int subCellX0 = gx * sub;
+                int subCellZ0 = gz * sub;
+                int x1 = mapX + subCellX0 * CLAIM_MAP_W / totalSubCells;
+                int x2 = mapX + (subCellX0 + sub) * CLAIM_MAP_W / totalSubCells;
+                int y1 = mapY + subCellZ0 * CLAIM_MAP_H / totalSubCells;
+                int y2 = mapY + (subCellZ0 + sub) * CLAIM_MAP_H / totalSubCells;
                 int borderColor = 0xFF000000 | claim.secondaryColorRgb();
                 String ownerId = claim.nationId();
                 if (!sameOwner(ownerId, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
@@ -1155,14 +1165,17 @@ public class NationHomeScreen extends Screen {
         g.drawString(this.font, text, tx, ty, color);
     }
 
-    private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
+    private int sampleClaimTerrainColor(int chunkX, int chunkZ, int sx, int sz) {
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
         int gridX = chunkX - this.data.previewCenterChunkX() + claimRadius();
         int gridZ = chunkZ - this.data.previewCenterChunkZ() + claimRadius();
         int diameter = claimRadius() * 2 + 1;
         if (gridX >= 0 && gridX < diameter && gridZ >= 0 && gridZ < diameter) {
-            int index = gridZ * diameter + gridX;
-            if (index >= 0 && index < this.data.nearbyTerrainColors().size()) {
-                int color = this.data.nearbyTerrainColors().get(index);
+            int chunkIndex = gridZ * diameter + gridX;
+            int subIndex = chunkIndex * sub * sub + sz * sub + sx;
+            List<Integer> colors = this.data.nearbyTerrainColors();
+            if (subIndex >= 0 && subIndex < colors.size()) {
+                int color = colors.get(subIndex);
                 if (color != PREVIEW_DEFAULT_TERRAIN_COLOR) {
                     TerrainColorClientCache.put(chunkX, chunkZ, color);
                     return color;
@@ -1172,10 +1185,8 @@ public class NationHomeScreen extends Screen {
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
         Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
-        if (local != null) {
-            return local;
-        }
-        return 0xFF33414A;
+        if (local != null) return local;
+        return PREVIEW_DEFAULT_TERRAIN_COLOR;
     }
 
 
@@ -1700,7 +1711,7 @@ public class NationHomeScreen extends Screen {
     private void syncSelections() { if (this.selectedClaimChunkX == Integer.MIN_VALUE || Math.abs(this.selectedClaimChunkX - this.data.currentChunkX()) > claimRadius() || Math.abs(this.selectedClaimChunkZ - this.data.currentChunkZ()) > claimRadius()) { this.selectedClaimChunkX = this.data.currentChunkX(); this.selectedClaimChunkZ = this.data.currentChunkZ(); } if (this.data.members().isEmpty()) { this.selectedMemberUuid = ""; this.memberScroll = 0; return; } if (this.selectedMemberUuid.isBlank()) this.selectedMemberUuid = this.data.members().get(0).playerUuid(); for (NationOverviewMember member : this.data.members()) if (member.playerUuid().equals(this.selectedMemberUuid)) return; this.selectedMemberUuid = this.data.members().get(0).playerUuid(); }
     private boolean trySelectMember(double mouseX, double mouseY) { int[] b = memberListBounds(); if (mouseX < b[0] || mouseX >= b[0] + b[2] || mouseY < b[1] || mouseY >= b[1] + b[3] || this.data.members().isEmpty()) return false; int row = (int) ((mouseY - b[1] - 4) / MEMBER_ROW_H); if (row < 0 || row >= MEMBER_VISIBLE_ROWS) return false; int idx = clampMemberScroll(this.memberScroll) + row; if (idx < 0 || idx >= this.data.members().size()) return false; this.selectedMemberUuid = this.data.members().get(idx).playerUuid(); updateButtonState(); return true; }
     private boolean trySelectClaim(double mouseX, double mouseY) {
-        int mapX = claimMapX(left() + BODY_X); int mapY = claimMapY(top() + BODY_Y);
+        int mapX = claimMapX(left() + BODY_X); int mapY = claimMapY(top() + BODY_Y) - this.pageScroll;
         if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false;
         int cellX = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseX - mapX) * (claimRadius() * 2 + 1) / CLAIM_MAP_W)));
         int cellZ = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseY - mapY) * (claimRadius() * 2 + 1) / CLAIM_MAP_H)));
@@ -1760,51 +1771,58 @@ public class NationHomeScreen extends Screen {
         return 0xFF33414A;
     }
 
-    private static final int PREVIEW_GRASS_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
-    private static final int PREVIEW_WATER_COLOR = 0xFF000000 | (MapColor.WATER.col & 0x00FFFFFF);
+    private static final int PREVIEW_WATER_COLOR = 0xFF4466B0;
+    private static final int PREVIEW_FALLBACK_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
 
     private Integer sampleLoadedTerrainColor(int chunkX, int chunkZ) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return null;
 
         int[] sampleOffsets = {2, 6, 10, 14};
-        boolean sawWater = false;
+        int[] colors = new int[16];
+        int[] heights = new int[16];
+        int count = 0;
         try {
-            for (int localX : sampleOffsets) {
-                for (int localZ : sampleOffsets) {
-                    SurfaceKind sample = sampleLoadedSurfaceKind(chunkX, chunkZ, localX, localZ);
-                    if (sample == null) {
-                        continue;
-                    }
-                    if (sample == SurfaceKind.GRASS) {
-                        TerrainColorClientCache.put(chunkX, chunkZ, PREVIEW_GRASS_COLOR);
-                        return PREVIEW_GRASS_COLOR;
-                    }
-                    if (sample == SurfaceKind.WATER) {
-                        sawWater = true;
-                    }
+            for (int lxi = 0; lxi < 4; lxi++) {
+                for (int lzi = 0; lzi < 4; lzi++) {
+                    int[] result = sampleBlockColorAndHeight(chunkX, chunkZ, sampleOffsets[lxi], sampleOffsets[lzi]);
+                    colors[count] = result[0];
+                    heights[count] = result[1];
+                    count++;
                 }
             }
         } catch (Exception ignored) {
-            sawWater = false;
+            int color = PREVIEW_FALLBACK_COLOR;
+            TerrainColorClientCache.put(chunkX, chunkZ, color);
+            return color;
         }
-
-        int color = sawWater ? PREVIEW_WATER_COLOR : PREVIEW_GRASS_COLOR;
+        long rSum = 0, gSum = 0, bSum = 0;
+        for (int lxi = 0; lxi < 4; lxi++) {
+            for (int lzi = 0; lzi < 4; lzi++) {
+                int idx = lxi * 4 + lzi;
+                int c = colors[idx];
+                int shade = 180;
+                if (lzi > 0) {
+                    int northIdx = lxi * 4 + (lzi - 1);
+                    if (heights[idx] > heights[northIdx]) shade = 220;
+                    else if (heights[idx] < heights[northIdx]) shade = 135;
+                }
+                rSum += ((c >> 16) & 0xFF) * shade / 180;
+                gSum += ((c >> 8) & 0xFF) * shade / 180;
+                bSum += (c & 0xFF) * shade / 180;
+            }
+        }
+        int color = 0xFF000000 | (Math.min(255, (int)(rSum / 16)) << 16) | (Math.min(255, (int)(gSum / 16)) << 8) | Math.min(255, (int)(bSum / 16));
         TerrainColorClientCache.put(chunkX, chunkZ, color);
         return color;
     }
 
-    private SurfaceKind sampleLoadedSurfaceKind(int chunkX, int chunkZ, int localX, int localZ) {
+    private int[] sampleBlockColorAndHeight(int chunkX, int chunkZ, int localX, int localZ) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null) {
-            return null;
-        }
         int worldX = (chunkX << 4) + localX;
         int worldZ = (chunkZ << 4) + localZ;
         int worldY = minecraft.level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ) - 1;
-        if (worldY < minecraft.level.getMinBuildHeight()) {
-            return null;
-        }
+        if (worldY < minecraft.level.getMinBuildHeight()) return new int[]{PREVIEW_FALLBACK_COLOR, worldY};
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
         BlockState state = minecraft.level.getBlockState(pos);
         while (state.isAir() && worldY > minecraft.level.getMinBuildHeight()) {
@@ -1812,21 +1830,10 @@ public class NationHomeScreen extends Screen {
             pos.set(worldX, worldY, worldZ);
             state = minecraft.level.getBlockState(pos);
         }
-        if (state.getFluidState().is(FluidTags.WATER)) {
-            return SurfaceKind.WATER;
-        }
+        if (state.getFluidState().is(FluidTags.WATER)) return new int[]{PREVIEW_WATER_COLOR, worldY};
         MapColor mapColor = state.getMapColor(minecraft.level, pos);
-        if (state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)
-                || mapColor == MapColor.GRASS || mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
-            return SurfaceKind.GRASS;
-        }
-        return SurfaceKind.DIRT;
-    }
-
-    private enum SurfaceKind {
-        GRASS,
-        WATER,
-        DIRT
+        if (mapColor == null || mapColor == MapColor.NONE || mapColor.col == 0) return new int[]{PREVIEW_FALLBACK_COLOR, worldY};
+        return new int[]{0xFF000000 | (mapColor.col & 0x00FFFFFF), worldY};
     }
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }

@@ -23,7 +23,8 @@ public class BankActionPacket {
         DEPOSIT_CURRENCY,
         WITHDRAW_CURRENCY,
         DEPOSIT_ITEM,
-        WITHDRAW_ITEM
+        WITHDRAW_ITEM,
+        WITHDRAW_AS_GOLD
     }
 
     private final Action action;
@@ -105,6 +106,14 @@ public class BankActionPacket {
                     }
                     ItemStack held = player.getMainHandItem();
                     if (held.isEmpty()) return;
+                    // Gold items: convert to currency at market price
+                    long goldValue = GoldStandardEconomy.goldItemMarketValue(held);
+                    if (goldValue > 0) {
+                        player.getMainHandItem().setCount(0);
+                        data.putTreasury(treasury.withBalance(treasury.currencyBalance() + goldValue));
+                        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.deposit.success", GoldStandardEconomy.formatBalance(goldValue)));
+                        break;
+                    }
                     NonNullList<ItemStack> items = treasury.items();
                     String depositorName = player.getGameProfile() != null ? player.getGameProfile().getName() : player.getName().getString();
                     for (int i = 0; i < items.size(); i++) {
@@ -136,8 +145,21 @@ public class BankActionPacket {
                     data.putTreasury(treasury);
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.withdraw_item.success"));
                 }
+                case WITHDRAW_AS_GOLD -> {
+                    if (msg.amount <= 0) return;
+                    if (!NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_TREASURY)) {
+                        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.no_permission"));
+                        return;
+                    }
+                    if (treasury.currencyBalance() < msg.amount) {
+                        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.insufficient", GoldStandardEconomy.formatBalance(treasury.currencyBalance())));
+                        return;
+                    }
+                    GoldStandardEconomy.tryDeposit(player, msg.amount);
+                    data.putTreasury(treasury.withBalance(treasury.currencyBalance() - msg.amount));
+                    player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", GoldStandardEconomy.formatBalance(msg.amount)));
+                }
             }
-            // Sync treasury to client after any action
             NationTreasuryRecord updatedTreasury = data.getOrCreateTreasury(town.nationId());
             com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(
                     net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> player),

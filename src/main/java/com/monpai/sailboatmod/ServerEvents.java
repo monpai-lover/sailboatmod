@@ -3,6 +3,7 @@ package com.monpai.sailboatmod;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
+import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
@@ -20,12 +21,14 @@ public final class ServerEvents {
 
     @SubscribeEvent
     public static void onServerStarted(ServerStartedEvent event) {
+        com.monpai.sailboatmod.market.commodity.CommodityConfigLoader.load();
         try {
             MarketDatabase.initialize(event.getServer());
         } catch (Exception e) {
             LOGGER.error("Failed to initialize market SQLite database", e);
         }
         BlueMapIntegration.onServerStarted(event.getServer());
+        ClaimPreviewTerrainService.clearAllPersistedColors(event.getServer().overworld());
     }
 
     private static int cleanupTickCounter;

@@ -15,6 +15,21 @@ public final class GoldStandardEconomy {
     public static final int BALANCE_PER_GOLD_BLOCK = BALANCE_PER_GOLD_INGOT * 9;
     public static final String LEDGER_CURRENCY = "GOLD_STANDARD";
 
+    /** Returns the market currency value of a gold item stack, or 0 if not a gold item. */
+    public static long goldItemMarketValue(net.minecraft.world.item.ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return 0;
+        if (!stack.is(Items.GOLD_INGOT) && !stack.is(Items.GOLD_BLOCK) && !stack.is(Items.GOLD_NUGGET)) return 0;
+        try {
+            com.monpai.sailboatmod.market.commodity.CommodityMarketService svc = new com.monpai.sailboatmod.market.commodity.CommodityMarketService();
+            int unitPrice = svc.ensureCommodity(stack).state().basePrice();
+            return (long) unitPrice * stack.getCount();
+        } catch (Exception ignored) {}
+        // fallback to fixed rate
+        int unitValue = stack.is(Items.GOLD_BLOCK) ? BALANCE_PER_GOLD_BLOCK
+                : stack.is(Items.GOLD_INGOT) ? BALANCE_PER_GOLD_INGOT : BALANCE_PER_GOLD_NUGGET;
+        return (long) unitValue * stack.getCount();
+    }
+
     private GoldStandardEconomy() {
     }
 

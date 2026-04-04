@@ -199,7 +199,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             MarketSavedData market = MarketSavedData.get(level);
             for (MarketListing listing : market.getListings()) {
                 String line = describeListingLine(listing);
-                String category = resolveListingCategory(listing.itemStack());
+                int listingRarity = 0;
+                String category = "";
+                try {
+                    com.monpai.sailboatmod.market.commodity.CommodityMarketService.CommoditySnapshot snap = COMMODITY_MARKET.ensureCommodity(listing.itemStack());
+                    category = snap.definition().category();
+                    listingRarity = snap.definition().rarity();
+                } catch (Exception ignored) {}
                 listingLines.add(line);
                 listingEntries.add(new MarketOverviewData.ListingEntry(
                         line,
@@ -213,7 +219,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         listing.nationId(),
                         listing.sellerNote(),
                         category,
-                        0
+                        listingRarity
                 ));
                 chartDisplayNames.putIfAbsent(
                         CommodityKeyResolver.resolve(listing.itemStack()),

@@ -177,10 +177,22 @@ public final class CommodityMarketService {
 
     public CommoditySnapshot ensureCommodity(ItemStack itemStack) throws SQLException {
         CommodityDefinition definition = definitionFrom(itemStack);
+        definition = CommodityConfigLoader.apply(definition);
         CommodityDefinition storedDefinition = repository.getDefinition(definition.commodityKey());
         if (storedDefinition == null) {
             repository.upsertDefinition(definition);
             storedDefinition = definition;
+        } else if (storedDefinition.rarity() != definition.rarity()
+                || !storedDefinition.category().equals(definition.category())
+                || storedDefinition.importance() != definition.importance()) {
+            // Re-sync rarity/category/importance from config/initializer
+            storedDefinition = new CommodityDefinition(
+                    storedDefinition.commodityKey(), storedDefinition.itemId(), storedDefinition.variantKey(),
+                    storedDefinition.displayName(), storedDefinition.unitSize(),
+                    definition.category(), storedDefinition.tradeEnabled(),
+                    definition.rarity(), definition.importance(), storedDefinition.volume(),
+                    definition.elasticity(), definition.baseVolatility());
+            repository.upsertDefinition(storedDefinition);
         }
 
         CommodityMarketState state = repository.getState(definition.commodityKey());
@@ -227,6 +239,8 @@ public final class CommodityMarketService {
     }
 
     private static int estimateBaseUnitPrice(CommodityDefinition definition) {
+        int fromConfig = CommodityConfigLoader.getBasePrice(definition.itemId(), -1);
+        if (fromConfig >= 0) return fromConfig;
         String itemId = definition == null ? "" : definition.itemId().toLowerCase();
         String category = definition == null ? "" : definition.category().toLowerCase();
 

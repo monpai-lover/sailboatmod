@@ -69,6 +69,10 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
         ).bounds(left + 140, top + 100, 120, 18).build());
 
         this.addRenderableWidget(Button.builder(
+                Component.translatable("screen.sailboatmod.bank.withdraw_as_gold"), b -> doWithdrawAsGold()
+        ).bounds(left + 266, top + 100, 60, 18).build());
+
+        this.addRenderableWidget(Button.builder(
                 Component.translatable("screen.sailboatmod.route_name.cancel"), b -> onClose()
         ).bounds(left + SCREEN_W - 74, top + SCREEN_H - 24, 60, 18).build());
     }
@@ -248,6 +252,13 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
         ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankActionPacket.Action.WITHDRAW_ITEM, this.menu.getBankPos(), 0, this.selectedItemSlot));
         this.statusLine = Component.translatable("screen.sailboatmod.bank.withdrawing_item");
         this.selectedItemSlot = -1;
+    }
+
+    private void doWithdrawAsGold() {
+        long amount = parseAmount();
+        if (amount <= 0) return;
+        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankActionPacket.Action.WITHDRAW_AS_GOLD, this.menu.getBankPos(), amount, 0));
+        this.statusLine = Component.translatable("screen.sailboatmod.bank.withdrawing", amount);
     }
 
     private long parseAmount() {

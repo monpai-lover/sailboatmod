@@ -8,7 +8,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkStatus;
@@ -30,50 +29,43 @@ import java.util.concurrent.CompletableFuture;
 
 public final class ClaimPreviewTerrainService {
     private static final int DEFAULT_COLOR = 0xFF33414A;
-    private static final int WATER_COLOR = 0xFF000000 | (MapColor.WATER.col & 0x00FFFFFF);
-    private static final int GRASS_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
+    private static final int WATER_COLOR = 0xFF4466B0;
+    private static final int FALLBACK_GRASS_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
     private static final long CHUNK_TTL_MILLIS = 60_000L;
     private static final int MAX_CHUNK_CACHE = 4096;
-    private static final int PREWARM_BUDGET_PER_TICK = 64;
+    private static final int PREWARM_BUDGET_PER_TICK = 16;
     private static final int PREWARM_RADIUS_PADDING = 2;
-    private static final int STORAGE_COMPLETION_BUDGET_PER_TICK = 128;
+    private static final int STORAGE_COMPLETION_BUDGET_PER_TICK = 32;
     private static final Method READ_CHUNK_METHOD = resolveReadChunkMethod();
 
     private record ChunkColorEntry(long createdAt, int color) {}
     private record PrewarmRequest(int chunkX, int chunkZ) {}
     private record StorageReadTask(ResourceKey<Level> dimension, int chunkX, int chunkZ, CompletableFuture<Optional<CompoundTag>> future) {}
-    private enum SurfaceKind {
-        GRASS,
-        WATER,
-        DIRT
-    }
 
     private static final ConcurrentMap<String, ChunkColorEntry> CHUNK_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, Queue<PrewarmRequest>> PREWARM_QUEUES = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, StorageReadTask> STORAGE_READS = new ConcurrentHashMap<>();
     private static final java.util.Set<String> QUEUED_CHUNKS = ConcurrentHashMap.newKeySet();
 
+    /** Sub-samples per chunk axis (2 = 2×2 sub-chunks per chunk, each 8×8 blocks) */
+    public static final int SUB = 1;
+
     public static List<Integer> sample(ServerLevel level, ChunkPos centerChunk, int radius) {
         int diameter = radius * 2 + 1;
         if (level == null || centerChunk == null || radius < 0) {
-            return filledDefaults(diameter * diameter);
+            return filledDefaults(diameter * diameter * SUB * SUB);
         }
 
         TerrainPreviewSavedData savedData = TerrainPreviewSavedData.get(level);
         queueAround(level, centerChunk, radius + PREWARM_RADIUS_PADDING);
         drainCompletedStorageReads(level, savedData, STORAGE_COMPLETION_BUDGET_PER_TICK);
 
-        Integer[] colors = new Integer[diameter * diameter];
-        int index = 0;
+        List<Integer> result = new ArrayList<>(diameter * diameter * SUB * SUB);
         for (int dz = -radius; dz <= radius; dz++) {
             for (int dx = -radius; dx <= radius; dx++) {
-                colors[index++] = sampleChunkColorCached(level, savedData, centerChunk.x + dx, centerChunk.z + dz);
+                int[] subColors = sampleChunkSubColorsCached(level, savedData, centerChunk.x + dx, centerChunk.z + dz);
+                for (int c : subColors) result.add(c);
             }
-        }
-
-        List<Integer> result = new ArrayList<>(colors.length);
-        for (Integer color : colors) {
-            result.add(color == null ? DEFAULT_COLOR : color);
         }
         return List.copyOf(result);
     }
@@ -158,6 +150,63 @@ public final class ClaimPreviewTerrainService {
         }
     }
 
+    /** Returns SUB*SUB colors for a chunk, one per sub-region. Uses cached single color if available, else samples. */
+    private static int[] sampleChunkSubColorsCached(ServerLevel level, TerrainPreviewSavedData savedData, int chunkX, int chunkZ) {
+        // Try to get chunk directly for high-res sampling
+        try {
+            ChunkAccess chunk = level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+            if (chunk != null) {
+                int[] colors = sampleChunkSubColors(chunk, chunkX, chunkZ);
+                // Cache the average as the single-color entry
+                cacheColor(level, savedData, chunkX, chunkZ, colors[0]);
+                return colors;
+            }
+        } catch (Exception ignored) {}
+
+        // Fall back to cached single color, replicated across all sub-cells
+        Integer single = sampleChunkColorCached(level, savedData, chunkX, chunkZ);
+        int c = single != null ? single : DEFAULT_COLOR;
+        int[] result = new int[SUB * SUB];
+        java.util.Arrays.fill(result, c);
+        return result;
+    }
+
+    /** Samples SUB×SUB sub-regions within a chunk, each covering (16/SUB)×(16/SUB) blocks. */
+    private static int[] sampleChunkSubColors(ChunkAccess chunk, int chunkX, int chunkZ) {
+        int cellSize = 16 / SUB; // 8 blocks per sub-cell
+        int[] result = new int[SUB * SUB];
+        for (int sz = 0; sz < SUB; sz++) {
+            for (int sx = 0; sx < SUB; sx++) {
+                // Sample 2×2 points within this sub-cell
+                int baseX = sx * cellSize;
+                int baseZ = sz * cellSize;
+                int quarter = cellSize / 2;
+                int[] colors = new int[4];
+                int[] heights = new int[4];
+                int ci = 0;
+                for (int px = 0; px < 2; px++) {
+                    for (int pz = 0; pz < 2; pz++) {
+                        int[] r = sampleBlockColorAndHeight(chunk, chunkX, chunkZ, baseX + quarter * px + quarter / 2, baseZ + quarter * pz + quarter / 2);
+                        colors[ci] = r[0];
+                        heights[ci] = r[1];
+                        ci++;
+                    }
+                }
+                // Average with height shading
+                long rSum = 0, gSum = 0, bSum = 0;
+                for (int i = 0; i < 4; i++) {
+                    int shade = 180;
+                    if (i >= 2 && heights[i] != heights[i - 2]) shade = heights[i] > heights[i - 2] ? 220 : 135;
+                    rSum += ((colors[i] >> 16) & 0xFF) * shade / 180;
+                    gSum += ((colors[i] >> 8) & 0xFF) * shade / 180;
+                    bSum += (colors[i] & 0xFF) * shade / 180;
+                }
+                result[sz * SUB + sx] = 0xFF000000 | (Math.min(255, (int)(rSum / 4)) << 16) | (Math.min(255, (int)(gSum / 4)) << 8) | Math.min(255, (int)(bSum / 4));
+            }
+        }
+        return result;
+    }
+
     private static Integer sampleChunkColorCached(ServerLevel level, TerrainPreviewSavedData savedData, int chunkX, int chunkZ) {
         String key = chunkKey(level.dimension(), chunkX, chunkZ);
         long now = System.currentTimeMillis();
@@ -218,6 +267,9 @@ public final class ClaimPreviewTerrainService {
     private static Integer sampleChunkColorIfAvailable(ServerLevel level, int chunkX, int chunkZ) {
         try {
             ChunkAccess chunk = level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+            if (chunk == null) {
+                chunk = level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FEATURES, false);
+            }
             if (chunk == null) {
                 return null;
             }
@@ -330,31 +382,60 @@ public final class ClaimPreviewTerrainService {
     }
 
     private static Integer sampleChunkColor(ChunkAccess chunk, int chunkX, int chunkZ) {
-        boolean sawWater = false;
         int[] sampleOffsets = {2, 6, 10, 14};
-        for (int localX : sampleOffsets) {
-            for (int localZ : sampleOffsets) {
-                SurfaceKind sample = sampleSurfaceKind(chunk, chunkX, chunkZ, localX, localZ);
-                if (sample == null) {
-                    continue;
-                }
-                if (sample == SurfaceKind.GRASS) {
-                    return GRASS_COLOR;
-                }
-                if (sample == SurfaceKind.WATER) {
-                    sawWater = true;
-                }
+        int[] colors = new int[16];
+        int[] heights = new int[16];
+        int count = 0;
+        for (int lxi = 0; lxi < 4; lxi++) {
+            for (int lzi = 0; lzi < 4; lzi++) {
+                int localX = sampleOffsets[lxi];
+                int localZ = sampleOffsets[lzi];
+                int[] result = sampleBlockColorAndHeight(chunk, chunkX, chunkZ, localX, localZ);
+                colors[count] = result[0];
+                heights[count] = result[1];
+                count++;
             }
         }
-        return sawWater ? WATER_COLOR : GRASS_COLOR;
+        // Apply height-based brightness shading (vanilla style)
+        // Compare each sample to the one north of it (same column, previous row)
+        long rSum = 0, gSum = 0, bSum = 0;
+        for (int lxi = 0; lxi < 4; lxi++) {
+            for (int lzi = 0; lzi < 4; lzi++) {
+                int idx = lxi * 4 + lzi;
+                int color = colors[idx];
+                int r = (color >> 16) & 0xFF;
+                int g = (color >> 8) & 0xFF;
+                int b = color & 0xFF;
+                // Height shading: compare to northern neighbor
+                int shade = 180; // normal
+                if (lzi > 0) {
+                    int northIdx = lxi * 4 + (lzi - 1);
+                    if (heights[idx] > heights[northIdx]) {
+                        shade = 220; // bright (higher than north)
+                    } else if (heights[idx] < heights[northIdx]) {
+                        shade = 135; // dark (lower than north)
+                    }
+                }
+                rSum += r * shade / 180;
+                gSum += g * shade / 180;
+                bSum += b * shade / 180;
+            }
+        }
+        int avgR = Math.min(255, (int) (rSum / 16));
+        int avgG = Math.min(255, (int) (gSum / 16));
+        int avgB = Math.min(255, (int) (bSum / 16));
+        return 0xFF000000 | (avgR << 16) | (avgG << 8) | avgB;
     }
 
-    private static SurfaceKind sampleSurfaceKind(ChunkAccess chunk, int chunkX, int chunkZ, int localX, int localZ) {
+    /**
+     * Returns [color, height] for a single sample point.
+     */
+    private static int[] sampleBlockColorAndHeight(ChunkAccess chunk, int chunkX, int chunkZ, int localX, int localZ) {
         int worldX = (chunkX << 4) + localX;
         int worldZ = (chunkZ << 4) + localZ;
         int worldY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, localX & 15, localZ & 15) - 1;
         if (worldY < chunk.getMinBuildHeight()) {
-            return null;
+            return new int[]{FALLBACK_GRASS_COLOR, worldY};
         }
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
         BlockState state = chunk.getBlockState(pos);
@@ -364,14 +445,25 @@ public final class ClaimPreviewTerrainService {
             state = chunk.getBlockState(pos);
         }
         if (state.getFluidState().is(FluidTags.WATER)) {
-            return SurfaceKind.WATER;
+            return new int[]{WATER_COLOR, worldY};
         }
         MapColor mapColor = state.getMapColor(chunk, pos);
-        if (state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)
-                || mapColor == MapColor.GRASS || mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
-            return SurfaceKind.GRASS;
+        if (mapColor == null || mapColor == MapColor.NONE || mapColor.col == 0) {
+            return new int[]{FALLBACK_GRASS_COLOR, worldY};
         }
-        return SurfaceKind.DIRT;
+        // Replace bare dirt with grass color for a greener map appearance
+        if (mapColor == MapColor.DIRT) {
+            mapColor = MapColor.GRASS;
+        }
+        int color = 0xFF000000 | (mapColor.col & 0x00FFFFFF);
+        return new int[]{color, worldY};
+    }
+
+    /** Call on server start to force re-sampling with new color logic. */
+    public static void clearAllPersistedColors(ServerLevel level) {
+        if (level == null) return;
+        TerrainPreviewSavedData.get(level).clearAll();
+        clearCache();
     }
 
     private static Method resolveReadChunkMethod() {
