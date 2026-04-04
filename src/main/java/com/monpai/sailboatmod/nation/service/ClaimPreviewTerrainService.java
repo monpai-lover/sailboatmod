@@ -30,7 +30,8 @@ import java.util.concurrent.CompletableFuture;
 
 public final class ClaimPreviewTerrainService {
     private static final int DEFAULT_COLOR = 0xFF33414A;
-    private static final int WATER_COLOR = 0xFF2F8FBF;
+    private static final int WATER_COLOR = 0xFF000000 | (MapColor.WATER.col & 0x00FFFFFF);
+    private static final int GRASS_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
     private static final long CHUNK_TTL_MILLIS = 60_000L;
     private static final int MAX_CHUNK_CACHE = 4096;
     private static final int PREWARM_BUDGET_PER_TICK = 64;
@@ -41,7 +42,11 @@ public final class ClaimPreviewTerrainService {
     private record ChunkColorEntry(long createdAt, int color) {}
     private record PrewarmRequest(int chunkX, int chunkZ) {}
     private record StorageReadTask(ResourceKey<Level> dimension, int chunkX, int chunkZ, CompletableFuture<Optional<CompoundTag>> future) {}
-    private record SurfaceSample(int color, int score) {}
+    private enum SurfaceKind {
+        GRASS,
+        WATER,
+        DIRT
+    }
 
     private static final ConcurrentMap<String, ChunkColorEntry> CHUNK_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, Queue<PrewarmRequest>> PREWARM_QUEUES = new ConcurrentHashMap<>();
@@ -325,24 +330,26 @@ public final class ClaimPreviewTerrainService {
     }
 
     private static Integer sampleChunkColor(ChunkAccess chunk, int chunkX, int chunkZ) {
-        int[][] sampleOffsets = {{8, 8}, {4, 4}, {12, 4}, {4, 12}, {12, 12}};
-        SurfaceSample best = null;
-        for (int[] offset : sampleOffsets) {
-            SurfaceSample sample = sampleSurfaceColor(chunk, chunkX, chunkZ, offset[0], offset[1]);
-            if (sample == null) {
-                continue;
-            }
-            if (best == null || sample.score() > best.score()) {
-                best = sample;
-            }
-            if (sample.score() >= 100) {
-                return sample.color();
+        boolean sawWater = false;
+        int[] sampleOffsets = {2, 6, 10, 14};
+        for (int localX : sampleOffsets) {
+            for (int localZ : sampleOffsets) {
+                SurfaceKind sample = sampleSurfaceKind(chunk, chunkX, chunkZ, localX, localZ);
+                if (sample == null) {
+                    continue;
+                }
+                if (sample == SurfaceKind.GRASS) {
+                    return GRASS_COLOR;
+                }
+                if (sample == SurfaceKind.WATER) {
+                    sawWater = true;
+                }
             }
         }
-        return best == null ? DEFAULT_COLOR : best.color();
+        return sawWater ? WATER_COLOR : GRASS_COLOR;
     }
 
-    private static SurfaceSample sampleSurfaceColor(ChunkAccess chunk, int chunkX, int chunkZ, int localX, int localZ) {
+    private static SurfaceKind sampleSurfaceKind(ChunkAccess chunk, int chunkX, int chunkZ, int localX, int localZ) {
         int worldX = (chunkX << 4) + localX;
         int worldZ = (chunkZ << 4) + localZ;
         int worldY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, localX & 15, localZ & 15) - 1;
@@ -357,30 +364,14 @@ public final class ClaimPreviewTerrainService {
             state = chunk.getBlockState(pos);
         }
         if (state.getFluidState().is(FluidTags.WATER)) {
-            return new SurfaceSample(WATER_COLOR, 60);
+            return SurfaceKind.WATER;
         }
         MapColor mapColor = state.getMapColor(chunk, pos);
-        int base = mapColor == null ? 0x55606A : mapColor.col;
-        return new SurfaceSample(0xFF000000 | (base & 0x00FFFFFF), sampleScore(state, mapColor));
-    }
-
-    private static int sampleScore(BlockState state, MapColor mapColor) {
-        if (state.is(Blocks.GRASS_BLOCK) || mapColor == MapColor.GRASS) {
-            return 100;
+        if (state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)
+                || mapColor == MapColor.GRASS || mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
+            return SurfaceKind.GRASS;
         }
-        if (state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)) {
-            return 92;
-        }
-        if (mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
-            return 86;
-        }
-        if (mapColor == MapColor.WATER) {
-            return 60;
-        }
-        if (mapColor == MapColor.SAND || mapColor == MapColor.COLOR_YELLOW) {
-            return 40;
-        }
-        return 20;
+        return SurfaceKind.DIRT;
     }
 
     private static Method resolveReadChunkMethod() {

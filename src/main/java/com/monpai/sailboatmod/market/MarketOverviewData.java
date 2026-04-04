@@ -90,7 +90,7 @@ public record MarketOverviewData(
         return null;
     }
 
-    public record StorageEntry(String label, String itemName, int quantity, int suggestedUnitPrice, String detail) {
+    public record StorageEntry(String label, String commodityKey, String itemName, int quantity, int suggestedUnitPrice, String detail) {
     }
 
     public record ListingEntry(String label, String commodityKey, String itemName, int availableCount, int reservedCount,

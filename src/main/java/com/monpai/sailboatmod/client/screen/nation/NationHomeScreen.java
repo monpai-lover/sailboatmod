@@ -1760,35 +1760,41 @@ public class NationHomeScreen extends Screen {
         return 0xFF33414A;
     }
 
+    private static final int PREVIEW_GRASS_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
+    private static final int PREVIEW_WATER_COLOR = 0xFF000000 | (MapColor.WATER.col & 0x00FFFFFF);
+
     private Integer sampleLoadedTerrainColor(int chunkX, int chunkZ) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return null;
 
-        int[][] sampleOffsets = {{8, 8}, {4, 4}, {12, 4}, {4, 12}, {12, 12}};
-        SurfaceColorSample best = null;
+        int[] sampleOffsets = {2, 6, 10, 14};
+        boolean sawWater = false;
         try {
-            for (int[] offset : sampleOffsets) {
-                SurfaceColorSample sample = sampleLoadedSurfaceColor(chunkX, chunkZ, offset[0], offset[1]);
-                if (sample == null) {
-                    continue;
-                }
-                if (best == null || sample.score() > best.score()) {
-                    best = sample;
-                }
-                if (sample.score() >= 100) {
-                    break;
+            for (int localX : sampleOffsets) {
+                for (int localZ : sampleOffsets) {
+                    SurfaceKind sample = sampleLoadedSurfaceKind(chunkX, chunkZ, localX, localZ);
+                    if (sample == null) {
+                        continue;
+                    }
+                    if (sample == SurfaceKind.GRASS) {
+                        TerrainColorClientCache.put(chunkX, chunkZ, PREVIEW_GRASS_COLOR);
+                        return PREVIEW_GRASS_COLOR;
+                    }
+                    if (sample == SurfaceKind.WATER) {
+                        sawWater = true;
+                    }
                 }
             }
         } catch (Exception ignored) {
-            best = null;
+            sawWater = false;
         }
 
-        int color = best == null ? 0xFF33414A : best.color();
+        int color = sawWater ? PREVIEW_WATER_COLOR : PREVIEW_GRASS_COLOR;
         TerrainColorClientCache.put(chunkX, chunkZ, color);
         return color;
     }
 
-    private SurfaceColorSample sampleLoadedSurfaceColor(int chunkX, int chunkZ, int localX, int localZ) {
+    private SurfaceKind sampleLoadedSurfaceKind(int chunkX, int chunkZ, int localX, int localZ) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null) {
             return null;
@@ -1807,33 +1813,21 @@ public class NationHomeScreen extends Screen {
             state = minecraft.level.getBlockState(pos);
         }
         if (state.getFluidState().is(FluidTags.WATER)) {
-            return new SurfaceColorSample(0xFF2F8FBF, 60);
+            return SurfaceKind.WATER;
         }
         MapColor mapColor = state.getMapColor(minecraft.level, pos);
-        int base = mapColor == null ? 0x55606A : mapColor.col;
-        return new SurfaceColorSample(0xFF000000 | (base & 0x00FFFFFF), surfaceSampleScore(state, mapColor));
+        if (state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)
+                || mapColor == MapColor.GRASS || mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
+            return SurfaceKind.GRASS;
+        }
+        return SurfaceKind.DIRT;
     }
 
-    private int surfaceSampleScore(BlockState state, MapColor mapColor) {
-        if (state.is(Blocks.GRASS_BLOCK) || mapColor == MapColor.GRASS) {
-            return 100;
-        }
-        if (state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)) {
-            return 92;
-        }
-        if (mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
-            return 86;
-        }
-        if (mapColor == MapColor.WATER) {
-            return 60;
-        }
-        if (mapColor == MapColor.SAND || mapColor == MapColor.COLOR_YELLOW) {
-            return 40;
-        }
-        return 20;
+    private enum SurfaceKind {
+        GRASS,
+        WATER,
+        DIRT
     }
-
-    private record SurfaceColorSample(int color, int score) {}
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }
     private void drawMetricCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {

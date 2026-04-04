@@ -357,41 +357,38 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         UIRoundedRectangle header = createPanel(parent, PANEL_PADDING, PANEL_PADDING, panelWidth - PANEL_PADDING * 2, HEADER_HEIGHT, 12f, CHROME_BG);
         createAccentBar(header, 0, 0, 80, 3, ACCENT);
 
-        UIRoundedRectangle iconCard = createPanel(header, 8, 6, 40, 40, 10f, CARD_BG_SOFT);
+        UIRoundedRectangle iconCard = createPanel(header, 8, 6, 64, 24, 10f, CARD_BG_SOFT);
         iconCard.enableEffect(new OutlineEffect(BORDER, 1f));
-        createText(iconCard, 6, 8, Component.translatable("screen.sailboatmod.market.header.brand_top").getString(), 0.7f, ACCENT);
-        createText(iconCard, 6, 20, Component.translatable(activePage.kickerKey).getString(), 0.55f, TEXT_PRIMARY);
-        createText(iconCard, 6, 30, Component.translatable("screen.sailboatmod.market.header.brand_bottom").getString(), 0.48f, TEXT_SOFT);
+        createText(iconCard, 8, 8, "MONPAI", 0.68f, ACCENT);
 
-        createText(header, 54, 8, marketTitleLine(), compact ? 0.75f : 0.85f, TEXT_PRIMARY);
-        createText(header, 54, 22, marketSubtitleLine(), 0.65f, ACCENT_DIM);
-        createText(header, 54, 35, currentDockLine(), 0.6f, data.linkedDock() ? TEXT_MUTED : NEGATIVE);
+        createText(header, 80, 6, marketTitleLine(), compact ? 0.75f : 0.85f, TEXT_PRIMARY);
+        createText(header, 80, 20, marketSubtitleLine(), 0.65f, ACCENT_DIM);
 
         int headerWidth = panelWidth - PANEL_PADDING * 2;
-        int buttonY = 18;
         if (compact) {
-            int actionX = headerWidth - 170;
-            UIRoundedRectangle actionGroup = createPanel(header, actionX - 8, 10, 178, 36, 10f, CARD_BG_SOFT);
-            actionGroup.enableEffect(new OutlineEffect(new Color(255, 255, 255, 12), 1f));
-            createButton(actionGroup, 8, 8, 50, 20,
-                    Component.translatable("screen.sailboatmod.market.refresh").getString(), true, false, this::refreshMarket);
-            createButton(actionGroup, 63, 8, 65, 20,
-                    Component.translatable("screen.sailboatmod.market.bind_dock").getString(), true, false,
-                    () -> send(MarketGuiActionPacket.Action.BIND_NEAREST_DOCK));
-            createButton(actionGroup, 133, 8, 45, 20,
-                    Component.translatable("screen.sailboatmod.route_name.cancel").getString(), true, true, this::closeMarketScreen);
+            buildHeaderActionButtons(header, headerWidth, new int[]{50, 65, 45}, 20, 5, 8);
         } else {
-            int actionX = headerWidth - 190;
-            UIRoundedRectangle actionGroup = createPanel(header, actionX - 8, 10, 198, 36, 10f, CARD_BG_SOFT);
-            actionGroup.enableEffect(new OutlineEffect(new Color(255, 255, 255, 12), 1f));
-            createButton(actionGroup, 8, 8, 55, 20,
-                    Component.translatable("screen.sailboatmod.market.refresh").getString(), true, false, this::refreshMarket);
-            createButton(actionGroup, 68, 8, 75, 20,
-                    Component.translatable("screen.sailboatmod.market.bind_dock").getString(), true, false,
-                    () -> send(MarketGuiActionPacket.Action.BIND_NEAREST_DOCK));
-            createButton(actionGroup, 148, 8, 50, 20,
-                    Component.translatable("screen.sailboatmod.route_name.cancel").getString(), true, true, this::closeMarketScreen);
+            buildHeaderActionButtons(header, headerWidth, new int[]{55, 75, 50}, 20, 5, 8);
         }
+    }
+
+    private void buildHeaderActionButtons(UIComponent header, int headerWidth, int[] buttonWidths, int buttonHeight, int gap, int inset) {
+        int totalWidth = inset * 2 + buttonWidths[0] + buttonWidths[1] + buttonWidths[2] + gap * 2;
+        int groupX = headerWidth - totalWidth - 8;
+        UIRoundedRectangle actionGroup = createPanel(header, groupX, 10, totalWidth, 36, 10f, CARD_BG_SOFT);
+        actionGroup.enableEffect(new OutlineEffect(new Color(255, 255, 255, 12), 1f));
+
+        int cancelX = totalWidth - inset - buttonWidths[2];
+        int bindX = cancelX - gap - buttonWidths[1];
+        int refreshX = bindX - gap - buttonWidths[0];
+
+        createButton(actionGroup, refreshX, 8, buttonWidths[0], buttonHeight,
+                Component.translatable("screen.sailboatmod.market.refresh").getString(), true, false, this::refreshMarket);
+        createButton(actionGroup, bindX, 8, buttonWidths[1], buttonHeight,
+                Component.translatable("screen.sailboatmod.market.bind_dock").getString(), true, false,
+                () -> send(MarketGuiActionPacket.Action.BIND_NEAREST_DOCK));
+        createButton(actionGroup, cancelX, 8, buttonWidths[2], buttonHeight,
+                Component.translatable("screen.sailboatmod.route_name.cancel").getString(), true, true, this::closeMarketScreen);
     }
 
     private void buildNotice(UIComponent parent, int panelWidth) {
@@ -524,8 +521,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void buildSellPage(UIComponent parent, int x, int y, int width, int height) {
-        int sidebarWidth = Math.min(360, Math.max(320, responsiveSidebarWidth(width) + 24));
-        int listWidth = width - sidebarWidth - SECTION_GAP;
+        int listWidth = Math.max(320, Math.min(420, Math.round(width * 0.4f)));
+        int sidebarWidth = width - listWidth - SECTION_GAP;
 
         UIRoundedRectangle listPanel = createSection(parent, x, y, listWidth, height,
                 Component.translatable("screen.sailboatmod.market.storage_title").getString(),
@@ -1309,8 +1306,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         terminalHeader.enableEffect(new OutlineEffect(BORDER, 1f));
         UIRoundedRectangle iconPlate = createPanel(terminalHeader, 10, 10, 46, 46, 12f, CARD_BG_SOFT);
         iconPlate.enableEffect(new OutlineEffect(new Color(255, 255, 255, 14), 1f));
-        createText(iconPlate, 10, 9, Component.translatable("screen.sailboatmod.market.sell.terminal_short_1").getString(), 0.72f, ACCENT);
-        createText(iconPlate, 10, 24, Component.translatable("screen.sailboatmod.market.sell.terminal_short_2").getString(), 0.58f, TEXT_MUTED);
+        createItemIcon(iconPlate, 7, 7, 32, 32, resolveStorageStack(entry), true);
         createText(terminalHeader, 66, 10,
                 shortenToWidth(entry == null ? Component.translatable("screen.sailboatmod.market.storage_empty").getString() : entry.itemName(),
                         Math.max(96, innerWidth - 174), 1.02f),
@@ -1342,7 +1338,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         int contentTop = 256;
         int contentHeight = Math.max(138, Math.round(panel.getHeight()) - contentTop - 16);
         int splitGap = 10;
-        int leftWidth = Math.max(112, Math.min(156, Math.round(innerWidth * 0.38f)));
+        int leftWidth = Math.max(144, Math.min(228, Math.round(innerWidth * 0.4f)));
         int rightWidth = innerWidth - leftWidth - splitGap;
 
         UIRoundedRectangle infoPanel = createPanel(panel, 14, contentTop, leftWidth, contentHeight, 14f, CHROME_MUTED);
@@ -1351,13 +1347,29 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         buildTextStack(infoPanel, 10, 28, leftWidth - 20, buildSellInfoLines(), TEXT_MUTED);
         buildTextStack(infoPanel, 10, 86, leftWidth - 20, buildSellActionLines(), TEXT_SOFT);
 
-        UIRoundedRectangle actionPanel = createPanel(panel, 14 + leftWidth + splitGap, contentTop, rightWidth, contentHeight, 14f, CHROME_MUTED);
-        actionPanel.enableEffect(new OutlineEffect(BORDER, 1f));
-        createText(actionPanel, 10, 10, Component.translatable("screen.sailboatmod.market.sell.action_title").getString(), 0.78f, TEXT_PRIMARY);
-        createAccentBar(actionPanel, 0, 0, 5, contentHeight, ACCENT_DIM);
-        createText(actionPanel, 10, 26, Component.translatable("screen.sailboatmod.market.qty").getString(), 0.72f, TEXT_SOFT);
+        UIRoundedRectangle actionFrame = createPanel(panel, 14 + leftWidth + splitGap, contentTop, rightWidth, contentHeight, 14f, CHROME_MUTED);
+        actionFrame.enableEffect(new OutlineEffect(BORDER, 1f));
+        createAccentBar(actionFrame, 0, 0, 5, contentHeight, ACCENT_DIM);
 
-        UITextInput qtyInput = createInput(actionPanel, 10, 40, Math.max(108, rightWidth - 20), 26,
+        ScrollComponent actionScroll = new ScrollComponent();
+        actionScroll.setX(new PixelConstraint(6));
+        actionScroll.setY(new PixelConstraint(6));
+        actionScroll.setWidth(new PixelConstraint(rightWidth - 12));
+        actionScroll.setHeight(new PixelConstraint(contentHeight - 12));
+        actionScroll.setColor(new Color(0, 0, 0, 0));
+        actionScroll.setChildOf(actionFrame);
+
+        UIBlock actionContent = new UIBlock(new Color(0, 0, 0, 0));
+        actionContent.setX(new PixelConstraint(6));
+        actionContent.setY(new PixelConstraint(6));
+        actionContent.setWidth(new PixelConstraint(rightWidth - 30));
+        actionContent.setHeight(new PixelConstraint(360));
+        actionContent.setChildOf(actionScroll);
+
+        createText(actionContent, 0, 0, Component.translatable("screen.sailboatmod.market.sell.action_title").getString(), 0.78f, TEXT_PRIMARY);
+        createText(actionContent, 0, 18, Component.translatable("screen.sailboatmod.market.qty").getString(), 0.72f, TEXT_SOFT);
+
+        UITextInput qtyInput = createInput(actionContent, 0, 32, Math.max(120, rightWidth - 32), 26,
                 Component.translatable("screen.sailboatmod.market.qty").getString(), listingQtyValue, value -> listingQtyValue = value);
         qtyInput.onActivate(value -> {
             listingQtyValue = value;
@@ -1365,27 +1377,28 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return Unit.INSTANCE;
         });
 
-        createText(actionPanel, 10, 76, Component.translatable("screen.sailboatmod.market.price_adjust").getString(), 0.72f, TEXT_SOFT);
-        createInput(actionPanel, 10, 90, Math.max(108, rightWidth - 20), 26,
+        createText(actionContent, 0, 68, Component.translatable("screen.sailboatmod.market.price_adjust").getString(), 0.72f, TEXT_SOFT);
+        createInput(actionContent, 0, 82, Math.max(120, rightWidth - 32), 26,
                 Component.translatable("screen.sailboatmod.market.price_adjust").getString(), listingPriceAdjustValue,
                 value -> listingPriceAdjustValue = value);
 
-        UIRoundedRectangle confirmPanel = createPanel(actionPanel, 10, 126, rightWidth - 20, 56, 12f, CARD_BG_SOFT);
+        UIRoundedRectangle confirmPanel = createPanel(actionContent, 0, 118, rightWidth - 32, 56, 12f, new Color(31, 40, 58, 238));
         confirmPanel.enableEffect(new OutlineEffect(new Color(255, 255, 255, 14), 1f));
         createText(confirmPanel, 10, 10, Component.translatable("screen.sailboatmod.market.sell.confirm_title").getString(), 0.72f, TEXT_SOFT);
         createText(confirmPanel, 10, 26,
                 shortenToWidth(buildSellConfirmSummary(), Math.max(80, rightWidth - 40), 0.86f),
                 0.86f, TEXT_PRIMARY);
 
-        createButton(actionPanel, 10, contentHeight - 36, rightWidth - 20, 28,
+        createButton(actionContent, 0, 184, rightWidth - 32, 30,
                 Component.translatable("screen.sailboatmod.market.list_hand").getString(),
                 selectedStorage() != null && data.dockStorageAccessible() && data.linkedDock(), false, this::createListing);
+        buildTextStack(actionContent, 0, 224, rightWidth - 32, buildSellActionLines(), TEXT_SOFT);
     }
 
     private void buildSellStoragePanel(UIComponent panel, int width, int height) {
         int innerWidth = width - 28;
         List<Integer> filtered = filteredStorageIndices();
-        UITextInput searchInput = createInput(panel, 14, 54, Math.min(230, innerWidth - 104), 24,
+        UITextInput searchInput = createInput(panel, 14, 54, innerWidth, 24,
                 Component.translatable("screen.sailboatmod.market.sell.search_storage").getString(), storageSearchValue, value -> storageSearchValue = value);
         searchInput.onActivate(value -> {
             runPreservingScroll(() -> {
@@ -1394,47 +1407,54 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             });
             return Unit.INSTANCE;
         });
-        createBadge(panel, innerWidth - 74, 54, 60, 18, Component.translatable("screen.sailboatmod.market.sell.filter_badge").getString(), new Color(56, 74, 108, 220), TEXT_PRIMARY);
-        createText(panel, 14, 84, buildSellStorageSummaryText(filtered.size()), 0.7f, TEXT_SOFT);
-        createMetricStrip(panel, 14, 98, innerWidth, buildSellStorageOverviewMetrics(filtered.size()));
+        createText(panel, 14, 86, buildSellStorageSummaryText(filtered.size()), 0.66f, TEXT_SOFT);
+        UIRoundedRectangle overviewCard = createPanel(panel, 14, 102, innerWidth, 44, 12f, CARD_BG_SOFT);
+        overviewCard.enableEffect(new OutlineEffect(new Color(255, 255, 255, 12), 1f));
+        buildDetailInfoRows(overviewCard, 10, 8, innerWidth - 20, buildSellStorageOverviewRows(filtered.size()));
 
         MarketOverviewData.StorageEntry selected = selectedStorage();
-        UIRoundedRectangle selectedCard = createPanel(panel, 14, 154, innerWidth, 58, 14f, CHROME_MUTED);
+        UIRoundedRectangle selectedCard = createPanel(panel, 14, 154, innerWidth, 74, 14f, CHROME_MUTED);
         selectedCard.enableEffect(new OutlineEffect(BORDER, 1f));
-        createText(selectedCard, 12, 10,
-                shortenToWidth(selected == null ? Component.translatable("screen.sailboatmod.market.sell.no_selection").getString() : selected.itemName(), innerWidth - 24, 0.92f),
+        UIRoundedRectangle selectedIcon = createPanel(selectedCard, 12, 16, 40, 40, 12f, CARD_BG_SOFT);
+        selectedIcon.enableEffect(new OutlineEffect(new Color(255, 255, 255, 10), 1f));
+        createItemIcon(selectedIcon, 8, 8, 24, 24, resolveStorageStack(selected), true);
+        createText(selectedCard, 62, 10,
+                shortenToWidth(selected == null ? Component.translatable("screen.sailboatmod.market.sell.no_selection").getString() : selected.itemName(), innerWidth - 74, 0.92f),
                 0.92f, TEXT_PRIMARY);
-        createText(selectedCard, 12, 26,
+        createText(selectedCard, 62, 26,
                 shortenToWidth(selected == null ? Component.translatable("screen.sailboatmod.market.sell.select_hint").getString()
-                        : selected.detail(), innerWidth - 24, 0.68f),
+                        : selected.detail(), innerWidth - 74, 0.68f),
                 0.68f, TEXT_SOFT);
-        createText(selectedCard, 12, 40,
+        createText(selectedCard, 62, 44,
                 shortenToWidth(selected == null ? currentDockLine()
                         : Component.translatable("screen.sailboatmod.market.sell.selected_stock_price", selected.quantity(), formatCompactLong(selected.suggestedUnitPrice())).getString(),
-                        innerWidth - 24, 0.68f),
+                        innerWidth - 74, 0.68f),
                 0.68f, TEXT_MUTED);
 
-        int listTop = 222;
+        int listTop = 236;
         int listHeight = Math.max(104, height - listTop - 16);
         buildStorageRowsPanel(panel, 14, listTop, innerWidth, listHeight, filtered);
     }
 
     private void buildStorageRowsPanel(UIComponent panel, int x, int y, int width, int height, List<Integer> filteredIndices) {
+        UIRoundedRectangle frame = createPanel(panel, x, y, width, height, 14f, new Color(17, 24, 37, 210));
+        frame.enableEffect(new OutlineEffect(new Color(255, 255, 255, 10), 1f));
+
         ScrollComponent scroll = new ScrollComponent();
-        scroll.setX(new PixelConstraint(x));
-        scroll.setY(new PixelConstraint(y));
-        scroll.setWidth(new PixelConstraint(width));
-        scroll.setHeight(new PixelConstraint(height));
-        scroll.setChildOf(panel);
+        scroll.setX(new PixelConstraint(6));
+        scroll.setY(new PixelConstraint(6));
+        scroll.setWidth(new PixelConstraint(width - 12));
+        scroll.setHeight(new PixelConstraint(height - 12));
+        scroll.setChildOf(frame);
         scroll.setColor(new Color(0, 0, 0, 0));
 
         if (filteredIndices.isEmpty()) {
-            createStorageRow(scroll, width - 8, null, -1, false);
+            createStorageRow(scroll, width - 20, null, -1, false);
             return;
         }
         for (int index : filteredIndices) {
             MarketOverviewData.StorageEntry entry = data.dockStorageEntries().get(index);
-            createStorageRow(scroll, width - 8, entry, index, index == selectedStorageIndex);
+            createStorageRow(scroll, width - 20, entry, index, index == selectedStorageIndex);
         }
     }
 
@@ -1443,11 +1463,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         row.setX(new PixelConstraint(0));
         row.setY(new CramSiblingConstraint(8f));
         row.setWidth(new PixelConstraint(width));
-        row.setHeight(new PixelConstraint(48));
+        row.setHeight(new PixelConstraint(62));
         row.setColor(selected ? ROW_SELECTED : ROW_BG);
         row.setChildOf(parent);
-        row.enableEffect(new OutlineEffect(new Color(255, 255, 255, selected ? 26 : 12), 1f));
-        createAccentBar(row, 0, 0, selected ? 6 : 4, 48, selected ? ACCENT : new Color(255, 255, 255, 18));
+        row.enableEffect(new OutlineEffect(new Color(255, 255, 255, selected ? 22 : 10), 1f));
+        createAccentBar(row, 0, 0, selected ? 4 : 3, 62, selected ? ACCENT : new Color(255, 255, 255, 14));
 
         if (entry == null) {
             createText(row, 14, 16, Component.translatable("screen.sailboatmod.market.storage_empty").getString(), 0.82f, TEXT_MUTED);
@@ -1471,14 +1491,16 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }));
         }
 
-        UIRoundedRectangle token = createPanel(row, 10, 9, 28, 28, 8f, CARD_BG_SOFT);
+        UIRoundedRectangle token = createPanel(row, 12, 15, 32, 32, 10f, new Color(34, 43, 61, 220));
         token.enableEffect(new OutlineEffect(new Color(255, 255, 255, 10), 1f));
-        createText(token, 8, 8, Component.translatable("screen.sailboatmod.market.sell.storage_token").getString(), 0.9f, ACCENT);
+        createItemIcon(token, 8, 8, 16, 16, resolveStorageStack(entry), true);
 
-        createText(row, 46, 8, shortenToWidth(entry.itemName(), Math.max(80, width - 144), 0.84f), 0.84f, TEXT_PRIMARY);
-        createText(row, 46, 22, shortenToWidth(entry.detail(), Math.max(80, width - 144), 0.66f), 0.66f, TEXT_SOFT);
-        createText(row, width - 84, 8, shortenToWidth("x" + entry.quantity(), 68, 0.78f), 0.78f, POSITIVE);
-        createText(row, width - 92, 24, shortenToWidth(formatCompactLong(entry.suggestedUnitPrice()), 76, 0.7f), 0.7f, ACCENT_DIM);
+        int textX = 56;
+        int textWidth = Math.max(90, width - 144);
+        createText(row, textX, 8, shortenToWidth(entry.itemName(), textWidth, 0.84f), 0.84f, TEXT_PRIMARY);
+        createText(row, textX, 22, shortenToWidth(entry.detail(), textWidth, 0.66f), 0.66f, TEXT_SOFT);
+        createText(row, textX, 40, shortenToWidth(Component.translatable("screen.sailboatmod.market.sell.detail.stock").getString() + " x" + entry.quantity(), textWidth - 54, 0.72f), 0.72f, POSITIVE);
+        createText(row, width - 88, 40, shortenToWidth(formatCompactLong(entry.suggestedUnitPrice()), 78, 0.72f), 0.72f, ACCENT_DIM);
     }
 
     private void buildDispatchActionPanel(UIComponent panel, int width) {
@@ -2341,6 +2363,23 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.metric.dock_status").getString(), Component.translatable(data.linkedDock() ? "screen.sailboatmod.market.sell.metric.online" : "screen.sailboatmod.market.sell.metric.unbound").getString(), data.linkedDock() ? ACCENT_DIM : NEGATIVE));
         metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.metric.permission").getString(), Component.translatable(data.dockStorageAccessible() ? "screen.sailboatmod.market.sell.metric.postable" : "screen.sailboatmod.market.sell.metric.read_only").getString(), data.dockStorageAccessible() ? new Color(95, 162, 198) : NEGATIVE));
         return metrics;
+    }
+
+    private List<DetailRow> buildSellStorageOverviewRows(int filteredCount) {
+        List<DetailRow> rows = new ArrayList<>();
+        int totalUnits = 0;
+        for (MarketOverviewData.StorageEntry entry : data.dockStorageEntries()) {
+            totalUnits += entry.quantity();
+        }
+        rows.add(new DetailRow(
+                Component.translatable("screen.sailboatmod.market.sell.metric.visible_goods").getString(),
+                Integer.toString(filteredCount),
+                POSITIVE));
+        rows.add(new DetailRow(
+                Component.translatable("screen.sailboatmod.market.sell.metric.total_stock").getString(),
+                Integer.toString(totalUnits),
+                ACCENT));
+        return rows;
     }
 
     private List<Integer> filteredStorageIndices() {
@@ -3615,6 +3654,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
         }
         return ItemStack.EMPTY;
+    }
+
+    private ItemStack resolveStorageStack(MarketOverviewData.StorageEntry entry) {
+        return entry == null ? ItemStack.EMPTY : resolveCommodityStack(entry.commodityKey());
     }
 
     private String rarityLabel(int rarity) {

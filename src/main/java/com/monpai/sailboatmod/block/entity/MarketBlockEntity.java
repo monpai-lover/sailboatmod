@@ -38,6 +38,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.registries.ForgeRegistries;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
@@ -172,8 +173,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         }
                         String itemName = stack.getHoverName().getString();
                         String label = itemName + " x" + stack.getCount();
+                        String itemKey = ForgeRegistries.ITEMS.getKey(stack.getItem()) != null
+                                ? ForgeRegistries.ITEMS.getKey(stack.getItem()).toString()
+                                : "";
                         storageEntries.add(new MarketOverviewData.StorageEntry(
                                 label,
+                                itemKey,
                                 itemName,
                                 stack.getCount(),
                                 currentCommodityUnitPrice(stack, 1, CommodityMarketService.estimateBaseUnitPrice(stack)),

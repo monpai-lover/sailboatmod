@@ -165,6 +165,7 @@ public class OpenMarketScreenPacket {
         buffer.writeVarInt(entries.size());
         for (MarketOverviewData.StorageEntry entry : entries) {
             PacketStringCodec.writeUtfSafe(buffer, entry.label(), 160);
+            PacketStringCodec.writeUtfSafe(buffer, entry.commodityKey(), 128);
             PacketStringCodec.writeUtfSafe(buffer, entry.itemName(), 96);
             buffer.writeVarInt(entry.quantity());
             buffer.writeVarInt(entry.suggestedUnitPrice());
@@ -178,6 +179,7 @@ public class OpenMarketScreenPacket {
         for (int i = 0; i < count; i++) {
             entries.add(new MarketOverviewData.StorageEntry(
                     buffer.readUtf(160),
+                    buffer.readUtf(128),
                     buffer.readUtf(96),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
