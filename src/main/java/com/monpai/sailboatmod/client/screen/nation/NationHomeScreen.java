@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
+import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
@@ -34,12 +35,17 @@ import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
+import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class NationHomeScreen extends Screen {
+    private static final Logger LOGGER = LogUtils.getLogger();
+    private static final boolean CLAIM_TRACE_ENABLED = true;
     private static final int AUTO_REFRESH_INTERVAL_TICKS = 40;
     private static final int ACTIVE_WAR_REFRESH_INTERVAL_TICKS = 20;
     private static final int SCREEN_W = 468;
@@ -157,6 +163,7 @@ public class NationHomeScreen extends Screen {
     private int queuedPreviewCenterZ = Integer.MIN_VALUE;
     private boolean resetPending = false;
     private boolean refreshPending;
+    private final Map<Long, NationOverviewClaim> cachedClaimOverlays = new HashMap<>();
     private static final int DIP_ROW_H = 20;
     private static final int DIP_VISIBLE_ROWS = 9;
 
@@ -168,11 +175,21 @@ public class NationHomeScreen extends Screen {
     }
 
     public void updateData(NationOverviewData updated) {
-        int visibleCenterX = mapCenterX();
-        int visibleCenterZ = mapCenterZ();
+        NationOverviewData previousData = this.data;
+        boolean preserveVisibleCenter = previousData != null && !previousData.nearbyTerrainColors().isEmpty();
+        int visibleCenterX = preserveVisibleCenter ? mapCenterX() : Integer.MIN_VALUE;
+        int visibleCenterZ = preserveVisibleCenter ? mapCenterZ() : Integer.MIN_VALUE;
         this.data = updated == null ? NationOverviewData.empty() : updated;
+        traceClaim("updateData previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
+                + " visibleCenterBefore=" + visibleCenterX + "," + visibleCenterZ
+                + " terrainCount=" + this.data.nearbyTerrainColors().size()
+                + " nearbyClaims=" + this.data.nearbyClaims().size()
+                + " pending=" + this.pendingPreviewCenterX + "," + this.pendingPreviewCenterZ
+                + " queued=" + this.queuedPreviewCenterX + "," + this.queuedPreviewCenterZ
+                + " resetPending=" + this.resetPending);
         this.refreshPending = false;
         this.autoRefreshTicks = 0;
+        cacheNearbyClaims();
         if (this.data.previewCenterChunkX() == this.pendingPreviewCenterX && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ) {
             this.pendingPreviewCenterX = Integer.MIN_VALUE;
             this.pendingPreviewCenterZ = Integer.MIN_VALUE;
@@ -181,6 +198,9 @@ public class NationHomeScreen extends Screen {
             this.mapOffsetX = 0;
             this.mapOffsetZ = 0;
             this.resetPending = false;
+        } else if (!preserveVisibleCenter) {
+            this.mapOffsetX = 0;
+            this.mapOffsetZ = 0;
         } else {
             this.mapOffsetX = visibleCenterX - this.data.previewCenterChunkX();
             this.mapOffsetZ = visibleCenterZ - this.data.previewCenterChunkZ();
@@ -198,7 +218,7 @@ public class NationHomeScreen extends Screen {
                 if (idx < this.data.nearbyTerrainColors().size()) {
                     int cx = this.data.previewCenterChunkX() + gx - claimRadius();
                     int cz = this.data.previewCenterChunkZ() + gz - claimRadius();
-                    TerrainColorClientCache.putIfAbsent(cx, cz, this.data.nearbyTerrainColors().get(idx));
+                    TerrainColorClientCache.put(cx, cz, this.data.nearbyTerrainColors().get(idx));
                 }
             }
         }
@@ -1143,13 +1163,33 @@ public class NationHomeScreen extends Screen {
             int index = gridZ * diameter + gridX;
             if (index >= 0 && index < this.data.nearbyTerrainColors().size()) {
                 int color = this.data.nearbyTerrainColors().get(index);
-                TerrainColorClientCache.putIfAbsent(chunkX, chunkZ, color);
+                TerrainColorClientCache.put(chunkX, chunkZ, color);
                 return color;
             }
         }
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
+        Integer nearby = sampleNearbyCachedTerrainColor(chunkX, chunkZ);
+        if (nearby != null) return nearby;
         return 0xFF33414A;
+    }
+
+    private Integer sampleNearbyCachedTerrainColor(int chunkX, int chunkZ) {
+        int searchRadius = Math.max(2, claimRadius() / 3);
+        for (int ring = 1; ring <= searchRadius; ring++) {
+            for (int dz = -ring; dz <= ring; dz++) {
+                for (int dx = -ring; dx <= ring; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
+                        continue;
+                    }
+                    Integer cached = TerrainColorClientCache.get(chunkX + dx, chunkZ + dz);
+                    if (cached != null) {
+                        return cached;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
 
@@ -1246,7 +1286,14 @@ public class NationHomeScreen extends Screen {
         return target.equalsIgnoreCase(nationId) || target.equalsIgnoreCase(nationName);
     }
 
-    private void switchPage(Page page) { this.currentPage = page == null ? Page.OVERVIEW : page; this.pageScroll = 0; updateButtonState(); }
+    private void switchPage(Page page) {
+        this.currentPage = page == null ? Page.OVERVIEW : page;
+        this.pageScroll = 0;
+        if (this.currentPage == Page.CLAIMS) {
+            ensureClaimPreviewVisible();
+        }
+        updateButtonState();
+    }
 
     private void layoutScrollableWidgets() {
         boolean overviewPage = this.currentPage == Page.OVERVIEW;
@@ -1293,7 +1340,7 @@ public class NationHomeScreen extends Screen {
         layoutWidget(this.redstonePermissionButton, 12, 98, 18, claimsPermView);
         layoutWidget(this.entityUsePermissionButton, 120, 98, 18, claimsPermView);
         layoutWidget(this.entityDamagePermissionButton, 12, 122, 18, claimsPermView);
-        layoutWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, 14, claimsPage);
+        layoutFixedWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, claimsPage);
 
         layoutWidget(this.warButton, 12, 164, 18, warPage);
         layoutWidget(this.warTargetInput, 12, 192, 18, warPage);
@@ -1342,7 +1389,17 @@ public class NationHomeScreen extends Screen {
         }
         int viewportTop = bodyViewportTop();
         int viewportBottom = bodyViewportBottom();
-        widget.visible = widget.visible && absoluteY + height > viewportTop && absoluteY < viewportBottom;
+        widget.visible = absoluteY + height > viewportTop && absoluteY < viewportBottom;
+    }
+
+    private void layoutFixedWidget(AbstractWidget widget, int bodyLocalX, int bodyLocalY, boolean pageVisible) {
+        if (widget == null) {
+            return;
+        }
+        int absoluteX = left() + BODY_X + bodyLocalX;
+        int absoluteY = top() + BODY_Y + bodyLocalY;
+        widget.setPosition(absoluteX, absoluteY);
+        widget.visible = pageVisible;
     }
 
     private int overviewFormLocalY() {
@@ -1386,10 +1443,15 @@ public class NationHomeScreen extends Screen {
     private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ()); }
     private void requestRefresh(int centerChunkX, int centerChunkZ) {
         if (this.refreshPending) {
+            traceClaim("requestRefresh queued center=" + centerChunkX + "," + centerChunkZ);
             this.queuedPreviewCenterX = centerChunkX;
             this.queuedPreviewCenterZ = centerChunkZ;
             return;
         }
+        traceClaim("requestRefresh send center=" + centerChunkX + "," + centerChunkZ
+                + " previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
+                + " mapCenter=" + mapCenterX() + "," + mapCenterZ()
+                + " terrainCount=" + this.data.nearbyTerrainColors().size());
         this.refreshPending = true;
         this.pendingPreviewCenterX = centerChunkX;
         this.pendingPreviewCenterZ = centerChunkZ;
@@ -1421,6 +1483,34 @@ public class NationHomeScreen extends Screen {
         if (!farFromPreview) return;
         if (centerChunkX == this.pendingPreviewCenterX && centerChunkZ == this.pendingPreviewCenterZ) return;
         requestRefresh(centerChunkX, centerChunkZ);
+    }
+
+    private void ensureClaimPreviewVisible() {
+        if (this.refreshPending) {
+            traceClaim("ensureClaimPreviewVisible skipped refreshPending=true");
+            return;
+        }
+        int centerChunkX = mapCenterX();
+        int centerChunkZ = mapCenterZ();
+        int diameter = claimRadius() * 2 + 1;
+        boolean missingTerrain = this.data.nearbyTerrainColors().size() < diameter * diameter;
+        boolean offCenter = centerChunkX != this.data.previewCenterChunkX() || centerChunkZ != this.data.previewCenterChunkZ();
+        traceClaim("ensureClaimPreviewVisible center=" + centerChunkX + "," + centerChunkZ
+                + " previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
+                + " terrainCount=" + this.data.nearbyTerrainColors().size()
+                + " expected=" + (diameter * diameter)
+                + " missingTerrain=" + missingTerrain
+                + " offCenter=" + offCenter);
+        if (missingTerrain || offCenter) {
+            requestRefresh(centerChunkX, centerChunkZ);
+        }
+    }
+
+    private void traceClaim(String message) {
+        if (!CLAIM_TRACE_ENABLED) {
+            return;
+        }
+        LOGGER.info("[NationClaimPreview] {}", message);
     }
     private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } com.monpai.sailboatmod.client.TownClientHooks.requestOpen(); com.monpai.sailboatmod.client.TownClientHooks.openCachedOrEmpty(); ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
     private void previousTownSelection() { cycleTownSelection(-1); }
@@ -1632,7 +1722,25 @@ public class NationHomeScreen extends Screen {
     private int claimMapY(int bodyY) { return bodyY + 24; }
     private NationOverviewMember selectedMember() { for (NationOverviewMember m : this.data.members()) if (m.playerUuid().equals(this.selectedMemberUuid)) return m; return null; }
     private NationOverviewClaim selectedClaim() { return findClaim(this.selectedClaimChunkX, this.selectedClaimChunkZ); }
-    private NationOverviewClaim findClaim(int x, int z) { for (NationOverviewClaim c : this.data.nearbyClaims()) if (c.chunkX() == x && c.chunkZ() == z) return c; return null; }
+    private void cacheNearbyClaims() {
+        for (NationOverviewClaim claim : this.data.nearbyClaims()) {
+            this.cachedClaimOverlays.put(claimKey(claim.chunkX(), claim.chunkZ()), claim);
+        }
+    }
+
+    private static long claimKey(int chunkX, int chunkZ) {
+        return ((long) chunkX << 32) ^ (chunkZ & 0xffffffffL);
+    }
+
+    private NationOverviewClaim findClaim(int x, int z) {
+        for (NationOverviewClaim claim : this.data.nearbyClaims()) {
+            if (claim.chunkX() == x && claim.chunkZ() == z) {
+                this.cachedClaimOverlays.put(claimKey(x, z), claim);
+                return claim;
+            }
+        }
+        return this.cachedClaimOverlays.get(claimKey(x, z));
+    }
     private boolean sameOwner(String ownerId, int x, int z) { NationOverviewClaim c = findClaim(x, z); return c != null && ownerId.equals(c.nationId()); }
     private boolean canAppointSelectedMember() { NationOverviewMember s = selectedMember(); return s != null && !NationOfficeIds.LEADER.equals(s.officeId()) && !NationOfficeIds.OFFICER.equals(s.officeId()); }
     private boolean canRemoveSelectedOfficer() { NationOverviewMember s = selectedMember(); return s != null && NationOfficeIds.OFFICER.equals(s.officeId()); }

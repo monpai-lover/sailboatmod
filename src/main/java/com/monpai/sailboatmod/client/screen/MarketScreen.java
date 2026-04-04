@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.MarketClientHooks;
 import com.monpai.sailboatmod.client.MarketOverviewConsumer;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
@@ -34,6 +35,7 @@ import net.minecraft.client.gui.screens.inventory.MenuAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
+import org.slf4j.Logger;
 import org.lwjgl.glfw.GLFW;
 
 import java.awt.Color;
@@ -46,6 +48,8 @@ import java.util.Locale;
 import java.util.function.Consumer;
 
 public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>, MarketOverviewConsumer {
+    private static final Logger LOGGER = LogUtils.getLogger();
+    private static final boolean SCROLL_TRACE_ENABLED = true;
     private static final int MAX_PANEL_WIDTH = 2400;
     private static final int MAX_PANEL_HEIGHT = 1600;
     private static final int NAV_WIDTH = 80;
@@ -105,6 +109,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private GoodsCategoryFilter goodsCategoryFilter = GoodsCategoryFilter.ALL;
     private GoodsPriceBandFilter goodsPriceBandFilter = GoodsPriceBandFilter.ALL;
     private int goodsCatalogPage;
+    private int scrollTraceSequence;
     private boolean showCategoryFilter = false;
     private boolean showPriceFilter = false;
     private float goodsViewportScrollOffset;
@@ -235,6 +240,17 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         super.onKeyPressed(keyCode, typedChar, modifiers);
     }
 
+    @Override
+    public void onMouseScrolled(double mouseX, double mouseY, double scrollDelta, double acceleratedDelta) {
+        traceScrollMessage("onMouseScrolled mouseX=" + mouseX
+                + " mouseY=" + mouseY
+                + " scrollDelta=" + scrollDelta
+                + " acceleratedDelta=" + acceleratedDelta);
+        super.onMouseScrolled(mouseX, mouseY, scrollDelta, acceleratedDelta);
+        syncLiveScrollOffsets();
+        traceScrollState("onMouseScrolled:after");
+    }
+
     private boolean handleEscape() {
         if (showCategoryFilter || showPriceFilter) {
             showCategoryFilter = false;
@@ -269,8 +285,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (width <= 0 || height <= 0) {
             return;
         }
+        traceScrollState("rebuildUi:start preserve=" + preserveScroll);
         clampSelections();
         if (preserveScroll) {
+            syncLiveScrollOffsets();
             rememberScrollState();
         } else {
             clearScrollRefs();
@@ -314,6 +332,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             case FINANCE -> buildFinancePage(mainPanel, contentX, contentY, contentWidth, contentHeight);
             case BUY_ORDERS -> buildBuyOrdersPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
         }
+        traceScrollState("rebuildUi:end preserve=" + preserveScroll);
     }
 
     private void buildHeader(UIComponent parent, int panelWidth) {
@@ -379,36 +398,23 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private void buildGoodsPage(UIComponent parent, int x, int y, int width, int height) {
         if (height < 350) {
+            float restoreOffset = goodsViewportScrollOffset;
+            float restoreProgress = goodsViewportScrollProgress;
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             goodsViewportScrollRef = scroll;
             trackViewportScroll(scroll, true);
-            buildGoodsPage(scroll, 0, 0, width, 450);
-            restoreScroll(scroll, goodsViewportScrollOffset, goodsViewportScrollProgress);
+            buildCompactGoodsPage(scroll, width, 450);
+            restoreScroll(scroll, restoreOffset, restoreProgress);
             return;
         }
         if (width < 760) {
+            float restoreOffset = goodsViewportScrollOffset;
+            float restoreProgress = goodsViewportScrollProgress;
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             goodsViewportScrollRef = scroll;
             trackViewportScroll(scroll, true);
-            int overviewHeight = 140;
-            int listHeight = 240;
-            int actionHeight = Math.max(350, height - overviewHeight - listHeight - SECTION_GAP * 2);
-
-            UIRoundedRectangle overviewPanel = createSection(scroll, 0, 0, width, overviewHeight,
-                    Component.translatable("screen.sailboatmod.market.market_overview").getString(),
-                    Component.translatable("screen.sailboatmod.market.status.live_feed").getString());
-            buildGoodsOverviewPanel(overviewPanel, width);
-
-            UIRoundedRectangle listPanel = createSection(scroll, 0, overviewHeight + SECTION_GAP, width, listHeight,
-                    Component.translatable("screen.sailboatmod.market.tab.goods").getString(),
-                    Component.translatable("screen.sailboatmod.market.goods_subtab.market").getString());
-            buildGoodsCatalogPanel(listPanel, width, listHeight);
-
-            UIRoundedRectangle actionPanel = createSection(scroll, 0, overviewHeight + listHeight + SECTION_GAP * 2, width, actionHeight,
-                    selectedListing() == null ? Component.translatable("screen.sailboatmod.market.page.goods").getString() : selectedListing().itemName(),
-                    goodsPanelSubtitle());
-            buildGoodsActionPanel(actionPanel, width);
-            restoreScroll(scroll, goodsViewportScrollOffset, goodsViewportScrollProgress);
+            buildCompactGoodsPage(scroll, width, height);
+            restoreScroll(scroll, restoreOffset, restoreProgress);
             return;
         }
 
@@ -433,6 +439,27 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         buildGoodsActionPanel(actionPanel, sidebarWidth);
     }
 
+    private void buildCompactGoodsPage(UIComponent parent, int width, int height) {
+        int overviewHeight = 140;
+        int listHeight = 240;
+        int actionHeight = Math.max(350, height - overviewHeight - listHeight - SECTION_GAP * 2);
+
+        UIRoundedRectangle overviewPanel = createSection(parent, 0, 0, width, overviewHeight,
+                Component.translatable("screen.sailboatmod.market.market_overview").getString(),
+                Component.translatable("screen.sailboatmod.market.status.live_feed").getString());
+        buildGoodsOverviewPanel(overviewPanel, width);
+
+        UIRoundedRectangle listPanel = createSection(parent, 0, overviewHeight + SECTION_GAP, width, listHeight,
+                Component.translatable("screen.sailboatmod.market.tab.goods").getString(),
+                Component.translatable("screen.sailboatmod.market.goods_subtab.market").getString());
+        buildGoodsCatalogPanel(listPanel, width, listHeight);
+
+        UIRoundedRectangle actionPanel = createSection(parent, 0, overviewHeight + listHeight + SECTION_GAP * 2, width, actionHeight,
+                selectedListing() == null ? Component.translatable("screen.sailboatmod.market.page.goods").getString() : selectedListing().itemName(),
+                goodsPanelSubtitle());
+        buildGoodsActionPanel(actionPanel, width);
+    }
+
     private void buildSellPage(UIComponent parent, int x, int y, int width, int height) {
         int sidebarWidth = Math.min(280, responsiveSidebarWidth(width));
         int listWidth = width - sidebarWidth - SECTION_GAP;
@@ -445,8 +472,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 Component.translatable("screen.sailboatmod.market.catalog.search").getString(),
                 storageSearchValue, value -> storageSearchValue = value);
         searchInput.onActivate(value -> {
-            storageSearchValue = value;
-            rebuildUi();
+            runPreservingScroll(() -> {
+                storageSearchValue = value;
+                rebuildUi();
+            });
             return Unit.INSTANCE;
         });
 
@@ -534,39 +563,23 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private void buildBuyOrdersPage(UIComponent parent, int x, int y, int width, int height) {
         if (height < 350) {
+            float restoreOffset = buyOrdersViewportScrollOffset;
+            float restoreProgress = buyOrdersViewportScrollProgress;
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             buyOrdersViewportScrollRef = scroll;
             trackViewportScroll(scroll, false);
-            buildBuyOrdersPage(scroll, 0, 0, width, 520);
-            restoreScroll(scroll, buyOrdersViewportScrollOffset, buyOrdersViewportScrollProgress);
+            buildCompactBuyOrdersPage(scroll, width, 520);
+            restoreScroll(scroll, restoreOffset, restoreProgress);
             return;
         }
         if (width < 780) {
+            float restoreOffset = buyOrdersViewportScrollOffset;
+            float restoreProgress = buyOrdersViewportScrollProgress;
             ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
             buyOrdersViewportScrollRef = scroll;
             trackViewportScroll(scroll, false);
-            int overviewHeight = buyOrdersOverviewSectionHeight(width);
-            int listHeight = compactBuyOrdersListHeight(height);
-            int actionHeight = buyOrdersActionSectionHeight(width);
-
-            UIRoundedRectangle overviewPanel = createSection(scroll, 0, 0, width, overviewHeight,
-                    Component.translatable("screen.sailboatmod.market.buy_orders_overview").getString(),
-                    Component.translatable("screen.sailboatmod.market.buy_order.create_hint").getString());
-            buildBuyOrdersOverviewPanel(overviewPanel, width);
-
-            UIRoundedRectangle listPanel = createSection(scroll, 0, overviewHeight + SECTION_GAP, width, listHeight,
-                    Component.translatable("screen.sailboatmod.market.tab.buy_orders").getString(),
-                    Component.translatable("screen.sailboatmod.market.buy_orders_manage").getString());
-            buildBuyOrdersListPanel(listPanel, data.buyOrderEntries().isEmpty()
-                            ? List.of(rowSpec(Component.translatable("screen.sailboatmod.market.empty").getString(), "", "", false, null))
-                            : buildBuyOrderRows(),
-                    width - 28, listHeight - 68);
-
-            UIRoundedRectangle actionPanel = createSection(scroll, 0, overviewHeight + listHeight + SECTION_GAP * 2, width, actionHeight,
-                    selectedBuyOrder() == null ? Component.translatable("screen.sailboatmod.market.page.buy_orders").getString() : displayCommodityName(selectedBuyOrder().commodityKey()),
-                    buildBuyOrdersSubtitle());
-            buildBuyOrderActionPanel(actionPanel, width);
-            restoreScroll(scroll, buyOrdersViewportScrollOffset, buyOrdersViewportScrollProgress);
+            buildCompactBuyOrdersPage(scroll, width, height);
+            restoreScroll(scroll, restoreOffset, restoreProgress);
             return;
         }
 
@@ -592,6 +605,30 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 selectedBuyOrder() == null ? Component.translatable("screen.sailboatmod.market.page.buy_orders").getString() : displayCommodityName(selectedBuyOrder().commodityKey()),
                 buildBuyOrdersSubtitle());
         buildBuyOrderActionPanel(actionPanel, sidebarWidth);
+    }
+
+    private void buildCompactBuyOrdersPage(UIComponent parent, int width, int height) {
+        int overviewHeight = buyOrdersOverviewSectionHeight(width);
+        int listHeight = compactBuyOrdersListHeight(height);
+        int actionHeight = buyOrdersActionSectionHeight(width);
+
+        UIRoundedRectangle overviewPanel = createSection(parent, 0, 0, width, overviewHeight,
+                Component.translatable("screen.sailboatmod.market.buy_orders_overview").getString(),
+                Component.translatable("screen.sailboatmod.market.buy_order.create_hint").getString());
+        buildBuyOrdersOverviewPanel(overviewPanel, width);
+
+        UIRoundedRectangle listPanel = createSection(parent, 0, overviewHeight + SECTION_GAP, width, listHeight,
+                Component.translatable("screen.sailboatmod.market.tab.buy_orders").getString(),
+                Component.translatable("screen.sailboatmod.market.buy_orders_manage").getString());
+        buildBuyOrdersListPanel(listPanel, data.buyOrderEntries().isEmpty()
+                        ? List.of(rowSpec(Component.translatable("screen.sailboatmod.market.empty").getString(), "", "", false, null))
+                        : buildBuyOrderRows(),
+                width - 28, listHeight - 68);
+
+        UIRoundedRectangle actionPanel = createSection(parent, 0, overviewHeight + listHeight + SECTION_GAP * 2, width, actionHeight,
+                selectedBuyOrder() == null ? Component.translatable("screen.sailboatmod.market.page.buy_orders").getString() : displayCommodityName(selectedBuyOrder().commodityKey()),
+                buildBuyOrdersSubtitle());
+        buildBuyOrderActionPanel(actionPanel, width);
     }
 
     private void buildGoodsActionPanel(UIComponent panel, int width) {
@@ -673,10 +710,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             createText(card, 12, 22, commodity.summary(), 0.68f, TEXT_SOFT);
             card.onMouseEnterRunnable(() -> card.setColor(ROW_HOVER));
             card.onMouseLeaveRunnable(() -> card.setColor(CARD_BG_SOFT));
-            card.onMouseClickConsumer(event -> {
+            card.onMouseClickConsumer(event -> runPreservingScroll(() -> {
                 selectedListingIndex = commodity.listingIndex();
                 rebuildUi();
-            });
+            }));
         }
     }
 
@@ -687,9 +724,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 Component.translatable("screen.sailboatmod.market.catalog.search").getString(),
                 goodsSearchValue, value -> goodsSearchValue = value);
         searchInput.onActivate(value -> {
-            goodsSearchValue = value;
-            goodsCatalogPage = 0;
-            rebuildUi();
+            runPreservingScroll(() -> {
+                goodsSearchValue = value;
+                goodsCatalogPage = 0;
+                rebuildUi();
+            });
             return Unit.INSTANCE;
         });
 
@@ -748,9 +787,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             UITextInput minInput = createInput(pricePanel, 8, 20, (priceWidth + 120) / 2 - 12, 22,
                     "0", priceFilterMinValue, value -> priceFilterMinValue = value);
             minInput.onActivate(value -> {
-                priceFilterMinValue = value;
-                goodsCatalogPage = 0;
-                rebuildUi();
+                runPreservingScroll(() -> {
+                    priceFilterMinValue = value;
+                    goodsCatalogPage = 0;
+                    rebuildUi();
+                });
                 return Unit.INSTANCE;
             });
 
@@ -758,9 +799,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             UITextInput maxInput = createInput(pricePanel, (priceWidth + 120) / 2 + 4, 20, (priceWidth + 120) / 2 - 12, 22,
                     "999999", priceFilterMaxValue, value -> priceFilterMaxValue = value);
             maxInput.onActivate(value -> {
-                priceFilterMaxValue = value;
-                goodsCatalogPage = 0;
-                rebuildUi();
+                runPreservingScroll(() -> {
+                    priceFilterMaxValue = value;
+                    goodsCatalogPage = 0;
+                    rebuildUi();
+                });
                 return Unit.INSTANCE;
             });
 
@@ -828,6 +871,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
 
         int scrollY = 156 + dropdownHeight;
+        float restoreOffset = goodsCatalogScrollOffset;
+        float restoreProgress = goodsCatalogScrollProgress;
         ScrollComponent scroll = new ScrollComponent();
         scroll.setX(new PixelConstraint(14));
         scroll.setY(new PixelConstraint(scrollY));
@@ -849,7 +894,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         for (int index : visible) {
             createGoodsCatalogRow(scroll, width - 8, data.listingEntries().get(index), index);
         }
-        restoreScroll(scroll, goodsCatalogScrollOffset, goodsCatalogScrollProgress);
+        restoreScroll(scroll, restoreOffset, restoreProgress);
     }
 
     private void createGoodsCatalogRow(UIComponent parent, int width, MarketOverviewData.ListingEntry entry, int index) {
@@ -873,10 +918,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 row.setColor(ROW_BG);
             }
         });
-        row.onMouseClickConsumer(event -> {
+        row.onMouseClickConsumer(event -> runPreservingScroll(() -> {
             selectedListingIndex = index;
             rebuildUi();
-        });
+        }));
 
         createAccentBar(row, 0, 0, selected ? 5 : 3, 36, selected ? ACCENT : new Color(255, 255, 255, 18));
         createText(row, 12, 5, shorten(entry.itemName(), 30), 0.72f, TEXT_PRIMARY);
@@ -939,7 +984,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 button.setColor(ROW_BG);
             }
         });
-        button.onMouseClickConsumer(event -> action.run());
+        button.onMouseClickConsumer(event -> runPreservingScroll(action));
     }
 
     private void createDropdownOption(UIComponent parent, int x, int y, int width, String labelKey, boolean selected, Runnable action) {
@@ -956,7 +1001,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 option.setColor(CARD_BG_SOFT);
             }
         });
-        option.onMouseClickConsumer(event -> action.run());
+        option.onMouseClickConsumer(event -> runPreservingScroll(action));
     }
 
     private void buildPriceChartPanel(UIComponent panel, int innerWidth) {
@@ -1207,6 +1252,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void buildBuyOrdersListPanel(UIComponent panel, List<RowSpec> rows, int width, int height) {
+        float restoreOffset = buyOrdersListScrollOffset;
+        float restoreProgress = buyOrdersListScrollProgress;
         ScrollComponent scroll = new ScrollComponent();
         scroll.setX(new PixelConstraint(14));
         scroll.setY(new PixelConstraint(48));
@@ -1220,7 +1267,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         for (RowSpec row : rows) {
             createRow(scroll, width - 8, row);
         }
-        restoreScroll(scroll, buyOrdersListScrollOffset, buyOrdersListScrollProgress);
+        restoreScroll(scroll, restoreOffset, restoreProgress);
     }
 
     private void buildListPanel(UIComponent panel, List<RowSpec> rows, int width, int height, int startY) {
@@ -1259,7 +1306,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     row.setColor(ROW_BG);
                 }
             });
-            row.onMouseClickConsumer(event -> spec.action.run());
+            row.onMouseClickConsumer(event -> runPreservingScroll(spec.action));
         }
 
         createAccentBar(row, 0, 0, spec.selected ? 6 : 4, ROW_HEIGHT, spec.selected ? ACCENT : new Color(255, 255, 255, 18));
@@ -2113,6 +2160,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void rememberScrollState() {
+        traceScrollState("rememberScrollState:before");
         if (goodsViewportScrollRef != null) {
             goodsViewportScrollOffset = preservedScrollOffset(goodsViewportScrollRef,
                     goodsViewportScrollOffset, pendingGoodsViewportScrollOffset, pendingGoodsViewportScrollTicks);
@@ -2137,6 +2185,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             buyOrdersListScrollProgress = preservedScrollProgress(buyOrdersListScrollRef,
                     buyOrdersListScrollProgress, pendingBuyOrdersListScrollProgress, pendingBuyOrdersListScrollTicks, buyOrdersListScrollOffset);
         }
+        traceScrollState("rememberScrollState:after");
         clearScrollRefs();
     }
 
@@ -2183,10 +2232,26 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         pendingBuyOrdersListScrollTicks = 0;
     }
 
+    private void runPreservingScroll(Runnable action) {
+        traceScrollState("runPreservingScroll:before");
+        syncLiveScrollOffsets();
+        rememberScrollState();
+        action.run();
+        traceScrollState("runPreservingScroll:after");
+    }
+
     private void restoreScroll(ScrollComponent scroll, float verticalOffset, float progress) {
         if (scroll == null) {
             return;
         }
+        float target = resolveScrollRestoreTarget(scroll, verticalOffset, progress);
+        traceScrollMessage("restoreScroll " + scrollName(scroll)
+                + " storedOffset=" + verticalOffset
+                + " storedProgress=" + progress
+                + " target=" + target
+                + " current=" + scroll.getVerticalOffset()
+                + " overhang=" + scroll.getVerticalOverhang());
+        scroll.scrollTo(scroll.getHorizontalOffset(), target, false);
         if (scroll == goodsViewportScrollRef) {
             pendingGoodsViewportScrollOffset = verticalOffset;
             pendingGoodsViewportScrollProgress = progress;
@@ -2321,6 +2386,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         float current = scroll.getVerticalOffset();
         float progress = computeScrollProgress(scroll, current);
+        traceScrollMessage("trackViewportScroll attach=" + (goodsPage ? "goodsViewport" : "buyOrdersViewport")
+                + " current=" + current
+                + " progress=" + progress
+                + " overhang=" + scroll.getVerticalOverhang());
         if (goodsPage) {
             goodsViewportScrollOffset = current;
             goodsViewportScrollProgress = progress;
@@ -2331,6 +2400,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         scroll.addScrollAdjustEvent(false, (scrollPercentage, percentageOfParent) -> {
             float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
             float value = scrollPercentageToOffset(scroll, updatedProgress);
+            traceScrollMessage("trackViewportScroll adjust=" + (goodsPage ? "goodsViewport" : "buyOrdersViewport")
+                    + " progress=" + updatedProgress
+                    + " value=" + value
+                    + " percentageOfParent=" + percentageOfParent
+                    + " live=" + scroll.getVerticalOffset()
+                    + " overhang=" + scroll.getVerticalOverhang());
             if (goodsPage) {
                 if (pendingGoodsViewportScrollTicks > 0) {
                     return Unit.INSTANCE;
@@ -2354,6 +2429,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         float current = scroll.getVerticalOffset();
         float progress = computeScrollProgress(scroll, current);
+        traceScrollMessage("trackNestedScroll attach=" + (goodsCatalog ? "goodsCatalog" : "buyOrdersList")
+                + " current=" + current
+                + " progress=" + progress
+                + " overhang=" + scroll.getVerticalOverhang());
         if (goodsCatalog) {
             goodsCatalogScrollOffset = current;
             goodsCatalogScrollProgress = progress;
@@ -2364,6 +2443,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         scroll.addScrollAdjustEvent(false, (scrollPercentage, percentageOfParent) -> {
             float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
             float value = scrollPercentageToOffset(scroll, updatedProgress);
+            traceScrollMessage("trackNestedScroll adjust=" + (goodsCatalog ? "goodsCatalog" : "buyOrdersList")
+                    + " progress=" + updatedProgress
+                    + " value=" + value
+                    + " percentageOfParent=" + percentageOfParent
+                    + " live=" + scroll.getVerticalOffset()
+                    + " overhang=" + scroll.getVerticalOverhang());
             if (goodsCatalog) {
                 if (pendingGoodsCatalogScrollTicks > 0) {
                     return Unit.INSTANCE;
@@ -2379,6 +2464,62 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
             return Unit.INSTANCE;
         });
+    }
+
+    private void traceScrollState(String stage) {
+        if (!SCROLL_TRACE_ENABLED) {
+            return;
+        }
+        int seq = ++scrollTraceSequence;
+        LOGGER.info("[MarketScroll:{}] {} page={} goodsTab={} goodsViewport={} buyViewport={} goodsCatalog={} buyList={} pending={}",
+                seq, stage, activePage, activeGoodsPanelTab,
+                describeScroll("goodsViewport", goodsViewportScrollRef, goodsViewportScrollOffset, goodsViewportScrollProgress),
+                describeScroll("buyViewport", buyOrdersViewportScrollRef, buyOrdersViewportScrollOffset, buyOrdersViewportScrollProgress),
+                describeScroll("goodsCatalog", goodsCatalogScrollRef, goodsCatalogScrollOffset, goodsCatalogScrollProgress),
+                describeScroll("buyList", buyOrdersListScrollRef, buyOrdersListScrollOffset, buyOrdersListScrollProgress),
+                pendingScrollSummary());
+    }
+
+    private void traceScrollMessage(String message) {
+        if (!SCROLL_TRACE_ENABLED) {
+            return;
+        }
+        LOGGER.info("[MarketScroll:{}] {}", ++scrollTraceSequence, message);
+    }
+
+    private String describeScroll(String name, ScrollComponent scroll, float storedOffset, float storedProgress) {
+        if (scroll == null) {
+            return name + "{ref=null,storedOffset=" + storedOffset + ",storedProgress=" + storedProgress + "}";
+        }
+        return name + "{ref=" + Integer.toHexString(System.identityHashCode(scroll))
+                + ",liveOffset=" + scroll.getVerticalOffset()
+                + ",storedOffset=" + storedOffset
+                + ",storedProgress=" + storedProgress
+                + ",overhang=" + scroll.getVerticalOverhang()
+                + "}";
+    }
+
+    private String pendingScrollSummary() {
+        return "goodsViewport{ticks=" + pendingGoodsViewportScrollTicks + ",offset=" + pendingGoodsViewportScrollOffset + ",progress=" + pendingGoodsViewportScrollProgress
+                + "} buyViewport{ticks=" + pendingBuyOrdersViewportScrollTicks + ",offset=" + pendingBuyOrdersViewportScrollOffset + ",progress=" + pendingBuyOrdersViewportScrollProgress
+                + "} goodsCatalog{ticks=" + pendingGoodsCatalogScrollTicks + ",offset=" + pendingGoodsCatalogScrollOffset + ",progress=" + pendingGoodsCatalogScrollProgress
+                + "} buyList{ticks=" + pendingBuyOrdersListScrollTicks + ",offset=" + pendingBuyOrdersListScrollOffset + ",progress=" + pendingBuyOrdersListScrollProgress + "}";
+    }
+
+    private String scrollName(ScrollComponent scroll) {
+        if (scroll == goodsViewportScrollRef) {
+            return "goodsViewport";
+        }
+        if (scroll == buyOrdersViewportScrollRef) {
+            return "buyOrdersViewport";
+        }
+        if (scroll == goodsCatalogScrollRef) {
+            return "goodsCatalog";
+        }
+        if (scroll == buyOrdersListScrollRef) {
+            return "buyOrdersList";
+        }
+        return "unknown@" + Integer.toHexString(System.identityHashCode(scroll));
     }
 
     private int responsiveSidebarWidth(int width) {
@@ -2495,7 +2636,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (enabled) {
             button.onMouseEnterRunnable(() -> button.setColor(hover));
             button.onMouseLeaveRunnable(() -> button.setColor(base));
-            button.onMouseClickConsumer(event -> action.run());
+            button.onMouseClickConsumer(event -> runPreservingScroll(action));
         }
     }
 
@@ -2524,10 +2665,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 button.setColor(ROW_BG);
             }
         });
-        button.onMouseClickConsumer(event -> {
+        button.onMouseClickConsumer(event -> runPreservingScroll(() -> {
             activePage = page;
             rebuildUi();
-        });
+        }));
     }
 
     private int createTabButton(UIComponent parent, int x, MarketPage page) {
@@ -2547,10 +2688,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 button.setColor(ROW_BG);
             }
         });
-        button.onMouseClickConsumer(event -> {
+        button.onMouseClickConsumer(event -> runPreservingScroll(() -> {
             activePage = page;
             rebuildUi();
-        });
+        }));
         return width + 4;
     }
 
