@@ -32,6 +32,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
@@ -62,6 +63,7 @@ public class NationHomeScreen extends Screen {
     private static final int TREASURY_ITEM_VISIBLE_ROWS = 4;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
+    private static final int PREVIEW_DEFAULT_TERRAIN_COLOR = 0xFF33414A;
     private int claimRadius() {
         int size = this.data.nearbyTerrainColors().size();
         if (size <= 0) return com.monpai.sailboatmod.ModConfig.claimPreviewRadius();
@@ -364,7 +366,9 @@ public class NationHomeScreen extends Screen {
             return;
         }
         this.autoRefreshTicks++;
-        int interval = this.data.hasActiveWar() ? ACTIVE_WAR_REFRESH_INTERVAL_TICKS : AUTO_REFRESH_INTERVAL_TICKS;
+        int interval = this.currentPage == Page.CLAIMS && hasIncompletePreviewTerrain()
+                ? 8
+                : (this.data.hasActiveWar() ? ACTIVE_WAR_REFRESH_INTERVAL_TICKS : AUTO_REFRESH_INTERVAL_TICKS);
         if (this.autoRefreshTicks < interval) {
             return;
         }
@@ -1070,8 +1074,8 @@ public class NationHomeScreen extends Screen {
     private int mapCenterZ() { return this.data.previewCenterChunkZ() + this.mapOffsetZ; }
 
     private void drawClaimMap(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
-        g.fill(mapX - 1, mapY - 1, mapX + CLAIM_MAP_W + 1, mapY + CLAIM_MAP_H + 1, 0xFF6F8390);
-        g.fill(mapX, mapY, mapX + CLAIM_MAP_W, mapY + CLAIM_MAP_H, 0xFF22323C);
+        g.fill(mapX - 1, mapY - 1, mapX + CLAIM_MAP_W + 1, mapY + CLAIM_MAP_H + 1, 0xFF8EAF9E);
+        g.fill(mapX, mapY, mapX + CLAIM_MAP_W, mapY + CLAIM_MAP_H, 0xAA0B110F);
         int centerX = mapCenterX();
         int centerZ = mapCenterZ();
         for (int gz = 0; gz <= claimRadius() * 2; gz++) {
@@ -1085,7 +1089,7 @@ public class NationHomeScreen extends Screen {
                 int color = sampleClaimTerrainColor(chunkX, chunkZ);
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim != null) {
-                    double overlayStrength = this.data.nationId().equals(claim.nationId()) ? 0.50D : 0.38D;
+                    double overlayStrength = this.data.nationId().equals(claim.nationId()) ? 0.24D : 0.18D;
                     color = blendColor(color, 0xFF000000 | claim.primaryColorRgb(), overlayStrength);
                 }
                 g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
@@ -1152,10 +1156,6 @@ public class NationHomeScreen extends Screen {
     }
 
     private int sampleClaimTerrainColor(int chunkX, int chunkZ) {
-        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
-        if (local != null) {
-            return local;
-        }
         int gridX = chunkX - this.data.previewCenterChunkX() + claimRadius();
         int gridZ = chunkZ - this.data.previewCenterChunkZ() + claimRadius();
         int diameter = claimRadius() * 2 + 1;
@@ -1163,33 +1163,19 @@ public class NationHomeScreen extends Screen {
             int index = gridZ * diameter + gridX;
             if (index >= 0 && index < this.data.nearbyTerrainColors().size()) {
                 int color = this.data.nearbyTerrainColors().get(index);
-                TerrainColorClientCache.put(chunkX, chunkZ, color);
-                return color;
+                if (color != PREVIEW_DEFAULT_TERRAIN_COLOR) {
+                    TerrainColorClientCache.put(chunkX, chunkZ, color);
+                    return color;
+                }
             }
         }
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
         if (cached != null) return cached;
-        Integer nearby = sampleNearbyCachedTerrainColor(chunkX, chunkZ);
-        if (nearby != null) return nearby;
-        return 0xFF33414A;
-    }
-
-    private Integer sampleNearbyCachedTerrainColor(int chunkX, int chunkZ) {
-        int searchRadius = Math.max(2, claimRadius() / 3);
-        for (int ring = 1; ring <= searchRadius; ring++) {
-            for (int dz = -ring; dz <= ring; dz++) {
-                for (int dx = -ring; dx <= ring; dx++) {
-                    if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
-                        continue;
-                    }
-                    Integer cached = TerrainColorClientCache.get(chunkX + dx, chunkZ + dz);
-                    if (cached != null) {
-                        return cached;
-                    }
-                }
-            }
+        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
+        if (local != null) {
+            return local;
         }
-        return null;
+        return 0xFF33414A;
     }
 
 
@@ -1493,7 +1479,7 @@ public class NationHomeScreen extends Screen {
         int centerChunkX = mapCenterX();
         int centerChunkZ = mapCenterZ();
         int diameter = claimRadius() * 2 + 1;
-        boolean missingTerrain = this.data.nearbyTerrainColors().size() < diameter * diameter;
+        boolean missingTerrain = hasIncompletePreviewTerrain();
         boolean offCenter = centerChunkX != this.data.previewCenterChunkX() || centerChunkZ != this.data.previewCenterChunkZ();
         traceClaim("ensureClaimPreviewVisible center=" + centerChunkX + "," + centerChunkZ
                 + " previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
@@ -1504,6 +1490,19 @@ public class NationHomeScreen extends Screen {
         if (missingTerrain || offCenter) {
             requestRefresh(centerChunkX, centerChunkZ);
         }
+    }
+
+    private boolean hasIncompletePreviewTerrain() {
+        int diameter = claimRadius() * 2 + 1;
+        if (this.data.nearbyTerrainColors().size() < diameter * diameter) {
+            return true;
+        }
+        for (Integer color : this.data.nearbyTerrainColors()) {
+            if (color == null || color == PREVIEW_DEFAULT_TERRAIN_COLOR) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void traceClaim(String message) {
@@ -1765,34 +1764,76 @@ public class NationHomeScreen extends Screen {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return null;
 
-        int color = 0xFF33414A;
+        int[][] sampleOffsets = {{8, 8}, {4, 4}, {12, 4}, {4, 12}, {12, 12}};
+        SurfaceColorSample best = null;
         try {
-            int worldX = (chunkX << 4) + 8;
-            int worldZ = (chunkZ << 4) + 8;
-            int worldY = minecraft.level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ) - 1;
-            if (worldY >= minecraft.level.getMinBuildHeight()) {
-                BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
-                BlockState state = minecraft.level.getBlockState(pos);
-                while (state.isAir() && worldY > minecraft.level.getMinBuildHeight()) {
-                    worldY--;
-                    pos.set(worldX, worldY, worldZ);
-                    state = minecraft.level.getBlockState(pos);
+            for (int[] offset : sampleOffsets) {
+                SurfaceColorSample sample = sampleLoadedSurfaceColor(chunkX, chunkZ, offset[0], offset[1]);
+                if (sample == null) {
+                    continue;
                 }
-                if (state.getFluidState().is(FluidTags.WATER)) {
-                    color = 0xFF2F8FBF;
-                } else {
-                    MapColor mapColor = state.getMapColor(minecraft.level, pos);
-                    int base = mapColor == null ? 0x55606A : mapColor.col;
-                    color = 0xFF000000 | (base & 0x00FFFFFF);
+                if (best == null || sample.score() > best.score()) {
+                    best = sample;
+                }
+                if (sample.score() >= 100) {
+                    break;
                 }
             }
         } catch (Exception ignored) {
-            color = 0xFF33414A;
+            best = null;
         }
 
+        int color = best == null ? 0xFF33414A : best.color();
         TerrainColorClientCache.put(chunkX, chunkZ, color);
         return color;
     }
+
+    private SurfaceColorSample sampleLoadedSurfaceColor(int chunkX, int chunkZ, int localX, int localZ) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) {
+            return null;
+        }
+        int worldX = (chunkX << 4) + localX;
+        int worldZ = (chunkZ << 4) + localZ;
+        int worldY = minecraft.level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ) - 1;
+        if (worldY < minecraft.level.getMinBuildHeight()) {
+            return null;
+        }
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
+        BlockState state = minecraft.level.getBlockState(pos);
+        while (state.isAir() && worldY > minecraft.level.getMinBuildHeight()) {
+            worldY--;
+            pos.set(worldX, worldY, worldZ);
+            state = minecraft.level.getBlockState(pos);
+        }
+        if (state.getFluidState().is(FluidTags.WATER)) {
+            return new SurfaceColorSample(0xFF2F8FBF, 60);
+        }
+        MapColor mapColor = state.getMapColor(minecraft.level, pos);
+        int base = mapColor == null ? 0x55606A : mapColor.col;
+        return new SurfaceColorSample(0xFF000000 | (base & 0x00FFFFFF), surfaceSampleScore(state, mapColor));
+    }
+
+    private int surfaceSampleScore(BlockState state, MapColor mapColor) {
+        if (state.is(Blocks.GRASS_BLOCK) || mapColor == MapColor.GRASS) {
+            return 100;
+        }
+        if (state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)) {
+            return 92;
+        }
+        if (mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
+            return 86;
+        }
+        if (mapColor == MapColor.WATER) {
+            return 60;
+        }
+        if (mapColor == MapColor.SAND || mapColor == MapColor.COLOR_YELLOW) {
+            return 40;
+        }
+        return 20;
+    }
+
+    private record SurfaceColorSample(int color, int score) {}
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }
     private void drawMetricCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {

@@ -8,6 +8,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkStatus;
@@ -32,14 +33,15 @@ public final class ClaimPreviewTerrainService {
     private static final int WATER_COLOR = 0xFF2F8FBF;
     private static final long CHUNK_TTL_MILLIS = 60_000L;
     private static final int MAX_CHUNK_CACHE = 4096;
-    private static final int PREWARM_BUDGET_PER_TICK = 6;
+    private static final int PREWARM_BUDGET_PER_TICK = 64;
     private static final int PREWARM_RADIUS_PADDING = 2;
-    private static final int STORAGE_COMPLETION_BUDGET_PER_TICK = 12;
+    private static final int STORAGE_COMPLETION_BUDGET_PER_TICK = 128;
     private static final Method READ_CHUNK_METHOD = resolveReadChunkMethod();
 
     private record ChunkColorEntry(long createdAt, int color) {}
     private record PrewarmRequest(int chunkX, int chunkZ) {}
     private record StorageReadTask(ResourceKey<Level> dimension, int chunkX, int chunkZ, CompletableFuture<Optional<CompoundTag>> future) {}
+    private record SurfaceSample(int color, int score) {}
 
     private static final ConcurrentMap<String, ChunkColorEntry> CHUNK_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, Queue<PrewarmRequest>> PREWARM_QUEUES = new ConcurrentHashMap<>();
@@ -64,7 +66,6 @@ public final class ClaimPreviewTerrainService {
             }
         }
 
-        fillMissingColors(colors, diameter);
         List<Integer> result = new ArrayList<>(colors.length);
         for (Integer color : colors) {
             result.add(color == null ? DEFAULT_COLOR : color);
@@ -170,6 +171,11 @@ public final class ClaimPreviewTerrainService {
         Integer color = sampleChunkColorIfAvailable(level, chunkX, chunkZ);
         if (color != null) {
             cacheColor(level, savedData, chunkX, chunkZ, color);
+            return color;
+        }
+
+        color = sampleChunkColorBlockingFromStorage(level, savedData, chunkX, chunkZ);
+        if (color != null) {
             return color;
         }
 
@@ -283,6 +289,31 @@ public final class ClaimPreviewTerrainService {
         });
     }
 
+    private static Integer sampleChunkColorBlockingFromStorage(ServerLevel level, TerrainPreviewSavedData savedData, int chunkX, int chunkZ) {
+        if (READ_CHUNK_METHOD == null || level == null) {
+            return null;
+        }
+        try {
+            Object result = READ_CHUNK_METHOD.invoke(level.getChunkSource().chunkMap, new ChunkPos(chunkX, chunkZ));
+            if (!(result instanceof CompletableFuture<?> future)) {
+                return null;
+            }
+            @SuppressWarnings("unchecked")
+            CompletableFuture<Optional<CompoundTag>> typedFuture = (CompletableFuture<Optional<CompoundTag>>) future;
+            Optional<CompoundTag> chunkTag = typedFuture.join();
+            if (chunkTag.isEmpty()) {
+                return null;
+            }
+            Integer color = sampleChunkColorFromStorage(level, chunkX, chunkZ, chunkTag.get());
+            if (color != null) {
+                cacheColor(level, savedData, chunkX, chunkZ, color);
+            }
+            return color;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private static Integer sampleChunkColorFromStorage(ServerLevel level, int chunkX, int chunkZ, CompoundTag chunkTag) {
         try {
             ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
@@ -294,13 +325,29 @@ public final class ClaimPreviewTerrainService {
     }
 
     private static Integer sampleChunkColor(ChunkAccess chunk, int chunkX, int chunkZ) {
-        int worldX = (chunkX << 4) + 8;
-        int worldZ = (chunkZ << 4) + 8;
-        int localX = worldX & 15;
-        int localZ = worldZ & 15;
-        int worldY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, localX, localZ) - 1;
+        int[][] sampleOffsets = {{8, 8}, {4, 4}, {12, 4}, {4, 12}, {12, 12}};
+        SurfaceSample best = null;
+        for (int[] offset : sampleOffsets) {
+            SurfaceSample sample = sampleSurfaceColor(chunk, chunkX, chunkZ, offset[0], offset[1]);
+            if (sample == null) {
+                continue;
+            }
+            if (best == null || sample.score() > best.score()) {
+                best = sample;
+            }
+            if (sample.score() >= 100) {
+                return sample.color();
+            }
+        }
+        return best == null ? DEFAULT_COLOR : best.color();
+    }
+
+    private static SurfaceSample sampleSurfaceColor(ChunkAccess chunk, int chunkX, int chunkZ, int localX, int localZ) {
+        int worldX = (chunkX << 4) + localX;
+        int worldZ = (chunkZ << 4) + localZ;
+        int worldY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, localX & 15, localZ & 15) - 1;
         if (worldY < chunk.getMinBuildHeight()) {
-            return DEFAULT_COLOR;
+            return null;
         }
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
         BlockState state = chunk.getBlockState(pos);
@@ -310,11 +357,30 @@ public final class ClaimPreviewTerrainService {
             state = chunk.getBlockState(pos);
         }
         if (state.getFluidState().is(FluidTags.WATER)) {
-            return WATER_COLOR;
+            return new SurfaceSample(WATER_COLOR, 60);
         }
         MapColor mapColor = state.getMapColor(chunk, pos);
         int base = mapColor == null ? 0x55606A : mapColor.col;
-        return 0xFF000000 | (base & 0x00FFFFFF);
+        return new SurfaceSample(0xFF000000 | (base & 0x00FFFFFF), sampleScore(state, mapColor));
+    }
+
+    private static int sampleScore(BlockState state, MapColor mapColor) {
+        if (state.is(Blocks.GRASS_BLOCK) || mapColor == MapColor.GRASS) {
+            return 100;
+        }
+        if (state.is(Blocks.MOSS_BLOCK) || state.is(Blocks.MYCELIUM)) {
+            return 92;
+        }
+        if (mapColor == MapColor.PLANT || mapColor == MapColor.COLOR_GREEN) {
+            return 86;
+        }
+        if (mapColor == MapColor.WATER) {
+            return 60;
+        }
+        if (mapColor == MapColor.SAND || mapColor == MapColor.COLOR_YELLOW) {
+            return 40;
+        }
+        return 20;
     }
 
     private static Method resolveReadChunkMethod() {
@@ -332,49 +398,6 @@ public final class ClaimPreviewTerrainService {
         evictIfNeeded();
         CHUNK_CACHE.put(chunkKey(level.dimension(), chunkX, chunkZ), new ChunkColorEntry(now, color));
         savedData.putColor(level.dimension().location().toString(), chunkX, chunkZ, color);
-    }
-
-    private static void fillMissingColors(Integer[] colors, int diameter) {
-        boolean changed = true;
-        for (int pass = 0; pass < diameter && changed; pass++) {
-            changed = false;
-            Integer[] next = colors.clone();
-            for (int index = 0; index < colors.length; index++) {
-                if (colors[index] != null) {
-                    continue;
-                }
-                int x = index % diameter;
-                int z = index / diameter;
-                Integer best = null;
-                int bestDistance = Integer.MAX_VALUE;
-                for (int dz = -1; dz <= 1; dz++) {
-                    for (int dx = -1; dx <= 1; dx++) {
-                        if (dx == 0 && dz == 0) {
-                            continue;
-                        }
-                        int nx = x + dx;
-                        int nz = z + dz;
-                        if (nx < 0 || nx >= diameter || nz < 0 || nz >= diameter) {
-                            continue;
-                        }
-                        Integer neighbor = colors[nz * diameter + nx];
-                        if (neighbor == null) {
-                            continue;
-                        }
-                        int distance = dx * dx + dz * dz;
-                        if (best == null || distance < bestDistance) {
-                            best = neighbor;
-                            bestDistance = distance;
-                        }
-                    }
-                }
-                if (best != null) {
-                    next[index] = best;
-                    changed = true;
-                }
-            }
-            System.arraycopy(next, 0, colors, 0, colors.length);
-        }
     }
 
     private ClaimPreviewTerrainService() {
