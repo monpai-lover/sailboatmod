@@ -313,6 +313,10 @@ public class NationHomeScreen extends Screen {
 
         // Claim radius buttons
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
+        this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
+            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket());
+            maybeRequestPreviewRefresh();
+        }).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 44, top + BODY_Y + 10, 24, 14).build());
 
         // Peace proposal buttons
         this.proposeCeasefireButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.ceasefire"), b -> submitPeaceProposal("ceasefire", 0, 0)).bounds(left + BODY_X + 12, top + BODY_Y + 148, 90, 18).build());

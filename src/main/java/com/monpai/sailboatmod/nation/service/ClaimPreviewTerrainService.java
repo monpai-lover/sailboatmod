@@ -48,7 +48,8 @@ public final class ClaimPreviewTerrainService {
     private static final java.util.Set<String> QUEUED_CHUNKS = ConcurrentHashMap.newKeySet();
 
     /** Sub-samples per chunk axis (2 = 2×2 sub-chunks per chunk, each 8×8 blocks) */
-    public static final int SUB = 1;
+    public static final int SUB = 2;
+    private static final int FORCE_LOAD_BUDGET_PER_TICK = 2;
 
     public static List<Integer> sample(ServerLevel level, ChunkPos centerChunk, int radius) {
         int diameter = radius * 2 + 1;
@@ -81,6 +82,7 @@ public final class ClaimPreviewTerrainService {
 
         TerrainPreviewSavedData savedData = TerrainPreviewSavedData.get(level);
         drainCompletedStorageReads(level, savedData, STORAGE_COMPLETION_BUDGET_PER_TICK);
+        int forceLoadCount = 0;
         for (int i = 0; i < PREWARM_BUDGET_PER_TICK && !queue.isEmpty(); i++) {
             PrewarmRequest request = queue.poll();
             if (request == null) {
@@ -96,7 +98,19 @@ public final class ClaimPreviewTerrainService {
                 cacheColor(level, savedData, request.chunkX(), request.chunkZ(), sampled);
                 continue;
             }
+            // Try storage read first
             startStorageRead(level, request.chunkX(), request.chunkZ());
+            // If no storage data and budget allows, force-load the chunk
+            if (!STORAGE_READS.containsKey(key) && forceLoadCount < FORCE_LOAD_BUDGET_PER_TICK) {
+                try {
+                    ChunkAccess chunk = level.getChunk(request.chunkX(), request.chunkZ(), ChunkStatus.FULL, true);
+                    if (chunk != null) {
+                        int color = sampleChunkColorPure(chunk, request.chunkX(), request.chunkZ());
+                        cacheColor(level, savedData, request.chunkX(), request.chunkZ(), color);
+                        forceLoadCount++;
+                    }
+                } catch (Exception ignored) {}
+            }
         }
         drainCompletedStorageReads(level, savedData, STORAGE_COMPLETION_BUDGET_PER_TICK);
     }
@@ -171,37 +185,16 @@ public final class ClaimPreviewTerrainService {
         return result;
     }
 
-    /** Samples SUB×SUB sub-regions within a chunk, each covering (16/SUB)×(16/SUB) blocks. */
+    /** Samples SUB×SUB sub-regions within a chunk, each covering (16/SUB)×(16/SUB) blocks. Pure center-point color, no blending. */
     private static int[] sampleChunkSubColors(ChunkAccess chunk, int chunkX, int chunkZ) {
-        int cellSize = 16 / SUB; // 8 blocks per sub-cell
+        int cellSize = 16 / SUB;
         int[] result = new int[SUB * SUB];
         for (int sz = 0; sz < SUB; sz++) {
             for (int sx = 0; sx < SUB; sx++) {
-                // Sample 2×2 points within this sub-cell
-                int baseX = sx * cellSize;
-                int baseZ = sz * cellSize;
-                int quarter = cellSize / 2;
-                int[] colors = new int[4];
-                int[] heights = new int[4];
-                int ci = 0;
-                for (int px = 0; px < 2; px++) {
-                    for (int pz = 0; pz < 2; pz++) {
-                        int[] r = sampleBlockColorAndHeight(chunk, chunkX, chunkZ, baseX + quarter * px + quarter / 2, baseZ + quarter * pz + quarter / 2);
-                        colors[ci] = r[0];
-                        heights[ci] = r[1];
-                        ci++;
-                    }
-                }
-                // Average with height shading
-                long rSum = 0, gSum = 0, bSum = 0;
-                for (int i = 0; i < 4; i++) {
-                    int shade = 180;
-                    if (i >= 2 && heights[i] != heights[i - 2]) shade = heights[i] > heights[i - 2] ? 220 : 135;
-                    rSum += ((colors[i] >> 16) & 0xFF) * shade / 180;
-                    gSum += ((colors[i] >> 8) & 0xFF) * shade / 180;
-                    bSum += (colors[i] & 0xFF) * shade / 180;
-                }
-                result[sz * SUB + sx] = 0xFF000000 | (Math.min(255, (int)(rSum / 4)) << 16) | (Math.min(255, (int)(gSum / 4)) << 8) | Math.min(255, (int)(bSum / 4));
+                int centerX = sx * cellSize + cellSize / 2;
+                int centerZ = sz * cellSize + cellSize / 2;
+                int[] r = sampleBlockColorAndHeight(chunk, chunkX, chunkZ, centerX, centerZ);
+                result[sz * SUB + sx] = r[0];
             }
         }
         return result;
@@ -375,56 +368,20 @@ public final class ClaimPreviewTerrainService {
         try {
             ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
             ChunkAccess chunk = ChunkSerializer.read(level, level.getChunkSource().getPoiManager(), chunkPos, chunkTag);
-            return sampleChunkColor(chunk, chunkX, chunkZ);
+            return sampleChunkColorPure(chunk, chunkX, chunkZ);
         } catch (Exception ignored) {
             return null;
         }
     }
 
     private static Integer sampleChunkColor(ChunkAccess chunk, int chunkX, int chunkZ) {
-        int[] sampleOffsets = {2, 6, 10, 14};
-        int[] colors = new int[16];
-        int[] heights = new int[16];
-        int count = 0;
-        for (int lxi = 0; lxi < 4; lxi++) {
-            for (int lzi = 0; lzi < 4; lzi++) {
-                int localX = sampleOffsets[lxi];
-                int localZ = sampleOffsets[lzi];
-                int[] result = sampleBlockColorAndHeight(chunk, chunkX, chunkZ, localX, localZ);
-                colors[count] = result[0];
-                heights[count] = result[1];
-                count++;
-            }
-        }
-        // Apply height-based brightness shading (vanilla style)
-        // Compare each sample to the one north of it (same column, previous row)
-        long rSum = 0, gSum = 0, bSum = 0;
-        for (int lxi = 0; lxi < 4; lxi++) {
-            for (int lzi = 0; lzi < 4; lzi++) {
-                int idx = lxi * 4 + lzi;
-                int color = colors[idx];
-                int r = (color >> 16) & 0xFF;
-                int g = (color >> 8) & 0xFF;
-                int b = color & 0xFF;
-                // Height shading: compare to northern neighbor
-                int shade = 180; // normal
-                if (lzi > 0) {
-                    int northIdx = lxi * 4 + (lzi - 1);
-                    if (heights[idx] > heights[northIdx]) {
-                        shade = 220; // bright (higher than north)
-                    } else if (heights[idx] < heights[northIdx]) {
-                        shade = 135; // dark (lower than north)
-                    }
-                }
-                rSum += r * shade / 180;
-                gSum += g * shade / 180;
-                bSum += b * shade / 180;
-            }
-        }
-        int avgR = Math.min(255, (int) (rSum / 16));
-        int avgG = Math.min(255, (int) (gSum / 16));
-        int avgB = Math.min(255, (int) (bSum / 16));
-        return 0xFF000000 | (avgR << 16) | (avgG << 8) | avgB;
+        return sampleChunkColorPure(chunk, chunkX, chunkZ);
+    }
+
+    /** Pure center-point color, no blending or height shading. */
+    private static int sampleChunkColorPure(ChunkAccess chunk, int chunkX, int chunkZ) {
+        int[] r = sampleBlockColorAndHeight(chunk, chunkX, chunkZ, 8, 8);
+        return r[0];
     }
 
     /**

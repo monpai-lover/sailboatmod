@@ -97,6 +97,11 @@ public final class ModItems {
             () -> new DescribedBlockItem(ModBlocks.SCHOOL_BLOCK.get(), new Item.Properties(), "item.sailboatmod.school.desc")
     );
 
+    public static final RegistryObject<Item> HALF_NUGGET_ITEM = ITEMS.register(
+            "half_nugget",
+            () -> new Item(new Item.Properties().stacksTo(64))
+    );
+
     private ModItems() {
     }
 }

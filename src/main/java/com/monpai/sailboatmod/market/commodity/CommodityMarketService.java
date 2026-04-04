@@ -199,6 +199,15 @@ public final class CommodityMarketService {
         if (state == null) {
             state = defaultState(storedDefinition);
             repository.upsertState(state);
+        } else if (state.priceFloor() == 0 && state.priceCeil() == Integer.MAX_VALUE) {
+            // Migrate existing states to ±15% price band
+            int base = state.basePrice();
+            int floor = Math.max(1, (int) Math.floor(base * 0.85));
+            int ceil = (int) Math.ceil(base * 1.15);
+            state = new CommodityMarketState(state.commodityKey(), base, state.currentStock(),
+                    state.volatility(), state.spreadBp(), state.stockFloor(), state.stockCeil(),
+                    floor, ceil, state.lastTradeAt(), state.updatedAt(), state.version());
+            repository.upsertState(state);
         }
 
         return new CommoditySnapshot(storedDefinition, state);
@@ -222,16 +231,19 @@ public final class CommodityMarketService {
 
     private CommodityMarketState defaultState(CommodityDefinition definition) {
         long now = System.currentTimeMillis();
+        int base = estimateBaseUnitPrice(definition);
+        int floor = Math.max(1, (int) Math.floor(base * 0.85));
+        int ceil = (int) Math.ceil(base * 1.15);
         return new CommodityMarketState(
                 definition.commodityKey(),
-                estimateBaseUnitPrice(definition),
+                base,
                 0,
                 DEFAULT_VOLATILITY,
                 DEFAULT_SPREAD_BP,
                 Integer.MIN_VALUE,
                 Integer.MAX_VALUE,
-                0,
-                Integer.MAX_VALUE,
+                floor,
+                ceil,
                 0L,
                 now,
                 0
@@ -368,9 +380,7 @@ public final class CommodityMarketService {
     }
 
     private double calculateBasePrice(CommodityDefinition definition, int stateBasePrice) {
-        double rarityCoeff = 1 + (definition.rarity() * 0.5);
-        double importanceCoeff = 1 + (definition.importance() * 0.3);
-        return stateBasePrice * rarityCoeff * importanceCoeff;
+        return stateBasePrice;
     }
 
     private double getVolFactor(CommodityDefinition definition, CommodityMarketState state) {

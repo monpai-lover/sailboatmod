@@ -1202,4 +1202,19 @@
     "screen.sailboatmod.nation.action.remove_core":  "Remove Core",
     "screen.sailboatmod.nation.core.removing":  "Removing nation core...",
     "command.sailboatmod.nation.structure.overlap_existing":  "This build area overlaps an existing structure: %s at %s, %s, %s."
+    ,"item.sailboatmod.half_nugget":  "Half Gold Nugget"
+    ,"screen.sailboatmod.market.catalog.filter.plant":  "Plant"
+    ,"screen.sailboatmod.market.catalog.filter.crop":  "Crop"
+    ,"screen.sailboatmod.market.catalog.filter.material":  "Material"
+    ,"screen.sailboatmod.market.catalog.filter.mob_drop":  "Mob Drop"
+    ,"screen.sailboatmod.market.catalog.filter.alchemy":  "Alchemy"
+    ,"screen.sailboatmod.market.catalog.filter.building":  "Building"
+    ,"screen.sailboatmod.market.catalog.filter.nether":  "Nether"
+    ,"screen.sailboatmod.market.catalog.filter.end":  "End"
+    ,"screen.sailboatmod.market.catalog.filter.treasure":  "Treasure"
+    ,"screen.sailboatmod.market.catalog.filter.redstone":  "Redstone"
+    ,"screen.sailboatmod.market.catalog.filter.utility":  "Utility"
+    ,"screen.sailboatmod.market.catalog.filter.weapon":  "Weapon"
+    ,"screen.sailboatmod.market.catalog.filter.armor":  "Armor"
+}
 }

@@ -10,8 +10,8 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class GoldStandardEconomy {
-    public static final int BALANCE_PER_GOLD_NUGGET = 1;
-    public static final int BALANCE_PER_GOLD_INGOT = 10;
+    public static final int BALANCE_PER_GOLD_NUGGET = 2;
+    public static final int BALANCE_PER_GOLD_INGOT = 18;
     public static final int BALANCE_PER_GOLD_BLOCK = BALANCE_PER_GOLD_INGOT * 9;
     public static final String LEDGER_CURRENCY = "GOLD_STANDARD";
 
@@ -113,7 +113,13 @@ public final class GoldStandardEconomy {
         int remaining = Math.max(0, amount);
         remaining = giveCurrencyStacks(player, Items.GOLD_BLOCK, BALANCE_PER_GOLD_BLOCK, remaining);
         remaining = giveCurrencyStacks(player, Items.GOLD_INGOT, BALANCE_PER_GOLD_INGOT, remaining);
-        giveCurrencyStacks(player, Items.GOLD_NUGGET, BALANCE_PER_GOLD_NUGGET, remaining);
+        remaining = giveCurrencyStacks(player, Items.GOLD_NUGGET, BALANCE_PER_GOLD_NUGGET, remaining);
+        // Give half-nuggets for odd remainder (value=1 each)
+        if (remaining > 0) {
+            ItemStack halfNugget = new ItemStack(com.monpai.sailboatmod.registry.ModItems.HALF_NUGGET_ITEM.get(), remaining);
+            boolean added = player.getInventory().add(halfNugget);
+            if (!added || !halfNugget.isEmpty()) player.drop(halfNugget, false);
+        }
         player.getInventory().setChanged();
         player.containerMenu.broadcastChanges();
     }
@@ -159,6 +165,9 @@ public final class GoldStandardEconomy {
         }
         if (stack.is(Items.GOLD_NUGGET)) {
             return BALANCE_PER_GOLD_NUGGET;
+        }
+        if (stack.is(com.monpai.sailboatmod.registry.ModItems.HALF_NUGGET_ITEM.get())) {
+            return 1;
         }
         return 0;
     }

@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.network;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
+import com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
 import com.monpai.sailboatmod.network.packet.BuildingUpgradePacket;
@@ -405,6 +406,13 @@ public final class ModNetwork {
                 CancelBuyOrderPacket::encode,
                 CancelBuyOrderPacket::decode,
                 CancelBuyOrderPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                ClearTerrainCachePacket.class,
+                ClearTerrainCachePacket::encode,
+                ClearTerrainCachePacket::decode,
+                ClearTerrainCachePacket::handle
         );
     }
 
