@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sailboat Market</title>
+    <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="page-shell">
+    <header class="hero">
+        <div class="hero-copy">
+            <p class="eyebrow">Sailboat Market Exchange</p>
+            <h1>Trade like a market terminal, not like a menu screen.</h1>
+            <p class="subtle">Run one command in game. The token is copied to your clipboard automatically, and this page can also extract it from pasted chat output.</p>
+            <div class="hero-badges">
+                <span class="hero-badge">Web listings</span>
+                <span class="hero-badge">Dispatch retry</span>
+                <span class="hero-badge">Clipboard login</span>
+            </div>
+        </div>
+        <div class="session-card">
+            <div class="login-head">
+                <div>
+                    <p class="section-kicker">Fast Login</p>
+                    <h2>Connect your in-game session</h2>
+                </div>
+                <button id="copy-command-button" type="button" class="secondary">Copy command</button>
+            </div>
+            <div class="command-card">
+                <div class="command-label">In-game command</div>
+                <code id="command-preview">/marketweb token</code>
+            </div>
+            <label for="chat-capture">Paste chat output or token</label>
+            <textarea id="chat-capture" autocomplete="off" placeholder="Paste the full chat line here. The page will detect the token and copy it again if needed."></textarea>
+            <div class="row">
+                <input id="login-token" type="text" autocomplete="off" placeholder="Token appears here automatically">
+                <button id="login-button" type="button">Sign in</button>
+            </div>
+            <p id="token-helper" class="muted">Command copied: run it in game and the mod will also copy the token directly to your clipboard.</p>
+            <p id="session-status" class="muted">Not signed in.</p>
+        </div>
+    </header>
+
+    <main class="layout">
+        <aside class="panel market-list-panel">
+            <div class="panel-head">
+                <h2>Markets</h2>
+                <button id="refresh-markets" type="button">Refresh</button>
+            </div>
+            <div id="market-list" class="market-list empty-state">Sign in to load markets.</div>
+        </aside>
+
+        <section class="panel detail-panel">
+            <div id="market-detail" class="empty-state">Select a market to inspect listings, storage, orders, and dispatch.</div>
+        </section>
+    </main>
+ </div>
+<script src="/app.js"></script>
+</body>
+</html>

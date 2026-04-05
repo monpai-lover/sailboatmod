@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
 import com.monpai.sailboatmod.network.packet.BuildingUpgradePacket;
 import com.monpai.sailboatmod.network.packet.OpenResidentScreenPacket;
@@ -413,6 +414,14 @@ public final class ModNetwork {
                 ClearTerrainCachePacket::encode,
                 ClearTerrainCachePacket::decode,
                 ClearTerrainCachePacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CopyMarketWebTokenPacket.class,
+                CopyMarketWebTokenPacket::encode,
+                CopyMarketWebTokenPacket::decode,
+                CopyMarketWebTokenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
     }
 

@@ -205,17 +205,49 @@ tasks.named('jar', Jar).configure {
     finalizedBy 'reobfJar'
 }
 
-tasks.register('copyReobfJarVersioned', Copy) {
+tasks.register('copyReobfJarVersioned') {
     dependsOn 'reobfJar'
-    mustRunAfter 'reobfJarJar'
-    from file("$buildDir/reobfJar/output.jar")
-    into file("$buildDir/libs")
-    rename { "${mod_id}-${mod_version}${fixSuffix}-reobf.jar" }
+    def targetFile = file("$buildDir/libs/${mod_id}-${mod_version}${fixSuffix}-reobf.jar")
+    inputs.file(file("$buildDir/reobfJar/output.jar"))
+    outputs.file(targetFile)
+    doLast {
+        copy {
+            from file("$buildDir/reobfJar/output.jar")
+            into targetFile.parentFile
+            rename { targetFile.name }
+        }
+    }
+}
+
+tasks.register('copyReobfJarJarVersioned') {
+    dependsOn 'reobfJarJar'
+    def targetFile = file("$buildDir/libs/${mod_id}-${mod_version}${fixSuffix}-all.jar")
+    inputs.file(file("$buildDir/reobfJarJar/output.jar"))
+    outputs.file(targetFile)
+    doLast {
+        copy {
+            from file("$buildDir/reobfJarJar/output.jar")
+            into targetFile.parentFile
+            rename { targetFile.name }
+        }
+    }
+}
+
+tasks.register('releaseMod') {
+    group = 'build'
+    description = 'Build the standard reobf jar and the reobfuscated jarJar all-in-one jar.'
+    dependsOn 'jar', 'jarJar'
 }
 
 tasks.configureEach {
     if (name == 'reobfJar') {
         finalizedBy 'copyReobfJarVersioned'
+    }
+    if (name == 'jarJar') {
+        finalizedBy 'reobfJarJar'
+    }
+    if (name == 'reobfJarJar') {
+        finalizedBy 'copyReobfJarJarVersioned'
     }
 }
 
@@ -270,5 +302,4 @@ tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.Shadow
     relocate('gg.essential.universalcraft', "${mod_group_id}.shadow.universalcraft")
 }
 
-// Keep standard jar path untouched for now. When you switch market UI to Elementa,
-// wire release artifacts to shadow+reobfShadowJar in the release task.
+// ship `jar` and `jarJar` by default; keep `shadowJar` as an explicit debug/inspection artifact.

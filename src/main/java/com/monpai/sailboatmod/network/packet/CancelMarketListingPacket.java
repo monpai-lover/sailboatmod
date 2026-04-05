@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.PacketDistributor;
@@ -38,7 +39,14 @@ public class CancelMarketListingPacket {
             if (!(player.level().getBlockEntity(packet.marketPos) instanceof MarketBlockEntity market)) {
                 return;
             }
-            market.cancelListing(player, packet.listingIndex);
+            MarketBlockEntity.CancelListingResult result = market.cancelListingResult(player, packet.listingIndex);
+            String messageKey = result.messageKey();
+            if (!messageKey.isBlank()) {
+                ModNetwork.CHANNEL.send(
+                        PacketDistributor.PLAYER.with(() -> player),
+                        new MarketStatusNoticePacket(packet.marketPos, Component.translatable(messageKey).getString(), result.success())
+                );
+            }
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> player),
                     new OpenMarketScreenPacket(market.buildOverview(player))

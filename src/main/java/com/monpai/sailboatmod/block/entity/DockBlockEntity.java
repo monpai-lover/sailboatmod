@@ -186,8 +186,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (player == null) {
             return false;
         }
+        return canManageDock(player.getUUID().toString());
+    }
+
+    public boolean canManageDock(String playerUuid) {
         String currentOwner = getOwnerUuid();
-        return !currentOwner.isBlank() && currentOwner.equals(player.getUUID().toString());
+        String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
+        return !currentOwner.isBlank() && currentOwner.equals(safePlayerUuid);
     }
 
     public boolean setDockZone(int minX, int maxX, int minZ, int maxZ) {
@@ -1121,6 +1126,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return canManageDock(player) ? getVisibleStorageGroups().size() : 0;
     }
 
+    public int getVisibleStorageCount(String playerUuid) {
+        return canManageDock(playerUuid) ? getVisibleStorageGroups().size() : 0;
+    }
+
     public ItemStack getStorageItemForVisibleIndex(Player player, int visibleIndex) {
         if (!canManageDock(player)) {
             return ItemStack.EMPTY;
@@ -1132,8 +1141,28 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return visibleGroups.get(visibleIndex).displayStack().copy();
     }
 
+    public ItemStack getStorageItemForVisibleIndex(String playerUuid, int visibleIndex) {
+        if (!canManageDock(playerUuid)) {
+            return ItemStack.EMPTY;
+        }
+        List<StorageGroup> visibleGroups = getVisibleStorageGroups();
+        if (visibleIndex < 0 || visibleIndex >= visibleGroups.size()) {
+            return ItemStack.EMPTY;
+        }
+        return visibleGroups.get(visibleIndex).displayStack().copy();
+    }
+
     public boolean extractVisibleStorage(Player player, int visibleIndex, int quantity) {
         ItemStack stack = getStorageItemForVisibleIndex(player, visibleIndex);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        int amount = Math.max(1, Math.min(quantity, countMatchingStock(stack)));
+        return extractMatchingStock(stack, amount);
+    }
+
+    public boolean extractVisibleStorage(String playerUuid, int visibleIndex, int quantity) {
+        ItemStack stack = getStorageItemForVisibleIndex(playerUuid, visibleIndex);
         if (stack.isEmpty()) {
             return false;
         }

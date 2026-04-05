@@ -158,6 +158,22 @@ public class MarketSavedData extends SavedData {
         return out;
     }
 
+    public List<ShippingOrder> getShippingOrders() {
+        return new ArrayList<>(shippingOrders.values());
+    }
+
+    public ShippingOrder getShippingOrderForPurchaseOrder(String purchaseOrderId) {
+        if (purchaseOrderId == null || purchaseOrderId.isBlank()) {
+            return null;
+        }
+        for (ShippingOrder order : shippingOrders.values()) {
+            if (purchaseOrderId.equals(order.purchaseOrderId())) {
+                return order;
+            }
+        }
+        return null;
+    }
+
     public void putListing(MarketListing listing) {
         listings.put(listing.listingId(), listing);
         setDirty();

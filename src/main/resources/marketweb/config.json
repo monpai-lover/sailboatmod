@@ -1,0 +1,14 @@
+{
+  "uiTitle": "Sailboat Market",
+  "commandText": "/marketweb token",
+  "autoRefreshSeconds": 0,
+  "defaultPurchaseQuantity": 1,
+  "defaultListingQuantity": 1,
+  "defaultPriceAdjustmentBp": 0,
+  "defaultBuyOrderQuantity": 1,
+  "defaultBuyOrderMinPriceBp": -1000,
+  "defaultBuyOrderMaxPriceBp": 1000,
+  "showShippingPanel": true,
+  "showPriceCharts": true,
+  "showTownEconomySummary": true
+}

@@ -72,6 +72,26 @@ public final class VaultEconomyBridge {
     }
 
     @Nullable
+    public static Boolean tryWithdrawByIdentity(UUID playerUuid, String playerName, int amount) {
+        if (amount <= 0) {
+            return Boolean.TRUE;
+        }
+        Object provider = resolveEconomyProvider();
+        if (provider == null) {
+            return null;
+        }
+        try {
+            Boolean withOffline = tryWithdrawWithOfflinePlayer(provider, playerUuid, amount);
+            if (withOffline != null) {
+                return withOffline;
+            }
+            return tryWithdrawWithName(provider, playerName, amount);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    @Nullable
     private static Object resolveEconomyProvider() {
         if (providerResolved) {
             return economyProvider;
@@ -173,9 +193,44 @@ public final class VaultEconomyBridge {
     }
 
     @Nullable
+    private static Boolean tryWithdrawWithOfflinePlayer(Object provider, UUID playerUuid, int amount) {
+        if (playerUuid == null) {
+            return null;
+        }
+        try {
+            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+            Class<?> offlinePlayerClass = Class.forName("org.bukkit.OfflinePlayer");
+            Method getOfflinePlayer = bukkitClass.getMethod("getOfflinePlayer", UUID.class);
+            Object offlinePlayer = getOfflinePlayer.invoke(null, playerUuid);
+            Method withdrawPlayer = provider.getClass().getMethod("withdrawPlayer", offlinePlayerClass, double.class);
+            Object response = withdrawPlayer.invoke(provider, offlinePlayer, (double) amount);
+            return isTransactionSuccess(response);
+        } catch (NoSuchMethodException ignored) {
+            return null;
+        } catch (Throwable ignored) {
+            return Boolean.FALSE;
+        }
+    }
+
+    @Nullable
     private static Boolean tryWithdrawWithName(Object provider, Player player, int amount) {
+        if (player == null) {
+            return null;
+        }
         try {
             String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+            return tryWithdrawWithName(provider, playerName, amount);
+        } catch (Throwable ignored) {
+            return Boolean.FALSE;
+        }
+    }
+
+    @Nullable
+    private static Boolean tryWithdrawWithName(Object provider, String playerName, int amount) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        try {
             Method withdrawPlayer = provider.getClass().getMethod("withdrawPlayer", String.class, double.class);
             Object response = withdrawPlayer.invoke(provider, playerName, (double) amount);
             return isTransactionSuccess(response);

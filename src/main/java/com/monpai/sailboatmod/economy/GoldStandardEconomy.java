@@ -62,6 +62,14 @@ public final class GoldStandardEconomy {
     }
 
     @Nullable
+    public static Boolean tryWithdrawByIdentity(@Nullable UUID playerUuid, String playerName, long amount) {
+        if (amount <= 0L) {
+            return Boolean.TRUE;
+        }
+        return VaultEconomyBridge.tryWithdrawByIdentity(playerUuid, playerName, saturatingInt(amount));
+    }
+
+    @Nullable
     public static Boolean tryDeposit(Player player, long amount) {
         if (player == null || amount <= 0L) {
             return Boolean.TRUE;

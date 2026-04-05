@@ -25,6 +25,7 @@ public class OpenMarketScreenPacket {
         PacketStringCodec.writeUtfSafe(buffer, data.marketName(), 64);
         PacketStringCodec.writeUtfSafe(buffer, data.ownerName(), 64);
         PacketStringCodec.writeUtfSafe(buffer, data.ownerUuid(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, data.viewerUuid(), 64);
         buffer.writeVarInt(data.pendingCredits());
         buffer.writeBoolean(data.linkedDock());
         PacketStringCodec.writeUtfSafe(buffer, data.linkedDockName(), 64);
@@ -65,6 +66,7 @@ public class OpenMarketScreenPacket {
         String marketName = buffer.readUtf(64);
         String ownerName = buffer.readUtf(64);
         String ownerUuid = buffer.readUtf(64);
+        String viewerUuid = buffer.readUtf(64);
         int pendingCredits = buffer.readVarInt();
         boolean linkedDock = buffer.readBoolean();
         String linkedDockName = buffer.readUtf(64);
@@ -103,6 +105,7 @@ public class OpenMarketScreenPacket {
                 marketName,
                 ownerName,
                 ownerUuid,
+                viewerUuid,
                 pendingCredits,
                 linkedDock,
                 linkedDockName,
@@ -199,6 +202,7 @@ public class OpenMarketScreenPacket {
             buffer.writeVarInt(entry.reservedCount());
             buffer.writeVarInt(entry.unitPrice());
             PacketStringCodec.writeUtfSafe(buffer, entry.sellerName(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, entry.sellerUuid(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.sourceDockName(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.nationId(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.sellerNote(), 128);
@@ -218,6 +222,7 @@ public class OpenMarketScreenPacket {
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
+                    buffer.readUtf(64),
                     buffer.readUtf(64),
                     buffer.readUtf(64),
                     buffer.readUtf(64),

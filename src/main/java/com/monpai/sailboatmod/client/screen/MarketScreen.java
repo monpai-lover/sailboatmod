@@ -96,6 +96,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String selectedCommodityKey = "";
     private boolean initialRefreshSent;
     private boolean closingContainer;
+    private boolean closeRequested;
 
     private int selectedListingIndex;
     private int selectedOrderIndex;
@@ -207,6 +208,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (minecraft == null || minecraft.player == null) {
             return;
         }
+        if (closeRequested) {
+            closeRequested = false;
+            closeMarketScreen();
+            return;
+        }
         if (!menu.stillValid(minecraft.player)) {
             closeMarketScreen();
             return;
@@ -291,7 +297,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return true;
         }
 
-        closeMarketScreen();
+        closeRequested = true;
         return true;
     }
 
@@ -335,7 +341,6 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         mainPanel.enableEffect(new OutlineEffect(BORDER, 1f));
 
         buildHeader(mainPanel, panelWidth);
-        buildNotice(mainPanel, panelWidth);
         buildTabs(mainPanel, panelWidth);
 
         int contentX = PANEL_PADDING;
@@ -350,6 +355,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             case FINANCE -> buildFinancePage(mainPanel, contentX, contentY, contentWidth, contentHeight);
             case BUY_ORDERS -> buildBuyOrdersPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
         }
+        buildNotice(mainPanel, panelWidth);
         traceScrollState("rebuildUi:end preserve=" + preserveScroll);
     }
 
@@ -795,10 +801,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
         int footerButtonsY = 92;
         int footerButtonGap = 8;
+        boolean ownListing = isSelectedListingOwnedByViewer();
+        int footerButtonCount = 3;
         int footerButtonWidth = Math.max(84, (innerWidth - 20 - footerButtonGap * 2) / 3);
         createButton(footer, 10, footerButtonsY, footerButtonWidth, 24,
-                Component.translatable("screen.sailboatmod.market.buy").getString(),
-                listing != null && data.linkedDock(), false, this::sendBuy);
+                Component.translatable(ownListing ? "screen.sailboatmod.market.unlist" : "screen.sailboatmod.market.buy").getString(),
+                listing != null && (ownListing || data.linkedDock()), ownListing, ownListing ? this::cancelListing : this::sendBuy);
         createButton(footer, 10 + footerButtonWidth + footerButtonGap, footerButtonsY, footerButtonWidth, 24,
                 Component.translatable("screen.sailboatmod.market.goods.go_sell").getString(),
                 true, false, () -> {
@@ -806,8 +814,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     rebuildUi();
                 });
         createButton(footer, 10 + (footerButtonWidth + footerButtonGap) * 2, footerButtonsY, footerButtonWidth, 24,
-                Component.translatable("screen.sailboatmod.market.cancel").getString(),
-                listing != null && data.canManage(), true, this::cancelListing);
+                Component.translatable("screen.sailboatmod.market.goods.back_market").getString(),
+                true, true, this::backToGoodsListings);
     }
 
     private void buildGoodsOverviewPanel(UIComponent panel, int width) {
@@ -2502,12 +2510,17 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private List<String> buildGoodsActionLines() {
         List<String> lines = new ArrayList<>();
+        MarketOverviewData.ListingEntry entry = selectedListing();
+        if (entry != null && isSelectedListingOwnedByViewer()) {
+            lines.add(Component.translatable("screen.sailboatmod.market.self_buy_denied").getString());
+            lines.add(Component.translatable("screen.sailboatmod.market.action.cancel_hint").getString());
+            return lines;
+        }
         if (!data.linkedDock()) {
             lines.add(Component.translatable("screen.sailboatmod.market.linked_dock_missing").getString());
             lines.add(Component.translatable("screen.sailboatmod.market.action.bind_dock_hint").getString());
             return lines;
         }
-        MarketOverviewData.ListingEntry entry = selectedListing();
         if (entry != null) {
             int qty = parsePositive(buyQtyValue, 1);
             lines.add(Component.translatable("screen.sailboatmod.market.action.buy_for",
@@ -2798,12 +2811,22 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void sendBuy() {
+        if (isSelectedListingOwnedByViewer()) {
+            applyNotice(Component.translatable("screen.sailboatmod.market.self_buy_denied").getString(), false);
+            rebuildUi();
+            return;
+        }
         rememberScrollState();
         ModNetwork.CHANNEL.sendToServer(new PurchaseMarketListingPacket(
                 data.marketPos(),
                 selectedListingIndex,
                 parsePositive(buyQtyValue, 1)
         ));
+    }
+
+    private void backToGoodsListings() {
+        activeGoodsView = GoodsPrimaryView.PRODUCT_LISTINGS;
+        rebuildUi();
     }
 
     private void cancelListing() {
@@ -3768,6 +3791,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 ? data.listingEntries().get(selectedListingIndex) : null;
     }
 
+    private boolean isSelectedListingOwnedByViewer() {
+        MarketOverviewData.ListingEntry listing = selectedListing();
+        if (listing == null || data.viewerUuid() == null || data.viewerUuid().isBlank()) {
+            return false;
+        }
+        return data.viewerUuid().equals(listing.sellerUuid());
+    }
+
     private MarketOverviewData.StorageEntry selectedStorage() {
         return selectedStorageIndex >= 0 && selectedStorageIndex < data.dockStorageEntries().size()
                 ? data.dockStorageEntries().get(selectedStorageIndex) : null;
@@ -3931,7 +3962,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private MarketOverviewData empty(BlockPos pos) {
-        return new MarketOverviewData(pos, "Market", "-", "", 0, false, "-", "-", false, false,
+        return new MarketOverviewData(pos, "Market", "-", "", "", 0, false, "-", "-", false, false,
                 "", "", 0, 0, 0, 0, 0, 0L, 0L, 0L, 0.0F,
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(),

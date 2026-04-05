@@ -9,6 +9,7 @@ public record MarketOverviewData(
         String marketName,
         String ownerName,
         String ownerUuid,
+        String viewerUuid,
         int pendingCredits,
         boolean linkedDock,
         String linkedDockName,
@@ -94,7 +95,7 @@ public record MarketOverviewData(
     }
 
     public record ListingEntry(String label, String commodityKey, String itemName, int availableCount, int reservedCount,
-                               int unitPrice, String sellerName, String sourceDockName, String nationId, String sellerNote,
+                               int unitPrice, String sellerName, String sellerUuid, String sourceDockName, String nationId, String sellerNote,
                                String category, int rarity) {
     }
 

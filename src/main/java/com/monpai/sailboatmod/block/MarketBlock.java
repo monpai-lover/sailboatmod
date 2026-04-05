@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.block;
 
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
+import com.monpai.sailboatmod.market.web.MarketTerminalSavedData;
 import com.monpai.sailboatmod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -71,6 +72,14 @@ public class MarketBlock extends BaseEntityBlock {
         market.bindNearestDockIfAbsent();
         NetworkHooks.openScreen(serverPlayer, market, pos);
         return InteractionResult.CONSUME;
+    }
+
+    @Override
+    public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        if (!state.is(newState.getBlock()) && !level.isClientSide) {
+            MarketTerminalSavedData.get(level).removeEntry(level.dimension().location().toString(), pos);
+        }
+        super.onRemove(state, level, pos, newState, movedByPiston);
     }
 
     @Override
