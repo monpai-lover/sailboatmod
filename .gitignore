@@ -24,3 +24,7 @@ run-data
 
 # Files from Forge MDK
 forge*changelog.txt
+
+# macOS
+.DS_Store
+*.DS_Store
