@@ -104,7 +104,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private int selectedBuyOrderIndex;
 
     private String listingQtyValue = "1";
-    private String listingPriceAdjustValue = "0";
+    private String listingPriceAdjustValue = "";
     private String buyQtyValue = "1";
     private String goodsSearchValue = "";
     private String storageSearchValue = "";
@@ -251,6 +251,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     @Override
     public void onMouseScrolled(double mouseX, double mouseY, double scrollDelta, double acceleratedDelta) {
+        LOGGER.info("[MarketScroll] onMouseScrolled delta={} goodsViewportRef={} catalogRef={}", scrollDelta, goodsViewportScrollRef != null, goodsCatalogScrollRef != null);
         traceScrollMessage("onMouseScrolled mouseX=" + mouseX
                 + " mouseY=" + mouseY
                 + " scrollDelta=" + scrollDelta
@@ -415,34 +416,35 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void buildGoodsPage(UIComponent parent, int x, int y, int width, int height) {
-        if (height < 350) {
-            float restoreOffset = goodsViewportScrollOffset;
-            float restoreProgress = goodsViewportScrollProgress;
-            ScrollComponent scroll = createViewportScroll(parent, x, y, width, height);
-            goodsViewportScrollRef = scroll;
-            trackViewportScroll(scroll, true);
-            buildCompactGoodsPage(scroll, width, 450);
-            restoreScroll(scroll, restoreOffset, restoreProgress);
-            return;
-        }
-
         buildGoodsViewTabs(parent, x, y, width);
         int goodsTop = y + 28;
         int goodsHeight = height - 28;
 
-        if (width < 760) {
+        if (activeGoodsView == GoodsPrimaryView.BROWSE_MARKET) {
+            if (height < 350 || width < 760) {
+                float restoreOffset = goodsViewportScrollOffset;
+                float restoreProgress = goodsViewportScrollProgress;
+                int contentH = compactContentHeight(width);
+                LOGGER.info("[MarketScroll] browsePage compact goodsH={} contentH={}", goodsHeight, contentH);
+                ScrollComponent scroll = createViewportScroll(parent, x, goodsTop, width, goodsHeight);
+                goodsViewportScrollRef = scroll;
+                trackViewportScroll(scroll, true);
+                buildBrowseGoodsPage(scroll, 0, 0, width, contentH);
+                restoreScroll(scroll, restoreOffset, restoreProgress);
+            } else {
+                buildBrowseGoodsPage(parent, x, goodsTop, width, goodsHeight);
+            }
+            return;
+        }
+
+        if (height < 350 || width < 760) {
             float restoreOffset = goodsViewportScrollOffset;
             float restoreProgress = goodsViewportScrollProgress;
             ScrollComponent scroll = createViewportScroll(parent, x, goodsTop, width, goodsHeight);
             goodsViewportScrollRef = scroll;
             trackViewportScroll(scroll, true);
-            buildCompactGoodsPage(scroll, width, goodsHeight);
+            buildCompactGoodsPage(scroll, width, Math.max(goodsHeight, compactContentHeight(width)));
             restoreScroll(scroll, restoreOffset, restoreProgress);
-            return;
-        }
-
-        if (activeGoodsView == GoodsPrimaryView.BROWSE_MARKET) {
-            buildBrowseGoodsPage(parent, x, goodsTop, width, goodsHeight);
             return;
         }
 
@@ -458,6 +460,21 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 selectedGoodsHeadline(),
                 goodsPanelSubtitle());
         buildGoodsActionPanel(actionPanel, width);
+    }
+
+    private int compactContentHeight(int width) {
+        if (activeGoodsView == GoodsPrimaryView.PRODUCT_LISTINGS) {
+            int sellers = selectedCommodityListingIndices().size();
+            return 146 + SECTION_GAP + 118 + 20 + estimateCommoditySellerCardsHeight(sellers) + 40;
+        }
+        if (activeGoodsView == GoodsPrimaryView.BROWSE_MARKET) {
+            List<Integer> filtered = filteredListingIndices();
+            List<Integer> paged = pagedListingIndices(filtered);
+            int innerWidth = Math.max(120, width - 28);
+            GoodsCatalogGridLayout layout = goodsCatalogGridLayout(innerWidth, paged.size());
+            return goodsCatalogScrollY(goodsCatalogDropdownHeight()) + layout.contentHeight() + 40;
+        }
+        return 450;
     }
 
     private void buildCompactGoodsPage(UIComponent parent, int width, int height) {
@@ -732,9 +749,18 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
         int footerHeight = 126;
         ScrollComponent body = createPanelBodyScroll(panel, 118, footerHeight);
+        List<Integer> actionSellerIndices = selectedCommodityListingIndices();
+        int detailTop = listing == null ? 0 : 104;
+        int bodyBottom = detailTop + 18 + estimateCommoditySellerCardsHeight(actionSellerIndices.size());
+        UIBlock bodyContent = new UIBlock(new Color(0, 0, 0, 0));
+        bodyContent.setX(new PixelConstraint(0));
+        bodyContent.setY(new PixelConstraint(0));
+        bodyContent.setWidth(new PixelConstraint(innerWidth));
+        bodyContent.setHeight(new PixelConstraint(bodyBottom + 60));
+        bodyContent.setChildOf(body);
 
         if (listing != null) {
-            UIRoundedRectangle hero = createPanel(body, 0, 0, innerWidth, 96, 14f, CHROME_MUTED);
+            UIRoundedRectangle hero = createPanel(bodyContent, 0, 0, innerWidth, 96, 14f, CHROME_MUTED);
             hero.enableEffect(new OutlineEffect(BORDER, 1f));
             ItemStack heroStack = resolveCommodityStack(listing.commodityKey());
             createItemIcon(hero, 12, 12, 72, 72, heroStack, true);
@@ -748,12 +774,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             createText(hero, innerWidth - 84, 66, formatCompactLong(listing.unitPrice()), 0.96f, ACCENT);
         }
 
-        int detailTop = listing == null ? 0 : 104;
-        createText(body, 0, detailTop, Component.translatable("screen.sailboatmod.market.goods.current_listing_count", selectedCommodityListingIndices().size()).getString(), 0.84f, TEXT_PRIMARY);
-        createText(body, Math.max(120, innerWidth - 140), detailTop + 2, Component.translatable("screen.sailboatmod.market.goods.switch_seller_hint").getString(), 0.64f, TEXT_SOFT);
-        buildCommoditySellerCards(body, 0, detailTop + 18, innerWidth, selectedCommodityListingIndices());
-        int bodyBottom = detailTop + 18 + estimateCommoditySellerCardsHeight(selectedCommodityListingIndices().size());
-        buildTextStack(body, 0, bodyBottom + 8, innerWidth, buildGoodsActionLines(), TEXT_MUTED);
+        createText(bodyContent, 0, detailTop, Component.translatable("screen.sailboatmod.market.goods.current_listing_count", actionSellerIndices.size()).getString(), 0.84f, TEXT_PRIMARY);
+        createText(bodyContent, Math.max(120, innerWidth - 140), detailTop + 2, Component.translatable("screen.sailboatmod.market.goods.switch_seller_hint").getString(), 0.64f, TEXT_SOFT);
+        buildCommoditySellerCards(bodyContent, 0, detailTop + 18, innerWidth, actionSellerIndices);
+        buildTextStack(bodyContent, 0, bodyBottom + 8, innerWidth, buildGoodsActionLines(), TEXT_MUTED);
 
         int footerY = Math.max(118, Math.round(panel.getHeight()) - footerHeight - 10);
         UIRoundedRectangle footer = createPanel(panel, 14, footerY, innerWidth, footerHeight, 14f, CHROME_MUTED);
@@ -827,9 +851,16 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return;
         }
         ScrollComponent body = createPanelBodyScroll(panel, 118, 12);
+        List<Integer> sellerIndices = selectedCommodityListingIndices();
+        int expectedContentH = 20 + estimateCommoditySellerCardsHeight(sellerIndices.size());
+        LOGGER.info("[MarketScroll] sellerPanel sellers={} expectedContentH={} bodyViewportH={}", sellerIndices.size(), expectedContentH, Math.round(body.getHeight()));
+        body.addScrollAdjustEvent(false, (pct, pctOfParent) -> {
+            LOGGER.info("[MarketScroll] sellerScroll pct={} overhang={} offset={}", pct, body.getVerticalOverhang(), body.getVerticalOffset());
+            return Unit.INSTANCE;
+        });
         createText(body, 0, 0, Component.translatable("screen.sailboatmod.market.goods.select_seller").getString(), 0.86f, TEXT_PRIMARY);
         createText(body, Math.max(100, innerWidth - 132), 2, Component.translatable("screen.sailboatmod.market.goods.select_seller_hint").getString(), 0.64f, TEXT_SOFT);
-        buildCommoditySellerCards(body, 0, 20, innerWidth, selectedCommodityListingIndices());
+        buildCommoditySellerCards(body, 0, 20, innerWidth, sellerIndices);
     }
 
     private void buildHotCommodityCards(UIComponent panel, int innerWidth, int startX, int startY) {
@@ -958,12 +989,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         List<Integer> filtered = filteredListingIndices();
         goodsCatalogPage = clampGoodsCatalogPage(filtered.size());
 
-        int dropdownHeight = 0;
-        if (showCategoryFilter) dropdownHeight = GoodsCategoryFilter.values().length * 24;
-        if (showPriceFilter) dropdownHeight = 80;
+        int dropdownHeight = goodsCatalogDropdownHeight();
 
         buildGoodsCatalogSummary(panel, innerWidth, filtered.size(), data.listingEntries().size(), dropdownHeight);
-        buildGoodsCatalogRows(panel, innerWidth, Math.max(190, height - 138 - dropdownHeight), filtered, dropdownHeight);
+        int catalogScrollHeight = Math.max(190, height - 172 - dropdownHeight);
+        LOGGER.info("[MarketScroll] goodsCatalog panelH={} height={} dropdown={} scrollH={} filtered={}", Math.round(panel.getHeight()), height, dropdownHeight, catalogScrollHeight, filtered.size());
+        buildGoodsCatalogRows(panel, innerWidth, catalogScrollHeight, filtered, dropdownHeight);
     }
 
     private void buildGoodsCatalogSummary(UIComponent panel, int innerWidth, int filteredCount, int totalCount, int dropdownHeight) {
@@ -972,19 +1003,61 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         createText(panel, 14, baseY + 14, buildGoodsCatalogFilterSummary(), 0.7f, TEXT_SOFT);
 
         int pageCount = goodsCatalogPageCount(filteredCount);
-        int baseX = innerWidth - 190;
-        int buttonY = baseY - 2;
-        createButton(panel, baseX, buttonY, 58, 22,
+        if (pageCount <= 1) return;
+
+        // Build page number list: always show first 2, last 2, current±1, with "..." gaps
+        java.util.LinkedHashSet<Integer> pageSet = new java.util.LinkedHashSet<>();
+        pageSet.add(0);
+        if (pageCount > 1) pageSet.add(1);
+        for (int p = goodsCatalogPage - 1; p <= goodsCatalogPage + 1; p++) {
+            if (p >= 0 && p < pageCount) pageSet.add(p);
+        }
+        if (pageCount > 2) pageSet.add(pageCount - 2);
+        pageSet.add(pageCount - 1);
+        List<Integer> pages = new ArrayList<>(pageSet);
+        java.util.Collections.sort(pages);
+
+        int btnW = 26;
+        int btnH = 22;
+        int gap = 4;
+        int prevW = 44;
+        int nextW = 44;
+        int buttonY = baseY + 28; // below summary text
+        int curX = 14;
+
+        // Prev button
+        createButton(panel, curX, buttonY, prevW, btnH,
                 Component.translatable("screen.sailboatmod.market.catalog.prev").getString(),
                 goodsCatalogPage > 0, true, () -> {
                     goodsCatalogPage = Math.max(0, goodsCatalogPage - 1);
                     goodsCatalogScrollOffset = 0f;
                     rebuildUi();
                 });
-        createText(panel, baseX + 66, buttonY + 7,
-                Component.translatable("screen.sailboatmod.market.catalog.page", goodsCatalogPage + 1, pageCount).getString(),
-                0.74f, TEXT_MUTED);
-        createButton(panel, baseX + 126, buttonY, 58, 22,
+        curX += prevW + gap;
+
+        // Page number buttons with ellipsis
+        int prev = -1;
+        for (int p : pages) {
+            if (prev >= 0 && p > prev + 1) {
+                // ellipsis
+                createText(panel, curX + 4, buttonY + 7, "...", 0.74f, TEXT_MUTED);
+                curX += 20 + gap;
+            }
+            final int fp = p;
+            boolean isCurrent = (p == goodsCatalogPage);
+            createButton(panel, curX, buttonY, btnW, btnH,
+                    String.valueOf(p + 1), !isCurrent, isCurrent, () -> {
+                        goodsCatalogPage = fp;
+                        goodsCatalogScrollOffset = 0f;
+                        rebuildUi();
+                    });
+            curX += btnW + gap;
+            prev = p;
+        }
+
+        // Next button
+        curX += 2;
+        createButton(panel, curX, buttonY, nextW, btnH,
                 Component.translatable("screen.sailboatmod.market.catalog.next").getString(),
                 goodsCatalogPage + 1 < pageCount, true, () -> {
                     goodsCatalogPage = Math.min(pageCount - 1, goodsCatalogPage + 1);
@@ -999,7 +1072,39 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             selectedListingIndex = visible.get(0);
         }
 
-        int scrollY = 124 + dropdownHeight;
+        int scrollY = goodsCatalogScrollY(dropdownHeight);
+        GoodsCatalogGridLayout layout = goodsCatalogGridLayout(width, visible.size());
+
+        // When outer viewport scroll exists, use plain UIBlock (no nested scroll conflict)
+        if (goodsViewportScrollRef != null) {
+            UIBlock grid = new UIBlock(new Color(0, 0, 0, 0));
+            grid.setX(new PixelConstraint(14 + layout.startX()));
+            grid.setY(new PixelConstraint(scrollY));
+            grid.setWidth(new PixelConstraint(layout.gridWidth()));
+            grid.setHeight(new PixelConstraint(layout.contentHeight()));
+            grid.setChildOf(panel);
+            if (visible.isEmpty()) {
+                createRow(grid, width - 8, rowSpec(
+                        Component.translatable("screen.sailboatmod.market.empty").getString(),
+                        Component.translatable("screen.sailboatmod.market.catalog.empty_hint").getString(),
+                        "", false, null));
+                return;
+            }
+            for (int slot = 0; slot < visible.size(); slot++) {
+                int index = visible.get(slot);
+                int col = slot % layout.columns();
+                int row = slot / layout.columns();
+                createGoodsCatalogCard(grid,
+                        col * (layout.cardWidth() + layout.gap()),
+                        row * (layout.cardHeight() + layout.gap()),
+                        layout.cardWidth(),
+                        layout.cardHeight(),
+                        data.listingEntries().get(index),
+                        index);
+            }
+            return;
+        }
+
         float restoreOffset = goodsCatalogScrollOffset;
         float restoreProgress = goodsCatalogScrollProgress;
         ScrollComponent scroll = new ScrollComponent();
@@ -1020,27 +1125,54 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return;
         }
 
-        int columns = width >= 640 ? 3 : width >= 400 ? 2 : 1;
-        int cardWidth = Math.max(140, (width - (columns - 1) * 10) / columns);
-        int cardHeight = width >= 640 ? 150 : 136;
-        int rows = (visible.size() + columns - 1) / columns;
         UIBlock grid = new UIBlock(new Color(0, 0, 0, 0));
-        grid.setX(new PixelConstraint(0));
+        grid.setX(new PixelConstraint(layout.startX()));
         grid.setY(new PixelConstraint(0));
-        grid.setWidth(new PixelConstraint(width));
-        grid.setHeight(new PixelConstraint(Math.max(cardHeight, rows * (cardHeight + 10) - 10)));
+        grid.setWidth(new PixelConstraint(layout.gridWidth()));
+        grid.setHeight(new PixelConstraint(layout.contentHeight()));
         grid.setChildOf(scroll);
 
         for (int slot = 0; slot < visible.size(); slot++) {
             int index = visible.get(slot);
-            int col = slot % columns;
-            int row = slot / columns;
-            int cardX = col * (cardWidth + 10);
-            int cardY = row * (cardHeight + 10);
-            createGoodsCatalogCard(grid, cardX, cardY, cardWidth, cardHeight, data.listingEntries().get(index), index);
+            int col = slot % layout.columns();
+            int row = slot / layout.columns();
+            createGoodsCatalogCard(grid,
+                    col * (layout.cardWidth() + layout.gap()),
+                    row * (layout.cardHeight() + layout.gap()),
+                    layout.cardWidth(),
+                    layout.cardHeight(),
+                    data.listingEntries().get(index),
+                    index);
         }
 
         restoreScroll(scroll, restoreOffset, restoreProgress);
+    }
+
+    private int goodsCatalogDropdownHeight() {
+        if (showPriceFilter) {
+            return 80;
+        }
+        if (showCategoryFilter) {
+            return GoodsCategoryFilter.values().length * 24;
+        }
+        return 0;
+    }
+
+    private int goodsCatalogScrollY(int dropdownHeight) {
+        return 158 + dropdownHeight;
+    }
+
+    private GoodsCatalogGridLayout goodsCatalogGridLayout(int width, int visibleCount) {
+        int columns = 3;
+        int gap = 12;
+        int rawCardWidth = Math.max(96, (width - (columns - 1) * gap) / columns);
+        int cardWidth = Math.min(160, rawCardWidth);
+        int cardHeight = cardWidth + 60;
+        int rows = Math.max(1, (Math.max(visibleCount, 1) + columns - 1) / columns);
+        int gridWidth = columns * cardWidth + (columns - 1) * gap;
+        int startX = Math.max(0, (width - gridWidth) / 2);
+        int contentHeight = Math.max(cardHeight, rows * (cardHeight + gap) + 40);
+        return new GoodsCatalogGridLayout(columns, gap, cardWidth, cardHeight, gridWidth, startX, contentHeight);
     }
 
     private void createGoodsCatalogCard(UIComponent parent, int x, int y, int width, int height,
@@ -1060,18 +1192,18 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             rebuildUi();
         }));
 
-        int previewHeight = Math.max(64, height - 62);
-        UIRoundedRectangle preview = createPanel(card, 8, 8, width - 16, previewHeight, 12f, new Color(68, 74, 84, 255));
+        int previewSize = Math.max(64, width - 16);
+        UIRoundedRectangle preview = createPanel(card, 8, 8, width - 16, previewSize, 12f, new Color(68, 74, 84, 255));
         preview.enableEffect(new OutlineEffect(new Color(255, 255, 255, 12), 1f));
-        createItemIcon(preview, 10, 8, width - 36, previewHeight - 18, resolveCommodityStack(entry.commodityKey()), true);
+        createItemIcon(preview, 10, 8, width - 36, previewSize - 18, resolveCommodityStack(entry.commodityKey()), true);
         createBadge(preview, 6, 6, 64, 16, rarityLabel(entry.rarity()), rarityColor(entry.rarity()), TEXT_PRIMARY);
 
-        createText(card, 12, previewHeight + 14,
+        createText(card, Math.max(12, width - 34), 12, "x" + entry.availableCount(), 0.68f, TEXT_MUTED);
+        createText(card, 12, previewSize + 16,
                 shortenToWidth(entry.itemName(), width - 24, 0.78f), 0.78f, TEXT_PRIMARY);
-        createText(card, 12, previewHeight + 28,
+        createText(card, 12, previewSize + 30,
                 shortenToWidth(entry.sellerName(), width - 24, 0.64f), 0.64f, TEXT_SOFT);
         createText(card, 12, height - 18, formatCompactLong(entry.unitPrice()), 0.82f, ACCENT);
-        createText(card, Math.max(12, width - 48), height - 18, "x" + entry.availableCount(), 0.72f, TEXT_MUTED);
     }
 
     private void createGoodsCatalogRow(UIComponent parent, int width, MarketOverviewData.ListingEntry entry, int index) {
@@ -1315,7 +1447,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         outerContent.setX(new PixelConstraint(0));
         outerContent.setY(new PixelConstraint(0));
         outerContent.setWidth(new PixelConstraint(width));
-        outerContent.setHeight(new PixelConstraint(860));
+        outerContent.setHeight(new PixelConstraint(8 + 286 + 240 + 16));
         outerContent.setChildOf(outerScroll);
 
         MarketOverviewData.StorageEntry entry = selectedStorage();
@@ -1384,16 +1516,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
         UITextInput qtyInput = createInput(actionContent, 0, 32, Math.min(Math.max(80, rightWidth - 32), 120), 26,
                 Component.translatable("screen.sailboatmod.market.qty").getString(), listingQtyValue, value -> listingQtyValue = value);
-        qtyInput.onActivate(value -> {
-            listingQtyValue = value;
-            createListing();
+        createText(actionContent, 0, 68, Component.translatable("screen.sailboatmod.market.price_adjust").getString(), 0.72f, TEXT_SOFT);
+        UITextInput bpInput = createInput(actionContent, 0, 82, Math.min(Math.max(80, rightWidth - 32), 120), 26,
+                "+5% / -10%", listingPriceAdjustValue,
+                value -> listingPriceAdjustValue = value);
+        bpInput.onActivate(value -> {
+            listingPriceAdjustValue = value;
+            rebuildUi(false);
             return Unit.INSTANCE;
         });
-
-        createText(actionContent, 0, 68, Component.translatable("screen.sailboatmod.market.price_adjust").getString(), 0.72f, TEXT_SOFT);
-        createInput(actionContent, 0, 82, Math.min(Math.max(80, rightWidth - 32), 120), 26,
-                Component.translatable("screen.sailboatmod.market.price_adjust").getString(), listingPriceAdjustValue,
-                value -> listingPriceAdjustValue = value);
 
         UIRoundedRectangle confirmPanel = createPanel(actionContent, 0, 118, rightWidth - 32, 56, 12f, new Color(31, 40, 58, 238));
         confirmPanel.enableEffect(new OutlineEffect(new Color(255, 255, 255, 14), 1f));
@@ -1440,7 +1571,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         scrollContent.setX(new PixelConstraint(0));
         scrollContent.setY(new PixelConstraint(0));
         scrollContent.setWidth(new PixelConstraint(width));
-        scrollContent.setHeight(new PixelConstraint(600));
+        // height set below after listHeight is computed
         scrollContent.setChildOf(scroll);
 
         // Summary text
@@ -1475,9 +1606,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                         innerWidth - 74, 0.68f),
                 0.68f, TEXT_MUTED);
 
-        // Storage rows list
+        // Storage rows list — height based on actual row count to avoid nested scroll conflict
         int listTop = cardTop + 14 + 62 + 8;
-        int listHeight = Math.max(104, 600 - listTop - 8);
+        int rowCount = Math.max(1, filtered.size());
+        int listHeight = rowCount * 62 + (rowCount - 1) * 8 + 20; // rows + gaps + padding
+        int contentHeight = listTop + listHeight + 8;
+        scrollContent.setHeight(new PixelConstraint(contentHeight));
         buildStorageRowsPanel(scrollContent, 14, listTop, innerWidth, listHeight, filtered);
     }
 
@@ -1485,21 +1619,20 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         UIRoundedRectangle frame = createPanel(panel, x, y, width, height, 14f, new Color(17, 24, 37, 210));
         frame.enableEffect(new OutlineEffect(new Color(255, 255, 255, 10), 1f));
 
-        ScrollComponent scroll = new ScrollComponent();
-        scroll.setX(new PixelConstraint(6));
-        scroll.setY(new PixelConstraint(6));
-        scroll.setWidth(new PixelConstraint(width - 12));
-        scroll.setHeight(new PixelConstraint(height - 12));
-        scroll.setChildOf(frame);
-        scroll.setColor(new Color(0, 0, 0, 0));
+        UIBlock rows = new UIBlock(new Color(0, 0, 0, 0));
+        rows.setX(new PixelConstraint(6));
+        rows.setY(new PixelConstraint(6));
+        rows.setWidth(new PixelConstraint(width - 12));
+        rows.setHeight(new PixelConstraint(height - 12));
+        rows.setChildOf(frame);
 
         if (filteredIndices.isEmpty()) {
-            createStorageRow(scroll, width - 20, null, -1, false);
+            createStorageRow(rows, width - 20, null, -1, false);
             return;
         }
         for (int index : filteredIndices) {
             MarketOverviewData.StorageEntry entry = data.dockStorageEntries().get(index);
-            createStorageRow(scroll, width - 20, entry, index, index == selectedStorageIndex);
+            createStorageRow(rows, width - 20, entry, index, index == selectedStorageIndex);
         }
     }
 
@@ -1891,7 +2024,16 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             indices.add(i);
         }
         indices.sort((left, right) -> compareListings(data.listingEntries().get(left), data.listingEntries().get(right)));
-        return indices;
+        // Deduplicate by commodityKey — catalog shows one card per commodity
+        List<Integer> deduped = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        for (int idx : indices) {
+            String key = data.listingEntries().get(idx).commodityKey();
+            if (seen.add(key)) {
+                deduped.add(idx);
+            }
+        }
+        return deduped;
     }
 
     private List<HotCommodity> buildHotCommodities() {
@@ -2100,8 +2242,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         } else if (activePage == MarketPage.SELL) {
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.qty").getString(),
                     Integer.toString(parsePositive(listingQtyValue, 1)), POSITIVE));
-            metrics.add(metric(Component.translatable("screen.sailboatmod.market.price_adjust").getString(),
-                    parsePriceAdjustment(listingPriceAdjustValue) + " bp", ACCENT));
+            int bp = parsePriceAdjustment(listingPriceAdjustValue);
+            String bpDisplay = bp == 0 ? "0%" : (bp > 0 ? "+" : "") + bp + "%";
+            metrics.add(metric(Component.translatable("screen.sailboatmod.market.price_adjust").getString(), bpDisplay, ACCENT));
         }
         return metrics;
     }
@@ -2469,7 +2612,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return Component.translatable("screen.sailboatmod.market.sell.confirm_wait").getString();
         }
         int qty = parsePositive(listingQtyValue, 1);
-        long total = (long) entry.suggestedUnitPrice() * qty;
+        int bp = parsePriceAdjustment(listingPriceAdjustValue);
+        long adjustedUnitPrice = (long) Math.round(entry.suggestedUnitPrice() * (1 + bp / 100.0));
+        long total = adjustedUnitPrice * qty;
         return Component.translatable("screen.sailboatmod.market.sell.confirm_value", qty, formatCompactLong(total)).getString();
     }
 
@@ -2833,7 +2978,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         } else if (scroll == goodsCatalogScrollRef) {
             pendingGoodsCatalogScrollOffset = verticalOffset;
             pendingGoodsCatalogScrollProgress = progress;
-            pendingGoodsCatalogScrollTicks = 8;
+            pendingGoodsCatalogScrollTicks = 2;
         } else if (scroll == buyOrdersListScrollRef) {
             pendingBuyOrdersListScrollOffset = verticalOffset;
             pendingBuyOrdersListScrollProgress = progress;
@@ -2952,6 +3097,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private ScrollComponent createPanelBodyScroll(UIComponent panel, int y, int bottomReservedHeight) {
         int bodyHeight = Math.max(100, Math.round(panel.getHeight()) - y - bottomReservedHeight - 14);
+        LOGGER.info("[MarketScroll] createPanelBodyScroll panelH={} y={} reserved={} -> bodyHeight={}", Math.round(panel.getHeight()), y, bottomReservedHeight, bodyHeight);
         ScrollComponent scroll = new ScrollComponent();
         scroll.setX(new PixelConstraint(14));
         scroll.setY(new PixelConstraint(y));
@@ -3032,15 +3178,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     + " live=" + scroll.getVerticalOffset()
                     + " overhang=" + scroll.getVerticalOverhang());
             if (goodsCatalog) {
-                if (pendingGoodsCatalogScrollTicks > 0) {
-                    return Unit.INSTANCE;
-                }
                 goodsCatalogScrollOffset = value;
                 goodsCatalogScrollProgress = updatedProgress;
             } else {
-                if (pendingBuyOrdersListScrollTicks > 0) {
-                    return Unit.INSTANCE;
-                }
                 buyOrdersListScrollOffset = value;
                 buyOrdersListScrollProgress = updatedProgress;
             }
@@ -3886,6 +4026,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private record MetricCard(String label, String value, Color accent) {
+    }
+
+    private record GoodsCatalogGridLayout(int columns, int gap, int cardWidth, int cardHeight,
+                                          int gridWidth, int startX, int contentHeight) {
     }
 
     private record RowSpec(String title, String subtitle, String trailing, boolean selected, Runnable action) {

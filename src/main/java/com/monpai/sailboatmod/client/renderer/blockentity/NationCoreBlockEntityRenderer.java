@@ -28,6 +28,10 @@ public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<Nation
             return;
         }
 
+        double distSq = blockEntity.getBlockPos().distToCenterSqr(
+                minecraft.player.getX(), minecraft.player.getY(), minecraft.player.getZ());
+        if (distSq > 16 * 16) return;
+
         poseStack.pushPose();
         poseStack.translate(0.5D, blockEntity.isActiveWar() ? 1.55D : 1.35D, 0.5D);
         poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
@@ -59,11 +63,11 @@ public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<Nation
 
     @Override
     public boolean shouldRenderOffScreen(NationCoreBlockEntity blockEntity) {
-        return true;
+        return false;
     }
 
     @Override
     public int getViewDistance() {
-        return 128;
+        return 16;
     }
 }

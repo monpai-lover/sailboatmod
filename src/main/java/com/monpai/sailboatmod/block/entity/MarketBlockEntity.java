@@ -384,7 +384,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             listingTownId = dockBinding.townId();
             listingNationId = dockBinding.nationId();
         }
-        int adjustedPrice = (int) Math.round(price * (1 + priceAdjustmentBp / 10000.0));
+        int adjustedPrice = (int) Math.round(price * (1 + priceAdjustmentBp / 100.0));
         market.putListing(new MarketListing(
                 market.nextId(),
                 player.getUUID().toString(),
