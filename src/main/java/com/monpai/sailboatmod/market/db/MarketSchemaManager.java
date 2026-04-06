@@ -155,6 +155,26 @@ final class MarketSchemaManager {
                             WHERE base_price <= 10
                             """
                     )
+            ),
+            new SchemaPatch(
+                    "007_market_analytics_snapshots",
+                    List.of(
+                            """
+                            CREATE TABLE IF NOT EXISTS market_analytics_snapshot (
+                                series_type TEXT NOT NULL,
+                                series_key TEXT NOT NULL,
+                                bucket_at INTEGER NOT NULL,
+                                open_value INTEGER NOT NULL DEFAULT 0,
+                                high_value INTEGER NOT NULL DEFAULT 0,
+                                low_value INTEGER NOT NULL DEFAULT 0,
+                                close_value INTEGER NOT NULL DEFAULT 0,
+                                volume INTEGER NOT NULL DEFAULT 0,
+                                trade_count INTEGER NOT NULL DEFAULT 0,
+                                PRIMARY KEY (series_type, series_key, bucket_at)
+                            )
+                            """,
+                            "CREATE INDEX IF NOT EXISTS idx_market_analytics_series_time ON market_analytics_snapshot (series_type, series_key, bucket_at DESC)"
+                    )
             )
     );
 

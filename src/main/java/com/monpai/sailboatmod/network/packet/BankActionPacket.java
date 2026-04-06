@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
@@ -19,24 +20,36 @@ import net.minecraftforge.network.NetworkEvent;
 import java.util.function.Supplier;
 
 public class BankActionPacket {
+    private static final BankLoanService BANK_LOANS = new BankLoanService();
+
     public enum Action {
         DEPOSIT_CURRENCY,
         WITHDRAW_CURRENCY,
         DEPOSIT_ITEM,
         WITHDRAW_ITEM,
-        WITHDRAW_AS_GOLD
+        WITHDRAW_AS_GOLD,
+        BORROW_PERSONAL,
+        REPAY_PERSONAL,
+        BORROW_NATION,
+        REPAY_NATION
     }
 
     private final Action action;
     private final BlockPos pos;
     private final long amount;
     private final int slot;
+    private final ItemStack stack;
 
     public BankActionPacket(Action action, BlockPos pos, long amount, int slot) {
+        this(action, pos, amount, slot, ItemStack.EMPTY);
+    }
+
+    public BankActionPacket(Action action, BlockPos pos, long amount, int slot, ItemStack stack) {
         this.action = action;
         this.pos = pos;
         this.amount = amount;
         this.slot = slot;
+        this.stack = stack == null ? ItemStack.EMPTY : stack.copy();
     }
 
     public static void encode(BankActionPacket msg, FriendlyByteBuf buf) {
@@ -44,10 +57,11 @@ public class BankActionPacket {
         buf.writeBlockPos(msg.pos);
         buf.writeLong(msg.amount);
         buf.writeInt(msg.slot);
+        buf.writeItem(msg.stack);
     }
 
     public static BankActionPacket decode(FriendlyByteBuf buf) {
-        return new BankActionPacket(buf.readEnum(Action.class), buf.readBlockPos(), buf.readLong(), buf.readInt());
+        return new BankActionPacket(buf.readEnum(Action.class), buf.readBlockPos(), buf.readLong(), buf.readInt(), buf.readItem());
     }
 
     public static void handle(BankActionPacket msg, Supplier<NetworkEvent.Context> ctx) {
@@ -133,15 +147,25 @@ public class BankActionPacket {
                         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.no_permission"));
                         return;
                     }
-                    if (msg.slot < 0 || msg.slot >= treasury.items().size()) return;
-                    ItemStack item = treasury.items().get(msg.slot);
-                    if (item.isEmpty()) return;
-                    if (!player.getInventory().add(item.copy())) {
+                    if (msg.amount <= 0 || msg.stack.isEmpty()) {
+                        return;
+                    }
+                    java.util.List<ItemStack> extracted = treasury.removeMatching(msg.stack, (int) Math.min(Integer.MAX_VALUE, msg.amount));
+                    if (extracted.isEmpty()) {
+                        return;
+                    }
+                    java.util.List<ItemStack> added = new java.util.ArrayList<>();
+                    for (ItemStack item : extracted) {
+                        if (player.getInventory().add(item.copy())) {
+                            added.add(item);
+                            continue;
+                        }
+                        for (ItemStack rollback : added) {
+                            treasury.addItem(rollback, player.getName().getString());
+                        }
                         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.inventory_full"));
                         return;
                     }
-                    treasury.items().set(msg.slot, ItemStack.EMPTY);
-                    treasury.setDepositor(msg.slot, null);
                     data.putTreasury(treasury);
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.withdraw_item.success"));
                 }
@@ -159,11 +183,43 @@ public class BankActionPacket {
                     data.putTreasury(treasury.withBalance(treasury.currencyBalance() - msg.amount));
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", GoldStandardEconomy.formatBalance(msg.amount)));
                 }
+                case BORROW_PERSONAL -> {
+                    if (!BANK_LOANS.borrowPersonal(player, msg.amount)) {
+                        player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.loan_action_failed"));
+                        return;
+                    }
+                    player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.borrow_personal_success", GoldStandardEconomy.formatBalance(msg.amount)));
+                }
+                case REPAY_PERSONAL -> {
+                    if (!BANK_LOANS.repayPersonal(player, msg.amount)) {
+                        player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.loan_action_failed"));
+                        return;
+                    }
+                    player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.repay_personal_success", GoldStandardEconomy.formatBalance(msg.amount)));
+                }
+                case BORROW_NATION -> {
+                    if (!BANK_LOANS.borrowNation(player, town.nationId(), msg.amount)) {
+                        player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.loan_action_failed"));
+                        return;
+                    }
+                    player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.borrow_nation_success", GoldStandardEconomy.formatBalance(msg.amount)));
+                }
+                case REPAY_NATION -> {
+                    if (!BANK_LOANS.repayNation(player, town.nationId(), msg.amount)) {
+                        player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.loan_action_failed"));
+                        return;
+                    }
+                    player.sendSystemMessage(Component.translatable("screen.sailboatmod.bank.repay_nation_success", GoldStandardEconomy.formatBalance(msg.amount)));
+                }
             }
             NationTreasuryRecord updatedTreasury = data.getOrCreateTreasury(town.nationId());
             com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(
                     net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> player),
-                    new SyncTreasuryPacket(updatedTreasury));
+                    new SyncTreasuryPacket(
+                            updatedTreasury,
+                            BANK_LOANS.buildPersonalView(player),
+                            BANK_LOANS.buildNationView(player.level(), town.nationId())
+                    ));
         });
         ctx.get().setPacketHandled(true);
     }

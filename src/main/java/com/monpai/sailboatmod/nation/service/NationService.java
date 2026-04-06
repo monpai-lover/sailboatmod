@@ -39,6 +39,21 @@ public final class NationService {
     private static final int DEFAULT_PRIMARY_COLOR = 0x3A6EA5;
     private static final int DEFAULT_SECONDARY_COLOR = 0xF2C14E;
 
+    public static NationResult ensureNationForCorePlacement(ServerPlayer player) {
+        NationSavedData data = NationSavedData.get(player.level());
+        updateKnownPlayer(player);
+        if (data.getMember(player.getUUID()) != null) {
+            return NationResult.success(Component.empty());
+        }
+        String nationName = generateAutoNationName(data, player);
+        if (nationName.isBlank()) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.name_invalid",
+                    NationRecord.MIN_NAME_LENGTH,
+                    NationRecord.MAX_NAME_LENGTH));
+        }
+        return createNation(player, nationName);
+    }
+
     public static NationResult createNation(ServerPlayer player, String rawName) {
         NationSavedData data = NationSavedData.get(player.level());
         updateKnownPlayer(player);
@@ -97,6 +112,29 @@ public final class NationService {
         data.clearJoinRequestsForPlayer(player.getUUID());
         refreshPlayerNames(player);
         return NationResult.success(Component.translatable("command.sailboatmod.nation.create.success", nation.name()));
+    }
+
+    private static String generateAutoNationName(NationSavedData data, ServerPlayer player) {
+        String playerName = player == null || player.getGameProfile() == null
+                ? "Player"
+                : player.getGameProfile().getName();
+        String preferred = NationRecord.normalizeName(playerName + " Nation");
+        if (isAutoNationNameAvailable(data, preferred)) {
+            return preferred;
+        }
+        for (int index = 2; index <= 999; index++) {
+            String candidate = NationRecord.normalizeName(playerName + " Nation " + index);
+            if (isAutoNationNameAvailable(data, candidate)) {
+                return candidate;
+            }
+        }
+        return "";
+    }
+
+    private static boolean isAutoNationNameAvailable(NationSavedData data, String name) {
+        return NationRecord.isValidName(name)
+                && !NationRecord.isReservedName(name)
+                && data.findNationByName(name) == null;
     }
 
     public static NationResult renameNation(ServerPlayer actor, String rawName) {

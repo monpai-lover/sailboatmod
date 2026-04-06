@@ -13,11 +13,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 public final class CommodityConfigLoader {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
     private static final Map<String, Override> OVERRIDES = new HashMap<>();
+    private static final Set<String> EXTRAORDINARY_ITEMS = Set.of(
+            "minecraft:heart_of_the_sea",
+            "minecraft:nether_star",
+            "minecraft:elytra",
+            "minecraft:totem_of_undying",
+            "minecraft:trident",
+            "minecraft:shulker_box"
+    );
 
     public record Override(int rarity, int importance, int elasticity, int baseVolatility, int basePrice, String category) {}
 
@@ -45,6 +54,7 @@ public final class CommodityConfigLoader {
                 String category = o.has("category") ? o.get("category").getAsString() : null;
                 OVERRIDES.put(itemId, new Override(rarity, importance, elasticity, baseVolatility, basePrice, category));
             }
+            applyRarityHotfixes();
             LOGGER.info("[Market] Loaded {} commodity overrides from commodities.json", OVERRIDES.size());
         } catch (IOException e) {
             LOGGER.error("[Market] Failed to load commodities.json", e);
@@ -74,6 +84,23 @@ public final class CommodityConfigLoader {
     public static int getBasePrice(String itemId, int fallback) {
         Override ov = OVERRIDES.get(itemId);
         return (ov != null && ov.basePrice() >= 0) ? ov.basePrice() : fallback;
+    }
+
+    private static void applyRarityHotfixes() {
+        for (String itemId : EXTRAORDINARY_ITEMS) {
+            Override override = OVERRIDES.get(itemId);
+            if (override != null && override.rarity() >= 5) {
+                continue;
+            }
+            OVERRIDES.put(itemId, new Override(
+                    5,
+                    override == null ? -1 : override.importance(),
+                    override == null ? -1 : override.elasticity(),
+                    override == null ? -1 : override.baseVolatility(),
+                    override == null ? -1 : override.basePrice(),
+                    override == null ? null : override.category()
+            ));
+        }
     }
 
     private static String defaultJson() {
@@ -248,9 +275,9 @@ public final class CommodityConfigLoader {
     { "itemId": "minecraft:chorus_fruit", "rarity": 1, "category": "end", "basePrice": 8 },
     { "itemId": "minecraft:popped_chorus_fruit", "rarity": 1, "category": "end", "basePrice": 10 },
     { "itemId": "minecraft:ender_eye", "rarity": 2, "category": "end", "basePrice": 28 },
-    { "itemId": "minecraft:elytra", "rarity": 3, "category": "end", "basePrice": 160 },
-    { "itemId": "minecraft:heart_of_the_sea", "rarity": 3, "category": "treasure", "basePrice": 80 },
-    { "itemId": "minecraft:totem_of_undying", "rarity": 3, "category": "treasure", "basePrice": 96 },
+    { "itemId": "minecraft:elytra", "rarity": 5, "category": "end", "basePrice": 160 },
+    { "itemId": "minecraft:heart_of_the_sea", "rarity": 5, "category": "treasure", "basePrice": 80 },
+    { "itemId": "minecraft:totem_of_undying", "rarity": 5, "category": "treasure", "basePrice": 96 },
     { "itemId": "minecraft:echo_shard", "rarity": 3, "category": "treasure", "basePrice": 48 },
     { "itemId": "minecraft:enchanted_book", "rarity": 2, "category": "treasure", "basePrice": 32 },
     { "itemId": "minecraft:name_tag", "rarity": 2, "category": "treasure", "basePrice": 24 },
@@ -268,7 +295,7 @@ public final class CommodityConfigLoader {
     { "itemId": "minecraft:fishing_rod", "rarity": 0, "category": "utility", "basePrice": 8 },
     { "itemId": "minecraft:torch", "rarity": 0, "category": "utility", "basePrice": 2 },
     { "itemId": "minecraft:lantern", "rarity": 0, "category": "utility", "basePrice": 8 },
-    { "itemId": "minecraft:shulker_box", "rarity": 3, "category": "utility", "basePrice": 64 },
+    { "itemId": "minecraft:shulker_box", "rarity": 5, "category": "utility", "basePrice": 64 },
     { "itemId": "minecraft:ender_chest", "rarity": 2, "category": "utility", "basePrice": 36 },
     { "itemId": "minecraft:chest", "rarity": 0, "category": "utility", "basePrice": 8 },
     { "itemId": "minecraft:compass", "rarity": 1, "category": "utility", "basePrice": 14 },
@@ -278,7 +305,7 @@ public final class CommodityConfigLoader {
     { "itemId": "minecraft:crossbow", "rarity": 1, "category": "weapon", "basePrice": 18 },
     { "itemId": "minecraft:bow", "rarity": 0, "category": "weapon", "basePrice": 10 },
     { "itemId": "minecraft:arrow", "rarity": 0, "category": "weapon", "basePrice": 1 },
-    { "itemId": "minecraft:trident", "rarity": 3, "category": "weapon", "basePrice": 72 },
+    { "itemId": "minecraft:trident", "rarity": 5, "category": "weapon", "basePrice": 72 },
     { "itemId": "minecraft:shield", "rarity": 1, "category": "armor", "basePrice": 12 },
     { "itemId": "minecraft:coal_block", "rarity": 0, "category": "ore", "basePrice": 36 },
     { "itemId": "minecraft:iron_block", "rarity": 1, "category": "metal", "basePrice": 108 },

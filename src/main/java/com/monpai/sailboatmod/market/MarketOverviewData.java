@@ -1,5 +1,8 @@
 package com.monpai.sailboatmod.market;
 
+import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
+import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import net.minecraft.core.BlockPos;
 
 import java.util.List;
@@ -42,7 +45,10 @@ public record MarketOverviewData(
         List<ShippingEntry> shippingEntries,
         List<BuyOrderEntry> buyOrderEntries,
         List<PriceChartSeries> priceChartSeries,
-        List<CommodityBuyBook> commodityBuyBooks
+        List<CommodityBuyBook> commodityBuyBooks,
+        List<CommodityCandleSeries> candleSeries,
+        List<CommodityImpactSnapshot> commodityImpactSnapshots,
+        List<MarketAnalyticsSeries> analyticsSeries
 ) {
     public MarketOverviewData {
         dockStorageLines = dockStorageLines == null ? List.of() : List.copyOf(dockStorageLines);
@@ -61,6 +67,9 @@ public record MarketOverviewData(
         buyOrderEntries = buyOrderEntries == null ? List.of() : List.copyOf(buyOrderEntries);
         priceChartSeries = priceChartSeries == null ? List.of() : List.copyOf(priceChartSeries);
         commodityBuyBooks = commodityBuyBooks == null ? List.of() : List.copyOf(commodityBuyBooks);
+        candleSeries = candleSeries == null ? List.of() : List.copyOf(candleSeries);
+        commodityImpactSnapshots = commodityImpactSnapshots == null ? List.of() : List.copyOf(commodityImpactSnapshots);
+        analyticsSeries = analyticsSeries == null ? List.of() : List.copyOf(analyticsSeries);
     }
 
     public boolean hasTownEconomy() {
@@ -86,6 +95,42 @@ public record MarketOverviewData(
         for (CommodityBuyBook book : commodityBuyBooks) {
             if (commodityKey.equals(book.commodityKey())) {
                 return book;
+            }
+        }
+        return null;
+    }
+
+    public CommodityCandleSeries candleSeriesFor(String commodityKey, String timeframe) {
+        if (commodityKey == null || commodityKey.isBlank() || timeframe == null || timeframe.isBlank()) {
+            return null;
+        }
+        for (CommodityCandleSeries series : candleSeries) {
+            if (commodityKey.equals(series.commodityKey()) && timeframe.equals(series.timeframe())) {
+                return series;
+            }
+        }
+        return null;
+    }
+
+    public CommodityImpactSnapshot impactSnapshotFor(String commodityKey) {
+        if (commodityKey == null || commodityKey.isBlank()) {
+            return null;
+        }
+        for (CommodityImpactSnapshot snapshot : commodityImpactSnapshots) {
+            if (commodityKey.equals(snapshot.commodityKey())) {
+                return snapshot;
+            }
+        }
+        return null;
+    }
+
+    public MarketAnalyticsSeries analyticsSeriesFor(String scopeType, String scopeKey) {
+        if (scopeType == null || scopeType.isBlank() || scopeKey == null || scopeKey.isBlank()) {
+            return null;
+        }
+        for (MarketAnalyticsSeries series : analyticsSeries) {
+            if (scopeType.equals(series.scopeType()) && scopeKey.equals(series.scopeKey())) {
+                return series;
             }
         }
         return null;

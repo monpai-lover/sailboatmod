@@ -2,9 +2,11 @@ package com.monpai.sailboatmod;
 
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
 import com.monpai.sailboatmod.market.web.MarketWebServer;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
+import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
@@ -19,6 +21,8 @@ import org.slf4j.Logger;
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class ServerEvents {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
+    private static final BankLoanService BANK_LOANS = new BankLoanService();
 
     @SubscribeEvent
     public static void onServerStarted(ServerStartedEvent event) {
@@ -34,6 +38,7 @@ public final class ServerEvents {
     }
 
     private static int cleanupTickCounter;
+    private static int loanTickCounter;
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
@@ -50,6 +55,11 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
             });
+            MARKET_ANALYTICS.maybeRecordSnapshots(server);
+            if (++loanTickCounter >= 1200) {
+                loanTickCounter = 0;
+                BANK_LOANS.tick(server);
+            }
             if (++cleanupTickCounter >= 6000) {
                 cleanupTickCounter = 0;
                 cleanupOrphanClaims(server);

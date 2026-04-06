@@ -16,6 +16,10 @@ import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import com.monpai.sailboatmod.market.commodity.CommodityPriceChartPoint;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
+import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
+import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.web.MarketTerminalSavedData;
 import com.monpai.sailboatmod.menu.MarketMenu;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
@@ -54,6 +58,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private static final Logger MARKET_LOGGER = LogUtils.getLogger();
     private static final double LINK_DOCK_RADIUS = 24.0D;
     private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
+    private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
     private String marketName = "";
     private String ownerName = "";
     private String ownerUuid = "";
@@ -258,6 +263,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         List<MarketOverviewData.BuyOrderEntry> buyOrderEntries = new ArrayList<>();
         List<MarketOverviewData.PriceChartSeries> priceChartSeries = new ArrayList<>();
         List<MarketOverviewData.CommodityBuyBook> commodityBuyBooks = new ArrayList<>();
+        List<CommodityCandleSeries> candleSeries = List.of();
+        List<CommodityImpactSnapshot> impactSnapshots = List.of();
+        List<MarketAnalyticsSeries> analyticsSeries = List.of();
         if (level != null && !level.isClientSide && !safePlayerUuid.isBlank()) {
             try {
                 List<com.monpai.sailboatmod.market.commodity.BuyOrder> buyOrders =
@@ -319,6 +327,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     MARKET_LOGGER.debug("Failed to load buy book for {}", entry.getKey(), exception);
                 }
             }
+            candleSeries = MARKET_ANALYTICS.loadCandleSeries(chartDisplayNames);
+            impactSnapshots = MARKET_ANALYTICS.loadImpactSnapshots(chartDisplayNames);
+            analyticsSeries = MARKET_ANALYTICS.loadAnalyticsSeries(level instanceof net.minecraft.server.level.ServerLevel serverLevel ? serverLevel : null, collectCategories(listingEntries));
         }
 
         return new MarketOverviewData(
@@ -359,8 +370,21 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 shippingEntries,
                 buyOrderEntries,
                 priceChartSeries,
-                commodityBuyBooks
+                commodityBuyBooks,
+                candleSeries,
+                impactSnapshots,
+                analyticsSeries
         );
+    }
+
+    private static List<String> collectCategories(List<MarketOverviewData.ListingEntry> listingEntries) {
+        List<String> categories = new ArrayList<>();
+        for (MarketOverviewData.ListingEntry entry : listingEntries) {
+            if (entry.category() != null && !entry.category().isBlank()) {
+                categories.add(entry.category());
+            }
+        }
+        return categories;
     }
 
     private static String fallbackTownLabel(String townId) {

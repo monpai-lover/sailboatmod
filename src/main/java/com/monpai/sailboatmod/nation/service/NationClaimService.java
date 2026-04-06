@@ -43,7 +43,15 @@ public final class NationClaimService {
         NationSavedData data = NationSavedData.get(player.level());
         NationMemberRecord member = data.getMember(player.getUUID());
         if (member == null) {
-            return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.no_nation"));
+            NationResult autoCreate = NationService.ensureNationForCorePlacement(player);
+            if (!autoCreate.success()) {
+                return autoCreate;
+            }
+            data = NationSavedData.get(player.level());
+            member = data.getMember(player.getUUID());
+            if (member == null) {
+                return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.no_nation"));
+            }
         }
         if (!NationService.hasPermission(player.level(), player.getUUID(), NationPermission.PLACE_CORE)) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.core.no_permission"));

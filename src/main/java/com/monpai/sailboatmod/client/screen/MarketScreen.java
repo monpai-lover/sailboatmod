@@ -5,6 +5,8 @@ import com.monpai.sailboatmod.client.MarketClientHooks;
 import com.monpai.sailboatmod.client.MarketOverviewConsumer;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.market.MarketOverviewData;
+import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
+import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import com.monpai.sailboatmod.menu.MarketMenu;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
@@ -93,7 +95,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private MarketPage activePage = MarketPage.GOODS;
     private GoodsPrimaryView activeGoodsView = GoodsPrimaryView.BROWSE_MARKET;
     private GoodsPanelTab activeGoodsPanelTab = GoodsPanelTab.SELLING;
+    private ChartTimeframe activeChartTimeframe = ChartTimeframe.ONE_HOUR;
     private String selectedCommodityKey = "";
+    private String selectedAnalyticsSeriesId = "";
     private boolean initialRefreshSent;
     private boolean closingContainer;
     private boolean closeRequested;
@@ -117,23 +121,35 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String priceFilterMaxValue = "";
     private GoodsCatalogSort goodsCatalogSort = GoodsCatalogSort.PRICE_DESC;
     private GoodsCategoryFilter goodsCategoryFilter = GoodsCategoryFilter.ALL;
+    private GoodsRarityFilter goodsRarityFilter = GoodsRarityFilter.ALL;
     private GoodsPriceBandFilter goodsPriceBandFilter = GoodsPriceBandFilter.ALL;
     private int goodsCatalogPage;
     private int scrollTraceSequence;
     private boolean showCategoryFilter = false;
+    private boolean showRarityFilter = false;
     private boolean showPriceFilter = false;
+    private final ChartViewportState priceChartViewport = new ChartViewportState(32, 14, 96, 6);
+    private final ChartViewportState analyticsChartViewport = new ChartViewportState(24, 12, 72, 6);
     private float goodsViewportScrollOffset;
     private float buyOrdersViewportScrollOffset;
     private float goodsCatalogScrollOffset;
     private float buyOrdersListScrollOffset;
+    private float analyticsListScrollOffset;
+    private float analyticsDetailScrollOffset;
     private float goodsViewportScrollProgress = Float.NaN;
     private float buyOrdersViewportScrollProgress = Float.NaN;
     private float goodsCatalogScrollProgress = Float.NaN;
     private float buyOrdersListScrollProgress = Float.NaN;
+    private float analyticsListScrollProgress = Float.NaN;
+    private float analyticsDetailScrollProgress = Float.NaN;
     private ScrollComponent goodsViewportScrollRef;
     private ScrollComponent buyOrdersViewportScrollRef;
     private ScrollComponent goodsCatalogScrollRef;
     private ScrollComponent buyOrdersListScrollRef;
+    private ScrollComponent analyticsListScrollRef;
+    private ScrollComponent analyticsDetailScrollRef;
+    private UIComponent priceChartPlotRef;
+    private UIComponent analyticsChartPlotRef;
     private String noticeMessage = "";
     private boolean noticePositive = true;
     private long noticeExpiresAtMs;
@@ -141,14 +157,20 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private float pendingBuyOrdersViewportScrollOffset = Float.NaN;
     private float pendingGoodsCatalogScrollOffset = Float.NaN;
     private float pendingBuyOrdersListScrollOffset = Float.NaN;
+    private float pendingAnalyticsListScrollOffset = Float.NaN;
+    private float pendingAnalyticsDetailScrollOffset = Float.NaN;
     private float pendingGoodsViewportScrollProgress = Float.NaN;
     private float pendingBuyOrdersViewportScrollProgress = Float.NaN;
     private float pendingGoodsCatalogScrollProgress = Float.NaN;
     private float pendingBuyOrdersListScrollProgress = Float.NaN;
+    private float pendingAnalyticsListScrollProgress = Float.NaN;
+    private float pendingAnalyticsDetailScrollProgress = Float.NaN;
     private int pendingGoodsViewportScrollTicks;
     private int pendingBuyOrdersViewportScrollTicks;
     private int pendingGoodsCatalogScrollTicks;
     private int pendingBuyOrdersListScrollTicks;
+    private int pendingAnalyticsListScrollTicks;
+    private int pendingAnalyticsDetailScrollTicks;
 
     public MarketScreen(MarketMenu menu, Inventory inventory, Component title) {
         super(ElementaVersion.V11, false, false, false);
@@ -262,14 +284,46 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 + " mouseY=" + mouseY
                 + " scrollDelta=" + scrollDelta
                 + " acceleratedDelta=" + acceleratedDelta);
+        if (handleChartMouseScroll(mouseX, mouseY, scrollDelta)) {
+            return;
+        }
         super.onMouseScrolled(mouseX, mouseY, scrollDelta, acceleratedDelta);
         syncLiveScrollOffsets();
         traceScrollState("onMouseScrolled:after");
     }
 
+    private boolean handleChartMouseScroll(double mouseX, double mouseY, double scrollDelta) {
+        if (scrollDelta == 0.0D) {
+            return false;
+        }
+        if (isPointInsideComponent(priceChartPlotRef, mouseX, mouseY)) {
+            priceChartViewport.zoomBy(scrollDelta > 0 ? -1 : 1);
+            rebuildUi();
+            return true;
+        }
+        if (isPointInsideComponent(analyticsChartPlotRef, mouseX, mouseY)) {
+            analyticsChartViewport.zoomBy(scrollDelta > 0 ? -1 : 1);
+            rebuildUi();
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isPointInsideComponent(UIComponent component, double mouseX, double mouseY) {
+        if (component == null) {
+            return false;
+        }
+        float left = component.getLeft();
+        float top = component.getTop();
+        float right = left + component.getWidth();
+        float bottom = top + component.getHeight();
+        return mouseX >= left && mouseX <= right && mouseY >= top && mouseY <= bottom;
+    }
+
     private boolean handleEscape() {
-        if (showCategoryFilter || showPriceFilter) {
+        if (showCategoryFilter || showRarityFilter || showPriceFilter) {
             showCategoryFilter = false;
+            showRarityFilter = false;
             showPriceFilter = false;
             rebuildUi();
             return true;
@@ -292,6 +346,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             activeGoodsView = GoodsPrimaryView.BROWSE_MARKET;
             activeGoodsPanelTab = GoodsPanelTab.SELLING;
             showCategoryFilter = false;
+            showRarityFilter = false;
             showPriceFilter = false;
             rebuildUi();
             return true;
@@ -321,6 +376,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
         Window window = getWindow();
         window.clearChildren();
+        priceChartPlotRef = null;
+        analyticsChartPlotRef = null;
 
         int panelWidth = Math.min(MAX_PANEL_WIDTH, width - 8);
         int panelHeight = Math.min(MAX_PANEL_HEIGHT, height - 8);
@@ -350,6 +407,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
         switch (activePage) {
             case GOODS -> buildGoodsPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
+            case MARKET_INDEX -> buildMarketIndexPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
             case SELL -> buildSellPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
             case DISPATCH -> buildDispatchPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
             case FINANCE -> buildFinancePage(mainPanel, contentX, contentY, contentWidth, contentHeight);
@@ -449,12 +507,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             ScrollComponent scroll = createViewportScroll(parent, x, goodsTop, width, goodsHeight);
             goodsViewportScrollRef = scroll;
             trackViewportScroll(scroll, true);
-            buildCompactGoodsPage(scroll, width, Math.max(goodsHeight, compactContentHeight(width)));
+            int extraChartHeight = activeGoodsPanelTab == GoodsPanelTab.PRICE_CHART ? 500 : 0;
+            buildCompactGoodsPage(scroll, width, Math.max(goodsHeight + extraChartHeight, compactContentHeight(width) + extraChartHeight));
             restoreScroll(scroll, restoreOffset, restoreProgress);
             return;
         }
 
-        int heroHeight = Math.min(170, Math.max(146, goodsHeight / 4));
+        int heroHeight = activeGoodsPanelTab == GoodsPanelTab.PRICE_CHART
+                ? Math.min(132, Math.max(112, goodsHeight / 5))
+                : Math.min(170, Math.max(146, goodsHeight / 4));
         int detailHeight = goodsHeight - heroHeight - SECTION_GAP;
 
         UIRoundedRectangle overviewPanel = createSection(parent, x, goodsTop, width, heroHeight,
@@ -493,8 +554,28 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return;
         }
 
-        int overviewHeight = Math.min(168, Math.max(146, height / 4));
-        int actionHeight = Math.max(350, height - overviewHeight - SECTION_GAP);
+        boolean priceChart = activeGoodsPanelTab == GoodsPanelTab.PRICE_CHART;
+        int overviewHeight = priceChart
+                ? Math.min(132, Math.max(116, height / 5))
+                : Math.min(168, Math.max(146, height / 4));
+        int actionHeight = priceChart
+                ? Math.max(620, height - overviewHeight - SECTION_GAP)
+                : Math.max(350, height - overviewHeight - SECTION_GAP);
+
+        UIRoundedRectangle overviewPanel = createSection(parent, 0, 0, width, overviewHeight,
+                selectedGoodsHeadline(),
+                selectedGoodsSubtitle());
+        buildGoodsOverviewPanel(overviewPanel, width);
+
+        UIRoundedRectangle actionPanel = createSection(parent, 0, overviewHeight + SECTION_GAP, width, actionHeight,
+                selectedGoodsHeadline(),
+                goodsPanelSubtitle());
+        buildGoodsActionPanel(actionPanel, width);
+    }
+
+    private void buildExpandedGoodsPage(UIComponent parent, int width, int height) {
+        int overviewHeight = Math.min(132, Math.max(112, height / 6));
+        int actionHeight = Math.max(820, height - overviewHeight - SECTION_GAP);
 
         UIRoundedRectangle overviewPanel = createSection(parent, 0, 0, width, overviewHeight,
                 selectedGoodsHeadline(),
@@ -625,6 +706,21 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 Component.translatable("screen.sailboatmod.market.finance.ledger_title").getString(),
                 Component.translatable(data.canManage() ? "screen.sailboatmod.market.finance.owner_controls" : "screen.sailboatmod.market.finance.read_only").getString());
         buildPreviewBlock(finance, joinLines(data.financePreviewLines(), buildFinanceDetailLines()), rightWidth);
+    }
+
+    private void buildMarketIndexPage(UIComponent parent, int x, int y, int width, int height) {
+        int listWidth = Math.min(260, Math.max(210, width / 4));
+        int detailWidth = width - listWidth - SECTION_GAP;
+
+        UIRoundedRectangle listPanel = createSection(parent, x, y, listWidth, height,
+                Component.translatable("screen.sailboatmod.market.page.market_index").getString(),
+                Component.translatable("screen.sailboatmod.market.index.subtitle").getString());
+        buildAnalyticsListPanel(listPanel, buildAnalyticsRows(), listWidth - 28, height - 68);
+
+        UIRoundedRectangle detailPanel = createSection(parent, x + listWidth + SECTION_GAP, y, detailWidth, height,
+                selectedAnalyticsSeriesTitle(),
+                selectedAnalyticsSeriesSubtitle());
+        buildAnalyticsDetailPanel(detailPanel, detailWidth);
     }
 
     private void buildBuyOrdersPage(UIComponent parent, int x, int y, int width, int height) {
@@ -774,7 +870,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             createText(hero, 94, 30, shortenToWidth(buildSelectedListingHeroSubtitle(), innerWidth - 106, 0.68f), 0.68f, TEXT_SOFT);
             createBadge(hero, 94, 48, 72, 18, rarityLabel(listing.rarity()), rarityColor(listing.rarity()), TEXT_PRIMARY);
             createBadge(hero, 172, 48, Math.max(88, innerWidth / 3), 18,
-                    listing.category().isBlank() ? listing.commodityKey() : listing.category(),
+                    displayCategoryLabel(listing.category()),
                     new Color(70, 88, 120, 220), TEXT_MUTED);
             createText(hero, 94, 72, Component.translatable("screen.sailboatmod.market.finance.owner", listing.sellerName()).getString(), 0.7f, TEXT_MUTED);
             createText(hero, innerWidth - 84, 66, formatCompactLong(listing.unitPrice()), 0.96f, ACCENT);
@@ -924,11 +1020,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
         int filterX = 14;
         String categoryLabel = Component.translatable("screen.sailboatmod.market.catalog.filter.category").getString()
-                + ": " + Component.translatable(goodsCategoryFilter.labelKey).getString();
+                + ": " + goodsCategoryFilter.label();
         int categoryWidth = Math.max(116, Math.min(188, categoryLabel.length() * 7 + 16));
         createGoodsPanelTab(panel, filterX, 72, categoryWidth, categoryLabel,
                 showCategoryFilter, () -> {
                     showCategoryFilter = !showCategoryFilter;
+                    showRarityFilter = false;
                     showPriceFilter = false;
                     rebuildUi();
                 });
@@ -936,7 +1033,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (showCategoryFilter) {
             int dropY = 96;
             for (GoodsCategoryFilter filter : GoodsCategoryFilter.values()) {
-                createDropdownOption(panel, filterX, dropY, categoryWidth, filter.labelKey,
+                createDropdownOption(panel, filterX, dropY, categoryWidth, filter.labelKey(),
                         goodsCategoryFilter == filter, () -> {
                             goodsCategoryFilter = filter;
                             showCategoryFilter = false;
@@ -947,13 +1044,40 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
         }
 
-        int priceX = filterX + categoryWidth + 8;
+        int rarityX = filterX + categoryWidth + 8;
+        String rarityLabel = Component.translatable("screen.sailboatmod.market.catalog.filter.rarity").getString()
+                + ": " + Component.translatable(goodsRarityFilter.labelKey).getString();
+        int rarityWidth = Math.max(126, Math.min(204, rarityLabel.length() * 7 + 16));
+        createGoodsPanelTab(panel, rarityX, 72, rarityWidth, rarityLabel,
+                showRarityFilter, () -> {
+                    showRarityFilter = !showRarityFilter;
+                    showCategoryFilter = false;
+                    showPriceFilter = false;
+                    rebuildUi();
+                });
+
+        if (showRarityFilter) {
+            int dropY = 96;
+            for (GoodsRarityFilter filter : GoodsRarityFilter.values()) {
+                createDropdownOption(panel, rarityX, dropY, rarityWidth, filter.labelKey,
+                        goodsRarityFilter == filter, () -> {
+                            goodsRarityFilter = filter;
+                            showRarityFilter = false;
+                            goodsCatalogPage = 0;
+                            rebuildUi();
+                        });
+                dropY += 24;
+            }
+        }
+
+        int priceX = rarityX + rarityWidth + 8;
         String priceLabel = Component.translatable("screen.sailboatmod.market.catalog.filter.price").getString();
         int priceWidth = Math.max(100, Math.min(132, priceLabel.length() * 7 + 16));
         createGoodsPanelTab(panel, priceX, 72, priceWidth, priceLabel,
                 showPriceFilter, () -> {
                     showPriceFilter = !showPriceFilter;
                     showCategoryFilter = false;
+                    showRarityFilter = false;
                     rebuildUi();
                 });
 
@@ -1163,6 +1287,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (showCategoryFilter) {
             return GoodsCategoryFilter.values().length * 24;
         }
+        if (showRarityFilter) {
+            return GoodsRarityFilter.values().length * 24;
+        }
         return 0;
     }
 
@@ -1268,17 +1395,24 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     List.of(Component.translatable("screen.sailboatmod.market.empty").getString()), TEXT_MUTED);
             return;
         }
-        buildTextStack(panel, 14, 88, innerWidth,
-                List.of(Component.translatable("screen.sailboatmod.market.buy_order.commodity", selectedChartDisplayName()).getString()),
-                TEXT_MUTED);
-        createMetricStrip(panel, 14, 120, innerWidth, buildBuyingMetrics(listing, book));
+        List<String> buyingLines = buildBuyingLines(listing, book);
+        int buyingLineHeight = estimateTextStackHeight(innerWidth, buyingLines);
+        ScrollComponent body = createPanelBodyScroll(panel, 118, 12);
+        UIBlock bodyContent = new UIBlock(new Color(0, 0, 0, 0));
+        bodyContent.setX(new PixelConstraint(0));
+        bodyContent.setY(new PixelConstraint(0));
+        bodyContent.setWidth(new PixelConstraint(innerWidth));
+        bodyContent.setHeight(new PixelConstraint(254 + buyingLineHeight + 20));
+        bodyContent.setChildOf(body);
 
-        UIRoundedRectangle depthPanel = createPanel(panel, 14, 186, innerWidth, 188, 14f, CHROME_MUTED);
+        createMetricStrip(bodyContent, 0, 0, innerWidth, buildBuyingMetrics(listing, book));
+
+        UIRoundedRectangle depthPanel = createPanel(bodyContent, 0, 66, innerWidth, 188, 14f, CHROME_MUTED);
         depthPanel.enableEffect(new OutlineEffect(BORDER, 1f));
         createText(depthPanel, 14, 10, Component.translatable("screen.sailboatmod.market.goods_subtab.buying").getString(), 0.9f, TEXT_PRIMARY);
         buildListPanel(depthPanel, buildBuyingRows(listing, book), innerWidth - 28, 128);
 
-        buildTextStack(panel, 14, 384, innerWidth, buildBuyingLines(listing, book), TEXT_MUTED);
+        buildTextStack(bodyContent, 0, 266, innerWidth, buyingLines, TEXT_MUTED);
     }
 
     private void buildBuyOrdersOverviewPanel(UIComponent panel, int width) {
@@ -1323,6 +1457,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private void buildPriceChartPanel(UIComponent panel, int innerWidth) {
         MarketOverviewData.ListingEntry listing = selectedListing();
+        CommodityCandleSeries candleSeries = selectedCandleSeries();
         MarketOverviewData.PriceChartSeries series = selectedPriceChartSeries();
         if (listing == null) {
             buildTextStack(panel, 14, 94, innerWidth,
@@ -1330,43 +1465,82 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return;
         }
 
-        buildTextStack(panel, 14, 90, innerWidth,
-                List.of(Component.translatable("screen.sailboatmod.market.buy_order.commodity", selectedChartDisplayName()).getString()),
-                TEXT_MUTED);
-        createMetricStrip(panel, 14, 122, innerWidth, buildPriceChartMetrics(series, listing));
-        buildPriceChartFrame(panel, 14, 188, innerWidth, 214, series);
-        buildTextStack(panel, 14, 414, innerWidth, buildPriceChartLines(series, listing), TEXT_MUTED);
+        List<String> chartLines = buildPriceChartLines(candleSeries, series, listing);
+        int chartLineHeight = estimateTextStackHeight(innerWidth, chartLines);
+        int bodyTop = 108;
+        int chartFrameHeight = 650;
+        ScrollComponent body = createPanelBodyScroll(panel, bodyTop, 12);
+        UIBlock bodyContent = new UIBlock(new Color(0, 0, 0, 0));
+        bodyContent.setX(new PixelConstraint(0));
+        bodyContent.setY(new PixelConstraint(0));
+        bodyContent.setWidth(new PixelConstraint(innerWidth));
+        bodyContent.setHeight(new PixelConstraint(420 + chartFrameHeight + chartLineHeight));
+        bodyContent.setChildOf(body);
+
+        int tfWidth = Math.max(54, Math.min(72, (innerWidth - 16) / 3));
+        int tfY = 0;
+        createGoodsPanelTab(bodyContent, 0, tfY, tfWidth, Component.translatable("screen.sailboatmod.market.chart.tf.1h").getString(),
+                activeChartTimeframe == ChartTimeframe.ONE_HOUR,
+                () -> {
+                    activeChartTimeframe = ChartTimeframe.ONE_HOUR;
+                    rebuildUi();
+                });
+        createGoodsPanelTab(bodyContent, 8 + tfWidth, tfY, tfWidth, Component.translatable("screen.sailboatmod.market.chart.tf.1d").getString(),
+                activeChartTimeframe == ChartTimeframe.ONE_DAY,
+                () -> {
+                    activeChartTimeframe = ChartTimeframe.ONE_DAY;
+                    rebuildUi();
+                });
+        createGoodsPanelTab(bodyContent, 16 + tfWidth * 2, tfY, tfWidth, Component.translatable("screen.sailboatmod.market.chart.tf.1w").getString(),
+                activeChartTimeframe == ChartTimeframe.ONE_WEEK,
+                () -> {
+                    activeChartTimeframe = ChartTimeframe.ONE_WEEK;
+                    rebuildUi();
+                });
+        createMetricStrip(bodyContent, 0, 34, innerWidth, buildPriceChartMetrics(candleSeries, series, listing));
+        buildPriceChartFrame(bodyContent, 0, 100, innerWidth, chartFrameHeight, candleSeries, series);
+        buildTextStack(bodyContent, 0, 100 + chartFrameHeight + 12, innerWidth, chartLines, TEXT_MUTED);
     }
 
-    private void buildPriceChartFrame(UIComponent parent, int x, int y, int width, int height, MarketOverviewData.PriceChartSeries series) {
+    private void buildPriceChartFrame(UIComponent parent, int x, int y, int width, int height,
+                                      CommodityCandleSeries candleSeries,
+                                      MarketOverviewData.PriceChartSeries series) {
         UIRoundedRectangle frame = createPanel(parent, x, y, width, height, 14f, CHROME_MUTED);
         frame.enableEffect(new OutlineEffect(BORDER, 1f));
         createText(frame, 14, 10, Component.translatable("screen.sailboatmod.market.price_chart").getString(), 0.9f, TEXT_PRIMARY);
-        if (series != null && !series.points().isEmpty()) {
-            createText(frame, width - 98, 10, Component.translatable("screen.sailboatmod.market.price_chart.buckets", series.points().size()).getString(), 0.82f, TEXT_SOFT);
-        }
+        List<ChartCandlePoint> allPoints = chartCandles(candleSeries, series);
+        List<ChartCandlePoint> points = visibleCandles(allPoints, priceChartViewport);
+        buildChartViewportControls(frame, width - 94, 8, priceChartViewport);
+        createText(frame, 14, 26,
+                viewportCaption(priceChartViewport, allPoints.size(), points.size()), 0.66f, TEXT_SOFT);
 
-        UIRoundedRectangle plot = createPanel(frame, 12, 34, width - 24, height - 46, 12f, new Color(16, 23, 31, 235));
+        int headerBottom = 44;
+        int footerHeight = 78;
+        int footerTop = height - footerHeight;
+
+        UIRoundedRectangle plot = createPanel(frame, 12, headerBottom, width - 24, footerTop - headerBottom - 8, 12f, new Color(16, 23, 31, 235));
         plot.enableEffect(new OutlineEffect(new Color(255, 255, 255, 10), 1f));
+        priceChartPlotRef = plot;
 
-        if (series == null || series.points().isEmpty()) {
+        if (points.isEmpty()) {
             buildTextStack(plot, 14, 42, width - 52,
                     List.of(Component.translatable("screen.sailboatmod.market.price_chart.empty").getString()), TEXT_MUTED);
             return;
         }
 
-        List<MarketOverviewData.PriceChartPoint> points = series.points();
         int plotWidth = width - 48;
-        int plotHeight = height - 70;
+        int plotHeight = footerTop - headerBottom - 8;
         int chartLeft = 10;
         int chartTop = 10;
-        int chartBottom = chartTop + plotHeight;
+        int plotBottom = Math.max(chartTop + 24, plotHeight - 10);
+        int volumeFooterGap = 14;
+        int chartBottom = plotBottom - volumeFooterGap;
         int maxPrice = 0;
         int minPrice = Integer.MAX_VALUE;
         int maxVolume = 0;
-        for (MarketOverviewData.PriceChartPoint point : points) {
-            maxPrice = Math.max(maxPrice, point.maxUnitPrice());
-            minPrice = Math.min(minPrice, point.minUnitPrice());
+        for (ChartCandlePoint point : points) {
+            maxPrice = Math.max(maxPrice, point.highPrice());
+            minPrice = Math.min(minPrice, point.lowPrice());
             maxVolume = Math.max(maxVolume, point.volume());
         }
         if (minPrice == Integer.MAX_VALUE) {
@@ -1376,49 +1550,92 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             maxPrice = minPrice + 1;
         }
 
-        int volumeMaxHeight = Math.max(18, plotHeight / 3);
+        int volumeMaxHeight = Math.max(26, Math.min(68, (chartBottom - chartTop) / 3));
         int lineTop = chartTop + 4;
-        int lineBottom = chartBottom - volumeMaxHeight - 10;
+        int lineBottom = chartBottom - volumeMaxHeight - 12;
         int lineHeight = Math.max(24, lineBottom - lineTop);
         int range = Math.max(1, maxPrice - minPrice);
         int barWidth = Math.max(4, Math.min(14, (plotWidth - 20) / Math.max(1, points.size())));
+        Color trendColor = points.get(points.size() - 1).closePrice() >= points.get(0).openPrice()
+                ? new Color(59, 196, 117, 230)
+                : new Color(227, 84, 84, 230);
+        Color trendFill = new Color(trendColor.getRed(), trendColor.getGreen(), trendColor.getBlue(), 54);
+        int[] closeCenters = new int[points.size()];
+        int[] closeYs = new int[points.size()];
+        int[] maShortYs = new int[points.size()];
+        int[] maLongYs = new int[points.size()];
+        int maShortPeriod = 5;
+        int maLongPeriod = 20;
+        Color maShortColor = new Color(244, 211, 94, 225);
+        Color maLongColor = new Color(103, 185, 255, 225);
 
-        for (int i = 0; i < 4; i++) {
-            int lineY = lineTop + Math.round((lineHeight * i) / 3.0f);
-            createAccentBar(plot, chartLeft, lineY, plotWidth - 8, 1, new Color(255, 255, 255, 10));
+        for (int i = 0; i < 6; i++) {
+            int bandY = lineTop + Math.round((lineHeight * i) / 5.0f);
+            createAccentBar(plot, chartLeft, bandY, plotWidth - 8, 1, new Color(255, 255, 255, i == 5 ? 12 : 8));
         }
+
+        createAccentBar(plot, chartLeft, lineBottom, plotWidth - 8, 1, new Color(255, 255, 255, 18));
 
         createText(plot, chartLeft, 4, formatCompactLong(maxPrice), 0.74f, TEXT_SOFT);
         createText(plot, chartLeft, lineTop + (lineHeight / 2) - 4, formatCompactLong((maxPrice + minPrice) / 2L), 0.72f, TEXT_SOFT);
-        createText(plot, chartLeft, chartBottom - 10, formatCompactLong(minPrice), 0.74f, TEXT_SOFT);
+        createText(plot, chartLeft, lineBottom - 8, formatCompactLong(minPrice), 0.74f, TEXT_SOFT);
+        createText(plot, Math.max(chartLeft, plotWidth - 56), 4, formatCompactLong(maxPrice), 0.72f, TEXT_SOFT);
+        createText(plot, Math.max(chartLeft, plotWidth - 56), lineTop + (lineHeight / 2) - 4, formatCompactLong((maxPrice + minPrice) / 2L), 0.7f, TEXT_SOFT);
+        createText(plot, Math.max(chartLeft, plotWidth - 56), lineBottom - 8, formatCompactLong(minPrice), 0.72f, TEXT_SOFT);
 
-        int previousCenterX = -1;
-        int previousY = -1;
         for (int i = 0; i < points.size(); i++) {
-            MarketOverviewData.PriceChartPoint point = points.get(i);
+            ChartCandlePoint point = points.get(i);
             int xPos = points.size() == 1
                     ? chartLeft + (plotWidth / 2) - (barWidth / 2)
                     : chartLeft + Math.round((plotWidth - barWidth - 8) * (i / (float) Math.max(1, points.size() - 1)));
             int centerX = xPos + (barWidth / 2);
-            int yPos = lineTop + Math.round((maxPrice - point.averageUnitPrice()) * (lineHeight / (float) range));
+            int highY = lineTop + Math.round((maxPrice - point.highPrice()) * (lineHeight / (float) range));
+            int lowY = lineTop + Math.round((maxPrice - point.lowPrice()) * (lineHeight / (float) range));
+            int openY = lineTop + Math.round((maxPrice - point.openPrice()) * (lineHeight / (float) range));
+            int closeY = lineTop + Math.round((maxPrice - point.closePrice()) * (lineHeight / (float) range));
+            int bodyTop = Math.min(openY, closeY);
+            int bodyHeight = Math.max(4, Math.abs(openY - closeY));
             int volumeHeight = maxVolume <= 0 ? 0 : Math.max(3, Math.round(point.volume() * (volumeMaxHeight / (float) maxVolume)));
+            Color candleColor = point.closePrice() >= point.openPrice() ? POSITIVE : NEGATIVE;
+            Color wickColor = new Color(candleColor.getRed(), candleColor.getGreen(), candleColor.getBlue(), 190);
+            closeCenters[i] = centerX;
+            closeYs[i] = closeY;
+            maShortYs[i] = movingAverageY(points, i, maShortPeriod, maxPrice, range, lineTop, lineHeight);
+            maLongYs[i] = movingAverageY(points, i, maLongPeriod, maxPrice, range, lineTop, lineHeight);
 
             createAccentBar(plot, xPos, chartBottom - volumeHeight, Math.max(3, barWidth - 1), volumeHeight, new Color(96, 146, 214, 118));
-            createAccentBar(plot, centerX - 1, yPos, 2, Math.max(1, lineBottom - yPos), new Color(240, 186, 96, 34));
-            createPanel(plot, centerX - 3, yPos - 3, 6, 6, 3f, i == points.size() - 1 ? ACCENT : ACCENT_DIM);
-
-            if (previousCenterX >= 0) {
-                drawChartLine(plot, previousCenterX, previousY, centerX, yPos, i == points.size() - 1 ? ACCENT : ACCENT_DIM, 2);
-            }
-            previousCenterX = centerX;
-            previousY = yPos;
+            createAccentBar(plot, centerX - 1, highY, 2, Math.max(2, lowY - highY), wickColor);
+            createPanel(plot, xPos, bodyTop, Math.max(4, barWidth - 1), bodyHeight, 3f, candleColor);
         }
 
-        int middleIndex = points.size() / 2;
-        createText(plot, chartLeft, chartBottom + 4, formatChartTime(points.get(0).bucketAt(), false), 0.72f, TEXT_SOFT);
-        createText(plot, Math.max(chartLeft, (plotWidth / 2) - 24), chartBottom + 4,
-                formatChartTime(points.get(middleIndex).bucketAt(), true), 0.72f, TEXT_SOFT);
-        createText(plot, Math.max(chartLeft, plotWidth - 86), chartBottom + 4,
+        for (int i = 0; i < closeCenters.length; i++) {
+            int nextX = i + 1 < closeCenters.length ? closeCenters[i + 1] : closeCenters[i];
+            int segmentWidth = Math.max(2, nextX - closeCenters[i]);
+            createAccentBar(plot, closeCenters[i], closeYs[i], segmentWidth, Math.max(2, lineBottom - closeYs[i]), trendFill);
+        }
+        for (int i = 1; i < closeCenters.length; i++) {
+            drawChartLine(plot, closeCenters[i - 1], closeYs[i - 1], closeCenters[i], closeYs[i], trendColor, 2);
+        }
+        for (int i = 1; i < closeCenters.length; i++) {
+            drawChartLine(plot, closeCenters[i - 1], maShortYs[i - 1], closeCenters[i], maShortYs[i], maShortColor, 1);
+            drawChartLine(plot, closeCenters[i - 1], maLongYs[i - 1], closeCenters[i], maLongYs[i], maLongColor, 1);
+        }
+        int lastIndex = closeCenters.length - 1;
+        createPanel(plot, Math.max(chartLeft, closeCenters[lastIndex] - 24), Math.max(lineTop, closeYs[lastIndex] - 10), 48, 14, 6f, new Color(14, 20, 28, 210));
+        createText(plot, Math.max(chartLeft + 4, closeCenters[lastIndex] - 18), Math.max(lineTop, closeYs[lastIndex] - 8),
+                formatCompactLong(points.get(lastIndex).closePrice()), 0.7f, trendColor);
+        int legendY = footerTop + 10;
+        int axisY = footerTop + 34;
+        createLegendBadge(frame, 18, legendY, "MA" + maShortPeriod, maShortColor);
+        createLegendBadge(frame, 72, legendY, "MA" + maLongPeriod, maLongColor);
+        createLegendBadge(frame, 126, legendY,
+                points.get(lastIndex).closePrice() >= points.get(0).openPrice()
+                        ? Component.translatable("screen.sailboatmod.market.chart.legend.up").getString()
+                        : Component.translatable("screen.sailboatmod.market.chart.legend.down").getString(),
+                trendColor);
+
+        createText(frame, 18, axisY, formatChartTime(points.get(0).bucketAt(), false), 0.72f, TEXT_SOFT);
+        createRightAlignedText(frame, width - 18, axisY,
                 formatChartTime(points.get(points.size() - 1).bucketAt(), false), 0.72f, TEXT_SOFT);
     }
 
@@ -1436,6 +1653,26 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             int y = Math.round(y1 + dy * progress);
             createAccentBar(parent, x, y, thickness, thickness, color);
         }
+    }
+
+    private int movingAverageY(List<ChartCandlePoint> points, int index, int period, int maxPrice, int range, int lineTop, int lineHeight) {
+        int start = Math.max(0, index - period + 1);
+        long total = 0L;
+        int count = 0;
+        for (int i = start; i <= index; i++) {
+            total += points.get(i).closePrice();
+            count++;
+        }
+        int average = count <= 0 ? points.get(index).closePrice() : (int) Math.round(total / (double) count);
+        return lineTop + Math.round((maxPrice - average) * (lineHeight / (float) range));
+    }
+
+    private void createLegendBadge(UIComponent parent, int x, int y, String label, Color color) {
+        int width = Math.max(28, 14 + label.length() * 6);
+        UIRoundedRectangle chip = createPanel(parent, x, y, width, 14, 6f, new Color(14, 20, 28, 210));
+        chip.enableEffect(new OutlineEffect(new Color(color.getRed(), color.getGreen(), color.getBlue(), 160), 1f));
+        createAccentBar(chip, 4, 5, 10, 3, color);
+        createText(chip, 18, 3, label, 0.62f, TEXT_PRIMARY);
     }
 
     private void buildSellActionPanel(UIComponent panel, int width) {
@@ -1734,6 +1971,153 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 : lines, TEXT_MUTED);
     }
 
+    private void buildAnalyticsDetailPanel(UIComponent panel, int width) {
+        int innerWidth = width - 28;
+        var series = selectedAnalyticsSeries();
+        List<String> analyticsLines = buildAnalyticsLines(series);
+        int analyticsLineHeight = estimateTextStackHeight(innerWidth, analyticsLines);
+        float restoreOffset = analyticsDetailScrollOffset;
+        float restoreProgress = analyticsDetailScrollProgress;
+        ScrollComponent body = createPanelBodyScroll(panel, 44, 12);
+        analyticsDetailScrollRef = body;
+        trackAnalyticsDetailScroll(body);
+        UIBlock bodyContent = new UIBlock(new Color(0, 0, 0, 0));
+        bodyContent.setX(new PixelConstraint(0));
+        bodyContent.setY(new PixelConstraint(0));
+        bodyContent.setWidth(new PixelConstraint(innerWidth));
+        bodyContent.setHeight(new PixelConstraint(332 + analyticsLineHeight + 20));
+        bodyContent.setChildOf(body);
+        createMetricStrip(bodyContent, 0, 0, innerWidth, buildAnalyticsMetrics(series));
+        buildAnalyticsChartFrame(bodyContent, 0, 58, innerWidth, 214, series);
+        buildTextStack(bodyContent, 0, 284, innerWidth, analyticsLines, TEXT_MUTED);
+        restoreScroll(body, restoreOffset, restoreProgress);
+    }
+
+    private void buildAnalyticsChartFrame(UIComponent parent, int x, int y, int width, int height,
+                                          com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries series) {
+        UIRoundedRectangle frame = createPanel(parent, x, y, width, height, 14f, CHROME_MUTED);
+        frame.enableEffect(new OutlineEffect(BORDER, 1f));
+        createText(frame, 14, 10, Component.translatable("screen.sailboatmod.market.page.market_index").getString(), 0.9f, TEXT_PRIMARY);
+        int totalPoints = series == null ? 0 : series.points().size();
+        List<com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint> points = visibleAnalyticsPoints(series, analyticsChartViewport);
+        buildChartViewportControls(frame, width - 94, 8, analyticsChartViewport);
+        createText(frame, 14, 26,
+                viewportCaption(analyticsChartViewport, totalPoints, points.size()), 0.66f, TEXT_SOFT);
+
+        int headerBottom = 46;
+        int footerHeight = 26;
+        int footerTop = height - footerHeight;
+        UIRoundedRectangle plot = createPanel(frame, 12, headerBottom, width - 24, footerTop - headerBottom - 8, 12f, new Color(16, 23, 31, 235));
+        plot.enableEffect(new OutlineEffect(new Color(255, 255, 255, 10), 1f));
+        analyticsChartPlotRef = plot;
+        if (points.isEmpty()) {
+            buildTextStack(plot, 14, 42, width - 52,
+                    List.of(Component.translatable("screen.sailboatmod.market.price_chart.empty").getString()), TEXT_MUTED);
+            return;
+        }
+
+        int plotWidth = width - 48;
+        int plotHeight = footerTop - headerBottom - 8;
+        int chartLeft = 10;
+        int chartTop = 10;
+        int chartBottom = plotHeight - 10;
+        int maxValue = Integer.MIN_VALUE;
+        int minValue = Integer.MAX_VALUE;
+        for (var point : points) {
+            maxValue = Math.max(maxValue, point.value());
+            minValue = Math.min(minValue, point.value());
+        }
+        if (maxValue <= minValue) {
+            maxValue = minValue + 1;
+        }
+        int lineTop = chartTop + 4;
+        int lineBottom = chartBottom - 10;
+        int lineHeight = Math.max(24, lineBottom - lineTop);
+        int range = Math.max(1, maxValue - minValue);
+
+        createText(plot, chartLeft, 4, formatCompactLong(maxValue), 0.74f, TEXT_SOFT);
+        createText(plot, chartLeft, chartBottom - 10, formatCompactLong(minValue), 0.74f, TEXT_SOFT);
+
+        int previousCenterX = -1;
+        int previousY = -1;
+        for (int i = 0; i < points.size(); i++) {
+            var point = points.get(i);
+            int xPos = points.size() == 1
+                    ? chartLeft + (plotWidth / 2)
+                    : chartLeft + Math.round((plotWidth - 8) * (i / (float) Math.max(1, points.size() - 1)));
+            int yPos = lineTop + Math.round((maxValue - point.value()) * (lineHeight / (float) range));
+            createPanel(plot, xPos - 3, yPos - 3, 6, 6, 3f, i == points.size() - 1 ? ACCENT : ACCENT_DIM);
+            if (previousCenterX >= 0) {
+                drawChartLine(plot, previousCenterX, previousY, xPos, yPos, i == points.size() - 1 ? ACCENT : ACCENT_DIM, 2);
+            }
+            previousCenterX = xPos;
+            previousY = yPos;
+        }
+
+        int axisY = footerTop + 8;
+        createText(frame, 18, axisY, formatChartTime(points.get(0).bucketAt(), false), 0.72f, TEXT_SOFT);
+        createRightAlignedText(frame, width - 18, axisY,
+                formatChartTime(points.get(points.size() - 1).bucketAt(), false), 0.72f, TEXT_SOFT);
+    }
+
+    private void buildChartViewportControls(UIComponent parent, int x, int y, ChartViewportState viewport) {
+        int buttonWidth = 18;
+        int gap = 4;
+        createViewportButton(parent, x, y, buttonWidth, "<", () -> {
+            viewport.panOlder();
+            rebuildUi();
+        });
+        createViewportButton(parent, x + buttonWidth + gap, y, buttonWidth, ">", () -> {
+            viewport.panNewer();
+            rebuildUi();
+        });
+        createViewportButton(parent, x + (buttonWidth + gap) * 2 + 4, y, buttonWidth, "-", () -> {
+            viewport.zoomBy(1);
+            rebuildUi();
+        });
+        createViewportButton(parent, x + (buttonWidth + gap) * 3 + 4, y, buttonWidth, "+", () -> {
+            viewport.zoomBy(-1);
+            rebuildUi();
+        });
+    }
+
+    private void createViewportButton(UIComponent parent, int x, int y, int width, String label, Runnable action) {
+        UIRoundedRectangle button = createPanel(parent, x, y, width, 16, 7f, ROW_BG);
+        button.enableEffect(new OutlineEffect(new Color(255, 255, 255, 14), 1f));
+        createText(button, Math.max(4, (width / 2) - 3), 4, label, 0.68f, TEXT_PRIMARY);
+        button.onMouseEnterRunnable(() -> button.setColor(ROW_HOVER));
+        button.onMouseLeaveRunnable(() -> button.setColor(ROW_BG));
+        button.onMouseClickConsumer(event -> runPreservingScroll(action));
+    }
+
+    private String viewportCaption(ChartViewportState viewport, int total, int visible) {
+        return visible + " / " + total + " · " + viewport.windowSize();
+    }
+
+    private List<ChartCandlePoint> visibleCandles(List<ChartCandlePoint> points, ChartViewportState viewport) {
+        if (points == null || points.isEmpty()) {
+            return List.of();
+        }
+        int total = points.size();
+        viewport.clamp(total);
+        int endExclusive = Math.max(viewport.windowSize(), total - viewport.offsetFromEnd());
+        int startInclusive = Math.max(0, endExclusive - viewport.windowSize());
+        return new ArrayList<>(points.subList(startInclusive, Math.min(total, endExclusive)));
+    }
+
+    private List<com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint> visibleAnalyticsPoints(
+            com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries series,
+            ChartViewportState viewport) {
+        if (series == null || series.points().isEmpty()) {
+            return List.of();
+        }
+        int total = series.points().size();
+        viewport.clamp(total);
+        int endExclusive = Math.max(viewport.windowSize(), total - viewport.offsetFromEnd());
+        int startInclusive = Math.max(0, endExclusive - viewport.windowSize());
+        return new ArrayList<>(series.points().subList(startInclusive, Math.min(total, endExclusive)));
+    }
+
     private void buildBuyOrderActionPanel(UIComponent panel, int width) {
         int innerWidth = width - 28;
         createMetricStrip(panel, 14, 42, innerWidth, buildBuyOrdersMetrics());
@@ -1804,6 +2188,25 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         scroll.setColor(new Color(0, 0, 0, 0));
         buyOrdersListScrollRef = scroll;
         trackNestedScroll(scroll, false);
+
+        for (RowSpec row : rows) {
+            createRow(scroll, width - 8, row);
+        }
+        restoreScroll(scroll, restoreOffset, restoreProgress);
+    }
+
+    private void buildAnalyticsListPanel(UIComponent panel, List<RowSpec> rows, int width, int height) {
+        float restoreOffset = analyticsListScrollOffset;
+        float restoreProgress = analyticsListScrollProgress;
+        ScrollComponent scroll = new ScrollComponent();
+        scroll.setX(new PixelConstraint(14));
+        scroll.setY(new PixelConstraint(48));
+        scroll.setWidth(new PixelConstraint(width));
+        scroll.setHeight(new PixelConstraint(height));
+        scroll.setChildOf(panel);
+        scroll.setColor(new Color(0, 0, 0, 0));
+        analyticsListScrollRef = scroll;
+        trackAnalyticsListScroll(scroll);
 
         for (RowSpec row : rows) {
             createRow(scroll, width - 8, row);
@@ -2011,6 +2414,29 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return rows;
     }
 
+    private List<RowSpec> buildAnalyticsRows() {
+        List<RowSpec> rows = new ArrayList<>();
+        for (int i = 0; i < data.analyticsSeries().size(); i++) {
+            var series = data.analyticsSeries().get(i);
+            String id = analyticsSeriesId(series.scopeType(), series.scopeKey());
+            var last = series.points().isEmpty() ? null : series.points().get(series.points().size() - 1);
+            rows.add(rowSpec(
+                    series.displayName(),
+                    analyticsSeriesScopeLabel(series.scopeType(), series.scopeKey()),
+                    last == null ? "-" : formatCompactLong(last.value()),
+                    id.equals(selectedAnalyticsSeriesId()),
+                    () -> {
+                        selectedAnalyticsSeriesId = id;
+                        rebuildUi();
+                    }
+            ));
+        }
+        if (rows.isEmpty()) {
+            rows.add(rowSpec(Component.translatable("screen.sailboatmod.market.empty").getString(), "", "", false, null));
+        }
+        return rows;
+    }
+
     private List<Integer> filteredListingIndices() {
         List<Integer> indices = new ArrayList<>();
         String query = goodsSearchValue == null ? "" : goodsSearchValue.trim().toLowerCase(Locale.ROOT);
@@ -2024,6 +2450,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 }
             }
             if (!goodsCategoryFilter.matches(entry)) {
+                continue;
+            }
+            if (!goodsRarityFilter.matches(entry)) {
                 continue;
             }
             if (!matchesPriceFilter(entry.unitPrice())) {
@@ -2077,6 +2506,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private int chartActivityFor(String commodityKey) {
+        CommodityCandleSeries candleSeries = data.candleSeriesFor(commodityKey, "1h");
+        if (candleSeries != null && !candleSeries.points().isEmpty()) {
+            int total = 0;
+            for (CommodityCandlePoint point : candleSeries.points()) {
+                total += point.tradeCount();
+            }
+            return total;
+        }
         MarketOverviewData.PriceChartSeries series = data.priceChartFor(commodityKey);
         if (series == null || series.points().isEmpty()) {
             return 0;
@@ -2123,7 +2560,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             parts.add(Component.translatable("screen.sailboatmod.market.catalog.filter.search", goodsSearchValue.trim()).getString());
         }
         if (goodsCategoryFilter != GoodsCategoryFilter.ALL) {
-            parts.add(Component.translatable(goodsCategoryFilter.labelKey).getString());
+            parts.add(Component.translatable("screen.sailboatmod.market.catalog.filter.category_selected", goodsCategoryFilter.label()).getString());
+        }
+        if (goodsRarityFilter != GoodsRarityFilter.ALL) {
+            parts.add(Component.translatable("screen.sailboatmod.market.catalog.filter.rarity_selected",
+                    Component.translatable(goodsRarityFilter.labelKey).getString()).getString());
         }
         if (goodsPriceBandFilter != GoodsPriceBandFilter.ALL) {
             parts.add(Component.translatable(goodsPriceBandFilter.labelKey).getString());
@@ -2177,6 +2618,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return switch (activePage) {
             case GOODS -> Component.translatable("screen.sailboatmod.market.action.buy_for",
                     data.listingEntries().size(), data.pendingCredits()).getString();
+            case MARKET_INDEX -> Component.translatable("screen.sailboatmod.market.index.subtitle").getString();
             case SELL -> data.dockStorageAccessible()
                     ? Component.translatable("screen.sailboatmod.market.sell_help").getString()
                     : Component.translatable("screen.sailboatmod.market.storage_owner_only").getString();
@@ -2257,20 +2699,23 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return metrics;
     }
 
-    private List<MetricCard> buildPriceChartMetrics(MarketOverviewData.PriceChartSeries series, MarketOverviewData.ListingEntry listing) {
+    private List<MetricCard> buildPriceChartMetrics(CommodityCandleSeries candleSeries,
+                                                    MarketOverviewData.PriceChartSeries series,
+                                                    MarketOverviewData.ListingEntry listing) {
         List<MetricCard> metrics = new ArrayList<>();
+        List<ChartCandlePoint> points = chartCandles(candleSeries, series);
         int latest = listing == null ? 0 : listing.unitPrice();
         int high = latest;
         int low = latest;
         int totalVolume = 0;
         int totalTrades = 0;
-        if (series != null && !series.points().isEmpty()) {
-            latest = series.points().get(series.points().size() - 1).averageUnitPrice();
+        if (!points.isEmpty()) {
+            latest = points.get(points.size() - 1).closePrice();
             low = Integer.MAX_VALUE;
             high = 0;
-            for (MarketOverviewData.PriceChartPoint point : series.points()) {
-                high = Math.max(high, point.maxUnitPrice());
-                low = Math.min(low, point.minUnitPrice());
+            for (ChartCandlePoint point : points) {
+                high = Math.max(high, point.highPrice());
+                low = Math.min(low, point.lowPrice());
                 totalVolume += point.volume();
                 totalTrades += point.tradeCount();
             }
@@ -2286,6 +2731,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 formatCompactLong(low), NEGATIVE));
         metrics.add(metric(Component.translatable("screen.sailboatmod.market.price_chart.volume").getString(),
                 totalVolume + " / " + totalTrades, new Color(95, 162, 198)));
+        if (points.size() >= 2) {
+            double changeRatio = chartChangeRatio(points);
+            metrics.add(metric(Component.translatable("screen.sailboatmod.market.index.delta").getString(),
+                    formatSignedPercent(changeRatio), changeRatio >= 0 ? POSITIVE : NEGATIVE));
+            metrics.add(metric(Component.translatable("screen.sailboatmod.market.metric.volatility").getString(),
+                    formatSignedPercent(chartVolatility(points)), ACCENT_DIM));
+            metrics.add(metric(Component.translatable("screen.sailboatmod.market.metric.drawdown").getString(),
+                    formatSignedPercent(-chartMaxDrawdown(points)), NEGATIVE));
+        }
         return metrics;
     }
 
@@ -2349,6 +2803,34 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 Integer.toString(active), new Color(95, 162, 198)));
         metrics.add(metric(Component.translatable("screen.sailboatmod.market.metric.catalog").getString(),
                 Integer.toString(countUniqueBuyOrderCommodities()), ACCENT_DIM));
+        return metrics;
+    }
+
+    private List<MetricCard> buildAnalyticsMetrics(com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries series) {
+        List<MetricCard> metrics = new ArrayList<>();
+        if (series == null || series.points().isEmpty()) {
+            return metrics;
+        }
+        var last = series.points().get(series.points().size() - 1);
+        var first = series.points().get(0);
+        int high = Integer.MIN_VALUE;
+        int low = Integer.MAX_VALUE;
+        int volume = 0;
+        int trades = 0;
+        for (var point : series.points()) {
+            high = Math.max(high, point.value());
+            low = Math.min(low, point.value());
+            volume += point.volume();
+            trades += point.tradeCount();
+        }
+        int delta = last.value() - first.value();
+        metrics.add(metric(Component.translatable("screen.sailboatmod.market.index.latest").getString(), formatCompactLong(last.value()), ACCENT));
+        metrics.add(metric(Component.translatable("screen.sailboatmod.market.index.delta").getString(), formatSignedLong(delta), delta >= 0 ? POSITIVE : NEGATIVE));
+        metrics.add(metric(Component.translatable("screen.sailboatmod.market.price_chart.high").getString(), formatCompactLong(high), POSITIVE));
+        metrics.add(metric(Component.translatable("screen.sailboatmod.market.price_chart.low").getString(), formatCompactLong(low), NEGATIVE));
+        if (volume > 0 || trades > 0) {
+            metrics.add(metric(Component.translatable("screen.sailboatmod.market.price_chart.volume").getString(), volume + " / " + trades, ACCENT_DIM));
+        }
         return metrics;
     }
 
@@ -2656,27 +3138,30 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return lines;
     }
 
-    private List<String> buildPriceChartLines(MarketOverviewData.PriceChartSeries series, MarketOverviewData.ListingEntry listing) {
+    private List<String> buildPriceChartLines(CommodityCandleSeries candleSeries,
+                                              MarketOverviewData.PriceChartSeries series,
+                                              MarketOverviewData.ListingEntry listing) {
         List<String> lines = new ArrayList<>();
         if (listing == null) {
             lines.add(Component.translatable("screen.sailboatmod.market.empty").getString());
             return lines;
         }
-        if (series == null || series.points().isEmpty()) {
+        List<ChartCandlePoint> points = chartCandles(candleSeries, series);
+        if (points.isEmpty()) {
             lines.add(Component.translatable("screen.sailboatmod.market.price_chart.empty").getString());
             lines.add(Component.translatable("screen.sailboatmod.market.auto_price_help").getString());
             return lines;
         }
 
-        MarketOverviewData.PriceChartPoint first = series.points().get(0);
-        MarketOverviewData.PriceChartPoint last = series.points().get(series.points().size() - 1);
+        ChartCandlePoint first = points.get(0);
+        ChartCandlePoint last = points.get(points.size() - 1);
         int high = 0;
         int low = Integer.MAX_VALUE;
         int totalVolume = 0;
         int totalTrades = 0;
-        for (MarketOverviewData.PriceChartPoint point : series.points()) {
-            high = Math.max(high, point.maxUnitPrice());
-            low = Math.min(low, point.minUnitPrice());
+        for (ChartCandlePoint point : points) {
+            high = Math.max(high, point.highPrice());
+            low = Math.min(low, point.lowPrice());
             totalVolume += point.volume();
             totalTrades += point.tradeCount();
         }
@@ -2686,17 +3171,23 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 formatChartTime(last.bucketAt(), false)).getString());
         lines.add(Component.translatable("screen.sailboatmod.market.price_chart.single_value",
                 Component.translatable("screen.sailboatmod.market.price_chart.latest").getString(),
-                formatCompactLong(last.averageUnitPrice())).getString());
+                formatCompactLong(last.closePrice())).getString());
         lines.add(Component.translatable("screen.sailboatmod.market.price_chart.high_low_value",
                 Component.translatable("screen.sailboatmod.market.price_chart.high").getString(),
                 Component.translatable("screen.sailboatmod.market.price_chart.low").getString(),
                 formatCompactLong(high),
-                formatCompactLong(low == Integer.MAX_VALUE ? last.averageUnitPrice() : low)).getString());
+                formatCompactLong(low == Integer.MAX_VALUE ? last.closePrice() : low)).getString());
         lines.add(Component.translatable("screen.sailboatmod.market.price_chart.volume_trades_value",
                 Component.translatable("screen.sailboatmod.market.price_chart.volume").getString(),
                 totalVolume,
                 Component.translatable("screen.sailboatmod.market.price_chart.trades").getString(),
                 totalTrades).getString());
+        if (points.size() >= 2) {
+            lines.add(Component.translatable("screen.sailboatmod.market.detail.analytics_change",
+                    formatSignedPercent(chartChangeRatio(points)),
+                    formatSignedPercent(chartVolatility(points)),
+                    formatSignedPercent(-chartMaxDrawdown(points))).getString());
+        }
         return lines;
     }
 
@@ -2763,6 +3254,24 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         } else {
             lines.add(Component.translatable("screen.sailboatmod.market.finance.no_credits_hint").getString());
         }
+        return lines;
+    }
+
+    private List<String> buildAnalyticsLines(com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries series) {
+        List<String> lines = new ArrayList<>();
+        if (series == null || series.points().isEmpty()) {
+            lines.add(Component.translatable("screen.sailboatmod.market.price_chart.empty").getString());
+            return lines;
+        }
+        var first = series.points().get(0);
+        var last = series.points().get(series.points().size() - 1);
+        lines.add(Component.translatable("screen.sailboatmod.market.price_chart.window_value",
+                Component.translatable("screen.sailboatmod.market.price_chart.window").getString(),
+                formatChartTime(first.bucketAt(), false),
+                formatChartTime(last.bucketAt(), false)).getString());
+        lines.add(Component.translatable("screen.sailboatmod.market.index.series_key", series.scopeType(), series.scopeKey()).getString());
+        lines.add(Component.translatable("screen.sailboatmod.market.index.latest_value", formatCompactLong(last.value())).getString());
+        lines.add(Component.translatable("screen.sailboatmod.market.index.delta_value", formatSignedLong(last.value() - first.value())).getString());
         return lines;
     }
 
@@ -2895,6 +3404,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             buyOrdersListScrollOffset = buyOrdersListScrollRef.getVerticalOffset();
             buyOrdersListScrollProgress = computeScrollProgress(buyOrdersListScrollRef, buyOrdersListScrollOffset);
         }
+        if (analyticsListScrollRef != null && pendingAnalyticsListScrollTicks <= 0) {
+            analyticsListScrollOffset = analyticsListScrollRef.getVerticalOffset();
+            analyticsListScrollProgress = computeScrollProgress(analyticsListScrollRef, analyticsListScrollOffset);
+        }
+        if (analyticsDetailScrollRef != null && pendingAnalyticsDetailScrollTicks <= 0) {
+            analyticsDetailScrollOffset = analyticsDetailScrollRef.getVerticalOffset();
+            analyticsDetailScrollProgress = computeScrollProgress(analyticsDetailScrollRef, analyticsDetailScrollOffset);
+        }
     }
 
     private void rememberScrollState() {
@@ -2922,6 +3439,18 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     buyOrdersListScrollOffset, pendingBuyOrdersListScrollOffset, pendingBuyOrdersListScrollTicks);
             buyOrdersListScrollProgress = preservedScrollProgress(buyOrdersListScrollRef,
                     buyOrdersListScrollProgress, pendingBuyOrdersListScrollProgress, pendingBuyOrdersListScrollTicks, buyOrdersListScrollOffset);
+        }
+        if (analyticsListScrollRef != null) {
+            analyticsListScrollOffset = preservedScrollOffset(analyticsListScrollRef,
+                    analyticsListScrollOffset, pendingAnalyticsListScrollOffset, pendingAnalyticsListScrollTicks);
+            analyticsListScrollProgress = preservedScrollProgress(analyticsListScrollRef,
+                    analyticsListScrollProgress, pendingAnalyticsListScrollProgress, pendingAnalyticsListScrollTicks, analyticsListScrollOffset);
+        }
+        if (analyticsDetailScrollRef != null) {
+            analyticsDetailScrollOffset = preservedScrollOffset(analyticsDetailScrollRef,
+                    analyticsDetailScrollOffset, pendingAnalyticsDetailScrollOffset, pendingAnalyticsDetailScrollTicks);
+            analyticsDetailScrollProgress = preservedScrollProgress(analyticsDetailScrollRef,
+                    analyticsDetailScrollProgress, pendingAnalyticsDetailScrollProgress, pendingAnalyticsDetailScrollTicks, analyticsDetailScrollOffset);
         }
         traceScrollState("rememberScrollState:after");
         clearScrollRefs();
@@ -2953,6 +3482,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         buyOrdersViewportScrollRef = null;
         goodsCatalogScrollRef = null;
         buyOrdersListScrollRef = null;
+        analyticsListScrollRef = null;
+        analyticsDetailScrollRef = null;
     }
 
     private void clearPendingScrollRestores() {
@@ -2960,14 +3491,20 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         pendingBuyOrdersViewportScrollOffset = Float.NaN;
         pendingGoodsCatalogScrollOffset = Float.NaN;
         pendingBuyOrdersListScrollOffset = Float.NaN;
+        pendingAnalyticsListScrollOffset = Float.NaN;
+        pendingAnalyticsDetailScrollOffset = Float.NaN;
         pendingGoodsViewportScrollProgress = Float.NaN;
         pendingBuyOrdersViewportScrollProgress = Float.NaN;
         pendingGoodsCatalogScrollProgress = Float.NaN;
         pendingBuyOrdersListScrollProgress = Float.NaN;
+        pendingAnalyticsListScrollProgress = Float.NaN;
+        pendingAnalyticsDetailScrollProgress = Float.NaN;
         pendingGoodsViewportScrollTicks = 0;
         pendingBuyOrdersViewportScrollTicks = 0;
         pendingGoodsCatalogScrollTicks = 0;
         pendingBuyOrdersListScrollTicks = 0;
+        pendingAnalyticsListScrollTicks = 0;
+        pendingAnalyticsDetailScrollTicks = 0;
     }
 
     private void runPreservingScroll(Runnable action) {
@@ -3006,6 +3543,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             pendingBuyOrdersListScrollOffset = verticalOffset;
             pendingBuyOrdersListScrollProgress = progress;
             pendingBuyOrdersListScrollTicks = 8;
+        } else if (scroll == analyticsListScrollRef) {
+            pendingAnalyticsListScrollOffset = verticalOffset;
+            pendingAnalyticsListScrollProgress = progress;
+            pendingAnalyticsListScrollTicks = 8;
+        } else if (scroll == analyticsDetailScrollRef) {
+            pendingAnalyticsDetailScrollOffset = verticalOffset;
+            pendingAnalyticsDetailScrollProgress = progress;
+            pendingAnalyticsDetailScrollTicks = 8;
         }
     }
 
@@ -3052,6 +3597,28 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 pendingBuyOrdersListScrollProgress = Float.NaN;
             } else {
                 pendingBuyOrdersListScrollTicks--;
+            }
+        }
+        if (pendingAnalyticsListScrollTicks > 0 && analyticsListScrollRef != null && !Float.isNaN(pendingAnalyticsListScrollOffset)) {
+            float target = resolveScrollRestoreTarget(analyticsListScrollRef, pendingAnalyticsListScrollOffset, pendingAnalyticsListScrollProgress);
+            analyticsListScrollRef.scrollTo(analyticsListScrollRef.getHorizontalOffset(), target, false);
+            if (Math.abs(analyticsListScrollRef.getVerticalOffset() - target) <= 0.5f) {
+                pendingAnalyticsListScrollTicks = 0;
+                pendingAnalyticsListScrollOffset = Float.NaN;
+                pendingAnalyticsListScrollProgress = Float.NaN;
+            } else {
+                pendingAnalyticsListScrollTicks--;
+            }
+        }
+        if (pendingAnalyticsDetailScrollTicks > 0 && analyticsDetailScrollRef != null && !Float.isNaN(pendingAnalyticsDetailScrollOffset)) {
+            float target = resolveScrollRestoreTarget(analyticsDetailScrollRef, pendingAnalyticsDetailScrollOffset, pendingAnalyticsDetailScrollProgress);
+            analyticsDetailScrollRef.scrollTo(analyticsDetailScrollRef.getHorizontalOffset(), target, false);
+            if (Math.abs(analyticsDetailScrollRef.getVerticalOffset() - target) <= 0.5f) {
+                pendingAnalyticsDetailScrollTicks = 0;
+                pendingAnalyticsDetailScrollOffset = Float.NaN;
+                pendingAnalyticsDetailScrollProgress = Float.NaN;
+            } else {
+                pendingAnalyticsDetailScrollTicks--;
             }
         }
     }
@@ -3211,17 +3778,79 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         });
     }
 
+    private void trackAnalyticsListScroll(ScrollComponent scroll) {
+        if (scroll == null) {
+            return;
+        }
+        float current = scroll.getVerticalOffset();
+        float progress = computeScrollProgress(scroll, current);
+        traceScrollMessage("trackNestedScroll attach=analyticsList"
+                + " current=" + current
+                + " progress=" + progress
+                + " overhang=" + scroll.getVerticalOverhang());
+        analyticsListScrollOffset = current;
+        analyticsListScrollProgress = progress;
+        scroll.addScrollAdjustEvent(false, (scrollPercentage, percentageOfParent) -> {
+            float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
+            float value = scrollPercentageToOffset(scroll, updatedProgress);
+            traceScrollMessage("trackNestedScroll adjust=analyticsList"
+                    + " progress=" + updatedProgress
+                    + " value=" + value
+                    + " percentageOfParent=" + percentageOfParent
+                    + " live=" + scroll.getVerticalOffset()
+                    + " overhang=" + scroll.getVerticalOverhang());
+            if (pendingAnalyticsListScrollTicks > 0) {
+                return Unit.INSTANCE;
+            }
+            analyticsListScrollOffset = value;
+            analyticsListScrollProgress = updatedProgress;
+            return Unit.INSTANCE;
+        });
+    }
+
+    private void trackAnalyticsDetailScroll(ScrollComponent scroll) {
+        if (scroll == null) {
+            return;
+        }
+        float current = scroll.getVerticalOffset();
+        float progress = computeScrollProgress(scroll, current);
+        traceScrollMessage("trackNestedScroll attach=analyticsDetail"
+                + " current=" + current
+                + " progress=" + progress
+                + " overhang=" + scroll.getVerticalOverhang());
+        analyticsDetailScrollOffset = current;
+        analyticsDetailScrollProgress = progress;
+        scroll.addScrollAdjustEvent(false, (scrollPercentage, percentageOfParent) -> {
+            float updatedProgress = scrollPercentage == null ? 0f : scrollPercentage;
+            float value = scrollPercentageToOffset(scroll, updatedProgress);
+            traceScrollMessage("trackNestedScroll adjust=analyticsDetail"
+                    + " progress=" + updatedProgress
+                    + " value=" + value
+                    + " percentageOfParent=" + percentageOfParent
+                    + " live=" + scroll.getVerticalOffset()
+                    + " overhang=" + scroll.getVerticalOverhang());
+            if (pendingAnalyticsDetailScrollTicks > 0) {
+                return Unit.INSTANCE;
+            }
+            analyticsDetailScrollOffset = value;
+            analyticsDetailScrollProgress = updatedProgress;
+            return Unit.INSTANCE;
+        });
+    }
+
     private void traceScrollState(String stage) {
         if (!SCROLL_TRACE_ENABLED) {
             return;
         }
         int seq = ++scrollTraceSequence;
-        LOGGER.info("[MarketScroll:{}] {} page={} goodsTab={} goodsViewport={} buyViewport={} goodsCatalog={} buyList={} pending={}",
+        LOGGER.info("[MarketScroll:{}] {} page={} goodsTab={} goodsViewport={} buyViewport={} goodsCatalog={} buyList={} analyticsList={} analyticsDetail={} pending={}",
                 seq, stage, activePage, activeGoodsPanelTab,
                 describeScroll("goodsViewport", goodsViewportScrollRef, goodsViewportScrollOffset, goodsViewportScrollProgress),
                 describeScroll("buyViewport", buyOrdersViewportScrollRef, buyOrdersViewportScrollOffset, buyOrdersViewportScrollProgress),
                 describeScroll("goodsCatalog", goodsCatalogScrollRef, goodsCatalogScrollOffset, goodsCatalogScrollProgress),
                 describeScroll("buyList", buyOrdersListScrollRef, buyOrdersListScrollOffset, buyOrdersListScrollProgress),
+                describeScroll("analyticsList", analyticsListScrollRef, analyticsListScrollOffset, analyticsListScrollProgress),
+                describeScroll("analyticsDetail", analyticsDetailScrollRef, analyticsDetailScrollOffset, analyticsDetailScrollProgress),
                 pendingScrollSummary());
     }
 
@@ -3248,7 +3877,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return "goodsViewport{ticks=" + pendingGoodsViewportScrollTicks + ",offset=" + pendingGoodsViewportScrollOffset + ",progress=" + pendingGoodsViewportScrollProgress
                 + "} buyViewport{ticks=" + pendingBuyOrdersViewportScrollTicks + ",offset=" + pendingBuyOrdersViewportScrollOffset + ",progress=" + pendingBuyOrdersViewportScrollProgress
                 + "} goodsCatalog{ticks=" + pendingGoodsCatalogScrollTicks + ",offset=" + pendingGoodsCatalogScrollOffset + ",progress=" + pendingGoodsCatalogScrollProgress
-                + "} buyList{ticks=" + pendingBuyOrdersListScrollTicks + ",offset=" + pendingBuyOrdersListScrollOffset + ",progress=" + pendingBuyOrdersListScrollProgress + "}";
+                + "} buyList{ticks=" + pendingBuyOrdersListScrollTicks + ",offset=" + pendingBuyOrdersListScrollOffset + ",progress=" + pendingBuyOrdersListScrollProgress
+                + "} analyticsList{ticks=" + pendingAnalyticsListScrollTicks + ",offset=" + pendingAnalyticsListScrollOffset + ",progress=" + pendingAnalyticsListScrollProgress
+                + "} analyticsDetail{ticks=" + pendingAnalyticsDetailScrollTicks + ",offset=" + pendingAnalyticsDetailScrollOffset + ",progress=" + pendingAnalyticsDetailScrollProgress + "}";
     }
 
     private String scrollName(ScrollComponent scroll) {
@@ -3263,6 +3894,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         if (scroll == buyOrdersListScrollRef) {
             return "buyOrdersList";
+        }
+        if (scroll == analyticsListScrollRef) {
+            return "analyticsList";
+        }
+        if (scroll == analyticsDetailScrollRef) {
+            return "analyticsDetail";
         }
         return "unknown@" + Integer.toHexString(System.identityHashCode(scroll));
     }
@@ -3321,6 +3958,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         label.setColor(color);
         label.setChildOf(parent);
         return label;
+    }
+
+    private UIText createRightAlignedText(UIComponent parent, int rightX, int y, String text, float scale, Color color) {
+        int textWidth = 0;
+        if (minecraft != null && minecraft.font != null && text != null) {
+            textWidth = Math.round(minecraft.font.width(text) * scale);
+        }
+        return createText(parent, Math.max(0, rightX - textWidth), y, text, scale, color);
     }
 
     private UIWrappedText createWrappedText(UIComponent parent, int x, int y, int width, String text, float scale, Color color) {
@@ -3611,6 +4256,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String detailHeadline() {
         return switch (activePage) {
             case GOODS -> selectedListing() == null ? "" : selectedListing().itemName();
+            case MARKET_INDEX -> selectedAnalyticsSeriesTitle();
             case SELL -> selectedStorage() == null ? "" : selectedStorage().itemName();
             case BUY_ORDERS -> selectedBuyOrder() == null ? "" : selectedBuyOrder().commodityKey();
             default -> "";
@@ -3637,6 +4283,13 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String goodsPanelSubtitle() {
         MarketOverviewData.CommodityBuyBook buyBook = selectedBuyBook();
         if (activeGoodsPanelTab == GoodsPanelTab.PRICE_CHART) {
+            CommodityCandleSeries candleSeries = selectedCandleSeries();
+            if (candleSeries != null && !candleSeries.points().isEmpty()) {
+                return Component.translatable("screen.sailboatmod.market.price_chart.window_value",
+                        Component.translatable("screen.sailboatmod.market.price_chart.window").getString(),
+                        formatChartTime(candleSeries.points().get(0).bucketAt(), true),
+                        formatChartTime(candleSeries.points().get(candleSeries.points().size() - 1).bucketAt(), true)).getString();
+            }
             MarketOverviewData.PriceChartSeries series = selectedPriceChartSeries();
             if (series != null && !series.points().isEmpty()) {
                 return Component.translatable("screen.sailboatmod.market.price_chart.window_value",
@@ -3659,7 +4312,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         return Component.translatable("screen.sailboatmod.market.goods.hero_subtitle",
                 rarityLabel(entry.rarity()),
-                entry.category().isBlank() ? displayCommodityName(entry.commodityKey()) : entry.category(),
+                displayCategoryLabel(entry.category()),
                 Component.translatable("screen.sailboatmod.market.catalog.column.seller").getString(),
                 entry.sellerName().isBlank() ? Component.translatable("screen.sailboatmod.market.value.none").getString() : entry.sellerName()).getString();
     }
@@ -3685,7 +4338,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         return Component.translatable("screen.sailboatmod.market.goods.seller_count_summary",
                 rarityLabel(entry.rarity()),
-                entry.category().isBlank() ? displayCommodityName(entry.commodityKey()) : entry.category(),
+                displayCategoryLabel(entry.category()),
                 selectedCommodityListingIndices().size()).getString();
     }
 
@@ -3824,12 +4477,111 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return listing == null ? null : data.priceChartFor(listing.commodityKey());
     }
 
+    private CommodityCandleSeries selectedCandleSeries() {
+        MarketOverviewData.ListingEntry listing = selectedListing();
+        if (listing == null) {
+            return null;
+        }
+        CommodityCandleSeries primary = data.candleSeriesFor(listing.commodityKey(), activeChartTimeframe.key);
+        if (primary != null && !primary.points().isEmpty()) {
+            return primary;
+        }
+        for (ChartTimeframe timeframe : ChartTimeframe.values()) {
+            CommodityCandleSeries fallback = data.candleSeriesFor(listing.commodityKey(), timeframe.key);
+            if (fallback != null && !fallback.points().isEmpty()) {
+                return fallback;
+            }
+        }
+        return null;
+    }
+
+    private String analyticsSeriesId(String scopeType, String scopeKey) {
+        return (scopeType == null ? "" : scopeType) + ":" + (scopeKey == null ? "" : scopeKey);
+    }
+
+    private String selectedAnalyticsSeriesId() {
+        if (selectedAnalyticsSeriesId != null && !selectedAnalyticsSeriesId.isBlank()) {
+            return selectedAnalyticsSeriesId;
+        }
+        if (data.analyticsSeries().isEmpty()) {
+            return "";
+        }
+        var first = data.analyticsSeries().get(0);
+        selectedAnalyticsSeriesId = analyticsSeriesId(first.scopeType(), first.scopeKey());
+        return selectedAnalyticsSeriesId;
+    }
+
+    private com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries selectedAnalyticsSeries() {
+        String id = selectedAnalyticsSeriesId();
+        for (var series : data.analyticsSeries()) {
+            if (analyticsSeriesId(series.scopeType(), series.scopeKey()).equals(id)) {
+                return series;
+            }
+        }
+        return data.analyticsSeries().isEmpty() ? null : data.analyticsSeries().get(0);
+    }
+
+    private String selectedAnalyticsSeriesTitle() {
+        var series = selectedAnalyticsSeries();
+        return series == null ? Component.translatable("screen.sailboatmod.market.page.market_index").getString() : series.displayName();
+    }
+
+    private String selectedAnalyticsSeriesSubtitle() {
+        var series = selectedAnalyticsSeries();
+        if (series == null || series.points().isEmpty()) {
+            return Component.translatable("screen.sailboatmod.market.index.subtitle").getString();
+        }
+        return analyticsSeriesScopeLabel(series.scopeType(), series.scopeKey())
+                + "  |  "
+                + Component.translatable("screen.sailboatmod.market.price_chart.window_value",
+                Component.translatable("screen.sailboatmod.market.price_chart.window").getString(),
+                formatChartTime(series.points().get(0).bucketAt(), true),
+                formatChartTime(series.points().get(series.points().size() - 1).bucketAt(), true)).getString();
+    }
+
+    private String analyticsSeriesScopeLabel(String scopeType, String scopeKey) {
+        String normalizedType = scopeType == null ? "" : scopeType.trim().toLowerCase(Locale.ROOT);
+        String normalizedKey = scopeKey == null ? "" : scopeKey.trim();
+        if ("market".equals(normalizedType)) {
+            return Component.translatable("screen.sailboatmod.market.index.scope.market").getString();
+        }
+        if ("category".equals(normalizedType)) {
+            if (normalizedKey.isBlank()) {
+                return Component.translatable("screen.sailboatmod.market.index.scope.category_generic").getString();
+            }
+            return Component.translatable("screen.sailboatmod.market.index.scope.category_value", displayCategoryLabel(normalizedKey)).getString();
+        }
+        if ("macro".equals(normalizedType)) {
+            if (normalizedKey.isBlank()) {
+                return Component.translatable("screen.sailboatmod.market.index.scope.macro").getString();
+            }
+            if ("cpi".equalsIgnoreCase(normalizedKey)) {
+                return Component.translatable("screen.sailboatmod.market.index.scope.macro_cpi").getString();
+            }
+            if ("outstanding_loans".equalsIgnoreCase(normalizedKey)) {
+                return Component.translatable("screen.sailboatmod.market.index.scope.macro_loans").getString();
+            }
+            return Component.translatable("screen.sailboatmod.market.index.scope.macro_value", normalizedKey).getString();
+        }
+        if (normalizedType.isBlank() && normalizedKey.isBlank()) {
+            return Component.translatable("screen.sailboatmod.market.index.scope.market").getString();
+        }
+        if (normalizedKey.isBlank()) {
+            return normalizedType;
+        }
+        return normalizedType + " / " + normalizedKey;
+    }
+
     private MarketOverviewData.CommodityBuyBook selectedBuyBook() {
         MarketOverviewData.ListingEntry listing = selectedListing();
         return listing == null ? null : data.buyBookFor(listing.commodityKey());
     }
 
     private String selectedChartDisplayName() {
+        CommodityCandleSeries candleSeries = selectedCandleSeries();
+        if (candleSeries != null && !candleSeries.displayName().isBlank()) {
+            return candleSeries.displayName();
+        }
         MarketOverviewData.PriceChartSeries series = selectedPriceChartSeries();
         if (series != null && !series.displayName().isBlank()) {
             return series.displayName();
@@ -3845,6 +4597,13 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (commodityKey == null || commodityKey.isBlank()) {
             return Component.translatable("screen.sailboatmod.market.empty").getString();
         }
+        CommodityCandleSeries candleSeries = data.candleSeriesFor(commodityKey, "1h");
+        if (candleSeries == null || candleSeries.displayName().isBlank()) {
+            candleSeries = data.candleSeriesFor(commodityKey, "1d");
+        }
+        if (candleSeries != null && !candleSeries.displayName().isBlank()) {
+            return candleSeries.displayName();
+        }
         MarketOverviewData.CommodityBuyBook buyBook = data.buyBookFor(commodityKey);
         if (buyBook != null && !buyBook.displayName().isBlank()) {
             return buyBook.displayName();
@@ -3859,6 +4618,54 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
         }
         return commodityKey;
+    }
+
+    private String displayCategoryLabel(String category) {
+        if (category == null || category.isBlank()) {
+            return Component.translatable("screen.sailboatmod.market.empty").getString();
+        }
+        String normalized = category.trim().toLowerCase(Locale.ROOT);
+        String translated = Component.translatable("screen.sailboatmod.market.category." + normalized).getString();
+        if (!translated.equals("screen.sailboatmod.market.category." + normalized)) {
+            return translated;
+        }
+        String fallback = normalized.replace('_', ' ').replace('-', ' ').trim();
+        if (fallback.isBlank()) {
+            return Component.translatable("screen.sailboatmod.market.empty").getString();
+        }
+        return Character.toUpperCase(fallback.charAt(0)) + fallback.substring(1);
+    }
+
+    private List<ChartCandlePoint> chartCandles(CommodityCandleSeries candleSeries, MarketOverviewData.PriceChartSeries series) {
+        List<ChartCandlePoint> candles = new ArrayList<>();
+        if (candleSeries != null && !candleSeries.points().isEmpty()) {
+            for (CommodityCandlePoint point : candleSeries.points()) {
+                candles.add(new ChartCandlePoint(
+                        point.bucketAt(),
+                        point.openUnitPrice(),
+                        point.highUnitPrice(),
+                        point.lowUnitPrice(),
+                        point.closeUnitPrice(),
+                        point.volume(),
+                        point.tradeCount()
+                ));
+            }
+            return candles;
+        }
+        if (series != null && !series.points().isEmpty()) {
+            for (MarketOverviewData.PriceChartPoint point : series.points()) {
+                candles.add(new ChartCandlePoint(
+                        point.bucketAt(),
+                        point.averageUnitPrice(),
+                        point.maxUnitPrice(),
+                        point.minUnitPrice(),
+                        point.averageUnitPrice(),
+                        point.volume(),
+                        point.tradeCount()
+                ));
+            }
+        }
+        return candles;
     }
 
     private ItemStack resolveCommodityStack(String commodityKey) {
@@ -3877,7 +4684,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private String rarityLabel(int rarity) {
-        return Component.translatable("screen.sailboatmod.market.rarity." + switch (clamp(rarity, 0, 4)) {
+        return Component.translatable("screen.sailboatmod.market.rarity." + switch (clamp(rarity, 0, 5)) {
+            case 5 -> "extraordinary";
             case 4 -> "legend";
             case 3 -> "epic";
             case 2 -> "rare";
@@ -3887,8 +4695,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private Color rarityColor(int rarity) {
-        return switch (clamp(rarity, 0, 4)) {
-            case 4 -> new Color(205, 92, 92, 235);
+        return switch (clamp(rarity, 0, 5)) {
+            case 5 -> new Color(214, 58, 71, 235);
+            case 4 -> new Color(224, 128, 54, 235);
             case 3 -> new Color(134, 92, 190, 235);
             case 2 -> new Color(72, 128, 206, 235);
             case 1 -> new Color(86, 154, 96, 235);
@@ -3911,6 +4720,56 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         return (shortForm ? CHART_SHORT_TIME_FORMAT : CHART_TIME_FORMAT)
                 .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDateTime());
+    }
+
+    private double chartChangeRatio(List<ChartCandlePoint> points) {
+        if (points == null || points.size() < 2) {
+            return 0D;
+        }
+        double first = Math.max(1, points.get(0).openPrice());
+        double last = points.get(points.size() - 1).closePrice();
+        return (last - first) / first;
+    }
+
+    private double chartVolatility(List<ChartCandlePoint> points) {
+        if (points == null || points.isEmpty()) {
+            return 0D;
+        }
+        double total = 0D;
+        for (ChartCandlePoint point : points) {
+            total += point.closePrice();
+        }
+        double mean = total / points.size();
+        if (mean <= 0D) {
+            return 0D;
+        }
+        double variance = 0D;
+        for (ChartCandlePoint point : points) {
+            double diff = point.closePrice() - mean;
+            variance += diff * diff;
+        }
+        variance /= Math.max(1, points.size());
+        return Math.sqrt(variance) / mean;
+    }
+
+    private double chartMaxDrawdown(List<ChartCandlePoint> points) {
+        if (points == null || points.isEmpty()) {
+            return 0D;
+        }
+        double peak = points.get(0).closePrice();
+        double maxDrawdown = 0D;
+        for (ChartCandlePoint point : points) {
+            peak = Math.max(peak, point.closePrice());
+            if (peak > 0D) {
+                maxDrawdown = Math.max(maxDrawdown, (peak - point.closePrice()) / peak);
+            }
+        }
+        return maxDrawdown;
+    }
+
+    private String formatSignedPercent(double value) {
+        String sign = value > 0D ? "+" : "";
+        return String.format(Locale.ROOT, "%s%.2f%%", sign, value * 100D);
     }
 
     private int estimateBuyOrderPrice(int marketUnitPrice, int adjustmentBp) {
@@ -3953,6 +4812,17 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return total;
     }
 
+    private record ChartCandlePoint(
+            long bucketAt,
+            int openPrice,
+            int highPrice,
+            int lowPrice,
+            int closePrice,
+            int volume,
+            int tradeCount
+    ) {
+    }
+
     private MetricCard metric(String label, String value, Color accent) {
         return new MetricCard(label, value, accent);
     }
@@ -3966,11 +4836,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 "", "", 0, 0, 0, 0, 0, 0L, 0L, 0L, 0.0F,
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
     }
 
     private enum MarketPage {
         GOODS("screen.sailboatmod.market.page.goods", "screen.sailboatmod.market.page.kicker.goods"),
+        MARKET_INDEX("screen.sailboatmod.market.page.market_index", "screen.sailboatmod.market.page.kicker.market_index"),
         SELL("screen.sailboatmod.market.page.sell", "screen.sailboatmod.market.page.kicker.sell"),
         DISPATCH("screen.sailboatmod.market.page.dispatch", "screen.sailboatmod.market.page.kicker.dispatch"),
         FINANCE("screen.sailboatmod.market.page.finance", "screen.sailboatmod.market.page.kicker.finance"),
@@ -3997,6 +4868,18 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         PRICE_CHART
     }
 
+    private enum ChartTimeframe {
+        ONE_HOUR("1h"),
+        ONE_DAY("1d"),
+        ONE_WEEK("1w");
+
+        private final String key;
+
+        ChartTimeframe(String key) {
+            this.key = key;
+        }
+    }
+
     private enum GoodsCatalogSort {
         PRICE_DESC("screen.sailboatmod.market.catalog.sort.price"),
         STOCK_DESC("screen.sailboatmod.market.catalog.sort.stock"),
@@ -4010,26 +4893,76 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private enum GoodsCategoryFilter {
+        ALL("screen.sailboatmod.market.catalog.filter.all", ""),
+        ALCHEMY("screen.sailboatmod.market.category.alchemy", "alchemy"),
+        ARMOR("screen.sailboatmod.market.category.armor", "armor"),
+        BUILDING("screen.sailboatmod.market.category.building", "building"),
+        CROP("screen.sailboatmod.market.category.crop", "crop"),
+        END("screen.sailboatmod.market.category.end", "end"),
+        FOOD("screen.sailboatmod.market.category.food", "food"),
+        GEMS("screen.sailboatmod.market.category.gems", "gems"),
+        MATERIAL("screen.sailboatmod.market.category.material", "material"),
+        METAL("screen.sailboatmod.market.category.metal", "metal"),
+        MOB_DROP("screen.sailboatmod.market.category.mob_drop", "mob_drop"),
+        NETHER("screen.sailboatmod.market.category.nether", "nether"),
+        ORE("screen.sailboatmod.market.category.ore", "ore"),
+        PLANT("screen.sailboatmod.market.category.plant", "plant"),
+        REDSTONE("screen.sailboatmod.market.category.redstone", "redstone"),
+        TREASURE("screen.sailboatmod.market.category.treasure", "treasure"),
+        UTILITY("screen.sailboatmod.market.category.utility", "utility"),
+        WEAPON("screen.sailboatmod.market.category.weapon", "weapon"),
+        WOOD("screen.sailboatmod.market.category.wood", "wood");
+
+        private final String labelKey;
+        private final String categoryId;
+
+        GoodsCategoryFilter(String labelKey, String categoryId) {
+            this.labelKey = labelKey;
+            this.categoryId = categoryId;
+        }
+
+        private String label() {
+            return Component.translatable(labelKey).getString();
+        }
+
+        private String labelKey() {
+            return labelKey;
+        }
+
+        private boolean matches(MarketOverviewData.ListingEntry entry) {
+            if (this == ALL) {
+                return true;
+            }
+            String category = entry == null || entry.category() == null ? "" : entry.category().trim().toLowerCase(Locale.ROOT);
+            return categoryId.equals(category);
+        }
+    }
+
+    private enum GoodsRarityFilter {
         ALL("screen.sailboatmod.market.catalog.filter.all"),
         COMMON("screen.sailboatmod.market.catalog.filter.common"),
         UNCOMMON("screen.sailboatmod.market.catalog.filter.uncommon"),
         RARE("screen.sailboatmod.market.catalog.filter.rare"),
-        EPIC("screen.sailboatmod.market.catalog.filter.epic");
+        EPIC("screen.sailboatmod.market.catalog.filter.epic"),
+        LEGEND("screen.sailboatmod.market.catalog.filter.legend"),
+        EXTRAORDINARY("screen.sailboatmod.market.catalog.filter.extraordinary");
 
         private final String labelKey;
 
-        GoodsCategoryFilter(String labelKey) {
+        GoodsRarityFilter(String labelKey) {
             this.labelKey = labelKey;
         }
 
         private boolean matches(MarketOverviewData.ListingEntry entry) {
-            int rarity = entry == null ? 0 : entry.rarity();
+            int rarity = entry == null ? 0 : Math.max(0, Math.min(5, entry.rarity()));
             return switch (this) {
                 case ALL -> true;
                 case COMMON -> rarity == 0;
                 case UNCOMMON -> rarity == 1;
                 case RARE -> rarity == 2;
                 case EPIC -> rarity == 3;
+                case LEGEND -> rarity == 4;
+                case EXTRAORDINARY -> rarity == 5;
             };
         }
     }
@@ -4070,6 +5003,61 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private record HotCommodity(String commodityKey, String itemName, int listingIndex, int heatScore, String summary) {
+    }
+
+    private static final class ChartViewportState {
+        private final int minWindow;
+        private final int maxWindow;
+        private final int zoomStep;
+        private final int panStep;
+        private int windowSize;
+        private int offsetFromEnd;
+
+        private ChartViewportState(int initialWindow, int minWindow, int maxWindow, int panStep) {
+            this.windowSize = Math.max(1, initialWindow);
+            this.minWindow = Math.max(1, minWindow);
+            this.maxWindow = Math.max(this.minWindow, maxWindow);
+            this.zoomStep = Math.max(1, Math.max(2, initialWindow / 6));
+            this.panStep = Math.max(1, panStep);
+        }
+
+        private void clamp(int totalPoints) {
+            if (totalPoints <= 0) {
+                windowSize = Math.max(1, minWindow);
+                offsetFromEnd = 0;
+                return;
+            }
+            int upperWindow = Math.max(minWindow, Math.min(maxWindow, totalPoints));
+            windowSize = Math.max(minWindow, Math.min(windowSize, upperWindow));
+            int maxOffset = Math.max(0, totalPoints - windowSize);
+            offsetFromEnd = Math.max(0, Math.min(offsetFromEnd, maxOffset));
+        }
+
+        private void zoomBy(int direction) {
+            windowSize += direction * zoomStep;
+            if (windowSize < minWindow) {
+                windowSize = minWindow;
+            }
+            if (windowSize > maxWindow) {
+                windowSize = maxWindow;
+            }
+        }
+
+        private void panOlder() {
+            offsetFromEnd += panStep;
+        }
+
+        private void panNewer() {
+            offsetFromEnd = Math.max(0, offsetFromEnd - panStep);
+        }
+
+        private int windowSize() {
+            return windowSize;
+        }
+
+        private int offsetFromEnd() {
+            return offsetFromEnd;
+        }
     }
 
     private static final class ItemIconComponent extends UIBlock {

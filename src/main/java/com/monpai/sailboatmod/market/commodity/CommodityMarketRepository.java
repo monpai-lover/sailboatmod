@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.commodity;
 
+import com.monpai.sailboatmod.market.analytics.CommodityTradeTick;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
 
 import java.sql.Connection;
@@ -10,6 +12,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class CommodityMarketRepository {
+    public record CommodityStateRow(
+            CommodityDefinition definition,
+            CommodityMarketState state
+    ) {
+    }
+
     public CommodityDefinition getDefinition(String commodityKey) throws SQLException {
         try (PreparedStatement statement = connection().prepareStatement(
                 "SELECT commodity_key, item_id, variant_key, display_name, unit_size, category, trade_enabled, rarity, importance, volume, elasticity, base_volatility FROM commodity_definition WHERE commodity_key = ?")) {
@@ -301,6 +309,152 @@ public final class CommodityMarketRepository {
                 "UPDATE buy_order SET status = ? WHERE order_id = ?")) {
             statement.setString(1, status);
             statement.setString(2, orderId);
+            statement.executeUpdate();
+        }
+    }
+
+    public List<CommodityStateRow> listAllCommodityStates() throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                SELECT
+                    d.commodity_key, d.item_id, d.variant_key, d.display_name, d.unit_size, d.category, d.trade_enabled, d.rarity, d.importance, d.volume, d.elasticity, d.base_volatility,
+                    s.base_price, s.current_stock, s.volatility, s.spread_bp, s.stock_floor, s.stock_ceil, s.price_floor, s.price_ceil, s.last_trade_at, s.updated_at, s.version
+                FROM commodity_definition d
+                JOIN commodity_market_state s ON s.commodity_key = d.commodity_key
+                ORDER BY d.display_name COLLATE NOCASE ASC
+                """)) {
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<CommodityStateRow> rows = new ArrayList<>();
+                while (resultSet.next()) {
+                    CommodityDefinition definition = new CommodityDefinition(
+                            resultSet.getString("commodity_key"),
+                            resultSet.getString("item_id"),
+                            resultSet.getString("variant_key"),
+                            resultSet.getString("display_name"),
+                            resultSet.getInt("unit_size"),
+                            resultSet.getString("category"),
+                            resultSet.getInt("trade_enabled") == 1,
+                            resultSet.getInt("rarity"),
+                            resultSet.getInt("importance"),
+                            resultSet.getInt("volume"),
+                            resultSet.getInt("elasticity"),
+                            resultSet.getInt("base_volatility")
+                    );
+                    CommodityMarketState state = new CommodityMarketState(
+                            resultSet.getString("commodity_key"),
+                            resultSet.getInt("base_price"),
+                            resultSet.getInt("current_stock"),
+                            resultSet.getInt("volatility"),
+                            resultSet.getInt("spread_bp"),
+                            resultSet.getInt("stock_floor"),
+                            resultSet.getInt("stock_ceil"),
+                            resultSet.getInt("price_floor"),
+                            resultSet.getInt("price_ceil"),
+                            resultSet.getLong("last_trade_at"),
+                            resultSet.getLong("updated_at"),
+                            resultSet.getInt("version")
+                    );
+                    rows.add(new CommodityStateRow(definition, state));
+                }
+                return rows;
+            }
+        }
+    }
+
+    public List<CommodityTradeTick> listTradeTicks(String commodityKey, long sinceInclusive) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                SELECT created_at, unit_price, quantity
+                FROM commodity_trade_history
+                WHERE commodity_key = ? AND created_at >= ?
+                ORDER BY created_at ASC, id ASC
+                """)) {
+            statement.setString(1, commodityKey);
+            statement.setLong(2, sinceInclusive);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<CommodityTradeTick> ticks = new ArrayList<>();
+                while (resultSet.next()) {
+                    ticks.add(new CommodityTradeTick(
+                            resultSet.getLong("created_at"),
+                            resultSet.getInt("unit_price"),
+                            resultSet.getInt("quantity")
+                    ));
+                }
+                return ticks;
+            }
+        }
+    }
+
+    public void upsertAnalyticsSnapshot(String seriesType, String seriesKey, long bucketAt,
+                                        int openValue, int highValue, int lowValue, int closeValue,
+                                        int volume, int tradeCount) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                INSERT INTO market_analytics_snapshot (series_type, series_key, bucket_at, open_value, high_value, low_value, close_value, volume, trade_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(series_type, series_key, bucket_at) DO UPDATE SET
+                    open_value = excluded.open_value,
+                    high_value = excluded.high_value,
+                    low_value = excluded.low_value,
+                    close_value = excluded.close_value,
+                    volume = excluded.volume,
+                    trade_count = excluded.trade_count
+                """)) {
+            statement.setString(1, seriesType);
+            statement.setString(2, seriesKey);
+            statement.setLong(3, bucketAt);
+            statement.setInt(4, openValue);
+            statement.setInt(5, highValue);
+            statement.setInt(6, lowValue);
+            statement.setInt(7, closeValue);
+            statement.setInt(8, volume);
+            statement.setInt(9, tradeCount);
+            statement.executeUpdate();
+        }
+    }
+
+    public List<MarketAnalyticsPoint> listAnalyticsSeries(String seriesType, String seriesKey, int limit) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                SELECT bucket_at, close_value, volume, trade_count
+                FROM market_analytics_snapshot
+                WHERE series_type = ? AND series_key = ?
+                ORDER BY bucket_at DESC
+                LIMIT ?
+                """)) {
+            statement.setString(1, seriesType);
+            statement.setString(2, seriesKey);
+            statement.setInt(3, limit);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<MarketAnalyticsPoint> points = new ArrayList<>();
+                while (resultSet.next()) {
+                    points.add(0, new MarketAnalyticsPoint(
+                            resultSet.getLong("bucket_at"),
+                            resultSet.getInt("close_value"),
+                            resultSet.getInt("volume"),
+                            resultSet.getInt("trade_count")
+                    ));
+                }
+                return points;
+            }
+        }
+    }
+
+    public long latestAnalyticsBucket(String seriesType, String seriesKey) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                "SELECT MAX(bucket_at) AS bucket_at FROM market_analytics_snapshot WHERE series_type = ? AND series_key = ?")) {
+            statement.setString(1, seriesType);
+            statement.setString(2, seriesKey);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getLong("bucket_at") : 0L;
+            }
+        }
+    }
+
+    public void deleteAnalyticsSnapshotsBefore(long cutoff) throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                "DELETE FROM market_analytics_snapshot WHERE bucket_at < ?")) {
+            statement.setLong(1, cutoff);
             statement.executeUpdate();
         }
     }

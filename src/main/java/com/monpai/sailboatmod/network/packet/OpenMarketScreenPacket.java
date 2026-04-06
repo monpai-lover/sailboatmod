@@ -2,6 +2,11 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.MarketClientHooks;
 import com.monpai.sailboatmod.market.MarketOverviewData;
+import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
+import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
+import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
@@ -59,6 +64,9 @@ public class OpenMarketScreenPacket {
         writeBuyOrderEntries(buffer, data.buyOrderEntries());
         writePriceChartSeries(buffer, data.priceChartSeries());
         writeCommodityBuyBooks(buffer, data.commodityBuyBooks());
+        writeCandleSeries(buffer, data.candleSeries());
+        writeImpactSnapshots(buffer, data.commodityImpactSnapshots());
+        writeAnalyticsSeries(buffer, data.analyticsSeries());
     }
 
     public static OpenMarketScreenPacket decode(FriendlyByteBuf buffer) {
@@ -100,6 +108,9 @@ public class OpenMarketScreenPacket {
         List<MarketOverviewData.BuyOrderEntry> buyOrderEntries = readBuyOrderEntries(buffer);
         List<MarketOverviewData.PriceChartSeries> priceChartSeries = readPriceChartSeries(buffer);
         List<MarketOverviewData.CommodityBuyBook> commodityBuyBooks = readCommodityBuyBooks(buffer);
+        List<CommodityCandleSeries> candleSeries = readCandleSeries(buffer);
+        List<CommodityImpactSnapshot> impactSnapshots = readImpactSnapshots(buffer);
+        List<MarketAnalyticsSeries> analyticsSeries = readAnalyticsSeries(buffer);
         return new OpenMarketScreenPacket(new MarketOverviewData(
                 marketPos,
                 marketName,
@@ -138,7 +149,10 @@ public class OpenMarketScreenPacket {
                 shippingEntries,
                 buyOrderEntries,
                 priceChartSeries,
-                commodityBuyBooks
+                commodityBuyBooks,
+                candleSeries,
+                impactSnapshots,
+                analyticsSeries
         ));
     }
 
@@ -398,5 +412,117 @@ public class OpenMarketScreenPacket {
             buyBooks.add(new MarketOverviewData.CommodityBuyBook(commodityKey, displayName, entries));
         }
         return buyBooks;
+    }
+
+    private static void writeCandleSeries(FriendlyByteBuf buffer, List<CommodityCandleSeries> seriesList) {
+        buffer.writeVarInt(seriesList.size());
+        for (CommodityCandleSeries series : seriesList) {
+            PacketStringCodec.writeUtfSafe(buffer, series.commodityKey(), 128);
+            PacketStringCodec.writeUtfSafe(buffer, series.displayName(), 96);
+            PacketStringCodec.writeUtfSafe(buffer, series.timeframe(), 8);
+            buffer.writeVarInt(series.points().size());
+            for (CommodityCandlePoint point : series.points()) {
+                buffer.writeLong(point.bucketAt());
+                buffer.writeVarInt(point.openUnitPrice());
+                buffer.writeVarInt(point.highUnitPrice());
+                buffer.writeVarInt(point.lowUnitPrice());
+                buffer.writeVarInt(point.closeUnitPrice());
+                buffer.writeVarInt(point.volume());
+                buffer.writeVarInt(point.tradeCount());
+            }
+        }
+    }
+
+    private static List<CommodityCandleSeries> readCandleSeries(FriendlyByteBuf buffer) {
+        int count = buffer.readVarInt();
+        List<CommodityCandleSeries> seriesList = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String commodityKey = buffer.readUtf(128);
+            String displayName = buffer.readUtf(96);
+            String timeframe = buffer.readUtf(8);
+            int pointCount = buffer.readVarInt();
+            List<CommodityCandlePoint> points = new ArrayList<>(pointCount);
+            for (int j = 0; j < pointCount; j++) {
+                points.add(new CommodityCandlePoint(
+                        buffer.readLong(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt()
+                ));
+            }
+            seriesList.add(new CommodityCandleSeries(commodityKey, displayName, timeframe, points));
+        }
+        return seriesList;
+    }
+
+    private static void writeImpactSnapshots(FriendlyByteBuf buffer, List<CommodityImpactSnapshot> snapshots) {
+        buffer.writeVarInt(snapshots.size());
+        for (CommodityImpactSnapshot snapshot : snapshots) {
+            PacketStringCodec.writeUtfSafe(buffer, snapshot.commodityKey(), 128);
+            buffer.writeVarInt(snapshot.referenceUnitPrice());
+            buffer.writeVarInt(snapshot.currentClosePrice());
+            buffer.writeVarInt(snapshot.liquidityScore());
+            buffer.writeVarInt(snapshot.inventoryPressureBp());
+            buffer.writeVarInt(snapshot.buyPressureBp());
+            buffer.writeVarInt(snapshot.volatilityBp());
+        }
+    }
+
+    private static List<CommodityImpactSnapshot> readImpactSnapshots(FriendlyByteBuf buffer) {
+        int count = buffer.readVarInt();
+        List<CommodityImpactSnapshot> snapshots = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            snapshots.add(new CommodityImpactSnapshot(
+                    buffer.readUtf(128),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readVarInt()
+            ));
+        }
+        return snapshots;
+    }
+
+    private static void writeAnalyticsSeries(FriendlyByteBuf buffer, List<MarketAnalyticsSeries> seriesList) {
+        buffer.writeVarInt(seriesList.size());
+        for (MarketAnalyticsSeries series : seriesList) {
+            PacketStringCodec.writeUtfSafe(buffer, series.scopeType(), 32);
+            PacketStringCodec.writeUtfSafe(buffer, series.scopeKey(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, series.displayName(), 96);
+            buffer.writeVarInt(series.points().size());
+            for (MarketAnalyticsPoint point : series.points()) {
+                buffer.writeLong(point.bucketAt());
+                buffer.writeVarInt(point.value());
+                buffer.writeVarInt(point.volume());
+                buffer.writeVarInt(point.tradeCount());
+            }
+        }
+    }
+
+    private static List<MarketAnalyticsSeries> readAnalyticsSeries(FriendlyByteBuf buffer) {
+        int count = buffer.readVarInt();
+        List<MarketAnalyticsSeries> seriesList = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String scopeType = buffer.readUtf(32);
+            String scopeKey = buffer.readUtf(64);
+            String displayName = buffer.readUtf(96);
+            int pointCount = buffer.readVarInt();
+            List<MarketAnalyticsPoint> points = new ArrayList<>(pointCount);
+            for (int j = 0; j < pointCount; j++) {
+                points.add(new MarketAnalyticsPoint(
+                        buffer.readLong(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt()
+                ));
+            }
+            seriesList.add(new MarketAnalyticsSeries(scopeType, scopeKey, displayName, points));
+        }
+        return seriesList;
     }
 }

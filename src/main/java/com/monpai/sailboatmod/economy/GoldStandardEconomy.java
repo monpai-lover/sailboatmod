@@ -91,6 +91,22 @@ public final class GoldStandardEconomy {
         return VaultEconomyBridge.tryDepositByIdentity(playerUuid, playerName, saturatingInt(amount));
     }
 
+    public static long getBalance(Player player) {
+        if (player == null) {
+            return 0L;
+        }
+        long vault = getBalanceByIdentity(player.getUUID(), player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName());
+        if (vault > 0L) {
+            return vault;
+        }
+        return countPhysicalGoldBalance(player.getInventory());
+    }
+
+    public static long getBalanceByIdentity(@Nullable UUID playerUuid, String playerName) {
+        Long vault = VaultEconomyBridge.getBalanceByIdentity(playerUuid, playerName);
+        return vault == null ? 0L : Math.max(0L, vault);
+    }
+
     private static boolean withdrawPhysicalGold(Player player, int amount) {
         Inventory inventory = player.getInventory();
         int total = countPhysicalGoldBalance(inventory);

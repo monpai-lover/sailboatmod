@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationOfficeRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
+import com.monpai.sailboatmod.nation.model.LoanAccountRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.model.TownNationRequestRecord;
 import com.monpai.sailboatmod.nation.model.NationWarRecord;
@@ -45,6 +46,8 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationDiplomacyRequestRecord> diplomacyRequests = new LinkedHashMap<>();
     private final Map<String, TownNationRequestRecord> townNationRequests = new LinkedHashMap<>();
     private final Map<String, NationTreasuryRecord> treasuries = new LinkedHashMap<>();
+    private final Map<String, LoanAccountRecord> nationLoans = new LinkedHashMap<>();
+    private final Map<UUID, LoanAccountRecord> personalLoans = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.PeaceProposalRecord> peaceProposals = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.PlacedStructureRecord> placedStructures = new LinkedHashMap<>();
     private final Map<String, com.monpai.sailboatmod.nation.model.RoadNetworkRecord> roadNetworks = new LinkedHashMap<>();
@@ -230,6 +233,29 @@ public class NationSavedData extends SavedData {
             }
         }
 
+        ListTag nationLoanTag = tag.getList("NationLoans", Tag.TAG_COMPOUND);
+        for (Tag raw : nationLoanTag) {
+            if (raw instanceof CompoundTag compound) {
+                LoanAccountRecord account = LoanAccountRecord.load(compound);
+                if (!account.accountId().isBlank()) {
+                    data.nationLoans.put(account.accountId(), account);
+                }
+            }
+        }
+
+        ListTag personalLoanTag = tag.getList("PersonalLoans", Tag.TAG_COMPOUND);
+        for (Tag raw : personalLoanTag) {
+            if (raw instanceof CompoundTag compound) {
+                LoanAccountRecord account = LoanAccountRecord.load(compound);
+                if (!account.accountId().isBlank()) {
+                    try {
+                        data.personalLoans.put(UUID.fromString(account.accountId()), account);
+                    } catch (IllegalArgumentException ignored) {
+                    }
+                }
+            }
+        }
+
         return data;
     }
 
@@ -340,6 +366,18 @@ public class NationSavedData extends SavedData {
             treasuryTag.add(treasury.save());
         }
         tag.put("Treasuries", treasuryTag);
+
+        ListTag nationLoanTag = new ListTag();
+        for (LoanAccountRecord loan : nationLoans.values()) {
+            nationLoanTag.add(loan.save());
+        }
+        tag.put("NationLoans", nationLoanTag);
+
+        ListTag personalLoanTag = new ListTag();
+        for (LoanAccountRecord loan : personalLoans.values()) {
+            personalLoanTag.add(loan.save());
+        }
+        tag.put("PersonalLoans", personalLoanTag);
         return tag;
     }
 
@@ -845,6 +883,57 @@ public class NationSavedData extends SavedData {
         if (treasury == null || treasury.nationId().isBlank()) return;
         treasuries.put(treasury.nationId(), treasury);
         setDirty();
+    }
+
+    public LoanAccountRecord getNationLoan(String nationId) {
+        String normalized = normalizeId(nationId);
+        if (normalized.isBlank()) {
+            return LoanAccountRecord.empty("");
+        }
+        return nationLoans.getOrDefault(normalized, LoanAccountRecord.empty(normalized));
+    }
+
+    public void putNationLoan(LoanAccountRecord loan) {
+        if (loan == null || loan.accountId().isBlank()) {
+            return;
+        }
+        if (!loan.active() && !loan.delinquent()) {
+            nationLoans.remove(loan.accountId());
+        } else {
+            nationLoans.put(loan.accountId(), loan);
+        }
+        setDirty();
+    }
+
+    public Collection<LoanAccountRecord> getNationLoans() {
+        return List.copyOf(nationLoans.values());
+    }
+
+    public LoanAccountRecord getPersonalLoan(UUID playerUuid) {
+        if (playerUuid == null) {
+            return LoanAccountRecord.empty("");
+        }
+        return personalLoans.getOrDefault(playerUuid, LoanAccountRecord.empty(playerUuid.toString()));
+    }
+
+    public void putPersonalLoan(LoanAccountRecord loan) {
+        if (loan == null || loan.accountId().isBlank()) {
+            return;
+        }
+        try {
+            UUID playerUuid = UUID.fromString(loan.accountId());
+            if (!loan.active() && !loan.delinquent()) {
+                personalLoans.remove(playerUuid);
+            } else {
+                personalLoans.put(playerUuid, loan);
+            }
+            setDirty();
+        } catch (IllegalArgumentException ignored) {
+        }
+    }
+
+    public Collection<LoanAccountRecord> getPersonalLoans() {
+        return List.copyOf(personalLoans.values());
     }
 
     public void removeTreasury(String nationId) {

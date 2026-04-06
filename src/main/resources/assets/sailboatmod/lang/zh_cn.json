@@ -164,6 +164,7 @@
     "screen.sailboatmod.market.page.dispatch":  "发运",
     "screen.sailboatmod.market.page.finance":  "结算",
     "screen.sailboatmod.market.page.buy_orders":  "求购订单",
+    "screen.sailboatmod.market.page.market_index":  "大盘指数",
     "screen.sailboatmod.market.market_overview":  "商城总览",
     "screen.sailboatmod.market.market_overview_hint":  "先在商品总览中选择商品，再切换到在售、求购或价格走势子页。",
     "screen.sailboatmod.market.hot_title":  "热门推荐：点击卡片可直接跳转到对应商品。",
@@ -193,8 +194,8 @@
     "screen.sailboatmod.market.tab.goods":  "商品",
     "screen.sailboatmod.market.goods_subtab.market":  "在售",
     "screen.sailboatmod.market.goods_subtab.buying":  "求购",
-    "screen.sailboatmod.market.price_chart":  "价格走势",
-    "screen.sailboatmod.market.price_chart.empty":  "该商品暂无成交历史。",
+    "screen.sailboatmod.market.price_chart":  "K线图",
+    "screen.sailboatmod.market.price_chart.empty":  "该商品暂无K线数据。",
     "screen.sailboatmod.market.price_chart.latest":  "最新",
     "screen.sailboatmod.market.price_chart.high":  "最高",
     "screen.sailboatmod.market.price_chart.low":  "最低",
@@ -932,6 +933,9 @@
     "item.sailboatmod.bank_block.desc":  "银行方块，可向国库存取货币和物品。",
     "screen.sailboatmod.bank.amount":  "金额",
     "screen.sailboatmod.bank.currency_label":  "金本位国库",
+    "screen.sailboatmod.bank.treasury_tab":  "国库",
+    "screen.sailboatmod.bank.loan_tab":  "贷款",
+    "screen.sailboatmod.bank.ledger_tab":  "账本",
     "screen.sailboatmod.bank.amount_label":  "输入金额:",
     "screen.sailboatmod.bank.deposit":  "存入",
     "screen.sailboatmod.bank.withdraw":  "取出",
@@ -943,11 +947,46 @@
     "screen.sailboatmod.bank.withdrawing_item":  "正在取出物品...",
     "screen.sailboatmod.bank.depositor":  "存入人: %s",
     "screen.sailboatmod.bank.item_label":  "物品操作",
-    "screen.sailboatmod.bank.item_hint":  "手持物品点击存入。",
+    "screen.sailboatmod.bank.loan_personal":  "个人贷款",
+    "screen.sailboatmod.bank.loan_nation":  "国家贷款",
+    "screen.sailboatmod.bank.loan_disabled":  "未启用",
+    "screen.sailboatmod.bank.loan_outstanding":  "未偿还：%s",
+    "screen.sailboatmod.bank.loan_max":  "最大可借：%s",
+    "screen.sailboatmod.bank.loan_interest":  "下次利息：%s",
+    "screen.sailboatmod.bank.loan_due":  "到期：%s",
+    "screen.sailboatmod.bank.borrow_personal":  "个人借款",
+    "screen.sailboatmod.bank.repay_personal":  "个人还款",
+    "screen.sailboatmod.bank.borrow_nation":  "国家借款",
+    "screen.sailboatmod.bank.repay_nation":  "国家还款",
+    "screen.sailboatmod.bank.mode_treasury": "存取款",
+    "screen.sailboatmod.bank.mode_storage": "存物品",
+    "screen.sailboatmod.bank.mode_loans": "贷款还款",
+    "screen.sailboatmod.bank.storage_refresh": "刷新状态",
+    "screen.sailboatmod.bank.storage_shift_hint": "下方背包物品可用 Shift+点击直接存入，上方选择国库条目可整组取回。",
+    "screen.sailboatmod.bank.loan_borrow": "借款",
+    "screen.sailboatmod.bank.loan_repay": "还款",
+    "screen.sailboatmod.bank.loan_principal": "本金：%s",
+    "screen.sailboatmod.bank.loan_interest_total": "累计利息：%s",
+    "screen.sailboatmod.bank.loan_delinquent": "是否逾期：%s",
+    "screen.sailboatmod.bank.loan_yes": "是",
+    "screen.sailboatmod.bank.loan_no": "否",
+    "screen.sailboatmod.bank.loan_personal_hint": "个人贷款直接发放到你的钱包，并从你的钱包偿还。",
+    "screen.sailboatmod.bank.loan_nation_hint": "国家贷款直接进入国库，并从国库余额中偿还。",
+    "screen.sailboatmod.bank.item_hint":  "可直接拖拽物品、点击槽位或使用 Shift 快速存入/取出。",
+    "screen.sailboatmod.bank.storage_tab":  "存放物品",
+    "screen.sailboatmod.bank.storage_hint":  "切换到存放物品分页来管理国库物品与存入货物。",
+    "screen.sailboatmod.bank.treasury_help":  "可在此存入资金、提取余额，或将提款兑换为金条。",
     "screen.sailboatmod.nation.treasury.bank_hint":  "前往银行方块查看和管理国库物品。",
     "screen.sailboatmod.bank.depositing":  "正在存入 %s...",
     "screen.sailboatmod.bank.withdrawing":  "正在取出 %s...",
+    "screen.sailboatmod.bank.borrowing":  "正在借款 %s...",
+    "screen.sailboatmod.bank.repaying":  "正在还款 %s...",
     "screen.sailboatmod.bank.depositing_item":  "正在存入物品...",
+    "screen.sailboatmod.bank.loan_action_failed":  "贷款操作失败。",
+    "screen.sailboatmod.bank.borrow_personal_success":  "已向个人钱包发放 %s。",
+    "screen.sailboatmod.bank.repay_personal_success":  "已从个人钱包偿还 %s。",
+    "screen.sailboatmod.bank.borrow_nation_success":  "已向国库发放 %s。",
+    "screen.sailboatmod.bank.repay_nation_success":  "已从国库偿还 %s。",
     "command.sailboatmod.nation.bank.no_nation":  "此银行未关联任何国家。",
     "command.sailboatmod.nation.bank.not_member":  "你不是此国家的成员。",
     "command.sailboatmod.nation.bank.insufficient_personal":  "你的个人资金不足。",
@@ -1139,12 +1178,17 @@
     ,"screen.sailboatmod.market.catalog.sort.stock":  "库存"
     ,"screen.sailboatmod.market.catalog.sort.name":  "名称"
     ,"screen.sailboatmod.market.catalog.filter.all":  "全部"
-    ,"screen.sailboatmod.market.catalog.filter.category":  "稀有度"
+    ,"screen.sailboatmod.market.catalog.filter.category":  "类别"
+    ,"screen.sailboatmod.market.catalog.filter.rarity":  "稀有度"
     ,"screen.sailboatmod.market.catalog.filter.price":  "价格"
     ,"screen.sailboatmod.market.catalog.filter.common":  "普通"
     ,"screen.sailboatmod.market.catalog.filter.uncommon":  "罕见"
     ,"screen.sailboatmod.market.catalog.filter.rare":  "稀有"
     ,"screen.sailboatmod.market.catalog.filter.epic":  "史诗"
+    ,"screen.sailboatmod.market.catalog.filter.legend":  "传说"
+    ,"screen.sailboatmod.market.catalog.filter.extraordinary":  "非凡"
+    ,"screen.sailboatmod.market.catalog.filter.category_selected":  "类别：%s"
+    ,"screen.sailboatmod.market.catalog.filter.rarity_selected":  "稀有度：%s"
     ,"screen.sailboatmod.market.catalog.filter.wood":  "木材"
     ,"screen.sailboatmod.market.catalog.filter.luxury":  "奢侈"
     ,"screen.sailboatmod.market.catalog.filter.other":  "其他"
@@ -1173,11 +1217,11 @@
     ,"screen.sailboatmod.market.goods_primary.purchase": "商品购买"
     ,"screen.sailboatmod.market.goods_primary.browse_hint": "简洁浏览商品卡片，先选商品，再进入商品购买查看详细信息"
     ,"screen.sailboatmod.market.goods_primary.browse_state": "市场卡片视图"
-    ,"screen.sailboatmod.market.goods_primary.seller_state": "卖家列表 / 求购 / 历史走势"
-    ,"screen.sailboatmod.market.goods_primary.detail_state": "商品详细信息 / 求购 / 历史走势"
+    ,"screen.sailboatmod.market.goods_primary.seller_state": "卖家列表 / 求购 / K线"
+    ,"screen.sailboatmod.market.goods_primary.detail_state": "商品详细信息 / 求购 / K线"
     ,"screen.sailboatmod.market.goods.back_market": "返回市场"
     ,"screen.sailboatmod.market.goods_subtab.selling": "在售"
-    ,"screen.sailboatmod.market.goods_subtab.history": "历史成交"
+    ,"screen.sailboatmod.market.goods_subtab.history": "K线"
     ,"screen.sailboatmod.market.goods.current_listing_count": "当前在售（%s）"
     ,"screen.sailboatmod.market.goods.switch_seller_hint": "点击下方卖家切换购买对象"
     ,"screen.sailboatmod.market.goods.go_sell": "前往上架"
@@ -1232,11 +1276,30 @@
     ,"screen.sailboatmod.market.goods.quantity_line": "数量 x%s"
     ,"screen.sailboatmod.market.goods.current_selected": "当前选择"
     ,"screen.sailboatmod.market.goods.click_view": "点击查看"
+    ,"screen.sailboatmod.market.rarity.extraordinary": "非凡"
     ,"screen.sailboatmod.market.rarity.legend": "传说"
     ,"screen.sailboatmod.market.rarity.epic": "史诗"
     ,"screen.sailboatmod.market.rarity.rare": "稀有"
     ,"screen.sailboatmod.market.rarity.uncommon": "罕见"
     ,"screen.sailboatmod.market.rarity.common": "普通"
+    ,"screen.sailboatmod.market.category.alchemy": "炼药"
+    ,"screen.sailboatmod.market.category.armor": "护甲"
+    ,"screen.sailboatmod.market.category.building": "建筑"
+    ,"screen.sailboatmod.market.category.crop": "农作物"
+    ,"screen.sailboatmod.market.category.end": "末地"
+    ,"screen.sailboatmod.market.category.food": "食物"
+    ,"screen.sailboatmod.market.category.gems": "宝石"
+    ,"screen.sailboatmod.market.category.material": "材料"
+    ,"screen.sailboatmod.market.category.metal": "金属"
+    ,"screen.sailboatmod.market.category.mob_drop": "怪物掉落"
+    ,"screen.sailboatmod.market.category.nether": "下界"
+    ,"screen.sailboatmod.market.category.ore": "矿石"
+    ,"screen.sailboatmod.market.category.plant": "植物"
+    ,"screen.sailboatmod.market.category.redstone": "红石"
+    ,"screen.sailboatmod.market.category.treasure": "宝物"
+    ,"screen.sailboatmod.market.category.utility": "工具杂项"
+    ,"screen.sailboatmod.market.category.weapon": "武器"
+    ,"screen.sailboatmod.market.category.wood": "木材"
     ,"screen.sailboatmod.market.price_chart.buckets": "%s 个时段"
     ,"screen.sailboatmod.market.price_chart.window_value": "%s：%s - %s"
     ,"screen.sailboatmod.market.price_chart.single_value": "%s：%s"
@@ -1252,6 +1315,28 @@
     ,"screen.sailboatmod.market.page.kicker.dispatch": "SHIP"
     ,"screen.sailboatmod.market.page.kicker.finance": "FUNDS"
     ,"screen.sailboatmod.market.page.kicker.buy_orders": "ORDERS"
+    ,"screen.sailboatmod.market.page.kicker.market_index": "INDEX"
+    ,"screen.sailboatmod.market.index.subtitle": "查看全市场指数、分类指数与宏观指标。"
+    ,"screen.sailboatmod.market.index.latest": "最新值"
+    ,"screen.sailboatmod.market.index.delta": "区间变化"
+    ,"screen.sailboatmod.market.index.series_key": "序列：%s / %s"
+    ,"screen.sailboatmod.market.index.latest_value": "最新值：%s"
+    ,"screen.sailboatmod.market.index.delta_value": "窗口变化：%s"
+    ,"screen.sailboatmod.market.index.scope.market": "全市场大盘"
+    ,"screen.sailboatmod.market.index.scope.category_generic": "分类指数"
+    ,"screen.sailboatmod.market.index.scope.category_value": "分类：%s"
+    ,"screen.sailboatmod.market.index.scope.macro": "宏观指标"
+    ,"screen.sailboatmod.market.index.scope.macro_cpi": "宏观：消费价格指数"
+    ,"screen.sailboatmod.market.index.scope.macro_loans": "宏观：未偿贷款"
+    ,"screen.sailboatmod.market.index.scope.macro_value": "宏观：%s"
+    ,"screen.sailboatmod.market.chart.tf.1h": "1小时"
+    ,"screen.sailboatmod.market.chart.tf.1d": "1天"
+    ,"screen.sailboatmod.market.chart.tf.1w": "1周"
+    ,"screen.sailboatmod.market.chart.legend.up": "上涨"
+    ,"screen.sailboatmod.market.chart.legend.down": "下跌"
+    ,"screen.sailboatmod.market.metric.volatility": "波动率"
+    ,"screen.sailboatmod.market.metric.drawdown": "最大回撤"
+    ,"screen.sailboatmod.market.detail.analytics_change": "涨跌 %s  波动 %s  回撤 %s"
     ,"item.sailboatmod.half_nugget": "半粒金粒"
     ,"screen.sailboatmod.market.catalog.filter.plant": "植物"
     ,"screen.sailboatmod.market.catalog.filter.crop": "农作物"

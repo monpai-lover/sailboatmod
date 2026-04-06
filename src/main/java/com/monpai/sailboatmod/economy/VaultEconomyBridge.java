@@ -92,6 +92,23 @@ public final class VaultEconomyBridge {
     }
 
     @Nullable
+    public static Long getBalanceByIdentity(UUID playerUuid, String playerName) {
+        Object provider = resolveEconomyProvider();
+        if (provider == null) {
+            return null;
+        }
+        try {
+            Long withOffline = getBalanceWithOfflinePlayer(provider, playerUuid);
+            if (withOffline != null) {
+                return withOffline;
+            }
+            return getBalanceWithName(provider, playerName);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    @Nullable
     private static Object resolveEconomyProvider() {
         if (providerResolved) {
             return economyProvider;
@@ -238,6 +255,42 @@ public final class VaultEconomyBridge {
             return null;
         } catch (Throwable ignored) {
             return Boolean.FALSE;
+        }
+    }
+
+    @Nullable
+    private static Long getBalanceWithOfflinePlayer(Object provider, UUID playerUuid) {
+        if (playerUuid == null) {
+            return null;
+        }
+        try {
+            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+            Class<?> offlinePlayerClass = Class.forName("org.bukkit.OfflinePlayer");
+            Method getOfflinePlayer = bukkitClass.getMethod("getOfflinePlayer", UUID.class);
+            Object offlinePlayer = getOfflinePlayer.invoke(null, playerUuid);
+            Method getBalance = provider.getClass().getMethod("getBalance", offlinePlayerClass);
+            Object value = getBalance.invoke(provider, offlinePlayer);
+            return value instanceof Number number ? Math.max(0L, Math.round(number.doubleValue())) : null;
+        } catch (NoSuchMethodException ignored) {
+            return null;
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
+    @Nullable
+    private static Long getBalanceWithName(Object provider, String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        try {
+            Method getBalance = provider.getClass().getMethod("getBalance", String.class);
+            Object value = getBalance.invoke(provider, playerName);
+            return value instanceof Number number ? Math.max(0L, Math.round(number.doubleValue())) : null;
+        } catch (NoSuchMethodException ignored) {
+            return null;
+        } catch (Throwable ignored) {
+            return 0L;
         }
     }
 

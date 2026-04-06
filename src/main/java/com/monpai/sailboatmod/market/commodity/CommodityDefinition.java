@@ -21,7 +21,7 @@ public record CommodityDefinition(
         displayName = sanitize(displayName);
         unitSize = Math.max(1, unitSize);
         category = sanitize(category);
-        rarity = Math.max(0, Math.min(3, rarity));
+        rarity = Math.max(0, Math.min(5, rarity));
         importance = Math.max(0, Math.min(3, importance));
         volume = Math.max(1, Math.min(4, volume));
         elasticity = Math.max(0, Math.min(3, elasticity));

@@ -17,7 +17,9 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -27,11 +29,13 @@ import java.util.function.Supplier;
 public final class MarketWebServer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
+    private static final String ICON_CACHE_VERSION = "marketweb-icons-v2";
     private static volatile MarketWebServer INSTANCE;
 
     private final MinecraftServer minecraftServer;
     private final MarketWebAuthManager auth;
     private final MarketWebService service = new MarketWebService();
+    private final MarketWebIconService icons = new MarketWebIconService();
     private HttpServer httpServer;
     private ExecutorService executor;
 
@@ -84,6 +88,7 @@ public final class MarketWebServer {
         createContext("/api/auth/token-login", this::handleTokenLogin);
         createContext("/api/session/me", this::handleSessionMe);
         createContext("/api/markets", this::handleMarkets);
+        createContext("/api/icons", this::handleIcon);
         createContext("/", this::handleStatic);
         httpServer.start();
         LOGGER.info("Market web server started on {}:{}", address.getHostString(), address.getPort());
@@ -150,13 +155,10 @@ public final class MarketWebServer {
     }
 
     private void handleMarkets(HttpExchange exchange) throws IOException {
-        MarketPlayerIdentity identity = requireIdentity(exchange);
-        if (identity == null) {
-            return;
-        }
         List<String> path = pathParts(exchange.getRequestURI().getPath());
         if (path.size() == 2) {
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
                 JsonObject out = callOnServerThread(() -> {
                     JsonObject json = new JsonObject();
                     json.add("markets", service.listMarkets(minecraftServer, identity));
@@ -171,6 +173,7 @@ public final class MarketWebServer {
         if (path.size() >= 3) {
             String marketId = path.get(2);
             if (path.size() == 3 && "GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
                 JsonObject detail = callOnServerThread(() -> service.marketDetail(minecraftServer, identity, marketId));
                 if (detail == null) {
                     writeJson(exchange, 404, error("not_found", "Market not found"));
@@ -181,6 +184,10 @@ public final class MarketWebServer {
             }
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+                return;
+            }
+            MarketPlayerIdentity identity = requireIdentity(exchange);
+            if (identity == null) {
                 return;
             }
             JsonObject body = readBody(exchange);
@@ -258,7 +265,85 @@ public final class MarketWebServer {
             writeStatic(exchange, "marketweb/config.json", "application/json; charset=utf-8");
             return;
         }
+        if (path.startsWith("/assets/")) {
+            String resourcePath = path.substring(1);
+            writeStatic(exchange, resourcePath, contentType(resourcePath));
+            return;
+        }
         writeJson(exchange, 404, error("not_found", "Not found"));
+    }
+
+    private void handleIcon(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        String commodityKey = queryParam(exchange, "commodityKey");
+        if (commodityKey.isBlank()) {
+            writeJson(exchange, 400, error("missing_commodity_key", "Missing commodityKey"));
+            return;
+        }
+        byte[] bytes = icons.loadIcon(commodityKey);
+        if (bytes == null || bytes.length == 0) {
+            writeJson(exchange, 404, error("icon_not_found", "Icon not found"));
+            return;
+        }
+        Headers headers = exchange.getResponseHeaders();
+        String etag = "\"" + ICON_CACHE_VERSION + ":" + Integer.toHexString(commodityKey.hashCode()) + "\"";
+        String ifNoneMatch = exchange.getRequestHeaders().getFirst("If-None-Match");
+        if (etag.equals(ifNoneMatch)) {
+            headers.set("ETag", etag);
+            headers.set("Cache-Control", "public, max-age=3600");
+            exchange.sendResponseHeaders(304, -1);
+            return;
+        }
+        headers.set("Content-Type", "image/png");
+        headers.set("Cache-Control", "public, max-age=3600");
+        headers.set("ETag", etag);
+        headers.set("X-Icon-Cache-Version", ICON_CACHE_VERSION);
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
+    }
+
+    private static String contentType(String resourcePath) {
+        String normalized = resourcePath == null ? "" : resourcePath.toLowerCase(Locale.ROOT);
+        if (normalized.endsWith(".png")) {
+            return "image/png";
+        }
+        if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (normalized.endsWith(".svg")) {
+            return "image/svg+xml; charset=utf-8";
+        }
+        if (normalized.endsWith(".json")) {
+            return "application/json; charset=utf-8";
+        }
+        if (normalized.endsWith(".css")) {
+            return "text/css; charset=utf-8";
+        }
+        if (normalized.endsWith(".js")) {
+            return "application/javascript; charset=utf-8";
+        }
+        if (normalized.endsWith(".html")) {
+            return "text/html; charset=utf-8";
+        }
+        return "application/octet-stream";
+    }
+
+    private static String queryParam(HttpExchange exchange, String key) {
+        String raw = exchange.getRequestURI().getRawQuery();
+        if (raw == null || raw.isBlank() || key == null || key.isBlank()) {
+            return "";
+        }
+        return Arrays.stream(raw.split("&"))
+                .map(entry -> entry.split("=", 2))
+                .filter(parts -> parts.length > 0 && key.equals(parts[0]))
+                .map(parts -> parts.length > 1 ? URLDecoder.decode(parts[1], StandardCharsets.UTF_8) : "")
+                .findFirst()
+                .orElse("");
     }
 
     private void writeStatic(HttpExchange exchange, String resourcePath, String contentType) throws IOException {
@@ -290,6 +375,17 @@ public final class MarketWebServer {
             return null;
         }
         return identity;
+    }
+
+    private MarketPlayerIdentity resolveIdentityOrGuest(HttpExchange exchange) {
+        String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+        String sessionToken = "";
+        if (authHeader != null && authHeader.toLowerCase(Locale.ROOT).startsWith("bearer ")) {
+            sessionToken = authHeader.substring(7).trim();
+        }
+        final String resolvedSessionToken = sessionToken;
+        MarketPlayerIdentity identity = callOnServerThread(() -> auth.resolveIdentity(minecraftServer, resolvedSessionToken));
+        return identity != null ? identity : new MarketPlayerIdentity(null, "", null);
     }
 
     private static JsonObject readBody(HttpExchange exchange) throws IOException {

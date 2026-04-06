@@ -8,6 +8,11 @@ import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
+import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
+import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import com.monpai.sailboatmod.market.commodity.BuyOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import net.minecraft.core.BlockPos;
@@ -89,6 +94,10 @@ public final class MarketWebService {
         root.add("buyOrderEntries", buyOrderEntries(overview));
         root.add("priceCharts", priceCharts(overview));
         root.add("commodityBuyBooks", commodityBuyBooks(overview));
+        root.add("candleSeries", candleSeries(overview));
+        root.add("impactSnapshots", impactSnapshots(overview));
+        root.add("analyticsSeries", analyticsSeries(overview));
+        root.add("chartCapabilities", chartCapabilities(overview));
         root.add("myOrders", myOrders(marketData, identity.playerUuidString()));
         root.add("sourceOrders", sourceOrders(overview));
         root.add("shippingEntries", shippingEntries(overview));
@@ -327,6 +336,69 @@ public final class MarketWebService {
         return out;
     }
 
+    private JsonArray candleSeries(MarketOverviewData overview) {
+        JsonArray out = new JsonArray();
+        for (CommodityCandleSeries series : overview.candleSeries()) {
+            JsonObject json = new JsonObject();
+            json.addProperty("commodityKey", series.commodityKey());
+            json.addProperty("displayName", series.displayName());
+            json.addProperty("timeframe", series.timeframe());
+            JsonArray points = new JsonArray();
+            for (CommodityCandlePoint point : series.points()) {
+                JsonObject p = new JsonObject();
+                p.addProperty("bucketAt", point.bucketAt());
+                p.addProperty("openUnitPrice", point.openUnitPrice());
+                p.addProperty("highUnitPrice", point.highUnitPrice());
+                p.addProperty("lowUnitPrice", point.lowUnitPrice());
+                p.addProperty("closeUnitPrice", point.closeUnitPrice());
+                p.addProperty("volume", point.volume());
+                p.addProperty("tradeCount", point.tradeCount());
+                points.add(p);
+            }
+            json.add("points", points);
+            out.add(json);
+        }
+        return out;
+    }
+
+    private JsonArray impactSnapshots(MarketOverviewData overview) {
+        JsonArray out = new JsonArray();
+        for (CommodityImpactSnapshot snapshot : overview.commodityImpactSnapshots()) {
+            JsonObject json = new JsonObject();
+            json.addProperty("commodityKey", snapshot.commodityKey());
+            json.addProperty("referenceUnitPrice", snapshot.referenceUnitPrice());
+            json.addProperty("currentClosePrice", snapshot.currentClosePrice());
+            json.addProperty("liquidityScore", snapshot.liquidityScore());
+            json.addProperty("inventoryPressureBp", snapshot.inventoryPressureBp());
+            json.addProperty("buyPressureBp", snapshot.buyPressureBp());
+            json.addProperty("volatilityBp", snapshot.volatilityBp());
+            out.add(json);
+        }
+        return out;
+    }
+
+    private JsonArray analyticsSeries(MarketOverviewData overview) {
+        JsonArray out = new JsonArray();
+        for (MarketAnalyticsSeries series : overview.analyticsSeries()) {
+            JsonObject json = new JsonObject();
+            json.addProperty("scopeType", series.scopeType());
+            json.addProperty("scopeKey", series.scopeKey());
+            json.addProperty("displayName", series.displayName());
+            JsonArray points = new JsonArray();
+            for (MarketAnalyticsPoint point : series.points()) {
+                JsonObject p = new JsonObject();
+                p.addProperty("bucketAt", point.bucketAt());
+                p.addProperty("value", point.value());
+                p.addProperty("volume", point.volume());
+                p.addProperty("tradeCount", point.tradeCount());
+                points.add(p);
+            }
+            json.add("points", points);
+            out.add(json);
+        }
+        return out;
+    }
+
     private JsonArray myOrders(MarketSavedData marketData, String buyerUuid) {
         JsonArray out = new JsonArray();
         List<PurchaseOrder> orders = marketData.getOrdersForBuyer(buyerUuid);
@@ -388,6 +460,16 @@ public final class MarketWebService {
             out.add(value == null ? "" : value);
         }
         return out;
+    }
+
+    private JsonObject chartCapabilities(MarketOverviewData overview) {
+        JsonObject json = new JsonObject();
+        json.addProperty("candles", !overview.candleSeries().isEmpty());
+        json.addProperty("macroCharts", !overview.analyticsSeries().isEmpty());
+        json.addProperty("logScale", true);
+        json.addProperty("inflation", overview.analyticsSeriesFor("MACRO_INDEX", "cpi") != null
+                && !overview.analyticsSeriesFor("MACRO_INDEX", "cpi").points().isEmpty());
+        return json;
     }
 
     private String listingIdFor(ServerLevel level, MarketSavedData marketData, int index) {
