@@ -17,6 +17,13 @@ import org.jetbrains.annotations.Nullable;
 
 public final class BankLoanService {
     private static final long DAY_MS = 24L * 60L * 60L * 1000L;
+    private static final double PERSONAL_CASH_WEIGHT = 1.00D;
+    private static final double PERSONAL_INVENTORY_WEIGHT = 0.20D;
+    private static final double NATION_CASH_WEIGHT = 1.00D;
+    private static final double NATION_TREASURY_ITEMS_WEIGHT = 0.35D;
+    private static final long NATION_TOWN_CREDIT = 800L;
+    private static final long NATION_CLAIM_CREDIT = 90L;
+    private static final long NATION_TRADE_CREDIT = 120L;
 
     public void tick(MinecraftServer server) {
         if (server == null) {
@@ -194,7 +201,7 @@ public final class BankLoanService {
         if (player == null || !ModConfig.bankPersonalLoansEnabled()) {
             return 0L;
         }
-        long collateral = estimatePlayerAssets(player);
+        long collateral = estimatePlayerLoanCollateral(player);
         long cap = Math.min(
                 ModConfig.bankPersonalLoanMax(),
                 Math.round(collateral * ModConfig.bankPersonalCollateralRatio())
@@ -209,9 +216,14 @@ public final class BankLoanService {
         }
         NationSavedData data = NationSavedData.get(level);
         NationTreasuryRecord treasury = data.getOrCreateTreasury(nationId);
+        long treasuryInventoryValue = estimateTreasuryInventoryValue(treasury);
+        long organizationalCredit = estimateNationOrganizationalCredit(data, treasury, nationId);
+        long collateral = Math.round(treasury.currencyBalance() * NATION_CASH_WEIGHT)
+                + Math.round(treasuryInventoryValue * NATION_TREASURY_ITEMS_WEIGHT)
+                + organizationalCredit;
         long cap = Math.min(
                 ModConfig.bankNationLoanMax(),
-                Math.round(treasury.currencyBalance() * ModConfig.bankNationCollateralRatio())
+                Math.round(collateral * ModConfig.bankNationCollateralRatio())
         );
         long outstanding = record == null ? 0L : record.outstanding();
         return Math.max(0L, cap - outstanding);
@@ -285,12 +297,35 @@ public final class BankLoanService {
         );
     }
 
-    private static long estimatePlayerAssets(Player player) {
-        long total = Math.max(0L, GoldStandardEconomy.getBalance(player));
+    private static long estimatePlayerLoanCollateral(Player player) {
+        long liquidBalance = Math.max(0L, GoldStandardEconomy.getBalance(player));
+        long inventoryValue = 0L;
         for (ItemStack stack : player.getInventory().items) {
+            inventoryValue += estimateStackValue(stack);
+        }
+        return Math.round(liquidBalance * PERSONAL_CASH_WEIGHT)
+                + Math.round(inventoryValue * PERSONAL_INVENTORY_WEIGHT);
+    }
+
+    private static long estimateTreasuryInventoryValue(NationTreasuryRecord treasury) {
+        if (treasury == null) {
+            return 0L;
+        }
+        long total = 0L;
+        for (ItemStack stack : treasury.items()) {
             total += estimateStackValue(stack);
         }
         return total;
+    }
+
+    private static long estimateNationOrganizationalCredit(NationSavedData data, NationTreasuryRecord treasury, String nationId) {
+        if (data == null || nationId == null || nationId.isBlank()) {
+            return 0L;
+        }
+        long townCredit = (long) data.getTownsForNation(nationId).size() * NATION_TOWN_CREDIT;
+        long claimCredit = (long) data.getClaimsForNation(nationId).size() * NATION_CLAIM_CREDIT;
+        long tradeCredit = (long) Math.max(0, treasury == null ? 0 : treasury.recentTradeCount()) * NATION_TRADE_CREDIT;
+        return townCredit + claimCredit + tradeCredit;
     }
 
     private static long estimateStackValue(ItemStack stack) {

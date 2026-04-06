@@ -16,6 +16,8 @@ import java.sql.Statement;
 
 public final class MarketDatabase {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final String RELOCATED_SQLITE_DRIVER = "com.monpai.sailboatmod.shadow.sqlite.JDBC";
+    private static final String STANDARD_SQLITE_DRIVER = "org.sqlite.JDBC";
 
     private static Connection activeConnection;
     private static Path activeDatabasePath;
@@ -37,7 +39,7 @@ public final class MarketDatabase {
         shutdown();
 
         Files.createDirectories(databasePath.getParent());
-        Class.forName("org.sqlite.JDBC");
+        ensureSqliteDriverLoaded();
         Connection opened = DriverManager.getConnection("jdbc:sqlite:" + databasePath.toAbsolutePath());
         configureConnection(opened);
         MarketSchemaManager.applyPatches(opened);
@@ -96,6 +98,14 @@ public final class MarketDatabase {
             return connection == null || connection.isClosed();
         } catch (SQLException ignored) {
             return true;
+        }
+    }
+
+    private static void ensureSqliteDriverLoaded() throws ClassNotFoundException {
+        try {
+            Class.forName(RELOCATED_SQLITE_DRIVER);
+        } catch (ClassNotFoundException ignored) {
+            Class.forName(STANDARD_SQLITE_DRIVER);
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.market.web;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -42,29 +43,66 @@ final class MarketWebIconService {
         return iconCache.computeIfAbsent(commodityKey.trim(), this::loadIconInternal);
     }
 
+    void clearCache() {
+        iconCache.clear();
+        textureCache.clear();
+    }
+
     private byte[] loadIconInternal(String commodityKey) {
         ResourceLocation itemId = ResourceLocation.tryParse(commodityKey);
         if (itemId == null) {
             return null;
         }
-        ResolvedModel model = loadModel(new ModelRef(itemId.getNamespace(), "item", itemId.getPath()), new HashSet<>());
-        if (model == null) {
-            return null;
-        }
 
         try {
-            if (isBlockLike(model)) {
-                BufferedImage blockIcon = buildBlockLikeIcon(model, itemId.getNamespace());
-                if (blockIcon != null) {
-                    return encodePng(blockIcon);
-                }
+            BufferedImage icon = resolveIcon(itemId);
+            if (icon == null) {
+                icon = buildPlaceholderIcon();
             }
-
-            BufferedImage flatIcon = buildFlatIcon(model, itemId.getNamespace());
-            return flatIcon == null ? null : encodePng(flatIcon);
+            return encodePng(icon);
         } catch (IOException ignored) {
             return null;
         }
+    }
+
+    private BufferedImage resolveIcon(ResourceLocation itemId) {
+        List<ResolvedModelCandidate> candidates = new ArrayList<>();
+        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "item", itemId.getPath()), new HashSet<>()), itemId.getNamespace());
+        addCandidate(candidates, loadBlockStateModel(itemId), itemId.getNamespace());
+        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "block", itemId.getPath()), new HashSet<>()), itemId.getNamespace());
+        for (ResolvedModelCandidate candidate : candidates) {
+            BufferedImage icon = renderResolvedModel(candidate.model(), candidate.fallbackNamespace());
+            if (icon != null) {
+                return icon;
+            }
+        }
+        return null;
+    }
+
+    private void addCandidate(List<ResolvedModelCandidate> candidates, ResolvedModel model, String fallbackNamespace) {
+        if (model == null) {
+            return;
+        }
+        for (ResolvedModelCandidate existing : candidates) {
+            if (existing.model().textures().equals(model.textures())
+                    && existing.model().parentChain().equals(model.parentChain())) {
+                return;
+            }
+        }
+        candidates.add(new ResolvedModelCandidate(model, fallbackNamespace));
+    }
+
+    private BufferedImage renderResolvedModel(ResolvedModel model, String fallbackNamespace) {
+        if (model == null) {
+            return null;
+        }
+        if (isBlockLike(model)) {
+            BufferedImage blockIcon = buildBlockLikeIcon(model, fallbackNamespace);
+            if (blockIcon != null) {
+                return blockIcon;
+            }
+        }
+        return buildFlatIcon(model, fallbackNamespace);
     }
 
     private boolean isBlockLike(ResolvedModel model) {
@@ -189,7 +227,7 @@ final class MarketWebIconService {
             return null;
         }
 
-        JsonObject json = readModelJson(ref);
+        JsonObject json = readJson("assets/" + ref.namespace() + "/models/" + ref.type() + "/" + ref.path() + ".json");
         if (json == null) {
             return null;
         }
@@ -220,8 +258,72 @@ final class MarketWebIconService {
         return new ResolvedModel(mergedTextures, parentChain);
     }
 
-    private JsonObject readModelJson(ModelRef ref) {
-        String resourcePath = "assets/" + ref.namespace() + "/models/" + ref.type() + "/" + ref.path() + ".json";
+    private ResolvedModel loadBlockStateModel(ResourceLocation itemId) {
+        JsonObject blockstate = readJson("assets/" + itemId.getNamespace() + "/blockstates/" + itemId.getPath() + ".json");
+        if (blockstate == null) {
+            return null;
+        }
+        ModelRef modelRef = selectBlockStateModel(blockstate, itemId.getNamespace());
+        return modelRef == null ? null : loadModel(modelRef, new HashSet<>());
+    }
+
+    private ModelRef selectBlockStateModel(JsonObject blockstate, String fallbackNamespace) {
+        JsonObject variants = object(blockstate, "variants");
+        if (variants != null) {
+            JsonElement preferred = variants.get("");
+            ModelRef ref = firstModelRef(preferred, fallbackNamespace);
+            if (ref != null) {
+                return ref;
+            }
+            for (Map.Entry<String, JsonElement> entry : variants.entrySet()) {
+                ref = firstModelRef(entry.getValue(), fallbackNamespace);
+                if (ref != null) {
+                    return ref;
+                }
+            }
+        }
+
+        JsonArray multipart = array(blockstate, "multipart");
+        if (multipart != null) {
+            for (JsonElement entry : multipart) {
+                ModelRef ref = firstModelRef(entry, fallbackNamespace);
+                if (ref != null) {
+                    return ref;
+                }
+            }
+        }
+        return null;
+    }
+
+    private ModelRef firstModelRef(JsonElement element, String fallbackNamespace) {
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        if (element.isJsonArray()) {
+            for (JsonElement child : element.getAsJsonArray()) {
+                ModelRef ref = firstModelRef(child, fallbackNamespace);
+                if (ref != null) {
+                    return ref;
+                }
+            }
+            return null;
+        }
+        if (!element.isJsonObject()) {
+            return null;
+        }
+        JsonObject object = element.getAsJsonObject();
+        String model = string(object, "model");
+        if (!model.isBlank()) {
+            return parseModelRef(model, fallbackNamespace, "block");
+        }
+        JsonElement apply = object.get("apply");
+        if (apply != null) {
+            return firstModelRef(apply, fallbackNamespace);
+        }
+        return null;
+    }
+
+    private JsonObject readJson(String resourcePath) {
         try (InputStream input = resource(resourcePath)) {
             if (input == null) {
                 return null;
@@ -321,6 +423,34 @@ final class MarketWebIconService {
         }
     }
 
+    private BufferedImage buildPlaceholderIcon() {
+        BufferedImage out = new BufferedImage(ICON_SIZE, ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = out.createGraphics();
+        configureGraphics(graphics);
+
+        graphics.setColor(new Color(10, 14, 20, 0));
+        graphics.fillRect(0, 0, ICON_SIZE, ICON_SIZE);
+        graphics.setColor(new Color(0, 0, 0, 20));
+        graphics.fillOval(16, 44, 32, 9);
+
+        graphics.setColor(new Color(56, 78, 102, 255));
+        graphics.fillPolygon(new int[] {13, 32, 51, 32}, new int[] {17, 7, 17, 28}, 4);
+        graphics.setColor(new Color(38, 55, 74, 255));
+        graphics.fillPolygon(new int[] {13, 32, 32, 13}, new int[] {17, 28, 52, 41}, 4);
+        graphics.setColor(new Color(29, 43, 59, 255));
+        graphics.fillPolygon(new int[] {32, 51, 51, 32}, new int[] {28, 17, 41, 52}, 4);
+
+        graphics.setColor(new Color(255, 255, 255, 38));
+        graphics.drawLine(32, 7, 51, 17);
+        graphics.drawLine(32, 7, 13, 17);
+        graphics.drawLine(32, 28, 32, 51);
+        graphics.setColor(new Color(120, 154, 191, 255));
+        graphics.fillRect(29, 21, 6, 16);
+        graphics.fillRect(24, 26, 16, 6);
+        graphics.dispose();
+        return out;
+    }
+
     private BufferedImage tinted(BufferedImage source, float brightness) {
         if (source == null) {
             return null;
@@ -362,6 +492,11 @@ final class MarketWebIconService {
         return element != null && element.isJsonObject() ? element.getAsJsonObject() : null;
     }
 
+    private static JsonArray array(JsonObject parent, String key) {
+        JsonElement element = parent == null ? null : parent.get(key);
+        return element != null && element.isJsonArray() ? element.getAsJsonArray() : null;
+    }
+
     private static String string(JsonObject parent, String key) {
         JsonElement element = parent == null ? null : parent.get(key);
         return element != null && element.isJsonPrimitive() ? element.getAsString() : "";
@@ -378,6 +513,9 @@ final class MarketWebIconService {
     }
 
     private record Point(int x, int y) {
+    }
+
+    private record ResolvedModelCandidate(ResolvedModel model, String fallbackNamespace) {
     }
 
     private record ResolvedModel(Map<String, String> textures, List<String> parentChain) {

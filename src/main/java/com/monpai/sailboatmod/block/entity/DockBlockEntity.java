@@ -1611,12 +1611,17 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return List.of();
         }
         AABB search = new AABB(worldPosition).inflate(ASSIGN_RADIUS);
+        Comparator<SailboatEntity> comparator = Comparator
+                .comparing((SailboatEntity boat) -> isBoatOwnedBy(boat, player) ? 0 : 1);
+        if (player != null) {
+            comparator = comparator.thenComparingDouble(player::distanceToSqr);
+        } else {
+            comparator = comparator.thenComparingInt(Entity::getId);
+        }
         return level.getEntitiesOfClass(SailboatEntity.class, search).stream()
                 .filter(Entity::isAlive)
                 .filter(boat -> isInsideDockZone(boat.position()))
-                .sorted(Comparator
-                        .comparing((SailboatEntity boat) -> isBoatOwnedBy(boat, player) ? 0 : 1)
-                        .thenComparingDouble(player::distanceToSqr))
+                .sorted(comparator)
                 .toList();
     }
 

@@ -19,6 +19,9 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -75,6 +78,11 @@ public final class MarketWebServer {
 
     public MarketWebAuthManager auth() {
         return auth;
+    }
+
+    public void reload() {
+        icons.clearCache();
+        LOGGER.info("Market web resources reloaded");
     }
 
     private void startInternal() throws IOException {
@@ -347,6 +355,20 @@ public final class MarketWebServer {
     }
 
     private void writeStatic(HttpExchange exchange, String resourcePath, String contentType) throws IOException {
+        if (com.monpai.sailboatmod.ModConfig.marketWebDevMode()) {
+            Path devFile = resolveDevResourcePath(resourcePath);
+            if (devFile != null && Files.isRegularFile(devFile)) {
+                byte[] bytes = Files.readAllBytes(devFile);
+                Headers headers = exchange.getResponseHeaders();
+                headers.set("Content-Type", contentType);
+                applyNoCache(headers);
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (OutputStream output = exchange.getResponseBody()) {
+                    output.write(bytes);
+                }
+                return;
+            }
+        }
         try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
             if (stream == null) {
                 writeJson(exchange, 404, error("not_found", "Static resource missing"));
@@ -355,11 +377,58 @@ public final class MarketWebServer {
             byte[] bytes = stream.readAllBytes();
             Headers headers = exchange.getResponseHeaders();
             headers.set("Content-Type", contentType);
+            if (com.monpai.sailboatmod.ModConfig.marketWebDevMode()) {
+                applyNoCache(headers);
+            }
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream output = exchange.getResponseBody()) {
                 output.write(bytes);
             }
         }
+    }
+
+    private Path resolveDevResourcePath(String resourcePath) {
+        Path devRoot = resolveDevRoot();
+        if (devRoot == null) {
+            return null;
+        }
+        String normalized = resourcePath == null ? "" : resourcePath.replace('\\', '/');
+        if (normalized.startsWith("marketweb/")) {
+            normalized = normalized.substring("marketweb/".length());
+        }
+        if (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        if (normalized.isBlank()) {
+            return null;
+        }
+        Path candidate = devRoot.resolve(normalized).normalize();
+        return candidate.startsWith(devRoot.normalize()) ? candidate : null;
+    }
+
+    private Path resolveDevRoot() {
+        String configured = com.monpai.sailboatmod.ModConfig.marketWebDevRoot();
+        if (configured != null && !configured.isBlank()) {
+            return Paths.get(configured.trim()).toAbsolutePath().normalize();
+        }
+        List<Path> candidates = List.of(
+                Paths.get("src", "main", "resources", "marketweb"),
+                Paths.get("src", "marketweb", "resources", "marketweb"),
+                Paths.get("build", "resources", "main", "marketweb")
+        );
+        for (Path candidate : candidates) {
+            Path absolute = candidate.toAbsolutePath().normalize();
+            if (Files.isDirectory(absolute)) {
+                return absolute;
+            }
+        }
+        return null;
+    }
+
+    private static void applyNoCache(Headers headers) {
+        headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        headers.set("Pragma", "no-cache");
+        headers.set("Expires", "0");
     }
 
     private MarketPlayerIdentity requireIdentity(HttpExchange exchange) throws IOException {

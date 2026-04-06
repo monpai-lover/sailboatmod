@@ -1468,13 +1468,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         List<String> chartLines = buildPriceChartLines(candleSeries, series, listing);
         int chartLineHeight = estimateTextStackHeight(innerWidth, chartLines);
         int bodyTop = 108;
-        int chartFrameHeight = 650;
+        int chartFrameHeight = 420;
+        int chartFrameTop = 100;
+        int chartLinesTop = chartFrameTop + chartFrameHeight + 12;
         ScrollComponent body = createPanelBodyScroll(panel, bodyTop, 12);
         UIBlock bodyContent = new UIBlock(new Color(0, 0, 0, 0));
         bodyContent.setX(new PixelConstraint(0));
         bodyContent.setY(new PixelConstraint(0));
         bodyContent.setWidth(new PixelConstraint(innerWidth));
-        bodyContent.setHeight(new PixelConstraint(420 + chartFrameHeight + chartLineHeight));
+        bodyContent.setHeight(new PixelConstraint(chartLinesTop + chartLineHeight + 28));
         bodyContent.setChildOf(body);
 
         int tfWidth = Math.max(54, Math.min(72, (innerWidth - 16) / 3));
@@ -1498,8 +1500,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     rebuildUi();
                 });
         createMetricStrip(bodyContent, 0, 34, innerWidth, buildPriceChartMetrics(candleSeries, series, listing));
-        buildPriceChartFrame(bodyContent, 0, 100, innerWidth, chartFrameHeight, candleSeries, series);
-        buildTextStack(bodyContent, 0, 100 + chartFrameHeight + 12, innerWidth, chartLines, TEXT_MUTED);
+        buildPriceChartFrame(bodyContent, 0, chartFrameTop, innerWidth, chartFrameHeight, candleSeries, series);
+        buildTextStack(bodyContent, 0, chartLinesTop, innerWidth, chartLines, TEXT_MUTED);
     }
 
     private void buildPriceChartFrame(UIComponent parent, int x, int y, int width, int height,
@@ -1515,7 +1517,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 viewportCaption(priceChartViewport, allPoints.size(), points.size()), 0.66f, TEXT_SOFT);
 
         int headerBottom = 44;
-        int footerHeight = 78;
+        int footerHeight = 60;
         int footerTop = height - footerHeight;
 
         UIRoundedRectangle plot = createPanel(frame, 12, headerBottom, width - 24, footerTop - headerBottom - 8, 12f, new Color(16, 23, 31, 235));
@@ -1532,8 +1534,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         int plotHeight = footerTop - headerBottom - 8;
         int chartLeft = 10;
         int chartTop = 10;
-        int plotBottom = Math.max(chartTop + 24, plotHeight - 10);
-        int volumeFooterGap = 14;
+        int plotBottom = Math.max(chartTop + 24, plotHeight - 8);
+        int volumeFooterGap = 10;
         int chartBottom = plotBottom - volumeFooterGap;
         int maxPrice = 0;
         int minPrice = Integer.MAX_VALUE;
@@ -1550,9 +1552,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             maxPrice = minPrice + 1;
         }
 
-        int volumeMaxHeight = Math.max(26, Math.min(68, (chartBottom - chartTop) / 3));
+        int volumeMaxHeight = Math.max(22, Math.min(48, (chartBottom - chartTop) / 4));
         int lineTop = chartTop + 4;
-        int lineBottom = chartBottom - volumeMaxHeight - 12;
+        int lineBottom = chartBottom - volumeMaxHeight - 8;
         int lineHeight = Math.max(24, lineBottom - lineTop);
         int range = Math.max(1, maxPrice - minPrice);
         int barWidth = Math.max(4, Math.min(14, (plotWidth - 20) / Math.max(1, points.size())));
@@ -1624,8 +1626,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         createPanel(plot, Math.max(chartLeft, closeCenters[lastIndex] - 24), Math.max(lineTop, closeYs[lastIndex] - 10), 48, 14, 6f, new Color(14, 20, 28, 210));
         createText(plot, Math.max(chartLeft + 4, closeCenters[lastIndex] - 18), Math.max(lineTop, closeYs[lastIndex] - 8),
                 formatCompactLong(points.get(lastIndex).closePrice()), 0.7f, trendColor);
-        int legendY = footerTop + 10;
-        int axisY = footerTop + 34;
+        int legendY = footerTop + 8;
+        int axisY = footerTop + 28;
         createLegendBadge(frame, 18, legendY, "MA" + maShortPeriod, maShortColor);
         createLegendBadge(frame, 72, legendY, "MA" + maLongPeriod, maLongColor);
         createLegendBadge(frame, 126, legendY,

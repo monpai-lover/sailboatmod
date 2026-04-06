@@ -16,10 +16,18 @@ public final class MarketWebCommands {
     }
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
-        dispatcher.register(Commands.literal("marketweb")
-                .requires(source -> source.getEntity() instanceof ServerPlayer)
+        registerRoot(dispatcher, "marketweb");
+        registerRoot(dispatcher, "webmarket");
+    }
+
+    private static void registerRoot(CommandDispatcher<CommandSourceStack> dispatcher, String root) {
+        dispatcher.register(Commands.literal(root)
                 .then(Commands.literal("token")
-                        .executes(context -> issueToken(context.getSource()))));
+                        .requires(source -> source.getEntity() instanceof ServerPlayer)
+                        .executes(context -> issueToken(context.getSource())))
+                .then(Commands.literal("reload")
+                        .requires(source -> source.hasPermission(2))
+                        .executes(context -> reloadWeb(context.getSource()))));
     }
 
     private static int issueToken(CommandSourceStack source) {
@@ -41,6 +49,17 @@ public final class MarketWebCommands {
         source.sendSuccess(() -> Component.literal("Fixed login token copied to clipboard."), false);
         source.sendSuccess(() -> Component.literal("Fallback token: ")
                 .append(Component.literal(token).setStyle(Style.EMPTY.withClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, token)))), false);
+        return 1;
+    }
+
+    private static int reloadWeb(CommandSourceStack source) {
+        MarketWebServer server = MarketWebServer.get();
+        if (server == null || !server.isRunning()) {
+            source.sendFailure(Component.literal("Market web service is not running."));
+            return 0;
+        }
+        server.reload();
+        source.sendSuccess(() -> Component.literal("Market web caches reloaded. Refresh the browser to see changes."), true);
         return 1;
     }
 }

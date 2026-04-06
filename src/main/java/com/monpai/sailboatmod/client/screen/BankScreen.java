@@ -37,6 +37,10 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
     private static final int INVENTORY_BOTTOM = BankMenu.STORAGE_HOTBAR_Y + 18;
     private static final int STATUS_Y = SCREEN_H - 44;
     private static final int STORAGE_STATUS_Y = 170;
+    private static final int LOAN_AMOUNT_LABEL_Y = 132;
+    private static final int LOAN_AMOUNT_INPUT_Y = 144;
+    private static final int LOAN_METRIC_START_Y = 104;
+    private static final int LOAN_METRIC_STEP_Y = 12;
 
     private final List<Button> tabButtons = new ArrayList<>();
     private final List<Button> treasuryButtons = new ArrayList<>();
@@ -76,7 +80,7 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
         this.amountInput = this.addRenderableWidget(new EditBox(this.font, left + 14, top + 78, 136, 18, Component.translatable("screen.sailboatmod.bank.amount")));
         this.amountInput.setMaxLength(16);
 
-        this.loanAmountInput = this.addRenderableWidget(new EditBox(this.font, left + 14, top + 130, 136, 18, Component.translatable("screen.sailboatmod.bank.amount")));
+        this.loanAmountInput = this.addRenderableWidget(new EditBox(this.font, left + 14, top + LOAN_AMOUNT_INPUT_Y, 136, 18, Component.translatable("screen.sailboatmod.bank.amount")));
         this.loanAmountInput.setMaxLength(16);
 
         int tabY = top + 30;
@@ -102,9 +106,9 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
                 .bounds(left + 118, top + 76, 96, 18).build()));
 
         this.loanButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.loan_borrow"), b -> doLoanBorrow())
-                .bounds(left + 156, top + 130, 78, 18).build()));
+                .bounds(left + 156, top + LOAN_AMOUNT_INPUT_Y, 78, 18).build()));
         this.loanButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.loan_repay"), b -> doLoanRepay())
-                .bounds(left + 242, top + 130, 78, 18).build()));
+                .bounds(left + 242, top + LOAN_AMOUNT_INPUT_Y, 78, 18).build()));
 
         this.closeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.route_name.cancel"), b -> onClose())
                 .bounds(left + SCREEN_W - 74, top + SCREEN_H - 30, 60, 18).build());
@@ -210,17 +214,18 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
             g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.currency_label"), 14, 58, 0xFFB8C0C8);
             g.drawString(this.font, balanceText, 120, 58, 0xFFE7C977);
             LoanAccountView view = activeLoanView();
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.amount_label"), 14, 118, 0xFFDCEEFF);
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.amount_label"), 14, LOAN_AMOUNT_LABEL_Y, 0xFFDCEEFF);
             if (!view.enabled()) {
                 g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_disabled"), 14, 106, 0xFFE57373);
             } else {
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_outstanding", GoldStandardEconomy.formatBalance(view.outstanding())), 14, 104, 0xFFDCEEFF);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_max", GoldStandardEconomy.formatBalance(view.maxBorrowable())), 14, 116, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_interest", GoldStandardEconomy.formatBalance(view.nextInterestCharge())), 14, 156, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_due", formatWhen(view.nextDueAt())), 14, 168, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_principal", GoldStandardEconomy.formatBalance(view.principal())), 14, 180, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_interest_total", GoldStandardEconomy.formatBalance(view.accruedInterest())), 14, 192, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_delinquent", yesNo(view.delinquent())), 14, 204, view.delinquent() ? 0xFFE57373 : 0xFF82D7A3);
+                int metricsY = LOAN_METRIC_START_Y;
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_outstanding", GoldStandardEconomy.formatBalance(view.outstanding())), 14, metricsY, 0xFFDCEEFF);
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_max", GoldStandardEconomy.formatBalance(view.maxBorrowable())), 14, metricsY + LOAN_METRIC_STEP_Y, 0xFFB8C0C8);
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_interest", GoldStandardEconomy.formatBalance(view.nextInterestCharge())), 14, LOAN_AMOUNT_INPUT_Y + 26, 0xFFB8C0C8);
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_due", formatWhen(view.nextDueAt())), 14, LOAN_AMOUNT_INPUT_Y + 38, 0xFFB8C0C8);
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_principal", GoldStandardEconomy.formatBalance(view.principal())), 14, LOAN_AMOUNT_INPUT_Y + 50, 0xFFB8C0C8);
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_interest_total", GoldStandardEconomy.formatBalance(view.accruedInterest())), 14, LOAN_AMOUNT_INPUT_Y + 62, 0xFFB8C0C8);
+                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_delinquent", yesNo(view.delinquent())), 14, LOAN_AMOUNT_INPUT_Y + 74, view.delinquent() ? 0xFFE57373 : 0xFF82D7A3);
             }
         }
 

@@ -1004,6 +1004,7 @@ public class NationHomeScreen extends Screen {
         boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
         NationOverviewClaim selectedClaim = selectedClaim();
         boolean ownClaim = selectedClaim != null && this.data.nationId().equals(selectedClaim.nationId());
+        if (this.refreshButton != null) { this.refreshButton.visible = claimsPage; this.refreshButton.active = claimsPage && this.data.hasNation() && !this.refreshPending; }
         if (this.claimButton != null) { this.claimButton.visible = claimsMapView; this.claimButton.active = claimsMapView && this.data.hasNation() && this.data.canManageClaims() && selectedClaim == null; }
         if (this.unclaimButton != null) { this.unclaimButton.visible = claimsMapView; this.unclaimButton.active = claimsMapView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; }
         if (this.claimsSubPageButton != null) { this.claimsSubPageButton.visible = claimsPage; this.claimsSubPageButton.active = claimsPage && this.data.hasNation(); this.claimsSubPageButton.setMessage(Component.translatable(claimsPermView ? "screen.sailboatmod.nation.claims.show_map" : "screen.sailboatmod.nation.claims.show_perms")); }
@@ -1090,7 +1091,7 @@ public class NationHomeScreen extends Screen {
             for (int gx = 0; gx < totalCells; gx++) {
                 int chunkX = centerX + gx - claimRadius();
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
-                double overlayStrength = claim == null ? 0 : (this.data.nationId().equals(claim.nationId()) ? 0.24D : 0.18D);
+                double overlayStrength = claim == null ? 0 : (this.data.nationId().equals(claim.nationId()) ? 0.38D : 0.30D);
                 int claimOverlay = claim == null ? 0 : (0xFF000000 | claim.primaryColorRgb());
                 for (int sz = 0; sz < sub; sz++) {
                     int subCellZ = gz * sub + sz;

@@ -11,6 +11,8 @@ public final class ModConfig {
     public static final ForgeConfigSpec.ConfigValue<String> MARKET_WEB_BIND_HOST;
     public static final ForgeConfigSpec.IntValue MARKET_WEB_PORT;
     public static final ForgeConfigSpec.IntValue MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES;
+    public static final ForgeConfigSpec.BooleanValue MARKET_WEB_DEV_MODE;
+    public static final ForgeConfigSpec.ConfigValue<String> MARKET_WEB_DEV_ROOT;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_RETENTION_DAYS;
     public static final ForgeConfigSpec.BooleanValue BANK_PERSONAL_LOANS_ENABLED;
@@ -55,6 +57,12 @@ public final class ModConfig {
         MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES = builder
                 .comment("One-time login token lifetime in minutes.")
                 .defineInRange("webLoginTokenTtlMinutes", 30, 1, 1440);
+        MARKET_WEB_DEV_MODE = builder
+                .comment("Serve market web static assets from disk and disable cache headers for hot reload during development.")
+                .define("webDevMode", false);
+        MARKET_WEB_DEV_ROOT = builder
+                .comment("Optional disk directory for market web dev assets. Use an absolute path or leave blank to auto-detect common source folders.")
+                .define("webDevRoot", "", value -> value instanceof String);
         MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES = builder
                 .comment("How often market analytics snapshots are recorded into SQLite.")
                 .defineInRange("analyticsSnapshotIntervalMinutes", 60, 5, 1440);
@@ -121,6 +129,14 @@ public final class ModConfig {
 
     public static int marketWebLoginTokenTtlMinutes() {
         return MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES.get();
+    }
+
+    public static boolean marketWebDevMode() {
+        return MARKET_WEB_DEV_MODE.get();
+    }
+
+    public static String marketWebDevRoot() {
+        return MARKET_WEB_DEV_ROOT.get();
     }
 
     public static int marketAnalyticsSnapshotIntervalMinutes() {

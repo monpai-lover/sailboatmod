@@ -58,6 +58,9 @@ const chartState = {
   lastFailure: null
 };
 
+const commodityIconCache = new Map();
+const commodityIconRequests = new Map();
+
 const els = {
   brandKicker: document.querySelector("#brand-kicker"),
   heroTitle: document.querySelector("#hero-title"),
@@ -1225,54 +1228,122 @@ function commodityIconSources(commodityKey) {
 }
 
 function renderCommodityIcon(commodityKey, displayName) {
+  const cached = commodityIconCache.get(commodityKey);
   const sources = commodityIconSources(commodityKey);
   const fallback = escapeHtml(iconLetter(displayName));
-  if (!sources.length) {
+  if (cached?.status === "loaded" && cached.src) {
+    return `
+      <div class="goods-art has-image" data-icon-shell data-commodity-key="${escapeHtml(commodityKey)}" data-display-name="${escapeHtml(displayName)}">
+        <img alt="${escapeHtml(displayName)}" loading="lazy" src="${escapeHtml(cached.src)}">
+        <span class="goods-art-fallback">${fallback}</span>
+      </div>
+    `;
+  }
+  if (cached?.status === "failed" || !sources.length) {
     return `<div class="goods-art"><span class="goods-art-fallback">${fallback}</span></div>`;
   }
   return `
-    <div class="goods-art" data-icon-shell data-commodity-key="${escapeHtml(commodityKey)}">
-      <img alt="${escapeHtml(displayName)}" loading="lazy" src="${escapeHtml(sources[0])}" data-icon-sources="${escapeHtml(sources.join("|"))}" data-icon-index="0">
+    <div class="goods-art" data-icon-shell data-commodity-key="${escapeHtml(commodityKey)}" data-display-name="${escapeHtml(displayName)}">
       <span class="goods-art-fallback">${fallback}</span>
     </div>
   `;
 }
 
-function hydrateCommodityIcons() {
-  document.querySelectorAll("[data-icon-shell] img").forEach((img) => {
-    if (img.dataset.bound === "true") {
-      return;
-    }
-    img.dataset.bound = "true";
-    const shell = img.closest("[data-icon-shell]");
-    const sources = (img.dataset.iconSources || "").split("|").filter(Boolean);
+function ensureCommodityIcon(commodityKey) {
+  const cached = commodityIconCache.get(commodityKey);
+  if (cached?.status === "loaded") {
+    return Promise.resolve(cached.src);
+  }
+  if (cached?.status === "failed") {
+    return Promise.resolve(null);
+  }
+  const existing = commodityIconRequests.get(commodityKey);
+  if (existing) {
+    return existing;
+  }
+  const sources = commodityIconSources(commodityKey);
+  if (!sources.length) {
+    commodityIconCache.set(commodityKey, { status: "failed", src: "" });
+    return Promise.resolve(null);
+  }
 
-    const markLoaded = () => {
-      if (img.naturalWidth > 0 && shell) {
-        shell.classList.add("has-image");
-      }
-    };
+  const request = new Promise((resolve) => {
+    const probe = new Image();
+    let index = 0;
 
-    const tryNext = () => {
-      const nextIndex = Number(img.dataset.iconIndex || "0") + 1;
-      if (nextIndex < sources.length) {
-        img.dataset.iconIndex = String(nextIndex);
-        img.src = sources[nextIndex];
+    const finish = (src) => {
+      commodityIconRequests.delete(commodityKey);
+      if (src) {
+        commodityIconCache.set(commodityKey, { status: "loaded", src });
+        resolve(src);
         return;
       }
-      img.remove();
+      commodityIconCache.set(commodityKey, { status: "failed", src: "" });
+      resolve(null);
     };
 
-    img.addEventListener("load", markLoaded);
-    img.addEventListener("error", tryNext);
-
-    if (img.complete) {
-      if (img.naturalWidth > 0) {
-        markLoaded();
-      } else {
-        tryNext();
+    const trySource = () => {
+      if (index >= sources.length) {
+        finish(null);
+        return;
       }
+      probe.src = sources[index];
+    };
+
+    probe.onload = () => {
+      if (probe.naturalWidth > 0) {
+        finish(sources[index]);
+        return;
+      }
+      index += 1;
+      trySource();
+    };
+    probe.onerror = () => {
+      index += 1;
+      trySource();
+    };
+
+    trySource();
+  });
+
+  commodityIconRequests.set(commodityKey, request);
+  return request;
+}
+
+function applyCommodityIcon(shell, src) {
+  if (!shell || !src) {
+    return;
+  }
+  let img = shell.querySelector("img");
+  if (!img) {
+    img = document.createElement("img");
+    img.loading = "lazy";
+    const fallback = shell.querySelector(".goods-art-fallback");
+    shell.insertBefore(img, fallback || null);
+  }
+  img.alt = shell.dataset.displayName || shell.dataset.commodityKey || "";
+  if (img.getAttribute("src") !== src) {
+    img.src = src;
+  }
+  shell.classList.add("has-image");
+}
+
+function hydrateCommodityIcons() {
+  document.querySelectorAll("[data-icon-shell]").forEach((shell) => {
+    if (shell.dataset.bound === "true") {
+      return;
     }
+    shell.dataset.bound = "true";
+    const commodityKey = shell.dataset.commodityKey || "";
+    if (!commodityKey) {
+      return;
+    }
+    ensureCommodityIcon(commodityKey).then((src) => {
+      if (!src || !document.body.contains(shell)) {
+        return;
+      }
+      applyCommodityIcon(shell, src);
+    });
   });
 }
 
