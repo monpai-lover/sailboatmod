@@ -1,3 +1,11 @@
 {
-  "parent": "sailboatmod:block/dock"
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "down": "sailboatmod:block/post_station_bottom",
+    "up": "sailboatmod:block/post_station_top",
+    "north": "sailboatmod:block/post_station_front",
+    "south": "sailboatmod:block/post_station_back",
+    "east": "sailboatmod:block/post_station_side",
+    "west": "sailboatmod:block/post_station_side"
+  }
 }

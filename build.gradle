@@ -219,8 +219,8 @@ tasks.named('jar', Jar).configure {
     exclude 'com/monpai/sailboatmod/market/web/**'
     exclude 'marketweb/**'
 
-    // Merge the relocated sqlite-jdbc classes into the mod jar to avoid JPMS package
-    // clashes on Mohist while still shipping the driver for normal Forge installs.
+    // Merge sqlite-jdbc into the runtime jars without relocating its package names.
+    // The native bridge expects org.sqlite.* and breaks if those classes are renamed.
     from({
         zipTree(tasks.named('shadowSqliteJar').get().archiveFile.get().asFile)
     }) {
@@ -291,7 +291,6 @@ tasks.register('shadowSqliteJar', com.github.jengelman.gradle.plugins.shadow.tas
     configurations = [project.configurations.embeddedLibrary]
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
-    relocate('org.sqlite', "${mod_group_id}.shadow.sqlite")
     mergeServiceFiles()
 
     dependencies {

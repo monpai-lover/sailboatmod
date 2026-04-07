@@ -1,8 +1,11 @@
 {
-  "parent": "minecraft:block/cube_bottom_top",
+  "parent": "minecraft:block/cube",
   "textures": {
-    "side": "sailboatmod:block/dock_side",
-    "top": "sailboatmod:block/market_top",
-    "bottom": "sailboatmod:block/dock"
+    "down": "sailboatmod:block/town_warehouse_bottom",
+    "up": "sailboatmod:block/town_warehouse_top",
+    "north": "sailboatmod:block/town_warehouse_front",
+    "south": "sailboatmod:block/town_warehouse_back",
+    "east": "sailboatmod:block/town_warehouse_side",
+    "west": "sailboatmod:block/town_warehouse_side"
   }
 }

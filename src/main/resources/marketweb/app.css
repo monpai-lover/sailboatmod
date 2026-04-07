@@ -972,6 +972,10 @@ select#create-listing-storage {
     place-items: center;
 }
 
+[data-icon-shell].icon-pending .goods-art-fallback {
+    visibility: hidden;
+}
+
 .goods-art.has-image .goods-art-fallback {
     display: none;
 }

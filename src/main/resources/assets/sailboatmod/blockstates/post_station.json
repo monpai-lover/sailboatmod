@@ -1,7 +1,19 @@
 {
   "variants": {
-    "": {
+    "facing=north": {
       "model": "sailboatmod:block/post_station"
+    },
+    "facing=east": {
+      "model": "sailboatmod:block/post_station",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "sailboatmod:block/post_station",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "sailboatmod:block/post_station",
+      "y": 270
     }
   }
 }
