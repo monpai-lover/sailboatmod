@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.renderer.SailboatEntityRenderer;
+import com.monpai.sailboatmod.client.renderer.CarriageEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.BankConstructorPreviewRenderer;
 import com.monpai.sailboatmod.client.renderer.resident.ResidentEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.BarBlockEntityRenderer;
@@ -17,6 +18,9 @@ import com.monpai.sailboatmod.client.renderer.blockentity.TownFlagBlockEntityRen
 import com.monpai.sailboatmod.client.screen.BankScreen;
 import com.monpai.sailboatmod.client.screen.DockScreen;
 import com.monpai.sailboatmod.client.screen.MarketScreen;
+import com.monpai.sailboatmod.client.screen.PostStationScreen;
+import com.monpai.sailboatmod.client.screen.StandardDockScreen;
+import com.monpai.sailboatmod.client.screen.WarehouseScreen;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.registry.ModEntities;
 import com.monpai.sailboatmod.registry.ModMenus;
@@ -32,9 +36,11 @@ public final class ClientEvents {
     @SubscribeEvent
     public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntities.SAILBOAT.get(), SailboatEntityRenderer::new);
+        event.registerEntityRenderer(ModEntities.CARRIAGE.get(), CarriageEntityRenderer::new);
         event.registerEntityRenderer(ModEntities.RESIDENT.get(), ResidentEntityRenderer::new);
         event.registerEntityRenderer(ModEntities.SOLDIER.get(), ResidentEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.DOCK_BLOCK_ENTITY.get(), DockBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.POST_STATION_BLOCK_ENTITY.get(), DockBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.MARKET_BLOCK_ENTITY.get(), MarketBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_CORE_BLOCK_ENTITY.get(), NationCoreBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_FLAG_BLOCK_ENTITY.get(), NationFlagBlockEntityRenderer::new);
@@ -50,8 +56,10 @@ public final class ClientEvents {
     public static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
             MenuScreens.register(ModMenus.BANK_MENU.get(), BankScreen::new);
-            MenuScreens.register(ModMenus.DOCK_MENU.get(), DockScreen::new);
+            MenuScreens.register(ModMenus.DOCK_MENU.get(), StandardDockScreen::new);
+            MenuScreens.register(ModMenus.POST_STATION_MENU.get(), PostStationScreen::new);
             MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
+            MenuScreens.register(ModMenus.WAREHOUSE_MENU.get(), WarehouseScreen::new);
         });
     }
 

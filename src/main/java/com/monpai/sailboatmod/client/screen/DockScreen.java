@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.screen;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.client.DockClientHooks;
 import com.monpai.sailboatmod.dock.DockScreenData;
+import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.menu.DockMenu;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.DockGuiActionPacket;
@@ -25,7 +26,7 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
-public class DockScreen extends AbstractContainerScreen<DockMenu> {
+public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
     private static final int TAB_ROUTE = 0;
     private static final int TAB_DISPATCH = 1;
     private static final int TAB_STORAGE = 2;
@@ -85,12 +86,16 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     private Button autoRouteButton;
     private boolean closingContainer;
 
-    public DockScreen(DockMenu menu, Inventory inventory, Component title) {
+    public DockScreen(T menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
         this.imageWidth = 194;
         this.imageHeight = 176;
         DockScreenData initial = DockClientHooks.consumeFor(menu.getDockPos());
         this.data = initial != null ? initial : empty(menu.getDockPos());
+    }
+
+    public static DockScreen<DockMenu> create(DockMenu menu, Inventory inventory, Component title) {
+        return new DockScreen<>(menu, inventory, title);
     }
 
     public boolean isForDock(net.minecraft.core.BlockPos pos) {
@@ -99,6 +104,26 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
 
     public void updateData(DockScreenData updated) {
         this.data = updated;
+    }
+
+    protected String screenKeyPrefix() {
+        return "screen.sailboatmod.dock";
+    }
+
+    protected String defaultFacilityNameKey() {
+        return "block.sailboatmod.dock";
+    }
+
+    protected TransportTerminalKind terminalKind() {
+        return TransportTerminalKind.PORT;
+    }
+
+    protected boolean useLandMinimapPalette() {
+        return false;
+    }
+
+    protected Component screenText(String suffix, Object... args) {
+        return Component.translatable(screenKeyPrefix() + "." + suffix, args);
     }
 
     @Override
@@ -110,43 +135,43 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         updateRightPanelAnchor();
         int top = this.rightPanelY;
         int panelX = this.rightPanelX;
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.routes"), b -> activeTab = TAB_ROUTE)
+        this.addRenderableWidget(Button.builder(screenText("tab.routes"), b -> activeTab = TAB_ROUTE)
                 .bounds(panelX + 6, top + 4, 42, 16).build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.dispatch"), b -> activeTab = TAB_DISPATCH)
+        this.addRenderableWidget(Button.builder(screenText("tab.dispatch"), b -> activeTab = TAB_DISPATCH)
                 .bounds(panelX + 52, top + 4, 42, 16).build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.warehouse"), b -> activeTab = TAB_STORAGE)
+        this.addRenderableWidget(Button.builder(screenText("tab.warehouse"), b -> activeTab = TAB_STORAGE)
                 .bounds(panelX + 98, top + 4, 42, 16).build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.tab.waybill"), b -> activeTab = TAB_WAYBILL)
+        this.addRenderableWidget(Button.builder(screenText("tab.waybill"), b -> activeTab = TAB_WAYBILL)
                 .bounds(panelX + 144, top + 4, 44, 16).build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.refresh"), b -> send(DockGuiActionPacket.Action.REFRESH))
+        this.addRenderableWidget(Button.builder(screenText("refresh"), b -> send(DockGuiActionPacket.Action.REFRESH))
                 .bounds(panelX + 146, top + 160, 40, 16).build());
-        this.importButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.import"), b -> send(DockGuiActionPacket.Action.IMPORT_BOOK))
+        this.importButton = this.addRenderableWidget(Button.builder(screenText("import"), b -> send(DockGuiActionPacket.Action.IMPORT_BOOK))
                 .bounds(panelX + 146, top + 44, 40, 16).build());
-        this.reverseButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.reverse"), b -> send(DockGuiActionPacket.Action.REVERSE_ROUTE))
+        this.reverseButton = this.addRenderableWidget(Button.builder(screenText("reverse"), b -> send(DockGuiActionPacket.Action.REVERSE_ROUTE))
                 .bounds(panelX + 146, top + 66, 40, 16).build());
-        this.autoRouteButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.auto_route"), b -> {
+        this.autoRouteButton = this.addRenderableWidget(Button.builder(screenText("auto_route"), b -> {
             ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket(data.dockPos()));
         }).bounds(panelX + 146, top + 124, 40, 16).build());
-        this.deleteButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.delete"), b -> send(DockGuiActionPacket.Action.DELETE_ROUTE))
+        this.deleteButton = this.addRenderableWidget(Button.builder(screenText("delete"), b -> send(DockGuiActionPacket.Action.DELETE_ROUTE))
                 .bounds(panelX + 146, top + 142, 40, 16).build());
-        this.assignButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.assign"), b -> send(DockGuiActionPacket.Action.ASSIGN_SELECTED))
+        this.assignButton = this.addRenderableWidget(Button.builder(screenText("assign"), b -> send(DockGuiActionPacket.Action.ASSIGN_SELECTED))
                 .bounds(panelX + 8, top + 44, 60, 16).build());
-        this.dispatchCargoButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.ship_cargo"), b -> send(DockGuiActionPacket.Action.DISPATCH_SELECTED_CARGO))
+        this.dispatchCargoButton = this.addRenderableWidget(Button.builder(screenText("ship_cargo"), b -> send(DockGuiActionPacket.Action.DISPATCH_SELECTED_CARGO))
                 .bounds(panelX + 72, top + 44, 74, 16).build());
         this.nonOrderAutoReturnButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> send(DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_RETURN))
                 .bounds(panelX + 8, top + 126, 132, 16).build());
         this.nonOrderAutoUnloadButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> send(DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_UNLOAD))
                 .bounds(panelX + 8, top + 144, 132, 16).build());
-        this.takeStorageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.withdraw"), b -> send(DockGuiActionPacket.Action.TAKE_SELECTED_STORAGE))
+        this.takeStorageButton = this.addRenderableWidget(Button.builder(screenText("withdraw"), b -> send(DockGuiActionPacket.Action.TAKE_SELECTED_STORAGE))
                 .bounds(panelX + 146, top + 66, 40, 16).build());
-        this.takeWaybillButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.take"), b -> send(DockGuiActionPacket.Action.TAKE_SELECTED_WAYBILL))
+        this.takeWaybillButton = this.addRenderableWidget(Button.builder(screenText("take"), b -> send(DockGuiActionPacket.Action.TAKE_SELECTED_WAYBILL))
                 .bounds(panelX + 146, top + 142, 40, 16).build());
 
-        this.dockNameInput = new EditBox(this.font, panelX + 36, top + 22, 108, 16, Component.translatable("screen.sailboatmod.dock.name_input"));
+        this.dockNameInput = new EditBox(this.font, panelX + 36, top + 22, 108, 16, screenText("name_input"));
         this.dockNameInput.setMaxLength(64);
         this.dockNameInput.setValue(data.dockName());
         this.addRenderableWidget(this.dockNameInput);
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.dock.name_save"), b -> {
+        this.addRenderableWidget(Button.builder(screenText("name_save"), b -> {
             ModNetwork.CHANNEL.sendToServer(new RenameDockPacket(data.dockPos(), dockNameInput.getValue()));
         }).bounds(panelX + 146, top + 22, 40, 16).build());
 
@@ -162,16 +187,16 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         drawMenuSlotFrames(guiGraphics);
         guiGraphics.fill(rightPanelX, rightPanelY, rightPanelX + RIGHT_PANEL_W, rightPanelY + imageHeight, 0xCC6E4B2A);
         guiGraphics.fill(rightPanelX + 1, rightPanelY + 1, rightPanelX + RIGHT_PANEL_W - 1, rightPanelY + imageHeight - 1, 0xCC49311F);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.name"), rightPanelX + 8, rightPanelY + 26, 0xFFF4CF8A);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book"), rightPanelX + 8, rightPanelY + 44, 0xFFF4CF8A);
+        guiGraphics.drawString(font, screenText("name"), rightPanelX + 8, rightPanelY + 26, 0xFFF4CF8A);
+        guiGraphics.drawString(font, screenText("book"), rightPanelX + 8, rightPanelY + 44, 0xFFF4CF8A);
         if (activeTab == TAB_ROUTE) {
-            guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xFFAEDAD1);
+            guiGraphics.drawString(font, screenText("slot_hint"), rightPanelX + 30, rightPanelY + 44, 0xFFAEDAD1);
             String ownerLine = Component.translatable("screen.sailboatmod.owner_name", data.dockOwnerName()).getString();
             guiGraphics.drawString(font, Component.literal(trimToWidth(ownerLine, 136)), rightPanelX + 8, rightPanelY + 52, 0xFFAEDAD1);
         }
         int slotLabelColor = data.canManageDock() ? 0xFFF4CF8A : 0xFFAAA39A;
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.book_slot"), leftPos + 8, topPos + 6, slotLabelColor);
-        guiGraphics.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_slot"), leftPos + 8, topPos + 32, slotLabelColor);
+        guiGraphics.drawString(font, screenText("book_slot"), leftPos + 8, topPos + 6, slotLabelColor);
+        guiGraphics.drawString(font, screenText("storage_slot"), leftPos + 8, topPos + 32, slotLabelColor);
         guiGraphics.fill(leftPos + 6, topPos + 38, leftPos + imageWidth - 6, topPos + 39, 0xFF9F7A4A);
 
         if (activeTab == TAB_ROUTE) {
@@ -257,7 +282,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         int storageW = 178;
         int storageH = STORAGE_VISIBLE_ROWS * STORAGE_ROW_H + 12;
         drawListFrame(g, storageX, storageY, storageW, storageH);
-        g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_title"), storageX + 4, storageY + 3, 0xFFF4CF8A);
+        g.drawString(font, screenText("storage_title"), storageX + 4, storageY + 3, 0xFFF4CF8A);
         drawStorageList(g, storageX, storageY + 12, storageW, storageH - 12);
     }
 
@@ -310,10 +335,16 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
                 var pos = new net.minecraft.core.BlockPos(wx, wy, wz);
                 int color;
                 if (wy >= minecraft.level.getMinBuildHeight() && minecraft.level.getFluidState(pos).is(net.minecraft.tags.FluidTags.WATER)) {
-                    color = 0xFF2F8FBF;
+                    color = useLandMinimapPalette() ? 0xFF27415A : 0xFF2F8FBF;
                 } else {
                     MapColor mc = minecraft.level.getBlockState(pos).getMapColor(minecraft.level, pos);
                     int base = mc == null ? 0x55606A : mc.col;
+                    if (useLandMinimapPalette()) {
+                        int r = (((base >> 16) & 0xFF) + 0x76) / 2;
+                        int gCol = (((base >> 8) & 0xFF) + 0x95) / 2;
+                        int b = ((base & 0xFF) + 0x62) / 2;
+                        base = (r << 16) | (gCol << 8) | b;
+                    }
                     color = 0xFF000000 | (base & 0xFFFFFF);
                 }
                 g.fill(x + px, y + py, x + px + 1, y + py + 1, color);
@@ -467,7 +498,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
 
     private void drawRouteList(GuiGraphics g, int x, int y, int w, boolean showMeta) {
         if (data.routeNames().isEmpty()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.no_route"), x + 4, y + 4, 0xFFAAA39A);
+            g.drawString(font, screenText("no_route"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         int rowHeight = showMeta ? META_ROW_H : COMPACT_ROW_H;
@@ -508,7 +539,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
 
     private void drawWaybillList(GuiGraphics g, int x, int y, int w) {
         if (data.waybillNames().isEmpty()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.no_waybill"), x + 4, y + 4, 0xFFAAA39A);
+            g.drawString(font, screenText("no_waybill"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         int selected = Math.max(0, Math.min(data.selectedWaybillIndex(), data.waybillNames().size() - 1));
@@ -739,18 +770,18 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
         if (nonOrderAutoReturnButton != null) {
             nonOrderAutoReturnButton.visible = onDispatch;
             nonOrderAutoReturnButton.active = onDispatch && data.canManageDock();
-            nonOrderAutoReturnButton.setMessage(Component.translatable(
+            nonOrderAutoReturnButton.setMessage(screenText(
                     data.nonOrderAutoReturnEnabled()
-                            ? "screen.sailboatmod.dock.non_order_auto.on"
-                            : "screen.sailboatmod.dock.non_order_auto.off"));
+                            ? "non_order_auto.on"
+                            : "non_order_auto.off"));
         }
         if (nonOrderAutoUnloadButton != null) {
             nonOrderAutoUnloadButton.visible = onDispatch;
             nonOrderAutoUnloadButton.active = onDispatch && data.canManageDock();
-            nonOrderAutoUnloadButton.setMessage(Component.translatable(
+            nonOrderAutoUnloadButton.setMessage(screenText(
                     data.nonOrderAutoUnloadEnabled()
-                            ? "screen.sailboatmod.dock.non_order_unload.on"
-                            : "screen.sailboatmod.dock.non_order_unload.off"));
+                            ? "non_order_unload.on"
+                            : "non_order_unload.off"));
         }
         if (takeWaybillButton != null) {
             takeWaybillButton.visible = onWaybill;
@@ -771,7 +802,7 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
     private DockScreenData empty(net.minecraft.core.BlockPos pos) {
         return new DockScreenData(
                 pos,
-                "Dock",
+                Component.translatable(defaultFacilityNameKey()).getString(),
                 "-",
                 "",
                 false,
@@ -801,11 +832,11 @@ public class DockScreen extends AbstractContainerScreen<DockMenu> {
 
     private void drawStorageList(GuiGraphics g, int x, int y, int w, int h) {
         if (!data.canManageDock()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_owner_only"), x + 4, y + 4, 0xFFAAA39A);
+            g.drawString(font, screenText("storage_owner_only"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         if (data.storageLines().isEmpty()) {
-            g.drawString(font, Component.translatable("screen.sailboatmod.dock.storage_empty"), x + 4, y + 4, 0xFFAAA39A);
+            g.drawString(font, screenText("storage_empty"), x + 4, y + 4, 0xFFAAA39A);
             return;
         }
         int selected = Math.max(0, Math.min(data.selectedStorageIndex(), data.storageLines().size() - 1));

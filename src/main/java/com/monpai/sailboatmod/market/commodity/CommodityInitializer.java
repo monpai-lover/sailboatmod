@@ -1,6 +1,9 @@
 package com.monpai.sailboatmod.market.commodity;
 
-import net.minecraft.world.item.ItemStack;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraftforge.registries.ForgeRegistries;
 
 public final class CommodityInitializer {
 
@@ -24,6 +27,11 @@ public final class CommodityInitializer {
 
     private static CommodityCategories detectCategory(String itemId) {
         String lower = itemId.toLowerCase();
+        Item item = findRegisteredItem(itemId);
+
+        if (item instanceof BlockItem) {
+            return CommodityCategories.BUILDING;
+        }
 
         if (lower.contains("wheat") || lower.contains("bread") || lower.contains("carrot")
             || lower.contains("potato") || lower.contains("beetroot") || lower.contains("apple")) {
@@ -60,6 +68,11 @@ public final class CommodityInitializer {
         }
 
         return CommodityCategories.FOOD;
+    }
+
+    private static Item findRegisteredItem(String itemId) {
+        ResourceLocation key = ResourceLocation.tryParse(itemId);
+        return key == null ? null : ForgeRegistries.ITEMS.getValue(key);
     }
 
     private CommodityInitializer() {

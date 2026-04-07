@@ -9,8 +9,10 @@ import com.monpai.sailboatmod.block.DockBlock;
 import com.monpai.sailboatmod.block.MarketBlock;
 import com.monpai.sailboatmod.block.NationCoreBlock;
 import com.monpai.sailboatmod.block.NationFlagBlock;
+import com.monpai.sailboatmod.block.PostStationBlock;
 import com.monpai.sailboatmod.block.SchoolBlock;
 import com.monpai.sailboatmod.block.TownFlagBlock;
+import com.monpai.sailboatmod.block.TownWarehouseBlock;
 import com.monpai.sailboatmod.block.TownCoreBlock;
 import com.monpai.sailboatmod.block.WallNationFlagBlock;
 import com.monpai.sailboatmod.block.WallTownFlagBlock;
@@ -35,6 +37,16 @@ public final class ModBlocks {
     public static final RegistryObject<Block> MARKET_BLOCK = BLOCKS.register(
             "market",
             () -> new MarketBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_LIGHT_BLUE).strength(3.0F).sound(SoundType.WOOD))
+    );
+
+    public static final RegistryObject<Block> POST_STATION_BLOCK = BLOCKS.register(
+            "post_station",
+            () -> new PostStationBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).strength(2.8F).sound(SoundType.WOOD))
+    );
+
+    public static final RegistryObject<Block> TOWN_WAREHOUSE_BLOCK = BLOCKS.register(
+            "town_warehouse",
+            () -> new TownWarehouseBlock(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BROWN).strength(3.2F).sound(SoundType.WOOD))
     );
 
     public static final RegistryObject<Block> TOWN_CORE_BLOCK = BLOCKS.register(

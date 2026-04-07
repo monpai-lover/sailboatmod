@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.monpai.sailboatmod.item.PostRouteBookItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
@@ -33,7 +34,8 @@ public class FinalizeRouteNamePacket {
             if (player == null) {
                 return;
             }
-            boolean ok = RouteBookItem.finalizeActiveRoute(player, packet.hand, packet.routeName);
+            boolean ok = RouteBookItem.finalizeActiveRoute(player, packet.hand, packet.routeName)
+                    || PostRouteBookItem.finalizeActiveRoute(player, packet.hand, packet.routeName);
             if (!ok) {
                 player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("item.sailboatmod.route_book.finish_invalid"));
             }

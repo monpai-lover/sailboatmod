@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
+import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.route.AutoRouteService;
+import com.monpai.sailboatmod.route.RoadAutoRouteService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -42,7 +44,14 @@ public class CreateAutoRoutePacket {
                 return;
             }
 
-            boolean success = AutoRouteService.createAndSaveAutoRoute(serverLevel, sourceDock, targetDock);
+            boolean success;
+            if (sourceDock instanceof PostStationBlockEntity && targetDock instanceof PostStationBlockEntity) {
+                success = RoadAutoRouteService.createAndSaveAutoRoute(serverLevel, sourceDock, targetDock);
+            } else if (!(sourceDock instanceof PostStationBlockEntity) && !(targetDock instanceof PostStationBlockEntity)) {
+                success = AutoRouteService.createAndSaveAutoRoute(serverLevel, sourceDock, targetDock);
+            } else {
+                success = false;
+            }
             if (success) {
                 player.sendSystemMessage(Component.translatable(
                         "message.sailboatmod.auto_route.created",

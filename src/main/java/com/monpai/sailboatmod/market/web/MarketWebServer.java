@@ -10,6 +10,8 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpContext;
 import net.minecraft.server.MinecraftServer;
+import net.minecraftforge.fml.ModList;
+import net.minecraftforge.forgespi.language.IModFileInfo;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -27,18 +29,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 public final class MarketWebServer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
-    private static final String ICON_CACHE_VERSION = "marketweb-icons-v2";
+    private static final String ICON_CACHE_VERSION = "marketweb-icons-v5";
     private static volatile MarketWebServer INSTANCE;
 
     private final MinecraftServer minecraftServer;
     private final MarketWebAuthManager auth;
     private final MarketWebService service = new MarketWebService();
     private final MarketWebIconService icons = new MarketWebIconService();
+    private final AtomicLong resourceVersion = new AtomicLong(initialResourceVersion());
     private HttpServer httpServer;
     private ExecutorService executor;
 
@@ -80,9 +84,28 @@ public final class MarketWebServer {
         return auth;
     }
 
+    public long resourceVersion() {
+        return resourceVersion.get();
+    }
+
+    public static String iconCacheVersion() {
+        return ICON_CACHE_VERSION;
+    }
+
+    public static String addonVersion() {
+        return ModList.get().getModContainerById(SailboatMarketWebAddon.MODID)
+                .map(container -> container.getModInfo().getVersion().toString())
+                .orElse("unknown");
+    }
+
+    private static long initialResourceVersion() {
+        return Math.max(1L, System.currentTimeMillis());
+    }
+
     public void reload() {
         icons.clearCache();
-        LOGGER.info("Market web resources reloaded");
+        long version = resourceVersion.incrementAndGet();
+        LOGGER.info("Market web resources reloaded (resource version {})", version);
     }
 
     private void startInternal() throws IOException {
@@ -94,12 +117,18 @@ public final class MarketWebServer {
         executor = Executors.newCachedThreadPool();
         httpServer.setExecutor(executor);
         createContext("/api/auth/token-login", this::handleTokenLogin);
+        createContext("/api/auth/password-login", this::handlePasswordLogin);
         createContext("/api/session/me", this::handleSessionMe);
+        createContext("/api/debug/version", this::handleDebugVersion);
         createContext("/api/markets", this::handleMarkets);
         createContext("/api/icons", this::handleIcon);
         createContext("/", this::handleStatic);
         httpServer.start();
-        LOGGER.info("Market web server started on {}:{}", address.getHostString(), address.getPort());
+        LOGGER.info("Market web server started on {}:{} (resource version {}, icon cache {})",
+                address.getHostString(),
+                address.getPort(),
+                resourceVersion.get(),
+                ICON_CACHE_VERSION);
     }
 
     private void stopInternal() {
@@ -135,15 +164,43 @@ public final class MarketWebServer {
         }
         JsonObject body = readBody(exchange);
         String token = stringValue(body, "token");
-        MarketWebAuthManager.SessionToken session = auth.exchangeLoginToken(token);
-        if (session == null) {
-            writeJson(exchange, 401, error("invalid_token", "Invalid token"));
+        String username = stringValue(body, "username");
+        String password = stringValue(body, "password");
+        boolean wantsBind = !username.isBlank() || !password.isBlank();
+        MarketWebAuthManager.AuthResult result;
+        if (wantsBind) {
+            result = auth.bindAccountFromToken(token, username, password);
+        } else {
+            MarketWebAuthManager.SessionToken session = auth.exchangeLoginToken(token);
+            result = session == null
+                    ? MarketWebAuthManager.AuthResult.invalid("invalid_token", "Invalid token")
+                    : new MarketWebAuthManager.AuthResult(session, "", false, null, null);
+        }
+        if (!result.ok()) {
+            writeJson(exchange, 401, error(result.errorCode() == null ? "invalid_token" : result.errorCode(), result.message() == null ? "Invalid token" : result.message()));
             return;
         }
         JsonObject out = new JsonObject();
-        out.addProperty("sessionToken", session.token());
-        out.addProperty("playerUuid", session.playerUuid().toString());
-        out.addProperty("playerName", session.playerName());
+        writeAuthSuccess(out, result);
+        writeJson(exchange, 200, out);
+    }
+
+    private void handlePasswordLogin(HttpExchange exchange) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        JsonObject body = readBody(exchange);
+        MarketWebAuthManager.AuthResult result = auth.loginWithAccount(
+                stringValue(body, "username"),
+                stringValue(body, "password")
+        );
+        if (!result.ok()) {
+            writeJson(exchange, 401, error(result.errorCode() == null ? "invalid_credentials" : result.errorCode(), result.message() == null ? "Invalid username or password" : result.message()));
+            return;
+        }
+        JsonObject out = new JsonObject();
+        writeAuthSuccess(out, result);
         writeJson(exchange, 200, out);
     }
 
@@ -157,8 +214,27 @@ public final class MarketWebServer {
             json.addProperty("playerUuid", identity.playerUuidString());
             json.addProperty("playerName", identity.playerName());
             json.addProperty("online", identity.onlinePlayer() != null);
+            MarketWebAccountSavedData.AccountEntry account = auth.accountByPlayerUuid(identity.playerUuid());
+            json.addProperty("accountBound", account != null);
+            json.addProperty("accountUsername", account == null ? "" : account.username());
+            json.addProperty("webResourceVersion", resourceVersion.get());
+            json.addProperty("iconCacheVersion", ICON_CACHE_VERSION);
             return json;
         });
+        writeJson(exchange, 200, out);
+    }
+
+    private void handleDebugVersion(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        JsonObject out = new JsonObject();
+        out.addProperty("addonModId", SailboatMarketWebAddon.MODID);
+        out.addProperty("addonVersion", addonVersion());
+        out.addProperty("resourceVersion", resourceVersion.get());
+        out.addProperty("iconCacheVersion", ICON_CACHE_VERSION);
+        out.addProperty("devMode", com.monpai.sailboatmod.ModConfig.marketWebDevMode());
         writeJson(exchange, 200, out);
     }
 
@@ -235,7 +311,13 @@ public final class MarketWebServer {
             } else if (path.size() == 6 && "buy-orders".equals(path.get(3)) && "cancel".equals(path.get(5))) {
                 ok = callOnServerThread(() -> service.cancelBuyOrder(minecraftServer, identity, marketId, path.get(4)));
             } else if (path.size() == 5 && "dispatch".equals(path.get(3)) && "retry".equals(path.get(4))) {
-                ok = callOnServerThread(() -> service.retryDispatch(minecraftServer, identity, marketId));
+                ok = callOnServerThread(() -> service.retryDispatch(
+                        minecraftServer,
+                        identity,
+                        marketId,
+                        intValue(body, "orderIndex", 0),
+                        stringValue(body, "terminalType")
+                ));
             } else {
                 writeJson(exchange, 404, error("not_found", "Endpoint not found"));
                 return;
@@ -261,6 +343,10 @@ public final class MarketWebServer {
             writeStatic(exchange, "marketweb/index.html", "text/html; charset=utf-8");
             return;
         }
+        if ("/browse".equals(path) || "/inventory".equals(path) || "/sell".equals(path) || "/buy".equals(path) || "/chart".equals(path) || "/index".equals(path)) {
+            writeStatic(exchange, "marketweb/index.html", "text/html; charset=utf-8");
+            return;
+        }
         if ("/app.js".equals(path)) {
             writeStatic(exchange, "marketweb/app.js", "application/javascript; charset=utf-8");
             return;
@@ -275,6 +361,11 @@ public final class MarketWebServer {
         }
         if (path.startsWith("/assets/")) {
             String resourcePath = path.substring(1);
+            writeStatic(exchange, resourcePath, contentType(resourcePath));
+            return;
+        }
+        if (path.startsWith("/") && path.lastIndexOf('/') == 0) {
+            String resourcePath = "marketweb/" + path.substring(1);
             writeStatic(exchange, resourcePath, contentType(resourcePath));
             return;
         }
@@ -293,15 +384,17 @@ public final class MarketWebServer {
         }
         byte[] bytes = icons.loadIcon(commodityKey);
         if (bytes == null || bytes.length == 0) {
+            LOGGER.warn("Market web icon not found for {}", commodityKey);
             writeJson(exchange, 404, error("icon_not_found", "Icon not found"));
             return;
         }
         Headers headers = exchange.getResponseHeaders();
-        String etag = "\"" + ICON_CACHE_VERSION + ":" + Integer.toHexString(commodityKey.hashCode()) + "\"";
+        String etag = "\"" + ICON_CACHE_VERSION + ":v" + resourceVersion.get() + ":" + Integer.toHexString(commodityKey.hashCode()) + "\"";
         String ifNoneMatch = exchange.getRequestHeaders().getFirst("If-None-Match");
         if (etag.equals(ifNoneMatch)) {
             headers.set("ETag", etag);
             headers.set("Cache-Control", "public, max-age=3600");
+            headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
             exchange.sendResponseHeaders(304, -1);
             return;
         }
@@ -309,6 +402,7 @@ public final class MarketWebServer {
         headers.set("Cache-Control", "public, max-age=3600");
         headers.set("ETag", etag);
         headers.set("X-Icon-Cache-Version", ICON_CACHE_VERSION);
+        headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
         exchange.sendResponseHeaders(200, bytes.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(bytes);
@@ -361,6 +455,7 @@ public final class MarketWebServer {
                 byte[] bytes = Files.readAllBytes(devFile);
                 Headers headers = exchange.getResponseHeaders();
                 headers.set("Content-Type", contentType);
+                headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
                 applyNoCache(headers);
                 exchange.sendResponseHeaders(200, bytes.length);
                 try (OutputStream output = exchange.getResponseBody()) {
@@ -369,14 +464,16 @@ public final class MarketWebServer {
                 return;
             }
         }
-        try (InputStream stream = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
+        try (InputStream stream = resource(resourcePath)) {
             if (stream == null) {
+                LOGGER.warn("Market web static resource missing: {}", resourcePath);
                 writeJson(exchange, 404, error("not_found", "Static resource missing"));
                 return;
             }
             byte[] bytes = stream.readAllBytes();
             Headers headers = exchange.getResponseHeaders();
             headers.set("Content-Type", contentType);
+            headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
             if (com.monpai.sailboatmod.ModConfig.marketWebDevMode()) {
                 applyNoCache(headers);
             }
@@ -388,22 +485,26 @@ public final class MarketWebServer {
     }
 
     private Path resolveDevResourcePath(String resourcePath) {
-        Path devRoot = resolveDevRoot();
-        if (devRoot == null) {
-            return null;
+        for (Path devRoot : resolveDevRoots(resourcePath)) {
+            if (devRoot == null) {
+                continue;
+            }
+            String normalized = resourcePath == null ? "" : resourcePath.replace('\\', '/');
+            if (normalized.startsWith("marketweb/")) {
+                normalized = normalized.substring("marketweb/".length());
+            }
+            if (normalized.startsWith("/")) {
+                normalized = normalized.substring(1);
+            }
+            if (normalized.isBlank()) {
+                continue;
+            }
+            Path candidate = devRoot.resolve(normalized).normalize();
+            if (candidate.startsWith(devRoot.normalize()) && Files.isRegularFile(candidate)) {
+                return candidate;
+            }
         }
-        String normalized = resourcePath == null ? "" : resourcePath.replace('\\', '/');
-        if (normalized.startsWith("marketweb/")) {
-            normalized = normalized.substring("marketweb/".length());
-        }
-        if (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        if (normalized.isBlank()) {
-            return null;
-        }
-        Path candidate = devRoot.resolve(normalized).normalize();
-        return candidate.startsWith(devRoot.normalize()) ? candidate : null;
+        return null;
     }
 
     private Path resolveDevRoot() {
@@ -423,6 +524,76 @@ public final class MarketWebServer {
             }
         }
         return null;
+    }
+
+    private List<Path> resolveDevRoots(String resourcePath) {
+        String configured = com.monpai.sailboatmod.ModConfig.marketWebDevRoot();
+        if (configured != null && !configured.isBlank()) {
+            return List.of(Paths.get(configured.trim()).toAbsolutePath().normalize());
+        }
+        String normalized = resourcePath == null ? "" : resourcePath.replace('\\', '/');
+        if (normalized.startsWith("assets/")) {
+            return List.of(
+                    Paths.get("src", "main", "resources").toAbsolutePath().normalize(),
+                    Paths.get("build", "resources", "main").toAbsolutePath().normalize()
+            );
+        }
+        Path devRoot = resolveDevRoot();
+        return devRoot == null ? List.of() : List.of(devRoot);
+    }
+
+    private InputStream resource(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        InputStream modResource = modResource(path);
+        if (modResource != null) {
+            return modResource;
+        }
+        ClassLoader loader = getClass().getClassLoader();
+        if (loader != null) {
+            InputStream stream = loader.getResourceAsStream(path);
+            if (stream != null) {
+                return stream;
+            }
+        }
+        return ClassLoader.getSystemResourceAsStream(path);
+    }
+
+    private InputStream modResource(String path) {
+        String normalized = path.replace('\\', '/');
+        String modId;
+        String[] relative;
+        if (normalized.startsWith("assets/")) {
+            String[] parts = normalized.split("/");
+            if (parts.length < 3) {
+                return null;
+            }
+            modId = parts[1];
+            if (modId.isBlank() || "minecraft".equals(modId)) {
+                return null;
+            }
+            relative = new String[parts.length];
+            System.arraycopy(parts, 0, relative, 0, relative.length);
+        } else if (normalized.startsWith("marketweb/")) {
+            modId = SailboatMarketWebAddon.MODID;
+            relative = normalized.split("/");
+        } else {
+            return null;
+        }
+        IModFileInfo modFileInfo = ModList.get().getModFileById(modId);
+        if (modFileInfo == null || modFileInfo.getFile() == null) {
+            return null;
+        }
+        Path resourcePath = modFileInfo.getFile().findResource(relative);
+        if (resourcePath == null || !Files.isRegularFile(resourcePath)) {
+            return null;
+        }
+        try {
+            return Files.newInputStream(resourcePath);
+        } catch (IOException ignored) {
+            return null;
+        }
     }
 
     private static void applyNoCache(Headers headers) {
@@ -480,6 +651,16 @@ public final class MarketWebServer {
         JsonObject out = new JsonObject();
         out.addProperty("ok", true);
         return out;
+    }
+
+    private static void writeAuthSuccess(JsonObject out, MarketWebAuthManager.AuthResult result) {
+        MarketWebAuthManager.SessionToken session = result.session();
+        out.addProperty("sessionToken", session.token());
+        out.addProperty("playerUuid", session.playerUuid().toString());
+        out.addProperty("playerName", session.playerName());
+        out.addProperty("accountUsername", result.accountUsername() == null ? "" : result.accountUsername());
+        out.addProperty("accountBound", result.accountUsername() != null && !result.accountUsername().isBlank());
+        out.addProperty("newlyBound", result.newlyBound());
     }
 
     private static JsonObject error(String code, String message) {

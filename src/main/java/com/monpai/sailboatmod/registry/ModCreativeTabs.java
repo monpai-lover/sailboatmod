@@ -18,8 +18,13 @@ public final class ModCreativeTabs {
                     .icon(() -> ModItems.SAILBOAT_ITEM.get().getDefaultInstance())
                     .displayItems((parameters, output) -> {
                         output.accept(ModItems.SAILBOAT_ITEM.get());
+                        output.accept(ModItems.CARRIAGE_ITEM.get());
                         output.accept(ModItems.ROUTE_BOOK_ITEM.get());
+                        output.accept(ModItems.POST_ROUTE_BOOK_ITEM.get());
+                        output.accept(ModItems.ROAD_PLANNER_ITEM.get());
                         output.accept(ModItems.DOCK_ITEM.get());
+                        output.accept(ModItems.POST_STATION_ITEM.get());
+                        output.accept(ModItems.TOWN_WAREHOUSE_ITEM.get());
                         output.accept(ModItems.MARKET_ITEM.get());
                         output.accept(ModItems.TOWN_CORE_ITEM.get());
                         output.accept(ModItems.NATION_CORE_ITEM.get());

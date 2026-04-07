@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.resident.entity.ResidentEntity;
 import com.monpai.sailboatmod.resident.entity.SoldierEntity;
@@ -21,6 +22,15 @@ public final class ModEntities {
                     .clientTrackingRange(10)
                     .updateInterval(1)
                     .build("sailboat")
+    );
+
+    public static final RegistryObject<EntityType<CarriageEntity>> CARRIAGE = ENTITY_TYPES.register(
+            "carriage",
+            () -> EntityType.Builder.<CarriageEntity>of(CarriageEntity::new, MobCategory.MISC)
+                    .sized(3.0F, 1.6F)
+                    .clientTrackingRange(10)
+                    .updateInterval(1)
+                    .build("carriage")
     );
 
     public static final RegistryObject<EntityType<ResidentEntity>> RESIDENT = ENTITY_TYPES.register(

@@ -123,6 +123,39 @@
     "screen.sailboatmod.dock.no_waybill":  "No waybill data",
     "screen.sailboatmod.dock.boat_index":  "Boat %s/%s",
     "screen.sailboatmod.dock.boat_name":  "Target: %s",
+    "screen.sailboatmod.post_station.title":  "Post Station Control",
+    "screen.sailboatmod.post_station.tab.routes":  "Routes",
+    "screen.sailboatmod.post_station.tab.dispatch":  "Dispatch",
+    "screen.sailboatmod.post_station.tab.waybill":  "Inbox",
+    "screen.sailboatmod.post_station.tab.warehouse":  "Storage",
+    "screen.sailboatmod.post_station.assign":  "Assign Cart",
+    "screen.sailboatmod.post_station.ship_cargo":  "Ship Cargo",
+    "screen.sailboatmod.post_station.withdraw":  "Withdraw",
+    "screen.sailboatmod.post_station.non_order_auto.on":  "Auto Return: ON",
+    "screen.sailboatmod.post_station.non_order_auto.off":  "Auto Return: OFF",
+    "screen.sailboatmod.post_station.non_order_unload.on":  "Auto Unload: ON",
+    "screen.sailboatmod.post_station.non_order_unload.off":  "Auto Unload: OFF",
+    "screen.sailboatmod.post_station.take":  "Take",
+    "screen.sailboatmod.post_station.refresh":  "Refresh",
+    "screen.sailboatmod.post_station.import":  "Load",
+    "screen.sailboatmod.post_station.reverse":  "Swap",
+    "screen.sailboatmod.post_station.delete":  "Del",
+    "screen.sailboatmod.post_station.book":  "Book:",
+    "screen.sailboatmod.post_station.book_slot":  "Route Book",
+    "screen.sailboatmod.post_station.storage_slot":  "Storage Slot",
+    "screen.sailboatmod.post_station.name":  "Station:",
+    "screen.sailboatmod.post_station.name_input":  "Station Name",
+    "screen.sailboatmod.post_station.name_save":  "Save",
+    "screen.sailboatmod.post_station.slot_hint":  "LMB load from hand, RMB clear",
+    "screen.sailboatmod.post_station.storage_title":  "Station Storage Cargo",
+    "screen.sailboatmod.post_station.storage_owner_only":  "Only the station owner can access this storage.",
+    "screen.sailboatmod.post_station.storage_empty":  "No cargo in station storage.",
+    "screen.sailboatmod.post_station.vehicle_not_ready":  "Carriage must be idle, empty, and parked in this station before dispatch.",
+    "screen.sailboatmod.post_station.no_route":  "No route data",
+    "screen.sailboatmod.post_station.no_waybill":  "No waybill data",
+    "screen.sailboatmod.post_station.auto_route":  "Auto",
+    "screen.sailboatmod.post_station.error.vehicle_cargo_full": "Carriage cargo hold is full.",
+    "screen.sailboatmod.post_station.error.vehicle_load_failed": "Carriage cargo load failed.",
     "screen.sailboatmod.route_name.title":  "Route Suffix",
     "screen.sailboatmod.route_name.desc":  "Final name = StartDock-EndDock Route-\"Suffix\"",
     "screen.sailboatmod.route_name.input":  "Suffix Text",
@@ -1283,11 +1316,29 @@
     "screen.sailboatmod.auto_route.empty":  "No available destination docks were found.",
     "screen.sailboatmod.auto_route.select_target":  "Select a target dock first.",
     "screen.sailboatmod.auto_route.entry":  "%s | %s | %s | %sm",
+    "screen.sailboatmod.auto_route.port.title":  "Create Auto Route",
+    "screen.sailboatmod.auto_route.port.subtitle":  "Select a destination dock to generate a direct automatic route.",
+    "screen.sailboatmod.auto_route.port.columns":  "Dock | Owner | Nation | Distance",
+    "screen.sailboatmod.auto_route.port.create":  "Create Route",
+    "screen.sailboatmod.auto_route.port.hint":  "Choose one target dock from the list below.",
+    "screen.sailboatmod.auto_route.port.empty":  "No available destination docks were found.",
+    "screen.sailboatmod.auto_route.port.select_target":  "Select a target dock first.",
+    "screen.sailboatmod.auto_route.port.entry":  "%s | %s | %s | %sm",
+    "screen.sailboatmod.auto_route.post_station.title":  "Create Auto Station Route",
+    "screen.sailboatmod.auto_route.post_station.subtitle":  "Select a destination post station to generate an overland route.",
+    "screen.sailboatmod.auto_route.post_station.columns":  "Station | Owner | Nation | Distance",
+    "screen.sailboatmod.auto_route.post_station.create":  "Create Route",
+    "screen.sailboatmod.auto_route.post_station.hint":  "Choose one target post station from the list below.",
+    "screen.sailboatmod.auto_route.post_station.empty":  "No reachable post stations were found.",
+    "screen.sailboatmod.auto_route.post_station.select_target":  "Select a target post station first.",
+    "screen.sailboatmod.auto_route.post_station.entry":  "%s | %s | %s | %sm",
     "screen.sailboatmod.auto_route.unknown_owner":  "Unknown Owner",
     "screen.sailboatmod.auto_route.no_nation":  "No Nation",
     "message.sailboatmod.auto_route.created":  "Auto route created to %s.",
     "message.sailboatmod.auto_route.create_failed":  "Failed to create auto route.",
     "message.sailboatmod.auto_route.dock_not_found":  "Source or target dock could not be found.",
+    "block.sailboatmod.post_station.no_target":  "No available carriage was found inside this station.",
+    "block.sailboatmod.post_station.no_route":  "This station has no usable route.",
     "command.sailboatmod.nation.core.moved":  "%s core moved. The previous core block can now be removed safely.",
     "command.sailboatmod.nation.town.core.moved":  "Moved the town core for %s. The previous core block can now be removed safely.",
     "screen.sailboatmod.town.action.remove_core":  "Remove Core",
@@ -1309,5 +1360,39 @@
     ,"screen.sailboatmod.market.catalog.filter.utility":  "Utility"
     ,"screen.sailboatmod.market.catalog.filter.weapon":  "Weapon"
     ,"screen.sailboatmod.market.catalog.filter.armor":  "Armor"
-}
+    ,"entity.sailboatmod.carriage": "Carriage"
+    ,"item.sailboatmod.carriage": "Carriage"
+    ,"screen.sailboatmod.carriage.owner_only_control": "Only the carriage owner can drive or access cargo"
+    ,"item.sailboatmod.post_route_book": "Post Route Book"
+    ,"item.sailboatmod.post_route_book.record_start": "Road route recording started at (%s, %s, %s)"
+    ,"item.sailboatmod.post_route_book.point_added": "Recorded waypoint %s at (%s, %s, %s)"
+    ,"item.sailboatmod.post_route_book.full": "Route is full (max %s waypoints)"
+    ,"item.sailboatmod.post_route_book.too_short": "At least %s waypoints are required"
+    ,"item.sailboatmod.post_route_book.start": "Started overland route %s (%s routes)"
+    ,"item.sailboatmod.post_route_book.stop": "Stopped overland autopilot"
+    ,"item.sailboatmod.post_route_book.tip.record": "Right-click a block: record a road waypoint"
+    ,"item.sailboatmod.post_route_book.tip.finish": "Sneak + right-click: finish and name the route"
+    ,"item.sailboatmod.post_route_book.tip.apply": "Right-click a carriage: start the recorded route"
+    ,"item.sailboatmod.post_route_book.tip.stop": "Sneak + right-click a carriage: stop autopilot"
+    ,"item.sailboatmod.post_route_book.active": "Active route: %s/%s"
+    ,"item.sailboatmod.post_route_book.info.name": "Route: %s"
+    ,"item.sailboatmod.post_route_book.info.meta": "Length %sm | Author %s | %s"
+    ,"item.sailboatmod.post_route_book.more": "%s more routes..."
+    ,"item.sailboatmod.post_route_book.finish": "Route \"%s\" finished, length %sm"
+    ,"item.sailboatmod.post_route_book.start_need_station": "Route recording must start inside a post station zone"
+    ,"item.sailboatmod.post_route_book.need_land": "Waypoints can only be recorded on solid land"
+    ,"item.sailboatmod.post_route_book.locked": "This route book is finalized and can no longer be edited"
+    ,"item.sailboatmod.post_route_book.default_name": "Road Route-%s"
+    ,"item.sailboatmod.post_route_book.generated_name": "%s-%s Road Route"
+    ,"item.sailboatmod.post_route_book.generated_name_with_suffix": "%s-%s Road Route-\"%s\""
+    ,"block.sailboatmod.post_station": "Post Station"
+    ,"item.sailboatmod.post_station": "Post Station"
+    ,"item.sailboatmod.post_station.desc": "The core block for overland entity transport between stations."
+    ,"block.sailboatmod.town_warehouse": "Town Warehouse"
+    ,"item.sailboatmod.town_warehouse": "Town Warehouse"
+    ,"item.sailboatmod.town_warehouse.desc": "Centralized town storage for market listings and deliveries."
+    ,"screen.sailboatmod.town_warehouse.title": "%s Warehouse"
+    ,"screen.sailboatmod.town_warehouse.manager_only": "Only town managers can open this warehouse."
+    ,"block.sailboatmod.town_warehouse.already_exists": "%s already has a warehouse."
+    ,"item.sailboatmod.road_planner": "Road Planner"
 }

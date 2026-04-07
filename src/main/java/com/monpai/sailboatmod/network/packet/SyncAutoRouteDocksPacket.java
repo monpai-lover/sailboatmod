@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.DockClientHooks;
 import com.monpai.sailboatmod.dock.AvailableDockEntry;
+import com.monpai.sailboatmod.market.TransportTerminalKind;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
@@ -14,15 +15,18 @@ import java.util.function.Supplier;
 
 public class SyncAutoRouteDocksPacket {
     private final BlockPos sourceDockPos;
+    private final TransportTerminalKind terminalKind;
     private final List<AvailableDockEntry> docks;
 
-    public SyncAutoRouteDocksPacket(BlockPos sourceDockPos, List<AvailableDockEntry> docks) {
+    public SyncAutoRouteDocksPacket(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
         this.sourceDockPos = sourceDockPos;
+        this.terminalKind = terminalKind;
         this.docks = docks;
     }
 
     public static void encode(SyncAutoRouteDocksPacket msg, FriendlyByteBuf buf) {
         buf.writeBlockPos(msg.sourceDockPos);
+        buf.writeEnum(msg.terminalKind);
         buf.writeVarInt(msg.docks.size());
         for (AvailableDockEntry dock : msg.docks) {
             buf.writeBlockPos(dock.pos());
@@ -35,6 +39,7 @@ public class SyncAutoRouteDocksPacket {
 
     public static SyncAutoRouteDocksPacket decode(FriendlyByteBuf buf) {
         BlockPos sourceDockPos = buf.readBlockPos();
+        TransportTerminalKind terminalKind = buf.readEnum(TransportTerminalKind.class);
         int size = buf.readVarInt();
         List<AvailableDockEntry> docks = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
@@ -46,12 +51,12 @@ public class SyncAutoRouteDocksPacket {
                 buf.readVarInt()
             ));
         }
-        return new SyncAutoRouteDocksPacket(sourceDockPos, docks);
+        return new SyncAutoRouteDocksPacket(sourceDockPos, terminalKind, docks);
     }
 
     public static void handle(SyncAutoRouteDocksPacket msg, Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
-            DockClientHooks.openAutoRouteDockSelection(msg.sourceDockPos, msg.docks)
+            DockClientHooks.openAutoRouteDockSelection(msg.sourceDockPos, msg.terminalKind, msg.docks)
         ));
         ctx.get().setPacketHandled(true);
     }

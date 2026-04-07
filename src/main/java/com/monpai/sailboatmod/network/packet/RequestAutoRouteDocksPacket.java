@@ -1,11 +1,15 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
+import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.dock.AvailableDockEntry;
 import com.monpai.sailboatmod.dock.DockRegistry;
+import com.monpai.sailboatmod.dock.PostStationRegistry;
+import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.route.AutoRouteService;
+import com.monpai.sailboatmod.route.RoadAutoRouteService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
@@ -40,15 +44,21 @@ public class RequestAutoRouteDocksPacket {
             if (!(serverLevel.getBlockEntity(msg.sourceDockPos) instanceof DockBlockEntity sourceDock)) return;
 
             List<AvailableDockEntry> available = new ArrayList<>();
+            boolean postStationMode = sourceDock instanceof PostStationBlockEntity;
+            TransportTerminalKind terminalKind = postStationMode ? TransportTerminalKind.POST_STATION : TransportTerminalKind.PORT;
+            Iterable<BlockPos> candidates = postStationMode ? PostStationRegistry.get(serverLevel) : DockRegistry.get(serverLevel);
 
-            for (BlockPos dockPos : DockRegistry.get(serverLevel)) {
+            for (BlockPos dockPos : candidates) {
                 if (dockPos.equals(msg.sourceDockPos)) continue;
 
                 // Force-load chunk to access dock block entity
                 serverLevel.getChunkSource().getChunk(dockPos.getX() >> 4, dockPos.getZ() >> 4, net.minecraft.world.level.chunk.ChunkStatus.FULL, true);
                 if (!(serverLevel.getBlockEntity(dockPos) instanceof DockBlockEntity targetDock)) continue;
 
-                if (!AutoRouteService.canCreateAutoRoute(serverLevel, sourceDock, targetDock)) continue;
+                boolean canCreate = postStationMode
+                        ? RoadAutoRouteService.canResolveAutoRoute(serverLevel, sourceDock, targetDock)
+                        : AutoRouteService.canCreateAutoRoute(serverLevel, sourceDock, targetDock);
+                if (!canCreate) continue;
 
                 int distance = (int) Math.sqrt(msg.sourceDockPos.distSqr(dockPos));
                 available.add(new AvailableDockEntry(
@@ -61,7 +71,7 @@ public class RequestAutoRouteDocksPacket {
             }
 
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
-                new SyncAutoRouteDocksPacket(msg.sourceDockPos, available));
+                new SyncAutoRouteDocksPacket(msg.sourceDockPos, terminalKind, available));
         });
         ctx.get().setPacketHandled(true);
     }

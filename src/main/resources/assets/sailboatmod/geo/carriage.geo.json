@@ -1,0 +1,155 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.sailboatmod.carriage",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 3.8,
+        "visible_bounds_height": 2.8,
+        "visible_bounds_offset": [0, 1.1, 0]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [0, 0, 0]
+        },
+        {
+          "name": "body",
+          "parent": "root",
+          "pivot": [0, 13, 0],
+          "cubes": [
+            {
+              "origin": [-11, 11, -10],
+              "size": [22, 2, 20],
+              "uv": [0, 0]
+            },
+            {
+              "origin": [-10, 13, -8],
+              "size": [20, 1, 16],
+              "uv": [0, 22]
+            },
+            {
+              "origin": [-12, 7, -10],
+              "size": [2, 6, 20],
+              "uv": [0, 24]
+            },
+            {
+              "origin": [10, 7, -10],
+              "size": [2, 6, 20],
+              "uv": [0, 24]
+            },
+            {
+              "origin": [-10, 7, -12],
+              "size": [20, 6, 2],
+              "uv": [44, 0]
+            },
+            {
+              "origin": [-10, 7, 10],
+              "size": [20, 6, 2],
+              "uv": [44, 0]
+            },
+            {
+              "origin": [-4, 13, 2],
+              "size": [8, 4, 5],
+              "uv": [44, 18]
+            }
+          ]
+        },
+        {
+          "name": "axle",
+          "parent": "root",
+          "pivot": [0, 13, 0],
+          "cubes": [
+            {
+              "origin": [-13, 12, -1],
+              "size": [26, 2, 2],
+              "uv": [22, 36]
+            }
+          ]
+        },
+        {
+          "name": "shaft_left",
+          "parent": "root",
+          "pivot": [4, 13, -10],
+          "cubes": [
+            {
+              "origin": [2, 12, -30],
+              "size": [2, 2, 20],
+              "uv": [0, 46]
+            }
+          ]
+        },
+        {
+          "name": "shaft_right",
+          "parent": "root",
+          "pivot": [-4, 13, -10],
+          "cubes": [
+            {
+              "origin": [-4, 12, -30],
+              "size": [2, 2, 20],
+              "uv": [0, 46]
+            }
+          ]
+        },
+        {
+          "name": "shaft_crossbar",
+          "parent": "root",
+          "pivot": [0, 13, -30],
+          "cubes": [
+            {
+              "origin": [-8, 12, -31],
+              "size": [16, 1, 2],
+              "uv": [44, 27]
+            }
+          ]
+        },
+        {
+          "name": "left_wheel",
+          "parent": "root",
+          "pivot": [14, 13, 0],
+          "cubes": [
+            {
+              "origin": [13, 5, -2],
+              "size": [2, 16, 4],
+              "uv": [48, 32]
+            },
+            {
+              "origin": [13, 8, -5],
+              "size": [2, 10, 10],
+              "uv": [28, 46]
+            },
+            {
+              "origin": [13, 12, -7],
+              "size": [2, 2, 14],
+              "uv": [0, 57]
+            }
+          ]
+        },
+        {
+          "name": "right_wheel",
+          "parent": "root",
+          "pivot": [-14, 13, 0],
+          "cubes": [
+            {
+              "origin": [-15, 5, -2],
+              "size": [2, 16, 4],
+              "uv": [48, 32]
+            },
+            {
+              "origin": [-15, 8, -5],
+              "size": [2, 10, 10],
+              "uv": [28, 46]
+            },
+            {
+              "origin": [-15, 12, -7],
+              "size": [2, 2, 14],
+              "uv": [0, 57]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

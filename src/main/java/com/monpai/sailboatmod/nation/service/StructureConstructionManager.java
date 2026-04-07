@@ -790,13 +790,17 @@ public final class StructureConstructionManager {
     private static void syncRoadNetwork(ServerLevel level, NationSavedData data, String townId, String nationId, String dimensionId) {
         Map<String, RoadNetworkRecord> existing = new LinkedHashMap<>();
         for (RoadNetworkRecord road : data.getRoadNetworks()) {
-            if (road.sameScope(townId, nationId, dimensionId)) {
+            if (road.sameScope(townId, nationId, dimensionId) && road.isAutoManaged()) {
                 existing.put(road.roadId(), road);
             }
         }
 
         Map<String, RoadNetworkRecord> desired = planRoadNetwork(level, data, townId, nationId, dimensionId);
+        List<RoadNetworkRecord> manualCoverageRoads = data.getRoadNetworks().stream()
+                .filter(road -> road.sameScope(townId, nationId, dimensionId) && !road.isAutoManaged())
+                .toList();
         Set<BlockPos> desiredCoverage = collectRoadCoverage(desired.values());
+        desiredCoverage.addAll(collectRoadCoverage(manualCoverageRoads));
 
         for (RoadNetworkRecord road : existing.values()) {
             RoadNetworkRecord desiredRoad = desired.get(road.roadId());
@@ -937,7 +941,8 @@ public final class StructureConstructionManager {
                 leftId,
                 rightId,
                 path,
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                RoadNetworkRecord.SOURCE_TYPE_AUTO
         ));
     }
 
@@ -1039,6 +1044,14 @@ public final class StructureConstructionManager {
         }
         ACTIVE_ROAD_CONSTRUCTIONS.put(road.roadId(), new RoadConstructionJob(level, road.roadId(), road.path(), resumeIndex, resumeIndex));
         persistRoadConstruction(level, road.roadId(), road.path());
+    }
+
+    public static void scheduleManualRoad(ServerLevel level, RoadNetworkRecord road) {
+        if (level == null || road == null || road.roadId().isBlank()) {
+            return;
+        }
+        NationSavedData.get(level).putRoadNetwork(road);
+        scheduleRoadConstruction(level, road);
     }
 
     private static void placeRoadSlice(ServerLevel level, List<BlockPos> path, int index, BlockState roadBlock) {

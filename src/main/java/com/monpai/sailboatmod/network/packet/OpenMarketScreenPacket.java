@@ -187,6 +187,8 @@ public class OpenMarketScreenPacket {
             buffer.writeVarInt(entry.quantity());
             buffer.writeVarInt(entry.suggestedUnitPrice());
             PacketStringCodec.writeUtfSafe(buffer, entry.detail(), 192);
+            PacketStringCodec.writeUtfSafe(buffer, entry.category(), 48);
+            buffer.writeVarInt(entry.rarity());
         }
     }
 
@@ -200,7 +202,9 @@ public class OpenMarketScreenPacket {
                     buffer.readUtf(96),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
-                    buffer.readUtf(192)
+                    buffer.readUtf(192),
+                    buffer.readUtf(48),
+                    buffer.readVarInt()
             ));
         }
         return entries;
@@ -256,6 +260,7 @@ public class OpenMarketScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, entry.targetDockName(), 64);
             buffer.writeVarInt(entry.quantity());
             PacketStringCodec.writeUtfSafe(buffer, entry.status(), 48);
+            writeDispatchOptions(buffer, entry.dispatchOptions());
         }
     }
 
@@ -268,10 +273,49 @@ public class OpenMarketScreenPacket {
                     buffer.readUtf(64),
                     buffer.readUtf(64),
                     buffer.readVarInt(),
-                    buffer.readUtf(48)
+                    buffer.readUtf(48),
+                    readDispatchOptions(buffer)
             ));
         }
         return entries;
+    }
+
+    private static void writeDispatchOptions(FriendlyByteBuf buffer, List<MarketOverviewData.DispatchOption> options) {
+        buffer.writeVarInt(options.size());
+        for (MarketOverviewData.DispatchOption option : options) {
+            PacketStringCodec.writeUtfSafe(buffer, option.terminalKind(), 32);
+            PacketStringCodec.writeUtfSafe(buffer, option.terminalLabel(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, option.carrierName(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, option.routeName(), 96);
+            PacketStringCodec.writeUtfSafe(buffer, option.sourceTerminalName(), 64);
+            PacketStringCodec.writeUtfSafe(buffer, option.targetTerminalName(), 64);
+            buffer.writeVarInt(option.distanceMeters());
+            buffer.writeVarInt(option.etaSeconds());
+            buffer.writeBoolean(option.available());
+            PacketStringCodec.writeUtfSafe(buffer, option.availability(), 48);
+            PacketStringCodec.writeUtfSafe(buffer, option.detail(), 128);
+        }
+    }
+
+    private static List<MarketOverviewData.DispatchOption> readDispatchOptions(FriendlyByteBuf buffer) {
+        int count = buffer.readVarInt();
+        List<MarketOverviewData.DispatchOption> options = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            options.add(new MarketOverviewData.DispatchOption(
+                    buffer.readUtf(32),
+                    buffer.readUtf(64),
+                    buffer.readUtf(64),
+                    buffer.readUtf(96),
+                    buffer.readUtf(64),
+                    buffer.readUtf(64),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readBoolean(),
+                    buffer.readUtf(48),
+                    buffer.readUtf(128)
+            ));
+        }
+        return options;
     }
 
     private static void writeShippingEntries(FriendlyByteBuf buffer, List<MarketOverviewData.ShippingEntry> entries) {

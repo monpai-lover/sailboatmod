@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.client.MarketClientHooks;
 import com.monpai.sailboatmod.client.MarketOverviewConsumer;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.market.MarketOverviewData;
+import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
 import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import com.monpai.sailboatmod.menu.MarketMenu;
@@ -655,7 +656,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         UIRoundedRectangle boats = createSection(parent, x + orderWidth + SECTION_GAP, y, boatWidth, height,
                 Component.translatable("screen.sailboatmod.market.tab.shipping").getString(),
                 Component.translatable("screen.sailboatmod.market.dispatch.select_boat").getString());
-        buildListPanel(boats, data.shippingEntries().isEmpty()
+        buildListPanel(boats, currentDispatchOptions().isEmpty()
                         ? List.of(rowSpec(Component.translatable("screen.sailboatmod.market.empty").getString(), "", "", false, null))
                         : buildBoatRows(),
                 boatWidth - 28, height - 68);
@@ -2348,6 +2349,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     index == selectedOrderIndex,
                     () -> {
                         selectedOrderIndex = index;
+                        selectedBoatIndex = 0;
                         rebuildUi();
                     }
             ));
@@ -2357,13 +2359,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private List<RowSpec> buildBoatRows() {
         List<RowSpec> rows = new ArrayList<>();
-        for (int i = 0; i < data.shippingEntries().size(); i++) {
-            MarketOverviewData.ShippingEntry entry = data.shippingEntries().get(i);
+        List<MarketOverviewData.DispatchOption> options = currentDispatchOptions();
+        for (int i = 0; i < options.size(); i++) {
+            MarketOverviewData.DispatchOption entry = options.get(i);
             int index = i;
             rows.add(rowSpec(
-                    entry.boatName(),
+                    entry.terminalLabel(),
                     entry.routeName().isBlank() ? Component.translatable("screen.sailboatmod.market.dispatch.select_boat").getString() : entry.routeName(),
-                    entry.mode().isBlank() ? "" : shorten(entry.mode(), 10),
+                    entry.available() ? shorten(formatEta(entry.etaSeconds()), 10) : shorten(entry.availability(), 10),
                     index == selectedBoatIndex,
                     () -> {
                         selectedBoatIndex = index;
@@ -2860,7 +2863,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private List<MetricCard> buildDispatchMetrics() {
         List<MetricCard> metrics = new ArrayList<>();
         MarketOverviewData.OrderEntry order = selectedOrder();
-        MarketOverviewData.ShippingEntry ship = selectedShipping();
+        MarketOverviewData.DispatchOption ship = selectedShipping();
         if (order != null) {
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.dispatch.qty", order.quantity()).getString(),
                     order.sourceDockName(), ACCENT));
@@ -2869,9 +2872,13 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         if (ship != null) {
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.tab.shipping").getString(),
-                    ship.boatName(), POSITIVE));
+                    ship.terminalLabel(), POSITIVE));
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.dispatch.mode").getString(),
-                    ship.mode().isBlank() ? "-" : ship.mode(), new Color(111, 149, 198)));
+                    ship.available() ? formatDistance(ship.distanceMeters()) : ship.availability(), new Color(111, 149, 198)));
+            metrics.add(metric("ETA",
+                    ship.available() ? formatEta(ship.etaSeconds()) : "-", ACCENT_DIM));
+            metrics.add(metric("Carrier",
+                    ship.carrierName().isBlank() ? "-" : ship.carrierName(), TEXT_MUTED));
         }
         return metrics;
     }
@@ -3118,7 +3125,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private List<String> buildDispatchActionLines() {
         List<String> lines = new ArrayList<>();
         MarketOverviewData.OrderEntry order = selectedOrder();
-        MarketOverviewData.ShippingEntry boat = selectedShipping();
+        MarketOverviewData.DispatchOption boat = selectedShipping();
         if (order != null) {
             lines.add(order.sourceDockName() + " -> " + order.targetDockName());
             lines.add(Component.translatable("screen.sailboatmod.market.dispatch.qty", order.quantity()).getString());
@@ -3127,12 +3134,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             lines.add(Component.translatable("screen.sailboatmod.market.dispatch.select_order").getString());
         }
         if (boat != null) {
-            lines.add(Component.translatable("screen.sailboatmod.market.dispatch.boat", boat.boatName()).getString());
-            if (!boat.routeName().isBlank()) {
+            lines.add(boat.terminalLabel() + " | " + boat.availability());
+            if (!boat.routeName().isBlank() && !"-".equals(boat.routeName())) {
                 lines.add(Component.translatable("screen.sailboatmod.market.dispatch.route", boat.routeName()).getString());
             }
-            if (!boat.mode().isBlank()) {
-                lines.add(Component.translatable("screen.sailboatmod.market.dispatch.mode", boat.mode()).getString());
+            if (!boat.detail().isBlank()) {
+                lines.add(boat.detail());
+            }
+            if (boat.available()) {
+                lines.add(formatDistance(boat.distanceMeters()) + " | ETA " + formatEta(boat.etaSeconds()));
             }
         } else {
             lines.add(Component.translatable("screen.sailboatmod.market.dispatch.select_boat").getString());
@@ -3347,7 +3357,12 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private void dispatchSelectedOrder() {
         rememberScrollState();
-        ModNetwork.CHANNEL.sendToServer(new DispatchMarketOrderPacket(data.marketPos(), selectedOrderIndex, selectedBoatIndex));
+        MarketOverviewData.DispatchOption option = selectedShipping();
+        ModNetwork.CHANNEL.sendToServer(new DispatchMarketOrderPacket(
+                data.marketPos(),
+                selectedOrderIndex,
+                option == null ? TransportTerminalKind.AUTO : TransportTerminalKind.fromName(option.terminalKind())
+        ));
     }
 
     private void claimCredits() {
@@ -4200,7 +4215,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private void clampSelections() {
         selectedListingIndex = clampSelection(selectedListingIndex, data.listingEntries().size());
         selectedOrderIndex = clampSelection(selectedOrderIndex, data.orderEntries().size());
-        selectedBoatIndex = clampSelection(selectedBoatIndex, data.shippingEntries().size());
+        selectedBoatIndex = clampSelection(selectedBoatIndex, currentDispatchOptions().size());
         selectedStorageIndex = clampSelection(selectedStorageIndex, data.dockStorageEntries().size());
         selectedBuyOrderIndex = clampSelection(selectedBuyOrderIndex, data.buyOrderEntries().size());
     }
@@ -4396,6 +4411,26 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return Math.round(Math.max(0.0F, value) * 100.0F) + "%";
     }
 
+    private String formatDistance(int meters) {
+        return meters <= 0 ? "-" : String.format(Locale.ROOT, "%dm", meters);
+    }
+
+    private String formatEta(int seconds) {
+        if (seconds <= 0) {
+            return "-";
+        }
+        int hours = seconds / 3600;
+        int minutes = (seconds % 3600) / 60;
+        int secs = seconds % 60;
+        if (hours > 0) {
+            return String.format(Locale.ROOT, "%dh %02dm", hours, minutes);
+        }
+        if (minutes > 0) {
+            return String.format(Locale.ROOT, "%dm %02ds", minutes, secs);
+        }
+        return String.format(Locale.ROOT, "%ds", secs);
+    }
+
     private String formatSignedLong(long value) {
         return GoldStandardEconomy.formatSignedBalance(value);
     }
@@ -4464,9 +4499,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 ? data.orderEntries().get(selectedOrderIndex) : null;
     }
 
-    private MarketOverviewData.ShippingEntry selectedShipping() {
-        return selectedBoatIndex >= 0 && selectedBoatIndex < data.shippingEntries().size()
-                ? data.shippingEntries().get(selectedBoatIndex) : null;
+    private List<MarketOverviewData.DispatchOption> currentDispatchOptions() {
+        MarketOverviewData.OrderEntry order = selectedOrder();
+        return order == null ? List.of() : order.dispatchOptions();
+    }
+
+    private MarketOverviewData.DispatchOption selectedShipping() {
+        List<MarketOverviewData.DispatchOption> options = currentDispatchOptions();
+        return selectedBoatIndex >= 0 && selectedBoatIndex < options.size()
+                ? options.get(selectedBoatIndex) : null;
     }
 
     private MarketOverviewData.BuyOrderEntry selectedBuyOrder() {

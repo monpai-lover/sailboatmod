@@ -9,8 +9,10 @@ import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.block.entity.NationCoreBlockEntity;
 import com.monpai.sailboatmod.block.entity.NationFlagBlockEntity;
+import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.block.entity.TownFlagBlockEntity;
 import com.monpai.sailboatmod.block.entity.TownCoreBlockEntity;
+import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -28,6 +30,16 @@ public final class ModBlockEntities {
     public static final RegistryObject<BlockEntityType<MarketBlockEntity>> MARKET_BLOCK_ENTITY = BLOCK_ENTITIES.register(
             "market",
             () -> BlockEntityType.Builder.of(MarketBlockEntity::new, ModBlocks.MARKET_BLOCK.get()).build(null)
+    );
+
+    public static final RegistryObject<BlockEntityType<PostStationBlockEntity>> POST_STATION_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "post_station",
+            () -> BlockEntityType.Builder.of(PostStationBlockEntity::new, ModBlocks.POST_STATION_BLOCK.get()).build(null)
+    );
+
+    public static final RegistryObject<BlockEntityType<TownWarehouseBlockEntity>> TOWN_WAREHOUSE_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "town_warehouse",
+            () -> BlockEntityType.Builder.of(TownWarehouseBlockEntity::new, ModBlocks.TOWN_WAREHOUSE_BLOCK.get()).build(null)
     );
 
     public static final RegistryObject<BlockEntityType<TownCoreBlockEntity>> TOWN_CORE_BLOCK_ENTITY = BLOCK_ENTITIES.register(

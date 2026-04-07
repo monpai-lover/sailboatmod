@@ -280,6 +280,7 @@ public final class CommodityMarketService {
             case "gems" -> 48;
             case "metal" -> 18;
             case "ore" -> 14;
+            case "building", "construction", "decoration", "furniture", "lighting", "flooring", "landscaping", "machinery" -> 6;
             case "tools" -> 16;
             case "spices" -> 14;
             case "wood" -> 5;

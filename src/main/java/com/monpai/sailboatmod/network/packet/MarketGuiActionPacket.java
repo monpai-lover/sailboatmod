@@ -45,8 +45,8 @@ public class MarketGuiActionPacket {
                     boolean bound = market.bindNearestDock();
                     String noticeMessage;
                     if (bound) {
-                        String dockName = market.getLinkedDock() != null
-                                ? market.getLinkedDock().getDockName()
+                        String dockName = market.getLinkedWarehouse() != null
+                                ? market.getLinkedWarehouse().getDisplayName().getString()
                                 : (market.getLinkedDockPos() == null ? "-" : market.getLinkedDockPos().toShortString());
                         noticeMessage = Component.translatable("screen.sailboatmod.market.bind_dock.success", dockName).getString();
                     } else {

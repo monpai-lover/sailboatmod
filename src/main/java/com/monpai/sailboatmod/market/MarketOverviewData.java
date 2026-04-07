@@ -136,7 +136,8 @@ public record MarketOverviewData(
         return null;
     }
 
-    public record StorageEntry(String label, String commodityKey, String itemName, int quantity, int suggestedUnitPrice, String detail) {
+    public record StorageEntry(String label, String commodityKey, String itemName, int quantity, int suggestedUnitPrice,
+                               String detail, String category, int rarity) {
     }
 
     public record ListingEntry(String label, String commodityKey, String itemName, int availableCount, int reservedCount,
@@ -144,10 +145,19 @@ public record MarketOverviewData(
                                String category, int rarity) {
     }
 
-    public record OrderEntry(String label, String sourceDockName, String targetDockName, int quantity, String status) {
+    public record OrderEntry(String label, String sourceDockName, String targetDockName, int quantity, String status,
+                             List<DispatchOption> dispatchOptions) {
+        public OrderEntry {
+            dispatchOptions = dispatchOptions == null ? List.of() : List.copyOf(dispatchOptions);
+        }
     }
 
     public record ShippingEntry(String label, String boatName, String routeName, String mode) {
+    }
+
+    public record DispatchOption(String terminalKind, String terminalLabel, String carrierName, String routeName,
+                                 String sourceTerminalName, String targetTerminalName, int distanceMeters, int etaSeconds,
+                                 boolean available, String availability, String detail) {
     }
 
     public record BuyOrderEntry(String orderId, String label, String commodityKey, int quantity,

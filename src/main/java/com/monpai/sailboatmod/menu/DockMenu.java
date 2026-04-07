@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.menu;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
-import com.monpai.sailboatmod.item.RouteBookItem;
+import com.monpai.sailboatmod.item.TransportRouteBook;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.OpenDockScreenPacket;
 import com.monpai.sailboatmod.registry.ModMenus;
@@ -12,6 +12,7 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -40,7 +41,11 @@ public class DockMenu extends AbstractContainerMenu {
     }
 
     public DockMenu(int containerId, Inventory inventory, BlockPos dockPos) {
-        super(ModMenus.DOCK_MENU.get(), containerId);
+        this(ModMenus.DOCK_MENU.get(), containerId, inventory, dockPos);
+    }
+
+    protected DockMenu(MenuType<?> menuType, int containerId, Inventory inventory, BlockPos dockPos) {
+        super(menuType, containerId);
         this.dockPos = dockPos;
         this.level = inventory.player.level();
         this.player = inventory.player;
@@ -51,7 +56,7 @@ public class DockMenu extends AbstractContainerMenu {
         this.dockSlotContainer = new SimpleContainer(1) {
             @Override
             public boolean canPlaceItem(int slot, ItemStack stack) {
-                return canManageDock && stack.getItem() instanceof RouteBookItem;
+                return canManageDock && stack.getItem() instanceof TransportRouteBook;
             }
 
             @Override
@@ -72,7 +77,7 @@ public class DockMenu extends AbstractContainerMenu {
         this.addSlot(new Slot(dockSlotContainer, 0, 10, 20) {
             @Override
             public boolean mayPlace(ItemStack stack) {
-                return canManageDock && stack.getItem() instanceof RouteBookItem;
+                return canManageDock && stack.getItem() instanceof TransportRouteBook;
             }
 
             @Override
@@ -163,7 +168,7 @@ public class DockMenu extends AbstractContainerMenu {
                 return ItemStack.EMPTY;
             }
         } else {
-            if (stack.getItem() instanceof RouteBookItem) {
+            if (stack.getItem() instanceof TransportRouteBook) {
                 if (!moveItemStackTo(stack, ROUTE_BOOK_SLOT, ROUTE_BOOK_SLOT + 1, false)) {
                     return ItemStack.EMPTY;
                 }

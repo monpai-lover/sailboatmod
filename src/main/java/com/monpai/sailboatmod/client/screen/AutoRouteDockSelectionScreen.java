@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen;
 
 import com.monpai.sailboatmod.dock.AvailableDockEntry;
+import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
 import net.minecraft.client.gui.GuiGraphics;
@@ -19,15 +20,17 @@ public class AutoRouteDockSelectionScreen extends Screen {
     private static final int VISIBLE_ROWS = 8;
 
     private final BlockPos sourceDockPos;
+    private final TransportTerminalKind terminalKind;
     private final List<AvailableDockEntry> docks;
     private Button createButton;
     private int scroll = 0;
     private int selectedIndex = -1;
     private Component statusLine = Component.empty();
 
-    public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, List<AvailableDockEntry> docks) {
-        super(Component.translatable("screen.sailboatmod.auto_route.title"));
+    public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
+        super(Component.translatable(baseKey(terminalKind) + ".title"));
         this.sourceDockPos = sourceDockPos;
+        this.terminalKind = terminalKind == null ? TransportTerminalKind.PORT : terminalKind;
         this.docks = docks;
     }
 
@@ -36,7 +39,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
         int left = (this.width - SCREEN_W) / 2;
         int top = (this.height - SCREEN_H) / 2;
 
-        this.createButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.auto_route.create"), b -> createRoute())
+        this.createButton = this.addRenderableWidget(Button.builder(autoRouteText("create"), b -> createRoute())
             .bounds(left + 12, top + SCREEN_H - 30, 120, 18).build());
         this.createButton.active = !this.docks.isEmpty();
 
@@ -54,14 +57,14 @@ public class AutoRouteDockSelectionScreen extends Screen {
         g.fill(left + 1, top + 1, left + SCREEN_W - 1, top + SCREEN_H - 1, 0xCC182632);
 
         g.drawString(this.font, this.title, left + 12, top + 10, 0xFFE7C977);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.auto_route.subtitle"), left + 12, top + 20, 0xFF8D98A3);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.auto_route.columns"), left + 12, top + 32, 0xFFB8C0C8);
+        g.drawString(this.font, autoRouteText("subtitle"), left + 12, top + 20, 0xFF8D98A3);
+        g.drawString(this.font, autoRouteText("columns"), left + 12, top + 32, 0xFFB8C0C8);
 
         int listY = top + 42;
         g.fill(left + 12, listY, left + SCREEN_W - 12, listY + VISIBLE_ROWS * ROW_H, 0x44000000);
 
         if (docks.isEmpty()) {
-            g.drawCenteredString(this.font, Component.translatable("screen.sailboatmod.auto_route.empty"),
+            g.drawCenteredString(this.font, autoRouteText("empty"),
                     left + SCREEN_W / 2, listY + 72, 0xFF8D98A3);
         } else {
             for (int i = 0; i < VISIBLE_ROWS && (scroll + i) < docks.size(); i++) {
@@ -79,7 +82,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
         if (!this.statusLine.getString().isBlank()) {
             g.drawString(this.font, this.statusLine, left + 12, top + SCREEN_H - 54, 0xFFF1D98A);
         } else {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.auto_route.hint"),
+            g.drawString(this.font, autoRouteText("hint"),
                     left + 12, top + SCREEN_H - 54, 0xFF8D98A3);
         }
 
@@ -115,7 +118,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
             onClose();
             return;
         }
-        this.statusLine = Component.translatable("screen.sailboatmod.auto_route.select_target");
+        this.statusLine = autoRouteText("select_target");
     }
 
     @Override
@@ -125,7 +128,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
 
     private Component rowText(AvailableDockEntry dock) {
         return Component.translatable(
-                "screen.sailboatmod.auto_route.entry",
+                autoRouteKeyPrefix() + ".entry",
                 dockName(dock.dockName()),
                 fallback(dock.ownerName(), "screen.sailboatmod.auto_route.unknown_owner"),
                 fallback(dock.nationName(), "screen.sailboatmod.auto_route.no_nation"),
@@ -135,9 +138,25 @@ public class AutoRouteDockSelectionScreen extends Screen {
 
     private Component dockName(String name) {
         if (name == null || name.isBlank()) {
-            return Component.translatable("block.sailboatmod.dock");
+            return Component.translatable(terminalKind == TransportTerminalKind.POST_STATION
+                    ? "block.sailboatmod.post_station"
+                    : "block.sailboatmod.dock");
         }
         return Component.literal(name);
+    }
+
+    private Component autoRouteText(String suffix, Object... args) {
+        return Component.translatable(autoRouteKeyPrefix() + "." + suffix, args);
+    }
+
+    private String autoRouteKeyPrefix() {
+        return baseKey(terminalKind);
+    }
+
+    private static String baseKey(TransportTerminalKind terminalKind) {
+        return terminalKind == TransportTerminalKind.POST_STATION
+                ? "screen.sailboatmod.auto_route.post_station"
+                : "screen.sailboatmod.auto_route.port";
     }
 
     private Component fallback(String value, String key) {

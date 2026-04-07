@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
 import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
@@ -76,6 +77,9 @@ public final class MarketWebService {
         root.addProperty("linkedDock", overview.linkedDock());
         root.addProperty("linkedDockName", overview.linkedDockName());
         root.addProperty("linkedDockPos", overview.linkedDockPosText());
+        root.addProperty("linkedWarehouse", overview.linkedDock());
+        root.addProperty("linkedWarehouseName", overview.linkedDockName());
+        root.addProperty("linkedWarehousePos", overview.linkedDockPosText());
         root.addProperty("canManage", overview.canManage());
         root.addProperty("pendingCredits", overview.pendingCredits());
         root.addProperty("townName", overview.townName());
@@ -146,10 +150,17 @@ public final class MarketWebService {
                 && resolved.market().claimPendingCredits(identity.playerUuidString(), identity.playerName(), identity.onlinePlayer());
     }
 
-    public boolean retryDispatch(MinecraftServer server, MarketPlayerIdentity identity, String marketId) {
+    public boolean retryDispatch(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int orderIndex, String terminalType) {
         ResolvedMarket resolved = resolveMarket(server, marketId);
         return resolved != null && identity != null
-                && resolved.market().dispatchOrder(identity.playerUuidString(), identity.playerName(), identity.onlinePlayer(), 0, 0);
+                && resolved.market().dispatchOrder(
+                identity.playerUuidString(),
+                identity.playerName(),
+                identity.onlinePlayer(),
+                orderIndex,
+                0,
+                TransportTerminalKind.fromName(terminalType)
+        );
     }
 
     public boolean createBuyOrder(MinecraftServer server, MarketPlayerIdentity identity, String marketId, String commodityKey, int quantity, int minPriceBp, int maxPriceBp) {
@@ -244,6 +255,8 @@ public final class MarketWebService {
             json.addProperty("quantity", entry.quantity());
             json.addProperty("suggestedUnitPrice", entry.suggestedUnitPrice());
             json.addProperty("detail", entry.detail());
+            json.addProperty("category", entry.category());
+            json.addProperty("rarity", entry.rarity());
             out.add(json);
         }
         return out;
@@ -429,13 +442,32 @@ public final class MarketWebService {
 
     private JsonArray sourceOrders(MarketOverviewData overview) {
         JsonArray out = new JsonArray();
-        for (MarketOverviewData.OrderEntry order : overview.orderEntries()) {
+        for (int i = 0; i < overview.orderEntries().size(); i++) {
+            MarketOverviewData.OrderEntry order = overview.orderEntries().get(i);
             JsonObject json = new JsonObject();
+            json.addProperty("index", i);
             json.addProperty("label", order.label());
             json.addProperty("sourceDockName", order.sourceDockName());
             json.addProperty("targetDockName", order.targetDockName());
             json.addProperty("quantity", order.quantity());
             json.addProperty("status", order.status());
+            JsonArray options = new JsonArray();
+            for (MarketOverviewData.DispatchOption option : order.dispatchOptions()) {
+                JsonObject dispatch = new JsonObject();
+                dispatch.addProperty("terminalKind", option.terminalKind());
+                dispatch.addProperty("terminalLabel", option.terminalLabel());
+                dispatch.addProperty("carrierName", option.carrierName());
+                dispatch.addProperty("routeName", option.routeName());
+                dispatch.addProperty("sourceTerminalName", option.sourceTerminalName());
+                dispatch.addProperty("targetTerminalName", option.targetTerminalName());
+                dispatch.addProperty("distanceMeters", option.distanceMeters());
+                dispatch.addProperty("etaSeconds", option.etaSeconds());
+                dispatch.addProperty("available", option.available());
+                dispatch.addProperty("availability", option.availability());
+                dispatch.addProperty("detail", option.detail());
+                options.add(dispatch);
+            }
+            json.add("dispatchOptions", options);
             out.add(json);
         }
         return out;

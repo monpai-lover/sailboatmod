@@ -1,11 +1,13 @@
 package com.monpai.sailboatmod.entity;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
+import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.item.PostRouteBookItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.registry.ModItems;
@@ -311,16 +313,25 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     @Override
     public InteractionResult interact(Player player, InteractionHand hand) {
         ItemStack held = player.getItemInHand(hand);
+        if (held.getItem() instanceof PostRouteBookItem postRouteBookItem && this instanceof CarriageEntity carriage) {
+            return postRouteBookItem.useOnCarriage(player, hand, carriage);
+        }
         if (held.getItem() instanceof RouteBookItem routeBookItem) {
             return routeBookItem.useOnSailboat(player, hand, this);
         }
 
         if (player.isSecondaryUseActive()) {
+            if (!canPlayerAccessStorage(player)) {
+                return InteractionResult.sidedSuccess(level().isClientSide);
+            }
             openStorage(player);
             return InteractionResult.sidedSuccess(level().isClientSide);
         }
 
         if (!player.isPassenger() && this.canAddPassenger(player)) {
+            if (!canPlayerBoard(player)) {
+                return InteractionResult.sidedSuccess(level().isClientSide);
+            }
             if (!level().isClientSide) {
                 int seat = firstFreeSeat();
                 if (seat < 0) {
@@ -357,7 +368,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         if (!level().isClientSide) {
             setGlowingTag(false);
             cleanupLegacyNightLightBlocks();
-            applyFallbackBuoyancy();
+            applyTransportSupport();
             updateAutopilotChunkLoading();
         }
         limitTurnRate();
@@ -394,7 +405,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             }
             setDeltaMovement(adjusted);
         }
-        if (!level().isClientSide && isInWater() && (isVehicle() || autopilotControl)) {
+        if (!level().isClientSide && isPrimaryTravelMedium() && (isVehicle() || autopilotControl)) {
             nonWaterTicks = 0;
             Vec3 current = getDeltaMovement();
             HandlingPreset preset = getHandlingPreset();
@@ -587,7 +598,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             inertialPlanarVelocity = new Vec3(nextX, 0.0D, nextZ);
             setDeltaMovement(nextX, current.y, nextZ);
         } else if (!level().isClientSide) {
-            if (!isInWater() && !isUnderWater()) {
+            if (isOutsidePrimaryTravelMedium()) {
                 nonWaterTicks++;
                 // Avoid one-frame water-state flicker instantly killing coasting momentum.
                 if (nonWaterTicks > 20 && (onGround() || isInLava())) {
@@ -603,7 +614,19 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         }
     }
 
-    private void applyFallbackBuoyancy() {
+    protected void applyTransportSupport() {
+        applyFallbackBuoyancy();
+    }
+
+    protected boolean isPrimaryTravelMedium() {
+        return isInWater();
+    }
+
+    protected boolean isOutsidePrimaryTravelMedium() {
+        return !isInWater() && !isUnderWater();
+    }
+
+    protected void applyFallbackBuoyancy() {
         double waterSurfaceY = sampleNearbyWaterSurfaceY();
         if (Double.isNaN(waterSurfaceY)) {
             return;
@@ -931,13 +954,37 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     @Override
     public Component getDisplayName() {
-        return Component.literal("\u8239\u8231\u50a8\u7269");
+        return getStorageMenuTitle();
     }
 
     public void openStorage(Player player) {
         if (!level().isClientSide && player instanceof ServerPlayer serverPlayer) {
             NetworkHooks.openScreen(serverPlayer, this);
         }
+    }
+
+    protected boolean canPlayerAccessStorage(Player player) {
+        return true;
+    }
+
+    protected boolean canPlayerBoard(Player player) {
+        return true;
+    }
+
+    protected Component getStorageMenuTitle() {
+        return Component.translatable("container.sailboatmod.sailboat_storage");
+    }
+
+    public Component getInfoScreenTitle() {
+        return Component.translatable("screen.sailboatmod.info");
+    }
+
+    public boolean showsSailControl() {
+        return true;
+    }
+
+    public int getStorageSlotCount() {
+        return INVENTORY_SIZE;
     }
 
     public boolean requestSeat(Player player, int requestedSeat) {
@@ -1041,7 +1088,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         entityData.set(DATA_RENTAL_PRICE, clamped);
     }
 
-    private void initializeOwnerIfAbsent(Player player) {
+    public void initializeOwnerIfAbsent(Player player) {
         if (level().isClientSide || player == null) {
             return;
         }
@@ -1662,21 +1709,24 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     @Nullable
     private DockBlockEntity getAutopilotDestinationDock() {
         BlockPos endDockPos = findAutopilotDestinationDockPos();
-        if (endDockPos != null && level().getBlockEntity(endDockPos) instanceof DockBlockEntity dock) {
-            return dock;
-        }
-        return null;
+        return endDockPos == null ? null : getTransportHub(endDockPos);
     }
 
     @Nullable
     private DockBlockEntity getAutopilotStartDock() {
-        if (routeDockPos != null && level().getBlockEntity(routeDockPos) instanceof DockBlockEntity dock) {
-            return dock;
+        if (routeDockPos != null) {
+            DockBlockEntity dock = getTransportHub(routeDockPos);
+            if (dock != null) {
+                return dock;
+            }
         }
         if (!autopilotRoute.isEmpty()) {
-            BlockPos startDockPos = DockBlockEntity.findDockZoneContains(level(), autopilotRoute.get(0));
-            if (startDockPos != null && level().getBlockEntity(startDockPos) instanceof DockBlockEntity dock) {
-                return dock;
+            BlockPos startDockPos = findTransportHubZoneContains(autopilotRoute.get(0));
+            if (startDockPos != null) {
+                DockBlockEntity dock = getTransportHub(startDockPos);
+                if (dock != null) {
+                    return dock;
+                }
             }
         }
         return null;
@@ -1791,11 +1841,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         Vec3 dockCenter = new Vec3(dock.getBlockPos().getX() + 0.5D, spot.y, dock.getBlockPos().getZ() + 0.5D);
         return dock.isInsideDockZone(spot)
                 && spot.distanceToSqr(dockCenter) >= DOCK_PARKING_DOCK_EXCLUSION_RADIUS * DOCK_PARKING_DOCK_EXCLUSION_RADIUS
-                && isDockParkingSpotWater(spot)
+                && isDockParkingSpotMedium(spot)
                 && !isDockApproachOccupied(spot);
     }
 
-    private boolean isDockParkingSpotWater(Vec3 spot) {
+    protected boolean isDockParkingSpotMedium(Vec3 spot) {
         if (level() == null) {
             return false;
         }
@@ -1817,7 +1867,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     private boolean isInsideAutopilotDestinationDockZone() {
         BlockPos endDockPos = findAutopilotDestinationDockPos();
-        if (endDockPos == null || !(level().getBlockEntity(endDockPos) instanceof DockBlockEntity dock)) {
+        DockBlockEntity dock = endDockPos == null ? null : getTransportHub(endDockPos);
+        if (dock == null) {
             return false;
         }
         return dock.isInsideDockZone(position());
@@ -1829,17 +1880,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             return null;
         }
         if (autopilotDestinationDockHintPos != null
-                && level().getBlockEntity(autopilotDestinationDockHintPos) instanceof DockBlockEntity) {
+                && getTransportHub(autopilotDestinationDockHintPos) != null) {
             return autopilotDestinationDockHintPos;
         }
         autopilotDestinationDockHintPos = null;
         Vec3 endPoint = autopilotRoute.get(autopilotRoute.size() - 1);
-        BlockPos exact = DockBlockEntity.findDockZoneContains(level(), endPoint);
+        BlockPos exact = findTransportHubZoneContains(endPoint);
         if (exact != null) {
             autopilotDestinationDockHintPos = exact.immutable();
             return exact;
         }
-        BlockPos nearest = DockBlockEntity.findNearestRegisteredDock(level(), endPoint, 256.0D);
+        BlockPos nearest = findNearestRegisteredTransportHub(endPoint, 256.0D);
         if (nearest != null) {
             autopilotDestinationDockHintPos = nearest.immutable();
         }
@@ -1859,9 +1910,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         autopilotShipmentDistanceMeters = route.routeLengthMeters() > 0.0D ? route.routeLengthMeters() : computeRouteLengthMeters(autopilotRoute);
         Vec3 startWaypoint = route.waypoints().isEmpty() ? null : route.waypoints().get(0);
         Vec3 endWaypoint = route.waypoints().isEmpty() ? null : route.waypoints().get(route.waypoints().size() - 1);
-        autopilotDestinationDockHintPos = endWaypoint == null ? null : DockBlockEntity.findDockZoneContains(level(), endWaypoint);
+        autopilotDestinationDockHintPos = endWaypoint == null ? null : findTransportHubZoneContains(endWaypoint);
         if (autopilotDestinationDockHintPos == null && endWaypoint != null) {
-            autopilotDestinationDockHintPos = DockBlockEntity.findNearestRegisteredDock(level(), endWaypoint, 256.0D);
+            autopilotDestinationDockHintPos = findNearestRegisteredTransportHub(endWaypoint, 256.0D);
         }
         autopilotShipmentStartDockName = resolveDockName(route.startDockName(), startWaypoint, null);
         autopilotShipmentEndDockName = resolveDockName(route.endDockName(), endWaypoint, autopilotDestinationDockHintPos);
@@ -1905,14 +1956,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             return preferredName;
         }
         if (dockHintPos != null) {
-            return DockBlockEntity.getDockDisplayName(level(), dockHintPos);
+            return getTransportHubDisplayName(dockHintPos);
         }
         if (waypoint == null) {
             return "-";
         }
-        BlockPos dockPos = DockBlockEntity.findDockZoneContains(level(), waypoint);
+        BlockPos dockPos = findTransportHubZoneContains(waypoint);
         if (dockPos != null) {
-            return DockBlockEntity.getDockDisplayName(level(), dockPos);
+            return getTransportHubDisplayName(dockPos);
         }
         return "-";
     }
@@ -2063,18 +2114,29 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         MarketSavedData market = MarketSavedData.get(level());
         List<ItemStack> cargo = drainAllCargo();
         boolean rolledBackToDock = false;
+        TownWarehouseBlockEntity rollbackWarehouse = null;
         DockBlockEntity rollbackDock = null;
         for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
             PurchaseOrder purchaseOrder = market.getPurchaseOrder(entry.purchaseOrderId());
             if (purchaseOrder == null) {
                 continue;
             }
+            if (level().getBlockEntity(purchaseOrder.sourceDockPos()) instanceof TownWarehouseBlockEntity sourceWarehouse) {
+                rollbackWarehouse = sourceWarehouse;
+                break;
+            }
             if (level().getBlockEntity(purchaseOrder.sourceDockPos()) instanceof DockBlockEntity sourceDock) {
                 rollbackDock = sourceDock;
                 break;
             }
         }
-        if (rollbackDock != null) {
+        if (rollbackWarehouse != null) {
+            if (cargo.isEmpty()) {
+                rolledBackToDock = true;
+            } else {
+                rolledBackToDock = rollbackWarehouse.insertCargo(cargo);
+            }
+        } else if (rollbackDock != null) {
             if (cargo.isEmpty()) {
                 rolledBackToDock = true;
             } else {
@@ -2133,11 +2195,16 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                         shippingOrder.boatUuid(),
                         shippingOrder.boatName(),
                         shippingOrder.boatMode(),
+                        shippingOrder.transportMode(),
                         shippingOrder.routeName(),
                         shippingOrder.sourceDockPos(),
                         shippingOrder.sourceDockName(),
                         shippingOrder.targetDockPos(),
                         shippingOrder.targetDockName(),
+                        shippingOrder.sourceTerminalName(),
+                        shippingOrder.targetTerminalName(),
+                        shippingOrder.distanceMeters(),
+                        shippingOrder.etaSeconds(),
                         shippingOrder.rentalFee(),
                         rolledBackToDock ? "FAILED_ROLLBACK" : "FAILED"
                 ));
@@ -2173,7 +2240,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                 System.currentTimeMillis(),
                 computeRouteLengthMeters(reversedWaypoints),
                 currentDock.getDockName(),
-                DockBlockEntity.getDockDisplayName(level(), returnDockPos)
+                getTransportHubDisplayName(returnDockPos)
         );
 
         String preferredBuyerUuid = buyerUuid == null || buyerUuid.isBlank() ? getOwnerUuid() : buyerUuid;
@@ -2193,11 +2260,31 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         if (route.waypoints().isEmpty()) {
             return false;
         }
-        BlockPos startDockPos = DockBlockEntity.findDockZoneContains(level(), route.waypoints().get(0));
-        if (startDockPos == null || !(level().getBlockEntity(startDockPos) instanceof DockBlockEntity dock)) {
+        BlockPos startDockPos = findTransportHubZoneContains(route.waypoints().get(0));
+        DockBlockEntity dock = startDockPos == null ? null : getTransportHub(startDockPos);
+        if (dock == null) {
             return false;
         }
         return dock.isInsideDockZone(position());
+    }
+
+    @Nullable
+    protected DockBlockEntity getTransportHub(BlockPos pos) {
+        return level().getBlockEntity(pos) instanceof DockBlockEntity dock ? dock : null;
+    }
+
+    @Nullable
+    protected BlockPos findTransportHubZoneContains(Vec3 point) {
+        return DockBlockEntity.findDockZoneContains(level(), point);
+    }
+
+    @Nullable
+    protected BlockPos findNearestRegisteredTransportHub(Vec3 point, double maxDistance) {
+        return DockBlockEntity.findNearestRegisteredDock(level(), point, maxDistance);
+    }
+
+    protected String getTransportHubDisplayName(BlockPos pos) {
+        return DockBlockEntity.getDockDisplayName(level(), pos);
     }
 
     private int findNearestWaypointIndex() {

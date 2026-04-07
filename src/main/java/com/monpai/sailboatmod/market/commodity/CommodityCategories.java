@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.market.commodity;
 public enum CommodityCategories {
     FOOD("food", 0, 3, 2, 0, 50),
     WOOD("wood", 0, 2, 3, 1, 80),
+    BUILDING("building", 0, 2, 4, 1, 90),
     ORE("ore", 1, 2, 2, 1, 100),
     METAL("metal", 1, 2, 2, 1, 120),
     GEMS("gems", 3, 1, 1, 3, 200),

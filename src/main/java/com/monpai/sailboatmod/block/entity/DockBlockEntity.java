@@ -4,14 +4,17 @@ import com.monpai.sailboatmod.dock.DockRegistry;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.dock.DockScreenData;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
+import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.item.RouteBookItem;
+import com.monpai.sailboatmod.item.TransportRouteBook;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.ProcurementService;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.monpai.sailboatmod.nation.service.DockTownResolver;
 import com.monpai.sailboatmod.nation.service.TownDeliveryService;
 import com.monpai.sailboatmod.nation.service.TownStockpileService;
@@ -35,6 +38,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -81,7 +85,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     private boolean nonOrderAutoUnloadEnabled = false;
 
     public DockBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlockEntities.DOCK_BLOCK_ENTITY.get(), pos, state);
+        this(ModBlockEntities.DOCK_BLOCK_ENTITY.get(), pos, state);
+    }
+
+    protected DockBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state) {
+        super(type, pos, state);
     }
 
     @Override
@@ -89,8 +97,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         super.onLoad();
         if (level != null && !level.isClientSide) {
             DockTownResolver.resolve(level, worldPosition);
-            DockRegistry.register(level, worldPosition);
-            BlueMapIntegration.syncDock(this);
+            registerFacility(level, worldPosition);
+            syncFacilityMarkers();
         }
     }
 
@@ -98,16 +106,28 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public void setChanged() {
         super.setChanged();
         if (level != null && !level.isClientSide) {
-            BlueMapIntegration.syncDock(this);
+            syncFacilityMarkers();
         }
     }
 
     @Override
     public void setRemoved() {
         if (level != null && !level.isClientSide) {
-            DockRegistry.unregister(level, worldPosition);
+            unregisterFacility(level, worldPosition);
         }
         super.setRemoved();
+    }
+
+    protected void registerFacility(Level level, BlockPos pos) {
+        DockRegistry.register(level, pos);
+    }
+
+    protected void unregisterFacility(Level level, BlockPos pos) {
+        DockRegistry.unregister(level, pos);
+    }
+
+    protected void syncFacilityMarkers() {
+        BlueMapIntegration.syncDock(this);
     }
 
     public void setRoutes(List<RouteDefinition> newRoutes, int activeIndex) {
@@ -121,9 +141,17 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     public String getDockName() {
         if (dockName == null || dockName.isBlank()) {
-            return ownerName != null && !ownerName.isBlank() ? ownerName + "'s Dock" : "Dock";
+            return ownerName != null && !ownerName.isBlank() ? ownerName + defaultFacilityNameSuffix() : defaultFacilityName();
         }
         return dockName;
+    }
+
+    protected String defaultFacilityName() {
+        return "Dock";
+    }
+
+    protected String defaultFacilityNameSuffix() {
+        return "'s Dock";
     }
 
     public void setDockName(String name) {
@@ -203,7 +231,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (clampedMaxX - clampedMinX < 2 || clampedMaxZ - clampedMinZ < 2) {
             return false;
         }
-        if (level == null || !isZoneMostlyWater(level, clampedMinX, clampedMaxX, clampedMinZ, clampedMaxZ)) {
+        if (level == null || !isValidFacilityZone(level, clampedMinX, clampedMaxX, clampedMinZ, clampedMaxZ)) {
             return false;
         }
         zoneMinX = clampedMinX;
@@ -214,12 +242,44 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return true;
     }
 
+    protected boolean isValidFacilityZone(Level level, int minX, int maxX, int minZ, int maxZ) {
+        return isZoneMostlyWater(level, minX, maxX, minZ, maxZ);
+    }
+
+    protected boolean acceptsRouteBook(ItemStack stack) {
+        return stack.getItem() instanceof TransportRouteBook;
+    }
+
+    protected boolean supportsTransportEntity(SailboatEntity entity) {
+        return !(entity instanceof CarriageEntity);
+    }
+
+    protected String noAssignableTransportTranslationKey() {
+        return "block.sailboatmod.dock.no_target";
+    }
+
+    protected String noRouteTranslationKey() {
+        return "block.sailboatmod.dock.no_route";
+    }
+
+    protected String transportNotReadyTranslationKey() {
+        return "screen.sailboatmod.dock.boat_not_ready";
+    }
+
+    protected String transportCargoFullTranslationKey() {
+        return "screen.sailboatmod.dock.error.boat_cargo_full";
+    }
+
+    protected String transportLoadFailedTranslationKey() {
+        return "screen.sailboatmod.dock.error.boat_load_failed";
+    }
+
     public boolean loadRouteBookFromPlayer(Player player) {
         ItemStack held = player.getMainHandItem();
-        if (!(held.getItem() instanceof RouteBookItem)) {
+        if (!acceptsRouteBook(held)) {
             held = player.getOffhandItem();
         }
-        if (!(held.getItem() instanceof RouteBookItem)) {
+        if (!acceptsRouteBook(held)) {
             return false;
         }
         routeBook = held.copy();
@@ -233,7 +293,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         ItemStack stack = player.getInventory().items.get(inventorySlot);
-        if (!(stack.getItem() instanceof RouteBookItem)) {
+        if (!acceptsRouteBook(stack)) {
             return false;
         }
         routeBook = stack.copy();
@@ -393,7 +453,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public boolean assignSelectedBoat(Player player, boolean autoStart) {
         List<SailboatEntity> boats = getNearbySailboats(player);
         if (boats.isEmpty()) {
-            player.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_target"), true);
+            player.displayClientMessage(Component.translatable(noAssignableTransportTranslationKey()), true);
             return false;
         }
         int idx = Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
@@ -428,11 +488,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         List<SailboatEntity> boats = getAvailableSailboatsForDispatch(player);
         if (boats.isEmpty()) {
-            player.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_target"), true);
+            player.displayClientMessage(Component.translatable(noAssignableTransportTranslationKey()), true);
             return false;
         }
         if (routes.isEmpty()) {
-            player.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_route"), true);
+            player.displayClientMessage(Component.translatable(noRouteTranslationKey()), true);
             return false;
         }
         int safeBoatIndex = Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
@@ -440,7 +500,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         SailboatEntity boat = boats.get(safeBoatIndex);
         List<ItemStack> cargo = splitCargo(stack, group.totalCount());
         if (!boat.canLoadCargo(cargo)) {
-            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.boat_cargo_full"), true);
+            player.displayClientMessage(Component.translatable(transportCargoFullTranslationKey()), true);
             return false;
         }
         List<ItemStack> removed = removeVisibleStorageGroup(safeStorageIndex);
@@ -451,7 +511,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         cargo = removed.stream().map(ItemStack::copy).toList();
         if (!boat.loadCargo(cargo)) {
             insertCargo(removed);
-            player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.boat_load_failed"), true);
+            player.displayClientMessage(Component.translatable(transportLoadFailedTranslationKey()), true);
             return false;
         }
         boat.setPendingMarketDelivery(
@@ -537,13 +597,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                                            @Nullable Player operator, boolean allowCargo) {
         if (routes.isEmpty()) {
             if (operator != null) {
-                operator.displayClientMessage(Component.translatable("block.sailboatmod.dock.no_route"), true);
+                operator.displayClientMessage(Component.translatable(noRouteTranslationKey()), true);
             }
             return false;
         }
         if (sailboat == null || !sailboat.isAlive() || !isInsideDockZone(sailboat.position()) || sailboat.isAutopilotActive() || (!allowCargo && sailboat.hasCargo())) {
             if (operator != null) {
-                operator.displayClientMessage(Component.translatable("screen.sailboatmod.dock.boat_not_ready"), true);
+                operator.displayClientMessage(Component.translatable(transportNotReadyTranslationKey()), true);
             }
             return false;
         }
@@ -826,8 +886,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         List<ShipmentManifestEntry> safeManifest = manifest == null ? List.of() : manifest.stream()
                 .filter(entry -> entry != null)
                 .toList();
-        TownDeliveryService.deliverDockArrival(level, worldPosition, townId, packed, safeManifest);
         if (safeManifest.isEmpty()) {
+            TownDeliveryService.deliverDockArrival(level, worldPosition, townId, packed, safeManifest);
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, packed,
                     "", "", "", "");
@@ -853,15 +913,90 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             if (entryCargo.isEmpty()) {
                 continue;
             }
+            if (tryDeliverManifestEntryToWarehouse(entryCargo, entry)) {
+                continue;
+            }
+            TownDeliveryService.deliverDockArrival(level, worldPosition, townId, entryCargo, List.of(entry));
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, entryCargo,
                     entry.recipientName(), entry.recipientUuid(), entry.purchaseOrderId(), entry.shippingOrderId());
         }
         if (!cargoPool.isEmpty()) {
+            TownDeliveryService.deliverDockArrival(level, worldPosition, townId, cargoPool, List.of());
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, cargoPool,
                     "", "", "", "");
         }
+    }
+
+    private boolean tryDeliverManifestEntryToWarehouse(List<ItemStack> cargo, ShipmentManifestEntry entry) {
+        if (level == null || level.isClientSide || cargo == null || cargo.isEmpty() || entry == null || !entry.isMarketOrder()) {
+            return false;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        PurchaseOrder order = market.getPurchaseOrder(entry.purchaseOrderId());
+        if (order == null) {
+            return false;
+        }
+        if (!(level.getBlockEntity(order.targetDockPos()) instanceof TownWarehouseBlockEntity warehouse)) {
+            return false;
+        }
+        if (!warehouse.insertCargo(cargo)) {
+            return false;
+        }
+        int deliveredQuantity = 0;
+        for (ItemStack stack : cargo) {
+            deliveredQuantity += stack.getCount();
+        }
+        int resolvedQuantity = Math.max(deliveredQuantity, entry.quantity());
+        market.putPurchaseOrder(new PurchaseOrder(
+                order.orderId(),
+                order.listingId(),
+                order.buyerUuid(),
+                order.buyerName(),
+                order.quantity(),
+                order.totalPrice(),
+                order.sourceDockPos(),
+                order.sourceDockName(),
+                order.targetDockPos(),
+                order.targetDockName(),
+                "CLAIMED"
+        ));
+        if (entry.shippingOrderId() != null && !entry.shippingOrderId().isBlank()) {
+            ShippingOrder shippingOrder = market.getShippingOrder(entry.shippingOrderId());
+            if (shippingOrder != null) {
+                market.putShippingOrder(new ShippingOrder(
+                        shippingOrder.shippingOrderId(),
+                        shippingOrder.purchaseOrderId(),
+                        shippingOrder.shipperUuid(),
+                        shippingOrder.shipperName(),
+                        shippingOrder.boatUuid(),
+                        shippingOrder.boatName(),
+                        shippingOrder.boatMode(),
+                        shippingOrder.transportMode(),
+                        shippingOrder.routeName(),
+                        shippingOrder.sourceDockPos(),
+                        shippingOrder.sourceDockName(),
+                        shippingOrder.targetDockPos(),
+                        shippingOrder.targetDockName(),
+                        shippingOrder.sourceTerminalName(),
+                        shippingOrder.targetTerminalName(),
+                        shippingOrder.distanceMeters(),
+                        shippingOrder.etaSeconds(),
+                        shippingOrder.rentalFee(),
+                        "DELIVERED"
+                ));
+            }
+        }
+        ProcurementService.markDeliveredByOrder(
+                level,
+                order.orderId(),
+                entry.shippingOrderId(),
+                warehouse.getTownId(),
+                CommodityKeyResolver.resolve(entry.itemStack()),
+                resolvedQuantity
+        );
+        return true;
     }
 
     private void appendWaybillEntry(
@@ -1109,6 +1244,27 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return true;
     }
 
+    public List<ItemStack> copyAllStorageCargo() {
+        List<ItemStack> cargo = new ArrayList<>();
+        for (ItemStack stack : storage) {
+            if (!stack.isEmpty()) {
+                cargo.add(stack.copy());
+            }
+        }
+        return cargo;
+    }
+
+    public List<ItemStack> drainAllStorageCargo() {
+        List<ItemStack> cargo = new ArrayList<>();
+        for (int i = 0; i < storage.size(); i++) {
+            ItemStack removed = removeStorageItemNoUpdate(i);
+            if (!removed.isEmpty()) {
+                cargo.add(removed);
+            }
+        }
+        return cargo;
+    }
+
     public List<String> getVisibleStorageLines(Player player) {
         if (!canManageDock(player)) {
             return List.of();
@@ -1248,11 +1404,16 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     boat.getUUID().toString(),
                     boat.getName().getString(),
                     "OWN",
+                    this instanceof PostStationBlockEntity ? "POST_STATION" : "PORT",
                     getDockName() + " Return",
                     order.sourceDockPos(),
                     order.sourceDockName(),
                     order.targetDockPos(),
                     order.targetDockName(),
+                    order.sourceDockName(),
+                    order.targetDockName(),
+                    0,
+                    0,
                     0,
                     "SAILING"
             ));
@@ -1620,6 +1781,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         return level.getEntitiesOfClass(SailboatEntity.class, search).stream()
                 .filter(Entity::isAlive)
+                .filter(this::supportsTransportEntity)
                 .filter(boat -> isInsideDockZone(boat.position()))
                 .sorted(comparator)
                 .toList();
@@ -1807,11 +1969,16 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                         order.boatUuid(),
                         order.boatName(),
                         order.boatMode(),
+                        order.transportMode(),
                         order.routeName(),
                         order.sourceDockPos(),
                         order.sourceDockName(),
                         order.targetDockPos(),
                         order.targetDockName(),
+                        order.sourceTerminalName(),
+                        order.targetTerminalName(),
+                        order.distanceMeters(),
+                        order.etaSeconds(),
                         order.rentalFee(),
                         "DELIVERED"
                 ));

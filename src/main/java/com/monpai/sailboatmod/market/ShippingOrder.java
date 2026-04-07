@@ -13,11 +13,16 @@ public record ShippingOrder(
         String boatUuid,
         String boatName,
         String boatMode,
+        String transportMode,
         String routeName,
         BlockPos sourceDockPos,
         String sourceDockName,
         BlockPos targetDockPos,
         String targetDockName,
+        String sourceTerminalName,
+        String targetTerminalName,
+        int distanceMeters,
+        int etaSeconds,
         int rentalFee,
         String status
 ) {
@@ -29,11 +34,16 @@ public record ShippingOrder(
         boatUuid = sanitize(boatUuid);
         boatName = sanitize(boatName);
         boatMode = sanitize(boatMode).isBlank() ? "OWN" : sanitize(boatMode);
+        transportMode = sanitize(transportMode).isBlank() ? "PORT" : sanitize(transportMode);
         routeName = sanitize(routeName);
         sourceDockPos = sourceDockPos == null ? BlockPos.ZERO : sourceDockPos.immutable();
         sourceDockName = sanitize(sourceDockName);
         targetDockPos = targetDockPos == null ? BlockPos.ZERO : targetDockPos.immutable();
         targetDockName = sanitize(targetDockName);
+        sourceTerminalName = sanitize(sourceTerminalName);
+        targetTerminalName = sanitize(targetTerminalName);
+        distanceMeters = Math.max(0, distanceMeters);
+        etaSeconds = Math.max(0, etaSeconds);
         rentalFee = Math.max(0, rentalFee);
         status = sanitize(status).isBlank() ? "CREATED" : sanitize(status);
     }
@@ -47,11 +57,16 @@ public record ShippingOrder(
         tag.putString("BoatUuid", boatUuid);
         tag.putString("BoatName", boatName);
         tag.putString("BoatMode", boatMode);
+        tag.putString("TransportMode", transportMode);
         tag.putString("RouteName", routeName);
         tag.putLong("SourceDockPos", sourceDockPos.asLong());
         tag.putString("SourceDockName", sourceDockName);
         tag.putLong("TargetDockPos", targetDockPos.asLong());
         tag.putString("TargetDockName", targetDockName);
+        tag.putString("SourceTerminalName", sourceTerminalName);
+        tag.putString("TargetTerminalName", targetTerminalName);
+        tag.putInt("DistanceMeters", distanceMeters);
+        tag.putInt("EtaSeconds", etaSeconds);
         tag.putInt("RentalFee", rentalFee);
         tag.putString("Status", status);
         return tag;
@@ -66,11 +81,16 @@ public record ShippingOrder(
                 tag.getString("BoatUuid"),
                 tag.getString("BoatName"),
                 tag.getString("BoatMode"),
+                tag.contains("TransportMode") ? tag.getString("TransportMode") : "PORT",
                 tag.getString("RouteName"),
                 BlockPos.of(tag.getLong("SourceDockPos")),
                 tag.getString("SourceDockName"),
                 BlockPos.of(tag.getLong("TargetDockPos")),
                 tag.getString("TargetDockName"),
+                tag.contains("SourceTerminalName") ? tag.getString("SourceTerminalName") : tag.getString("SourceDockName"),
+                tag.contains("TargetTerminalName") ? tag.getString("TargetTerminalName") : tag.getString("TargetDockName"),
+                tag.contains("DistanceMeters") ? tag.getInt("DistanceMeters") : 0,
+                tag.contains("EtaSeconds") ? tag.getInt("EtaSeconds") : 0,
                 tag.getInt("RentalFee"),
                 tag.getString("Status")
         );

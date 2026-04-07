@@ -28,7 +28,7 @@ public class SailboatInfoScreen extends Screen {
     private final Button[] seatButtons = new Button[5];
 
     public SailboatInfoScreen(SailboatEntity sailboat) {
-        super(Component.translatable("screen.sailboatmod.info"));
+        super(sailboat.getInfoScreenTitle());
         this.sailboat = sailboat;
     }
 
@@ -55,14 +55,19 @@ public class SailboatInfoScreen extends Screen {
             ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket());
         }).bounds(centerX + 4, top + 46, 96, 20).build());
 
-        this.sailButton = this.addRenderableWidget(Button.builder(getSailButtonText(), b -> {
-            ModNetwork.CHANNEL.sendToServer(new ToggleSailPacket());
-        }).bounds(centerX - 100, top + 68, 96, 20).build());
+        if (sailboat.showsSailControl()) {
+            this.sailButton = this.addRenderableWidget(Button.builder(getSailButtonText(), b -> {
+                ModNetwork.CHANNEL.sendToServer(new ToggleSailPacket());
+            }).bounds(centerX - 100, top + 68, 96, 20).build());
+        } else {
+            this.sailButton = null;
+        }
 
+        int handlingX = sailboat.showsSailControl() ? centerX + 4 : centerX - 48;
         this.handlingButton = this.addRenderableWidget(Button.builder(getHandlingButtonText(), b -> {
             int nextId = sailboat.getHandlingPreset().next().id;
             ModNetwork.CHANNEL.sendToServer(new SetHandlingPresetPacket(nextId));
-        }).bounds(centerX + 4, top + 68, 96, 20).build());
+        }).bounds(handlingX, top + 68, 96, 20).build());
 
         this.routePrevButton = this.addRenderableWidget(Button.builder(Component.literal("<"), b -> {
             ModNetwork.CHANNEL.sendToServer(new ControlAutopilotPacket(sailboat.getId(), SailboatEntity.AutopilotControlAction.PREV_ROUTE));
@@ -151,7 +156,7 @@ public class SailboatInfoScreen extends Screen {
                 centerX, top + 86, 0xFFF3B0);
 
         guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.owner_name", sailboat.getOwnerName()), centerX - 100, top + 208, 0xA8E6FF);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.storage_info", 27), centerX - 100, top + 220, 0xA8E6FF);
+        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.storage_info", sailboat.getStorageSlotCount()), centerX - 100, top + 220, 0xA8E6FF);
     }
 
     @Override

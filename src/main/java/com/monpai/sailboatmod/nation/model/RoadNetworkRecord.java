@@ -17,8 +17,12 @@ public record RoadNetworkRecord(
         String structureAId,
         String structureBId,
         List<BlockPos> path,
-        long updatedAt
+        long updatedAt,
+        String sourceType
 ) {
+    public static final String SOURCE_TYPE_AUTO = "AUTO";
+    public static final String SOURCE_TYPE_MANUAL = "MANUAL";
+
     public RoadNetworkRecord {
         roadId = roadId == null ? "" : roadId.trim().toLowerCase(Locale.ROOT);
         nationId = nationId == null ? "" : nationId.trim().toLowerCase(Locale.ROOT);
@@ -27,6 +31,7 @@ public record RoadNetworkRecord(
         structureAId = structureAId == null ? "" : structureAId.trim();
         structureBId = structureBId == null ? "" : structureBId.trim();
         path = path == null ? List.of() : List.copyOf(path);
+        sourceType = sourceType == null || sourceType.isBlank() ? SOURCE_TYPE_AUTO : sourceType.trim().toUpperCase(Locale.ROOT);
     }
 
     public static String edgeKey(String leftStructureId, String rightStructureId) {
@@ -55,6 +60,10 @@ public record RoadNetworkRecord(
         return scopeNationId != null && !scopeNationId.isBlank() && nationId.equalsIgnoreCase(scopeNationId);
     }
 
+    public boolean isAutoManaged() {
+        return SOURCE_TYPE_AUTO.equals(sourceType);
+    }
+
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag();
         tag.putString("Id", roadId);
@@ -64,6 +73,7 @@ public record RoadNetworkRecord(
         tag.putString("A", structureAId);
         tag.putString("B", structureBId);
         tag.putLong("UpdatedAt", updatedAt);
+        tag.putString("SourceType", sourceType);
         ListTag pathTag = new ListTag();
         for (BlockPos pos : path) {
             CompoundTag entry = new CompoundTag();
@@ -91,7 +101,8 @@ public record RoadNetworkRecord(
                 structureA,
                 structureB,
                 path,
-                tag.getLong("UpdatedAt")
+                tag.getLong("UpdatedAt"),
+                tag.contains("SourceType") ? tag.getString("SourceType") : SOURCE_TYPE_AUTO
         );
     }
 }

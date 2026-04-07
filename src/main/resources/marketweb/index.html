@@ -3,7 +3,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sailboat Market</title>
+    <link rel="icon" href="/favicon.ico" sizes="32x32" type="image/x-icon">
+    <title>Monpai Online Market·Monpai在线市场</title>
     <link rel="stylesheet" href="/app.css">
     <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -11,9 +12,14 @@
 <div class="page-shell">
     <header class="topbar">
         <div class="brand-lockup">
-            <p id="brand-kicker" class="brand-kicker">Sailboat Market Exchange</p>
-            <h1 id="hero-title">Market browser for dock goods, selling rows, buy orders, and price history.</h1>
-            <p id="hero-subtitle" class="brand-subtitle">Open a market terminal on the left, browse commodities like a catalog, then switch between selling, buying, and price chart tabs for one selected item.</p>
+            <div class="brand-mark">
+                <img src="/brand-mark.svg" alt="Monpai anti-counterfeit mark">
+            </div>
+            <div class="brand-copy">
+                <p id="brand-kicker" class="brand-kicker">Monpai Online Market</p>
+                <h1 id="hero-title">Monpai Online Market·Monpai在线市场</h1>
+                <p id="hero-subtitle" class="brand-subtitle">在这里进行线上的物品交易出售，你甚至都不用进入服务器,在下方选择你的商品！</p>
+            </div>
         </div>
         <div class="topbar-side">
             <label class="locale-switcher" for="locale-select">
@@ -43,8 +49,8 @@
     <section class="login-console">
         <div class="login-summary">
             <p id="portal-kicker" class="section-kicker">Portal Access</p>
-            <h2 id="auth-title">Authenticate from the game client</h2>
-            <p id="auth-subtitle" class="subtle">Run the in-game command once, paste the copied token or chat line here, then browse market pages in a normal web UI.</p>
+            <h2 id="auth-title">Bind once with token, then sign in offline</h2>
+            <p id="auth-subtitle" class="subtle">Use the in-game token once to bind a web account, then continue using username and password even while offline.</p>
             <div class="command-card">
                 <div>
                     <div id="command-label" class="command-label">In-game command</div>
@@ -58,7 +64,7 @@
             <div class="login-panel-head">
                 <div>
                     <p id="fast-signin-kicker" class="section-kicker">Fast Sign In</p>
-                    <h3 id="connect-player-title">Connect current player</h3>
+                    <h3 id="connect-player-title">Bind account or sign in</h3>
                 </div>
                 <p id="session-status" class="muted">Not signed in.</p>
             </div>
@@ -66,12 +72,18 @@
             <label id="chat-capture-label" for="chat-capture">Paste chat output or token</label>
             <textarea id="chat-capture" autocomplete="off" placeholder="Paste the full chat line here. The page will detect the token automatically."></textarea>
 
-            <div class="token-row">
-                <input id="login-token" type="text" autocomplete="off" placeholder="Token appears here automatically">
-                <button id="login-button" type="button">Sign in</button>
+            <div class="account-grid">
+                <input id="account-username" type="text" autocomplete="username" placeholder="Account username">
+                <input id="account-password" type="password" autocomplete="current-password" placeholder="Password">
             </div>
 
-            <p id="token-helper" class="muted">Run the command in game. The mod copies the token, and this page can parse pasted output too.</p>
+            <div class="token-row">
+                <input id="login-token" type="text" autocomplete="off" placeholder="Token appears here automatically">
+                <button id="bind-button" type="button">Bind account</button>
+                <button id="login-button" type="button" class="secondary">Account login</button>
+            </div>
+
+            <p id="token-helper" class="muted">First time: paste the token, set username and password, then bind. Later: sign in directly with username and password.</p>
         </div>
     </section>
 

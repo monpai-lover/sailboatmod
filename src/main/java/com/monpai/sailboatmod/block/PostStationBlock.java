@@ -1,0 +1,71 @@
+package com.monpai.sailboatmod.block;
+
+import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
+import com.monpai.sailboatmod.nation.service.TownService;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraftforge.network.NetworkHooks;
+import org.jetbrains.annotations.Nullable;
+
+public class PostStationBlock extends DockBlock {
+    public PostStationBlock(Properties properties) {
+        super(properties);
+    }
+
+    @Nullable
+    @Override
+    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+        return new PostStationBlockEntity(pos, state);
+    }
+
+    @Override
+    public void setPlacedBy(Level level, BlockPos pos, BlockState state, @Nullable LivingEntity placer, ItemStack stack) {
+        super.setPlacedBy(level, pos, state, placer, stack);
+        if (level.isClientSide || !(placer instanceof ServerPlayer player) || !level.getBlockState(pos).is(state.getBlock())) {
+            return;
+        }
+        if (TownService.getManagedTownAt(player, pos) != null) {
+            return;
+        }
+        player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.facility.place_denied"));
+        level.removeBlock(pos, false);
+        if (!player.getAbilities().instabuild) {
+            player.getInventory().placeItemBackInInventory(stack.copy());
+        }
+    }
+
+    @Override
+    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+        if (level.isClientSide) {
+            return InteractionResult.SUCCESS;
+        }
+        if (!(player instanceof ServerPlayer serverPlayer)) {
+            return InteractionResult.CONSUME;
+        }
+        if (TownService.getTownAt(level, pos) == null) {
+            serverPlayer.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.facility.missing_town"));
+            return InteractionResult.CONSUME;
+        }
+        if (!(level.getBlockEntity(pos) instanceof PostStationBlockEntity station)) {
+            return InteractionResult.PASS;
+        }
+        station.initializeOwnerIfAbsent(serverPlayer);
+        NetworkHooks.openScreen(serverPlayer, station, pos);
+        return InteractionResult.CONSUME;
+    }
+
+    @Override
+    public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        super.onRemove(state, level, pos, newState, movedByPiston);
+    }
+}

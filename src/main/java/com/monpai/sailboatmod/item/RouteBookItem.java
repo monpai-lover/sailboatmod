@@ -26,7 +26,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-public class RouteBookItem extends Item {
+public class RouteBookItem extends Item implements TransportRouteBook {
     private static final String TAG_ROUTES = "Routes";
     private static final String TAG_ACTIVE_ROUTE = "ActiveRoute";
     private static final int MAX_ROUTES = 24;

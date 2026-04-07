@@ -123,6 +123,39 @@
     "screen.sailboatmod.dock.no_waybill":  "暂无运单",
     "screen.sailboatmod.dock.boat_index":  "船只 %s/%s",
     "screen.sailboatmod.dock.boat_name":  "指派目标: %s",
+    "screen.sailboatmod.post_station.title":  "驿站管控",
+    "screen.sailboatmod.post_station.tab.routes":  "驿路",
+    "screen.sailboatmod.post_station.tab.dispatch":  "派遣",
+    "screen.sailboatmod.post_station.tab.waybill":  "收件箱",
+    "screen.sailboatmod.post_station.tab.warehouse":  "仓储",
+    "screen.sailboatmod.post_station.assign":  "指派马车",
+    "screen.sailboatmod.post_station.ship_cargo":  "发货",
+    "screen.sailboatmod.post_station.withdraw":  "取出",
+    "screen.sailboatmod.post_station.non_order_auto.on":  "自动返程：开",
+    "screen.sailboatmod.post_station.non_order_auto.off":  "自动返程：关",
+    "screen.sailboatmod.post_station.non_order_unload.on":  "自动卸货：开",
+    "screen.sailboatmod.post_station.non_order_unload.off":  "自动卸货：关",
+    "screen.sailboatmod.post_station.take":  "取出",
+    "screen.sailboatmod.post_station.refresh":  "刷新",
+    "screen.sailboatmod.post_station.import":  "装载",
+    "screen.sailboatmod.post_station.reverse":  "调换",
+    "screen.sailboatmod.post_station.delete":  "删除",
+    "screen.sailboatmod.post_station.book":  "路书:",
+    "screen.sailboatmod.post_station.book_slot":  "驿站路书",
+    "screen.sailboatmod.post_station.storage_slot":  "仓储格位",
+    "screen.sailboatmod.post_station.name":  "驿站:",
+    "screen.sailboatmod.post_station.name_input":  "驿站名",
+    "screen.sailboatmod.post_station.name_save":  "保存",
+    "screen.sailboatmod.post_station.slot_hint":  "左键装载手中路书，右键清空",
+    "screen.sailboatmod.post_station.storage_title":  "驿站仓储货物",
+    "screen.sailboatmod.post_station.storage_owner_only":  "只有驿站所有者可以访问这个仓库。",
+    "screen.sailboatmod.post_station.storage_empty":  "驿站仓储中暂无货物。",
+    "screen.sailboatmod.post_station.vehicle_not_ready":  "马车必须空载、空闲且停在本驿站内才能发运。",
+    "screen.sailboatmod.post_station.no_route":  "没有驿路数据",
+    "screen.sailboatmod.post_station.no_waybill":  "暂无运单",
+    "screen.sailboatmod.post_station.auto_route":  "自动",
+    "screen.sailboatmod.post_station.error.vehicle_cargo_full": "马车货仓已满。",
+    "screen.sailboatmod.post_station.error.vehicle_load_failed": "马车装货失败。",
     "screen.sailboatmod.structure_selection":  "选择建筑",
     "screen.sailboatmod.route_name.title":  "航线后缀",
     "screen.sailboatmod.route_name.desc":  "最终名称 = 起点港-终点港航线-\"后缀\"",
@@ -1155,11 +1188,29 @@
     "screen.sailboatmod.auto_route.empty":  "附近没有可用的目标码头。",
     "screen.sailboatmod.auto_route.select_target":  "请先选择一个目标码头。",
     "screen.sailboatmod.auto_route.entry":  "%s | %s | %s | %sm",
+    "screen.sailboatmod.auto_route.port.title":  "创建自动航线",
+    "screen.sailboatmod.auto_route.port.subtitle":  "选择目标码头，自动生成一条直达航线。",
+    "screen.sailboatmod.auto_route.port.columns":  "码头 | 所有者 | 国家 | 距离",
+    "screen.sailboatmod.auto_route.port.create":  "创建航线",
+    "screen.sailboatmod.auto_route.port.hint":  "从下方列表选择一个目标码头。",
+    "screen.sailboatmod.auto_route.port.empty":  "附近没有可用的目标码头。",
+    "screen.sailboatmod.auto_route.port.select_target":  "请先选择一个目标码头。",
+    "screen.sailboatmod.auto_route.port.entry":  "%s | %s | %s | %sm",
+    "screen.sailboatmod.auto_route.post_station.title":  "创建自动驿路",
+    "screen.sailboatmod.auto_route.post_station.subtitle":  "选择目标驿站，自动生成一条陆路驿路。",
+    "screen.sailboatmod.auto_route.post_station.columns":  "驿站 | 所有者 | 国家 | 距离",
+    "screen.sailboatmod.auto_route.post_station.create":  "创建驿路",
+    "screen.sailboatmod.auto_route.post_station.hint":  "从下方列表选择一个目标驿站。",
+    "screen.sailboatmod.auto_route.post_station.empty":  "附近没有可达的目标驿站。",
+    "screen.sailboatmod.auto_route.post_station.select_target":  "请先选择一个目标驿站。",
+    "screen.sailboatmod.auto_route.post_station.entry":  "%s | %s | %s | %sm",
     "screen.sailboatmod.auto_route.unknown_owner":  "未知",
     "screen.sailboatmod.auto_route.no_nation":  "无国家",
     "message.sailboatmod.auto_route.created":  "已创建通往 %s 的自动航线。",
     "message.sailboatmod.auto_route.create_failed":  "自动航线创建失败。",
     "message.sailboatmod.auto_route.dock_not_found":  "源码头或目标码头不存在。",
+    "block.sailboatmod.post_station.no_target":  "本驿站内没有可指派的马车。",
+    "block.sailboatmod.post_station.no_route":  "本驿站没有可用驿路。",
     "command.sailboatmod.nation.core.moved":  "%s 核心已迁移，旧核心方块现在可以安全拆除。",
     "command.sailboatmod.nation.town.core.moved":  "%s 的城镇核心已迁移，旧核心方块现在可以安全拆除。"
     ,"screen.sailboatmod.town.action.remove_core":  "拆除核心"
@@ -1199,6 +1250,7 @@
     ,"screen.sailboatmod.market.catalog.price.low":  "< 16g"
     ,"screen.sailboatmod.market.catalog.price.mid":  "16g - 63g"
     ,"screen.sailboatmod.market.catalog.price.high":  "64g+"
+    ,"screen.sailboatmod.carriage.owner_only_control":  "\u53ea\u6709\u9a6c\u8f66\u6240\u6709\u8005\u624d\u80fd\u9a7e\u9a76\u6216\u53d6\u7528\u8d27\u7269"
     ,"screen.sailboatmod.market.catalog.prev":  "上一页"
     ,"screen.sailboatmod.market.catalog.next":  "下一页"
     ,"screen.sailboatmod.market.catalog.page":  "%s / %s"
@@ -1351,4 +1403,5 @@
     ,"screen.sailboatmod.market.catalog.filter.utility": "实用"
     ,"screen.sailboatmod.market.catalog.filter.weapon": "武器"
     ,"screen.sailboatmod.market.catalog.filter.armor": "防具"
+    ,"item.sailboatmod.road_planner": "道路规划器"
 }

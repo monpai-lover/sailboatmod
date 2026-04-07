@@ -4,6 +4,8 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.menu.BankMenu;
 import com.monpai.sailboatmod.menu.DockMenu;
 import com.monpai.sailboatmod.menu.MarketMenu;
+import com.monpai.sailboatmod.menu.PostStationMenu;
+import com.monpai.sailboatmod.menu.WarehouseMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraftforge.common.extensions.IForgeMenuType;
 import net.minecraftforge.registries.DeferredRegister;
@@ -18,6 +20,11 @@ public final class ModMenus {
             () -> IForgeMenuType.create(DockMenu::new)
     );
 
+    public static final RegistryObject<MenuType<PostStationMenu>> POST_STATION_MENU = MENUS.register(
+            "post_station_menu",
+            () -> IForgeMenuType.create(PostStationMenu::new)
+    );
+
     public static final RegistryObject<MenuType<MarketMenu>> MARKET_MENU = MENUS.register(
             "market_menu",
             () -> IForgeMenuType.create(MarketMenu::new)
@@ -26,6 +33,11 @@ public final class ModMenus {
     public static final RegistryObject<MenuType<BankMenu>> BANK_MENU = MENUS.register(
             "bank_menu",
             () -> IForgeMenuType.create(BankMenu::new)
+    );
+
+    public static final RegistryObject<MenuType<WarehouseMenu>> WAREHOUSE_MENU = MENUS.register(
+            "warehouse_menu",
+            () -> IForgeMenuType.create(WarehouseMenu::new)
     );
 
     private ModMenus() {

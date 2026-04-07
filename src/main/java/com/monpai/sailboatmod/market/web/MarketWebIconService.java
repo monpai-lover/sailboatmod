@@ -4,7 +4,11 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.logging.LogUtils;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraftforge.fml.ModList;
+import net.minecraftforge.forgespi.language.IModFileInfo;
+import org.slf4j.Logger;
 
 import javax.imageio.ImageIO;
 import java.awt.AlphaComposite;
@@ -13,21 +17,29 @@ import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 final class MarketWebIconService {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final int ICON_SIZE = 64;
+    private static final String MINECRAFT_ASSET_BASE_URL = "https://assets.mcasset.cloud/1.20.1/";
     private static final List<String> FLAT_KEYS = List.of("layer0", "layer1", "particle");
     private static final List<String> TOP_KEYS = List.of("top", "up", "end", "all", "particle", "bottom", "side", "front", "north");
     private static final List<String> LEFT_KEYS = List.of("front", "north", "south", "side", "all", "particle", "end");
@@ -35,6 +47,7 @@ final class MarketWebIconService {
 
     private final Map<String, byte[]> iconCache = new ConcurrentHashMap<>();
     private final Map<String, BufferedImage> textureCache = new ConcurrentHashMap<>();
+    private final Map<String, Optional<byte[]>> externalResourceCache = new ConcurrentHashMap<>();
 
     byte[] loadIcon(String commodityKey) {
         if (commodityKey == null || commodityKey.isBlank()) {
@@ -46,6 +59,7 @@ final class MarketWebIconService {
     void clearCache() {
         iconCache.clear();
         textureCache.clear();
+        externalResourceCache.clear();
     }
 
     private byte[] loadIconInternal(String commodityKey) {
@@ -56,10 +70,7 @@ final class MarketWebIconService {
 
         try {
             BufferedImage icon = resolveIcon(itemId);
-            if (icon == null) {
-                icon = buildPlaceholderIcon();
-            }
-            return encodePng(icon);
+            return icon == null ? null : encodePng(icon);
         } catch (IOException ignored) {
             return null;
         }
@@ -67,19 +78,19 @@ final class MarketWebIconService {
 
     private BufferedImage resolveIcon(ResourceLocation itemId) {
         List<ResolvedModelCandidate> candidates = new ArrayList<>();
-        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "item", itemId.getPath()), new HashSet<>()), itemId.getNamespace());
-        addCandidate(candidates, loadBlockStateModel(itemId), itemId.getNamespace());
-        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "block", itemId.getPath()), new HashSet<>()), itemId.getNamespace());
+        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "item", itemId.getPath()), new HashSet<>()), itemId.getNamespace(), CandidateType.ITEM_MODEL);
+        addCandidate(candidates, loadBlockStateModel(itemId), itemId.getNamespace(), CandidateType.BLOCKSTATE_MODEL);
+        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "block", itemId.getPath()), new HashSet<>()), itemId.getNamespace(), CandidateType.BLOCK_MODEL);
         for (ResolvedModelCandidate candidate : candidates) {
-            BufferedImage icon = renderResolvedModel(candidate.model(), candidate.fallbackNamespace());
+            BufferedImage icon = renderResolvedModel(candidate);
             if (icon != null) {
                 return icon;
             }
         }
-        return null;
+        return hasBuiltinEntityParent(candidates) ? buildBuiltinEntityPlaceholderIcon() : null;
     }
 
-    private void addCandidate(List<ResolvedModelCandidate> candidates, ResolvedModel model, String fallbackNamespace) {
+    private void addCandidate(List<ResolvedModelCandidate> candidates, ResolvedModel model, String fallbackNamespace, CandidateType type) {
         if (model == null) {
             return;
         }
@@ -89,14 +100,16 @@ final class MarketWebIconService {
                 return;
             }
         }
-        candidates.add(new ResolvedModelCandidate(model, fallbackNamespace));
+        candidates.add(new ResolvedModelCandidate(model, fallbackNamespace, type));
     }
 
-    private BufferedImage renderResolvedModel(ResolvedModel model, String fallbackNamespace) {
+    private BufferedImage renderResolvedModel(ResolvedModelCandidate candidate) {
+        ResolvedModel model = candidate.model();
+        String fallbackNamespace = candidate.fallbackNamespace();
         if (model == null) {
             return null;
         }
-        if (isBlockLike(model)) {
+        if (shouldRenderBlockLike(candidate)) {
             BufferedImage blockIcon = buildBlockLikeIcon(model, fallbackNamespace);
             if (blockIcon != null) {
                 return blockIcon;
@@ -105,36 +118,105 @@ final class MarketWebIconService {
         return buildFlatIcon(model, fallbackNamespace);
     }
 
-    private boolean isBlockLike(ResolvedModel model) {
-        if (model.parentChain().stream().anyMatch(parent ->
+    private boolean shouldRenderBlockLike(ResolvedModelCandidate candidate) {
+        if (candidate == null || candidate.model() == null) {
+            return false;
+        }
+        ResolvedModel model = candidate.model();
+        if (isItemLikeModel(model)) {
+            return false;
+        }
+        if (candidate.type() == CandidateType.ITEM_MODEL) {
+            return hasBlockParent(model);
+        }
+        return hasBlockParent(model);
+    }
+
+    private boolean isItemLikeModel(ResolvedModel model) {
+        return model.parentChain().stream().anyMatch(parent ->
+                parent.startsWith("minecraft:item/")
+                        || parent.startsWith("item/"));
+    }
+
+    private boolean hasBuiltinEntityParent(List<ResolvedModelCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return false;
+        }
+        for (ResolvedModelCandidate candidate : candidates) {
+            if (candidate == null || candidate.type() != CandidateType.ITEM_MODEL || candidate.model() == null) {
+                continue;
+            }
+            for (String parent : candidate.model().parentChain()) {
+                if ("builtin/entity".equals(parent) || parent.endsWith(":builtin/entity")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean hasBlockParent(ResolvedModel model) {
+        return model.parentChain().stream().anyMatch(parent ->
                 parent.startsWith("minecraft:block/")
                         || parent.startsWith("block/")
                         || parent.contains("/cube")
                         || parent.contains("/orientable")
                         || parent.contains("/column")
-                        || parent.contains("glazed_terracotta")
-                        || parent.contains("template"))) {
+                        || parent.contains("glazed_terracotta"));
+    }
+
+    private boolean isBlockLike(ResolvedModel model) {
+        if (hasBlockParent(model)) {
             return true;
         }
-        return hasAnyTexture(model, TOP_KEYS) && (hasAnyTexture(model, LEFT_KEYS) || hasAnyTexture(model, RIGHT_KEYS));
+        return !isItemLikeModel(model) && hasAnyTexture(model, TOP_KEYS) && (hasAnyTexture(model, LEFT_KEYS) || hasAnyTexture(model, RIGHT_KEYS));
     }
 
     private BufferedImage buildFlatIcon(ResolvedModel model, String fallbackNamespace) {
-        String textureRef = firstTextureReference(model, FLAT_KEYS);
-        if (textureRef.isBlank()) {
-            textureRef = firstTextureReference(model, TOP_KEYS);
+        List<BufferedImage> layers = loadFlatLayers(model, fallbackNamespace);
+        if (!layers.isEmpty()) {
+            return composeFlatLayers(layers);
         }
+        String textureRef = firstTextureReference(model, TOP_KEYS);
         if (textureRef.isBlank()) {
             return null;
         }
         BufferedImage texture = loadTexture(parseTextureRef(textureRef, fallbackNamespace));
-        if (texture == null) {
+        return copyImage(texture);
+    }
+
+    private List<BufferedImage> loadFlatLayers(ResolvedModel model, String fallbackNamespace) {
+        List<BufferedImage> layers = new ArrayList<>();
+        for (String key : FLAT_KEYS) {
+            String textureRef = resolveTextureReference(model.textures(), key);
+            if (textureRef.isBlank()) {
+                continue;
+            }
+            BufferedImage texture = loadTexture(parseTextureRef(textureRef, fallbackNamespace));
+            if (texture != null) {
+                layers.add(texture);
+            }
+        }
+        return layers;
+    }
+
+    private BufferedImage composeFlatLayers(List<BufferedImage> layers) {
+        if (layers == null || layers.isEmpty()) {
             return null;
         }
-        BufferedImage out = new BufferedImage(ICON_SIZE, ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+        BufferedImage base = layers.get(0);
+        if (base == null) {
+            return null;
+        }
+        BufferedImage out = new BufferedImage(base.getWidth(), base.getHeight(), BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = out.createGraphics();
         configureGraphics(graphics);
-        graphics.drawImage(texture, 8, 8, ICON_SIZE - 16, ICON_SIZE - 16, null);
+        for (BufferedImage layer : layers) {
+            if (layer == null) {
+                continue;
+            }
+            graphics.drawImage(layer, 0, 0, out.getWidth(), out.getHeight(), null);
+        }
         graphics.dispose();
         return out;
     }
@@ -423,34 +505,6 @@ final class MarketWebIconService {
         }
     }
 
-    private BufferedImage buildPlaceholderIcon() {
-        BufferedImage out = new BufferedImage(ICON_SIZE, ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = out.createGraphics();
-        configureGraphics(graphics);
-
-        graphics.setColor(new Color(10, 14, 20, 0));
-        graphics.fillRect(0, 0, ICON_SIZE, ICON_SIZE);
-        graphics.setColor(new Color(0, 0, 0, 20));
-        graphics.fillOval(16, 44, 32, 9);
-
-        graphics.setColor(new Color(56, 78, 102, 255));
-        graphics.fillPolygon(new int[] {13, 32, 51, 32}, new int[] {17, 7, 17, 28}, 4);
-        graphics.setColor(new Color(38, 55, 74, 255));
-        graphics.fillPolygon(new int[] {13, 32, 32, 13}, new int[] {17, 28, 52, 41}, 4);
-        graphics.setColor(new Color(29, 43, 59, 255));
-        graphics.fillPolygon(new int[] {32, 51, 51, 32}, new int[] {28, 17, 41, 52}, 4);
-
-        graphics.setColor(new Color(255, 255, 255, 38));
-        graphics.drawLine(32, 7, 51, 17);
-        graphics.drawLine(32, 7, 13, 17);
-        graphics.drawLine(32, 28, 32, 51);
-        graphics.setColor(new Color(120, 154, 191, 255));
-        graphics.fillRect(29, 21, 6, 16);
-        graphics.fillRect(24, 26, 16, 6);
-        graphics.dispose();
-        return out;
-    }
-
     private BufferedImage tinted(BufferedImage source, float brightness) {
         if (source == null) {
             return null;
@@ -470,6 +524,44 @@ final class MarketWebIconService {
             }
         }
         return tinted;
+    }
+
+    private BufferedImage copyImage(BufferedImage source) {
+        if (source == null) {
+            return null;
+        }
+        BufferedImage copy = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = copy.createGraphics();
+        configureGraphics(graphics);
+        graphics.drawImage(source, 0, 0, null);
+        graphics.dispose();
+        return copy;
+    }
+
+    private BufferedImage buildBuiltinEntityPlaceholderIcon() {
+        BufferedImage out = new BufferedImage(ICON_SIZE, ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = out.createGraphics();
+        configureGraphics(graphics);
+
+        graphics.setColor(new Color(0, 0, 0, 20));
+        graphics.fillOval(16, 44, 32, 9);
+
+        graphics.setColor(new Color(56, 78, 102, 255));
+        graphics.fillPolygon(new int[] {13, 32, 51, 32}, new int[] {17, 7, 17, 28}, 4);
+        graphics.setColor(new Color(38, 55, 74, 255));
+        graphics.fillPolygon(new int[] {13, 32, 32, 13}, new int[] {17, 28, 52, 41}, 4);
+        graphics.setColor(new Color(29, 43, 59, 255));
+        graphics.fillPolygon(new int[] {32, 51, 51, 32}, new int[] {28, 17, 41, 52}, 4);
+
+        graphics.setColor(new Color(255, 255, 255, 38));
+        graphics.drawLine(32, 7, 51, 17);
+        graphics.drawLine(32, 7, 13, 17);
+        graphics.drawLine(32, 28, 32, 51);
+        graphics.setColor(new Color(120, 154, 191, 255));
+        graphics.fillRect(29, 21, 6, 16);
+        graphics.fillRect(24, 26, 16, 6);
+        graphics.dispose();
+        return out;
     }
 
     private static byte[] encodePng(BufferedImage image) throws IOException {
@@ -502,8 +594,96 @@ final class MarketWebIconService {
         return element != null && element.isJsonPrimitive() ? element.getAsString() : "";
     }
 
-    private static InputStream resource(String path) {
-        return MarketWebIconService.class.getClassLoader().getResourceAsStream(path);
+    private InputStream resource(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        InputStream modResource = modResource(path);
+        if (modResource != null) {
+            return modResource;
+        }
+        InputStream externalResource = externalResource(path);
+        if (externalResource != null) {
+            return externalResource;
+        }
+        ClassLoader loader = MarketWebIconService.class.getClassLoader();
+        if (loader != null) {
+            InputStream stream = loader.getResourceAsStream(path);
+            if (stream != null) {
+                return stream;
+            }
+        }
+        return ClassLoader.getSystemResourceAsStream(path);
+    }
+
+    private InputStream modResource(String path) {
+        if (!path.startsWith("assets/")) {
+            return null;
+        }
+        String normalized = path.replace('\\', '/');
+        String[] parts = normalized.split("/");
+        if (parts.length < 3) {
+            return null;
+        }
+        String namespace = parts[1];
+        if (namespace.isBlank() || "minecraft".equals(namespace)) {
+            return null;
+        }
+        IModFileInfo modFileInfo = ModList.get().getModFileById(namespace);
+        if (modFileInfo == null || modFileInfo.getFile() == null) {
+            return null;
+        }
+        String[] relative = new String[parts.length];
+        System.arraycopy(parts, 0, relative, 0, relative.length);
+        Path resourcePath = modFileInfo.getFile().findResource(relative);
+        if (resourcePath == null || !Files.isRegularFile(resourcePath)) {
+            return null;
+        }
+        try {
+            return Files.newInputStream(resourcePath);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private InputStream externalResource(String path) {
+        String normalized = path == null ? "" : path.replace('\\', '/');
+        if (!normalized.startsWith("assets/minecraft/")) {
+            return null;
+        }
+        Optional<byte[]> cached = externalResourceCache.computeIfAbsent(normalized, this::downloadExternalResource);
+        return cached.map(ByteArrayInputStream::new).orElse(null);
+    }
+
+    private Optional<byte[]> downloadExternalResource(String path) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(MINECRAFT_ASSET_BASE_URL + path);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(3000);
+            connection.setReadTimeout(5000);
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("User-Agent", "SailboatMarketWebIconService/1.3.7");
+            int status = connection.getResponseCode();
+            if (status != HttpURLConnection.HTTP_OK) {
+                if (status != HttpURLConnection.HTTP_NOT_FOUND) {
+                    LOGGER.debug("External minecraft asset request failed for {} with status {}", path, status);
+                }
+                return Optional.empty();
+            }
+            try (InputStream input = connection.getInputStream()) {
+                byte[] bytes = input.readAllBytes();
+                return bytes.length == 0 ? Optional.empty() : Optional.of(bytes);
+            }
+        } catch (IOException exception) {
+            LOGGER.debug("Failed to download external minecraft asset {}", path, exception);
+            return Optional.empty();
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
     }
 
     private record ModelRef(String namespace, String type, String path) {
@@ -515,7 +695,7 @@ final class MarketWebIconService {
     private record Point(int x, int y) {
     }
 
-    private record ResolvedModelCandidate(ResolvedModel model, String fallbackNamespace) {
+    private record ResolvedModelCandidate(ResolvedModel model, String fallbackNamespace, CandidateType type) {
     }
 
     private record ResolvedModel(Map<String, String> textures, List<String> parentChain) {
@@ -523,5 +703,11 @@ final class MarketWebIconService {
             this.textures = new LinkedHashMap<>(textures);
             this.parentChain = List.copyOf(parentChain);
         }
+    }
+
+    private enum CandidateType {
+        ITEM_MODEL,
+        BLOCKSTATE_MODEL,
+        BLOCK_MODEL
     }
 }

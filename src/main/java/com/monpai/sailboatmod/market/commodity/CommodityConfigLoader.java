@@ -27,6 +27,7 @@ public final class CommodityConfigLoader {
             "minecraft:trident",
             "minecraft:shulker_box"
     );
+    private static final String SAILBOAT_ITEM_ID = "sailboatmod:sailboat";
 
     public record Override(int rarity, int importance, int elasticity, int baseVolatility, int basePrice, String category) {}
 
@@ -54,7 +55,7 @@ public final class CommodityConfigLoader {
                 String category = o.has("category") ? o.get("category").getAsString() : null;
                 OVERRIDES.put(itemId, new Override(rarity, importance, elasticity, baseVolatility, basePrice, category));
             }
-            applyRarityHotfixes();
+            applyBuiltinHotfixes();
             LOGGER.info("[Market] Loaded {} commodity overrides from commodities.json", OVERRIDES.size());
         } catch (IOException e) {
             LOGGER.error("[Market] Failed to load commodities.json", e);
@@ -86,7 +87,7 @@ public final class CommodityConfigLoader {
         return (ov != null && ov.basePrice() >= 0) ? ov.basePrice() : fallback;
     }
 
-    private static void applyRarityHotfixes() {
+    private static void applyBuiltinHotfixes() {
         for (String itemId : EXTRAORDINARY_ITEMS) {
             Override override = OVERRIDES.get(itemId);
             if (override != null && override.rarity() >= 5) {
@@ -101,12 +102,19 @@ public final class CommodityConfigLoader {
                     override == null ? null : override.category()
             ));
         }
+
+        // Sailboats should always have an explicit market model instead of falling back to FOOD.
+        Override sailboat = OVERRIDES.get(SAILBOAT_ITEM_ID);
+        if (sailboat == null) {
+            OVERRIDES.put(SAILBOAT_ITEM_ID, new Override(2, -1, -1, -1, 200, "luxury"));
+        }
     }
 
     private static String defaultJson() {
         return """
 {
   "overrides": [
+    { "itemId": "sailboatmod:sailboat", "rarity": 2, "category": "luxury", "basePrice": 200 },
     { "itemId": "minecraft:diamond", "rarity": 3, "category": "gems", "basePrice": 64 },
     { "itemId": "minecraft:emerald", "rarity": 3, "category": "gems", "basePrice": 48 },
     { "itemId": "minecraft:netherite_ingot", "rarity": 3, "category": "metal", "basePrice": 72 },

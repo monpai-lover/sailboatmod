@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.block.entity;
 
-import com.monpai.sailboatmod.dock.DockScreenData;
+import com.monpai.sailboatmod.dock.DockRegistry;
+import com.monpai.sailboatmod.dock.PostStationRegistry;
+import com.monpai.sailboatmod.dock.TownWarehouseRegistry;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.market.MarketListing;
@@ -11,6 +13,7 @@ import com.monpai.sailboatmod.market.ProcurementService;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import com.monpai.sailboatmod.market.commodity.CommodityPriceChartPoint;
@@ -29,6 +32,8 @@ import com.monpai.sailboatmod.nation.service.DockTownResolver;
 import com.monpai.sailboatmod.nation.service.TownEconomySnapshotService;
 import com.monpai.sailboatmod.nation.service.TownFinanceLedgerService;
 import com.monpai.sailboatmod.nation.service.TownService;
+import com.monpai.sailboatmod.route.RoadAutoRouteService;
+import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
@@ -52,11 +57,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private static final Logger MARKET_LOGGER = LogUtils.getLogger();
     private static final double LINK_DOCK_RADIUS = 24.0D;
+    private static final double PORT_PREVIEW_SPEED_MPS = 8.0D;
+    private static final double POST_STATION_PREVIEW_SPEED_MPS = 5.0D;
     private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
     private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
     private String marketName = "";
@@ -102,7 +110,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (level == null || level.isClientSide) {
             return false;
         }
-        BlockPos nearest = DockBlockEntity.findNearestRegisteredDock(level, Vec3.atCenterOf(worldPosition), LINK_DOCK_RADIUS);
+        BlockPos nearest = TownWarehouseRegistry.findNearest(level, Vec3.atCenterOf(worldPosition), LINK_DOCK_RADIUS);
         if (nearest == null) {
             return false;
         }
@@ -140,25 +148,23 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         List<String> procurementPreviewLines = List.of();
         List<String> financePreviewLines = List.of();
         boolean linked = false;
-        List<String> boatLines = new ArrayList<>();
         List<MarketOverviewData.ShippingEntry> shippingEntries = new ArrayList<>();
         boolean dockStorageAccessible = false;
         List<String> dockStorageLines = List.of();
         List<MarketOverviewData.StorageEntry> storageEntries = new ArrayList<>();
-        if (level != null && linkedDockPos != null && level.getBlockEntity(linkedDockPos) instanceof DockBlockEntity dock) {
-            dockName = dock.getDockName();
+        if (level != null && linkedDockPos != null && level.getBlockEntity(linkedDockPos) instanceof TownWarehouseBlockEntity warehouse) {
+            dockName = warehouse.getDisplayName().getString();
             dockPosText = linkedDockPos.toShortString();
             linked = true;
-            DockTownBindingRecord dockBinding = DockTownResolver.resolve(level, dock);
-            if (dockBinding != null && !dockBinding.townId().isBlank()) {
-                townId = dockBinding.townId();
-                TownRecord town = NationSavedData.get(level).getTown(townId);
-                if ((town == null || town.name().isBlank()) && linkedDockPos != null) {
-                    town = TownService.getTownAt(level, linkedDockPos);
-                }
-                townName = town != null && !town.name().isBlank()
-                        ? town.name()
-                        : fallbackTownLabel(townId);
+            townId = warehouse.getTownId();
+            TownRecord town = townId.isBlank() ? TownService.getTownAt(level, linkedDockPos) : NationSavedData.get(level).getTown(townId);
+            if (town != null) {
+                townId = town.townId();
+                townName = town.name().isBlank() ? fallbackTownLabel(townId) : town.name();
+            } else {
+                townName = warehouse.getTownName();
+            }
+            if (!townId.isBlank()) {
                 TownEconomySnapshotService.TownEconomySnapshot economy = TownEconomySnapshotService.build(level, townId);
                 stockpileCommodityTypes = economy.stockpileCommodityTypes();
                 stockpileTotalUnits = economy.stockpileTotalUnits();
@@ -174,19 +180,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 procurementPreviewLines = economy.procurementPreviewLines();
                 financePreviewLines = economy.financePreviewLines();
             }
-            DockScreenData dockData = dock.buildScreenData(onlinePlayer);
-            boatLines.addAll(dockData.nearbyBoatNames());
-            dockStorageAccessible = dock.canManageDock(safePlayerUuid);
-            dockStorageLines = dockStorageAccessible
-                    ? onlinePlayer != null ? dock.getVisibleStorageLines(onlinePlayer) : List.of()
-                    : List.of();
-            for (String boatLine : boatLines) {
-                shippingEntries.add(new MarketOverviewData.ShippingEntry(boatLine, boatLine, "", ""));
-            }
+            dockStorageAccessible = canManageMarket(safePlayerUuid);
+            dockStorageLines = dockStorageAccessible ? warehouse.getVisibleStorageLines() : List.of();
             if (dockStorageAccessible) {
-                int storageCount = dock.getVisibleStorageCount(safePlayerUuid);
+                int storageCount = warehouse.getVisibleStorageCount();
                 for (int i = 0; i < storageCount; i++) {
-                    ItemStack stack = dock.getStorageItemForVisibleIndex(safePlayerUuid, i);
+                    ItemStack stack = warehouse.getStorageItemForVisibleIndex(i);
                     if (stack.isEmpty()) {
                         continue;
                     }
@@ -201,7 +200,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                             itemName,
                             stack.getCount(),
                             currentCommodityUnitPrice(stack, 1, CommodityMarketService.estimateBaseUnitPrice(stack)),
-                            Component.translatable("screen.sailboatmod.market.storage_at", dock.getDockName()).getString()
+                            Component.translatable("screen.sailboatmod.market.storage_at", warehouse.getDisplayName().getString()).getString(),
+                            resolveListingCategory(stack),
+                            resolveListingRarity(stack)
                     ));
                 }
             }
@@ -212,7 +213,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         Map<String, String> chartDisplayNames = new LinkedHashMap<>();
         List<String> orderLines = new ArrayList<>();
         List<MarketOverviewData.OrderEntry> orderEntries = new ArrayList<>();
-        List<String> shippingLines = new ArrayList<>(boatLines);
+        List<String> shippingLines = new ArrayList<>();
         if (level != null && !level.isClientSide) {
             MarketSavedData market = MarketSavedData.get(level);
             for (MarketListing listing : market.getListings()) {
@@ -246,6 +247,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 );
             }
             List<PurchaseOrder> openOrders = linkedDockPos == null ? List.<PurchaseOrder>of() : market.getOpenOrdersForSourceDock(linkedDockPos);
+            TownWarehouseBlockEntity linkedWarehouse = getLinkedWarehouse();
             for (PurchaseOrder order : openOrders) {
                 String line = order.toSummaryLine();
                 orderLines.add(line);
@@ -254,7 +256,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         order.sourceDockName().isBlank() ? order.sourceDockPos().toShortString() : order.sourceDockName(),
                         order.targetDockName().isBlank() ? order.targetDockPos().toShortString() : order.targetDockName(),
                         order.quantity(),
-                        order.status()
+                        order.status(),
+                        buildDispatchOptionsForOrder(linkedWarehouse, order, onlinePlayer)
                 ));
             }
         }
@@ -410,13 +413,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean createListingFromDockStorage(String playerUuid, String playerName, int visibleStorageIndex, int quantity, int unitPrice, int priceAdjustmentBp, String sellerNote) {
-        DockBlockEntity dock = getLinkedDock();
+        TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
         String safePlayerName = playerName == null ? "" : playerName.trim();
-        if (level == null || level.isClientSide || dock == null || safePlayerUuid.isBlank()) {
+        if (level == null || level.isClientSide || warehouse == null || safePlayerUuid.isBlank() || !canManageMarket(safePlayerUuid)) {
             return false;
         }
-        ItemStack selected = dock.getStorageItemForVisibleIndex(safePlayerUuid, visibleStorageIndex);
+        ItemStack selected = warehouse.getStorageItemForVisibleIndex(visibleStorageIndex);
         if (selected.isEmpty()) {
             return false;
         }
@@ -425,18 +428,18 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         ItemStack listed = selected.copy();
         listed.setCount(1);
         int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listed), unitPrice);
-        if (!dock.extractVisibleStorage(safePlayerUuid, visibleStorageIndex, amount)) {
+        if (!warehouse.extractVisibleStorage(visibleStorageIndex, amount)) {
             return false;
         }
         int price = currentCommodityUnitPrice(listed, 1, fallbackPrice);
         adjustCommoditySupply(listed, amount);
         MarketSavedData market = MarketSavedData.get(level);
-        String listingTownId = dock.getTownId();
-        String listingNationId = dock.getNationId();
-        var dockBinding = DockTownResolver.resolve(level, dock);
-        if (dockBinding != null) {
-            listingTownId = dockBinding.townId();
-            listingNationId = dockBinding.nationId();
+        String listingTownId = warehouse.getTownId();
+        String listingNationId = "";
+        TownRecord town = TownService.getTownAt(level, warehouse.getBlockPos());
+        if (town != null) {
+            listingTownId = town.townId();
+            listingNationId = town.nationId();
         }
         int adjustedPrice = applyPriceAdjustment(price, priceAdjustmentBp);
         market.putListing(new MarketListing(
@@ -448,7 +451,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 amount,
                 0,
                 linkedDockPos,
-                dock.getDockName(),
+                warehouse.getDisplayName().getString(),
                 listingTownId,
                 listingNationId,
                 priceAdjustmentBp,
@@ -472,10 +475,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean purchaseListing(String playerUuid, String playerName, @Nullable Player onlinePlayer, int listingIndex, int quantity) {
-        DockBlockEntity dock = getLinkedDock();
+        TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
         String safePlayerName = playerName == null ? "" : playerName.trim();
-        if (level == null || level.isClientSide || dock == null || safePlayerUuid.isBlank()) {
+        if (level == null || level.isClientSide || warehouse == null || safePlayerUuid.isBlank()) {
             return false;
         }
         MarketSavedData market = MarketSavedData.get(level);
@@ -526,11 +529,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sourceDockPos(),
                 listing.sourceDockName(),
                 linkedDockPos,
-                dock.getDockName(),
+                warehouse.getDisplayName().getString(),
                 "WAITING_SHIPMENT"
         );
         market.putPurchaseOrder(createdOrder);
-        String buyerTownId = DockTownResolver.resolveTownForArrival(level, linkedDockPos, dock.getTownId());
+        String buyerTownId = warehouse.getTownId();
         String sourceTownId = DockTownResolver.resolveTownForSource(level, listing.sourceDockPos(), listing.townId());
         ProcurementRecord procurement = ProcurementService.createProcurement(
                 level,
@@ -571,7 +574,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     sourceRef
             );
         }
-        tryAutoDispatchOrders(safePlayerUuid, safePlayerName, onlinePlayer, createdOrder.sourceDockPos());
+        tryAutoDispatchOrders(safePlayerUuid, safePlayerName, onlinePlayer, createdOrder.sourceDockPos(), TransportTerminalKind.AUTO);
         return true;
     }
 
@@ -607,12 +610,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (listing.availableCount() <= 0) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_no_stock");
         }
-        DockSelectionResult targetDockSelection = resolveCancelListingDock(safePlayerUuid, listing);
-        if (targetDockSelection.result() != null) {
-            return targetDockSelection.result();
+        WarehouseSelectionResult targetWarehouseSelection = resolveCancelListingWarehouse(safePlayerUuid, listing);
+        if (targetWarehouseSelection.result() != null) {
+            return targetWarehouseSelection.result();
         }
         List<ItemStack> cargo = splitCargo(listing.itemStack(), listing.availableCount());
-        if (!targetDockSelection.dock().insertCargo(cargo)) {
+        if (!targetWarehouseSelection.warehouse().insertCargo(cargo)) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_storage_full");
         }
         adjustCommoditySupply(listing.itemStack(), -listing.availableCount());
@@ -635,7 +638,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sellerNote()
             ));
         }
-        return CancelListingResult.success(targetDockSelection.usedLinkedDockFallback()
+        return CancelListingResult.success(targetWarehouseSelection.usedLinkedWarehouseFallback()
                 ? "screen.sailboatmod.market.unlist.success_linked_dock"
                 : "screen.sailboatmod.market.unlist.success");
     }
@@ -680,14 +683,39 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
                 player,
                 orderIndex,
-                boatIndex
+                boatIndex,
+                TransportTerminalKind.AUTO
         );
     }
 
     public boolean dispatchOrder(String playerUuid, String playerName, @Nullable Player onlinePlayer, int orderIndex, int boatIndex) {
-        return linkedDockPos != null
-                && canManageMarket(playerUuid)
-                && tryAutoDispatchOrders(playerUuid, playerName, onlinePlayer, linkedDockPos);
+        return dispatchOrder(playerUuid, playerName, onlinePlayer, orderIndex, boatIndex, TransportTerminalKind.AUTO);
+    }
+
+    public boolean dispatchOrder(String playerUuid, String playerName, @Nullable Player onlinePlayer, int orderIndex, int boatIndex,
+                                 TransportTerminalKind terminalKind) {
+        if (linkedDockPos == null || !canManageMarket(playerUuid) || level == null || level.isClientSide) {
+            return false;
+        }
+        TransportTerminalKind effectiveKind = terminalKind == null ? TransportTerminalKind.AUTO : terminalKind;
+        TownWarehouseBlockEntity sourceWarehouse = getLinkedWarehouse();
+        if (sourceWarehouse == null) {
+            return false;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        List<PurchaseOrder> openOrders = market.getOpenOrdersForSourceDock(linkedDockPos);
+        if (orderIndex >= 0 && orderIndex < openOrders.size()) {
+            PurchaseOrder selectedOrder = openOrders.get(orderIndex);
+            if (selectedOrder.sourceDockPos().equals(selectedOrder.targetDockPos())) {
+                return processLocalOrders(sourceWarehouse, market);
+            }
+            if (effectiveKind == TransportTerminalKind.AUTO) {
+                return dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, selectedOrder, TransportTerminalKind.PORT)
+                        || dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, selectedOrder, TransportTerminalKind.POST_STATION);
+            }
+            return dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, selectedOrder, effectiveKind);
+        }
+        return tryAutoDispatchOrders(playerUuid, playerName, onlinePlayer, linkedDockPos, effectiveKind);
     }
 
     public String getMarketName() {
@@ -749,6 +777,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return level.getBlockEntity(linkedDockPos) instanceof DockBlockEntity dock ? dock : null;
     }
 
+    @Nullable
+    public TownWarehouseBlockEntity getLinkedWarehouse() {
+        if (level == null || linkedDockPos == null) {
+            return null;
+        }
+        return level.getBlockEntity(linkedDockPos) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
+    }
+
     @Override
     public Component getDisplayName() {
         return Component.literal(getMarketName());
@@ -784,48 +820,80 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return market.getListing(listingId);
     }
 
-    private boolean tryAutoDispatchOrders(String shipperUuid, String shipperName, @Nullable Player player, BlockPos sourceDockPos) {
+    private boolean tryAutoDispatchOrders(String shipperUuid, String shipperName, @Nullable Player player, BlockPos sourceDockPos,
+                                          TransportTerminalKind terminalKind) {
         if (level == null || level.isClientSide || sourceDockPos == null) {
             return false;
         }
-        DockBlockEntity sourceDock = level.getBlockEntity(sourceDockPos) instanceof DockBlockEntity dock ? dock : null;
-        if (sourceDock == null) {
+        TownWarehouseBlockEntity sourceWarehouse = level.getBlockEntity(sourceDockPos) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
+        if (sourceWarehouse == null) {
             return false;
         }
         MarketSavedData market = MarketSavedData.get(level);
         boolean progressedAny = false;
         while (true) {
-            boolean progressed = processLocalOrders(sourceDock, market);
-            List<SailboatEntity> boats = availableDispatchBoats(sourceDock, player);
+            boolean progressed = processLocalOrders(sourceWarehouse, market);
             boolean shipped = false;
-            for (SailboatEntity boat : boats) {
-                ShipmentPlan plan = buildShipmentPlan(sourceDock, market, boat);
-                if (plan == null) {
-                    continue;
-                }
-                if (dispatchShipmentPlan(shipperUuid, shipperName, player, boat, sourceDock, market, plan)) {
-                    shipped = true;
-                    progressed = true;
+            TransportTerminalKind effectiveKind = terminalKind == null ? TransportTerminalKind.AUTO : terminalKind;
+            if (effectiveKind == TransportTerminalKind.AUTO) {
+                shipped = tryDispatchWaitingOrders(shipperUuid, shipperName, player, sourceWarehouse, market, TransportTerminalKind.PORT)
+                        || tryDispatchWaitingOrders(shipperUuid, shipperName, player, sourceWarehouse, market, TransportTerminalKind.POST_STATION);
+            } else {
+                shipped = tryDispatchWaitingOrders(shipperUuid, shipperName, player, sourceWarehouse, market, effectiveKind);
+            }
+            if (!progressed) {
+                if (!shipped) {
                     break;
                 }
             }
-            if (!progressed) {
-                break;
-            }
             progressedAny = true;
-            if (!shipped && availableDispatchBoats(sourceDock, player).isEmpty()) {
-                break;
-            }
         }
         return progressedAny;
     }
 
-    private boolean processLocalOrders(DockBlockEntity sourceDock, MarketSavedData market) {
-        if (sourceDock == null || market == null) {
+    private boolean tryDispatchWaitingOrders(String shipperUuid, String shipperName, @Nullable Player player,
+                                             TownWarehouseBlockEntity sourceWarehouse, MarketSavedData market,
+                                             TransportTerminalKind terminalKind) {
+        if (sourceWarehouse == null || market == null || terminalKind == null || terminalKind == TransportTerminalKind.AUTO) {
+            return false;
+        }
+        LinkedHashMap<BlockPos, List<PurchaseOrder>> byTargetWarehouse = new LinkedHashMap<>();
+        for (PurchaseOrder order : market.getOpenOrdersForSourceDock(sourceWarehouse.getBlockPos())) {
+            if (order.sourceDockPos().equals(order.targetDockPos())) {
+                continue;
+            }
+            byTargetWarehouse.computeIfAbsent(order.targetDockPos(), ignored -> new ArrayList<>()).add(order);
+        }
+        for (Map.Entry<BlockPos, List<PurchaseOrder>> entry : byTargetWarehouse.entrySet()) {
+            DispatchTerminalPlan terminalPlan = resolveDispatchTerminalPlan(sourceWarehouse, entry.getKey(), terminalKind, player);
+            if (terminalPlan == null) {
+                continue;
+            }
+            for (SailboatEntity boat : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
+                ShipmentPlan shipmentPlan = buildShipmentPlanForWarehouseTarget(
+                        market,
+                        boat,
+                        terminalPlan.routeIndex(),
+                        terminalPlan.targetTerminal(),
+                        entry.getValue()
+                );
+                if (shipmentPlan == null) {
+                    continue;
+                }
+                if (dispatchShipmentPlan(shipperUuid, shipperName, player, boat, terminalPlan.sourceTerminal(), market, shipmentPlan, terminalKind)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean processLocalOrders(TownWarehouseBlockEntity sourceWarehouse, MarketSavedData market) {
+        if (sourceWarehouse == null || market == null) {
             return false;
         }
         boolean processed = false;
-        List<PurchaseOrder> waiting = new ArrayList<>(market.getOpenOrdersForSourceDock(sourceDock.getBlockPos()));
+        List<PurchaseOrder> waiting = new ArrayList<>(market.getOpenOrdersForSourceDock(sourceWarehouse.getBlockPos()));
         for (PurchaseOrder order : waiting) {
             if (!order.sourceDockPos().equals(order.targetDockPos())) {
                 continue;
@@ -834,75 +902,316 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (listing == null) {
                 continue;
             }
-            deliverOrderLocally(sourceDock, market, order, listing);
-            processed = true;
+            if (deliverOrderLocally(sourceWarehouse, market, order, listing)) {
+                processed = true;
+            }
         }
         return processed;
     }
 
-    private void deliverOrderLocally(DockBlockEntity dock, MarketSavedData market, PurchaseOrder order, MarketListing listing) {
+    private boolean deliverOrderLocally(TownWarehouseBlockEntity warehouse, MarketSavedData market, PurchaseOrder order, MarketListing listing) {
         List<ItemStack> cargo = splitCargo(listing.itemStack(), order.quantity());
-        dock.receiveShipment(
-                null,
-                "LOCAL",
-                "LOCAL",
-                dock.getDockName(),
-                dock.getDockName(),
-                System.currentTimeMillis(),
-                0L,
-                0.0D,
-                cargo,
-                List.of(new ShipmentManifestEntry(
-                        listing.listingId(),
-                        listing.itemStack(),
-                        order.orderId(),
-                        "",
-                        order.buyerUuid(),
-                        order.buyerName(),
-                        order.quantity()
-                ))
-        );
+        if (!warehouse.insertCargo(cargo)) {
+            return false;
+        }
         applyListingReservationDeltas(market, Map.of(listing.listingId(), order.quantity()));
+        market.putPurchaseOrder(new PurchaseOrder(
+                order.orderId(),
+                order.listingId(),
+                order.buyerUuid(),
+                order.buyerName(),
+                order.quantity(),
+                order.totalPrice(),
+                order.sourceDockPos(),
+                order.sourceDockName(),
+                order.targetDockPos(),
+                order.targetDockName(),
+                "CLAIMED"
+        ));
+        ProcurementService.markDeliveredByOrder(level, order.orderId(), "", warehouse.getTownId(),
+                CommodityKeyResolver.resolve(listing.itemStack()), order.quantity());
+        return true;
     }
 
     @Nullable
-    private ShipmentPlan buildShipmentPlan(DockBlockEntity sourceDock, MarketSavedData market, SailboatEntity boat) {
-        if (sourceDock == null || market == null || boat == null) {
+    private DispatchTerminalPlan resolveDispatchTerminalPlan(TownWarehouseBlockEntity sourceWarehouse, BlockPos targetWarehousePos,
+                                                             TransportTerminalKind terminalKind, @Nullable Player player) {
+        if (level == null || sourceWarehouse == null || targetWarehousePos == null || terminalKind == null || terminalKind == TransportTerminalKind.AUTO) {
             return null;
         }
-        LinkedHashMap<BlockPos, List<PurchaseOrder>> byTargetDock = new LinkedHashMap<>();
-        for (PurchaseOrder order : market.getOpenOrdersForSourceDock(sourceDock.getBlockPos())) {
-            if (order.sourceDockPos().equals(order.targetDockPos())) {
+        TownWarehouseBlockEntity targetWarehouse = level.getBlockEntity(targetWarehousePos) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
+        if (targetWarehouse == null) {
+            return null;
+        }
+        List<DockBlockEntity> sourceTerminals = terminalsForTown(sourceWarehouse.getTownId(), terminalKind);
+        List<DockBlockEntity> targetTerminals = terminalsForTown(targetWarehouse.getTownId(), terminalKind);
+        DispatchTerminalPlan best = null;
+        for (DockBlockEntity sourceTerminal : sourceTerminals) {
+            if (availableDispatchBoats(sourceTerminal, player).isEmpty()) {
                 continue;
             }
-            int routeIndex = sourceDock.findRouteIndexByDestinationDock(order.targetDockPos(), order.targetDockName());
-            if (routeIndex < 0) {
-                continue;
+            for (DockBlockEntity targetTerminal : targetTerminals) {
+                int routeIndex = sourceTerminal.findRouteIndexByDestinationDock(targetTerminal.getBlockPos(), targetTerminal.getDockName());
+                if (routeIndex < 0 && terminalKind == TransportTerminalKind.POST_STATION
+                        && sourceTerminal instanceof PostStationBlockEntity sourceStation
+                        && targetTerminal instanceof PostStationBlockEntity targetStation
+                        && level instanceof net.minecraft.server.level.ServerLevel serverLevel
+                        && RoadAutoRouteService.canCreateAutoRoute(level, sourceStation, targetStation)
+                        && RoadAutoRouteService.createAndSaveAutoRoute(serverLevel, sourceStation, targetStation)) {
+                    routeIndex = sourceTerminal.findRouteIndexByDestinationDock(targetTerminal.getBlockPos(), targetTerminal.getDockName());
+                }
+                if (routeIndex < 0) {
+                    continue;
+                }
+                double pairScore = Vec3.atCenterOf(sourceWarehouse.getBlockPos()).distanceToSqr(Vec3.atCenterOf(sourceTerminal.getBlockPos()))
+                        + Vec3.atCenterOf(targetWarehouse.getBlockPos()).distanceToSqr(Vec3.atCenterOf(targetTerminal.getBlockPos()));
+                if (best == null || pairScore < best.pairScore()) {
+                    best = new DispatchTerminalPlan(sourceTerminal, targetTerminal, routeIndex, pairScore);
+                }
             }
-            byTargetDock.computeIfAbsent(order.targetDockPos(), ignored -> new ArrayList<>()).add(order);
+        }
+        return best;
+    }
+
+    private boolean dispatchSelectedOrder(String shipperUuid, String shipperName, @Nullable Player player,
+                                          TownWarehouseBlockEntity sourceWarehouse, MarketSavedData market,
+                                          PurchaseOrder order, TransportTerminalKind terminalKind) {
+        if (sourceWarehouse == null || market == null || order == null || terminalKind == null || terminalKind == TransportTerminalKind.AUTO) {
+            return false;
+        }
+        DispatchTerminalPlan terminalPlan = resolveDispatchTerminalPlan(sourceWarehouse, order.targetDockPos(), terminalKind, player);
+        if (terminalPlan == null) {
+            return false;
+        }
+        for (SailboatEntity boat : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
+            ShipmentPlan shipmentPlan = buildShipmentPlanForWarehouseTarget(
+                    market,
+                    boat,
+                    terminalPlan.routeIndex(),
+                    terminalPlan.targetTerminal(),
+                    List.of(order)
+            );
+            if (shipmentPlan != null && dispatchShipmentPlan(shipperUuid, shipperName, player, boat, terminalPlan.sourceTerminal(), market, shipmentPlan, terminalKind)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<MarketOverviewData.DispatchOption> buildDispatchOptionsForOrder(@Nullable TownWarehouseBlockEntity sourceWarehouse,
+                                                                                 @Nullable PurchaseOrder order,
+                                                                                 @Nullable Player player) {
+        if (sourceWarehouse == null || order == null) {
+            return List.of();
+        }
+        return List.of(
+                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.PORT, player),
+                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.POST_STATION, player)
+        );
+    }
+
+    private MarketOverviewData.DispatchOption buildDispatchOption(TownWarehouseBlockEntity sourceWarehouse, BlockPos targetWarehousePos,
+                                                                  TransportTerminalKind terminalKind, @Nullable Player player) {
+        String terminalLabel = terminalKind == TransportTerminalKind.POST_STATION ? "Post Station" : "Port";
+        if (level == null || sourceWarehouse == null || targetWarehousePos == null || terminalKind == null || terminalKind == TransportTerminalKind.AUTO) {
+            return new MarketOverviewData.DispatchOption(
+                    terminalKind == null ? TransportTerminalKind.AUTO.name() : terminalKind.name(),
+                    terminalLabel,
+                    "-",
+                    "-",
+                    "",
+                    "",
+                    0,
+                    0,
+                    false,
+                    "Unavailable",
+                    "Terminal preview unavailable."
+            );
+        }
+        if (sourceWarehouse.getBlockPos().equals(targetWarehousePos)) {
+            return new MarketOverviewData.DispatchOption(
+                    terminalKind.name(),
+                    terminalLabel,
+                    "-",
+                    "-",
+                    "",
+                    "",
+                    0,
+                    0,
+                    false,
+                    "Local",
+                    "Source and destination share the same warehouse."
+            );
         }
 
-        ShipmentPlan bestPlan = null;
-        for (Map.Entry<BlockPos, List<PurchaseOrder>> entry : byTargetDock.entrySet()) {
-            int routeIndex = sourceDock.findRouteIndexByDestinationDock(entry.getKey(), entry.getValue().get(0).targetDockName());
-            ShipmentPlan candidate = buildShipmentPlanForTarget(sourceDock, market, boat, routeIndex, entry.getKey(), entry.getValue());
-            if (candidate == null) {
-                continue;
-            }
-            if (bestPlan == null
-                    || candidate.selections().size() > bestPlan.selections().size()
-                    || (candidate.selections().size() == bestPlan.selections().size()
-                    && candidate.totalQuantity() > bestPlan.totalQuantity())) {
-                bestPlan = candidate;
+        TownWarehouseBlockEntity targetWarehouse = level.getBlockEntity(targetWarehousePos) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
+        if (targetWarehouse == null) {
+            return new MarketOverviewData.DispatchOption(terminalKind.name(), terminalLabel, "-", "-", "", "", 0, 0, false, "Unavailable", "Target warehouse is missing.");
+        }
+
+        List<DockBlockEntity> sourceTerminals = terminalsForTown(sourceWarehouse.getTownId(), terminalKind);
+        List<DockBlockEntity> targetTerminals = terminalsForTown(targetWarehouse.getTownId(), terminalKind);
+        if (sourceTerminals.isEmpty() || targetTerminals.isEmpty()) {
+            return new MarketOverviewData.DispatchOption(
+                    terminalKind.name(),
+                    terminalLabel,
+                    "-",
+                    "-",
+                    "",
+                    "",
+                    0,
+                    0,
+                    false,
+                    "Unavailable",
+                    sourceTerminals.isEmpty() ? "No source terminal in the origin town." : "No destination terminal in the target town."
+            );
+        }
+
+        DispatchPreviewPlan best = null;
+        for (DockBlockEntity sourceTerminal : sourceTerminals) {
+            List<SailboatEntity> boats = availableDispatchBoats(sourceTerminal, player);
+            for (DockBlockEntity targetTerminal : targetTerminals) {
+                RoutePreview preview = resolveRoutePreview(sourceWarehouse, targetWarehouse, sourceTerminal, targetTerminal, terminalKind);
+                if (preview == null) {
+                    continue;
+                }
+                double pairScore = Vec3.atCenterOf(sourceWarehouse.getBlockPos()).distanceToSqr(Vec3.atCenterOf(sourceTerminal.getBlockPos()))
+                        + Vec3.atCenterOf(targetWarehouse.getBlockPos()).distanceToSqr(Vec3.atCenterOf(targetTerminal.getBlockPos()))
+                        + preview.distanceMeters();
+                DispatchPreviewPlan candidate = new DispatchPreviewPlan(
+                        sourceTerminal,
+                        targetTerminal,
+                        boats.isEmpty() ? "-" : boats.get(0).getName().getString(),
+                        preview.routeName(),
+                        preview.distanceMeters(),
+                        estimateEtaSeconds(terminalKind, preview.distanceMeters()),
+                        !boats.isEmpty(),
+                        boats.isEmpty() ? "No vehicle" : "Ready",
+                        preview.autoCreated() ? "Route will be generated automatically on dispatch." : sourceTerminal.getDockName() + " -> " + targetTerminal.getDockName(),
+                        pairScore
+                );
+                if (best == null || (candidate.available() && !best.available()) || candidate.pairScore() < best.pairScore()) {
+                    best = candidate;
+                }
             }
         }
-        return bestPlan;
+
+        if (best == null) {
+            return new MarketOverviewData.DispatchOption(
+                    terminalKind.name(),
+                    terminalLabel,
+                    "-",
+                    "-",
+                    "",
+                    "",
+                    0,
+                    0,
+                    false,
+                    "No route",
+                    "No valid route was found between the terminals."
+            );
+        }
+
+        return new MarketOverviewData.DispatchOption(
+                terminalKind.name(),
+                terminalLabel,
+                best.carrierName(),
+                best.routeName(),
+                best.sourceTerminal().getDockName(),
+                best.targetTerminal().getDockName(),
+                best.distanceMeters(),
+                best.etaSeconds(),
+                best.available(),
+                best.availability(),
+                best.detail()
+        );
     }
 
     @Nullable
-    private ShipmentPlan buildShipmentPlanForTarget(DockBlockEntity sourceDock, MarketSavedData market, SailboatEntity boat,
-                                                    int routeIndex, BlockPos targetDockPos, List<PurchaseOrder> orders) {
-        if (routeIndex < 0 || orders == null || orders.isEmpty()) {
+    private RoutePreview resolveRoutePreview(TownWarehouseBlockEntity sourceWarehouse, TownWarehouseBlockEntity targetWarehouse,
+                                             DockBlockEntity sourceTerminal, DockBlockEntity targetTerminal,
+                                             TransportTerminalKind terminalKind) {
+        int routeIndex = sourceTerminal.findRouteIndexByDestinationDock(targetTerminal.getBlockPos(), targetTerminal.getDockName());
+        if (routeIndex >= 0) {
+            RouteDefinition route = routeIndex < sourceTerminal.getRoutesForMap().size() ? sourceTerminal.getRoutesForMap().get(routeIndex) : null;
+            int distanceMeters = route == null ? 0 : (int) Math.round(estimateRouteLength(route));
+            return new RoutePreview(sourceTerminal.getRouteName(routeIndex), Math.max(distanceMeters, 0), false);
+        }
+        if (terminalKind != TransportTerminalKind.POST_STATION
+                || !(sourceTerminal instanceof PostStationBlockEntity sourceStation)
+                || !(targetTerminal instanceof PostStationBlockEntity targetStation)
+                || !(level instanceof net.minecraft.server.level.ServerLevel serverLevel)
+                || !RoadAutoRouteService.canCreateAutoRoute(level, sourceStation, targetStation)) {
+            return null;
+        }
+        RoadAutoRouteService.RouteResolution resolution = RoadAutoRouteService.resolveAutoRoutePreview(serverLevel, sourceStation.getBlockPos(), targetStation.getBlockPos());
+        if (!resolution.found()) {
+            return null;
+        }
+        return new RoutePreview("Road Auto: " + targetTerminal.getDockName(), (int) Math.round(estimatePathLength(resolution.path())), true);
+    }
+
+    private int estimateEtaSeconds(TransportTerminalKind terminalKind, int distanceMeters) {
+        double speed = terminalKind == TransportTerminalKind.POST_STATION ? POST_STATION_PREVIEW_SPEED_MPS : PORT_PREVIEW_SPEED_MPS;
+        if (distanceMeters <= 0 || speed <= 0.0D) {
+            return 0;
+        }
+        return Math.max(1, (int) Math.ceil(distanceMeters / speed));
+    }
+
+    private double estimateRouteLength(@Nullable RouteDefinition route) {
+        if (route == null) {
+            return 0.0D;
+        }
+        if (route.routeLengthMeters() > 0.0D) {
+            return route.routeLengthMeters();
+        }
+        double total = 0.0D;
+        for (int i = 1; i < route.waypoints().size(); i++) {
+            total += route.waypoints().get(i - 1).distanceTo(route.waypoints().get(i));
+        }
+        return total;
+    }
+
+    private double estimatePathLength(List<BlockPos> path) {
+        if (path == null || path.size() < 2) {
+            return 0.0D;
+        }
+        double total = 0.0D;
+        for (int i = 1; i < path.size(); i++) {
+            total += Vec3.atCenterOf(path.get(i - 1)).distanceTo(Vec3.atCenterOf(path.get(i)));
+        }
+        return total;
+    }
+
+    private List<DockBlockEntity> terminalsForTown(String townId, TransportTerminalKind terminalKind) {
+        if (level == null || townId == null || townId.isBlank() || terminalKind == null) {
+            return List.of();
+        }
+        Set<BlockPos> candidates = terminalKind == TransportTerminalKind.POST_STATION ? PostStationRegistry.get(level) : DockRegistry.get(level);
+        List<DockBlockEntity> terminals = new ArrayList<>();
+        for (BlockPos pos : candidates) {
+            if (!(level.getBlockEntity(pos) instanceof DockBlockEntity terminal)) {
+                continue;
+            }
+            if (terminalKind == TransportTerminalKind.PORT && terminal instanceof PostStationBlockEntity) {
+                continue;
+            }
+            if (terminalKind == TransportTerminalKind.POST_STATION && !(terminal instanceof PostStationBlockEntity)) {
+                continue;
+            }
+            String resolvedTownId = DockTownResolver.resolveTownForArrival(level, pos, terminal.getTownId());
+            if (townId.equals(resolvedTownId)) {
+                terminals.add(terminal);
+            }
+        }
+        return terminals;
+    }
+
+    @Nullable
+    private ShipmentPlan buildShipmentPlanForWarehouseTarget(MarketSavedData market, SailboatEntity boat, int routeIndex,
+                                                             DockBlockEntity targetTerminal, List<PurchaseOrder> orders) {
+        if (market == null || boat == null || targetTerminal == null || routeIndex < 0 || orders == null || orders.isEmpty()) {
             return null;
         }
         List<ItemStack> cargo = new ArrayList<>();
@@ -932,11 +1241,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (cargo.isEmpty() || selections.isEmpty()) {
             return null;
         }
-        return new ShipmentPlan(routeIndex, targetDockPos, cargo, selections);
+        return new ShipmentPlan(routeIndex, targetTerminal.getBlockPos(), targetTerminal.getDockName(), cargo, selections);
     }
 
     private boolean dispatchShipmentPlan(String shipperUuid, String shipperName, @Nullable Player player, SailboatEntity boat, DockBlockEntity sourceDock,
-                                         MarketSavedData market, ShipmentPlan plan) {
+                                         MarketSavedData market, ShipmentPlan plan, TransportTerminalKind terminalKind) {
         if (boat == null || sourceDock == null || market == null || plan == null) {
             return false;
         }
@@ -947,6 +1256,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         List<ShipmentManifestEntry> manifest = new ArrayList<>();
         Map<String, Integer> listingReservationDeltas = new LinkedHashMap<>();
         List<ShippingOrder> shippingOrders = new ArrayList<>();
+        RouteDefinition route = plan.routeIndex() >= 0 && plan.routeIndex() < sourceDock.getRoutesForMap().size()
+                ? sourceDock.getRoutesForMap().get(plan.routeIndex()) : null;
+        int distanceMeters = (int) Math.round(estimateRouteLength(route));
+        int etaSeconds = estimateEtaSeconds(terminalKind == null ? TransportTerminalKind.PORT : terminalKind, distanceMeters);
         for (ShipmentOrderSelection selection : plan.selections()) {
             String shippingOrderId = market.nextId();
             PurchaseOrder order = selection.dispatchOrder();
@@ -968,11 +1281,16 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     boat.getUUID().toString(),
                     boat.getName().getString(),
                     "OWN",
+                    terminalKind == null ? TransportTerminalKind.PORT.name() : terminalKind.name(),
                     sourceDock.getRouteName(plan.routeIndex()),
-                    order.sourceDockPos(),
-                    order.sourceDockName(),
-                    order.targetDockPos(),
-                    order.targetDockName(),
+                    sourceDock.getBlockPos(),
+                    sourceDock.getDockName(),
+                    plan.targetDockPos(),
+                    plan.targetDockName(),
+                    sourceDock.getDockName(),
+                    plan.targetDockName(),
+                    distanceMeters,
+                    etaSeconds,
                     0,
                     "SAILING"
             ));
@@ -1099,7 +1417,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return new PurchaseSplit(shipped, remainder);
     }
 
-    private record ShipmentPlan(int routeIndex, BlockPos targetDockPos, List<ItemStack> cargo,
+    private record ShipmentPlan(int routeIndex, BlockPos targetDockPos, String targetDockName, List<ItemStack> cargo,
                                 List<ShipmentOrderSelection> selections) {
         private int totalQuantity() {
             int total = 0;
@@ -1108,6 +1426,18 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             }
             return total;
         }
+    }
+
+    private record DispatchTerminalPlan(DockBlockEntity sourceTerminal, DockBlockEntity targetTerminal,
+                                        int routeIndex, double pairScore) {
+    }
+
+    private record RoutePreview(String routeName, int distanceMeters, boolean autoCreated) {
+    }
+
+    private record DispatchPreviewPlan(DockBlockEntity sourceTerminal, DockBlockEntity targetTerminal, String carrierName,
+                                       String routeName, int distanceMeters, int etaSeconds, boolean available,
+                                       String availability, String detail, double pairScore) {
     }
 
     private record ShipmentOrderSelection(PurchaseOrder dispatchOrder, @Nullable PurchaseOrder remainderOrder,
@@ -1174,6 +1504,18 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
+    private int resolveListingRarity(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return 0;
+        }
+        try {
+            return COMMODITY_MARKET.ensureCommodity(stack).definition().rarity();
+        } catch (SQLException exception) {
+            MARKET_LOGGER.debug("Failed to resolve commodity rarity for {}", stack.getHoverName().getString(), exception);
+            return 0;
+        }
+    }
+
     private int currentCommodityUnitPrice(ItemStack stack, int quantity, int fallbackPrice) {
         CommodityQuote quote = quoteCommodity(stack, quantity);
         if (quote == null) {
@@ -1233,6 +1575,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (listing == null || amount <= 0) {
             return;
         }
+        String buyerNationId = "";
+        if (level != null && linkedDockPos != null) {
+            TownRecord buyerTown = TownService.getTownAt(level, linkedDockPos);
+            buyerNationId = buyerTown == null ? "" : buyerTown.nationId();
+        }
         try {
             COMMODITY_MARKET.applyTrade(
                     listing.itemStack(),
@@ -1240,7 +1587,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     amount,
                     worldPosition.toShortString(),
                     listing.nationId(),
-                    getLinkedDock() == null ? "" : getLinkedDock().getNationId(),
+                    buyerNationId,
                     buyerUuid == null ? "" : buyerUuid.trim(),
                     buyerName == null ? "" : buyerName.trim()
             );
@@ -1270,19 +1617,19 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 .toList();
     }
 
-    private DockSelectionResult resolveCancelListingDock(String playerUuid, MarketListing listing) {
-        DockBlockEntity originalDock = level.getBlockEntity(listing.sourceDockPos()) instanceof DockBlockEntity dock ? dock : null;
-        if (originalDock != null) {
-            return DockSelectionResult.success(originalDock, false);
+    private WarehouseSelectionResult resolveCancelListingWarehouse(String playerUuid, MarketListing listing) {
+        TownWarehouseBlockEntity originalWarehouse = level.getBlockEntity(listing.sourceDockPos()) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
+        if (originalWarehouse != null) {
+            return WarehouseSelectionResult.success(originalWarehouse, false);
         }
-        DockBlockEntity linkedDock = getLinkedDock();
-        if (linkedDock == null) {
-            return DockSelectionResult.failure("screen.sailboatmod.market.unlist.failed_missing_dock");
+        TownWarehouseBlockEntity linkedWarehouse = getLinkedWarehouse();
+        if (linkedWarehouse == null) {
+            return WarehouseSelectionResult.failure("screen.sailboatmod.market.unlist.failed_missing_dock");
         }
-        if (!linkedDock.canManageDock(playerUuid)) {
-            return DockSelectionResult.failure("screen.sailboatmod.market.unlist.failed_dock_access");
+        if (!canManageMarket(playerUuid)) {
+            return WarehouseSelectionResult.failure("screen.sailboatmod.market.unlist.failed_dock_access");
         }
-        return DockSelectionResult.success(linkedDock, true);
+        return WarehouseSelectionResult.success(linkedWarehouse, true);
     }
 
     private void syncTerminalRegistry() {
@@ -1320,15 +1667,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
-    private record DockSelectionResult(@Nullable DockBlockEntity dock,
-                                       boolean usedLinkedDockFallback,
-                                       @Nullable CancelListingResult result) {
-        private static DockSelectionResult success(DockBlockEntity dock, boolean usedLinkedDockFallback) {
-            return new DockSelectionResult(dock, usedLinkedDockFallback, null);
+    private record WarehouseSelectionResult(@Nullable TownWarehouseBlockEntity warehouse,
+                                            boolean usedLinkedWarehouseFallback,
+                                            @Nullable CancelListingResult result) {
+        private static WarehouseSelectionResult success(TownWarehouseBlockEntity warehouse, boolean usedLinkedWarehouseFallback) {
+            return new WarehouseSelectionResult(warehouse, usedLinkedWarehouseFallback, null);
         }
 
-        private static DockSelectionResult failure(String messageKey) {
-            return new DockSelectionResult(null, false, CancelListingResult.failure(messageKey));
+        private static WarehouseSelectionResult failure(String messageKey) {
+            return new WarehouseSelectionResult(null, false, CancelListingResult.failure(messageKey));
         }
     }
 

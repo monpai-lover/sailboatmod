@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "side": "sailboatmod:block/dock_side",
+    "top": "sailboatmod:block/market_top",
+    "bottom": "sailboatmod:block/dock"
+  }
+}

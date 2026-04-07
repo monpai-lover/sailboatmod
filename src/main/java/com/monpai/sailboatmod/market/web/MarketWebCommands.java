@@ -25,6 +25,9 @@ public final class MarketWebCommands {
                 .then(Commands.literal("token")
                         .requires(source -> source.getEntity() instanceof ServerPlayer)
                         .executes(context -> issueToken(context.getSource())))
+                .then(Commands.literal("version")
+                        .requires(source -> source.hasPermission(2))
+                        .executes(context -> showVersion(context.getSource())))
                 .then(Commands.literal("reload")
                         .requires(source -> source.hasPermission(2))
                         .executes(context -> reloadWeb(context.getSource()))));
@@ -60,6 +63,19 @@ public final class MarketWebCommands {
         }
         server.reload();
         source.sendSuccess(() -> Component.literal("Market web caches reloaded. Refresh the browser to see changes."), true);
+        return 1;
+    }
+
+    private static int showVersion(CommandSourceStack source) {
+        MarketWebServer server = MarketWebServer.get();
+        if (server == null || !server.isRunning()) {
+            source.sendFailure(Component.literal("Market web service is not running."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Market web addon " + MarketWebServer.addonVersion()), false);
+        source.sendSuccess(() -> Component.literal("Resource version: " + server.resourceVersion()), false);
+        source.sendSuccess(() -> Component.literal("Icon cache version: " + MarketWebServer.iconCacheVersion()), false);
+        source.sendSuccess(() -> Component.literal("Dev mode: " + com.monpai.sailboatmod.ModConfig.marketWebDevMode()), false);
         return 1;
     }
 }

@@ -2,9 +2,12 @@ package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.item.BankConstructorItem;
+import com.monpai.sailboatmod.item.CarriageItem;
 import com.monpai.sailboatmod.item.CommandBatonItem;
 import com.monpai.sailboatmod.item.DescribedBlockItem;
 import com.monpai.sailboatmod.item.NationCoreItem;
+import com.monpai.sailboatmod.item.PostRouteBookItem;
+import com.monpai.sailboatmod.item.RoadPlannerItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.item.SailboatItem;
 import com.monpai.sailboatmod.item.StandingAndWallFlagBlockItem;
@@ -27,9 +30,29 @@ public final class ModItems {
             () -> new RouteBookItem(new Item.Properties().stacksTo(1))
     );
 
+    public static final RegistryObject<Item> POST_ROUTE_BOOK_ITEM = ITEMS.register(
+            "post_route_book",
+            () -> new PostRouteBookItem(new Item.Properties().stacksTo(1))
+    );
+
+    public static final RegistryObject<Item> ROAD_PLANNER_ITEM = ITEMS.register(
+            "road_planner",
+            () -> new RoadPlannerItem(new Item.Properties().stacksTo(1))
+    );
+
     public static final RegistryObject<Item> DOCK_ITEM = ITEMS.register(
             "dock",
             () -> new DescribedBlockItem(ModBlocks.DOCK_BLOCK.get(), new Item.Properties(), "item.sailboatmod.dock.desc")
+    );
+
+    public static final RegistryObject<Item> POST_STATION_ITEM = ITEMS.register(
+            "post_station",
+            () -> new DescribedBlockItem(ModBlocks.POST_STATION_BLOCK.get(), new Item.Properties(), "item.sailboatmod.post_station.desc")
+    );
+
+    public static final RegistryObject<Item> TOWN_WAREHOUSE_ITEM = ITEMS.register(
+            "town_warehouse",
+            () -> new DescribedBlockItem(ModBlocks.TOWN_WAREHOUSE_BLOCK.get(), new Item.Properties(), "item.sailboatmod.town_warehouse.desc")
     );
 
     public static final RegistryObject<Item> MARKET_ITEM = ITEMS.register(
@@ -100,6 +123,11 @@ public final class ModItems {
     public static final RegistryObject<Item> HALF_NUGGET_ITEM = ITEMS.register(
             "half_nugget",
             () -> new Item(new Item.Properties().stacksTo(64))
+    );
+
+    public static final RegistryObject<Item> CARRIAGE_ITEM = ITEMS.register(
+            "carriage",
+            () -> new CarriageItem(new Item.Properties().stacksTo(1))
     );
 
     private ModItems() {

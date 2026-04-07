@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Monpai anti-counterfeit mark</title>
+  <desc id="desc">A stylized monkey badge used as the Monpai web market anti-counterfeit icon.</desc>
+  <defs>
+    <linearGradient id="bg" x1="20" y1="16" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3a2612"/>
+      <stop offset="1" stop-color="#120b05"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="24" y1="18" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff5c5"/>
+      <stop offset="0.5" stop-color="#ebb44d"/>
+      <stop offset="1" stop-color="#8e580d"/>
+    </linearGradient>
+    <linearGradient id="fur" x1="40" y1="28" x2="90" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9c6332"/>
+      <stop offset="1" stop-color="#5f3616"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="46" y1="58" x2="82" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd59f"/>
+      <stop offset="1" stop-color="#d69a64"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="32" fill="url(#bg)"/>
+  <rect x="12" y="12" width="104" height="104" rx="28" fill="none" stroke="url(#ring)" stroke-width="6"/>
+  <circle cx="64" cy="64" r="44" fill="none" stroke="#ffebb8" stroke-opacity="0.28" stroke-width="2"/>
+  <circle cx="40" cy="53" r="13" fill="url(#fur)"/>
+  <circle cx="88" cy="53" r="13" fill="url(#fur)"/>
+  <circle cx="40" cy="53" r="7" fill="#d79c67"/>
+  <circle cx="88" cy="53" r="7" fill="#d79c67"/>
+  <path d="M64 28c16.9 0 31 12.6 33.1 28.9v18.8C94.3 91 80.8 102 64 102S33.7 91 30.9 75.7V56.9C33 40.6 47.1 28 64 28Z" fill="url(#fur)"/>
+  <path d="M64 50c13.9 0 25.2 9.1 25.2 20.4 0 12.8-11.3 23.2-25.2 23.2S38.8 83.2 38.8 70.4C38.8 59.1 50.1 50 64 50Z" fill="url(#skin)"/>
+  <path d="M49 64c1.6-7.1 7.4-11.7 15-11.7S77.4 56.9 79 64" fill="none" stroke="#f3c38a" stroke-linecap="round" stroke-width="4"/>
+  <ellipse cx="54" cy="60" rx="5.2" ry="6.1" fill="#1a120a"/>
+  <ellipse cx="74" cy="60" rx="5.2" ry="6.1" fill="#1a120a"/>
+  <ellipse cx="52.7" cy="57.9" rx="1.2" ry="1.6" fill="#fff7dd"/>
+  <ellipse cx="72.7" cy="57.9" rx="1.2" ry="1.6" fill="#fff7dd"/>
+  <path d="M64 66.5c4.7 0 8.8 2.3 8.8 5.7 0 4.7-3.4 8.4-8.8 8.4s-8.8-3.7-8.8-8.4c0-3.4 4.1-5.7 8.8-5.7Z" fill="#492a12"/>
+  <path d="M54.5 84.5c3.4 3.4 7.5 5 9.5 5s6.1-1.6 9.5-5" fill="none" stroke="#5f3616" stroke-linecap="round" stroke-width="4"/>
+  <path d="M26 97.5c11.6 8 24.1 12 38 12s26.4-4 38-12" fill="none" stroke="url(#ring)" stroke-linecap="round" stroke-width="5"/>
+  <path d="M30 29.5c10.8-8.3 22.1-12.5 34-12.5s23.2 4.2 34 12.5" fill="none" stroke="#ffe7b0" stroke-opacity="0.45" stroke-linecap="round" stroke-width="3.5"/>
+</svg>
