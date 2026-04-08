@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.market.web;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
@@ -24,7 +25,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -121,6 +125,7 @@ public final class MarketWebServer {
         createContext("/api/session/me", this::handleSessionMe);
         createContext("/api/debug/version", this::handleDebugVersion);
         createContext("/api/markets", this::handleMarkets);
+        createContext("/api/icons/batch", this::handleIconBatch);
         createContext("/api/icons", this::handleIcon);
         createContext("/", this::handleStatic);
         httpServer.start();
@@ -276,6 +281,7 @@ public final class MarketWebServer {
             }
             JsonObject body = readBody(exchange);
             boolean ok;
+            MarketWebService.ActionResult actionResult = null;
             if (path.size() == 4 && "purchase".equals(path.get(3))) {
                 ok = callOnServerThread(() -> service.purchaseListing(
                         minecraftServer,
@@ -285,15 +291,16 @@ public final class MarketWebServer {
                         intValue(body, "quantity", 1)
                 ));
             } else if (path.size() == 4 && "listings".equals(path.get(3))) {
-                ok = callOnServerThread(() -> service.createListing(
+                actionResult = callOnServerThread(() -> service.createListing(
                         minecraftServer,
                         identity,
                         marketId,
                         intValue(body, "storageIndex", -1),
                         intValue(body, "quantity", 1),
-                        intValue(body, "priceAdjustmentBp", 0),
+                        intValue(body, "unitPrice", 0),
                         stringValue(body, "sellerNote")
                 ));
+                ok = actionResult != null && actionResult.ok();
             } else if (path.size() == 6 && "listings".equals(path.get(3)) && "cancel".equals(path.get(5))) {
                 ok = callOnServerThread(() -> service.cancelListing(minecraftServer, identity, marketId, path.get(4)));
             } else if (path.size() == 5 && "credits".equals(path.get(3)) && "claim".equals(path.get(4))) {
@@ -323,6 +330,13 @@ public final class MarketWebServer {
                 return;
             }
             if (!ok) {
+                if (actionResult != null) {
+                    writeJson(exchange, 400, error(
+                            actionResult.errorCode() == null || actionResult.errorCode().isBlank() ? "action_failed" : actionResult.errorCode(),
+                            actionResult.message() == null || actionResult.message().isBlank() ? "Action failed" : actionResult.message()
+                    ));
+                    return;
+                }
                 writeJson(exchange, 400, error("action_failed", "Action failed"));
                 return;
             }
@@ -409,6 +423,44 @@ public final class MarketWebServer {
         }
     }
 
+    private void handleIconBatch(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        List<String> requestedKeys = queryParams(exchange, "commodityKey").stream()
+                .map(String::trim)
+                .filter(key -> !key.isBlank())
+                .limit(128)
+                .toList();
+        if (requestedKeys.isEmpty()) {
+            writeJson(exchange, 400, error("missing_commodity_key", "Missing commodityKey"));
+            return;
+        }
+
+        JsonObject out = success();
+        JsonObject iconsJson = new JsonObject();
+        JsonArray missing = new JsonArray();
+        Base64.Encoder encoder = Base64.getEncoder();
+
+        for (String commodityKey : new LinkedHashSet<>(requestedKeys)) {
+            byte[] bytes = icons.loadIcon(commodityKey);
+            if (bytes == null || bytes.length == 0) {
+                missing.add(commodityKey);
+                continue;
+            }
+            iconsJson.addProperty(commodityKey, "data:image/png;base64," + encoder.encodeToString(bytes));
+        }
+
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Cache-Control", "public, max-age=60");
+        headers.set("X-Icon-Cache-Version", ICON_CACHE_VERSION);
+        headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
+        out.add("icons", iconsJson);
+        out.add("missing", missing);
+        writeJson(exchange, 200, out);
+    }
+
     private static String contentType(String resourcePath) {
         String normalized = resourcePath == null ? "" : resourcePath.toLowerCase(Locale.ROOT);
         if (normalized.endsWith(".png")) {
@@ -446,6 +498,22 @@ public final class MarketWebServer {
                 .map(parts -> parts.length > 1 ? URLDecoder.decode(parts[1], StandardCharsets.UTF_8) : "")
                 .findFirst()
                 .orElse("");
+    }
+
+    private static List<String> queryParams(HttpExchange exchange, String key) {
+        String raw = exchange.getRequestURI().getRawQuery();
+        if (raw == null || raw.isBlank() || key == null || key.isBlank()) {
+            return List.of();
+        }
+        List<String> values = new ArrayList<>();
+        for (String entry : raw.split("&")) {
+            String[] parts = entry.split("=", 2);
+            if (parts.length == 0 || !key.equals(parts[0])) {
+                continue;
+            }
+            values.add(parts.length > 1 ? URLDecoder.decode(parts[1], StandardCharsets.UTF_8) : "");
+        }
+        return values;
     }
 
     private void writeStatic(HttpExchange exchange, String resourcePath, String contentType) throws IOException {

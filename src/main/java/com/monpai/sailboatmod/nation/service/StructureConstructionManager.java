@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
+import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
@@ -107,7 +108,14 @@ public final class StructureConstructionManager {
         }
     }
 
-    private record RoadConstructionJob(ServerLevel level, String roadId, List<BlockPos> path, int currentIndex, double progress) {}
+    private record RoadConstructionJob(ServerLevel level,
+                                       String roadId,
+                                       UUID ownerUuid,
+                                       String sourceTownName,
+                                       String targetTownName,
+                                       List<BlockPos> path,
+                                       int currentIndex,
+                                       double progress) {}
     private record ActiveWorker(BlockPos position, long lastSeenTick, boolean specialist) {}
     private record RoadCandidate(com.monpai.sailboatmod.nation.model.PlacedStructureRecord left,
                                  com.monpai.sailboatmod.nation.model.PlacedStructureRecord right,
@@ -115,6 +123,7 @@ public final class StructureConstructionManager {
     private record RoadPlan(RoadNetworkRecord road) {}
     private record RoadAnchor(BlockPos pos, Direction side) {}
     private record PreviewRoadTarget(BlockPos pos, PreviewRoadTargetKind kind) {}
+    private record RoadPlacementStyle(BlockState surface, BlockState support, boolean bridge) {}
     private record DisjointSet(Map<String, String> parent) {
         DisjointSet() {
             this(new HashMap<>());
@@ -460,12 +469,17 @@ public final class StructureConstructionManager {
     }
 
     public static void tickRoadConstructions(ServerLevel level) {
-        BlockState roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState();
         List<String> completed = new ArrayList<>();
+        Set<ServerPlayer> playersToSync = Collections.newSetFromMap(new IdentityHashMap<>());
 
         for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
             RoadConstructionJob job = entry.getValue();
             if (job.level != level) continue;
+
+            ServerPlayer owner = ownerPlayer(level, job.ownerUuid);
+            if (owner != null) {
+                playersToSync.add(owner);
+            }
 
             int activeWorkers = getActiveRoadWorkerCount(level, entry.getKey());
             double speedMultiplier = activeWorkers > 0 ? (activeWorkers + 2.0D) / 3.0D : 1.0D;
@@ -474,14 +488,30 @@ public final class StructureConstructionManager {
             int targetIndex = Math.min(job.path.size() - 1, (int) targetProgress);
 
             for (int i = job.currentIndex; i <= Math.min(targetIndex, job.path.size() - 1); i++) {
-                placeRoadSlice(level, job.path, i, roadBlock);
+                placeRoadSlice(level, job.path, i);
             }
 
             int newIndex = Math.min(targetIndex + 1, job.path.size());
             if (newIndex >= job.path.size()) {
+                if (owner != null) {
+                    owner.sendSystemMessage(Component.translatable(
+                            "message.sailboatmod.road_planner.completed",
+                            job.sourceTownName,
+                            job.targetTownName
+                    ));
+                }
                 completed.add(entry.getKey());
             } else {
-                ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), new RoadConstructionJob(job.level, job.roadId, job.path, newIndex, targetProgress));
+                ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), new RoadConstructionJob(
+                        job.level,
+                        job.roadId,
+                        job.ownerUuid,
+                        job.sourceTownName,
+                        job.targetTownName,
+                        job.path,
+                        newIndex,
+                        targetProgress
+                ));
             }
         }
 
@@ -490,6 +520,7 @@ public final class StructureConstructionManager {
             ACTIVE_ROAD_WORKERS.remove(jobId);
             removePersistedRoadJob(level, jobId);
         });
+        syncRoadConstructionProgress(level, playersToSync);
     }
 
     private static BlockPos getRoadFocusPos(RoadConstructionJob job) {
@@ -818,7 +849,7 @@ public final class StructureConstructionManager {
                 continue;
             }
             data.putRoadNetwork(road);
-            scheduleRoadConstruction(level, road);
+            scheduleRoadConstruction(level, road, null, "", "");
         }
     }
 
@@ -1030,7 +1061,11 @@ public final class StructureConstructionManager {
         };
     }
 
-    private static void scheduleRoadConstruction(ServerLevel level, RoadNetworkRecord road) {
+    private static void scheduleRoadConstruction(ServerLevel level,
+                                                 RoadNetworkRecord road,
+                                                 UUID ownerUuid,
+                                                 String sourceTownName,
+                                                 String targetTownName) {
         if (road.path().size() < 2) {
             ACTIVE_ROAD_CONSTRUCTIONS.remove(road.roadId());
             removePersistedRoadJob(level, road.roadId());
@@ -1042,22 +1077,46 @@ public final class StructureConstructionManager {
             removePersistedRoadJob(level, road.roadId());
             return;
         }
-        ACTIVE_ROAD_CONSTRUCTIONS.put(road.roadId(), new RoadConstructionJob(level, road.roadId(), road.path(), resumeIndex, resumeIndex));
-        persistRoadConstruction(level, road.roadId(), road.path());
+        String resolvedSource = sourceTownName;
+        String resolvedTarget = targetTownName;
+        if (resolvedSource == null || resolvedSource.isBlank() || resolvedTarget == null || resolvedTarget.isBlank()) {
+            String[] resolvedNames = resolveRoadTownNames(level, road);
+            resolvedSource = resolvedSource == null || resolvedSource.isBlank() ? resolvedNames[0] : resolvedSource;
+            resolvedTarget = resolvedTarget == null || resolvedTarget.isBlank() ? resolvedNames[1] : resolvedTarget;
+        }
+        ACTIVE_ROAD_CONSTRUCTIONS.put(road.roadId(), new RoadConstructionJob(
+                level,
+                road.roadId(),
+                ownerUuid,
+                resolvedSource,
+                resolvedTarget,
+                road.path(),
+                resumeIndex,
+                resumeIndex
+        ));
+        persistRoadConstruction(level, road.roadId(), ownerUuid, road.path());
     }
 
     public static void scheduleManualRoad(ServerLevel level, RoadNetworkRecord road) {
+        scheduleManualRoad(level, road, null, "", "");
+    }
+
+    public static void scheduleManualRoad(ServerLevel level,
+                                          RoadNetworkRecord road,
+                                          UUID ownerUuid,
+                                          String sourceTownName,
+                                          String targetTownName) {
         if (level == null || road == null || road.roadId().isBlank()) {
             return;
         }
         NationSavedData.get(level).putRoadNetwork(road);
-        scheduleRoadConstruction(level, road);
+        scheduleRoadConstruction(level, road, ownerUuid, sourceTownName, targetTownName);
     }
 
-    private static void placeRoadSlice(ServerLevel level, List<BlockPos> path, int index, BlockState roadBlock) {
+    private static void placeRoadSlice(ServerLevel level, List<BlockPos> path, int index) {
         boolean placedAny = false;
         for (BlockPos roadPos : collectRoadSlicePositions(path, index)) {
-            placedAny |= tryPlaceRoad(level, roadPos, roadBlock);
+            placedAny |= tryPlaceRoad(level, roadPos, selectRoadPlacementStyle(level, roadPos));
         }
         if (placedAny) {
             BlockPos center = path.get(index).above();
@@ -1066,7 +1125,7 @@ public final class StructureConstructionManager {
                     center.getY() + 0.25D,
                     center.getZ() + 0.5D,
                     4, 0.2D, 0.1D, 0.2D, 0.01D);
-            level.playSound(null, center, roadBlock.getSoundType().getPlaceSound(), SoundSource.BLOCKS, 0.35F, 0.95F);
+            level.playSound(null, center, Blocks.STONE_BRICK_SLAB.defaultBlockState().getSoundType().getPlaceSound(), SoundSource.BLOCKS, 0.35F, 0.95F);
         }
     }
 
@@ -1122,9 +1181,10 @@ public final class StructureConstructionManager {
         return positions;
     }
 
-    private static boolean tryPlaceRoad(ServerLevel level, BlockPos pos, BlockState roadBlock) {
+    private static boolean tryPlaceRoad(ServerLevel level, BlockPos pos, RoadPlacementStyle style) {
+        stabilizeRoadFoundation(level, pos, style);
         BlockState at = level.getBlockState(pos);
-        if (at.is(roadBlock.getBlock())) {
+        if (at.equals(style.surface()) || isRoadSurface(at)) {
             return false;
         }
         if (!at.isAir() && !at.canBeReplaced() && !at.liquid()) {
@@ -1134,21 +1194,74 @@ public final class StructureConstructionManager {
         if (below.isAir() || below.liquid()) {
             return false;
         }
-        level.setBlock(pos, roadBlock, Block.UPDATE_ALL);
+        level.setBlock(pos, style.surface(), Block.UPDATE_ALL);
         return true;
     }
 
+    private static RoadPlacementStyle selectRoadPlacementStyle(ServerLevel level, BlockPos pos) {
+        if (isBridgeSegment(level, pos)) {
+            return new RoadPlacementStyle(Blocks.SPRUCE_SLAB.defaultBlockState(), Blocks.SPRUCE_FENCE.defaultBlockState(), true);
+        }
+
+        String biomePath = level.getBiome(pos).unwrapKey()
+                .map(key -> key.location().getPath())
+                .orElse("");
+        if (biomePath.contains("desert") || biomePath.contains("badlands") || biomePath.contains("beach")) {
+            return new RoadPlacementStyle(Blocks.SMOOTH_SANDSTONE_SLAB.defaultBlockState(), Blocks.SANDSTONE.defaultBlockState(), false);
+        }
+        if (biomePath.contains("swamp") || biomePath.contains("mangrove") || biomePath.contains("jungle")) {
+            return new RoadPlacementStyle(Blocks.MUD_BRICK_SLAB.defaultBlockState(), Blocks.MUD_BRICKS.defaultBlockState(), false);
+        }
+        return new RoadPlacementStyle(Blocks.STONE_BRICK_SLAB.defaultBlockState(), Blocks.COBBLESTONE.defaultBlockState(), false);
+    }
+
+    private static boolean isBridgeSegment(ServerLevel level, BlockPos pos) {
+        BlockState below = level.getBlockState(pos.below());
+        if (below.isAir() || below.liquid()) {
+            return true;
+        }
+        return level.getBlockState(pos.below().north()).liquid()
+                || level.getBlockState(pos.below().south()).liquid()
+                || level.getBlockState(pos.below().east()).liquid()
+                || level.getBlockState(pos.below().west()).liquid();
+    }
+
+    private static void stabilizeRoadFoundation(ServerLevel level, BlockPos pos, RoadPlacementStyle style) {
+        BlockPos cursor = pos.below();
+        int depth = 0;
+        while (depth < 8) {
+            BlockState state = level.getBlockState(cursor);
+            if (!state.isAir() && !state.canBeReplaced() && !state.liquid()) {
+                return;
+            }
+            BlockState fillState = depth == 0 || !style.bridge() ? style.support() : Blocks.SPRUCE_FENCE.defaultBlockState();
+            level.setBlock(cursor, fillState, Block.UPDATE_ALL);
+            cursor = cursor.below();
+            depth++;
+        }
+    }
+
+    private static boolean isRoadSurface(BlockState state) {
+        return state.is(Blocks.STONE_BRICK_SLAB)
+                || state.is(Blocks.SMOOTH_SANDSTONE_SLAB)
+                || state.is(Blocks.MUD_BRICK_SLAB)
+                || state.is(Blocks.SPRUCE_SLAB)
+                || state.is(Blocks.SPRUCE_FENCE)
+                || state.is(Blocks.COBBLESTONE)
+                || state.is(Blocks.SANDSTONE)
+                || state.is(Blocks.MUD_BRICKS);
+    }
+
     private static void clearRoad(ServerLevel level, RoadNetworkRecord road, Set<BlockPos> preservedCoverage) {
-        BlockState roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState();
         for (BlockPos pos : collectRoadPlacementPositions(road.path())) {
             if (!preservedCoverage.contains(pos)) {
-                removeRoadAt(level, pos, roadBlock);
+                removeRoadAt(level, pos);
             }
         }
     }
 
-    private static void removeRoadAt(ServerLevel level, BlockPos pos, BlockState roadBlock) {
-        if (level.getBlockState(pos).is(roadBlock.getBlock())) {
+    private static void removeRoadAt(ServerLevel level, BlockPos pos) {
+        if (isRoadSurface(level.getBlockState(pos))) {
             level.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
         }
     }
@@ -1416,6 +1529,35 @@ public final class StructureConstructionManager {
         }
     }
 
+    private static void syncRoadConstructionProgress(ServerLevel level, Set<ServerPlayer> players) {
+        if (players.isEmpty()) {
+            return;
+        }
+
+        for (ServerPlayer player : players) {
+            List<SyncRoadConstructionProgressPacket.Entry> entries = new ArrayList<>();
+            for (Map.Entry<String, RoadConstructionJob> activeEntry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
+                RoadConstructionJob job = activeEntry.getValue();
+                if (job.level != level || job.ownerUuid == null || !player.getUUID().equals(job.ownerUuid)) {
+                    continue;
+                }
+                entries.add(new SyncRoadConstructionProgressPacket.Entry(
+                        job.roadId,
+                        job.sourceTownName == null ? "" : job.sourceTownName,
+                        job.targetTownName == null ? "" : job.targetTownName,
+                        job.path.get(Math.min(job.currentIndex, Math.max(0, job.path.size() - 1))),
+                        roadProgressPercent(job),
+                        getActiveRoadWorkerCount(level, activeEntry.getKey())
+                ));
+            }
+            ModNetwork.CHANNEL.sendTo(
+                    new SyncRoadConstructionProgressPacket(entries),
+                    player.connection.connection,
+                    NetworkDirection.PLAY_TO_CLIENT
+            );
+        }
+    }
+
     private static int getActiveWorkerCount(ServerLevel level, String jobId) {
         Map<String, ActiveWorker> workers = ACTIVE_SITE_WORKERS.get(jobId);
         if (workers == null || workers.isEmpty()) {
@@ -1533,7 +1675,19 @@ public final class StructureConstructionManager {
                 staleRoadJobs.add(state.roadId());
                 continue;
             }
-            ACTIVE_ROAD_CONSTRUCTIONS.put(state.roadId(), new RoadConstructionJob(level, state.roadId(), path, resumeIndex, resumeIndex));
+            UUID ownerUuid = parseUuid(state.ownerUuid());
+            RoadNetworkRecord road = NationSavedData.get(level).getRoadNetwork(state.roadId());
+            String[] resolvedNames = resolveRoadTownNames(level, road);
+            ACTIVE_ROAD_CONSTRUCTIONS.put(state.roadId(), new RoadConstructionJob(
+                    level,
+                    state.roadId(),
+                    ownerUuid,
+                    resolvedNames[0],
+                    resolvedNames[1],
+                    path,
+                    resumeIndex,
+                    resumeIndex
+            ));
         }
         staleRoadJobs.forEach(runtimeData::removeRoadJob);
     }
@@ -1560,7 +1714,7 @@ public final class StructureConstructionManager {
         ConstructionRuntimeSavedData.get(level).removeStructureJob(jobId);
     }
 
-    private static void persistRoadConstruction(ServerLevel level, String roadId, List<BlockPos> path) {
+    private static void persistRoadConstruction(ServerLevel level, String roadId, UUID ownerUuid, List<BlockPos> path) {
         if (level == null || roadId == null || roadId.isBlank()) {
             return;
         }
@@ -1568,6 +1722,7 @@ public final class StructureConstructionManager {
                 new ConstructionRuntimeSavedData.RoadJobState(
                         roadId,
                         level.dimension().location().toString(),
+                        ownerUuid == null ? "" : ownerUuid.toString(),
                         toLongList(path)
                 )
         );
@@ -1630,11 +1785,10 @@ public final class StructureConstructionManager {
     }
 
     private static int findRoadResumeIndex(ServerLevel level, List<BlockPos> path) {
-        Block roadBlock = net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB;
         for (int i = 0; i < path.size(); i++) {
             boolean complete = true;
             for (BlockPos pos : collectRoadSlicePositions(path, i)) {
-                if (!level.getBlockState(pos).is(roadBlock)) {
+                if (!isRoadSurface(level.getBlockState(pos))) {
                     complete = false;
                     break;
                 }
@@ -1644,6 +1798,31 @@ public final class StructureConstructionManager {
             }
         }
         return path.size();
+    }
+
+    private static String[] resolveRoadTownNames(ServerLevel level, RoadNetworkRecord road) {
+        NationSavedData data = NationSavedData.get(level);
+        TownRecord leftTown = road == null ? null : data.getTown(road.townId());
+        TownRecord rightTown = null;
+        if (road != null && road.structureAId() != null && road.structureBId() != null) {
+            String leftId = road.structureAId().startsWith("town:") ? road.structureAId().substring(5) : "";
+            String rightId = road.structureBId().startsWith("town:") ? road.structureBId().substring(5) : "";
+            if (!leftId.isBlank() && leftTown == null) {
+                leftTown = data.getTown(leftId);
+            }
+            if (!rightId.isBlank()) {
+                rightTown = data.getTown(rightId);
+            }
+            if (rightTown == null && !leftId.isBlank() && !leftId.equalsIgnoreCase(road.townId())) {
+                rightTown = data.getTown(leftId);
+            }
+        }
+        String leftName = leftTown == null ? road == null ? "" : road.structureAId() : leftTown.name();
+        String rightName = rightTown == null ? road == null ? "" : road.structureBId() : rightTown.name();
+        return new String[] {
+                leftName == null || leftName.isBlank() ? "-" : leftName,
+                rightName == null || rightName.isBlank() ? "-" : rightName
+        };
     }
 
     private static void placeNationCoreForConstruction(NationSavedData data,

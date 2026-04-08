@@ -101,15 +101,14 @@ public class TownWarehouseBlock extends BaseEntityBlock {
         if (!(player instanceof ServerPlayer serverPlayer)) {
             return InteractionResult.CONSUME;
         }
-        TownRecord town = TownService.getManagedTownAt(serverPlayer, pos);
-        if (town == null) {
-            serverPlayer.sendSystemMessage(Component.translatable("screen.sailboatmod.town_warehouse.manager_only"));
-            return InteractionResult.CONSUME;
-        }
         if (!(level.getBlockEntity(pos) instanceof TownWarehouseBlockEntity warehouse)) {
             return InteractionResult.PASS;
         }
         warehouse.resolveTownBinding();
+        if (!warehouse.canAccessWarehouse(serverPlayer)) {
+            serverPlayer.sendSystemMessage(Component.translatable("screen.sailboatmod.town_warehouse.member_only"));
+            return InteractionResult.CONSUME;
+        }
         NetworkHooks.openScreen(serverPlayer, warehouse, pos);
         return InteractionResult.CONSUME;
     }

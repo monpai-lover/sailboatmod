@@ -1,4 +1,4 @@
-{
+﻿{
     "item.sailboatmod.sailboat":  "Sailboat",
     "itemGroup.sailboatmod.sailboat_tab":  "Sailboat Mod",
     "entity.sailboatmod.sailboat":  "Sailboat",
@@ -167,9 +167,9 @@
     "screen.sailboatmod.market.name_input":  "Market Name",
     "screen.sailboatmod.market.name_save":  "Save",
     "screen.sailboatmod.market.refresh":  "Refresh",
-    "screen.sailboatmod.market.bind_dock":  "Bind Dock",
-    "screen.sailboatmod.market.bind_dock.success":  "Bound dock: %s",
-    "screen.sailboatmod.market.bind_dock.failed":  "No dock found nearby.",
+    "screen.sailboatmod.market.bind_dock":  "Bind Warehouse",
+    "screen.sailboatmod.market.bind_dock.success":  "Bound warehouse: %s",
+    "screen.sailboatmod.market.bind_dock.failed":  "No warehouse found nearby.",
     "screen.sailboatmod.market.qty":  "Qty",
     "screen.sailboatmod.market.price_adjust":  "Adjust (bp)",
     "screen.sailboatmod.market.price":  "Price",
@@ -182,13 +182,13 @@
     "screen.sailboatmod.market.self_buy_denied":  "You cannot buy your own listing.",
     "screen.sailboatmod.market.cancel":  "Cancel",
     "screen.sailboatmod.market.unlist":  "Unlist",
-    "screen.sailboatmod.market.unlist.success":  "Listing removed and cargo returned to the original dock storage.",
-    "screen.sailboatmod.market.unlist.success_linked_dock":  "Listing removed and cargo returned to the currently linked dock storage.",
+    "screen.sailboatmod.market.unlist.success":  "Listing removed and cargo returned to the original warehouse storage.",
+    "screen.sailboatmod.market.unlist.success_linked_dock":  "Listing removed and cargo returned to the currently linked warehouse storage.",
     "screen.sailboatmod.market.unlist.failed_not_owner":  "Only the seller can remove this listing.",
-    "screen.sailboatmod.market.unlist.failed_missing_dock":  "No available dock can receive the returned cargo.",
-    "screen.sailboatmod.market.unlist.failed_dock_access":  "You cannot manage the currently linked dock for cargo return.",
+    "screen.sailboatmod.market.unlist.failed_missing_dock":  "No available warehouse can receive the returned cargo.",
+    "screen.sailboatmod.market.unlist.failed_dock_access":  "You cannot manage the currently linked warehouse for cargo return.",
     "screen.sailboatmod.market.unlist.failed_no_stock":  "No removable stock remains on this listing.",
-    "screen.sailboatmod.market.unlist.failed_storage_full":  "Dock storage is full. Clear space before unlisting.",
+    "screen.sailboatmod.market.unlist.failed_storage_full":  "Warehouse storage is full. Clear space before unlisting.",
     "screen.sailboatmod.market.claim":  "Claim",
     "screen.sailboatmod.market.dispatch":  "Ship",
     "screen.sailboatmod.market.page.goods":  "Goods",
@@ -221,7 +221,7 @@
     "screen.sailboatmod.market.buy_order.use_selected":  "Use Selected Goods",
     "screen.sailboatmod.market.buy_order.selected_goods":  "Selected goods: %s",
     "screen.sailboatmod.market.buy_order.created_at":  "Created: %s",
-    "screen.sailboatmod.market.catalog.search":  "Search goods, seller, dock",
+    "screen.sailboatmod.market.catalog.search":  "Search goods, seller, warehouse",
     "screen.sailboatmod.market.catalog.sort.price":  "Price",
     "screen.sailboatmod.market.catalog.sort.stock":  "Stock",
     "screen.sailboatmod.market.catalog.sort.name":  "Name",
@@ -259,15 +259,15 @@
     "screen.sailboatmod.market.catalog.column.seller":  "Seller",
     "screen.sailboatmod.market.catalog.column.stock":  "Stock",
     "screen.sailboatmod.market.catalog.column.price":  "Price",
-    "screen.sailboatmod.market.catalog.row_format":  "%s | stock %s | dock %s",
+    "screen.sailboatmod.market.catalog.row_format":  "%s | stock %s | warehouse %s",
     "screen.sailboatmod.market.catalog.empty_hint":  "Try a different search or sort.",
     "screen.sailboatmod.market.buy_order.min_price":  "Min",
     "screen.sailboatmod.market.buy_order.max_price":  "Max",
     "screen.sailboatmod.market.buy_order.qty":  "Qty",
-    "screen.sailboatmod.market.storage_title":  "Dock Storage",
-    "screen.sailboatmod.market.storage_inventory":  "Storage cargo ready to list",
-    "screen.sailboatmod.market.storage_owner_only":  "Only the linked dock owner can list from this storage.",
-    "screen.sailboatmod.market.storage_empty":  "No cargo available in linked dock storage.",
+    "screen.sailboatmod.market.storage_title":  "Warehouse Storage",
+    "screen.sailboatmod.market.storage_inventory":  "Warehouse cargo ready to list",
+    "screen.sailboatmod.market.storage_owner_only":  "Only the linked warehouse owner can list from this storage.",
+    "screen.sailboatmod.market.storage_empty":  "No cargo available in linked warehouse storage.",
     "screen.sailboatmod.market.storage_at":  "Stored at %s",
     "screen.sailboatmod.market.tab.goods":  "Goods",
     "screen.sailboatmod.market.goods_subtab.market":  "Selling",
@@ -280,30 +280,32 @@
     "screen.sailboatmod.market.price_chart.volume":  "Volume",
     "screen.sailboatmod.market.price_chart.trades":  "Trades",
     "screen.sailboatmod.market.price_chart.window":  "Window",
-    "screen.sailboatmod.market.tab.orders":  "Dock Orders",
+    "screen.sailboatmod.market.tab.orders":  "Warehouse Orders",
     "screen.sailboatmod.market.tab.shipping":  "Boats",
     "screen.sailboatmod.market.empty":  "No data",
     "screen.sailboatmod.market.detail":  "Details",
-    "screen.sailboatmod.market.sell_help":  "Select cargo from linked dock storage and post it at the live global market price.",
+    "screen.sailboatmod.market.sell_help":  "Select cargo from linked warehouse storage, enter a manual unit price, and list it within the allowed market range.",
+    "screen.sailboatmod.market.action.post_manual_price":  "Post x%s  |  Unit price %s",
     "screen.sailboatmod.market.finance_help":  "Sales settle automatically. If direct deposit fails, credits stay here until you claim them.",
-    "screen.sailboatmod.market.linked_dock_value":  "Linked dock: %s (%s)",
-    "screen.sailboatmod.market.linked_dock_missing":  "Linked dock: none nearby",
+    "screen.sailboatmod.market.linked_dock_value":  "Linked warehouse: %s (%s)",
+    "screen.sailboatmod.market.linked_dock_missing":  "Linked warehouse: none nearby",
     "screen.sailboatmod.market.summary.pending":  "Pending",
-    "screen.sailboatmod.market.summary.dock":  "Dock",
+    "screen.sailboatmod.market.summary.dock":  "Warehouse",
     "screen.sailboatmod.market.summary.unlinked":  "Unlinked",
     "screen.sailboatmod.market.status.ready_to_post":  "Ready to post",
     "screen.sailboatmod.market.status.owner_required":  "Owner access required",
-    "screen.sailboatmod.market.status.dock_online":  "Dock logistics online",
-    "screen.sailboatmod.market.status.bind_dock_first":  "Bind a dock first",
+    "screen.sailboatmod.market.status.dock_online":  "Warehouse logistics online",
+    "screen.sailboatmod.market.status.bind_dock_first":  "Bind a warehouse first",
     "screen.sailboatmod.market.status.credits_waiting":  "Credits waiting",
     "screen.sailboatmod.market.status.no_credits":  "No pending credits",
     "screen.sailboatmod.market.status.live_feed":  "Live market feed",
-    "screen.sailboatmod.market.status.dock_required":  "Dock required to buy",
+    "screen.sailboatmod.market.status.list_created":  "Listing created.",
+    "screen.sailboatmod.market.status.dock_required":  "Warehouse required to buy",
     "screen.sailboatmod.market.detail.unit_price":  "Unit price: %s",
     "screen.sailboatmod.market.detail.available":  "Available: %s",
     "screen.sailboatmod.market.detail.reserved":  "Reserved: %s",
     "screen.sailboatmod.market.detail.seller":  "Seller: %s",
-    "screen.sailboatmod.market.detail.dock":  "Dock: %s",
+    "screen.sailboatmod.market.detail.dock":  "Warehouse: %s",
     "screen.sailboatmod.market.detail.nation":  "Nation: %s",
     "screen.sailboatmod.market.detail.estimate":  "Estimate x%s: %s",
     "screen.sailboatmod.market.detail.in_storage":  "In storage: %s",
@@ -316,7 +318,7 @@
     "screen.sailboatmod.market.metric.storage":  "Stock",
     "screen.sailboatmod.market.metric.status":  "Status",
     "screen.sailboatmod.market.metric.auto":  "Live",
-    "screen.sailboatmod.market.action.bind_dock_hint":  "Bind a dock to receive purchased cargo.",
+    "screen.sailboatmod.market.action.bind_dock_hint":  "Bind a warehouse to receive purchased cargo.",
     "screen.sailboatmod.market.action.buy_for":  "Buy %s for %s",
     "screen.sailboatmod.market.action.cancel_hint":  "Use cancel to withdraw your own listing.",
     "screen.sailboatmod.market.action.post_at_rate":  "Post %s at live market rate.",
@@ -338,8 +340,8 @@
     "screen.sailboatmod.market.finance.owner_controls":  "Owner controls available.",
     "screen.sailboatmod.market.finance.read_only":  "Read-only market access.",
     "screen.sailboatmod.market.finance.market_name":  "Market: %s",
-    "screen.sailboatmod.market.finance.storage_available":  "Dock storage can be listed here.",
-    "screen.sailboatmod.market.finance.storage_locked":  "Dock storage listing is locked.",
+    "screen.sailboatmod.market.finance.storage_available":  "Warehouse storage can be listed here.",
+    "screen.sailboatmod.market.finance.storage_locked":  "Warehouse storage listing is locked.",
     "screen.sailboatmod.market.finance.refresh_hint":  "Use refresh to sync market state.",
     "screen.sailboatmod.market.finance.claim_hint":  "Claim pending sales credits.",
     "screen.sailboatmod.market.finance.deposit_fail_hint":  "Funds stay here if direct deposit fails.",
@@ -372,13 +374,13 @@
     "screen.sailboatmod.market.goods.select_seller": "Select Seller",
     "screen.sailboatmod.market.goods.select_seller_hint": "Layer 2: pick a seller, then continue to purchase",
     "screen.sailboatmod.market.sell.storage_subtitle": "Storage search / cargo list / current selection",
-    "screen.sailboatmod.market.sell.terminal_subtitle": "Listing terminal / live pricing / dock sync",
+    "screen.sailboatmod.market.sell.terminal_subtitle": "Warehouse listing / manual pricing / terminal sync",
     "screen.sailboatmod.market.sell.terminal_short_1": "SELL",
     "screen.sailboatmod.market.sell.terminal_short_2": "TERM",
-    "screen.sailboatmod.market.sell.wait_select": "Select dock cargo first to begin listing",
-    "screen.sailboatmod.market.sell.header_stock_price": "Stock x%s  |  Live price %s",
-    "screen.sailboatmod.market.sell.badge.dock_online": "Dock Online",
-    "screen.sailboatmod.market.sell.badge.no_dock": "No Dock",
+    "screen.sailboatmod.market.sell.wait_select": "Select warehouse cargo first to begin listing",
+    "screen.sailboatmod.market.sell.header_stock_price": "Stock x%s  |  Suggested %s",
+    "screen.sailboatmod.market.sell.badge.dock_online": "Warehouse Online",
+    "screen.sailboatmod.market.sell.badge.no_dock": "No Warehouse",
     "screen.sailboatmod.market.sell.badge.post_allowed": "Posting On",
     "screen.sailboatmod.market.sell.badge.read_only": "Read Only",
     "screen.sailboatmod.market.sell.detail_title": "Item Details",
@@ -394,9 +396,14 @@
     "screen.sailboatmod.market.sell.info.source": "Source: %s",
     "screen.sailboatmod.market.sell.info.stock": "Stock: x%s",
     "screen.sailboatmod.market.sell.info.suggested_price": "Suggested price: %s",
+    "screen.sailboatmod.market.sell.manual_price": "Manual unit price",
+    "screen.sailboatmod.market.sell.manual_price_help": "Enter a manual unit price. The server derives bp from the current market reference and rejects anything outside the allowed range.",
+    "screen.sailboatmod.market.sell.derived_bp": "Derived bp",
+    "screen.sailboatmod.market.sell.info.allowed_price_range": "Allowed range: %s - %s",
+    "screen.sailboatmod.market.sell.info.derived_bp": "Derived bp: %s",
     "screen.sailboatmod.market.sell.metric.visible_goods": "Visible Goods",
     "screen.sailboatmod.market.sell.metric.total_stock": "Total Stock",
-    "screen.sailboatmod.market.sell.metric.dock_status": "Dock Status",
+    "screen.sailboatmod.market.sell.metric.dock_status": "Warehouse Status",
     "screen.sailboatmod.market.sell.metric.permission": "Permission",
     "screen.sailboatmod.market.sell.metric.online": "Online",
     "screen.sailboatmod.market.sell.metric.unbound": "Unbound",
@@ -405,16 +412,16 @@
     "screen.sailboatmod.market.sell.summary.none": "No cargo can be listed with the current filter",
     "screen.sailboatmod.market.sell.summary.filtered": "%s storage entries matched; select one to list it from the right terminal.",
     "screen.sailboatmod.market.sell.detail.status": "Status",
-    "screen.sailboatmod.market.sell.detail.dock": "Dock",
+    "screen.sailboatmod.market.sell.detail.dock": "Warehouse",
     "screen.sailboatmod.market.sell.detail.goods": "Goods",
     "screen.sailboatmod.market.sell.detail.stock": "Stock",
-    "screen.sailboatmod.market.sell.detail.unit_price": "Unit Price",
+    "screen.sailboatmod.market.sell.detail.unit_price": "Manual Price",
     "screen.sailboatmod.market.sell.confirm_wait": "Waiting for selection",
     "screen.sailboatmod.market.sell.confirm_value": "x%s  |  %s",
     "screen.sailboatmod.market.header.brand_top": "MON",
     "screen.sailboatmod.market.header.brand_bottom": "Market",
     "screen.sailboatmod.market.count_short": "x%s",
-    "screen.sailboatmod.market.detail.dock_label": "Dock",
+    "screen.sailboatmod.market.detail.dock_label": "Warehouse",
     "screen.sailboatmod.market.detail.note_label": "Note",
     "screen.sailboatmod.market.value.none": "-",
     "screen.sailboatmod.market.goods.quantity_line": "Qty x%s",
@@ -1240,8 +1247,11 @@
     "screen.sailboatmod.market.error.insufficient_funds": "Not enough funds.",
     "screen.sailboatmod.market.error.cancel_not_seller": "Only the seller can cancel this listing.",
     "screen.sailboatmod.market.error.no_unsold_stock": "No unsold stock remains on this listing.",
-    "screen.sailboatmod.market.error.source_dock_unavailable": "Source dock is unavailable.",
-    "screen.sailboatmod.market.error.source_dock_full": "Source dock storage is full.",
+    "screen.sailboatmod.market.error.source_dock_unavailable": "Source warehouse is unavailable.",
+    "screen.sailboatmod.market.error.source_dock_full": "Source warehouse storage is full.",
+    "screen.sailboatmod.market.error.listing_price_invalid": "Enter a valid unit price.",
+    "screen.sailboatmod.market.error.listing_price_out_of_range": "Listing price must stay between %s and %s. Suggested price: %s.",
+    "screen.sailboatmod.market.error.listing_unavailable": "Listing is unavailable right now.",
     "screen.sailboatmod.dock.error.boat_cargo_full": "Boat cargo hold is full.",
     "screen.sailboatmod.dock.error.boat_load_failed": "Boat cargo load failed.",
     "screen.sailboatmod.dock.error.stockpile_shipment_missing": "Town stockpile no longer has this shipment available.",
@@ -1394,5 +1404,32 @@
     ,"screen.sailboatmod.town_warehouse.title": "%s Warehouse"
     ,"screen.sailboatmod.town_warehouse.manager_only": "Only town managers can open this warehouse."
     ,"block.sailboatmod.town_warehouse.already_exists": "%s already has a warehouse."
+    ,"screen.sailboatmod.town_warehouse.member_only": "Only city members may open this warehouse."
     ,"item.sailboatmod.road_planner": "Road Planner"
+    ,"item.sailboatmod.road_planner.tip.use": "Right-click to preview or confirm an inter-town road."
+    ,"item.sailboatmod.road_planner.tip.select": "Sneak-right-click to choose the destination town."
+    ,"item.sailboatmod.road_planner.tip.confirm": "Right-click the same preview again to start construction."
+    ,"screen.sailboatmod.road_planner.target.title": "Road Planner"
+    ,"screen.sailboatmod.road_planner.target.select": "Select"
+    ,"screen.sailboatmod.road_planner.target.source": "Source town: %s"
+    ,"screen.sailboatmod.road_planner.target.hint": "Choose a town to link with a manual road."
+    ,"screen.sailboatmod.road_planner.target.empty": "No eligible towns are available in this dimension."
+    ,"screen.sailboatmod.road_planner.target.entry": "%s | %s blocks"
+    ,"screen.sailboatmod.road_planner.target.unknown": "Unknown town"
+    ,"screen.sailboatmod.road_planner.overlay.route": "%s -> %s"
+    ,"screen.sailboatmod.road_planner.overlay.length": "Preview nodes: %s"
+    ,"screen.sailboatmod.road_planner.overlay.preview": "Preview generated."
+    ,"screen.sailboatmod.road_planner.overlay.confirm": "Right-click again to confirm construction."
+    ,"screen.sailboatmod.road_planner.overlay.progress": "%s -> %s | %s%%"
+    ,"screen.sailboatmod.road_planner.overlay.workers": "Active workers: %s"
+    ,"message.sailboatmod.road_planner.unavailable": "Road planner is unavailable."
+    ,"message.sailboatmod.road_planner.must_manage_town": "Stand inside a town you manage before planning a road."
+    ,"message.sailboatmod.road_planner.no_targets": "No allied, trade, or same-nation towns can be linked here."
+    ,"message.sailboatmod.road_planner.selection_opened": "Choose a destination town for %s."
+    ,"message.sailboatmod.road_planner.target_selected": "Road planner target set to %s."
+    ,"message.sailboatmod.road_planner.target_invalid": "That town is no longer a valid road target."
+    ,"message.sailboatmod.road_planner.preview_ready": "Preview ready: %s -> %s. Right-click again to build it."
+    ,"message.sailboatmod.road_planner.path_failed": "No valid road path could be generated."
+    ,"message.sailboatmod.road_planner.queued": "Queued road construction: %s -> %s."
+    ,"message.sailboatmod.road_planner.completed": "Road construction completed: %s -> %s."
 }

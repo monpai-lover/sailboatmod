@@ -4,12 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" href="/brand-mark.svg" sizes="any" type="image/svg+xml">
-    <title>Monpai Online Market·Monpai在线市场</title>
+    <title>Monpai Online Market</title>
     <link rel="stylesheet" href="/app.css">
-    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 <div class="page-shell">
+    <div id="status-live" class="sr-only" aria-live="polite"></div>
+
     <header class="topbar">
         <div class="brand-lockup">
             <div class="brand-mark">
@@ -17,41 +18,43 @@
             </div>
             <div class="brand-copy">
                 <p id="brand-kicker" class="brand-kicker">Monpai Online Market</p>
-                <h1 id="hero-title">Monpai Online Market · Monpai在线市场</h1>
-                <p id="hero-subtitle" class="brand-subtitle">游客可以浏览市场与商品，登录后才能绑定账户、上架、求购和发货。</p>
+                <h1 id="hero-title">Monpai Online Market</h1>
+                <p id="hero-subtitle" class="brand-subtitle">Browse market terminals and commodity prices first. Bind a web account only when you want to trade, list goods, or manage logistics.</p>
             </div>
         </div>
-        <div class="topbar-side">
-            <label class="locale-switcher" for="locale-select">
-                <span id="locale-label" class="hero-chip-label">Language</span>
-                <select id="locale-select">
-                    <option value="zh-CN">简体中文</option>
-                    <option value="en-US">English</option>
-                </select>
-            </label>
-            <div class="hero-strip">
-            <div class="hero-chip">
-                <span id="mode-label" class="hero-chip-label">Mode</span>
-                <strong id="mode-value">Commodity Market</strong>
-            </div>
-            <div class="hero-chip">
-                <span id="session-label" class="hero-chip-label">Session</span>
-                <strong id="session-pill">Offline</strong>
-            </div>
-            <div class="hero-chip">
-                <span id="flow-label" class="hero-chip-label">Flow</span>
-                <strong id="flow-value">Token Login</strong>
-            </div>
-        </div>
-        </div>
-    </header>
 
-    <section class="login-console">
-        <div class="login-summary">
-            <p id="portal-kicker" class="section-kicker">Portal Access</p>
-            <h2 id="auth-title">Bind once with token, then sign in offline</h2>
-            <p id="auth-subtitle" class="subtle">Use the in-game token once to bind a web account, then continue using username and password even while offline.</p>
-            <div class="command-card">
+        <div class="topbar-side">
+            <div class="topbar-control-row">
+                <label class="locale-switcher" for="locale-select">
+                    <span id="locale-label" class="hero-chip-label">Language</span>
+                    <select id="locale-select">
+                        <option value="zh-CN">&#31616;&#20307;&#20013;&#25991;</option>
+                        <option value="en-US">English</option>
+                    </select>
+                </label>
+
+                <button id="access-toggle" type="button" class="access-toggle" aria-controls="access-panel" aria-expanded="true">
+                    <span id="access-toggle-label" class="hero-chip-label">登录</span>
+                    <strong id="session-status-inline">立即登录</strong>
+                </button>
+            </div>
+
+            <div class="hero-strip">
+                <div class="hero-chip">
+                    <span id="mode-label" class="hero-chip-label">Mode</span>
+                    <strong id="mode-value">Commodity Market</strong>
+                </div>
+                <div class="hero-chip">
+                    <span id="session-label" class="hero-chip-label">Session</span>
+                    <strong id="session-pill">Offline</strong>
+                </div>
+                <div class="hero-chip">
+                    <span id="flow-label" class="hero-chip-label">Flow</span>
+                    <strong id="flow-value">Token Login</strong>
+                </div>
+            </div>
+
+            <div class="command-card compact">
                 <div>
                     <div id="command-label" class="command-label">In-game command</div>
                     <code id="command-preview">/marketweb token</code>
@@ -59,31 +62,41 @@
                 <button id="copy-command-button" type="button" class="secondary">Copy command</button>
             </div>
         </div>
+    </header>
 
-        <div class="login-panel">
-            <div class="login-panel-head">
-                <div>
-                    <p id="fast-signin-kicker" class="section-kicker">Fast Sign In</p>
-                    <h3 id="connect-player-title">Bind account or sign in</h3>
+    <section id="access-panel" class="access-panel" hidden>
+        <div class="access-grid">
+            <div class="login-summary">
+                <p id="portal-kicker" class="section-kicker">Portal Access</p>
+                <h2 id="auth-title">Bind once with token, then sign in offline</h2>
+                <p id="auth-subtitle" class="subtle">Use the in-game token once to bind a web account, then continue using username and password even while offline.</p>
+            </div>
+
+            <div class="login-panel">
+                <div class="login-panel-head">
+                    <div>
+                        <p id="fast-signin-kicker" class="section-kicker">Fast Sign In</p>
+                        <h3 id="connect-player-title">Bind account or sign in</h3>
+                    </div>
+                    <p id="session-status" class="muted">Not signed in.</p>
                 </div>
-                <p id="session-status" class="muted">Not signed in.</p>
+
+                <label id="chat-capture-label" for="chat-capture">Paste chat output or token</label>
+                <textarea id="chat-capture" autocomplete="off" placeholder="Paste the full chat line here. The page will detect the token automatically."></textarea>
+
+                <div class="account-grid">
+                    <input id="account-username" type="text" autocomplete="username" placeholder="Account username">
+                    <input id="account-password" type="password" autocomplete="current-password" placeholder="Password">
+                </div>
+
+                <div class="token-row">
+                    <input id="login-token" type="text" autocomplete="off" placeholder="Token appears here automatically">
+                    <button id="bind-button" type="button">Bind account</button>
+                    <button id="login-button" type="button" class="secondary">Account login</button>
+                </div>
+
+                <p id="token-helper" class="muted">First time: paste the token, set username and password, then bind. Later: sign in directly with username and password.</p>
             </div>
-
-            <label id="chat-capture-label" for="chat-capture">Paste chat output or token</label>
-            <textarea id="chat-capture" autocomplete="off" placeholder="Paste the full chat line here. The page will detect the token automatically."></textarea>
-
-            <div class="account-grid">
-                <input id="account-username" type="text" autocomplete="username" placeholder="Account username">
-                <input id="account-password" type="password" autocomplete="current-password" placeholder="Password">
-            </div>
-
-            <div class="token-row">
-                <input id="login-token" type="text" autocomplete="off" placeholder="Token appears here automatically">
-                <button id="bind-button" type="button">Bind account</button>
-                <button id="login-button" type="button" class="secondary">Account login</button>
-            </div>
-
-            <p id="token-helper" class="muted">First time: paste the token, set username and password, then bind. Later: sign in directly with username and password.</p>
         </div>
     </section>
 
@@ -97,7 +110,17 @@
                     </div>
                     <button id="refresh-markets" type="button" class="secondary">Refresh</button>
                 </div>
+
+                <label class="market-search-field" for="market-search">
+                    <span id="market-search-label" class="hero-chip-label">Find Terminal</span>
+                    <input id="market-search" type="search" placeholder="Search market, owner, town, or dimension">
+                </label>
+
                 <p id="market-sidebar-hint" class="muted">Choose one market terminal, then browse its commodities like a marketplace and drill into one item page.</p>
+            </div>
+
+            <div id="market-summary" class="sidebar-panel market-summary">
+                <div class="empty-state compact">Loading markets...</div>
             </div>
 
             <div class="sidebar-panel market-list-shell">
@@ -110,6 +133,7 @@
         </section>
     </main>
 </div>
+<script src="/lightweight-charts.standalone.production.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

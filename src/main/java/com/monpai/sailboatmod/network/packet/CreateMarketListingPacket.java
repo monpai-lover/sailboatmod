@@ -15,19 +15,18 @@ public class CreateMarketListingPacket {
     private final int storageIndex;
     private final int quantity;
     private final int unitPrice;
-    private final int priceAdjustmentBp;
     private final String sellerNote;
 
-    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice, int priceAdjustmentBp, String sellerNote) {
+    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice, String sellerNote) {
         this.marketPos = marketPos;
         this.storageIndex = storageIndex;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
-        this.priceAdjustmentBp = priceAdjustmentBp;
         this.sellerNote = sellerNote == null ? "" : sellerNote;
     }
-    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice, int priceAdjustmentBp) {
-        this(marketPos, storageIndex, quantity, unitPrice, priceAdjustmentBp, "");
+
+    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice) {
+        this(marketPos, storageIndex, quantity, unitPrice, "");
     }
 
 
@@ -36,12 +35,11 @@ public class CreateMarketListingPacket {
         buffer.writeVarInt(packet.storageIndex);
         buffer.writeVarInt(packet.quantity);
         buffer.writeVarInt(packet.unitPrice);
-        buffer.writeVarInt(packet.priceAdjustmentBp);
         PacketStringCodec.writeUtfSafe(buffer, packet.sellerNote, 120);
     }
 
     public static CreateMarketListingPacket decode(FriendlyByteBuf buffer) {
-        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readUtf(120));
+        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readUtf(120));
     }
 
     public static void handle(CreateMarketListingPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -54,7 +52,17 @@ public class CreateMarketListingPacket {
             if (!(player.level().getBlockEntity(packet.marketPos) instanceof MarketBlockEntity market)) {
                 return;
             }
-            market.createListingFromDockStorage(player, packet.storageIndex, packet.quantity, packet.unitPrice, packet.priceAdjustmentBp, packet.sellerNote);
+            MarketBlockEntity.CreateListingResult result = market.createListingFromDockStorage(
+                    player,
+                    packet.storageIndex,
+                    packet.quantity,
+                    packet.unitPrice,
+                    packet.sellerNote
+            );
+            ModNetwork.CHANNEL.send(
+                    PacketDistributor.PLAYER.with(() -> player),
+                    new MarketStatusNoticePacket(packet.marketPos, result.message().getString(), result.success())
+            );
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> player),
                     new OpenMarketScreenPacket(market.buildOverview(player))

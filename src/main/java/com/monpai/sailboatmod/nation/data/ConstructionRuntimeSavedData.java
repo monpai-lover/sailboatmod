@@ -156,11 +156,12 @@ public class ConstructionRuntimeSavedData extends SavedData {
         }
     }
 
-    public record RoadJobState(String roadId, String dimensionId, List<Long> path) {
+    public record RoadJobState(String roadId, String dimensionId, String ownerUuid, List<Long> path) {
         public CompoundTag save() {
             CompoundTag tag = new CompoundTag();
             tag.putString("RoadId", roadId);
             tag.putString("DimensionId", dimensionId == null ? "" : dimensionId);
+            tag.putString("OwnerUuid", ownerUuid == null ? "" : ownerUuid);
             tag.putLongArray("Path", path == null ? new long[0] : path.stream().mapToLong(Long::longValue).toArray());
             return tag;
         }
@@ -172,6 +173,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
             return new RoadJobState(
                     tag.getString("RoadId"),
                     tag.getString("DimensionId"),
+                    tag.getString("OwnerUuid"),
                     toLongList(tag.getLongArray("Path"))
             );
         }

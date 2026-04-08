@@ -137,6 +137,7 @@ public record MarketOverviewData(
     }
 
     public record StorageEntry(String label, String commodityKey, String itemName, int quantity, int suggestedUnitPrice,
+                               int minAllowedUnitPrice, int maxAllowedUnitPrice,
                                String detail, String category, int rarity) {
     }
 

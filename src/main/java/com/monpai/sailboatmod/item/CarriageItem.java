@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.item;
 
+import com.monpai.sailboatmod.client.renderer.CarriageItemRenderer;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.registry.ModEntities;
 import net.minecraft.core.BlockPos;
@@ -15,12 +16,30 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.client.extensions.common.IClientItemExtensions;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 public class CarriageItem extends SailboatItem {
     public CarriageItem(Properties properties) {
         super(properties);
+    }
+
+    @Override
+    public void initializeClient(Consumer<IClientItemExtensions> consumer) {
+        consumer.accept(new IClientItemExtensions() {
+            private CarriageItemRenderer renderer;
+
+            @Override
+            public @Nullable net.minecraft.client.renderer.BlockEntityWithoutLevelRenderer getCustomRenderer() {
+                if (renderer == null) {
+                    renderer = new CarriageItemRenderer();
+                }
+                return renderer;
+            }
+        });
     }
 
     @Override

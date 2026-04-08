@@ -1,12 +1,17 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
+import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -14,6 +19,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -23,79 +29,171 @@ import java.util.Set;
 
 public final class ManualRoadPlannerService {
     private static final String TAG_TARGET_TOWN_ID = "TargetTownId";
+    private static final String TAG_PREVIEW_ROAD_ID = "PreviewRoadId";
+    private static final String TAG_PREVIEW_TARGET_TOWN_ID = "PreviewTargetTownId";
+    private static final String TAG_PREVIEW_HASH = "PreviewHash";
+    private static final String TAG_PREVIEW_AT = "PreviewAt";
+    private static final long PREVIEW_TIMEOUT_MS = 45_000L;
 
     private ManualRoadPlannerService() {
     }
 
-    public static Component cycleTargetTown(ServerPlayer player, ItemStack stack) {
+    public static Component openTargetSelection(ServerPlayer player, ItemStack stack, boolean offhand) {
         if (player == null || stack == null) {
-            return Component.literal("Road planner unavailable.");
+            return Component.translatable("message.sailboatmod.road_planner.unavailable");
         }
         ServerLevel level = player.serverLevel();
         TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
         if (sourceTown == null) {
-            return Component.literal("Stand inside a town you manage before planning a road.");
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.must_manage_town");
         }
+
         List<TownRecord> targets = eligibleTargets(level, sourceTown);
         if (targets.isEmpty()) {
-            return Component.literal("No allied, trade, or same-nation towns are available in this dimension.");
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.no_targets");
         }
-        String currentTargetId = stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
-        int nextIndex = 0;
-        for (int i = 0; i < targets.size(); i++) {
-            if (targets.get(i).townId().equalsIgnoreCase(currentTargetId)) {
-                nextIndex = (i + 1) % targets.size();
-                break;
-            }
+
+        String selectedTownId = stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
+        List<RoadPlannerClientHooks.TargetEntry> entries = new ArrayList<>(targets.size());
+        for (TownRecord target : targets) {
+            BlockPos targetCore = townCorePos(level, target);
+            int distanceBlocks = targetCore == null
+                    ? 0
+                    : Mth.floor(Math.sqrt(player.blockPosition().distSqr(targetCore)));
+            entries.add(new RoadPlannerClientHooks.TargetEntry(target.townId(), displayTownName(target), distanceBlocks));
         }
-        TownRecord next = targets.get(nextIndex);
-        stack.getOrCreateTag().putString(TAG_TARGET_TOWN_ID, next.townId());
-        return Component.literal("Road planner target: " + displayTownName(next));
+
+        ModNetwork.CHANNEL.send(
+                PacketDistributor.PLAYER.with(() -> player),
+                new OpenRoadPlannerScreenPacket(offhand, displayTownName(sourceTown), selectedTownId, entries)
+        );
+        return Component.translatable("message.sailboatmod.road_planner.selection_opened", displayTownName(sourceTown));
     }
 
-    public static Component planRoad(ServerPlayer player, ItemStack stack) {
+    public static Component setSelectedTarget(ServerPlayer player, ItemStack stack, String selectedTownId) {
         if (player == null || stack == null) {
-            return Component.literal("Road planner unavailable.");
+            return Component.translatable("message.sailboatmod.road_planner.unavailable");
         }
+        ServerLevel level = player.serverLevel();
+        TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
+        if (sourceTown == null) {
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.must_manage_town");
+        }
+
+        List<TownRecord> targets = eligibleTargets(level, sourceTown);
+        if (targets.isEmpty()) {
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.no_targets");
+        }
+
+        for (TownRecord target : targets) {
+            if (target.townId().equalsIgnoreCase(selectedTownId)) {
+                stack.getOrCreateTag().putString(TAG_TARGET_TOWN_ID, target.townId());
+                clearPreviewState(stack);
+                sendPreviewClear(player);
+                return Component.translatable("message.sailboatmod.road_planner.target_selected", displayTownName(target));
+            }
+        }
+
+        return Component.translatable("message.sailboatmod.road_planner.target_invalid");
+    }
+
+    public static Component previewOrConfirm(ServerPlayer player, ItemStack stack) {
+        if (player == null || stack == null) {
+            return Component.translatable("message.sailboatmod.road_planner.unavailable");
+        }
+
+        PlanCandidate candidate = buildPlan(player, stack);
+        if (candidate == null) {
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.path_failed");
+        }
+
+        CompoundTag tag = stack.getOrCreateTag();
+        String previewHash = previewHash(candidate.road());
+        long now = System.currentTimeMillis();
+        boolean confirmable = candidate.targetTown().townId().equalsIgnoreCase(tag.getString(TAG_PREVIEW_TARGET_TOWN_ID))
+                && candidate.road().roadId().equalsIgnoreCase(tag.getString(TAG_PREVIEW_ROAD_ID))
+                && previewHash.equals(tag.getString(TAG_PREVIEW_HASH))
+                && now - tag.getLong(TAG_PREVIEW_AT) <= PREVIEW_TIMEOUT_MS;
+
+        if (confirmable) {
+            StructureConstructionManager.scheduleManualRoad(
+                    player.serverLevel(),
+                    candidate.road(),
+                    player.getUUID(),
+                    displayTownName(candidate.sourceTown()),
+                    displayTownName(candidate.targetTown())
+            );
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable(
+                    "message.sailboatmod.road_planner.queued",
+                    displayTownName(candidate.sourceTown()),
+                    displayTownName(candidate.targetTown())
+            );
+        }
+
+        tag.putString(TAG_PREVIEW_TARGET_TOWN_ID, candidate.targetTown().townId());
+        tag.putString(TAG_PREVIEW_ROAD_ID, candidate.road().roadId());
+        tag.putString(TAG_PREVIEW_HASH, previewHash);
+        tag.putLong(TAG_PREVIEW_AT, now);
+        sendPreview(player, candidate, true);
+        return Component.translatable(
+                "message.sailboatmod.road_planner.preview_ready",
+                displayTownName(candidate.sourceTown()),
+                displayTownName(candidate.targetTown())
+        );
+    }
+
+    private static PlanCandidate buildPlan(ServerPlayer player, ItemStack stack) {
         ServerLevel level = player.serverLevel();
         NationSavedData data = NationSavedData.get(level);
         TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
         if (sourceTown == null) {
-            return Component.literal("Stand inside a town you manage before planning a road.");
+            return null;
         }
 
         List<TownRecord> targets = eligibleTargets(level, sourceTown);
         if (targets.isEmpty()) {
-            return Component.literal("No eligible target town was found.");
+            return null;
         }
         TownRecord targetTown = resolveSelectedTarget(stack, targets);
         if (targetTown == null) {
-            return Component.literal("Select a target town first.");
+            return null;
         }
 
         List<NationClaimRecord> sourceClaims = claimsInDimension(data, sourceTown, level.dimension().location().toString());
         List<NationClaimRecord> targetClaims = claimsInDimension(data, targetTown, level.dimension().location().toString());
         if (sourceClaims.isEmpty() || targetClaims.isEmpty()) {
-            return Component.literal("Both towns need claimed chunks in this dimension.");
+            return null;
         }
 
-        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, player.blockPosition(), townCorePos(level, targetTown));
-        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, townCorePos(level, targetTown), sourceAnchor);
+        BlockPos targetCore = townCorePos(level, targetTown);
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, player.blockPosition(), targetCore);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetCore == null ? player.blockPosition() : targetCore, sourceAnchor);
         if (sourceAnchor == null || targetAnchor == null) {
-            return Component.literal("Failed to find valid boundary anchors for the planned road.");
+            return null;
         }
 
         List<BlockPos> rawPath = RoadPathfinder.findPath(level, sourceAnchor, targetAnchor);
         List<BlockPos> path = normalizePath(sourceAnchor, rawPath, targetAnchor);
         if (path.size() < 2) {
-            return Component.literal("No traversable land path was found between the towns.");
+            return null;
         }
 
         String leftId = "town:" + sourceTown.townId();
         String rightId = "town:" + targetTown.townId();
         String edgeKey = RoadNetworkRecord.edgeKey(leftId, rightId);
         if (edgeKey.isBlank()) {
-            return Component.literal("Road planner could not build a stable road key.");
+            return null;
         }
 
         RoadNetworkRecord road = new RoadNetworkRecord(
@@ -109,8 +207,7 @@ public final class ManualRoadPlannerService {
                 System.currentTimeMillis(),
                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
         );
-        StructureConstructionManager.scheduleManualRoad(level, road);
-        return Component.literal("Queued manual road: " + displayTownName(sourceTown) + " -> " + displayTownName(targetTown));
+        return new PlanCandidate(sourceTown, targetTown, road);
     }
 
     private static TownRecord resolveSelectedTarget(ItemStack stack, List<TownRecord> targets) {
@@ -175,7 +272,7 @@ public final class ManualRoadPlannerService {
         if (roadNode != null) {
             return roadNode;
         }
-        BlockPos boundary = nearestBoundaryAnchor(level, claims, towardPos, preferredFallback.getY());
+        BlockPos boundary = nearestBoundaryAnchor(level, claims, towardPos, preferredFallback == null ? level.getSeaLevel() : preferredFallback.getY());
         if (boundary != null) {
             return boundary;
         }
@@ -298,11 +395,57 @@ public final class ManualRoadPlannerService {
         return List.copyOf(ordered);
     }
 
+    private static void sendPreview(ServerPlayer player, PlanCandidate candidate, boolean awaitingConfirmation) {
+        ModNetwork.CHANNEL.send(
+                PacketDistributor.PLAYER.with(() -> player),
+                new SyncRoadPlannerPreviewPacket(
+                        displayTownName(candidate.sourceTown()),
+                        displayTownName(candidate.targetTown()),
+                        candidate.road().path(),
+                        awaitingConfirmation
+                )
+        );
+    }
+
+    private static void sendPreviewClear(ServerPlayer player) {
+        ModNetwork.CHANNEL.send(
+                PacketDistributor.PLAYER.with(() -> player),
+                new SyncRoadPlannerPreviewPacket("", "", List.of(), false)
+        );
+    }
+
+    private static void clearPreviewState(ItemStack stack) {
+        if (stack == null || !stack.hasTag()) {
+            return;
+        }
+        CompoundTag tag = stack.getTag();
+        if (tag == null) {
+            return;
+        }
+        tag.remove(TAG_PREVIEW_TARGET_TOWN_ID);
+        tag.remove(TAG_PREVIEW_ROAD_ID);
+        tag.remove(TAG_PREVIEW_HASH);
+        tag.remove(TAG_PREVIEW_AT);
+    }
+
+    private static String previewHash(RoadNetworkRecord road) {
+        int hash = road == null ? 0 : road.roadId().hashCode();
+        if (road != null) {
+            for (BlockPos pos : road.path()) {
+                hash = 31 * hash + Long.hashCode(pos.asLong());
+            }
+        }
+        return Integer.toHexString(hash);
+    }
+
     private static String displayTownName(TownRecord town) {
         if (town == null) {
             return "-";
         }
         String name = town.name() == null ? "" : town.name().trim();
         return name.isBlank() ? town.townId().toLowerCase(Locale.ROOT) : name;
+    }
+
+    private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road) {
     }
 }

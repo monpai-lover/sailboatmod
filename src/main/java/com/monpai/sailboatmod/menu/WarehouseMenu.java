@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.menu;
 import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
 import com.monpai.sailboatmod.registry.ModMenus;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
@@ -18,18 +19,22 @@ public class WarehouseMenu extends AbstractContainerMenu {
 
     private final Container warehouse;
     private final BlockPos warehousePos;
+    private final TownWarehouseBlockEntity blockEntity;
 
-    public WarehouseMenu(int containerId, Inventory inventory, net.minecraft.network.FriendlyByteBuf extraData) {
-        this(containerId, inventory,
-                inventory.player.level().getBlockEntity(extraData.readBlockPos()) instanceof TownWarehouseBlockEntity warehouse
-                        ? warehouse
-                        : null);
+    public WarehouseMenu(int containerId, Inventory inventory, FriendlyByteBuf extraData) {
+        this(containerId, inventory, null, new SimpleContainer(WAREHOUSE_SLOT_COUNT),
+                extraData == null ? BlockPos.ZERO : extraData.readBlockPos());
     }
 
-    public WarehouseMenu(int containerId, Inventory inventory, TownWarehouseBlockEntity warehouse) {
+    public WarehouseMenu(int containerId, Inventory inventory, TownWarehouseBlockEntity warehouse, Container personalStorage) {
+        this(containerId, inventory, warehouse, personalStorage, warehouse == null ? BlockPos.ZERO : warehouse.getBlockPos());
+    }
+
+    private WarehouseMenu(int containerId, Inventory inventory, TownWarehouseBlockEntity blockEntity, Container warehouse, BlockPos warehousePos) {
         super(ModMenus.WAREHOUSE_MENU.get(), containerId);
         this.warehouse = warehouse == null ? new SimpleContainer(WAREHOUSE_SLOT_COUNT) : warehouse;
-        this.warehousePos = warehouse == null ? BlockPos.ZERO : warehouse.getBlockPos();
+        this.warehousePos = warehousePos == null ? BlockPos.ZERO : warehousePos.immutable();
+        this.blockEntity = blockEntity;
 
         for (int row = 0; row < WAREHOUSE_ROWS; row++) {
             for (int col = 0; col < WAREHOUSE_COLUMNS; col++) {
@@ -50,7 +55,13 @@ public class WarehouseMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        return warehouse.stillValid(player);
+        if (blockEntity != null) {
+            return blockEntity.stillValid(player);
+        }
+        return player != null && player.distanceToSqr(
+                warehousePos.getX() + 0.5D,
+                warehousePos.getY() + 0.5D,
+                warehousePos.getZ() + 0.5D) <= 64.0D;
     }
 
     @Override

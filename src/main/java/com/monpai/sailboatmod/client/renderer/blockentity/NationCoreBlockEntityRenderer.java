@@ -58,7 +58,34 @@ public class NationCoreBlockEntityRenderer implements BlockEntityRenderer<Nation
         }
         float x = -this.font.width(line) / 2.0F;
         Matrix4f matrix = poseStack.last().pose();
-        this.font.drawInBatch(line, x, y, color, false, matrix, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
+        int readableColor = ensureReadableColor(color);
+        drawOutline(line, x, y, matrix, bufferSource, packedLight);
+        this.font.drawInBatch(line, x, y, readableColor, false, matrix, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
+    }
+
+    private void drawOutline(String line, float x, int y, Matrix4f matrix, MultiBufferSource bufferSource, int packedLight) {
+        this.font.drawInBatch(line, x - 1.0F, y, 0xCC101010, false, matrix, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
+        this.font.drawInBatch(line, x + 1.0F, y, 0xCC101010, false, matrix, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
+        this.font.drawInBatch(line, x, y - 1.0F, 0xCC101010, false, matrix, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
+        this.font.drawInBatch(line, x, y + 1.0F, 0xCC101010, false, matrix, bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
+    }
+
+    private static int ensureReadableColor(int color) {
+        int rgb = color & 0x00FFFFFF;
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        double luminance = (0.299D * r) + (0.587D * g) + (0.114D * b);
+        if (luminance < 78.0D) {
+            r = Math.min(255, r + 68);
+            g = Math.min(255, g + 68);
+            b = Math.min(255, b + 68);
+        } else if (luminance > 214.0D) {
+            r = Math.max(0, r - 32);
+            g = Math.max(0, g - 32);
+            b = Math.max(0, b - 32);
+        }
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
     @Override

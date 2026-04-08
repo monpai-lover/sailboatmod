@@ -35,6 +35,16 @@ import java.util.Locale;
 public final class MarketWebService {
     private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
 
+    public record ActionResult(boolean ok, String errorCode, String message) {
+        public static ActionResult success() {
+            return new ActionResult(true, "", "");
+        }
+
+        public static ActionResult failure(String errorCode, String message) {
+            return new ActionResult(false, errorCode == null ? "action_failed" : errorCode, message == null ? "Action failed" : message);
+        }
+    }
+
     public JsonArray listMarkets(MinecraftServer server, MarketPlayerIdentity identity) {
         JsonArray out = new JsonArray();
         if (server == null || identity == null) {
@@ -112,18 +122,23 @@ public final class MarketWebService {
         return root;
     }
 
-    public boolean createListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int storageIndex, int quantity, int priceAdjustmentBp, String sellerNote) {
+    public ActionResult createListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int storageIndex, int quantity, int unitPrice, String sellerNote) {
         ResolvedMarket resolved = resolveMarket(server, marketId);
-        return resolved != null && identity != null
-                && resolved.market().createListingFromDockStorage(
-                identity.playerUuidString(),
-                identity.playerName(),
-                storageIndex,
-                quantity,
-                0,
-                priceAdjustmentBp,
-                sellerNote
-        );
+        if (resolved == null || identity == null) {
+            return ActionResult.failure("market_not_found", "Market not found");
+        }
+        com.monpai.sailboatmod.block.entity.MarketBlockEntity.CreateListingResult result =
+                resolved.market().createListingFromDockStorage(
+                        identity.playerUuidString(),
+                        identity.playerName(),
+                        storageIndex,
+                        quantity,
+                        unitPrice,
+                        sellerNote
+                );
+        return result.success()
+                ? ActionResult.success()
+                : ActionResult.failure(result.messageKey(), result.message().getString());
     }
 
     public boolean purchaseListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int listingIndex, int quantity) {
@@ -254,6 +269,8 @@ public final class MarketWebService {
             json.addProperty("itemName", entry.itemName());
             json.addProperty("quantity", entry.quantity());
             json.addProperty("suggestedUnitPrice", entry.suggestedUnitPrice());
+            json.addProperty("minAllowedUnitPrice", entry.minAllowedUnitPrice());
+            json.addProperty("maxAllowedUnitPrice", entry.maxAllowedUnitPrice());
             json.addProperty("detail", entry.detail());
             json.addProperty("category", entry.category());
             json.addProperty("rarity", entry.rarity());

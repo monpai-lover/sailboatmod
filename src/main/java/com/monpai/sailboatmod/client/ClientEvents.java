@@ -13,8 +13,10 @@ import com.monpai.sailboatmod.client.renderer.blockentity.NationCoreBlockEntityR
 import com.monpai.sailboatmod.client.renderer.blockentity.DockBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.MarketBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.NationFlagBlockEntityRenderer;
+import com.monpai.sailboatmod.client.renderer.blockentity.PostStationBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.TownCoreBlockEntityRenderer;
 import com.monpai.sailboatmod.client.renderer.blockentity.TownFlagBlockEntityRenderer;
+import com.monpai.sailboatmod.client.renderer.blockentity.TownWarehouseBlockEntityRenderer;
 import com.monpai.sailboatmod.client.screen.BankScreen;
 import com.monpai.sailboatmod.client.screen.DockScreen;
 import com.monpai.sailboatmod.client.screen.MarketScreen;
@@ -40,7 +42,7 @@ public final class ClientEvents {
         event.registerEntityRenderer(ModEntities.RESIDENT.get(), ResidentEntityRenderer::new);
         event.registerEntityRenderer(ModEntities.SOLDIER.get(), ResidentEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.DOCK_BLOCK_ENTITY.get(), DockBlockEntityRenderer::new);
-        event.registerBlockEntityRenderer(ModBlockEntities.POST_STATION_BLOCK_ENTITY.get(), DockBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.POST_STATION_BLOCK_ENTITY.get(), PostStationBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.MARKET_BLOCK_ENTITY.get(), MarketBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_CORE_BLOCK_ENTITY.get(), NationCoreBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.NATION_FLAG_BLOCK_ENTITY.get(), NationFlagBlockEntityRenderer::new);
@@ -50,6 +52,7 @@ public final class ClientEvents {
         event.registerBlockEntityRenderer(ModBlockEntities.BARRACKS_BLOCK_ENTITY.get(), BarracksBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.TOWN_CORE_BLOCK_ENTITY.get(), TownCoreBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.TOWN_FLAG_BLOCK_ENTITY.get(), TownFlagBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.TOWN_WAREHOUSE_BLOCK_ENTITY.get(), TownWarehouseBlockEntityRenderer::new);
     }
 
     @SubscribeEvent

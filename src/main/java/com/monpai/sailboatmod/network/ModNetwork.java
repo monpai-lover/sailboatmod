@@ -37,9 +37,13 @@ import com.monpai.sailboatmod.network.packet.RenameDockPacket;
 import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
 import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
+import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
+import com.monpai.sailboatmod.network.packet.SelectRoadPlannerTargetPacket;
 import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket;
+import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
+import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetTownClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetDockZonePacket;
@@ -421,6 +425,37 @@ public final class ModNetwork {
                 CopyMarketWebTokenPacket::encode,
                 CopyMarketWebTokenPacket::decode,
                 CopyMarketWebTokenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenRoadPlannerScreenPacket.class,
+                OpenRoadPlannerScreenPacket::encode,
+                OpenRoadPlannerScreenPacket::decode,
+                OpenRoadPlannerScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SelectRoadPlannerTargetPacket.class,
+                SelectRoadPlannerTargetPacket::encode,
+                SelectRoadPlannerTargetPacket::decode,
+                SelectRoadPlannerTargetPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncRoadPlannerPreviewPacket.class,
+                SyncRoadPlannerPreviewPacket::encode,
+                SyncRoadPlannerPreviewPacket::decode,
+                SyncRoadPlannerPreviewPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncRoadConstructionProgressPacket.class,
+                SyncRoadConstructionProgressPacket::encode,
+                SyncRoadConstructionProgressPacket::decode,
+                SyncRoadConstructionProgressPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
     }

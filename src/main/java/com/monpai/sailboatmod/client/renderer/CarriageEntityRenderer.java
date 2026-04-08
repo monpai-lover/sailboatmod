@@ -38,8 +38,8 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
                           com.mojang.blaze3d.vertex.VertexConsumer buffer,
                           boolean isReRender, float partialTick, int packedLight, int packedOverlay,
                           float red, float green, float blue, float alpha) {
-        poseStack.translate(0.0F, 0.35F, 0.0F);
-        poseStack.scale(0.68F, 0.68F, 0.68F);
+        poseStack.translate(0.0F, 0.92F, 0.0F);
+        poseStack.scale(1.04F, 1.04F, 1.04F);
         super.preRender(poseStack, animatable, model, bufferSource, buffer, isReRender, partialTick, packedLight, packedOverlay, red, green, blue, alpha);
     }
 
@@ -77,8 +77,8 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
         poseStack.pushPose();
         poseStack.mulPose(Axis.YP.rotationDegrees(180.0F - yaw));
-        poseStack.translate(0.0D, 0.08D + Mth.sin(animationTime * 0.34F) * 0.015F * limbSwingAmount, -1.6D);
-        poseStack.scale(0.78F, 0.78F, 0.78F);
+        poseStack.translate(0.0D, 1.42D + Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount, -1.78D);
+        poseStack.scale(-0.96F, -0.96F, 0.96F);
 
         horseModel.prepareMobModel(horse, limbSwing, limbSwingAmount, partialTick);
         horseModel.setupAnim(horse, limbSwing, limbSwingAmount, animationTime, 0.0F, 0.0F);

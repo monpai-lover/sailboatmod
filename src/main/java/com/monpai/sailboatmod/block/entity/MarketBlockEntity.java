@@ -65,6 +65,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private static final double LINK_DOCK_RADIUS = 24.0D;
     private static final double PORT_PREVIEW_SPEED_MPS = 8.0D;
     private static final double POST_STATION_PREVIEW_SPEED_MPS = 5.0D;
+    private static final int MIN_LISTING_PRICE_BP = -1000;
+    private static final int MAX_LISTING_PRICE_BP = 1000;
     private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
     private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
     private String marketName = "";
@@ -72,6 +74,28 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private String ownerUuid = "";
     @Nullable
     private BlockPos linkedDockPos;
+
+    public record CreateListingResult(boolean success, String messageKey, Object[] messageArgs) {
+        public static CreateListingResult created() {
+            return new CreateListingResult(true, "screen.sailboatmod.market.status.list_created", new Object[0]);
+        }
+
+        public static CreateListingResult failure(String messageKey, Object... messageArgs) {
+            return new CreateListingResult(false, messageKey, messageArgs == null ? new Object[0] : messageArgs);
+        }
+
+        public Component message() {
+            return Component.translatable(messageKey, messageArgs);
+        }
+    }
+
+    private record ListingPriceWindow(int referenceUnitPrice,
+                                      int requestedUnitPrice,
+                                      int derivedPriceAdjustmentBp,
+                                      int minAllowedUnitPrice,
+                                      int maxAllowedUnitPrice,
+                                      boolean valid) {
+    }
 
     public MarketBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.MARKET_BLOCK_ENTITY.get(), pos, state);
@@ -194,12 +218,16 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     String itemKey = ForgeRegistries.ITEMS.getKey(stack.getItem()) != null
                             ? ForgeRegistries.ITEMS.getKey(stack.getItem()).toString()
                             : "";
+                    int suggestedUnitPrice = currentCommodityUnitPrice(stack, 1, CommodityMarketService.estimateBaseUnitPrice(stack));
+                    ListingPriceWindow priceWindow = listingPriceWindow(stack, 1, suggestedUnitPrice);
                     storageEntries.add(new MarketOverviewData.StorageEntry(
                             label,
                             itemKey,
                             itemName,
                             stack.getCount(),
-                            currentCommodityUnitPrice(stack, 1, CommodityMarketService.estimateBaseUnitPrice(stack)),
+                            suggestedUnitPrice,
+                            priceWindow.minAllowedUnitPrice(),
+                            priceWindow.maxAllowedUnitPrice(),
                             Component.translatable("screen.sailboatmod.market.storage_at", warehouse.getDisplayName().getString()).getString(),
                             resolveListingCategory(stack),
                             resolveListingRarity(stack)
@@ -397,41 +425,52 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return townId.length() > 24 ? townId.substring(0, 24) + "..." : townId;
     }
 
-    public boolean createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int unitPrice, int priceAdjustmentBp, String sellerNote) {
+    public CreateListingResult createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int requestedUnitPrice, String sellerNote) {
         if (player == null) {
-            return false;
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
         return createListingFromDockStorage(
                 player.getUUID().toString(),
                 player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
                 visibleStorageIndex,
                 quantity,
-                unitPrice,
-                priceAdjustmentBp,
+                requestedUnitPrice,
                 sellerNote
         );
     }
 
-    public boolean createListingFromDockStorage(String playerUuid, String playerName, int visibleStorageIndex, int quantity, int unitPrice, int priceAdjustmentBp, String sellerNote) {
+    public CreateListingResult createListingFromDockStorage(String playerUuid, String playerName, int visibleStorageIndex, int quantity, int requestedUnitPrice, String sellerNote) {
         TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
         String safePlayerName = playerName == null ? "" : playerName.trim();
         if (level == null || level.isClientSide || warehouse == null || safePlayerUuid.isBlank() || !canManageMarket(safePlayerUuid)) {
-            return false;
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
         ItemStack selected = warehouse.getStorageItemForVisibleIndex(visibleStorageIndex);
         if (selected.isEmpty()) {
-            return false;
+            return CreateListingResult.failure("screen.sailboatmod.market.storage_empty");
         }
         int stocked = selected.getCount();
         int amount = Math.max(1, Math.min(quantity, stocked));
         ItemStack listed = selected.copy();
         listed.setCount(1);
-        int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listed), unitPrice);
-        if (!warehouse.extractVisibleStorage(visibleStorageIndex, amount)) {
-            return false;
+        if (requestedUnitPrice <= 0) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_price_invalid");
         }
+        int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listed), requestedUnitPrice);
         int price = currentCommodityUnitPrice(listed, 1, fallbackPrice);
+        ListingPriceWindow priceWindow = listingPriceWindow(listed, amount, requestedUnitPrice);
+        if (!priceWindow.valid()) {
+            return CreateListingResult.failure(
+                    "screen.sailboatmod.market.error.listing_price_out_of_range",
+                    priceWindow.minAllowedUnitPrice(),
+                    priceWindow.maxAllowedUnitPrice(),
+                    priceWindow.referenceUnitPrice()
+            );
+        }
+        if (!warehouse.extractVisibleStorage(visibleStorageIndex, amount)) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
         adjustCommoditySupply(listed, amount);
         MarketSavedData market = MarketSavedData.get(level);
         String listingTownId = warehouse.getTownId();
@@ -441,24 +480,23 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             listingTownId = town.townId();
             listingNationId = town.nationId();
         }
-        int adjustedPrice = applyPriceAdjustment(price, priceAdjustmentBp);
         market.putListing(new MarketListing(
                 market.nextId(),
                 safePlayerUuid,
                 safePlayerName,
                 listed,
-                Math.max(1, adjustedPrice),
+                Math.max(1, priceWindow.requestedUnitPrice()),
                 amount,
                 0,
                 linkedDockPos,
                 warehouse.getDisplayName().getString(),
                 listingTownId,
                 listingNationId,
-                priceAdjustmentBp,
+                priceWindow.derivedPriceAdjustmentBp(),
                 sellerNote
         ));
         syncTerminalRegistry();
-        return true;
+        return CreateListingResult.created();
     }
 
     public boolean purchaseListing(Player player, int listingIndex, int quantity) {
@@ -1524,6 +1562,26 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return Math.max(1, quote.buyUnitPrice());
     }
 
+    private ListingPriceWindow listingPriceWindow(ItemStack stack, int quantity, int requestedUnitPrice) {
+        int referenceUnitPrice = currentCommodityUnitPrice(stack, quantity, CommodityMarketService.estimateBaseUnitPrice(stack));
+        int safeRequestedUnitPrice = Math.max(1, requestedUnitPrice);
+        int minAllowedUnitPrice = applyPriceAdjustment(referenceUnitPrice, MIN_LISTING_PRICE_BP);
+        int maxAllowedUnitPrice = applyPriceAdjustment(referenceUnitPrice, MAX_LISTING_PRICE_BP);
+        int derivedPriceAdjustmentBp = derivePriceAdjustmentBp(referenceUnitPrice, safeRequestedUnitPrice);
+        boolean valid = safeRequestedUnitPrice >= minAllowedUnitPrice
+                && safeRequestedUnitPrice <= maxAllowedUnitPrice
+                && derivedPriceAdjustmentBp >= MIN_LISTING_PRICE_BP
+                && derivedPriceAdjustmentBp <= MAX_LISTING_PRICE_BP;
+        return new ListingPriceWindow(
+                referenceUnitPrice,
+                safeRequestedUnitPrice,
+                derivedPriceAdjustmentBp,
+                minAllowedUnitPrice,
+                maxAllowedUnitPrice,
+                valid
+        );
+    }
+
     private int currentListingUnitPrice(MarketListing listing, int quantity) {
         if (listing == null) {
             return 0;
@@ -1548,6 +1606,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private int applyPriceAdjustment(int basePrice, int priceAdjustmentBp) {
         return Math.max(1, (int) Math.round(basePrice * (1 + priceAdjustmentBp / 10000.0D)));
+    }
+
+    private int derivePriceAdjustmentBp(int basePrice, int requestedUnitPrice) {
+        if (basePrice <= 0 || requestedUnitPrice <= 0) {
+            return 0;
+        }
+        double ratio = (requestedUnitPrice / (double) Math.max(1, basePrice)) - 1.0D;
+        return (int) Math.round(ratio * 10000.0D);
     }
 
     @Nullable

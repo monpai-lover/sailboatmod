@@ -23,8 +23,8 @@ public class RoadPlannerItem extends Item {
         ItemStack stack = player.getItemInHand(hand);
         if (!level.isClientSide && player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
             Component message = player.isShiftKeyDown()
-                    ? ManualRoadPlannerService.cycleTargetTown(serverPlayer, stack)
-                    : ManualRoadPlannerService.planRoad(serverPlayer, stack);
+                    ? ManualRoadPlannerService.openTargetSelection(serverPlayer, stack, hand == InteractionHand.OFF_HAND)
+                    : ManualRoadPlannerService.previewOrConfirm(serverPlayer, stack);
             serverPlayer.sendSystemMessage(message);
         }
         return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
@@ -32,7 +32,8 @@ public class RoadPlannerItem extends Item {
 
     @Override
     public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
-        tooltip.add(Component.literal("Right click to queue a manual inter-town road."));
-        tooltip.add(Component.literal("Sneak-right click to cycle the target town."));
+        tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.use"));
+        tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.select"));
+        tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.confirm"));
     }
 }

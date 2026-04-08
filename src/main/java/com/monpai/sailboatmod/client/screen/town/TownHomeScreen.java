@@ -176,6 +176,7 @@ public class TownHomeScreen extends Screen {
         int left = left();
         int top = top();
         this.refreshButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.refresh"), b -> requestRefresh()).bounds(left + SCREEN_W - 82, top + 12, 70, 18).build());
+        this.refreshButton.visible = false;
         this.overviewTabButton = addTabButton(left + 12, top + 34, Page.OVERVIEW, Component.translatable("screen.sailboatmod.town.section.overview"));
         this.membersTabButton = addTabButton(left + 110, top + 34, Page.MEMBERS, Component.translatable("screen.sailboatmod.town.section.members"));
         this.claimsTabButton = addTabButton(left + 208, top + 34, Page.CLAIMS, Component.translatable("screen.sailboatmod.town.section.claims"));
@@ -194,6 +195,7 @@ public class TownHomeScreen extends Screen {
         this.unclaimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.unclaim"), b -> unclaimSelectedChunk()).bounds(left + BODY_X + 90, top + BODY_Y + BODY_H - 26, 86, 18).build());
         this.claimsSubPageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claims.show_perms"), b -> { this.claimsSubPage = this.claimsSubPage == 0 ? 1 : 0; updateButtonState(); }).bounds(left + BODY_X + 184, top + BODY_Y + BODY_H - 26, 120, 18).build());
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("\u2316"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
+        this.resetMapButton.visible = false;
         this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
             com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket());
             maybeRequestPreviewRefresh();

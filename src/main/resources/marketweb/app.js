@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   sessionToken: localStorage.getItem("marketWebSessionToken") || "",
   locale: localStorage.getItem("marketWebLocale") || "zh-CN",
   session: null,
@@ -7,6 +7,7 @@ const state = {
   selectedMarketId: "",
   selectedCommodityKey: "",
   activeProductTab: "browse",
+  accessPanelOpen: localStorage.getItem("marketWebAccessPanelOpen") !== "0",
   activeChartTimeframe: localStorage.getItem("marketWebChartTimeframe") || "1h",
   chartIndicators: loadStoredJson("marketWebChartIndicators", {
     ma5: true,
@@ -18,6 +19,7 @@ const state = {
     inflationAdjusted: false
   }),
   commodityQuery: "",
+  marketQuery: "",
   accountUsername: localStorage.getItem("marketWebAccountUsername") || "",
   catalogSort: loadStoredJson("marketWebCatalogSort", {
     mode: "quantity",
@@ -36,7 +38,7 @@ const state = {
   selectedDispatchOrderIndex: 0,
   selectedDispatchTerminal: localStorage.getItem("marketWebDispatchTerminal") || "PORT",
   settings: {
-    uiTitle: "Monpai Online Market · Monpai在线市场",
+    uiTitle: "Monpai Online Market 路 Monpai鍦ㄧ嚎甯傚満",
     commandText: "/marketweb token",
     autoRefreshSeconds: 0,
     defaultPurchaseQuantity: 1,
@@ -73,6 +75,8 @@ const chartState = {
 
 const commodityIconCache = new Map();
 const commodityIconRequests = new Map();
+const commodityIconBatchRequests = new Map();
+const COMMODITY_ICON_BATCH_SIZE = 24;
 const PAGE_ROUTES = new Set(["browse", "inventory", "sell", "buy", "chart", "index"]);
 const CATALOG_SORT_MODES = new Set(["name", "price", "time", "quantity"]);
 const CATALOG_CATEGORY_ORDER = ["wood", "luxury", "food", "fishery", "livestock", "ore", "gems", "metal", "tools", "spices", "plant", "crop", "textile", "material", "construction", "building", "decoration", "furniture", "lighting", "flooring", "landscaping", "machinery", "mob_drop", "alchemy", "magic", "nether", "end", "treasure", "redstone", "utility", "weapon", "armor", "other"];
@@ -133,6 +137,7 @@ const CATALOG_CATEGORY_ICON_ITEMS = {
 const CATALOG_RARITY_ORDER = [0, 1, 2, 3, 4, 5];
 
 const els = {
+  statusLive: document.querySelector("#status-live"),
   brandKicker: document.querySelector("#brand-kicker"),
   heroTitle: document.querySelector("#hero-title"),
   heroSubtitle: document.querySelector("#hero-subtitle"),
@@ -144,6 +149,10 @@ const els = {
   flowLabel: document.querySelector("#flow-label"),
   flowValue: document.querySelector("#flow-value"),
   localeSelect: document.querySelector("#locale-select"),
+  accessToggle: document.querySelector("#access-toggle"),
+  accessToggleLabel: document.querySelector("#access-toggle-label"),
+  sessionStatusInline: document.querySelector("#session-status-inline"),
+  accessPanel: document.querySelector("#access-panel"),
   portalKicker: document.querySelector("#portal-kicker"),
   authTitle: document.querySelector("#auth-title"),
   authSubtitle: document.querySelector("#auth-subtitle"),
@@ -164,7 +173,10 @@ const els = {
   marketNetworkKicker: document.querySelector("#market-network-kicker"),
   browseMarketsTitle: document.querySelector("#browse-markets-title"),
   refreshMarkets: document.querySelector("#refresh-markets"),
+  marketSearchLabel: document.querySelector("#market-search-label"),
+  marketSearch: document.querySelector("#market-search"),
   marketSidebarHint: document.querySelector("#market-sidebar-hint"),
+  marketSummary: document.querySelector("#market-summary"),
   marketList: document.querySelector("#market-list"),
   marketDetail: document.querySelector("#market-detail")
 };
@@ -194,6 +206,20 @@ function persistCatalogSort() {
 
 function persistCatalogFilters() {
   localStorage.setItem("marketWebCatalogFilters", JSON.stringify(state.catalogFilters));
+}
+
+function setAccessPanelOpen(open) {
+  state.accessPanelOpen = !!open;
+  localStorage.setItem("marketWebAccessPanelOpen", state.accessPanelOpen ? "1" : "0");
+  if (els.accessPanel) {
+    els.accessPanel.hidden = !state.accessPanelOpen;
+  }
+  if (els.accessToggle) {
+    els.accessToggle.setAttribute("aria-expanded", state.accessPanelOpen ? "true" : "false");
+  }
+  if (els.accessToggleLabel) {
+    els.accessToggleLabel.textContent = t(state.accessPanelOpen ? "access_panel_open" : "access_panel_closed");
+  }
 }
 
 function normalizePageRoute(value) {
@@ -241,6 +267,7 @@ function syncRouteUrl(replace = false) {
 function clearCommodityIconCache() {
   commodityIconCache.clear();
   commodityIconRequests.clear();
+  commodityIconBatchRequests.clear();
 }
 
 function applyWebResourceVersion(version) {
@@ -338,247 +365,250 @@ function currentDispatchOption(order = currentDispatchOrder(), terminalKind = st
 const I18N = {
   /*
   "zh-CN": {
-    hero_title: "Monpai閸︺劎鍤庣敮鍌氭簚",
-    hero_subtitle: "閸︺劏绻栭柌宀冪箻鐞涘瞼鍤庢稉濠勬畱閻椻晛鎼ф禍銈嗘閸戝搫鏁敍灞肩稑閻㈡俺鍤﹂柈鎴掔瑝閻劏绻橀崗銉︽箛閸斺€虫珤,閸︺劋绗呴弬褰掆偓澶嬪娴ｇ姷娈戦崯鍡楁惂閿?,
-    mode_label: "濡€崇础",
-    mode_value: "閸熷棗鎼х敮鍌氭簚",
-    session_label: "娴兼俺鐦?,
-    flow_label: "濞翠胶鈻?,
-    flow_value: "娴犮倗澧濋惂璇茬秿",
-    portal_kicker: "缂冩垿銆夐惂璇茬秿",
-    auth_title: "妫ｆ牗顐奸悽?token 缂佹垵鐣鹃敍灞芥倵缂侇厾顬囩痪璺ㄦ瑜?,
-    auth_subtitle: "閸忓牆婀〒鍛婂灆闁插本澧界悰灞肩濞嗏€虫嚒娴犮倖瀣侀崚?token閿涘本濡哥€瑰啰绮︾€规艾鍩岀純鎴︺€夌拹锕€褰块敍灞肩閸氬骸姘ㄩ崣顖欎簰閻╁瓨甯撮悽銊ㄥ閸欏嘲鐦戦惍浣烘瑜版洏鈧?,
-    command_label: "濞撳憡鍨欓崘鍛嚒娴?,
-    copy_command: "婢跺秴鍩楅崨鎴掓姢",
-    fast_signin: "韫囶偊鈧喓娅ヨぐ?,
-    connect_player: "缂佹垵鐣剧拹锕€褰块幋鏍瑜?,
-    not_signed_in: "閺堫亞娅ヨぐ鏇樷偓?,
-    paste_chat: "缁鍒涢懕濠傘亯鏉堟挸鍤幋?token",
-    paste_chat_placeholder: "閹跺﹤鐣弫纾嬩喊婢垛晞顢戠划妯垮垱閸掓媽绻栭柌宀嬬礉妞ょ敻娼版导姘冲殰閸斻劏鐦戦崚?token閵?,
-    token_placeholder: "Token 娴兼俺鍤滈崝銊ュ毉閻滄澘婀潻娆撳櫡",
-    account_username_placeholder: "鐠愶箑褰块崥?,
-    account_password_placeholder: "鐎靛棛鐖?,
-    bind_account: "缂佹垵鐣剧拹锕€褰?,
-    account_login: "鐠愶箑褰块惂璇茬秿",
-    token_helper: "妫ｆ牗顐肩紒鎴濈暰閿涙氨鐭樼拹?token閿涘矁顔曠純顔垮閸欏嘲鎷扮€靛棛鐖滈敍宀€鍔ч崥搴ｇ拨鐎规哎鈧倷绠ｉ崥搴″讲閻╁瓨甯撮悽銊ㄥ閸欏嘲鐦戦惍浣烘瑜版洏鈧?,
-    market_network: "鐢倸婧€缂冩垹绮?,
-    browse_markets: "濞村繗顫嶇敮鍌氭簚",
-    refresh: "閸掗攱鏌?,
-    market_sidebar_hint: "閸忓牓鈧绔存稉顏勭閸﹁櫣绮撶粩顖ょ礉閸愬秴鍎氶崯鍡楁惂鐢倸婧€娑撯偓閺嶉攱绁荤憴鍫濆従鐠愌呭⒖楠炶埖澧﹀鈧崡鏇炴櫌閸濅線銆夐妴?,
-    brand_kicker: "Sailboat 鐢倸婧€娴溿倖妲楅幍鈧?,
-    language_label: "鐠囶叀鈻?,
-    empty_select_market: "闁瀚ㄦ稉鈧稉顏勭閸﹁櫣绮撶粩顖欎簰濞村繗顫嶉崯鍡楁惂閵嗕焦瀵曢崡鏇樷偓浣圭湴鐠愵厼鎷版禒閿嬬壐鐠ф澘濞嶉妴?,
-    market_overview: "鐢倸婧€濮掑倽顫?,
-    browse_goods: "濞村繗顫嶉崯鍡楁惂",
-    commodity_shelf: "閸熷棗鎼х拹褎鐏?,
-    search_placeholder: "閹兼粎鍌ㄩ悧鈺佹惂閸氬秵鍨?commodity key",
-    price_range: "娴犻攱鐗搁崠娲？",
-    min_price: "閺堚偓娴ｅ簼鐜?,
-    max_price: "閺堚偓妤傛ü鐜?,
-    sort_name: "閸氬秶袨",
-    sort_price: "娴犻攱鐗?,
-    sort_time: "閺冨爼妫?,
-    sort_quantity: "閺佷即鍣?,
-    all_types: "閸忋劑鍎寸猾璇茬€?,
-    all_rarities: "閸忋劑鍎寸粙鈧張澶婂",
-    rarity_filter: "缁嬧偓閺堝瀹?,
-    sort_label: "閹烘帒绨?,
-    inventory_tab: "鎼存挸鐡?,
-    inventory_title: "鍩庨晣浠撳簱",
-    no_inventory_rows: "瑜版挸澧犵紒鍫㈩伂濞屸剝婀侀崣顖氱潔缁€铏规畱鎼存挸鐡ㄩ妴?,
-    inventory_requires_manage: "閸欘亝婀佽ぐ鎾冲閻礁銇旈幋鏍х閸﹁櫣娈戠粻锛勬倞閼板懎褰叉禒銉︾叀閻绨辩€涙ǜ鈧?,
-    category_all: "閸忋劑鍎?,
-    category_wood: "閺堛劍娼?,
-    category_luxury: "婵傤澀绶?,
-    category_food: "妞嬬喓澧?,
-    category_ore: "閻法鐓?,
-    category_gems: "鐎规繄鐓?,
-    category_metal: "闁叉垵鐫?,
-    category_tools: "瀹搞儱鍙?,
-    category_spices: "妫ｆ瑦鏋?,
-    category_plant: "濡炲秶澧?,
-    category_crop: "閸愭粈缍旈悧?,
-    category_material: "閺夋劖鏋?,
-    category_mob_drop: "閹亞澧块幒澶庢儰",
-    category_alchemy: "閻愯壈宓?,
-    category_building: "瀵よ櫣鐡?,
-    category_nether: "娑撳鏅?,
-    category_end: "閺堫偄婀?,
-    category_treasure: "鐎规繄澧?,
-    category_redstone: "缁俱垻鐓?,
-    category_utility: "鐎圭偟鏁?,
-    category_weapon: "濮濓箑娅?,
-    category_armor: "闂冩彃鍙?,
-    category_other: "閸忔湹绮?,
-    rarity_common: "閺咁噣鈧?,
-    rarity_uncommon: "缂冩洝顫?,
-    rarity_rare: "缁嬧偓閺?,
-    rarity_epic: "閸欒尪鐦?,
-    rarity_legend: "娴肩姾顕?,
-    rarity_extraordinary: "闂堢偛鍤?,
-    no_match: "濞屸剝婀侀崠褰掑帳鏉╂瑤閲滅粵娑⑩偓澶嬫蒋娴犲墎娈戦崯鍡楁惂閵?,
-    selected_commodity: "瑜版挸澧犻崯鍡楁惂",
-    lowest_sell: "閺堚偓娴ｅ骸婀崬?,
-    highest_buy: "閺堚偓妤傛ɑ鐪扮拹?,
-    avg_24h: "24鐏忓繑妞傞崸鍥︾幆",
-    trades_24h: "24鐏忓繑妞傞幋鎰唉",
-    sell_listings: "閸︺劌鏁悰灞炬殶",
-    on_sale: "閸︺劌鏁弫浼村櫤",
-    buying_demand: "濮瑰倽鍠橀棁鈧Ч?,
-    in_storage: "娴犳挸鍋嶆惔鎾崇摠",
-    browse_tab: "濞村繗顫嶉崯鍡楁惂",
-    purchase_tab: "鐠愵厺鎷遍崯鍡楁惂",
-    chart_tab: "K缁惧灝娴?,
-    market_index_tab: "婢堆呮磸閹稿洦鏆?,
-    units_live: "閸楁洑缍呴崷銊ユ暛",
-    units_wanted: "閸楁洑缍呭Ч鍌濆枠",
-    volume_label: "閹存劒姘﹂柌?,
-    selling: "閸︺劌鏁?,
-    buying: "濮瑰倽鍠?,
-    my_buy_orders: "閹存垹娈戝Ч鍌濆枠閸?,
-    price_history: "娴犻攱鐗搁崢鍡楀蕉",
-    recent_buckets: "閺堚偓鏉╂垵鍨庨弮鑸点€?,
-    chart_context: "閸ユ崘銆冮悳顖氼暔",
-    sell_item: "娑撳﹥鐏﹂崯鍡楁惂",
-    create_listing: "閸掓稑缂撻幐鍌氬礋",
-    create_buy_order: "閸掓稑缂撳Ч鍌濆枠閸?,
-    claim_credits: "妫板棗褰囩拹褎顑?,
-    retry_dispatch: "閲嶈瘯鍙戣揣",
-    terminal_type_label: "鍙戣揣缁堢",
-    terminal_type_port: "娓彛",
-    terminal_type_post_station: "椹跨珯",
-    market_notes: "鐢倸婧€鐠囧瓨妲?,
-    sell_summary: "閸楁牜娲忛幗妯款洣",
-    demand_summary: "娑旀壆娲忓ù浣稿З閹?,
-    market_snapshot: "鐢倸婧€韫囶偆鍙?,
-    no_commodity_data: "鏉╂瑤閲滅敮鍌氭簚閻╊喖澧犳潻妯荤梾閺堝鏅㈤崫浣规殶閹诡喓鈧?,
-    no_selling_rows: "鏉╂瑤閲滈崯鍡楁惂瑜版挸澧犲▽鈩冩箒閸︺劌鏁幐鍌氬礋閵?,
-    no_buy_rows: "鏉╂瑤閲滈崯鍡楁惂瑜版挸澧犲▽鈩冩箒閸忣剙绱戝Ч鍌濆枠閵?,
-    no_my_buy_rows: "娴ｇ姾绻曞▽鈩冩箒鏉╂瑤閲滈崯鍡楁惂閻ㄥ嫭鐪扮拹顓炲礋閵?,
-    no_chart_rows: "鏉╂瑤閲滈崯鍡楁惂鏉╂ɑ鐥呴張澶夌幆閺嶈壈顔囪ぐ鏇樷偓?,
-    no_storage_match: "瑜版挸澧犲▽鈩冩箒娑撳氦顕氶崯鍡楁惂閸栧綊鍘ら惃鍕垳婢剁繝绮ㄩ崒銊︽蒋閻╊喓鈧?,
-    seller_note: "閸楁牕顔嶆径鍥ㄦ暈",
-    suggested_word: "瀵ら缚顔?,
-    min_bp: "閺堚偓娴?bp",
-    max_bp: "閺堚偓妤?bp",
-    to_word: "閸?,
-    offline_word: "缁傝崵鍤?,
-    online_word: "閸︺劎鍤?,
-    connected_word: "瀹歌尪绻涢幒?,
-    signed_in_as: "瀹歌尙娅ヨぐ鏇氳礋 {name}閵?,
-    sign_in_required: "闂団偓鐟曚礁鍘涙潏鎾冲弳閻ц缍?token閵?,
-    bind_requires_credentials: "缂佹垵鐣剧拹锕€褰块弮鍫曟付鐟曚礁鎮撻弮璺猴綖閸愭瑨澶勯崣宄版倳閸滃苯鐦戦惍浣碘偓?,
-    account_login_required: "鐠囩柉绶崗銉ㄥ閸欏嘲鎮曢崪灞界槕閻降鈧?,
-    account_bound: "瀹歌尙绮︾€规俺澶勯崣?{name}閵?,
-    account_login_success: "瀹告煡鈧俺绻冪拹锕€褰?{name} 閻ц缍嶉妴?,
-    sign_in_to_trade: "閻ц缍嶉崥搴㈠閼冲€熺箻鐞涘矁鍠樻稊鑸偓浣风瑐閺嬭翰鈧焦鐪扮拹顓溾偓浣稿絿濞戝牆鎷版０鍡楀絿缁涘鎼锋担婧库偓?,
-    copied: "瀹告彃顦查崚韬测偓?,
-    command_copied: "閸涙垝鎶ゅ鎻掝槻閸掕绱濈拠宄版躬濞撳憡鍨欓崘鍛⒔鐞涘被鈧?,
-    token_extracted: "瀹稿弶褰侀崣?token 楠炶泛顦查崚璺哄煂閸擃亣鍒涢弶瑁も偓?,
-    clipboard_failed: "閺冪姵纭剁拋鍧楁６閸擃亣鍒涢弶鍖＄礉鐠囬攱澧滈崝銊ヮ槻閸掕翰鈧?,
-    markets_refreshed: "鐢倸婧€瀹告彃鍩涢弬鑸偓?,
-    action_completed: "閹垮秳缍斿鎻掔暚閹存劑鈧?,
-    sign_in_to_load_markets: "閻ц缍嶉崥搴″祮閸欘垱澧界悰灞界閸︾儤鎼锋担婧库偓?,
-    guest_mode_ready: "鐠佸灝顓瑰Ο鈥崇础閿涙艾褰叉禒銉︾セ鐟欏牆缍嬮崜宥呯閸﹀搫鎷伴崯鍡楁惂閿涘奔绲炬稉宥堝厴鏉╂稖顢戦幙宥勭稊閵?,
-    no_markets: "鏉╂ɑ鐥呴張澶嬫暈閸愬奔鎹㈡担鏇炵閸﹁櫣绮撶粩顖樷偓?,
-    select_market_prompt: "闁瀚ㄦ稉鈧稉顏勭閸﹁櫣绮撶粩顖涙降濞村繗顫嶇€瑰啰娈戦崯鍡楁惂閻╊喖缍嶉妴?,
-    guest_word: "鐠佸灝顓?,
-    live_terminal: "閸︺劎鍤庣紒鍫㈩伂",
-    chunk_cold: "閸栧搫娼￠張顏勫鏉?,
-    manage: "閸欘垳顓搁悶?,
-    view: "娴犲懏鐓￠惇?,
-    loaded: "瀹告彃濮炴潪?,
-    cold: "閺堫亜濮炴潪?,
-    dock_linked: "宸茬粦瀹氫粨搴?,
-    no_linked_dock: "鏈粦瀹氫粨搴?,
-    manager_access: "缁狅紕鎮婇弶鍐",
-    read_only: "閸欘亣顕?,
-    browse_only: "娴犲懏绁荤憴?,
-    listings_word: "閹稿倸宕?,
-    market: "鐢倸婧€",
-    quantity: "閺佷即鍣?,
-    total: "閹鐜?,
-    actions: "閹垮秳缍?,
-    seller: "閸楁牕顔?,
-    buyer: "娑旀澘顔?,
-    available: "閸欘垰鏁?,
-    reserved: "妫板嫮鏆€",
-    unit_price: "閸楁洑鐜?,
-    dock: "鐮佸ご",
-    warehouse_word: "浠撳簱",
-    status: "閻樿埖鈧?,
-    price_band: "娴犻攱鐗搁崠娲？",
-    implied_bid: "閹恒劎鐣婚崙杞扮幆",
-    time: "閺冨爼妫?,
-    average: "閸у洣鐜?,
-    low: "娴?,
-    high: "妤?,
-    volume: "闁?,
-    buy_1: "鐠愵厺鎷?1",
-    cancel: "閸欐牗绉?,
-    current_sell_side: "瑜版挸澧犻崡鏍磸",
-    current_buy_side: "瑜版挸澧犳稊鎵磸",
-    dock_stock: "浠撳簱搴撳瓨",
-    terminal_status: "缂佸牏顏悩鑸碘偓?,
-    chart_disabled: "闁板秶鐤嗗鎻掑彠闂傤厺鐜弽鐓庢禈鐞涖劊鈧?,
-    no_chart_buckets: "鏉╂瑤閲滈崯鍡楁惂鏉╂ɑ鐥呴張澶夌幆閺嶇厧鍨庡鑸垫殶閹诡喓鈧?,
-    chart_no_selection: "瑜版挸澧犲▽鈩冩箒閸欘垰鐫嶇粈鍝勬禈鐞涖劎娈戦崯鍡楁惂閵?,
-    chart_library_missing: "閸ユ崘銆冩惔鎾存弓閸旂姾娴囬敍灞藉嚒閸掑洦宕叉稉鍝勫敶缂冪攤缁炬寧瑕嗛弻鎾扁偓?,
-    chart_init_failed: "閸ユ崘銆冮崚婵嗩潗閸栨牕銇戠拹銉礉瀹告彃鍨忛幑顫礋閸愬懐鐤咾缁炬寧瑕嗛弻鎾扁偓?,
-    chart_render_failed: "閸ユ崘銆冨〒鍙夌厠婢惰精瑙﹂妴?,
-    no_demand_ladder: "鏉╂瑤閲滈崯鍡楁惂閻╊喖澧犳潻妯荤梾閺堝鑸伴幋鎰湴鐠愵厽顫梼鐔粹偓?,
-    waiting_reference: "閺嗗倹妫ら弰搴ｂ€橀崷銊ユ暛娴犲嘲寮懓鍐︹偓?,
-    around_current_ask: "閹稿缍嬮崜宥呭礌娴犻攱甯圭粻妤€銇囬懛鏉戞躬 {range}閵?,
-    no_storage: "閺冪姳绮ㄩ崒?,
-    storage_rows: "娴犳挸鍋嶇悰?,
-    live_requests: "濞叉槒绌Ч鍌濆枠",
-    stock_rows: "娴犳挸鍋嶉弶锛勬窗",
-    owner_word: "閹碘偓閺堝鈧?,
-    town_word: "閸╁酣鏅?,
-    pending_credits: "瀵板懘顣拹褎顑?,
-    commodity_types: "閸熷棗鎼х粔宥囪",
-    storage_units: "娴犳挸鍋嶉幀濠氬櫤",
-    open_demand: "瀵偓閺€楣冩付濮?,
-    my_buy_orders_metric: "閹存垹娈戝Ч鍌濆枠閸?,
-    net_balance: "閸戔偓娴ｆ瑩顤?,
-    reference_price: "閸欏倽鈧啩鐜?,
-    liquidity_score: "濞翠礁濮╅幀?,
-    market_index: "婢堆呮磸閹稿洦鏆?,
-    category_index: "閸掑棛琚幐鍥ㄦ殶",
-    pressure_model: "娴犻攱鐗歌ぐ鍗炴惙濡€崇€?,
-    inventory_pressure: "鎼存挸鐡ㄩ崢瀣",
-    buy_pressure: "娑旀壆娲忛崢瀣",
-    volatility_word: "濞夈垹濮?,
-    timeframe: "閸涖劍婀?,
-    indicators: "閹稿洦鐖?,
-    chart_controls: "閸ユ崘銆冮幒褍鍩?,
-    log_scale: "鐎佃鏆熼崸鎰垼",
-    inflation_adjust: "闁俺鍎夋穱顔筋劀",
-    inflation_unavailable: "瑜版挸澧犲▽鈩冩箒 CPI 閺佺増宓侀敍灞炬畯娑撳秴褰查悽銊ｂ偓?,
-    reset_zoom: "闁插秶鐤嗙紓鈺傛杹",
-    current_change: "瑜版挸澧犲☉銊ㄧ┘",
-    max_drawdown: "閺堚偓婢堆冩礀閹?,
-    inception_return: "鐠у嘲顫愰弨鍓佹抄",
-    chart_hover_empty: "缁夎濮╅崚鏉挎禈鐞涖劋绗傞弻銉ф箙 OHLC 娑撳孩鍨氭禍銈夊櫤",
-    market_index_chart: "鐢倸婧€閹稿洦鏆熺挧鏉垮◢",
-    category_index_chart: "閸掑棛琚幐鍥ㄦ殶鐠ф澘濞?,
-    cpi_chart: "濞戝牐鍨傛禒閿嬬壐閹稿洦鏆?,
-    loans_chart: "閺堫亜浼╃拹閿嬵儥鐠ф澘濞?,
-    inflation_since_inception: "缁鳖垵顓搁柅姘冲剦",
-    loans_change: "鐠愰攱顑欓崣妯哄",
-    cpi_now: "瑜版挸澧?CPI",
-    macro_overview: "鐎瑰繗顫囧鍌濐潔"
+    hero_title: "Monpai闁革负鍔庨崵搴ｆ暜閸屾碍绨?,
+    hero_subtitle: "闁革负鍔忕换鏍煂瀹€鍐閻炴稑鐬奸崵搴㈢▔婵犲嫭鐣遍柣妞绘櫅閹佳勭閵堝棙顫滈柛鎴濇惈閺侇參鏁嶇仦鑲╃☉闁汇垺淇洪崵锕傛焾閹存帞鐟濋柣顫姀缁绘﹢宕楅妷锔界疀闁告柡鈧櫕鐝?闁革负鍔嬬粭鍛村棘瑜版巻鍋撴径瀣仴濞达絿濮峰▓鎴﹀疮閸℃鎯傞柨?,
+    mode_label: "婵☆垪鈧磭纭€",
+    mode_value: "闁哥喎妫楅幖褏鏁崒姘皻",
+    session_label: "濞村吋淇洪惁?,
+    flow_label: "婵炵繝鑳堕埢?,
+    flow_value: "濞寸姰鍊楁晶婵嬫儌鐠囪尙绉?,
+    portal_kicker: "缂傚啯鍨块妴澶愭儌鐠囪尙绉?,
+    auth_title: "濡絾鐗楅濂告偨?token 缂備焦鍨甸悾楣冩晬鐏炶姤鍊电紓渚囧幘椤洨鐥捄銊︻仮鐟?,
+    auth_subtitle: "闁稿繐鐗嗗﹢顏勩€掗崨濠傜亞闂佹彃鏈晶鐣屾偘鐏炶偐顏辨繛鍡忊偓铏殥濞寸姰鍊栫€ｄ線宕?token闁挎稑鏈俊鍝モ偓鐟板暟缁妇鈧鑹鹃崺宀€绱旈幋锔衡偓澶屾嫻閿曗偓瑜板潡鏁嶇仦鑲╊吅闁告艾楠稿銊╁矗椤栨瑤绨伴柣鈺佺摠鐢挳鎮介妸銊ヮ槱闁告瑥鍢查惁鎴︽儘娴ｇ儤顏㈢憸鐗堟磸閳?,
+    command_label: "婵炴挸鎲￠崹娆撳礃閸涱厽鍤掑ù?,
+    copy_command: "濠㈣泛绉撮崺妤呭川閹存帗濮?,
+    fast_signin: "闊浂鍋婇埀顒傚枔濞呫儴銇?,
+    connect_player: "缂備焦鍨甸悾鍓ф嫻閿曗偓瑜板潡骞嬮弽顐ｎ仮鐟?,
+    not_signed_in: "闁哄牜浜炲▍銉ㄣ亹閺囨ǚ鍋?,
+    paste_chat: "缂侇喗顭堥崚娑㈡嚂婵犲倶浜弶鍫熸尭閸ゎ參骞?token",
+    paste_chat_placeholder: "闁硅泛锕ら悾顒勫极绾惧鍠婂鍨涙櫈椤㈡垹鍒掑Ο鍨灡闁告帗濯界换鏍煂瀹€瀣濡炪倗鏁诲鐗堝濮樺啿娈伴柛鏂诲姀閻︽垿宕?token闁?,
+    token_placeholder: "Token 濞村吋淇洪崵婊堝礉閵娿儱姣夐柣婊勬緲濠€顏呮交濞嗘挸娅?,
+    account_username_placeholder: "閻犳劧绠戣ぐ鍧楀触?,
+    account_password_placeholder: "閻庨潧妫涢悥?,
+    bind_account: "缂備焦鍨甸悾鍓ф嫻閿曗偓瑜?,
+    account_login: "閻犳劧绠戣ぐ鍧楁儌鐠囪尙绉?,
+    token_helper: "濡絾鐗楅鑲╃磼閹存繄鏆伴柨娑欐皑閻鎷?token闁挎稑鐭侀鏇犵磾椤斿灝顦╅柛娆忓槻閹锋壆鈧潧妫涢悥婊堟晬瀹€鈧崝褔宕ユ惔锝囨嫧閻庤鍝庨埀顒€鍊风粻锝夊触鎼粹€宠闁烩晛鐡ㄧ敮鎾偨閵娿劌顦╅柛娆忓槻閻︽垿鎯嶆担鐑橆仮鐟滅増娲忛埀?,
+    market_network: "閻㈩垰鍊稿┃鈧紓鍐╁灩缁?,
+    browse_markets: "婵炴潙绻楅～宥囨暜閸屾碍绨?,
+    refresh: "闁告帡鏀遍弻?,
+    market_sidebar_hint: "闁稿繐鐗撻埀顒€顦粩瀛樼▔椤忓嫮顏抽柛锕佹缁挾绮╅銈囩闁告劕绉撮崕姘跺疮閸℃鎯傞悽顖氬€稿┃鈧☉鎾亾闁哄秹鏀辩粊鑽ゆ喆閸繂寰撻悹鎰屽懎鈷栨鐐跺煐婢э箑顕ｉ埀顒勫础閺囩偞娅岄柛婵呯窔閵嗗濡?,
+    brand_kicker: "Sailboat 閻㈩垰鍊稿┃鈧ù婧垮€栧Σ妤呭箥閳?,
+    language_label: "閻犲浂鍙€閳?,
+    empty_select_market: "闂侇偄顦扮€氥劍绋夐埀顒佺▔椤忓嫮顏抽柛锕佹缁挾绮╅娆庣鞍婵炴潙绻楅～宥夊疮閸℃鎯傞柕鍡曠劍鐎垫洟宕￠弴妯峰亾娴ｅ湱婀撮悹鎰靛幖閹风増绂掗柨瀣閻犙勬緲婵炲秹濡?,
+    market_overview: "閻㈩垰鍊稿┃鈧慨鎺戝€介～?,
+    browse_goods: "婵炴潙绻楅～宥夊疮閸℃鎯?,
+    commodity_shelf: "闁哥喎妫楅幖褏鎷硅閻?,
+    search_placeholder: "闁瑰吋绮庨崒銊╂偋閳轰焦鎯傞柛姘У閸?commodity key",
+    price_range: "濞寸娀鏀遍悧鎼佸礌濞差亝锛?,
+    min_price: "闁哄牃鍋撳ù锝呯凹閻?,
+    max_price: "闁哄牃鍋撳Δ鍌浢奸悳?,
+    sort_name: "闁告艾绉惰ⅷ",
+    sort_price: "濞寸娀鏀遍悧?,
+    sort_time: "闁哄啫鐖煎Λ?,
+    sort_quantity: "闁轰椒鍗抽崳?,
+    all_types: "闁稿繈鍔戦崕瀵哥尵鐠囪尙鈧?,
+    all_rarities: "闁稿繈鍔戦崕瀵哥矙閳ь剟寮垫径濠傤唺",
+    rarity_filter: "缂佸鍋撻柡鍫濐槸鐎?,
+    sort_label: "闁圭儤甯掔花?,
+    inventory_tab: "閹煎瓨鎸搁悺?,
+    inventory_title: "閸╁酣鏅ｆ禒鎾崇氨",
+    no_inventory_rows: "鐟滅増鎸告晶鐘电磼閸埄浼傛繛灞稿墲濠€渚€宕ｉ姘辨綌缂佲偓閾忚鐣遍幖瀛樻尭閻°劑濡?,
+    inventory_requires_manage: "闁告瑯浜濆﹢浣姐亹閹惧啿顤呴柣顔荤閵囨棃骞嬮弽褏顏抽柛锕佹濞堟垹绮婚敍鍕€為柤鏉挎噹瑜板弶绂掗妷锔惧弨闁活亜顑呯花杈┾偓娑櫱滈埀?,
+    category_all: "闁稿繈鍔戦崕?,
+    category_wood: "闁哄牄鍔嶅?,
+    category_luxury: "濠靛偆婢€缁?,
+    category_food: "濡炲鍠撴晶?,
+    category_ore: "闁活叀娉曢悡?,
+    category_gems: "閻庤绻勯悡?,
+    category_metal: "闂佸弶鍨甸惈?,
+    category_tools: "鐎规悶鍎遍崣?,
+    category_spices: "濡絾鐟﹂弸?,
+    category_plant: "婵＄偛绉舵晶?,
+    category_crop: "闁告劖绮堢紞鏃堟偋?,
+    category_material: "闁哄鍔栭弸?,
+    category_mob_drop: "闁诡剦浜炴晶鍧楀箳婢跺孩鍎?,
+    category_alchemy: "闁绘劘澹堝畵?,
+    category_building: "鐎点倛娅ｉ悺?,
+    category_nether: "濞戞挸顑囬弲?,
+    category_end: "闁哄牜鍋勫﹢?,
+    category_treasure: "閻庤绻勬晶?,
+    category_redstone: "缂佷勘鍨婚悡?,
+    category_utility: "閻庡湱鍋熼弫?,
+    category_weapon: "婵繐绠戝▍?,
+    category_armor: "闂傚啯褰冮崣?,
+    category_other: "闁稿繑婀圭划?,
+    rarity_common: "闁哄拋鍣ｉ埀?,
+    rarity_uncommon: "缂傚啯娲濋～?,
+    rarity_rare: "缂佸鍋撻柡?,
+    rarity_epic: "闁告瑨灏惁?,
+    rarity_legend: "濞磋偐濮鹃?,
+    rarity_extraordinary: "闂傚牏鍋涢崵?,
+    no_match: "婵炲备鍓濆﹢渚€宕犺ぐ鎺戝赋閺夆晜鐟ら柌婊呯驳濞戔懇鍋撴径瀣拫濞寸姴澧庡▓鎴﹀疮閸℃鎯傞柕?,
+    selected_commodity: "鐟滅増鎸告晶鐘诲疮閸℃鎯?,
+    lowest_sell: "闁哄牃鍋撳ù锝呴濠€顏堝船?,
+    highest_buy: "闁哄牃鍋撳Δ鍌浬戦惇鎵嫻?,
+    avg_24h: "24閻忓繐绻戝鍌炲锤閸ワ妇骞?,
+    trades_24h: "24閻忓繐绻戝鍌炲箣閹邦亝鍞?,
+    sell_listings: "闁革负鍔岄弫顓犳偘鐏炵偓娈?,
+    on_sale: "闁革负鍔岄弫顓㈠极娴兼潙娅?,
+    buying_demand: "婵懓鍊介崰姗€妫侀埀顒€效?,
+    in_storage: "濞寸姵鎸搁崑宥嗘償閹惧磭鎽?,
+    browse_tab: "婵炴潙绻楅～宥夊疮閸℃鎯?,
+    purchase_tab: "閻犳劦鍘洪幏閬嶅疮閸℃鎯?,
+    chart_tab: "K缂佹儳鐏濆ù?,
+    market_index_tab: "濠㈠爢鍛８闁圭娲﹂弳?,
+    units_live: "闁告娲戠紞鍛村捶閵娿儲鏆?,
+    units_wanted: "闁告娲戠紞鍛ч崒婵嗘灎",
+    volume_label: "闁瑰瓨鍔掑锕傛煂?,
+    selling: "闁革负鍔岄弫?,
+    buying: "婵懓鍊介崰?,
+    my_buy_orders: "闁瑰瓨鍨瑰▓鎴澬ч崒婵嗘灎闁?,
+    price_history: "濞寸娀鏀遍悧鎼佸储閸℃钑?,
+    recent_buckets: "闁哄牃鍋撻弶鈺傚灥閸ㄥ酣寮懜鐐光偓?,
+    chart_context: "闁搞儲宕橀妴鍐偝椤栨凹鏆?,
+    sell_item: "濞戞挸锕ラ悘锕傚疮閸℃鎯?,
+    create_listing: "闁告帗绋戠紓鎾诲箰閸屾艾绀?,
+    create_buy_order: "闁告帗绋戠紓鎾承ч崒婵嗘灎闁?,
+    claim_credits: "濡澘妫楄ぐ鍥╂嫻瑜庨?,
+    retry_dispatch: "闁插秷鐦崣鎴ｆ彛",
+    terminal_type_label: "閸欐垼鎻ｇ紒鍫㈩伂",
+    terminal_type_port: "濞擃垰褰?,
+    terminal_type_post_station: "妞硅法鐝?,
+    market_notes: "閻㈩垰鍊稿┃鈧悹鍥х摠濡?,
+    sell_summary: "闁告鐗滃ú蹇涘箺濡娲?,
+    demand_summary: "濞戞梹澹嗗ú蹇撁规担绋啃楅柟?,
+    market_snapshot: "閻㈩垰鍊稿┃鈧煫鍥跺亞閸?,
+    no_commodity_data: "閺夆晜鐟ら柌婊呮暜閸屾碍绨氶柣鈺婂枛婢х姵娼诲Ο鑽ゆ⒕闁哄牆顦弲銏ゅ传娴ｈ娈堕柟璇″枔閳?,
+    no_selling_rows: "閺夆晜鐟ら柌婊堝疮閸℃鎯傜憸鐗堟尭婢х姴鈻介埄鍐╃畳闁革负鍔岄弫顓㈠箰閸屾艾绀嬮柕?,
+    no_buy_rows: "閺夆晜鐟ら柌婊堝疮閸℃鎯傜憸鐗堟尭婢х姴鈻介埄鍐╃畳闁稿浚鍓欑槐鎴澬ч崒婵嗘灎闁?,
+    no_my_buy_rows: "濞达絿濮剧换鏇炩柦閳╁啯绠掗弶鈺傜懁闁叉粓宕崱妤佹儌闁汇劌瀚惇鎵嫻椤撶偛绀嬮柕?,
+    no_chart_rows: "閺夆晜鐟ら柌婊堝疮閸℃鎯傞弶鈺偵戦惀鍛村嫉婢跺骞嗛柡宥堝椤斿洩銇愰弴妯峰亾?,
+    no_storage_match: "鐟滅増鎸告晶鐘测柦閳╁啯绠掑☉鎾虫唉椤曟岸宕崱妤佹儌闁告牕缍婇崢銈夋儍閸曨厾鍨冲鍓佺節缁劑宕掗妸锔借拫闁烩晩鍠撻埀?,
+    seller_note: "闁告鐗曢宥嗗緞閸ャ劍鏆?,
+    suggested_word: "鐎点倝缂氶?,
+    min_bp: "闁哄牃鍋撳ù?bp",
+    max_bp: "闁哄牃鍋撳Δ?bp",
+    to_word: "闁?,
+    offline_word: "缂佸倽宕甸崵?,
+    online_word: "闁革负鍔庨崵?,
+    connected_word: "鐎规瓕灏换娑㈠箳?,
+    signed_in_as: "鐎规瓕灏欏▍銉ㄣ亹閺囨俺绀?{name}闁?,
+    sign_in_required: "闂傚洠鍋撻悷鏇氱閸樻稒娼忛幘鍐插汲闁谎嗩嚙缂?token闁?,
+    bind_requires_credentials: "缂備焦鍨甸悾鍓ф嫻閿曗偓瑜板潡寮崼鏇熶粯閻熸洑绀侀幃鎾诲籍鐠虹尨缍栭柛鎰懆婢跺嫰宕ｅ畡鐗堝€抽柛婊冭嫰閻︽垿鎯嶆担纰樺亾?,
+    account_login_required: "閻犲洨鏌夌欢顓㈠礂閵夈劌顦╅柛娆忓槻閹洟宕仦鐣屾闁活喕闄嶉埀?,
+    account_bound: "鐎规瓕灏欑划锔锯偓瑙勪亢婢跺嫰宕?{name}闁?,
+    account_login_success: "鐎瑰憡鐓￠埀顒佷亢缁诲啰鎷归敃鈧ぐ?{name} 闁谎嗩嚙缂嶅秹濡?,
+    sign_in_to_trade: "闁谎嗩嚙缂嶅秹宕ユ惔銏狀枀闁煎啿鈧喓绠婚悶娑樼焷閸犳ɑ绋婇懜顑藉亾娴ｉ鐟愰柡瀣堪閳ь兛鐒﹂惇鎵嫻椤撴壕鍋撴担绋跨悼婵炴垵鐗嗛幏鐗堬紣閸℃绲跨紒娑橆槹閹奸攱鎷呭┃搴撳亾?,
+    copied: "鐎瑰憡褰冮ˇ鏌ュ礆闊祴鍋?,
+    command_copied: "闁告稒鍨濋幎銈咁啅閹绘帩妲婚柛鎺曨啇缁辨繄鎷犲畡鐗堣含婵炴挸鎲￠崹娆撳礃閸涱喖鈷旈悶娑樿閳?,
+    token_extracted: "鐎圭寮惰ぐ渚€宕?token 妤犵偠娉涢ˇ鏌ュ礆鐠哄搫鐓傞柛鎿冧海閸掓盯寮剁憗銈傚亾?,
+    clipboard_failed: "闁哄啰濮电涵鍓佹媼閸ф锛栭柛鎿冧海閸掓盯寮堕崠锛勭閻犲洭鏀辨晶婊堝礉閵娿儺妲婚柛鎺曠堪閳?,
+    markets_refreshed: "閻㈩垰鍊稿┃鈧€瑰憡褰冮崺娑㈠棘閼割兘鍋?,
+    action_completed: "闁瑰灝绉崇紞鏂款啅閹绘帞鏆氶柟瀛樺姂閳?,
+    sign_in_to_load_markets: "闁谎嗩嚙缂嶅秹宕ユ惔鈥崇ギ闁告瑯鍨辨晶鐣屾偘鐏炵晫顏抽柛锔惧劋閹奸攱鎷呭┃搴撳亾?,
+    guest_mode_ready: "閻犱礁鐏濋鐟拔熼垾宕囩闁挎稒鑹捐ぐ鍙夌閵夛妇銈婚悷娆忕墕缂嶅宕滃鍛伋闁革箑鎼幏浼村疮閸℃鎯傞柨娑樺缁茬偓绋夊鍫濆幋閺夆晜绋栭、鎴﹀箼瀹ュ嫮绋婇柕?,
+    no_markets: "閺夆晜蓱閻ュ懘寮垫径瀣殘闁告劕濂旈幑銏℃媴閺囩偟顏抽柛锕佹缁挾绮╅妯峰亾?,
+    select_market_prompt: "闂侇偄顦扮€氥劍绋夐埀顒佺▔椤忓嫮顏抽柛锕佹缁挾绮╅娑欓檷婵炴潙绻楅～宥団偓鐟板暟濞堟垿宕崱妤佹儌闁烩晩鍠栫紞宥夊Υ?,
+    guest_word: "閻犱礁鐏濋?,
+    live_terminal: "闁革负鍔庨崵搴ｇ磼閸埄浼?,
+    chunk_cold: "闁告牕鎼锟犲嫉椤忓嫬顫ｉ弶?,
+    manage: "闁告瑯鍨抽鎼佹偠?,
+    view: "濞寸姴鎳忛悡锟犳儑?,
+    loaded: "鐎瑰憡褰冩慨鐐存姜?,
+    cold: "闁哄牜浜滄慨鐐存姜?,
+    dock_linked: "瀹歌尙绮︾€规矮绮ㄦ惔?,
+    no_linked_dock: "閺堫亞绮︾€规矮绮ㄦ惔?,
+    manager_access: "缂佺媴绱曢幃濠囧级閸愵喗顎?,
+    read_only: "闁告瑯浜ｉ?,
+    browse_only: "濞寸姴鎳忕粊鑽ゆ喆?,
+    listings_word: "闁圭鍊稿畷?,
+    market: "閻㈩垰鍊稿┃鈧?,
+    quantity: "闁轰椒鍗抽崳?,
+    total: "闁诡剝顔婇悳?,
+    actions: "闁瑰灝绉崇紞?,
+    seller: "闁告鐗曢?,
+    buyer: "濞戞梹婢橀?,
+    available: "闁告瑯鍨伴弫?,
+    reserved: "濡澘瀚弳鈧?,
+    unit_price: "闁告娲戦悳?,
+    dock: "閻礁銇?,
+    warehouse_word: "娴犳挸绨?,
+    status: "闁绘鍩栭埀?,
+    price_band: "濞寸娀鏀遍悧鎼佸礌濞差亝锛?,
+    implied_bid: "闁规亽鍔庨悾濠氬礄鏉炴壆骞?,
+    time: "闁哄啫鐖煎Λ?,
+    average: "闁秆冩矗閻?,
+    low: "濞?,
+    high: "濡?,
+    volume: "闂?,
+    buy_1: "閻犳劦鍘洪幏?1",
+    cancel: "闁告瑦鐗楃粔?,
+    current_sell_side: "鐟滅増鎸告晶鐘诲础閺嶎偅纾?,
+    current_buy_side: "鐟滅増鎸告晶鐘崇▕閹殿喗纾?,
+    dock_stock: "娴犳挸绨辨惔鎾崇摠",
+    terminal_status: "缂備礁鐗忛顒勬偐閼哥鍋?,
+    chart_disabled: "闂佹澘绉堕悿鍡楊啅閹绘帒褰犻梻鍌ゅ幒閻滎垶寮介悡搴㈢閻炴稏鍔婇埀?,
+    no_chart_buckets: "閺夆晜鐟ら柌婊堝疮閸℃鎯傞弶鈺偵戦惀鍛村嫉婢跺骞嗛柡宥囧帶閸ㄥ骸顩奸懜鍨闁硅鍠撻埀?,
+    chart_no_selection: "鐟滅増鎸告晶鐘测柦閳╁啯绠掗柛娆樺灠閻秶绮堥崫鍕閻炴稏鍔庡▓鎴﹀疮閸℃鎯傞柕?,
+    chart_library_missing: "闁搞儲宕橀妴鍐╂償閹惧瓨寮撻柛鏃傚Ь濞村洭鏁嶇仦钘夊殥闁告帒娲﹀畷鍙夌▔閸濆嫬鏁剁紓鍐敜缂佺偓瀵х憰鍡涘蓟閹炬墎鍋?,
+    chart_init_failed: "闁搞儲宕橀妴鍐礆濠靛棭娼楅柛鏍ㄧ墪閵囨垹鎷归妷顖滅鐎瑰憡褰冮崹蹇涘箲椤叀绀嬮柛鎰噽閻ゅ捑缂佺偓瀵х憰鍡涘蓟閹炬墎鍋?,
+    chart_render_failed: "闁搞儲宕橀妴鍐ㄣ€掗崣澶屽帬濠㈡儼绮剧憴锕傚Υ?,
+    no_demand_ladder: "閺夆晜鐟ら柌婊堝疮閸℃鎯傞柣鈺婂枛婢х姵娼诲Ο鑽ゆ⒕闁哄牆顦懜浼村箣閹邦厾婀撮悹鎰靛幗椤亪姊奸悢绮瑰亾?,
+    waiting_reference: "闁哄棗鍊瑰Λ銈夊及鎼达絺鈧﹢宕烽妸銉︽殯濞寸姴鍢插顒勬嚀閸愶腹鍋?,
+    around_current_ask: "闁圭顦紞瀣礈瀹ュ懎绀屽ù鐘绘敱鐢湱绮诲Δ鈧妵鍥嚊閺夋垶韬?{range}闁?,
+    no_storage: "闁哄啰濮崇划銊╁磼?,
+    storage_rows: "濞寸姵鎸搁崑宥囨偘?,
+    live_requests: "婵炲弶妲掔粚顒€效閸屾繂鏋?,
+    stock_rows: "濞寸姵鎸搁崑宥夊级閿涘嫭绐?,
+    owner_word: "闁圭鍋撻柡鍫濐槼閳?,
+    town_word: "闁糕晛閰ｉ弲?,
+    pending_credits: "鐎垫澘鎳橀。顐ゆ嫻瑜庨?,
+    commodity_types: "闁哥喎妫楅幖褏绮斿鍥潶",
+    storage_units: "濞寸姵鎸搁崑宥夊箑婵犳艾娅?,
+    open_demand: "鐎殿喒鍋撻柡鈧ィ鍐╀粯婵?,
+    my_buy_orders_metric: "闁瑰瓨鍨瑰▓鎴澬ч崒婵嗘灎闁?,
+    net_balance: "闁告垟鍋撳ù锝嗙懇椤?,
+    reference_price: "闁告瑥鍊介埀顒€鍟╅悳?,
+    liquidity_score: "婵炵繝绀佹慨鈺呭箑?,
+    market_index: "濠㈠爢鍛８闁圭娲﹂弳?,
+    category_index: "闁告帒妫涚悮顐﹀箰閸ャ劍娈?,
+    pressure_model: "濞寸娀鏀遍悧姝屻亹閸楃偞鎯欐俊顖椻偓宕団偓?,
+    inventory_pressure: "閹煎瓨鎸搁悺銊╁储鐎ｎ亜顫?,
+    buy_pressure: "濞戞梹澹嗗ú蹇涘储鐎ｎ亜顫?,
+    volatility_word: "婵炲鍨规慨?,
+    timeframe: "闁告稏鍔嶅﹢?,
+    indicators: "闁圭娲﹂悥?,
+    chart_controls: "闁搞儲宕橀妴鍐箳瑜嶉崺?,
+    log_scale: "閻庝絻顫夐弳鐔煎锤閹邦厾鍨?,
+    inflation_adjust: "闂侇偅淇洪崕澶嬬┍椤旂瓔鍔€",
+    inflation_unavailable: "鐟滅増鎸告晶鐘测柦閳╁啯绠?CPI 闁轰胶澧楀畵渚€鏁嶇仦鐐暞濞戞挸绉磋ぐ鏌ユ偨閵婏絺鍋?,
+    reset_zoom: "闂佹彃绉堕悿鍡欑磽閳哄倹鏉?,
+    current_change: "鐟滅増鎸告晶鐘测槈閵娿劎鈹?,
+    max_drawdown: "闁哄牃鍋撳鍫嗗啯绀€闁?,
+    inception_return: "閻犙冨槻椤劙寮ㄩ崜浣规妱",
+    chart_hover_empty: "缂佸顕ф慨鈺呭礆閺夋寧绂堥悶娑栧妺缁楀倿寮婚妷褎绠?OHLC 濞戞挸瀛╅崹姘閵堝娅?,
+    market_index_chart: "閻㈩垰鍊稿┃鈧柟绋挎处閺嗙喓鎸ч弶鍨棦",
+    category_index_chart: "闁告帒妫涚悮顐﹀箰閸ャ劍娈堕悹褎婢樻繛?,
+    cpi_chart: "婵炴垵鐗愰崹鍌涚闁垮澹愰柟绋挎处閺?,
+    loans_chart: "闁哄牜浜滄导鈺冩嫻闁垮鍎ラ悹褎婢樻繛?,
+    inflation_since_inception: "缂侀硸鍨甸鎼佹焻濮樺啿鍓?,
+    loans_change: "閻犳劙鏀遍娆撳矗濡搫顕?,
+    cpi_now: "鐟滅増鎸告晶?CPI",
+    macro_overview: "閻庣懓绻楅～鍥ь潡閸屾繍娼?
   },
   */
   "zh-CN": {},
   "en-US": {
     hero_title: "Monpai Online Market",
-    hero_subtitle: "Trade and sell items online here without even entering the server. Pick your goods below.",
+    hero_subtitle: "Browse terminals and prices first. Bind a web account only when you want to trade, list goods, or manage logistics.",
     mode_label: "Mode",
     mode_value: "Commodity Market",
     session_label: "Session",
     flow_label: "Flow",
     flow_value: "Token Login",
+    access_panel: "Sign In",
+    access_panel_open: "Hide Login",
+    access_panel_closed: "Sign In",
     portal_kicker: "Portal Access",
     auth_title: "Bind once with token, then sign in offline",
     auth_subtitle: "Use the in-game token once to bind a web account, then continue using username and password even while offline.",
@@ -598,11 +628,26 @@ const I18N = {
     market_network: "Market Network",
     browse_markets: "Browse Markets",
     refresh: "Refresh",
+    market_search_label: "Find Terminal",
+    market_search_placeholder: "Search market, owner, town, or dimension",
     market_sidebar_hint: "Choose one market terminal, then browse its commodities like a marketplace and drill into one item page.",
+    market_summary_title: "Network Snapshot",
+    market_summary_hint: "Track terminal count, live chunks, and the currently selected market.",
+    market_terminal_count: "Terminals",
+    selected_market: "Selected Market",
     brand_kicker: "Monpai Online Market",
     language_label: "Language",
     empty_select_market: "Select a market terminal to browse commodities, listings, buy orders, and price history.",
     market_overview: "Market Overview",
+    explore_tab: "Explore",
+    trade_tab: "Trade",
+    analytics_tab: "Analytics",
+    explore_hint: "Browse catalog, compare prices, and jump between goods.",
+    trade_hint: "Buy, list, claim credits, and manage demand from one lane.",
+    inventory_hint: "Inspect stock that can be listed or dispatched.",
+    analytics_hint: "Read price history, index movement, and macro signals.",
+    signin_status_guest: "Sign in",
+    signin_status_ready: "Account Center",
     browse_goods: "Browse Goods",
     commodity_shelf: "Commodity Shelf",
     search_placeholder: "Search item name or commodity key",
@@ -692,6 +737,12 @@ const I18N = {
     no_chart_rows: "No price chart records yet.",
     no_storage_match: "No matching dock storage entry for this commodity.",
     seller_note: "Seller note",
+    manual_price: "Manual unit price",
+    manual_price_help: "Enter your own unit price. The server converts it to a bp offset and only accepts prices inside the allowed range.",
+    listing_price_preview: "Unit price",
+    listing_bp_preview: "Derived bp",
+    listing_price_range: "Allowed range",
+    listing_price_invalid: "Price is out of range.",
     suggested_word: "suggested",
     min_bp: "Min bp",
     max_bp: "Max bp",
@@ -723,7 +774,7 @@ const I18N = {
     view: "View",
     loaded: "Loaded",
     cold: "Cold",
-    dock_linked: "Warehouse linked",
+    dock_linked: "Linked warehouse",
     no_linked_dock: "No linked warehouse",
     manager_access: "Manager access",
     read_only: "Read only",
@@ -806,236 +857,242 @@ const I18N = {
 };
 
 Object.assign(I18N["zh-CN"], I18N["en-US"], {
-  hero_title: "Monpai 在线市场",
-  hero_subtitle: "游客也可以浏览市场、商品与价格走势；登录后才能执行绑定、上架、求购与发货等操作。",
-  mode_label: "模式",
-  mode_value: "商品市场",
-  session_label: "会话",
-  flow_label: "流程",
-  flow_value: "网页账户登录",
-  portal_kicker: "网页登录",
-  auth_title: "先绑定网页账户，再离线登录",
-  auth_subtitle: "首次使用时，从游戏中获取 token，设置网页账号和密码完成绑定。之后可直接用账号密码登录。",
-  command_label: "游戏内命令",
-  copy_command: "复制命令",
-  fast_signin: "快速登录",
-  connect_player: "绑定账户或登录",
-  not_signed_in: "未登录。",
-  paste_chat: "粘贴聊天输出或 token",
-  paste_chat_placeholder: "把完整聊天消息粘贴到这里，页面会自动提取 token。",
-  token_placeholder: "Token 会自动显示在这里",
-  account_username_placeholder: "账户名",
-  account_password_placeholder: "密码",
-  bind_account: "绑定账户",
-  account_login: "账户登录",
-  token_helper: "首次使用：粘贴 token，填写账户名和密码后点击绑定。之后可直接使用账户名和密码登录。",
-  market_network: "市场网络",
-  browse_markets: "浏览市场",
-  refresh: "刷新",
-  market_sidebar_hint: "选择一个商城终端后，即可浏览其商品目录、在售挂单、求购订单和价格走势。",
-  brand_kicker: "Monpai 在线市场",
-  language_label: "语言",
-  empty_select_market: "选择一个商城终端来浏览商品、挂单、求购和价格走势。",
-  market_overview: "市场概览",
-  browse_goods: "浏览商品",
-  commodity_shelf: "商品货架",
-  search_placeholder: "搜索物品名或商品键",
-  price_range: "价格区间",
-  min_price: "最低价",
-  max_price: "最高价",
-  sort_name: "名称",
-  sort_price: "价格",
-  sort_time: "时间",
-  sort_quantity: "数量",
-  all_types: "全部类型",
-  all_rarities: "全部稀有度",
-  rarity_filter: "稀有度",
-  sort_label: "排序",
-  inventory_tab: "仓储",
-  inventory_title: "城镇仓库",
-  no_inventory_rows: "当前终端还没有可显示的库存。",
-  inventory_requires_manage: "只有当前码头或市场管理员可以查看库存。",
-  category_all: "全部",
-  category_wood: "木材",
-  category_luxury: "奢侈品",
-  category_food: "食物",
-  category_ore: "矿石",
-  category_gems: "宝石",
-  category_metal: "金属",
-  category_tools: "工具",
-  category_spices: "香料",
-  category_plant: "植物",
-  category_crop: "作物",
-  category_material: "材料",
-  category_mob_drop: "生物掉落",
-  category_alchemy: "炼金",
-  category_building: "建筑",
-  category_nether: "下界",
-  category_end: "末地",
-  category_treasure: "宝藏",
-  category_redstone: "红石",
-  category_utility: "实用",
-  category_weapon: "武器",
-  category_armor: "护甲",
-  category_other: "其他",
-  rarity_common: "普通",
-  rarity_uncommon: "优秀",
-  rarity_rare: "稀有",
-  rarity_epic: "史诗",
-  rarity_legend: "传说",
-  rarity_extraordinary: "超凡",
-  no_match: "没有符合筛选条件的商品。",
-  selected_commodity: "当前商品",
-  lowest_sell: "最低在售",
-  highest_buy: "最高求购",
-  avg_24h: "24小时均价",
-  trades_24h: "24小时成交",
-  sell_listings: "在售挂单",
-  on_sale: "在售数量",
-  buying_demand: "求购需求",
-  in_storage: "仓储库存",
-  browse_tab: "浏览商品",
-  purchase_tab: "购买商品",
-  chart_tab: "价格图表",
-  market_index_tab: "市场指数",
-  units_live: "在售单位",
-  units_wanted: "求购单位",
-  volume_label: "成交量",
-  selling: "在售",
-  buying: "求购",
-  my_buy_orders: "我的求购单",
-  price_history: "价格历史",
-  recent_buckets: "近期分桶",
-  chart_context: "图表环境",
-  sell_item: "上架商品",
-  create_listing: "创建挂单",
-  create_buy_order: "创建求购单",
-  claim_credits: "领取货款",
-  retry_dispatch: "重试发货",
-  terminal_type_label: "发货终端",
-  terminal_type_port: "港口",
-  terminal_type_post_station: "驿站",
-  market_notes: "市场说明",
-  sell_summary: "卖盘摘要",
-  demand_summary: "买盘流动性",
-  market_snapshot: "市场快照",
-  no_commodity_data: "当前市场还没有商品数据。",
-  no_selling_rows: "当前商品没有在售挂单。",
-  no_buy_rows: "当前商品没有公开求购。",
-  no_my_buy_rows: "你还没有这个商品的求购单。",
-  no_chart_rows: "当前商品还没有价格记录。",
-  no_storage_match: "当前没有与该商品匹配的仓储条目。",
-  seller_note: "卖家备注",
-  suggested_word: "建议价",
-  min_bp: "最低 bp",
-  max_bp: "最高 bp",
-  to_word: "到",
-  offline_word: "离线",
-  online_word: "在线",
-  connected_word: "已连接",
-  signed_in_as: "当前登录为 {name}。",
-  sign_in_required: "需要先输入登录 token。",
-  bind_requires_credentials: "绑定账户需要填写账户名和密码。",
-  account_login_required: "登录需要填写账户名和密码。",
-  account_bound: "已绑定账户 {name}。",
-  account_login_success: "已使用账户 {name} 登录。",
-  sign_in_to_trade: "登录后才能购买、上架、求购、取消、领取货款或执行发货。",
-  copied: "已复制。",
-  command_copied: "命令已复制，请回到游戏内执行。",
-  token_extracted: "已提取 token 并复制到剪贴板。",
-  clipboard_failed: "无法访问剪贴板，请手动复制。",
-  markets_refreshed: "市场列表已刷新。",
-  action_completed: "操作已完成。",
-  sign_in_to_load_markets: "游客可浏览市场，登录后解锁交易和发货操作。",
-  guest_mode_ready: "访客模式：可以浏览市场与商品，但不能执行交易操作。",
-  no_markets: "当前还没有注册任何市场终端。",
-  select_market_prompt: "选择一个市场终端来浏览它的商品目录。",
-  guest_word: "访客",
-  live_terminal: "在线终端",
-  chunk_cold: "区块未加载",
-  manage: "可管理",
-  view: "仅查看",
-  loaded: "已加载",
-  cold: "未加载",
-  dock_linked: "已绑定港口",
-  no_linked_dock: "未绑定港口",
-  manager_access: "管理权限",
-  read_only: "只读",
-  browse_only: "仅浏览",
-  listings_word: "挂单",
-  market: "市场",
-  quantity: "数量",
-  total: "总价",
-  actions: "操作",
-  seller: "卖家",
-  buyer: "买家",
-  available: "可售",
-  reserved: "预留",
-  unit_price: "单价",
-  dock: "港口",
-  warehouse_word: "仓库",
-  status: "状态",
-  price_band: "价格区间",
-  implied_bid: "推算出价",
-  time: "时间",
-  average: "均价",
-  low: "最低",
-  high: "最高",
-  volume: "成交量",
-  buy_1: "购买 1",
-  cancel: "取消",
-  current_sell_side: "当前卖盘",
-  current_buy_side: "当前买盘",
-  dock_stock: "仓储库存",
-  terminal_status: "终端状态",
-  chart_disabled: "配置已关闭价格图表。",
-  no_chart_buckets: "当前商品还没有价格分桶数据。",
-  chart_no_selection: "当前没有可展示图表的商品。",
-  chart_library_missing: "图表库未加载，已切换到内置 K 线渲染。",
-  chart_init_failed: "图表初始化失败，已切换到内置 K 线渲染。",
-  chart_render_failed: "图表渲染失败。",
-  no_demand_ladder: "当前商品还没有形成求购梯队。",
-  waiting_reference: "暂无明确在售价参考。",
-  around_current_ask: "按当前卖价推算大致在 {range}。",
-  no_storage: "无仓储",
-  storage_rows: "仓储条目",
-  live_requests: "活跃求购",
-  stock_rows: "库存条目",
-  owner_word: "所有者",
-  town_word: "城镇",
-  pending_credits: "待领货款",
-  commodity_types: "商品种类",
-  storage_units: "仓储总量",
-  open_demand: "开放需求",
-  my_buy_orders_metric: "我的求购单",
-  net_balance: "净余额",
-  reference_price: "参考价",
-  liquidity_score: "流动性",
-  market_index: "市场指数",
-  category_index: "分类指数",
-  pressure_model: "价格影响模型",
-  inventory_pressure: "库存压力",
-  buy_pressure: "买盘压力",
-  volatility_word: "波动",
-  timeframe: "周期",
-  indicators: "指标",
-  chart_controls: "图表控制",
-  log_scale: "对数坐标",
-  inflation_adjust: "通胀修正",
-  inflation_unavailable: "当前没有 CPI 数据，暂不可用。",
-  reset_zoom: "重置缩放",
-  current_change: "当前涨跌",
-  max_drawdown: "最大回撤",
-  inception_return: "起始收益",
-  chart_hover_empty: "将鼠标移动到图表上以查看 OHLC 与成交量",
-  market_index_chart: "市场指数走势",
-  category_index_chart: "分类指数走势",
-  cpi_chart: "消费价格指数",
-  loans_chart: "未偿贷款走势",
-  inflation_since_inception: "累计通胀",
-  loans_change: "贷款变化",
-  cpi_now: "当前 CPI",
-  macro_overview: "宏观概览"
+  hero_title: "Monpai 鍦ㄧ嚎甯傚満",
+  hero_subtitle: "娓稿涔熷彲浠ユ祻瑙堝競鍦恒€佸晢鍝佷笌浠锋牸璧板娍锛涚櫥褰曞悗鎵嶈兘鎵ц缁戝畾銆佷笂鏋躲€佹眰璐笌鍙戣揣绛夋搷浣溿€?,
+  mode_label: "妯″紡",
+  mode_value: "鍟嗗搧甯傚満",
+  session_label: "浼氳瘽",
+  flow_label: "娴佺▼",
+  flow_value: "缃戦〉璐︽埛鐧诲綍",
+  portal_kicker: "缃戦〉鐧诲綍",
+  auth_title: "鍏堢粦瀹氱綉椤佃处鎴凤紝鍐嶇绾跨櫥褰?,
+  auth_subtitle: "棣栨浣跨敤鏃讹紝浠庢父鎴忎腑鑾峰彇 token锛岃缃綉椤佃处鍙峰拰瀵嗙爜瀹屾垚缁戝畾銆備箣鍚庡彲鐩存帴鐢ㄨ处鍙峰瘑鐮佺櫥褰曘€?,
+  command_label: "娓告垙鍐呭懡浠?,
+  copy_command: "澶嶅埗鍛戒护",
+  fast_signin: "蹇€熺櫥褰?,
+  connect_player: "缁戝畾璐︽埛鎴栫櫥褰?,
+  not_signed_in: "鏈櫥褰曘€?,
+  paste_chat: "绮樿创鑱婂ぉ杈撳嚭鎴?token",
+  paste_chat_placeholder: "鎶婂畬鏁磋亰澶╂秷鎭矘璐村埌杩欓噷锛岄〉闈細鑷姩鎻愬彇 token銆?,
+  token_placeholder: "Token 浼氳嚜鍔ㄦ樉绀哄湪杩欓噷",
+  account_username_placeholder: "璐︽埛鍚?,
+  account_password_placeholder: "瀵嗙爜",
+  bind_account: "缁戝畾璐︽埛",
+  account_login: "璐︽埛鐧诲綍",
+  token_helper: "棣栨浣跨敤锛氱矘璐?token锛屽～鍐欒处鎴峰悕鍜屽瘑鐮佸悗鐐瑰嚮缁戝畾銆備箣鍚庡彲鐩存帴浣跨敤璐︽埛鍚嶅拰瀵嗙爜鐧诲綍銆?,
+  market_network: "甯傚満缃戠粶",
+  browse_markets: "娴忚甯傚満",
+  refresh: "鍒锋柊",
+  market_sidebar_hint: "閫夋嫨涓€涓晢鍩庣粓绔悗锛屽嵆鍙祻瑙堝叾鍟嗗搧鐩綍銆佸湪鍞寕鍗曘€佹眰璐鍗曞拰浠锋牸璧板娍銆?,
+  brand_kicker: "Monpai 鍦ㄧ嚎甯傚満",
+  language_label: "璇█",
+  empty_select_market: "閫夋嫨涓€涓晢鍩庣粓绔潵娴忚鍟嗗搧銆佹寕鍗曘€佹眰璐拰浠锋牸璧板娍銆?,
+  market_overview: "甯傚満姒傝",
+  browse_goods: "娴忚鍟嗗搧",
+  commodity_shelf: "鍟嗗搧璐ф灦",
+  search_placeholder: "鎼滅储鐗╁搧鍚嶆垨鍟嗗搧閿?,
+  price_range: "浠锋牸鍖洪棿",
+  min_price: "鏈€浣庝环",
+  max_price: "鏈€楂樹环",
+  sort_name: "鍚嶇О",
+  sort_price: "浠锋牸",
+  sort_time: "鏃堕棿",
+  sort_quantity: "鏁伴噺",
+  all_types: "鍏ㄩ儴绫诲瀷",
+  all_rarities: "鍏ㄩ儴绋€鏈夊害",
+  rarity_filter: "绋€鏈夊害",
+  sort_label: "鎺掑簭",
+  inventory_tab: "浠撳偍",
+  inventory_title: "鍩庨晣浠撳簱",
+  no_inventory_rows: "褰撳墠缁堢杩樻病鏈夊彲鏄剧ず鐨勫簱瀛樸€?,
+  inventory_requires_manage: "鍙湁褰撳墠鐮佸ご鎴栧競鍦虹鐞嗗憳鍙互鏌ョ湅搴撳瓨銆?,
+  category_all: "鍏ㄩ儴",
+  category_wood: "鏈ㄦ潗",
+  category_luxury: "濂緢鍝?,
+  category_food: "椋熺墿",
+  category_ore: "鐭跨煶",
+  category_gems: "瀹濈煶",
+  category_metal: "閲戝睘",
+  category_tools: "宸ュ叿",
+  category_spices: "棣欐枡",
+  category_plant: "妞嶇墿",
+  category_crop: "浣滅墿",
+  category_material: "鏉愭枡",
+  category_mob_drop: "鐢熺墿鎺夎惤",
+  category_alchemy: "鐐奸噾",
+  category_building: "寤虹瓚",
+  category_nether: "涓嬬晫",
+  category_end: "鏈湴",
+  category_treasure: "瀹濊棌",
+  category_redstone: "绾㈢煶",
+  category_utility: "瀹炵敤",
+  category_weapon: "姝﹀櫒",
+  category_armor: "鎶ょ敳",
+  category_other: "鍏朵粬",
+  rarity_common: "鏅€?,
+  rarity_uncommon: "浼樼",
+  rarity_rare: "绋€鏈?,
+  rarity_epic: "鍙茶瘲",
+  rarity_legend: "浼犺",
+  rarity_extraordinary: "瓒呭嚒",
+  no_match: "娌℃湁绗﹀悎绛涢€夋潯浠剁殑鍟嗗搧銆?,
+  selected_commodity: "褰撳墠鍟嗗搧",
+  lowest_sell: "鏈€浣庡湪鍞?,
+  highest_buy: "鏈€楂樻眰璐?,
+  avg_24h: "24灏忔椂鍧囦环",
+  trades_24h: "24灏忔椂鎴愪氦",
+  sell_listings: "鍦ㄥ敭鎸傚崟",
+  on_sale: "鍦ㄥ敭鏁伴噺",
+  buying_demand: "姹傝喘闇€姹?,
+  in_storage: "浠撳偍搴撳瓨",
+  browse_tab: "娴忚鍟嗗搧",
+  purchase_tab: "璐拱鍟嗗搧",
+  chart_tab: "浠锋牸鍥捐〃",
+  market_index_tab: "甯傚満鎸囨暟",
+  units_live: "鍦ㄥ敭鍗曚綅",
+  units_wanted: "姹傝喘鍗曚綅",
+  volume_label: "鎴愪氦閲?,
+  selling: "鍦ㄥ敭",
+  buying: "姹傝喘",
+  my_buy_orders: "鎴戠殑姹傝喘鍗?,
+  price_history: "浠锋牸鍘嗗彶",
+  recent_buckets: "杩戞湡鍒嗘《",
+  chart_context: "鍥捐〃鐜",
+  sell_item: "涓婃灦鍟嗗搧",
+  create_listing: "鍒涘缓鎸傚崟",
+  create_buy_order: "鍒涘缓姹傝喘鍗?,
+  claim_credits: "棰嗗彇璐ф",
+  retry_dispatch: "閲嶈瘯鍙戣揣",
+  terminal_type_label: "鍙戣揣缁堢",
+  terminal_type_port: "娓彛",
+  terminal_type_post_station: "椹跨珯",
+  market_notes: "甯傚満璇存槑",
+  sell_summary: "鍗栫洏鎽樿",
+  demand_summary: "涔扮洏娴佸姩鎬?,
+  market_snapshot: "甯傚満蹇収",
+  no_commodity_data: "褰撳墠甯傚満杩樻病鏈夊晢鍝佹暟鎹€?,
+  no_selling_rows: "褰撳墠鍟嗗搧娌℃湁鍦ㄥ敭鎸傚崟銆?,
+  no_buy_rows: "褰撳墠鍟嗗搧娌℃湁鍏紑姹傝喘銆?,
+  no_my_buy_rows: "浣犺繕娌℃湁杩欎釜鍟嗗搧鐨勬眰璐崟銆?,
+  no_chart_rows: "褰撳墠鍟嗗搧杩樻病鏈変环鏍艰褰曘€?,
+  no_storage_match: "褰撳墠娌℃湁涓庤鍟嗗搧鍖归厤鐨勪粨鍌ㄦ潯鐩€?,
+  seller_note: "鍗栧澶囨敞",
+  manual_price: "\u624b\u52a8\u5355\u4ef7",
+  manual_price_help: "\u8bf7\u76f4\u63a5\u8f93\u5165\u73a9\u5bb6\u60f3\u8981\u7684\u5355\u4ef7\u3002\u670d\u52a1\u7aef\u4f1a\u81ea\u52a8\u6362\u7b97\u4e3a bp \u504f\u79fb\uff0c\u53ea\u5141\u8bb8\u4f7f\u7528\u8303\u56f4\u5185\u7684\u4ef7\u683c\u3002",
+  listing_price_preview: "\u5355\u4ef7\u9884\u89c8",
+  listing_bp_preview: "\u63a8\u5bfc bp",
+  listing_price_range: "\u5141\u8bb8\u8303\u56f4",
+  listing_price_invalid: "\u5b9a\u4ef7\u4e0d\u5728\u5141\u8bb8\u8303\u56f4\u5185\u3002",
+  suggested_word: "寤鸿浠?,
+  min_bp: "鏈€浣?bp",
+  max_bp: "鏈€楂?bp",
+  to_word: "鍒?,
+  offline_word: "绂荤嚎",
+  online_word: "鍦ㄧ嚎",
+  connected_word: "宸茶繛鎺?,
+  signed_in_as: "褰撳墠鐧诲綍涓?{name}銆?,
+  sign_in_required: "闇€瑕佸厛杈撳叆鐧诲綍 token銆?,
+  bind_requires_credentials: "缁戝畾璐︽埛闇€瑕佸～鍐欒处鎴峰悕鍜屽瘑鐮併€?,
+  account_login_required: "鐧诲綍闇€瑕佸～鍐欒处鎴峰悕鍜屽瘑鐮併€?,
+  account_bound: "宸茬粦瀹氳处鎴?{name}銆?,
+  account_login_success: "宸蹭娇鐢ㄨ处鎴?{name} 鐧诲綍銆?,
+  sign_in_to_trade: "鐧诲綍鍚庢墠鑳借喘涔般€佷笂鏋躲€佹眰璐€佸彇娑堛€侀鍙栬揣娆炬垨鎵ц鍙戣揣銆?,
+  copied: "宸插鍒躲€?,
+  command_copied: "鍛戒护宸插鍒讹紝璇峰洖鍒版父鎴忓唴鎵ц銆?,
+  token_extracted: "宸叉彁鍙?token 骞跺鍒跺埌鍓创鏉裤€?,
+  clipboard_failed: "鏃犳硶璁块棶鍓创鏉匡紝璇锋墜鍔ㄥ鍒躲€?,
+  markets_refreshed: "甯傚満鍒楄〃宸插埛鏂般€?,
+  action_completed: "鎿嶄綔宸插畬鎴愩€?,
+  sign_in_to_load_markets: "娓稿鍙祻瑙堝競鍦猴紝鐧诲綍鍚庤В閿佷氦鏄撳拰鍙戣揣鎿嶄綔銆?,
+  guest_mode_ready: "璁垮妯″紡锛氬彲浠ユ祻瑙堝競鍦轰笌鍟嗗搧锛屼絾涓嶈兘鎵ц浜ゆ槗鎿嶄綔銆?,
+  no_markets: "褰撳墠杩樻病鏈夋敞鍐屼换浣曞競鍦虹粓绔€?,
+  select_market_prompt: "閫夋嫨涓€涓競鍦虹粓绔潵娴忚瀹冪殑鍟嗗搧鐩綍銆?,
+  guest_word: "璁垮",
+  live_terminal: "鍦ㄧ嚎缁堢",
+  chunk_cold: "鍖哄潡鏈姞杞?,
+  manage: "鍙鐞?,
+  view: "浠呮煡鐪?,
+  loaded: "宸插姞杞?,
+  cold: "鏈姞杞?,
+  dock_linked: "\u5df2\u7ed1\u5b9a\u4ed3\u5e93",
+  no_linked_dock: "\u672a\u7ed1\u5b9a\u4ed3\u5e93",
+  manager_access: "绠＄悊鏉冮檺",
+  read_only: "鍙",
+  browse_only: "浠呮祻瑙?,
+  listings_word: "鎸傚崟",
+  market: "甯傚満",
+  quantity: "鏁伴噺",
+  total: "鎬讳环",
+  actions: "鎿嶄綔",
+  seller: "鍗栧",
+  buyer: "涔板",
+  available: "鍙敭",
+  reserved: "棰勭暀",
+  unit_price: "鍗曚环",
+  dock: "娓彛",
+  warehouse_word: "浠撳簱",
+  status: "鐘舵€?,
+  price_band: "浠锋牸鍖洪棿",
+  implied_bid: "鎺ㄧ畻鍑轰环",
+  time: "鏃堕棿",
+  average: "鍧囦环",
+  low: "鏈€浣?,
+  high: "鏈€楂?,
+  volume: "鎴愪氦閲?,
+  buy_1: "璐拱 1",
+  cancel: "鍙栨秷",
+  current_sell_side: "褰撳墠鍗栫洏",
+  current_buy_side: "褰撳墠涔扮洏",
+  dock_stock: "浠撳偍搴撳瓨",
+  terminal_status: "缁堢鐘舵€?,
+  chart_disabled: "閰嶇疆宸插叧闂环鏍煎浘琛ㄣ€?,
+  no_chart_buckets: "褰撳墠鍟嗗搧杩樻病鏈変环鏍煎垎妗舵暟鎹€?,
+  chart_no_selection: "褰撳墠娌℃湁鍙睍绀哄浘琛ㄧ殑鍟嗗搧銆?,
+  chart_library_missing: "鍥捐〃搴撴湭鍔犺浇锛屽凡鍒囨崲鍒板唴缃?K 绾挎覆鏌撱€?,
+  chart_init_failed: "鍥捐〃鍒濆鍖栧け璐ワ紝宸插垏鎹㈠埌鍐呯疆 K 绾挎覆鏌撱€?,
+  chart_render_failed: "鍥捐〃娓叉煋澶辫触銆?,
+  no_demand_ladder: "褰撳墠鍟嗗搧杩樻病鏈夊舰鎴愭眰璐闃熴€?,
+  waiting_reference: "鏆傛棤鏄庣‘鍦ㄥ敭浠峰弬鑰冦€?,
+  around_current_ask: "鎸夊綋鍓嶅崠浠锋帹绠楀ぇ鑷村湪 {range}銆?,
+  no_storage: "鏃犱粨鍌?,
+  storage_rows: "浠撳偍鏉＄洰",
+  live_requests: "娲昏穬姹傝喘",
+  stock_rows: "搴撳瓨鏉＄洰",
+  owner_word: "鎵€鏈夎€?,
+  town_word: "鍩庨晣",
+  pending_credits: "寰呴璐ф",
+  commodity_types: "鍟嗗搧绉嶇被",
+  storage_units: "浠撳偍鎬婚噺",
+  open_demand: "寮€鏀鹃渶姹?,
+  my_buy_orders_metric: "鎴戠殑姹傝喘鍗?,
+  net_balance: "鍑€浣欓",
+  reference_price: "鍙傝€冧环",
+  liquidity_score: "娴佸姩鎬?,
+  market_index: "甯傚満鎸囨暟",
+  category_index: "鍒嗙被鎸囨暟",
+  pressure_model: "浠锋牸褰卞搷妯″瀷",
+  inventory_pressure: "搴撳瓨鍘嬪姏",
+  buy_pressure: "涔扮洏鍘嬪姏",
+  volatility_word: "娉㈠姩",
+  timeframe: "鍛ㄦ湡",
+  indicators: "鎸囨爣",
+  chart_controls: "鍥捐〃鎺у埗",
+  log_scale: "瀵规暟鍧愭爣",
+  inflation_adjust: "閫氳儉淇",
+  inflation_unavailable: "褰撳墠娌℃湁 CPI 鏁版嵁锛屾殏涓嶅彲鐢ㄣ€?,
+  reset_zoom: "閲嶇疆缂╂斁",
+  current_change: "褰撳墠娑ㄨ穼",
+  max_drawdown: "鏈€澶у洖鎾?,
+  inception_return: "璧峰鏀剁泭",
+  chart_hover_empty: "灏嗛紶鏍囩Щ鍔ㄥ埌鍥捐〃涓婁互鏌ョ湅 OHLC 涓庢垚浜ら噺",
+  market_index_chart: "甯傚満鎸囨暟璧板娍",
+  category_index_chart: "鍒嗙被鎸囨暟璧板娍",
+  cpi_chart: "娑堣垂浠锋牸鎸囨暟",
+  loans_chart: "鏈伩璐锋璧板娍",
+  inflation_since_inception: "绱閫氳儉",
+  loans_change: "璐锋鍙樺寲",
+  cpi_now: "褰撳墠 CPI",
+  macro_overview: "瀹忚姒傝"
 });
 
 Object.assign(I18N["zh-CN"], {
@@ -1080,6 +1137,80 @@ Object.assign(I18N["en-US"], {
   category_magic: "Magic"
 });
 
+Object.assign(I18N["zh-CN"], {
+  hero_title: "Monpai 鍦ㄧ嚎甯傚満",
+  hero_subtitle: "鍏堟祻瑙堝競鍦虹粓绔笌浠锋牸锛屽啀鍐冲畾鏄惁缁戝畾缃戦〉璐︽埛杩涜浜ゆ槗銆佷笂鏋舵垨鐗╂祦绠＄悊銆?,
+  access_panel: "鐧诲綍",
+  access_panel_open: "鏀惰捣鐧诲綍",
+  access_panel_closed: "鐧诲綍",
+  portal_kicker: "缃戦〉鐧诲綍",
+  auth_title: "鍏堢粦瀹氱綉椤佃处鎴凤紝鍐嶇绾跨櫥褰?,
+  auth_subtitle: "棣栨浣跨敤鏃讹紝浠庢父鎴忎腑鑾峰彇 token锛岃缃綉椤佃处鎴峰拰瀵嗙爜瀹屾垚缁戝畾銆備箣鍚庡彲鐩存帴浣跨敤璐︽埛鍚嶅拰瀵嗙爜鐧诲綍銆?,
+  command_label: "娓告垙鍐呭懡浠?,
+  copy_command: "澶嶅埗鍛戒护",
+  fast_signin: "蹇€熺櫥褰?,
+  connect_player: "缁戝畾璐︽埛鎴栫櫥褰?,
+  not_signed_in: "鏈櫥褰曘€?,
+  paste_chat: "绮樿创鑱婂ぉ杈撳嚭鎴?token",
+  paste_chat_placeholder: "鎶婂畬鏁磋亰澶╂秷鎭矘璐村埌杩欓噷锛岄〉闈細鑷姩鎻愬彇 token銆?,
+  token_placeholder: "Token 浼氳嚜鍔ㄦ樉绀哄湪杩欓噷",
+  account_username_placeholder: "璐︽埛鍚?,
+  account_password_placeholder: "瀵嗙爜",
+  bind_account: "缁戝畾璐︽埛",
+  account_login: "璐︽埛鐧诲綍",
+  token_helper: "棣栨浣跨敤锛氱矘璐?token锛屽～鍐欒处鎴峰悕鍜屽瘑鐮佸悗鐐瑰嚮缁戝畾銆備箣鍚庡彲鐩存帴浣跨敤璐︽埛鍚嶅拰瀵嗙爜鐧诲綍銆?,
+  market_network: "甯傚満缃戠粶",
+  browse_markets: "娴忚甯傚満",
+  refresh: "鍒锋柊",
+  market_search_label: "鏌ユ壘缁堢",
+  market_search_placeholder: "鎼滅储甯傚満銆佹墍鏈夎€呫€佸煄闀囨垨缁村害",
+  market_sidebar_hint: "閫夋嫨涓€涓競鍦虹粓绔悗锛屽嵆鍙祻瑙堝畠鐨勫晢鍝佺洰褰曘€佸湪鍞寕鍗曘€佹眰璐鍗曞拰浠锋牸璧板娍銆?,
+  market_summary_title: "缃戠粶鎽樿",
+  market_summary_hint: "蹇€熸煡鐪嬬粓绔暟閲忋€佸湪绾垮尯鍧楀拰褰撳墠閫夋嫨鐨勫競鍦恒€?,
+  market_terminal_count: "缁堢鏁?,
+  selected_market: "褰撳墠甯傚満",
+  brand_kicker: "Monpai 鍦ㄧ嚎甯傚満",
+  language_label: "璇█",
+  market_overview: "甯傚満姒傝",
+  explore_tab: "娴忚",
+  trade_tab: "浜ゆ槗",
+  analytics_tab: "鍒嗘瀽",
+  explore_hint: "娴忚鐩綍銆佹瘮杈冧环鏍煎苟蹇€熷垏鎹㈠晢鍝併€?,
+  trade_hint: "闆嗕腑澶勭悊璐拱銆佷笂鏋躲€侀娆惧拰姹傝喘鎿嶄綔銆?,
+  inventory_hint: "鏌ョ湅鍙笂鏋舵垨鍙彂杩愮殑搴撳瓨銆?,
+  analytics_hint: "鏌ョ湅浠锋牸璧板娍銆佹寚鏁板彉鍖栧拰瀹忚淇″彿銆?,
+  signin_status_guest: "绔嬪嵆鐧诲綍",
+  signin_status_ready: "璐︽埛涓績",
+  dock_linked: "宸茬粦瀹氫粨搴?,
+  no_linked_dock: "鏈粦瀹氫粨搴?,
+  chart_disabled: "閰嶇疆宸插叧闂环鏍煎浘琛ㄣ€?,
+  no_chart_buckets: "褰撳墠鍟嗗搧杩樻病鏈変环鏍煎垎妗舵暟鎹€?,
+  chart_no_selection: "褰撳墠娌℃湁鍙睍绀哄浘琛ㄧ殑鍟嗗搧銆?,
+  chart_library_missing: "鍥捐〃搴撴湭鍔犺浇锛屽凡鍒囨崲鍒板唴缃覆鏌撱€?,
+  chart_init_failed: "鍥捐〃鍒濆鍖栧け璐ワ紝宸插垏鎹㈠埌鍐呯疆娓叉煋銆?,
+  chart_render_failed: "鍥捐〃娓叉煋澶辫触銆?,
+  no_chart_rows: "褰撳墠鍟嗗搧杩樻病鏈変环鏍艰褰曘€?,
+  timeframe: "鍛ㄦ湡",
+  indicators: "鎸囨爣",
+  chart_controls: "鍥捐〃鎺у埗",
+  log_scale: "瀵规暟鍧愭爣",
+  inflation_adjust: "閫氳儉淇",
+  inflation_unavailable: "褰撳墠娌℃湁 CPI 鏁版嵁锛屾殏涓嶅彲鐢ㄣ€?,
+  reset_zoom: "閲嶇疆缂╂斁",
+  current_change: "褰撳墠娑ㄨ穼",
+  max_drawdown: "鏈€澶у洖鎾?,
+  inception_return: "璧峰鏀剁泭",
+  chart_hover_empty: "灏嗛紶鏍囩Щ鍔ㄥ埌鍥捐〃涓婁互鏌ョ湅 OHLC 涓庢垚浜ら噺",
+  market_index_chart: "甯傚満鎸囨暟璧板娍",
+  category_index_chart: "鍒嗙被鎸囨暟璧板娍",
+  cpi_chart: "娑堣垂浠锋牸鎸囨暟",
+  loans_chart: "鏈伩璐锋璧板娍",
+  inflation_since_inception: "绱閫氳儉",
+  loans_change: "璐锋鍙樺寲",
+  cpi_now: "褰撳墠 CPI",
+  macro_overview: "瀹忚姒傝"
+});
+
 function t(key, vars = {}) {
   const locale = I18N[state.locale] || I18N["en-US"];
   let text = locale[key] || I18N["en-US"][key] || key;
@@ -1099,7 +1230,7 @@ function setNodePlaceholder(node, value) {
 }
 
 function uiTitle() {
-  return state.settings.uiTitle || "Monpai Online Market · Monpai在线市场";
+  return state.settings.uiTitle || "Monpai Online Market 路 Monpai鍦ㄧ嚎甯傚満";
 }
 
 function updateStaticCopy() {
@@ -1117,6 +1248,7 @@ function updateStaticCopy() {
   setNodeText(els.sessionLabel, t("session_label"));
   setNodeText(els.flowLabel, t("flow_label"));
   setNodeText(els.flowValue, t("flow_value"));
+  setNodeText(els.accessToggleLabel, t(state.accessPanelOpen ? "access_panel_open" : "access_panel_closed"));
   setNodeText(els.portalKicker, t("portal_kicker"));
   setNodeText(els.authTitle, t("auth_title"));
   setNodeText(els.authSubtitle, t("auth_subtitle"));
@@ -1131,20 +1263,26 @@ function updateStaticCopy() {
   setNodeText(els.marketNetworkKicker, t("market_network"));
   setNodeText(els.browseMarketsTitle, t("browse_markets"));
   setNodeText(els.refreshMarkets, t("refresh"));
+  setNodeText(els.marketSearchLabel, t("market_search_label"));
   setNodeText(els.marketSidebarHint, t("market_sidebar_hint"));
   setNodePlaceholder(els.chatCapture, t("paste_chat_placeholder"));
   setNodePlaceholder(els.token, t("token_placeholder"));
   setNodePlaceholder(els.accountUsername, t("account_username_placeholder"));
   setNodePlaceholder(els.accountPassword, t("account_password_placeholder"));
+  setNodePlaceholder(els.marketSearch, t("market_search_placeholder"));
   if (els.accountUsername && state.accountUsername) {
     els.accountUsername.value = state.accountUsername;
   }
+  setAccessPanelOpen(state.accessPanelOpen);
   renderSession();
 }
 
 function setStatus(message, isError = false) {
   state.status = isError ? "" : message || "";
   state.error = isError ? message || "" : "";
+  if (els.statusLive) {
+    els.statusLive.textContent = message || "";
+  }
   renderDetail();
 }
 
@@ -1404,7 +1542,7 @@ function renderSession() {
   }
 
   const accountPart = state.session.accountBound && state.session.accountUsername
-    ? ` · @${state.session.accountUsername}`
+    ? ` 路 @${state.session.accountUsername}`
     : "";
   els.sessionStatus.textContent = `${state.session.playerName} (${state.session.online ? t("online_word") : t("offline_word")})${accountPart}`;
   if (els.sessionPill) {
@@ -1510,7 +1648,7 @@ function renderDetail() {
             <div class="overview-title">
               <p class="section-kicker">${escapeHtml(t("market_overview"))}</p>
               <h2>${escapeHtml(detail.marketName)}</h2>
-              <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} · ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} · ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
+              <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} 路 ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} 路 ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
             </div>
             <div class="market-meta">
               <span class="pill ${detail.linkedDock ? "success" : "warning"}">${detail.linkedDock ? escapeHtml(t("dock_linked")) : escapeHtml(t("no_linked_dock"))}</span>
@@ -1703,6 +1841,7 @@ function bindDetailActions() {
         candidate.classList.toggle("active", active);
         candidate.setAttribute("aria-pressed", active ? "true" : "false");
       });
+      updateCreateListingFormState();
     });
   });
 
@@ -1747,13 +1886,26 @@ function bindDetailActions() {
   });
 
   const createListingButton = document.querySelector("#create-listing-button");
+  const createListingStorage = document.querySelector("#create-listing-storage");
+  const createListingPrice = document.querySelector("#create-listing-price");
+  const createListingQuantity = document.querySelector("#create-listing-quantity");
+  if (createListingStorage) {
+    createListingStorage.addEventListener("change", () => updateCreateListingFormState());
+  }
+  if (createListingPrice) {
+    createListingPrice.addEventListener("input", () => updateCreateListingFormState());
+  }
+  if (createListingQuantity) {
+    createListingQuantity.addEventListener("input", () => updateCreateListingFormState());
+  }
   if (createListingButton) {
     createListingButton.addEventListener("click", () => postMarketAction("/listings", {
       storageIndex: numberValue("#create-listing-storage", -1),
       quantity: numberValue("#create-listing-quantity", 1),
-      priceAdjustmentBp: numberValue("#create-listing-adjustment", 0),
+      unitPrice: numberValue("#create-listing-price", 0),
       sellerNote: valueOf("#create-listing-note")
     }));
+    updateCreateListingFormState();
   }
 
   const buyOrderButton = document.querySelector("#buy-order-button");
@@ -2152,7 +2304,7 @@ function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMess
           <div class="catalog-subcategory-strip" data-catalog-subcategory-strip>
             <div class="catalog-subcategory-head">
               <span class="toolbar-label">${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
-              <span class="catalog-subcategory-hint">${escapeHtml(t("all_types"))} · ${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
+              <span class="catalog-subcategory-hint">${escapeHtml(t("all_types"))} 路 ${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
             </div>
             <div class="catalog-subcategory-grid">
               ${subcategories.map((category) => renderCatalogSubcategoryButton(category, catalog)).join("")}
@@ -2486,7 +2638,7 @@ function cycleCatalogSort(mode) {
 function renderCatalogSortButton(mode, label) {
   const active = normalizeCatalogSortMode(state.catalogSort?.mode) === mode;
   const direction = active ? state.catalogSort?.direction : "";
-  const indicator = direction === "desc" ? "↓" : direction === "asc" ? "↑" : "";
+  const indicator = direction === "desc" ? "鈫? : direction === "asc" ? "鈫? : "";
   return `
     <button type="button" class="sort-button ${active ? "active-sort" : ""}" data-catalog-sort="${escapeHtml(mode)}">
       <span>${escapeHtml(label)}</span>
@@ -2558,9 +2710,9 @@ function commodityIconSources(commodityKey) {
   const endpoint = `/api/icons?commodityKey=${encodeURIComponent(commodityKey)}${versionParam}`;
   if (namespace === "sailboatmod") {
     return unique([
-      endpoint,
       `/assets/sailboatmod/textures/item/${path}.png${assetVersionParam}`,
-      `/assets/sailboatmod/textures/block/${path}.png${assetVersionParam}`
+      `/assets/sailboatmod/textures/block/${path}.png${assetVersionParam}`,
+      endpoint
     ]);
   }
   return unique([endpoint]);
@@ -2585,6 +2737,67 @@ function renderCommodityIcon(commodityKey, displayName) {
       <span class="goods-art-fallback">${fallback}</span>
     </div>
   `;
+}
+
+function chunkValues(values, size) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function requestCommodityIconBatch(keys) {
+  const pending = unique(keys.map((key) => String(key || "").trim())).filter((commodityKey) => {
+    if (!commodityKey || commodityIconRequests.has(commodityKey)) {
+      return false;
+    }
+    const cached = commodityIconCache.get(commodityKey);
+    return cached?.status !== "loaded" && cached?.status !== "failed" && commodityIconSources(commodityKey).length > 0;
+  });
+  if (!pending.length) {
+    return;
+  }
+
+  const waiters = [];
+  const freshKeys = [];
+  pending.forEach((commodityKey) => {
+    const existing = commodityIconBatchRequests.get(commodityKey);
+    if (existing) {
+      waiters.push(existing);
+      return;
+    }
+    freshKeys.push(commodityKey);
+  });
+
+  const chunkRequests = chunkValues(freshKeys, COMMODITY_ICON_BATCH_SIZE).map((chunk) => {
+    const params = new URLSearchParams();
+    chunk.forEach((commodityKey) => params.append("commodityKey", commodityKey));
+    if (state.webResourceVersion) {
+      params.set("v", state.webResourceVersion);
+    }
+    const request = api(`/api/icons/batch?${params.toString()}`).then((data) => {
+      const icons = data && typeof data.icons === "object" && data.icons ? data.icons : {};
+      const missing = new Set(Array.isArray(data?.missing) ? data.missing : []);
+      chunk.forEach((commodityKey) => {
+        const src = typeof icons[commodityKey] === "string" ? icons[commodityKey] : "";
+        if (src) {
+          commodityIconCache.set(commodityKey, { status: "loaded", src });
+          return;
+        }
+        if (missing.has(commodityKey)) {
+          commodityIconCache.set(commodityKey, { status: "failed", src: "" });
+        }
+      });
+    }).catch(() => {
+    }).finally(() => {
+      chunk.forEach((commodityKey) => commodityIconBatchRequests.delete(commodityKey));
+    });
+    chunk.forEach((commodityKey) => commodityIconBatchRequests.set(commodityKey, request));
+    return request;
+  });
+
+  await Promise.allSettled(waiters.concat(chunkRequests));
 }
 
 function ensureCommodityIcon(commodityKey) {
@@ -2670,7 +2883,9 @@ function applyCommodityIcon(shell, src) {
   shell.classList.add("has-image");
 }
 
-function hydrateCommodityIcons() {
+async function hydrateCommodityIcons() {
+  const pendingShells = [];
+  const pendingKeys = [];
   document.querySelectorAll("[data-icon-shell]").forEach((shell) => {
     if (shell.dataset.bound === "true") {
       return;
@@ -2680,6 +2895,17 @@ function hydrateCommodityIcons() {
     if (!commodityKey) {
       return;
     }
+    pendingShells.push(shell);
+    pendingKeys.push(commodityKey);
+  });
+  if (!pendingShells.length) {
+    return;
+  }
+
+  await requestCommodityIconBatch(pendingKeys);
+
+  pendingShells.forEach((shell) => {
+    const commodityKey = shell.dataset.commodityKey || "";
     ensureCommodityIcon(commodityKey).then((src) => {
       if (!document.body.contains(shell)) {
         return;
@@ -2789,6 +3015,9 @@ function renderCreateListingPanel(commodity, detail, canManage, canAct) {
   const matchingStorage = storageEntriesForCommodity(commodity, detail);
   const preferredStorage = preferredStorageEntry(matchingStorage);
   const selectedStorageIndex = preferredStorage?.index ?? -1;
+  const suggestedUnitPrice = Math.max(1, Number(preferredStorage?.suggestedUnitPrice) || Number(commodity?.suggestedUnitPrice) || Number(commodity?.referencePrice) || 1);
+  const minAllowedUnitPrice = Math.max(1, Number(preferredStorage?.minAllowedUnitPrice) || suggestedUnitPrice);
+  const maxAllowedUnitPrice = Math.max(minAllowedUnitPrice, Number(preferredStorage?.maxAllowedUnitPrice) || minAllowedUnitPrice);
   return `
     <div class="action-box">
       <div class="panel-head">
@@ -2800,14 +3029,16 @@ function renderCreateListingPanel(commodity, detail, canManage, canAct) {
       </div>
       ${matchingStorage.length ? `
         <div class="stack">
-          <div class="summary-note">${escapeHtml(commodity.displayName)} · ${number(sumBy(matchingStorage, "quantity"))} ${escapeHtml(t("in_storage"))}.</div>
+          <div class="summary-note">${escapeHtml(commodity.displayName)} 路 ${number(sumBy(matchingStorage, "quantity"))} ${escapeHtml(t("in_storage"))}.</div>
           <input id="create-listing-storage" type="hidden" value="${escapeHtml(String(selectedStorageIndex))}">
+          <div class="summary-note">${escapeHtml(t("manual_price_help"))}</div>
           ${renderStorageChoiceGrid(matchingStorage, selectedStorageIndex, t("no_storage_match"))}
           <input id="create-listing-quantity" type="number" min="1" value="${escapeHtml(String(state.settings.defaultListingQuantity || 1))}" placeholder="${escapeHtml(t("quantity"))}">
-          <input id="create-listing-adjustment" type="number" value="${escapeHtml(String(state.settings.defaultPriceAdjustmentBp || 0))}" placeholder="${escapeHtml(t("price_band"))} bp">
+          <input id="create-listing-price" type="number" min="1" value="${escapeHtml(String(suggestedUnitPrice))}" placeholder="${escapeHtml(t("manual_price"))}">
+          <div id="create-listing-price-preview" class="summary-note">${escapeHtml(t("listing_price_preview"))} ${number(suggestedUnitPrice)} | ${escapeHtml(t("listing_price_range"))} ${number(minAllowedUnitPrice)} - ${number(maxAllowedUnitPrice)}</div>
           <textarea id="create-listing-note" placeholder="${escapeHtml(t("seller_note"))}"></textarea>
           <div class="actions">
-            <button type="button" id="create-listing-button" ${canManage && canAct ? "" : "disabled"}>${escapeHtml(t("create_listing"))}</button>
+            <button type="button" id="create-listing-button" data-can-create="${canManage && canAct ? "true" : "false"}" ${canManage && canAct ? "" : "disabled"}>${escapeHtml(t("create_listing"))}</button>
             <button type="button" id="claim-credits-button" class="secondary" ${canAct ? "" : "disabled"}>${escapeHtml(t("claim_credits"))}</button>
           </div>
         </div>
@@ -2907,7 +3138,7 @@ function renderCommodityDetailPage(commodity, detail, canManage, canAct) {
           <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
           <div class="price-line">
             ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}
-            <span class="minor">${escapeHtml(t("lowest_sell"))}${commodity.bestBuy == null ? "" : ` · ${escapeHtml(t("highest_buy"))} ${number(commodity.bestBuy)} bp`}</span>
+            <span class="minor">${escapeHtml(t("lowest_sell"))}${commodity.bestBuy == null ? "" : ` 路 ${escapeHtml(t("highest_buy"))} ${number(commodity.bestBuy)} bp`}</span>
           </div>
           <div class="goods-stats">
             ${metricBox(t("sell_listings"), number(commodity.totalListings))}
@@ -3008,8 +3239,8 @@ function renderBrowseTab(commodity, detail) {
           </div>
           <div class="summary-note">${escapeHtml(t("lowest_sell"))} ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}.</div>
           <div class="summary-note">${escapeHtml(t("highest_buy"))} ${commodity.bestBuy == null ? "--" : number(commodity.bestBuy)}.</div>
-          <div class="summary-note">${escapeHtml(t("avg_24h"))} ${latestPoint ? number(latestPoint.averageUnitPrice) : "--"} · ${escapeHtml(t("trades_24h"))} ${number(chartStats.tradeCount)}.</div>
-          <div class="summary-note">${escapeHtml(t("in_storage"))} ${number(commodity.storageUnits)} · ${escapeHtml(t("open_demand"))} ${number(commodity.demandUnits)}.</div>
+          <div class="summary-note">${escapeHtml(t("avg_24h"))} ${latestPoint ? number(latestPoint.averageUnitPrice) : "--"} 路 ${escapeHtml(t("trades_24h"))} ${number(chartStats.tradeCount)}.</div>
+          <div class="summary-note">${escapeHtml(t("in_storage"))} ${number(commodity.storageUnits)} 路 ${escapeHtml(t("open_demand"))} ${number(commodity.demandUnits)}.</div>
           <div class="summary-note">${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))}.</div>
         </div>
 
@@ -3035,6 +3266,9 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
   const matchingStorage = storageEntriesForCommodity(commodity, detail);
   const preferredStorage = preferredStorageEntry(matchingStorage);
   const selectedStorageIndex = preferredStorage?.index ?? dockStorage[0]?.index ?? -1;
+  const suggestedUnitPrice = Math.max(1, Number(preferredStorage?.suggestedUnitPrice) || Number(commodity?.suggestedUnitPrice) || Number(commodity?.referencePrice) || 1);
+  const minAllowedUnitPrice = Math.max(1, Number(preferredStorage?.minAllowedUnitPrice) || suggestedUnitPrice);
+  const maxAllowedUnitPrice = Math.max(minAllowedUnitPrice, Number(preferredStorage?.maxAllowedUnitPrice) || minAllowedUnitPrice);
 
   return `
     <div class="detail-grid">
@@ -3073,7 +3307,7 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
             <span class="pill">${number(matchingStorage.length)} ${escapeHtml(t("storage_rows"))}</span>
           </div>
           <div class="summary-note">${escapeHtml(t("dock_stock"))} ${number(dockStorage.length)} ${escapeHtml(t("storage_rows"))} / ${number(sumBy(dockStorage, "quantity"))}.</div>
-          <div class="summary-note">${preferredStorage ? `${escapeHtml(commodity.displayName)} x${number(preferredStorage.quantity)} · ${escapeHtml(t("suggested_word"))} ${number(preferredStorage.suggestedUnitPrice)}` : escapeHtml(t("no_storage_match"))}</div>
+          <div class="summary-note">${preferredStorage ? `${escapeHtml(commodity.displayName)} x${number(preferredStorage.quantity)} 路 ${escapeHtml(t("suggested_word"))} ${number(preferredStorage.suggestedUnitPrice)}` : escapeHtml(t("no_storage_match"))}</div>
           ${canManage ? `<div class="actions"><button type="button" class="secondary" data-route="inventory">${escapeHtml(t("inventory_tab"))}</button></div>` : ""}
         </div>
 
@@ -3088,14 +3322,15 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
           ${matchingStorage.length ? `
             <div class="stack">
               ${renderStorageChoiceGrid(matchingStorage, selectedStorageIndex, t("no_storage_match"))}
-              <select id="create-listing-storage">
-                ${dockStorage.map((entry) => `<option value="${entry.index}" ${Number(entry.index) === Number(selectedStorageIndex) ? "selected" : ""}>${escapeHtml(entry.itemName)} x${number(entry.quantity)} · ${escapeHtml(t("suggested_word"))} ${number(entry.suggestedUnitPrice)}</option>`).join("")}
-              </select>
+              <input id="create-listing-storage" type="hidden" value="${escapeHtml(String(selectedStorageIndex))}">
+              <div class="summary-note">${escapeHtml(t("manual_price_help"))}</div>
+              <div class="summary-note">${escapeHtml(t("listing_price_range"))} ${number(minAllowedUnitPrice)} - ${number(maxAllowedUnitPrice)} | ${escapeHtml(t("suggested_word"))} ${number(suggestedUnitPrice)}</div>
               <input id="create-listing-quantity" type="number" min="1" value="${escapeHtml(String(state.settings.defaultListingQuantity || 1))}" placeholder="${escapeHtml(t("quantity"))}">
-              <input id="create-listing-adjustment" type="number" value="${escapeHtml(String(state.settings.defaultPriceAdjustmentBp || 0))}" placeholder="${escapeHtml(t("price_band"))} bp">
+              <input id="create-listing-price" type="number" min="1" value="${escapeHtml(String(suggestedUnitPrice))}" placeholder="${escapeHtml(t("manual_price"))}">
+              <div id="create-listing-price-preview" class="summary-note">${escapeHtml(t("listing_price_preview"))} ${number(suggestedUnitPrice)} | ${escapeHtml(t("listing_price_range"))} ${number(minAllowedUnitPrice)} - ${number(maxAllowedUnitPrice)}</div>
               <textarea id="create-listing-note" placeholder="${escapeHtml(t("seller_note"))}"></textarea>
               <div class="actions">
-                <button type="button" id="create-listing-button" ${canManage && canAct ? "" : "disabled"}>${escapeHtml(t("create_listing"))}</button>
+                <button type="button" id="create-listing-button" data-can-create="${canManage && canAct ? "true" : "false"}" ${canManage && canAct ? "" : "disabled"}>${escapeHtml(t("create_listing"))}</button>
                 <button type="button" id="claim-credits-button" class="secondary" ${canAct ? "" : "disabled"}>${escapeHtml(t("claim_credits"))}</button>
               </div>
             </div>
@@ -3110,7 +3345,7 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
             </div>
           </div>
           <div class="summary-note">${escapeHtml(t("lowest_sell"))} ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}. ${number(commodity.sellUnits)} / ${number(commodity.totalListings)}.</div>
-          <div class="summary-note">${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))} · ${escapeHtml(detail.linkedDockName || "-")}.</div>
+          <div class="summary-note">${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))} 路 ${escapeHtml(detail.linkedDockName || "-")}.</div>
           <div class="summary-note">${escapeHtml(t("dock_stock"))} ${number(dockStorage.length)} ${escapeHtml(t("storage_rows"))} / ${number(sumBy(dockStorage, "quantity"))}.</div>
           <div class="summary-note">${escapeHtml(canManage ? t("manager_access") : t("read_only"))}.</div>
           <div class="summary-note">${escapeHtml(canAct ? t("manage") : t("browse_only"))}.</div>
@@ -3391,11 +3626,11 @@ function renderIndexTab(commodity, detail) {
           </div>
           <div class="chart-row">
             <strong>${escapeHtml(t("reference_price"))}</strong>
-            <div class="muted-inline">${impact?.referenceUnitPrice ? number(impact.referenceUnitPrice) : "--"} · ${escapeHtml(t("liquidity_score"))} ${number(impact?.liquidityScore || 0)}</div>
+            <div class="muted-inline">${impact?.referenceUnitPrice ? number(impact.referenceUnitPrice) : "--"} 路 ${escapeHtml(t("liquidity_score"))} ${number(impact?.liquidityScore || 0)}</div>
           </div>
           <div class="chart-row">
             <strong>${escapeHtml(t("pressure_model"))}</strong>
-            <div class="muted-inline">${escapeHtml(t("inventory_pressure"))} ${number(impact?.inventoryPressureBp || 0)} bp · ${escapeHtml(t("buy_pressure"))} ${number(impact?.buyPressureBp || 0)} bp · ${escapeHtml(t("volatility_word"))} ${number(impact?.volatilityBp || 0)} bp</div>
+            <div class="muted-inline">${escapeHtml(t("inventory_pressure"))} ${number(impact?.inventoryPressureBp || 0)} bp 路 ${escapeHtml(t("buy_pressure"))} ${number(impact?.buyPressureBp || 0)} bp 路 ${escapeHtml(t("volatility_word"))} ${number(impact?.volatilityBp || 0)} bp</div>
           </div>
           <div class="chart-row">
             <strong>${escapeHtml(t("terminal_status"))}</strong>
@@ -3611,7 +3846,7 @@ function renderIndexRow(series) {
   return `
     <div class="chart-row">
       <strong>${escapeHtml(series.displayName || series.scopeKey || "-")}</strong>
-      <div class="muted-inline">${last ? number(last.value) : "--"} · ${sign}${number(delta)} · ${t("trades_24h")} ${number(last?.tradeCount || 0)}</div>
+      <div class="muted-inline">${last ? number(last.value) : "--"} 路 ${sign}${number(delta)} 路 ${t("trades_24h")} ${number(last?.tradeCount || 0)}</div>
     </div>
   `;
 }
@@ -3794,12 +4029,12 @@ function hydrateLightweightChart() {
   const cpiSeries = analyticsSeries(detail, "MACRO_INDEX", "cpi");
   if (!points.length) {
     setChartFailure("no-buckets", `${commodity.commodityKey} has no chart buckets for timeframe ${state.activeChartTimeframe}.`);
-    renderChartFallbackMessage(container, "no_chart_buckets", `${commodity.displayName} · ${state.activeChartTimeframe.toUpperCase()}`);
+    renderChartFallbackMessage(container, "no_chart_buckets", `${commodity.displayName} 路 ${state.activeChartTimeframe.toUpperCase()}`);
     return;
   }
   if (typeof LightweightCharts === "undefined") {
     setChartFailure("library-missing", "window.LightweightCharts is undefined.");
-    renderChartFallbackMessage(container, "chart_library_missing", `${commodity.displayName} · ${state.activeChartTimeframe.toUpperCase()}`);
+    renderChartFallbackMessage(container, "chart_library_missing", `${commodity.displayName} 路 ${state.activeChartTimeframe.toUpperCase()}`);
     renderFallbackKlineChart(container, points);
     return;
   }
@@ -3833,7 +4068,7 @@ function hydrateLightweightChart() {
   } catch (error) {
     console.warn("Failed to initialize lightweight chart, using fallback renderer.", error);
     setChartFailure("init-failed", error?.stack || error?.message || String(error));
-    renderChartFallbackMessage(container, "chart_init_failed", `${commodity.displayName} · ${state.activeChartTimeframe.toUpperCase()}`);
+    renderChartFallbackMessage(container, "chart_init_failed", `${commodity.displayName} 路 ${state.activeChartTimeframe.toUpperCase()}`);
     renderFallbackKlineChart(container, points);
     hydrateMacroCharts(detail, commodity);
     return;
@@ -3974,9 +4209,42 @@ function hydrateMacroCharts(detail, commodity) {
   chartState.loansChart = createMacroChart("#loans-chart", loansSeries, "#ea580c");
 }
 
+function renderMacroChartFallback(container, series, color) {
+  if (!container) {
+    return;
+  }
+  const points = (series?.points || []).slice(-8);
+  if (!points.length) {
+    container.innerHTML = `<div class="chart-fallback"><div class="chart-fallback-copy"><span>${escapeHtml(t("no_chart_buckets"))}</span></div></div>`;
+    return;
+  }
+  const maxValue = Math.max(1, ...points.map((point) => Number(point.value || 0)));
+  container.innerHTML = `
+    <div class="chart-fallback">
+      <div class="chart-fallback-copy" style="width:100%;">
+        ${points.map((point) => {
+          const value = Number(point.value || 0);
+          const ratio = Math.max(0.06, value / maxValue);
+          return `
+            <div class="chart-bar-row">
+              <span>${escapeHtml(shortTime(point.bucketAt))}</span>
+              <div class="chart-bar"><span style="width:${Math.round(ratio * 100)}%; background:${escapeHtml(color)};"></span></div>
+              <strong>${escapeHtml(number(value))}</strong>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function createMacroChart(selector, series, color) {
   const container = document.querySelector(selector);
-  if (!container || !series?.points?.length || typeof LightweightCharts === "undefined") {
+  if (!container || !series?.points?.length) {
+    return null;
+  }
+  if (typeof LightweightCharts === "undefined") {
+    renderMacroChartFallback(container, series, color);
     return null;
   }
   const palette = currentChartPalette();
@@ -4047,6 +4315,77 @@ function valueOf(selector) {
 function numberValue(selector, fallback) {
   const value = Number(valueOf(selector));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function selectedCreateListingStorageEntry() {
+  const detail = state.detail;
+  if (!detail || !Array.isArray(detail.storageEntries)) {
+    return null;
+  }
+  const storageIndex = numberValue("#create-listing-storage", -1);
+  return detail.storageEntries.find((entry) => Number(entry?.index) === Number(storageIndex)) || null;
+}
+
+function selectedCreateListingPrice() {
+  const entry = selectedCreateListingStorageEntry();
+  const fallback = Number(entry?.suggestedUnitPrice) || 1;
+  return Math.max(1, numberValue("#create-listing-price", fallback));
+}
+
+function selectedCreateListingDerivedBp() {
+  const entry = selectedCreateListingStorageEntry();
+  const referencePrice = Math.max(1, Number(entry?.suggestedUnitPrice) || 1);
+  const requestedPrice = selectedCreateListingPrice();
+  return Math.round(((requestedPrice / referencePrice) - 1) * 10000);
+}
+
+function selectedCreateListingPriceValid() {
+  const entry = selectedCreateListingStorageEntry();
+  if (!entry) {
+    return false;
+  }
+  const requestedPrice = selectedCreateListingPrice();
+  const minAllowed = Math.max(1, Number(entry.minAllowedUnitPrice) || 1);
+  const maxAllowed = Math.max(minAllowed, Number(entry.maxAllowedUnitPrice) || minAllowed);
+  const derivedBp = selectedCreateListingDerivedBp();
+  return requestedPrice >= minAllowed && requestedPrice <= maxAllowed && derivedBp >= -1000 && derivedBp <= 1000;
+}
+
+function updateCreateListingFormState() {
+  const entry = selectedCreateListingStorageEntry();
+  const preview = document.querySelector("#create-listing-price-preview");
+  const button = document.querySelector("#create-listing-button");
+  if (!preview && !button) {
+    return;
+  }
+
+  const canCreate = button?.getAttribute("data-can-create") === "true";
+  const valid = !!entry && selectedCreateListingPriceValid();
+  if (button) {
+    button.disabled = !canCreate || !valid;
+  }
+
+  if (!preview) {
+    return;
+  }
+  if (!entry) {
+    preview.textContent = t("no_storage_match");
+    preview.classList.remove("error");
+    return;
+  }
+
+  const requestedPrice = selectedCreateListingPrice();
+  const derivedBp = selectedCreateListingDerivedBp();
+  const minAllowed = Math.max(1, Number(entry.minAllowedUnitPrice) || 1);
+  const maxAllowed = Math.max(minAllowed, Number(entry.maxAllowedUnitPrice) || minAllowed);
+  if (!valid) {
+    preview.textContent = `${t("listing_price_invalid")} ${number(minAllowed)} - ${number(maxAllowed)} | ${t("suggested_word")} ${number(entry.suggestedUnitPrice)}`;
+    preview.classList.add("error");
+    return;
+  }
+
+  preview.textContent = `${t("listing_price_preview")} ${number(requestedPrice)} | ${t("listing_bp_preview")} ${number(derivedBp)} bp | ${t("listing_price_range")} ${number(minAllowed)} - ${number(maxAllowed)}`;
+  preview.classList.remove("error");
 }
 
 function normalizeCommodityKey(value) {
@@ -4127,6 +4466,378 @@ function shortTime(epochMs) {
     date.toLocaleTimeString(state.locale, { hour: "2-digit", minute: "2-digit" });
 }
 
+function activeWorkspaceSection(route = state.activeProductTab) {
+  const normalized = normalizePageRoute(route);
+  if (normalized === "inventory") {
+    return "inventory";
+  }
+  if (normalized === "sell" || normalized === "buy") {
+    return "trade";
+  }
+  if (normalized === "chart" || normalized === "index") {
+    return "analytics";
+  }
+  return "explore";
+}
+
+function workspaceTargetRoute(section) {
+  if (section === "trade") {
+    return state.activeProductTab === "buy" ? "buy" : "sell";
+  }
+  if (section === "analytics") {
+    return state.activeProductTab === "index" ? "index" : "chart";
+  }
+  if (section === "inventory") {
+    return "inventory";
+  }
+  return "browse";
+}
+
+function workspaceHint(section) {
+  if (section === "trade") {
+    return t("trade_hint");
+  }
+  if (section === "analytics") {
+    return t("analytics_hint");
+  }
+  if (section === "inventory") {
+    return t("inventory_hint");
+  }
+  return t("explore_hint");
+}
+
+function workspaceButton(section, label) {
+  const active = activeWorkspaceSection() === section;
+  return `
+    <button type="button" class="workspace-button ${active ? "active" : ""}" data-route="${workspaceTargetRoute(section)}">
+      <span class="workspace-kicker">${escapeHtml(t("mode_label"))}</span>
+      <span class="workspace-title">${escapeHtml(label)}</span>
+      <span class="muted-inline">${escapeHtml(workspaceHint(section))}</span>
+    </button>
+  `;
+}
+
+function summaryBlock(label, value) {
+  return `<div class="summary-block"><span class="tiny-label">${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`;
+}
+
+function filteredMarkets() {
+  const query = String(state.marketQuery || "").trim().toLowerCase();
+  if (!query) {
+    return state.markets;
+  }
+  return state.markets.filter((market) => {
+    const haystack = [
+      market.marketName,
+      market.ownerName,
+      market.townName,
+      market.dimensionId,
+      market.position
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function renderMarketSummary(markets) {
+  if (!els.marketSummary) {
+    return;
+  }
+  const selected = state.markets.find((market) => market.marketId === state.selectedMarketId) || null;
+  const liveCount = state.markets.filter((market) => market.loaded).length;
+  const manageableCount = state.markets.filter((market) => market.canManage).length;
+  els.marketSummary.innerHTML = `
+    <div class="panel-head">
+      <div>
+        <p class="section-kicker">${escapeHtml(t("market_summary_title"))}</p>
+        <h3>${escapeHtml(t("market_overview"))}</h3>
+      </div>
+    </div>
+    <p class="muted">${escapeHtml(t("market_summary_hint"))}</p>
+    <div class="market-summary-grid">
+      ${summaryBlock(t("market_terminal_count"), number(state.markets.length))}
+      ${summaryBlock(t("live_terminal"), number(liveCount))}
+      ${summaryBlock(t("manage"), number(manageableCount))}
+      ${summaryBlock(t("selected_market"), selected?.marketName || "-")}
+    </div>
+    ${state.marketQuery && markets.length !== state.markets.length
+      ? `<div class="summary-note">${escapeHtml(number(markets.length))} / ${escapeHtml(number(state.markets.length))}</div>`
+      : ""}
+  `;
+}
+
+function renderSession() {
+  if (!state.session) {
+    if (els.sessionStatus) {
+      els.sessionStatus.textContent = `${t("not_signed_in")} ${t("guest_mode_ready")}`;
+    }
+    if (els.sessionStatusInline) {
+      els.sessionStatusInline.textContent = t("signin_status_guest");
+    }
+    if (els.sessionPill) {
+      els.sessionPill.textContent = t("guest_word");
+    }
+    return;
+  }
+
+  const accountPart = state.session.accountBound && state.session.accountUsername
+    ? ` 路 @${state.session.accountUsername}`
+    : "";
+  const sessionSummary = `${state.session.playerName} (${state.session.online ? t("online_word") : t("offline_word")})${accountPart}`;
+  if (els.sessionStatus) {
+    els.sessionStatus.textContent = sessionSummary;
+  }
+  if (els.sessionStatusInline) {
+    els.sessionStatusInline.textContent = t("signin_status_ready");
+  }
+  if (els.sessionPill) {
+    els.sessionPill.textContent = state.session.online ? `${state.session.playerName} ${t("online_word")}` : `${state.session.playerName} ${t("connected_word")}`;
+  }
+}
+
+function renderMarkets() {
+  const markets = filteredMarkets();
+  renderMarketSummary(markets);
+
+  if (!markets.length) {
+    els.marketList.innerHTML = `<div class="empty-state">${escapeHtml(state.marketQuery ? t("no_match") : t("no_markets"))}</div>`;
+    return;
+  }
+
+  els.marketList.innerHTML = markets.map((market) => `
+    <button type="button" class="market-card ${market.marketId === state.selectedMarketId ? "active" : ""}" data-market-id="${escapeHtml(market.marketId)}">
+      <p class="panel-meta">${market.loaded ? t("live_terminal") : t("chunk_cold")}</p>
+      <h3>${escapeHtml(market.marketName)}</h3>
+      <div class="muted">${escapeHtml(market.ownerName || market.townName || "-")}</div>
+      <div class="muted">${escapeHtml(market.dimensionId || "-")} @ ${escapeHtml(market.position || "-")}</div>
+      <div class="market-meta">
+        ${market.canManage ? `<span class="pill success">${escapeHtml(t("manage"))}</span>` : `<span class="pill">${escapeHtml(t("view"))}</span>`}
+        ${market.loaded ? `<span class="pill">${escapeHtml(t("loaded"))}</span>` : `<span class="pill warning">${escapeHtml(t("cold"))}</span>`}
+      </div>
+    </button>
+  `).join("");
+
+  document.querySelectorAll("[data-market-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.commodityQuery = "";
+      state.activeProductTab = "browse";
+      state.selectedCommodityKey = "";
+      state.catalogHoverGroup = "all";
+      state.catalogExpandedGroup = currentCatalogActiveGroup();
+      loadMarketDetail(node.getAttribute("data-market-id") || "", "push");
+    });
+  });
+}
+
+function renderWorkspaceRail(detail, catalog, canAct, canManage) {
+  const accessBody = canAct
+    ? (canManage ? t("manager_access") : t("browse_only"))
+    : `${t("guest_mode_ready")} ${t("sign_in_to_trade")}`;
+  return `
+    <div class="market-rail">
+      <div class="section-copy">
+        <p class="section-kicker">${escapeHtml(t("market_summary_title"))}</p>
+        <strong>${escapeHtml(activeWorkspaceSection() === "inventory" ? t("inventory_tab") : t(`${activeWorkspaceSection()}_tab`))}</strong>
+        <p>${escapeHtml(workspaceHint(activeWorkspaceSection()))}</p>
+      </div>
+      <div class="section-copy">
+        <p class="section-kicker">${escapeHtml(t("session_label"))}</p>
+        <strong>${escapeHtml(canAct ? (state.session?.playerName || t("signin_status_ready")) : t("signin_status_guest"))}</strong>
+        <p>${escapeHtml(accessBody)}</p>
+      </div>
+      <div class="section-copy">
+        <p class="section-kicker">${escapeHtml(t("commodity_types"))}</p>
+        <strong>${escapeHtml(number(catalog.length))}</strong>
+        <p>${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))}</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderDetail() {
+  const bars = [];
+  if (state.status) {
+    bars.push(`<div class="status-bar" aria-live="polite">${escapeHtml(state.status)}</div>`);
+  }
+  if (state.error) {
+    bars.push(`<div class="status-bar error" aria-live="polite">${escapeHtml(state.error)}</div>`);
+  }
+
+  const workspaceNav = `
+    <div class="workspace-toolbar">
+      <div class="workspace-switch">
+        ${workspaceButton("explore", t("explore_tab"))}
+        ${workspaceButton("trade", t("trade_tab"))}
+        ${state.detail?.canManage ? workspaceButton("inventory", t("inventory_tab")) : ""}
+        ${workspaceButton("analytics", t("analytics_tab"))}
+      </div>
+    </div>
+  `;
+
+  if (!state.detail) {
+    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${workspaceNav}<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div></div>`;
+    return;
+  }
+
+  const detail = state.detail;
+  const canManage = !!detail.canManage;
+  if (state.activeProductTab === "inventory" && !canManage) {
+    state.activeProductTab = "browse";
+  }
+  const canAct = !!state.session;
+  const catalog = buildCommodityCatalog(detail);
+  const inventoryCatalog = canManage ? buildInventoryCatalog(detail) : [];
+  const browseCatalog = filterCatalog(catalog);
+  const inventoryFilteredCatalog = filterCatalog(inventoryCatalog);
+  const inventorySelectedCommodity = findCommodityByKey(inventoryCatalog, state.selectedCommodityKey);
+  const selectedCommodity = state.activeProductTab === "inventory"
+    ? findCommodityByKey(catalog, state.selectedCommodityKey)
+    : getSelectedCommodity(browseCatalog, catalog);
+  syncRouteUrl(true);
+
+  const browseSection = renderCatalogShelf({
+    catalog,
+    filteredCatalog: browseCatalog,
+    kicker: t("browse_goods"),
+    title: t("commodity_shelf"),
+    emptyMessage: t("no_match"),
+    cardRenderer: (commodity) => renderCommodityCard(commodity)
+  });
+  const inventorySection = renderCatalogShelf({
+    catalog: inventoryCatalog,
+    filteredCatalog: inventoryFilteredCatalog,
+    kicker: t("inventory_tab"),
+    title: t("inventory_title"),
+    emptyMessage: t("no_inventory_rows"),
+    cardRenderer: (commodity) => renderInventoryCard(commodity)
+  });
+
+  els.marketDetail.innerHTML = `
+    ${bars.join("")}
+    <div class="market-shell">
+      ${workspaceNav}
+      <section class="market-overview">
+        <div class="market-header-card">
+          <div class="market-overview-layout">
+            <div class="overview-main">
+              <div class="detail-header">
+                <div class="overview-title">
+                  <p class="section-kicker">${escapeHtml(t("market_overview"))}</p>
+                  <h2>${escapeHtml(detail.marketName)}</h2>
+                  <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} 路 ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} 路 ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
+                </div>
+                <div class="market-meta">
+                  <span class="pill ${detail.linkedDock ? "success" : "warning"}">${detail.linkedDock ? escapeHtml(t("dock_linked")) : escapeHtml(t("no_linked_dock"))}</span>
+                  <span class="pill">${canManage ? escapeHtml(t("manager_access")) : escapeHtml(t("read_only"))}</span>
+                  <span class="pill">${canAct ? escapeHtml(t("signin_status_ready")) : escapeHtml(t("signin_status_guest"))}</span>
+                  <span class="pill">${number((detail.listings || []).length)} ${escapeHtml(t("listings_word"))}</span>
+                </div>
+              </div>
+              <div class="metric-strip">
+                ${metricBox(t("pending_credits"), number(detail.pendingCredits))}
+                ${metricBox(t("commodity_types"), number(catalog.length))}
+                ${metricBox(t("storage_units"), number(detail.stockpileTotalUnits))}
+                ${metricBox(t("open_demand"), number(detail.openDemandUnits))}
+                ${metricBox(t("my_buy_orders_metric"), number((detail.buyOrderEntries || []).length))}
+                ${state.settings.showTownEconomySummary ? metricBox(t("net_balance"), number(detail.netBalance)) : ""}
+              </div>
+            </div>
+            ${renderWorkspaceRail(detail, catalog, canAct, canManage)}
+          </div>
+        </div>
+      </section>
+
+      <section class="goods-market">
+        ${state.activeProductTab === "browse"
+          ? browseSection
+          : (state.activeProductTab === "inventory"
+            ? (inventorySelectedCommodity
+              ? renderInventoryDetailPage(inventorySelectedCommodity, detail, canManage, canAct)
+              : inventorySection)
+            : (selectedCommodity
+              ? renderCommodityDetailPage(selectedCommodity, detail, canManage, canAct)
+              : browseSection))}
+      </section>
+    </div>
+  `;
+
+  bindDetailActions();
+  hydrateCommodityIcons();
+  hydrateLightweightChart();
+}
+
+function renderCommodityDetailPage(commodity, detail, canManage, canAct) {
+  const activeSeries = primaryChartSeries(commodity);
+  const latestPoint = latestChartPoint(activeSeries);
+  const chartStats = chartSummary(activeSeries);
+  const workspaceSection = activeWorkspaceSection();
+  const detailNav = workspaceSection === "trade"
+    ? `<div class="tab-strip">${routeButton("sell", t("selling"))}${routeButton("buy", t("buying"))}</div>`
+    : workspaceSection === "analytics"
+      ? `<div class="tab-strip">${routeButton("chart", t("chart_tab"))}${routeButton("index", t("market_index_tab"))}</div>`
+      : `<div class="tab-strip">${routeButton("browse", t("browse_tab"))}${routeButton("sell", t("selling"))}${routeButton("chart", t("chart_tab"))}</div>`;
+
+  return `
+    <div class="goods-detail">
+      <div class="crumb-strip">
+        <span>${escapeHtml(t("market"))}</span>
+        <span>/</span>
+        <span>${escapeHtml(detail.marketName)}</span>
+        <span>/</span>
+        <strong>${escapeHtml(commodity.displayName)}</strong>
+      </div>
+
+      <section class="goods-hero">
+        ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
+        <div class="goods-main">
+          <div class="tiny-label">${escapeHtml(t("selected_commodity"))}</div>
+          <h2>${escapeHtml(commodity.displayName)}</h2>
+          <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
+          <div class="price-line">
+            ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}
+            <span class="minor">${escapeHtml(t("lowest_sell"))}${commodity.bestBuy == null ? "" : ` 路 ${escapeHtml(t("highest_buy"))} ${number(commodity.bestBuy)} bp`}</span>
+          </div>
+          <div class="goods-stats">
+            ${metricBox(t("sell_listings"), number(commodity.totalListings))}
+            ${metricBox(t("on_sale"), number(commodity.sellUnits))}
+            ${metricBox(t("buying_demand"), number(commodity.demandUnits))}
+            ${metricBox(t("in_storage"), number(commodity.storageUnits))}
+          </div>
+        </div>
+        <div class="quote-panel">
+          <div class="quote-box">
+            <span class="quote-label">${escapeHtml(t("lowest_sell"))}</span>
+            <strong>${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
+          </div>
+          <div class="quote-box buy">
+            <span class="quote-label">${escapeHtml(t("highest_buy"))}</span>
+            <strong>${commodity.bestBuy == null ? "--" : number(commodity.bestBuy)}</strong>
+          </div>
+          <div class="quote-box neutral">
+            <span class="quote-label">${escapeHtml(t("avg_24h"))}</span>
+            <strong>${latestPoint ? number(latestPoint.averageUnitPrice) : "--"}</strong>
+          </div>
+          <div class="quote-box neutral">
+            <span class="quote-label">${escapeHtml(t("trades_24h"))}</span>
+            <strong>${number(chartStats.tradeCount)}</strong>
+          </div>
+          <div class="quote-box neutral">
+            <span class="quote-label">${escapeHtml(t("reference_price"))}</span>
+            <strong>${commodity.referencePrice == null ? "--" : number(commodity.referencePrice)}</strong>
+          </div>
+          <div class="quote-box neutral">
+            <span class="quote-label">${escapeHtml(t("liquidity_score"))}</span>
+            <strong>${number(commodity.liquidityScore)}</strong>
+          </div>
+        </div>
+      </section>
+
+      ${detailNav}
+
+      ${renderCommodityPage(commodity, detail, canManage, canAct)}
+    </div>
+  `;
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -4142,6 +4853,10 @@ els.loginButton.addEventListener("click", login);
 els.copyCommandButton?.addEventListener("click", () => {
   copyText(state.settings.commandText || "/marketweb token", t("command_copied"));
 });
+els.accessToggle?.addEventListener("click", () => {
+  setAccessPanelOpen(!state.accessPanelOpen);
+  setNodeText(els.accessToggleLabel, t(state.accessPanelOpen ? "access_panel_open" : "access_panel_closed"));
+});
 els.refreshMarkets.addEventListener("click", async () => {
   try {
     await loadMarkets();
@@ -4156,6 +4871,10 @@ els.localeSelect?.addEventListener("change", (event) => {
   updateStaticCopy();
   renderMarkets();
   renderDetail();
+});
+els.marketSearch?.addEventListener("input", (event) => {
+  state.marketQuery = event.target.value || "";
+  renderMarkets();
 });
 els.token.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {

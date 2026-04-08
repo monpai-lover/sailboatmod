@@ -4,37 +4,59 @@ import com.monpai.sailboatmod.dock.DockRegistry;
 import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.dock.TownWarehouseRegistry;
 import com.monpai.sailboatmod.menu.WarehouseMenu;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
-import com.monpai.sailboatmod.nation.service.TownStockpileService;
+import com.monpai.sailboatmod.nation.model.TownStockpileRecord;
 import com.monpai.sailboatmod.nation.service.TownService;
+import com.monpai.sailboatmod.nation.service.TownStockpileService;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.MenuProvider;
+import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraftforge.registries.ForgeRegistries;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
-public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvider, Container {
+public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvider {
     public static final int STORAGE_SIZE = 54;
 
-    private final NonNullList<ItemStack> storage = NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY);
+    private static final String TAG_PLAYER_STORAGE = "PlayerStorage";
+    private static final String TAG_PLAYER_UUID = "PlayerUuid";
+    private static final String TAG_ITEMS = "Items";
+    private static final String TAG_LEGACY_STORAGE = "Storage";
+
+    private final Map<UUID, NonNullList<ItemStack>> playerStorage = new LinkedHashMap<>();
+    private final NonNullList<ItemStack> legacySharedStorage = NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY);
+
     private String townId = "";
     private String townName = "";
     private boolean terminalsImported = false;
+    private boolean legacyStorageMigrated = true;
 
     public TownWarehouseBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TOWN_WAREHOUSE_BLOCK_ENTITY.get(), pos, state);
@@ -45,6 +67,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         super.onLoad();
         if (level != null && !level.isClientSide) {
             resolveTownBinding();
+            migrateLegacyStorageToStockpile();
             tryImportTerminalStorage();
         }
     }
@@ -101,13 +124,42 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
             return false;
         }
         TownRecord town = TownService.getTownAt(level, worldPosition);
-        return town != null && TownService.canManageTown(player, com.monpai.sailboatmod.nation.data.NationSavedData.get(level), town);
+        return town != null && TownService.canManageTown(player, NationSavedData.get(level), town);
+    }
+
+    public boolean canAccessWarehouse(@Nullable Player player) {
+        if (player == null || level == null) {
+            return false;
+        }
+        TownRecord town = TownService.getTownAt(level, worldPosition);
+        if (town == null) {
+            return false;
+        }
+        if (player.getUUID().equals(town.mayorUuid())) {
+            return true;
+        }
+        if (level.isClientSide) {
+            return true;
+        }
+        if (player instanceof ServerPlayer serverPlayer && TownService.canManageTown(serverPlayer, NationSavedData.get(level), town)) {
+            return true;
+        }
+        if (town.nationId().isBlank()) {
+            return false;
+        }
+        NationMemberRecord member = NationSavedData.get(level).getMember(player.getUUID());
+        return member != null && town.nationId().equalsIgnoreCase(member.nationId());
+    }
+
+    public Container createPersonalContainer(Player player) {
+        UUID ownerId = player == null ? new UUID(0L, 0L) : player.getUUID();
+        return new PersonalWarehouseContainer(ownerId);
     }
 
     public List<String> getVisibleStorageLines() {
         List<String> lines = new ArrayList<>();
         for (StorageGroup group : getVisibleStorageGroups()) {
-            String itemName = group.displayStack().isEmpty() ? "-" : group.displayStack().getHoverName().getString();
+            String itemName = group.displayName();
             lines.add(clampUtf(itemName + " x" + group.totalCount(), 150));
         }
         return lines;
@@ -122,7 +174,9 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         if (visibleIndex < 0 || visibleIndex >= groups.size()) {
             return ItemStack.EMPTY;
         }
-        return groups.get(visibleIndex).displayStack().copy();
+        ItemStack stack = groups.get(visibleIndex).displayStack().copy();
+        stack.setCount(groups.get(visibleIndex).totalCount());
+        return stack;
     }
 
     public boolean extractVisibleStorage(int visibleIndex, int quantity) {
@@ -135,82 +189,55 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
     }
 
     public int countMatchingStock(ItemStack sample) {
-        if (sample == null || sample.isEmpty()) {
+        if (sample == null || sample.isEmpty() || level == null || getTownId().isBlank()) {
             return 0;
         }
-        int total = 0;
-        for (ItemStack stack : storage) {
-            if (!stack.isEmpty() && ItemStack.isSameItemSameTags(stack, sample)) {
-                total += stack.getCount();
-            }
-        }
-        return total;
+        return TownStockpileService.getAvailable(level, getTownId(), commodityKey(sample));
     }
 
     public boolean extractMatchingStock(ItemStack sample, int quantity) {
-        if (sample == null || sample.isEmpty() || quantity <= 0) {
+        if (sample == null || sample.isEmpty() || quantity <= 0 || level == null || getTownId().isBlank()) {
             return false;
         }
-        if (countMatchingStock(sample) < quantity) {
-            return false;
+        boolean removed = TownStockpileService.removeItemStack(level, getTownId(), sample, quantity);
+        if (removed) {
+            setChanged();
         }
-        int remaining = quantity;
-        for (int i = 0; i < storage.size() && remaining > 0; i++) {
-            ItemStack stack = storage.get(i);
-            if (stack.isEmpty() || !ItemStack.isSameItemSameTags(stack, sample)) {
-                continue;
-            }
-            int consume = Math.min(stack.getCount(), remaining);
-            stack.shrink(consume);
-            if (stack.isEmpty()) {
-                storage.set(i, ItemStack.EMPTY);
-            }
-            remaining -= consume;
-        }
-        if (!getTownId().isBlank()) {
-            TownStockpileService.removeItemStack(level, getTownId(), sample, quantity);
-        }
-        setChanged();
-        return remaining <= 0;
+        return removed;
     }
 
     public boolean canInsertCargo(List<ItemStack> cargo) {
-        if (cargo == null || cargo.isEmpty()) {
-            return true;
-        }
-        NonNullList<ItemStack> working = NonNullList.withSize(storage.size(), ItemStack.EMPTY);
-        for (int i = 0; i < storage.size(); i++) {
-            working.set(i, storage.get(i).copy());
-        }
-        for (ItemStack stack : cargo) {
-            if (stack == null || stack.isEmpty()) {
-                continue;
-            }
-            ItemStack remaining = stack.copy();
-            mergeIntoStorage(remaining, working);
-            if (!remaining.isEmpty()) {
-                return false;
-            }
-        }
-        return true;
+        return level != null && !getTownId().isBlank();
     }
 
     public boolean insertCargo(List<ItemStack> cargo) {
-        if (!canInsertCargo(cargo)) {
+        if (level == null || level.isClientSide || getTownId().isBlank() || cargo == null || cargo.isEmpty()) {
             return false;
         }
-        for (ItemStack stack : cargo) {
-            if (stack == null || stack.isEmpty()) {
-                continue;
-            }
-            ItemStack remaining = stack.copy();
-            mergeIntoStorage(remaining, storage);
-        }
-        if (!getTownId().isBlank()) {
-            TownStockpileService.addCargo(level, getTownId(), cargo);
-        }
+        TownStockpileService.addCargo(level, getTownId(), cargo);
         setChanged();
         return true;
+    }
+
+    private void migrateLegacyStorageToStockpile() {
+        if (legacyStorageMigrated || level == null || level.isClientSide) {
+            return;
+        }
+        if (getTownId().isBlank()) {
+            return;
+        }
+        List<ItemStack> legacyCargo = new ArrayList<>();
+        for (ItemStack stack : legacySharedStorage) {
+            if (!stack.isEmpty()) {
+                legacyCargo.add(stack.copy());
+            }
+        }
+        if (!legacyCargo.isEmpty()) {
+            TownStockpileService.addCargo(level, getTownId(), legacyCargo);
+        }
+        clearLegacyStorage();
+        legacyStorageMigrated = true;
+        setChanged();
     }
 
     private void tryImportTerminalStorage() {
@@ -235,72 +262,61 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
             if (terminalTown == null || !currentTownId.equals(terminalTown.townId())) {
                 continue;
             }
-            List<ItemStack> cargo = terminal.copyAllStorageCargo();
-            if (cargo.isEmpty() || !canInsertCargo(cargo)) {
-                continue;
-            }
             List<ItemStack> drained = terminal.drainAllStorageCargo();
-            if (!drained.isEmpty() && !insertCargo(drained)) {
-                terminal.insertCargo(drained);
+            if (!drained.isEmpty()) {
+                TownStockpileService.addCargo(level, currentTownId, drained);
             }
         }
         terminalsImported = true;
         setChanged();
     }
 
-    private List<StorageGroup> getVisibleStorageGroups() {
-        List<StorageGroupAccumulator> groups = new ArrayList<>();
-        for (int slot = 0; slot < storage.size(); slot++) {
-            ItemStack stack = storage.get(slot);
-            if (stack.isEmpty()) {
-                continue;
-            }
-            StorageGroupAccumulator target = null;
-            for (StorageGroupAccumulator group : groups) {
-                if (ItemStack.isSameItemSameTags(group.template, stack)) {
-                    target = group;
-                    break;
-                }
-            }
-            if (target == null) {
-                target = new StorageGroupAccumulator(stack.copy());
-                groups.add(target);
-            }
-            target.totalCount += stack.getCount();
-            target.slots.add(slot);
-        }
-        List<StorageGroup> visible = new ArrayList<>(groups.size());
-        for (StorageGroupAccumulator group : groups) {
-            ItemStack display = group.template.copy();
-            display.setCount(group.totalCount);
-            visible.add(new StorageGroup(display, group.totalCount));
-        }
-        return visible;
+    private NonNullList<ItemStack> getOrCreatePlayerStorage(UUID playerId) {
+        return playerStorage.computeIfAbsent(playerId, ignored -> NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY));
     }
 
-    private void mergeIntoStorage(ItemStack remaining, NonNullList<ItemStack> targetStorage) {
-        for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
-            ItemStack slot = targetStorage.get(i);
-            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, remaining)) {
-                continue;
-            }
-            int limit = Math.min(slot.getMaxStackSize(), 64);
-            int canMove = Math.min(limit - slot.getCount(), remaining.getCount());
-            if (canMove <= 0) {
-                continue;
-            }
-            slot.grow(canMove);
-            remaining.shrink(canMove);
+    private List<StorageGroup> getVisibleStorageGroups() {
+        if (level == null || getTownId().isBlank()) {
+            return List.of();
         }
-        for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
-            if (!targetStorage.get(i).isEmpty()) {
+        TownStockpileRecord stockpile = TownStockpileService.getStockpile(level, getTownId());
+        List<StorageGroup> groups = new ArrayList<>();
+        for (Map.Entry<String, Integer> entry : stockpile.commodityAmounts().entrySet()) {
+            int amount = Math.max(0, entry.getValue() == null ? 0 : entry.getValue());
+            if (amount <= 0) {
                 continue;
             }
-            int toMove = Math.min(remaining.getMaxStackSize(), remaining.getCount());
-            ItemStack moved = remaining.copy();
-            moved.setCount(toMove);
-            targetStorage.set(i, moved);
-            remaining.shrink(toMove);
+            ItemStack sample = sampleStack(entry.getKey(), amount);
+            String displayName = sample.isEmpty() ? entry.getKey() : sample.getHoverName().getString();
+            groups.add(new StorageGroup(sample, displayName, amount));
+        }
+        groups.sort((left, right) -> Integer.compare(right.totalCount(), left.totalCount()));
+        return groups;
+    }
+
+    private ItemStack sampleStack(String commodityKey, int amount) {
+        ResourceLocation key = ResourceLocation.tryParse(commodityKey == null ? "" : commodityKey.trim().toLowerCase(Locale.ROOT));
+        if (key == null) {
+            return ItemStack.EMPTY;
+        }
+        Item item = ForgeRegistries.ITEMS.getValue(key);
+        if (item == null) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack stack = item.getDefaultInstance();
+        stack.setCount(Math.max(1, Math.min(amount, stack.getMaxStackSize())));
+        return stack;
+    }
+
+    private static String commodityKey(ItemStack stack) {
+        ResourceLocation key = ForgeRegistries.ITEMS.getKey(stack.getItem());
+        return key == null ? "" : key.toString();
+    }
+
+    private void clearLegacyStorage() {
+        legacySharedStorage.clear();
+        while (legacySharedStorage.size() < STORAGE_SIZE) {
+            legacySharedStorage.add(ItemStack.EMPTY);
         }
     }
 
@@ -324,9 +340,18 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         tag.putString("TownId", getTownId());
         tag.putString("TownName", getTownName());
         tag.putBoolean("TerminalsImported", terminalsImported);
-        CompoundTag storageTag = new CompoundTag();
-        net.minecraft.world.ContainerHelper.saveAllItems(storageTag, storage);
-        tag.put("Storage", storageTag);
+        tag.putBoolean("LegacyStorageMigrated", legacyStorageMigrated);
+
+        ListTag players = new ListTag();
+        for (Map.Entry<UUID, NonNullList<ItemStack>> entry : playerStorage.entrySet()) {
+            CompoundTag playerTag = new CompoundTag();
+            playerTag.putUUID(TAG_PLAYER_UUID, entry.getKey());
+            CompoundTag itemsTag = new CompoundTag();
+            ContainerHelper.saveAllItems(itemsTag, entry.getValue());
+            playerTag.put(TAG_ITEMS, itemsTag);
+            players.add(playerTag);
+        }
+        tag.put(TAG_PLAYER_STORAGE, players);
     }
 
     @Override
@@ -335,8 +360,25 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         townId = tag.getString("TownId");
         townName = tag.getString("TownName");
         terminalsImported = tag.getBoolean("TerminalsImported");
-        storage.clear();
-        net.minecraft.world.ContainerHelper.loadAllItems(tag.getCompound("Storage"), storage);
+        legacyStorageMigrated = !tag.contains(TAG_LEGACY_STORAGE, Tag.TAG_COMPOUND) || tag.getBoolean("LegacyStorageMigrated");
+
+        playerStorage.clear();
+        ListTag players = tag.getList(TAG_PLAYER_STORAGE, Tag.TAG_COMPOUND);
+        for (Tag raw : players) {
+            if (!(raw instanceof CompoundTag playerTag) || !playerTag.hasUUID(TAG_PLAYER_UUID)) {
+                continue;
+            }
+            UUID playerId = playerTag.getUUID(TAG_PLAYER_UUID);
+            NonNullList<ItemStack> storage = NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY);
+            ContainerHelper.loadAllItems(playerTag.getCompound(TAG_ITEMS), storage);
+            playerStorage.put(playerId, storage);
+        }
+
+        clearLegacyStorage();
+        if (tag.contains(TAG_LEGACY_STORAGE, Tag.TAG_COMPOUND)) {
+            ContainerHelper.loadAllItems(tag.getCompound(TAG_LEGACY_STORAGE), legacySharedStorage);
+            legacyStorageMigrated = false;
+        }
     }
 
     @Override
@@ -347,81 +389,9 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
     @Nullable
     @Override
     public AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player) {
-        return new WarehouseMenu(containerId, playerInventory, this);
+        return new WarehouseMenu(containerId, playerInventory, this, createPersonalContainer(player));
     }
 
-    @Override
-    public int getContainerSize() {
-        return storage.size();
-    }
-
-    @Override
-    public boolean isEmpty() {
-        for (ItemStack stack : storage) {
-            if (!stack.isEmpty()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
-    public ItemStack getItem(int slot) {
-        return slot >= 0 && slot < storage.size() ? storage.get(slot) : ItemStack.EMPTY;
-    }
-
-    @Override
-    public ItemStack removeItem(int slot, int amount) {
-        if (slot < 0 || slot >= storage.size() || amount <= 0) {
-            return ItemStack.EMPTY;
-        }
-        ItemStack removed = net.minecraft.world.ContainerHelper.removeItem(storage, slot, amount);
-        if (!removed.isEmpty() && !getTownId().isBlank()) {
-            TownStockpileService.removeItemStack(level, getTownId(), removed, removed.getCount());
-        }
-        if (!removed.isEmpty()) {
-            setChanged();
-        }
-        return removed;
-    }
-
-    @Override
-    public ItemStack removeItemNoUpdate(int slot) {
-        if (slot < 0 || slot >= storage.size()) {
-            return ItemStack.EMPTY;
-        }
-        ItemStack removed = net.minecraft.world.ContainerHelper.takeItem(storage, slot);
-        if (!removed.isEmpty() && !getTownId().isBlank()) {
-            TownStockpileService.removeItemStack(level, getTownId(), removed, removed.getCount());
-        }
-        if (!removed.isEmpty()) {
-            setChanged();
-        }
-        return removed;
-    }
-
-    @Override
-    public void setItem(int slot, ItemStack stack) {
-        if (slot < 0 || slot >= storage.size()) {
-            return;
-        }
-        ItemStack previous = storage.get(slot).copy();
-        storage.set(slot, stack == null ? ItemStack.EMPTY : stack);
-        if (!getTownId().isBlank()) {
-            if (!previous.isEmpty()) {
-                TownStockpileService.removeItemStack(level, getTownId(), previous, previous.getCount());
-            }
-            if (stack != null && !stack.isEmpty()) {
-                TownStockpileService.addItemStack(level, getTownId(), stack, stack.getCount());
-            }
-        }
-        if (stack != null && !stack.isEmpty()) {
-            stack.setCount(Math.min(stack.getCount(), getMaxStackSize()));
-        }
-        setChanged();
-    }
-
-    @Override
     public boolean stillValid(Player player) {
         return player != null
                 && level != null
@@ -429,32 +399,98 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
                 && player.distanceToSqr(worldPosition.getX() + 0.5D, worldPosition.getY() + 0.5D, worldPosition.getZ() + 0.5D) <= 64.0D;
     }
 
-    @Override
-    public void clearContent() {
-        if (!getTownId().isBlank()) {
-            for (ItemStack stack : storage) {
+    private final class PersonalWarehouseContainer implements Container {
+        private final UUID ownerId;
+
+        private PersonalWarehouseContainer(UUID ownerId) {
+            this.ownerId = ownerId;
+        }
+
+        @Override
+        public int getContainerSize() {
+            return STORAGE_SIZE;
+        }
+
+        @Override
+        public boolean isEmpty() {
+            for (ItemStack stack : getOrCreatePlayerStorage(ownerId)) {
                 if (!stack.isEmpty()) {
-                    TownStockpileService.removeItemStack(level, getTownId(), stack, stack.getCount());
+                    return false;
                 }
             }
+            return true;
         }
-        storage.clear();
-        while (storage.size() < STORAGE_SIZE) {
-            storage.add(ItemStack.EMPTY);
+
+        @Override
+        public ItemStack getItem(int slot) {
+            NonNullList<ItemStack> storage = getOrCreatePlayerStorage(ownerId);
+            return slot >= 0 && slot < storage.size() ? storage.get(slot) : ItemStack.EMPTY;
         }
-        setChanged();
+
+        @Override
+        public ItemStack removeItem(int slot, int amount) {
+            if (slot < 0 || amount <= 0) {
+                return ItemStack.EMPTY;
+            }
+            NonNullList<ItemStack> storage = getOrCreatePlayerStorage(ownerId);
+            if (slot >= storage.size()) {
+                return ItemStack.EMPTY;
+            }
+            ItemStack removed = ContainerHelper.removeItem(storage, slot, amount);
+            if (!removed.isEmpty()) {
+                setChanged();
+            }
+            return removed;
+        }
+
+        @Override
+        public ItemStack removeItemNoUpdate(int slot) {
+            NonNullList<ItemStack> storage = getOrCreatePlayerStorage(ownerId);
+            if (slot < 0 || slot >= storage.size()) {
+                return ItemStack.EMPTY;
+            }
+            ItemStack removed = ContainerHelper.takeItem(storage, slot);
+            if (!removed.isEmpty()) {
+                setChanged();
+            }
+            return removed;
+        }
+
+        @Override
+        public void setItem(int slot, ItemStack stack) {
+            NonNullList<ItemStack> storage = getOrCreatePlayerStorage(ownerId);
+            if (slot < 0 || slot >= storage.size()) {
+                return;
+            }
+            ItemStack safeStack = stack == null ? ItemStack.EMPTY : stack.copy();
+            if (!safeStack.isEmpty()) {
+                safeStack.setCount(Math.min(safeStack.getCount(), getMaxStackSize()));
+            }
+            storage.set(slot, safeStack);
+            setChanged();
+        }
+
+        @Override
+        public void setChanged() {
+            TownWarehouseBlockEntity.this.setChanged();
+        }
+
+        @Override
+        public boolean stillValid(Player player) {
+            return TownWarehouseBlockEntity.this.stillValid(player);
+        }
+
+        @Override
+        public void clearContent() {
+            NonNullList<ItemStack> storage = getOrCreatePlayerStorage(ownerId);
+            storage.clear();
+            while (storage.size() < STORAGE_SIZE) {
+                storage.add(ItemStack.EMPTY);
+            }
+            setChanged();
+        }
     }
 
-    private record StorageGroup(ItemStack displayStack, int totalCount) {
-    }
-
-    private static final class StorageGroupAccumulator {
-        private final ItemStack template;
-        private final List<Integer> slots = new ArrayList<>();
-        private int totalCount;
-
-        private StorageGroupAccumulator(ItemStack template) {
-            this.template = template;
-        }
+    private record StorageGroup(ItemStack displayStack, String displayName, int totalCount) {
     }
 }

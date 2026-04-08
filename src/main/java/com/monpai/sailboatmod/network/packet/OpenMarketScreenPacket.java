@@ -186,6 +186,8 @@ public class OpenMarketScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, entry.itemName(), 96);
             buffer.writeVarInt(entry.quantity());
             buffer.writeVarInt(entry.suggestedUnitPrice());
+            buffer.writeVarInt(entry.minAllowedUnitPrice());
+            buffer.writeVarInt(entry.maxAllowedUnitPrice());
             PacketStringCodec.writeUtfSafe(buffer, entry.detail(), 192);
             PacketStringCodec.writeUtfSafe(buffer, entry.category(), 48);
             buffer.writeVarInt(entry.rarity());
@@ -200,6 +202,8 @@ public class OpenMarketScreenPacket {
                     buffer.readUtf(160),
                     buffer.readUtf(128),
                     buffer.readUtf(96),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readUtf(192),

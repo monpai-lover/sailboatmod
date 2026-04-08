@@ -235,6 +235,7 @@ public class NationHomeScreen extends Screen {
         int left = left();
         int top = top();
         this.refreshButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.refresh"), b -> requestRefresh()).bounds(left + SCREEN_W - 82, top + 12, 70, 18).build());
+        this.refreshButton.visible = false;
         this.overviewTabButton = addTabButton(left + 12, top + 36, Page.OVERVIEW, Component.translatable("screen.sailboatmod.nation.section.overview"));
         this.membersTabButton = addTabButton(left + 76, top + 36, Page.MEMBERS, Component.translatable("screen.sailboatmod.nation.section.members"));
         this.claimsTabButton = addTabButton(left + 140, top + 36, Page.CLAIMS, Component.translatable("screen.sailboatmod.nation.section.claims"));
@@ -313,6 +314,7 @@ public class NationHomeScreen extends Screen {
 
         // Claim radius buttons
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
+        this.resetMapButton.visible = false;
         this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
             com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket());
             maybeRequestPreviewRefresh();

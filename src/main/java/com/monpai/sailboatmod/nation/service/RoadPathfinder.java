@@ -26,11 +26,13 @@ public final class RoadPathfinder {
     private static final double DISTANCE_COST = 0.55D;
     private static final double HEIGHT_PENALTY = 3.0D;
     private static final double TURN_PENALTY = 0.65D;
-    private static final double WATER_PENALTY = 5000.0D;
-    private static final double ROAD_BONUS = 1.8D;
-    private static final double SOFT_GROUND_PENALTY = 1.5D;
-    private static final double MAX_STEP_HEIGHT = 4.0D;
-    private static final int MAX_VISITED_NODES = 20000;
+    private static final double WATER_PENALTY = 18.0D;
+    private static final double NEAR_WATER_PENALTY = 3.5D;
+    private static final double CLIFF_PENALTY = 4.5D;
+    private static final double ROAD_BONUS = 2.1D;
+    private static final double SOFT_GROUND_PENALTY = 1.8D;
+    private static final double MAX_STEP_HEIGHT = 5.0D;
+    private static final int MAX_VISITED_NODES = 32000;
 
     private RoadPathfinder() {}
 
@@ -106,11 +108,15 @@ public final class RoadPathfinder {
         if (crossesWater(level, next)) {
             terrainCost += WATER_PENALTY;
         }
+        terrainCost += adjacentWaterCount(level, next) * NEAR_WATER_PENALTY;
         if (isSoftGround(level, next)) {
             terrainCost += SOFT_GROUND_PENALTY;
         }
         if (isRoad(level, next)) {
             terrainCost = Math.max(0.35D, terrainCost - ROAD_BONUS);
+        }
+        if (heightDiff >= 3) {
+            terrainCost += CLIFF_PENALTY * heightDiff;
         }
 
         if (current.parent != null) {
@@ -148,7 +154,7 @@ public final class RoadPathfinder {
             return rawPath;
         }
         List<BlockPos> simplified = simplifyPath(level, rawPath);
-        return rasterizeSegments(level, simplified);
+        return smoothPath(level, rasterizeSegments(level, simplified));
     }
 
     private static List<BlockPos> simplifyPath(Level level, List<BlockPos> rawPath) {
@@ -234,6 +240,33 @@ public final class RoadPathfinder {
         return line;
     }
 
+    private static List<BlockPos> smoothPath(Level level, List<BlockPos> path) {
+        if (path.size() <= 3) {
+            return path;
+        }
+        List<BlockPos> smoothed = new ArrayList<>(path);
+        boolean changed;
+        do {
+            changed = false;
+            for (int i = 1; i < smoothed.size() - 1; i++) {
+                BlockPos previous = smoothed.get(i - 1);
+                BlockPos current = smoothed.get(i);
+                BlockPos next = smoothed.get(i + 1);
+                int prevDx = Integer.compare(current.getX(), previous.getX());
+                int prevDz = Integer.compare(current.getZ(), previous.getZ());
+                int nextDx = Integer.compare(next.getX(), current.getX());
+                int nextDz = Integer.compare(next.getZ(), current.getZ());
+                boolean zigZag = prevDx == -nextDx && prevDz == -nextDz;
+                if (zigZag || hasLineOfTravel(level, previous, next)) {
+                    smoothed.remove(i);
+                    changed = true;
+                    break;
+                }
+            }
+        } while (changed && smoothed.size() > 2);
+        return smoothed;
+    }
+
     private static BlockPos findNearestSurface(Level level, int x, int z, int preferredY) {
         BlockPos direct = findSurface(level, x, z);
         if (direct != null && Math.abs(direct.getY() - preferredY) <= MAX_STEP_HEIGHT) {
@@ -271,9 +304,20 @@ public final class RoadPathfinder {
     }
 
     private static boolean crossesWater(Level level, BlockPos pos) {
-        return pos.getY() <= level.getSeaLevel()
-                || !level.getBlockState(pos).getFluidState().isEmpty()
-                || !level.getBlockState(pos.above()).getFluidState().isEmpty();
+        return !level.getBlockState(pos).getFluidState().isEmpty()
+                || !level.getBlockState(pos.above()).getFluidState().isEmpty()
+                || !level.getBlockState(pos.below()).getFluidState().isEmpty();
+    }
+
+    private static int adjacentWaterCount(Level level, BlockPos pos) {
+        int count = 0;
+        for (BlockPos nearby : List.of(pos.north(), pos.south(), pos.east(), pos.west())) {
+            if (!level.getBlockState(nearby).getFluidState().isEmpty()
+                    || !level.getBlockState(nearby.below()).getFluidState().isEmpty()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static boolean isSoftGround(Level level, BlockPos pos) {

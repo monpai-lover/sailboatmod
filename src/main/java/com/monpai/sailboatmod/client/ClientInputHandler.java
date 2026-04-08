@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.client.screen.CarriageInfoScreen;
 import com.monpai.sailboatmod.client.screen.SailboatInfoScreen;
+import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.item.BankConstructorItem;
@@ -45,7 +47,9 @@ public final class ClientInputHandler {
         }
 
         if (player.getVehicle() instanceof SailboatEntity sailboat && ClientKeyMappings.OPEN_SAILBOAT_INFO.consumeClick()) {
-            minecraft.setScreen(new SailboatInfoScreen(sailboat));
+            minecraft.setScreen(sailboat instanceof CarriageEntity carriage
+                    ? new CarriageInfoScreen(carriage)
+                    : new SailboatInfoScreen(sailboat));
         }
     }
 
