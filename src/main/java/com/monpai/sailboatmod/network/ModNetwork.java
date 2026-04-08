@@ -41,9 +41,11 @@ import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerTargetPacket;
 import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
+import com.monpai.sailboatmod.network.packet.SyncConstructionGhostPreviewPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.network.packet.UseBuilderHammerPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetTownClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetDockZonePacket;
@@ -400,6 +402,14 @@ public final class ModNetwork {
         );
         CHANNEL.registerMessage(
                 packetId++,
+                SyncConstructionGhostPreviewPacket.class,
+                SyncConstructionGhostPreviewPacket::encode,
+                SyncConstructionGhostPreviewPacket::decode,
+                SyncConstructionGhostPreviewPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
                 CreateBuyOrderPacket.class,
                 CreateBuyOrderPacket::encode,
                 CreateBuyOrderPacket::decode,
@@ -457,6 +467,13 @@ public final class ModNetwork {
                 SyncRoadConstructionProgressPacket::decode,
                 SyncRoadConstructionProgressPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                UseBuilderHammerPacket.class,
+                UseBuilderHammerPacket::encode,
+                UseBuilderHammerPacket::decode,
+                UseBuilderHammerPacket::handle
         );
     }
 

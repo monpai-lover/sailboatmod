@@ -29,7 +29,7 @@ public class SyncRoadConstructionProgressPacket {
     public static void encode(SyncRoadConstructionProgressPacket msg, FriendlyByteBuf buf) {
         buf.writeVarInt(msg.entries.size());
         for (Entry entry : msg.entries) {
-            buf.writeUtf(entry.roadId(), 80);
+            buf.writeUtf(entry.roadId(), ConstructionPacketStringLimits.MAX_ROAD_ID_LENGTH);
             buf.writeUtf(entry.sourceTownName(), 64);
             buf.writeUtf(entry.targetTownName(), 64);
             buf.writeBlockPos(entry.origin());
@@ -43,7 +43,7 @@ public class SyncRoadConstructionProgressPacket {
         List<Entry> entries = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             entries.add(new Entry(
-                    buf.readUtf(80),
+                    buf.readUtf(ConstructionPacketStringLimits.MAX_ROAD_ID_LENGTH),
                     buf.readUtf(64),
                     buf.readUtf(64),
                     buf.readBlockPos(),

@@ -165,6 +165,27 @@ final class StructureConstructionSite {
         return nextBlock != null ? nextBlock.relativePos() : anchorPos();
     }
 
+    public BlueprintService.BlueprintBlock currentTargetBlock() {
+        refreshPlacedBlocks();
+        return findNextBlockToPlace();
+    }
+
+    public List<BlueprintService.BlueprintBlock> remainingBlocks() {
+        refreshPlacedBlocks();
+        List<BlueprintService.BlueprintBlock> remaining = new ArrayList<>();
+        for (BlueprintService.BlueprintBlock block : blocks) {
+            if (!placedBlockPosSet.contains(block.relativePos())) {
+                remaining.add(block);
+            }
+        }
+        return List.copyOf(remaining);
+    }
+
+    public boolean advanceOneStep() {
+        refreshPlacedBlocks();
+        return buildNextBlock();
+    }
+
     public BlockPos approachPos(BlockPos workerPos) {
         BlockPos focus = focusPos();
         BlockPos fallback = anchorPos();

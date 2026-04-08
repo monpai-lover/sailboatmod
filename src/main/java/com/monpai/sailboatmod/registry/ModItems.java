@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.registry;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.item.BankConstructorItem;
+import com.monpai.sailboatmod.item.BuilderHammerItem;
 import com.monpai.sailboatmod.item.CarriageItem;
 import com.monpai.sailboatmod.item.CommandBatonItem;
 import com.monpai.sailboatmod.item.DescribedBlockItem;
@@ -88,6 +89,11 @@ public final class ModItems {
     public static final RegistryObject<Item> BANK_CONSTRUCTOR_ITEM = ITEMS.register(
             "bank_constructor",
             () -> new BankConstructorItem(new Item.Properties().stacksTo(1))
+    );
+
+    public static final RegistryObject<Item> BUILDER_HAMMER_ITEM = ITEMS.register(
+            "builder_hammer",
+            () -> new BuilderHammerItem(new Item.Properties().stacksTo(1).durability(256))
     );
 
     public static final RegistryObject<Item> COTTAGE_ITEM = ITEMS.register(

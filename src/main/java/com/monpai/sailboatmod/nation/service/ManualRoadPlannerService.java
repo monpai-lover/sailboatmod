@@ -18,10 +18,12 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -183,7 +185,8 @@ public final class ManualRoadPlannerService {
             return null;
         }
 
-        List<BlockPos> rawPath = RoadPathfinder.findPath(level, sourceAnchor, targetAnchor);
+        Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
+        List<BlockPos> rawPath = RoadPathfinder.findPath(level, sourceAnchor, targetAnchor, blockedColumns);
         List<BlockPos> path = normalizePath(sourceAnchor, rawPath, targetAnchor);
         if (path.size() < 2) {
             return null;
@@ -269,15 +272,19 @@ public final class ManualRoadPlannerService {
     private static BlockPos resolveTownAnchor(ServerLevel level, NationSavedData data, TownRecord town,
                                               List<NationClaimRecord> claims, BlockPos preferredFallback, BlockPos towardPos) {
         BlockPos roadNode = nearestRoadNodeInClaims(level, data, claims, towardPos);
-        if (roadNode != null) {
+        if (isValidRoadAnchor(level, roadNode)) {
             return roadNode;
         }
         BlockPos boundary = nearestBoundaryAnchor(level, claims, towardPos, preferredFallback == null ? level.getSeaLevel() : preferredFallback.getY());
-        if (boundary != null) {
+        if (isValidRoadAnchor(level, boundary)) {
             return boundary;
         }
         BlockPos townCore = townCorePos(level, town);
-        return townCore == null ? surfaceAt(level, preferredFallback) : townCore;
+        if (isValidRoadAnchor(level, townCore)) {
+            return townCore;
+        }
+        BlockPos fallback = surfaceAt(level, preferredFallback);
+        return isValidRoadAnchor(level, fallback) ? fallback : null;
     }
 
     private static BlockPos townCorePos(ServerLevel level, TownRecord town) {
@@ -296,7 +303,7 @@ public final class ManualRoadPlannerService {
                 continue;
             }
             for (BlockPos pos : road.path()) {
-                if (!isInClaims(claims, pos)) {
+                if (!isInClaims(claims, pos) || !isValidRoadAnchor(level, pos)) {
                     continue;
                 }
                 double distance = towardPos == null ? 0.0D : pos.distSqr(towardPos);
@@ -323,20 +330,15 @@ public final class ManualRoadPlannerService {
             if (!isBoundaryClaim(claim, claimKeys)) {
                 continue;
             }
-            int minX = claim.chunkX() * 16;
-            int minZ = claim.chunkZ() * 16;
-            int maxX = minX + 15;
-            int maxZ = minZ + 15;
-            int x = targetEdgeCoordinate(towardPos.getX(), minX, maxX);
-            int z = targetEdgeCoordinate(towardPos.getZ(), minZ, maxZ);
-            BlockPos surface = surfaceAt(level, new BlockPos(x, fallbackY, z));
-            if (surface == null) {
-                continue;
-            }
-            double distance = surface.distSqr(towardPos);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                best = surface;
+            for (BlockPos candidate : exposedBoundaryCandidates(level, claim, claimKeys, towardPos, fallbackY)) {
+                if (!isValidRoadAnchor(level, candidate)) {
+                    continue;
+                }
+                double distance = candidate.distSqr(towardPos);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = candidate;
+                }
             }
         }
         return best;
@@ -371,6 +373,112 @@ public final class ManualRoadPlannerService {
 
     private static long chunkKey(int chunkX, int chunkZ) {
         return ((long) chunkX << 32) ^ (chunkZ & 0xffffffffL);
+    }
+
+    private static List<BlockPos> exposedBoundaryCandidates(ServerLevel level,
+                                                            NationClaimRecord claim,
+                                                            Set<Long> claimKeys,
+                                                            BlockPos towardPos,
+                                                            int fallbackY) {
+        LinkedHashSet<BlockPos> candidates = new LinkedHashSet<>();
+        int minX = claim.chunkX() * 16;
+        int minZ = claim.chunkZ() * 16;
+        int maxX = minX + 15;
+        int maxZ = minZ + 15;
+
+        if (!claimKeys.contains(chunkKey(claim.chunkX() - 1, claim.chunkZ()))) {
+            int x = minX + 1;
+            for (int z = minZ + 1; z <= maxZ - 1; z++) {
+                candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+            }
+        }
+        if (!claimKeys.contains(chunkKey(claim.chunkX() + 1, claim.chunkZ()))) {
+            int x = maxX - 1;
+            for (int z = minZ + 1; z <= maxZ - 1; z++) {
+                candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+            }
+        }
+        if (!claimKeys.contains(chunkKey(claim.chunkX(), claim.chunkZ() - 1))) {
+            int z = minZ + 1;
+            for (int x = minX + 1; x <= maxX - 1; x++) {
+                candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+            }
+        }
+        if (!claimKeys.contains(chunkKey(claim.chunkX(), claim.chunkZ() + 1))) {
+            int z = maxZ - 1;
+            for (int x = minX + 1; x <= maxX - 1; x++) {
+                candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+            }
+        }
+
+        List<BlockPos> ordered = new ArrayList<>();
+        for (BlockPos candidate : candidates) {
+            if (candidate != null) {
+                ordered.add(candidate);
+            }
+        }
+        ordered.sort((left, right) -> Double.compare(left.distSqr(towardPos), right.distSqr(towardPos)));
+        return ordered;
+    }
+
+    private static Set<Long> collectBlockedRoadColumns(ServerLevel level,
+                                                       NationSavedData data,
+                                                       TownRecord sourceTown,
+                                                       TownRecord targetTown) {
+        Set<Long> blocked = new HashSet<>();
+        String dimensionId = level.dimension().location().toString();
+        for (com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure : data.getPlacedStructures()) {
+            if (!dimensionId.equalsIgnoreCase(structure.dimensionId())) {
+                continue;
+            }
+            addBlockedColumns(blocked, structure);
+        }
+        unblockCoreColumn(blocked, townCorePos(level, sourceTown));
+        unblockCoreColumn(blocked, townCorePos(level, targetTown));
+        return blocked;
+    }
+
+    private static void addBlockedColumns(Set<Long> blocked, com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure) {
+        if (blocked == null || structure == null) {
+            return;
+        }
+        BlockPos origin = structure.origin();
+        int minX = origin.getX() - 1;
+        int minZ = origin.getZ() - 1;
+        int maxX = origin.getX() + structure.sizeW();
+        int maxZ = origin.getZ() + structure.sizeD();
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                blocked.add(columnKey(x, z));
+            }
+        }
+    }
+
+    private static void unblockCoreColumn(Set<Long> blocked, BlockPos corePos) {
+        if (blocked == null || corePos == null) {
+            return;
+        }
+        blocked.remove(columnKey(corePos.getX(), corePos.getZ()));
+    }
+
+    private static boolean isValidRoadAnchor(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        BlockState surface = level.getBlockState(pos);
+        if (!surface.isFaceSturdy(level, pos, net.minecraft.core.Direction.UP)
+                || !surface.getFluidState().isEmpty()
+                || !level.getBlockState(pos.above()).getFluidState().isEmpty()) {
+            return false;
+        }
+        BlockState roadState = level.getBlockState(pos.above());
+        BlockState headState = level.getBlockState(pos.above(2));
+        return (roadState.isAir() || roadState.canBeReplaced() || roadState.liquid())
+                && (headState.isAir() || headState.canBeReplaced() || headState.liquid());
+    }
+
+    private static long columnKey(int x, int z) {
+        return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
     private static BlockPos surfaceAt(ServerLevel level, BlockPos pos) {
