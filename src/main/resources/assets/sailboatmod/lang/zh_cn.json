@@ -1473,5 +1473,18 @@
     "command.sailboatmod.nation.office.info.header": "国家官职列表：",
     "command.sailboatmod.nation.office.info.entry": "%s（%s）| 优先级 %s | 权限 %s",
     "item.sailboatmod.structure.school": "学校",
-    "item.sailboatmod.structure.cottage": "小屋"
+    "item.sailboatmod.structure.cottage": "小屋",
+    "item.sailboatmod.builder_hammer": "建筑锤",
+    "item.sailboatmod.builder_hammer.tip.use": "右键施工中的半透明预览方块，可排入一次催工加速。",
+    "item.sailboatmod.builder_hammer.tip.cost": "会消耗耐久，并优先扣除钱包资金，不足时再扣国库。",
+    "message.sailboatmod.builder_hammer.no_permission": "你没有权限加速这处施工。",
+    "message.sailboatmod.builder_hammer.invalid_target": "这个半透明施工预览已经不是有效目标了。",
+    "message.sailboatmod.builder_hammer.insufficient_funds": "你的钱包和国库资金都不足，无法使用建筑锤。",
+    "message.sailboatmod.builder_hammer.queue_full": "这处施工的建筑锤加速队列已满。",
+    "message.sailboatmod.builder_hammer.too_far": "请靠近施工预览后再使用建筑锤。",
+    "message.sailboatmod.builder_hammer.queued_building": "已排入一次建筑催工。钱包 %s，国库 %s。",
+    "message.sailboatmod.builder_hammer.queued_road": "已排入一次道路催工。钱包 %s，国库 %s。",
+    "overlay.sailboatmod.builder_hammer.ready": "建筑锤已锁定目标",
+    "overlay.sailboatmod.builder_hammer.building": "当前目标：建筑施工预览",
+    "overlay.sailboatmod.builder_hammer.road": "当前目标：道路施工预览"
 }

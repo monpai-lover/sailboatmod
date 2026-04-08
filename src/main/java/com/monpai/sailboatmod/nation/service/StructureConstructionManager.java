@@ -1,15 +1,23 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.client.ConstructionGhostClientHooks;
+import com.monpai.sailboatmod.construction.BuilderHammerChargePlan;
+import com.monpai.sailboatmod.construction.BuilderHammerCreditState;
+import com.monpai.sailboatmod.construction.RuntimeRoadGhostWindow;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.SyncConstructionGhostPreviewPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
+import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
+import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.resident.service.ConstructionScaffoldingService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -67,7 +75,7 @@ public final class StructureConstructionManager {
     }
 
     private record ConstructionJob(ServerLevel level, UUID ownerUuid, StructureType type,
-                                   String projectId, StructureConstructionSite site) {}
+                                   String projectId, String townId, String nationId, StructureConstructionSite site) {}
 
     public record AssistPlacementResult(boolean success, boolean completed, Component message) {}
     public record WorkerSiteAssignment(String jobId, BlockPos anchorPos, BlockPos approachPos, BlockPos focusPos,
@@ -111,6 +119,8 @@ public final class StructureConstructionManager {
     private record RoadConstructionJob(ServerLevel level,
                                        String roadId,
                                        UUID ownerUuid,
+                                       String townId,
+                                       String nationId,
                                        String sourceTownName,
                                        String targetTownName,
                                        List<BlockPos> path,
@@ -124,6 +134,12 @@ public final class StructureConstructionManager {
     private record RoadAnchor(BlockPos pos, Direction side) {}
     private record PreviewRoadTarget(BlockPos pos, PreviewRoadTargetKind kind) {}
     private record RoadPlacementStyle(BlockState surface, BlockState support, boolean bridge) {}
+    private record HammerUseResult(boolean success, Component message) {
+        private static HammerUseResult failure(String key) {
+            return new HammerUseResult(false, Component.translatable(key));
+        }
+    }
+    private record HammerChargeResult(boolean success, long walletSpent, long treasurySpent, Component message) {}
     private record DisjointSet(Map<String, String> parent) {
         DisjointSet() {
             this(new HashMap<>());
@@ -135,6 +151,9 @@ public final class StructureConstructionManager {
     private static final Map<String, List<BlockPos>> ACTIVE_ASSIST_SITES = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, ActiveWorker>> ACTIVE_SITE_WORKERS = new ConcurrentHashMap<>();
     private static final Map<String, Map<String, ActiveWorker>> ACTIVE_ROAD_WORKERS = new ConcurrentHashMap<>();
+    private static final Map<String, Integer> ACTIVE_BUILDING_HAMMER_CREDITS = new ConcurrentHashMap<>();
+    private static final Map<String, Integer> ACTIVE_ROAD_HAMMER_CREDITS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> PLAYER_HAMMER_COOLDOWNS = new ConcurrentHashMap<>();
     private static final Set<String> RESTORED_DIMENSIONS = ConcurrentHashMap.newKeySet();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
     private static final int ROAD_BUILD_DURATION_TICKS = 200; // ~10 seconds for roads
@@ -144,6 +163,13 @@ public final class StructureConstructionManager {
     private static final int PREVIEW_ROAD_SEARCH_RADIUS = 48;
     private static final int PREVIEW_ROAD_CANDIDATE_LIMIT = 18;
     private static final int PREVIEW_ROAD_CONNECTION_LIMIT = 3;
+    private static final int BUILDER_HAMMER_MAX_CREDITS = 5;
+    private static final long BUILDER_HAMMER_COOLDOWN_TICKS = 5L;
+    private static final long BUILDER_HAMMER_BUILDING_COST = 48L;
+    private static final long BUILDER_HAMMER_ROAD_COST = 16L;
+    private static final double GHOST_PREVIEW_RADIUS_SQR = 72.0D * 72.0D;
+    private static final int ROAD_GHOST_WINDOW_RADIUS = 20;
+    private static final double BUILDER_HAMMER_REACH_SQR = 64.0D;
 
     private StructureConstructionManager() {}
 
@@ -176,7 +202,21 @@ public final class StructureConstructionManager {
         StructureConstructionSite site = StructureConstructionSite.create(level, origin, placement, scaffoldPositions, true);
 
         String jobId = origin.toShortString() + "_" + System.currentTimeMillis();
-        ConstructionJob job = new ConstructionJob(level, player.getUUID(), type, projectId, site);
+        NationSavedData data = NationSavedData.get(level);
+        NationMemberRecord member = data.getMember(player.getUUID());
+        TownRecord constructionTown = TownService.getTownAt(level, origin);
+        if (constructionTown == null && member != null) {
+            constructionTown = TownService.getTownForMember(data, member);
+        }
+        ConstructionJob job = new ConstructionJob(
+                level,
+                player.getUUID(),
+                type,
+                projectId,
+                constructionTown == null ? "" : constructionTown.townId(),
+                member == null ? constructionTown == null ? "" : constructionTown.nationId() : member.nationId(),
+                site
+        );
         ACTIVE_CONSTRUCTIONS.put(jobId, job);
         persistConstructionJob(jobId, job);
 
@@ -275,6 +315,7 @@ public final class StructureConstructionManager {
         if (!ACTIVE_ROAD_CONSTRUCTIONS.isEmpty()) {
             tickRoadConstructions(level);
         }
+        syncRuntimeGhostPreviews(level);
     }
 
     private static void tickConstructions(ServerLevel level) {
@@ -289,6 +330,7 @@ public final class StructureConstructionManager {
             }
 
             int activeWorkers = getActiveWorkerCount(level, entry.getKey());
+            consumeBuildingHammerCredit(entry.getKey(), job.site);
             job.site.tick(activeWorkers, false);
             if (job.site.consumeProgressUpdate()) {
                 if (owner != null) {
@@ -312,6 +354,7 @@ public final class StructureConstructionManager {
         completed.forEach(jobId -> {
             ACTIVE_CONSTRUCTIONS.remove(jobId);
             ACTIVE_SITE_WORKERS.remove(jobId);
+            ACTIVE_BUILDING_HAMMER_CREDITS.remove(jobId);
             removePersistedConstructionJob(level, jobId);
         });
         syncConstructionProgress(level, playersToSync);
@@ -482,6 +525,7 @@ public final class StructureConstructionManager {
             }
 
             int activeWorkers = getActiveRoadWorkerCount(level, entry.getKey());
+            job = consumeRoadHammerCredit(level, entry.getKey(), job);
             double speedMultiplier = activeWorkers > 0 ? (activeWorkers + 2.0D) / 3.0D : 1.0D;
             double progressPerTick = (job.path.size() / (double) ROAD_BUILD_DURATION_TICKS) * speedMultiplier;
             double targetProgress = job.progress + progressPerTick;
@@ -506,6 +550,8 @@ public final class StructureConstructionManager {
                         job.level,
                         job.roadId,
                         job.ownerUuid,
+                        job.townId,
+                        job.nationId,
                         job.sourceTownName,
                         job.targetTownName,
                         job.path,
@@ -518,9 +564,148 @@ public final class StructureConstructionManager {
         completed.forEach(jobId -> {
             ACTIVE_ROAD_CONSTRUCTIONS.remove(jobId);
             ACTIVE_ROAD_WORKERS.remove(jobId);
+            ACTIVE_ROAD_HAMMER_CREDITS.remove(jobId);
             removePersistedRoadJob(level, jobId);
         });
         syncRoadConstructionProgress(level, playersToSync);
+    }
+
+    public static void handleBuilderHammerUse(ServerPlayer player,
+                                              ConstructionGhostClientHooks.TargetKind kind,
+                                              String jobId,
+                                              BlockPos hitPos) {
+        if (player == null || kind == null || jobId == null || jobId.isBlank() || hitPos == null) {
+            return;
+        }
+        ServerLevel level = player.serverLevel();
+        ensureRuntimeRestored(level);
+        if (!isHoldingBuilderHammer(player)) {
+            return;
+        }
+        if (player.distanceToSqr(hitPos.getX() + 0.5D, hitPos.getY() + 0.5D, hitPos.getZ() + 0.5D) > BUILDER_HAMMER_REACH_SQR) {
+            player.sendSystemMessage(Component.translatable("message.sailboatmod.builder_hammer.too_far"));
+            return;
+        }
+        Long nextAllowedTick = PLAYER_HAMMER_COOLDOWNS.get(player.getUUID());
+        long now = level.getGameTime();
+        if (nextAllowedTick != null && now < nextAllowedTick) {
+            return;
+        }
+
+        HammerUseResult result = switch (kind) {
+            case BUILDING -> queueBuildingHammer(level, player, jobId, hitPos);
+            case ROAD -> queueRoadHammer(level, player, jobId, hitPos);
+        };
+        if (!result.message().getString().isBlank()) {
+            player.sendSystemMessage(result.message());
+        }
+        if (result.success()) {
+            PLAYER_HAMMER_COOLDOWNS.put(player.getUUID(), now + BUILDER_HAMMER_COOLDOWN_TICKS);
+            damageBuilderHammer(player);
+            syncRuntimeGhostPreviews(level);
+        }
+    }
+
+    private static void consumeBuildingHammerCredit(String jobId, StructureConstructionSite site) {
+        Integer queuedCredits = ACTIVE_BUILDING_HAMMER_CREDITS.get(jobId);
+        if (queuedCredits == null || queuedCredits <= 0 || site == null || site.isComplete()) {
+            return;
+        }
+        if (site.advanceOneStep()) {
+            if (queuedCredits <= 1) {
+                ACTIVE_BUILDING_HAMMER_CREDITS.remove(jobId);
+            } else {
+                ACTIVE_BUILDING_HAMMER_CREDITS.put(jobId, queuedCredits - 1);
+            }
+        }
+    }
+
+    private static RoadConstructionJob consumeRoadHammerCredit(ServerLevel level, String jobId, RoadConstructionJob job) {
+        Integer queuedCredits = ACTIVE_ROAD_HAMMER_CREDITS.get(jobId);
+        if (queuedCredits == null || queuedCredits <= 0 || job == null || job.currentIndex >= job.path.size()) {
+            return job;
+        }
+        placeRoadSlice(level, job.path, job.currentIndex);
+        if (queuedCredits <= 1) {
+            ACTIVE_ROAD_HAMMER_CREDITS.remove(jobId);
+        } else {
+            ACTIVE_ROAD_HAMMER_CREDITS.put(jobId, queuedCredits - 1);
+        }
+        int nextIndex = Math.min(job.currentIndex + 1, job.path.size());
+        double progress = Math.max(job.progress, nextIndex);
+        return new RoadConstructionJob(
+                job.level,
+                job.roadId,
+                job.ownerUuid,
+                job.townId,
+                job.nationId,
+                job.sourceTownName,
+                job.targetTownName,
+                job.path,
+                nextIndex,
+                progress
+        );
+    }
+
+    private static HammerUseResult queueBuildingHammer(ServerLevel level, ServerPlayer player, String jobId, BlockPos hitPos) {
+        ConstructionJob job = ACTIVE_CONSTRUCTIONS.get(jobId);
+        if (job == null || job.level != level || job.site.isComplete()) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.invalid_target");
+        }
+        if (!canManageConstruction(level, player, job.townId, job.nationId, job.ownerUuid)) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.no_permission");
+        }
+        boolean hitsPreview = job.site.remainingBlocks().stream().anyMatch(block -> hitPos.equals(block.relativePos()));
+        if (!hitsPreview) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.invalid_target");
+        }
+
+        int queued = ACTIVE_BUILDING_HAMMER_CREDITS.getOrDefault(jobId, 0);
+        BuilderHammerCreditState queueState = BuilderHammerCreditState.of(queued, BUILDER_HAMMER_MAX_CREDITS).enqueue();
+        if (!queueState.accepted()) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.queue_full");
+        }
+
+        HammerChargeResult charge = chargeBuilderHammer(level, player, job.nationId, BUILDER_HAMMER_BUILDING_COST);
+        if (!charge.success()) {
+            return new HammerUseResult(false, charge.message());
+        }
+        ACTIVE_BUILDING_HAMMER_CREDITS.put(jobId, queueState.queuedCredits());
+        return new HammerUseResult(true, Component.translatable(
+                "message.sailboatmod.builder_hammer.queued_building",
+                GoldStandardEconomy.formatBalance(charge.walletSpent()),
+                GoldStandardEconomy.formatBalance(charge.treasurySpent())
+        ));
+    }
+
+    private static HammerUseResult queueRoadHammer(ServerLevel level, ServerPlayer player, String jobId, BlockPos hitPos) {
+        RoadConstructionJob job = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
+        if (job == null || job.level != level || job.currentIndex >= job.path.size()) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.invalid_target");
+        }
+        if (!canManageRoad(level, player, job)) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.no_permission");
+        }
+        if (!remainingRoadGhostPositions(level, job).contains(hitPos)) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.invalid_target");
+        }
+
+        int queued = ACTIVE_ROAD_HAMMER_CREDITS.getOrDefault(jobId, 0);
+        BuilderHammerCreditState queueState = BuilderHammerCreditState.of(queued, BUILDER_HAMMER_MAX_CREDITS).enqueue();
+        if (!queueState.accepted()) {
+            return HammerUseResult.failure("message.sailboatmod.builder_hammer.queue_full");
+        }
+
+        HammerChargeResult charge = chargeBuilderHammer(level, player, job.nationId, BUILDER_HAMMER_ROAD_COST);
+        if (!charge.success()) {
+            return new HammerUseResult(false, charge.message());
+        }
+        ACTIVE_ROAD_HAMMER_CREDITS.put(jobId, queueState.queuedCredits());
+        return new HammerUseResult(true, Component.translatable(
+                "message.sailboatmod.builder_hammer.queued_road",
+                GoldStandardEconomy.formatBalance(charge.walletSpent()),
+                GoldStandardEconomy.formatBalance(charge.treasurySpent())
+        ));
     }
 
     private static BlockPos getRoadFocusPos(RoadConstructionJob job) {
@@ -1088,6 +1273,8 @@ public final class StructureConstructionManager {
                 level,
                 road.roadId(),
                 ownerUuid,
+                road.townId(),
+                road.nationId(),
                 resolvedSource,
                 resolvedTarget,
                 road.path(),
@@ -1558,6 +1745,98 @@ public final class StructureConstructionManager {
         }
     }
 
+    private static void syncRuntimeGhostPreviews(ServerLevel level) {
+        if (level == null || level.getServer() == null) {
+            return;
+        }
+        for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
+            if (player == null || player.serverLevel() != level || !isHoldingConstructionPreviewTool(player)) {
+                continue;
+            }
+            List<SyncConstructionGhostPreviewPacket.BuildingEntry> buildingEntries = collectBuildingGhostEntries(level, player);
+            List<SyncConstructionGhostPreviewPacket.RoadEntry> roadEntries = collectRoadGhostEntries(level, player);
+            ModNetwork.CHANNEL.sendTo(
+                    new SyncConstructionGhostPreviewPacket(buildingEntries, roadEntries),
+                    player.connection.connection,
+                    NetworkDirection.PLAY_TO_CLIENT
+            );
+        }
+    }
+
+    private static List<SyncConstructionGhostPreviewPacket.BuildingEntry> collectBuildingGhostEntries(ServerLevel level, ServerPlayer player) {
+        List<SyncConstructionGhostPreviewPacket.BuildingEntry> entries = new ArrayList<>();
+        for (Map.Entry<String, ConstructionJob> activeEntry : ACTIVE_CONSTRUCTIONS.entrySet()) {
+            ConstructionJob job = activeEntry.getValue();
+            if (job.level != level || player.blockPosition().distSqr(job.site.anchorPos()) > GHOST_PREVIEW_RADIUS_SQR) {
+                continue;
+            }
+            List<SyncConstructionGhostPreviewPacket.GhostBlock> blocks = job.site.remainingBlocks().stream()
+                    .map(block -> new SyncConstructionGhostPreviewPacket.GhostBlock(block.relativePos(), block.state()))
+                    .toList();
+            if (blocks.isEmpty()) {
+                continue;
+            }
+            BlueprintService.BlueprintBlock targetBlock = job.site.currentTargetBlock();
+            entries.add(new SyncConstructionGhostPreviewPacket.BuildingEntry(
+                    activeEntry.getKey(),
+                    job.type.nbtName(),
+                    job.site.origin(),
+                    blocks,
+                    targetBlock == null ? null : targetBlock.relativePos(),
+                    job.site.progressPercent(),
+                    getActiveWorkerCount(level, activeEntry.getKey())
+            ));
+        }
+        return entries;
+    }
+
+    private static List<SyncConstructionGhostPreviewPacket.RoadEntry> collectRoadGhostEntries(ServerLevel level, ServerPlayer player) {
+        List<SyncConstructionGhostPreviewPacket.RoadEntry> entries = new ArrayList<>();
+        for (Map.Entry<String, RoadConstructionJob> activeEntry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
+            RoadConstructionJob job = activeEntry.getValue();
+            if (job.level != level || player.blockPosition().distSqr(getRoadFocusPos(job)) > GHOST_PREVIEW_RADIUS_SQR) {
+                continue;
+            }
+            List<BlockPos> clippedPositions = RuntimeRoadGhostWindow.clip(
+                    new ArrayList<>(remainingRoadGhostPositions(level, job)),
+                    player.blockPosition(),
+                    ROAD_GHOST_WINDOW_RADIUS
+            );
+            if (clippedPositions.isEmpty()) {
+                continue;
+            }
+            List<SyncConstructionGhostPreviewPacket.GhostBlock> blocks = clippedPositions.stream()
+                    .map(pos -> new SyncConstructionGhostPreviewPacket.GhostBlock(pos, selectRoadPlacementStyle(level, pos).surface()))
+                    .toList();
+            entries.add(new SyncConstructionGhostPreviewPacket.RoadEntry(
+                    activeEntry.getKey(),
+                    job.roadId,
+                    job.sourceTownName,
+                    job.targetTownName,
+                    blocks,
+                    getRoadFocusPos(job).above(),
+                    roadProgressPercent(job),
+                    getActiveRoadWorkerCount(level, activeEntry.getKey())
+            ));
+        }
+        return entries;
+    }
+
+    private static Set<BlockPos> remainingRoadGhostPositions(ServerLevel level, RoadConstructionJob job) {
+        Set<BlockPos> remaining = new LinkedHashSet<>();
+        if (level == null || job == null) {
+            return remaining;
+        }
+        for (int i = Math.max(0, job.currentIndex); i < job.path.size(); i++) {
+            for (BlockPos pos : collectRoadSlicePositions(job.path, i)) {
+                if (!isRoadSurface(level.getBlockState(pos))) {
+                    remaining.add(pos);
+                }
+            }
+        }
+        return remaining;
+    }
+
     private static int getActiveWorkerCount(ServerLevel level, String jobId) {
         Map<String, ActiveWorker> workers = ACTIVE_SITE_WORKERS.get(jobId);
         if (workers == null || workers.isEmpty()) {
@@ -1581,6 +1860,133 @@ public final class StructureConstructionManager {
             ACTIVE_SITE_WORKERS.remove(jobId);
         }
         return count;
+    }
+
+    private static boolean isHoldingConstructionPreviewTool(ServerPlayer player) {
+        return player != null && (
+                player.getMainHandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())
+                        || player.getOffhandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())
+                        || player.getMainHandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get())
+                        || player.getOffhandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get())
+                        || player.getMainHandItem().is(ModItems.ROAD_PLANNER_ITEM.get())
+                        || player.getOffhandItem().is(ModItems.ROAD_PLANNER_ITEM.get())
+        );
+    }
+
+    private static boolean isHoldingBuilderHammer(ServerPlayer player) {
+        return player != null && (
+                player.getMainHandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())
+                        || player.getOffhandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())
+        );
+    }
+
+    private static boolean canManageConstruction(ServerLevel level,
+                                                 ServerPlayer player,
+                                                 String townId,
+                                                 String nationId,
+                                                 UUID ownerUuid) {
+        if (level == null || player == null) {
+            return false;
+        }
+        NationSavedData data = NationSavedData.get(level);
+        if (townId != null && !townId.isBlank()) {
+            TownRecord town = data.getTown(townId);
+            if (town != null) {
+                return TownService.canManageTown(player, data, town);
+            }
+        }
+        if (nationId != null && !nationId.isBlank()) {
+            NationRecord nation = data.getNation(nationId);
+            if (nation != null && player.getUUID().equals(nation.leaderUuid())) {
+                return true;
+            }
+        }
+        return ownerUuid != null && ownerUuid.equals(player.getUUID());
+    }
+
+    private static boolean canManageRoad(ServerLevel level, ServerPlayer player, RoadConstructionJob job) {
+        if (level == null || player == null || job == null) {
+            return false;
+        }
+        NationSavedData data = NationSavedData.get(level);
+        RoadNetworkRecord road = data.getRoadNetwork(job.roadId);
+        if (road != null) {
+            for (String townId : resolveRoadTownIds(road)) {
+                TownRecord town = data.getTown(townId);
+                if (town != null && TownService.canManageTown(player, data, town)) {
+                    return true;
+                }
+            }
+            if (!road.nationId().isBlank()) {
+                NationRecord nation = data.getNation(road.nationId());
+                if (nation != null && player.getUUID().equals(nation.leaderUuid())) {
+                    return true;
+                }
+            }
+        }
+        return canManageConstruction(level, player, job.townId, job.nationId, job.ownerUuid);
+    }
+
+    private static List<String> resolveRoadTownIds(RoadNetworkRecord road) {
+        if (road == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        if (!road.townId().isBlank()) {
+            ids.add(road.townId());
+        }
+        if (road.structureAId().startsWith("town:")) {
+            ids.add(road.structureAId().substring(5));
+        }
+        if (road.structureBId().startsWith("town:")) {
+            ids.add(road.structureBId().substring(5));
+        }
+        return List.copyOf(ids);
+    }
+
+    private static HammerChargeResult chargeBuilderHammer(ServerLevel level,
+                                                          ServerPlayer player,
+                                                          String nationId,
+                                                          long cost) {
+        if (player == null || player.getAbilities().instabuild || cost <= 0L) {
+            return new HammerChargeResult(true, 0L, 0L, Component.empty());
+        }
+        NationSavedData data = NationSavedData.get(level);
+        NationTreasuryRecord treasury = nationId == null || nationId.isBlank() ? null : data.getTreasury(nationId);
+        long walletBalance = GoldStandardEconomy.getBalance(player);
+        long treasuryBalance = treasury == null ? 0L : Math.max(0L, treasury.currencyBalance());
+        BuilderHammerChargePlan plan = BuilderHammerChargePlan.allocate(cost, walletBalance, treasuryBalance);
+        if (!plan.success()) {
+            return new HammerChargeResult(false, 0L, 0L, Component.translatable("message.sailboatmod.builder_hammer.insufficient_funds"));
+        }
+
+        if (plan.walletSpent() > 0L && !Boolean.TRUE.equals(GoldStandardEconomy.tryWithdraw(player, plan.walletSpent()))) {
+            return new HammerChargeResult(false, 0L, 0L, Component.translatable("message.sailboatmod.builder_hammer.insufficient_funds"));
+        }
+
+        if (plan.treasurySpent() > 0L) {
+            NationTreasuryRecord latestTreasury = data.getOrCreateTreasury(nationId);
+            if (latestTreasury.currencyBalance() < plan.treasurySpent()) {
+                if (plan.walletSpent() > 0L) {
+                    GoldStandardEconomy.tryDeposit(player, plan.walletSpent());
+                }
+                return new HammerChargeResult(false, 0L, 0L, Component.translatable("message.sailboatmod.builder_hammer.insufficient_funds"));
+            }
+            data.putTreasury(latestTreasury.withBalance(latestTreasury.currencyBalance() - plan.treasurySpent()));
+        }
+
+        return new HammerChargeResult(true, plan.walletSpent(), plan.treasurySpent(), Component.empty());
+    }
+
+    private static void damageBuilderHammer(ServerPlayer player) {
+        if (player == null || player.getAbilities().instabuild) {
+            return;
+        }
+        if (player.getMainHandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())) {
+            player.getMainHandItem().hurtAndBreak(1, player, p -> p.broadcastBreakEvent(net.minecraft.world.InteractionHand.MAIN_HAND));
+        } else if (player.getOffhandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())) {
+            player.getOffhandItem().hurtAndBreak(1, player, p -> p.broadcastBreakEvent(net.minecraft.world.InteractionHand.OFF_HAND));
+        }
     }
 
     private static Block requiredFunctionalBlock(StructureType type) {
@@ -1615,6 +2021,9 @@ public final class StructureConstructionManager {
         ACTIVE_ASSIST_SITES.clear();
         ACTIVE_SITE_WORKERS.clear();
         ACTIVE_ROAD_WORKERS.clear();
+        ACTIVE_BUILDING_HAMMER_CREDITS.clear();
+        ACTIVE_ROAD_HAMMER_CREDITS.clear();
+        PLAYER_HAMMER_COOLDOWNS.clear();
         RESTORED_DIMENSIONS.clear();
     }
 
@@ -1656,7 +2065,21 @@ public final class StructureConstructionManager {
                 continue;
             }
 
-            ACTIVE_CONSTRUCTIONS.put(state.jobId(), new ConstructionJob(level, ownerUuid, type, state.projectId(), site));
+            NationSavedData data = NationSavedData.get(level);
+            TownRecord constructionTown = TownService.getTownAt(level, origin);
+            NationMemberRecord member = data.getMember(ownerUuid);
+            if (constructionTown == null && member != null) {
+                constructionTown = TownService.getTownForMember(data, member);
+            }
+            ACTIVE_CONSTRUCTIONS.put(state.jobId(), new ConstructionJob(
+                    level,
+                    ownerUuid,
+                    type,
+                    state.projectId(),
+                    constructionTown == null ? "" : constructionTown.townId(),
+                    member == null ? constructionTown == null ? "" : constructionTown.nationId() : member.nationId(),
+                    site
+            ));
         }
         staleStructureJobs.forEach(runtimeData::removeStructureJob);
 
@@ -1682,6 +2105,8 @@ public final class StructureConstructionManager {
                     level,
                     state.roadId(),
                     ownerUuid,
+                    road == null ? "" : road.townId(),
+                    road == null ? "" : road.nationId(),
                     resolvedNames[0],
                     resolvedNames[1],
                     path,

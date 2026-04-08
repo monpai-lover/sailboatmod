@@ -1166,6 +1166,9 @@
     "command.sailboatmod.nation.bank.inventory_full":  "Your inventory is full.",
     "item.sailboatmod.bank_constructor":  "Structure Constructor",
     "item.sailboatmod.bank_constructor.desc":  "Place to construct buildings. Shift+Right-click to cycle structure type.",
+    "item.sailboatmod.builder_hammer": "Builder Hammer",
+    "item.sailboatmod.builder_hammer.tip.use": "Right-click a construction ghost block to queue one boost step.",
+    "item.sailboatmod.builder_hammer.tip.cost": "Uses durability and charges your wallet first, then the treasury.",
     "item.sailboatmod.structure.current":  "Current: %s",
     "item.sailboatmod.structure.cycle_hint":  "Shift+RClick to switch | Shift+Scroll to cycle | Alt+Scroll to change mode",
     "item.sailboatmod.constructor.current_mode":  "Mode: %s",
@@ -1432,4 +1435,14 @@
     ,"message.sailboatmod.road_planner.path_failed": "No valid road path could be generated."
     ,"message.sailboatmod.road_planner.queued": "Queued road construction: %s -> %s."
     ,"message.sailboatmod.road_planner.completed": "Road construction completed: %s -> %s."
+    ,"message.sailboatmod.builder_hammer.no_permission": "You do not have permission to accelerate this construction."
+    ,"message.sailboatmod.builder_hammer.invalid_target": "That ghost preview is no longer a valid construction target."
+    ,"message.sailboatmod.builder_hammer.insufficient_funds": "Not enough wallet or treasury funds to use the builder hammer."
+    ,"message.sailboatmod.builder_hammer.queue_full": "That construction is already fully queued for hammer boosts."
+    ,"message.sailboatmod.builder_hammer.too_far": "Move closer to the construction preview before using the builder hammer."
+    ,"message.sailboatmod.builder_hammer.queued_building": "Queued a building boost. Wallet %s, treasury %s."
+    ,"message.sailboatmod.builder_hammer.queued_road": "Queued a road boost. Wallet %s, treasury %s."
+    ,"overlay.sailboatmod.builder_hammer.ready": "Builder Hammer Ready"
+    ,"overlay.sailboatmod.builder_hammer.building": "Target locked: building ghost"
+    ,"overlay.sailboatmod.builder_hammer.road": "Target locked: road ghost"
 }

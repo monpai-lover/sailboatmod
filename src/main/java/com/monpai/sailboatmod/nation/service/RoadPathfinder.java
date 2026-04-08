@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.construction.RoadBridgeBudgetState;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
@@ -16,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.Set;
 
 public final class RoadPathfinder {
     private static final int[][] DIRECTIONS = {
@@ -26,30 +29,43 @@ public final class RoadPathfinder {
     private static final double DISTANCE_COST = 0.55D;
     private static final double HEIGHT_PENALTY = 3.0D;
     private static final double TURN_PENALTY = 0.65D;
-    private static final double WATER_PENALTY = 18.0D;
+    private static final double BRIDGE_PENALTY = 6.0D;
     private static final double NEAR_WATER_PENALTY = 3.5D;
     private static final double CLIFF_PENALTY = 4.5D;
     private static final double ROAD_BONUS = 2.1D;
     private static final double SOFT_GROUND_PENALTY = 1.8D;
     private static final double MAX_STEP_HEIGHT = 5.0D;
     private static final int MAX_VISITED_NODES = 32000;
+    private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 5;
+    private static final int MAX_TOTAL_BRIDGE_COLUMNS = 14;
 
     private RoadPathfinder() {}
 
     public static List<BlockPos> findPath(Level level, BlockPos from, BlockPos to) {
+        return findPath(level, from, to, Set.of());
+    }
+
+    public static List<BlockPos> findPath(Level level, BlockPos from, BlockPos to, Set<Long> blockedColumns) {
         BlockPos start = findSurface(level, from.getX(), from.getZ());
         BlockPos end = findSurface(level, to.getX(), to.getZ());
-        if (start == null || end == null) {
+        if (start == null || end == null || isBlockedRoadColumn(level, start, blockedColumns) || isBlockedRoadColumn(level, end, blockedColumns)) {
             return Collections.emptyList();
         }
 
         SearchBounds bounds = SearchBounds.around(start, end);
         PriorityQueue<PathNode> open = new PriorityQueue<>(Comparator.comparingDouble(node -> node.fCost));
-        Map<Long, PathNode> allNodes = new HashMap<>();
+        Map<PathStateKey, PathNode> allNodes = new HashMap<>();
 
-        PathNode startNode = new PathNode(start, null, 0.0D, heuristic(start, end));
+        boolean startBridge = requiresBridge(level, start);
+        RoadBridgeBudgetState startBudget = RoadBridgeBudgetState.empty()
+                .advance(startBridge, MAX_CONTIGUOUS_BRIDGE_COLUMNS, MAX_TOTAL_BRIDGE_COLUMNS);
+        if (!startBudget.accepted()) {
+            return Collections.emptyList();
+        }
+
+        PathNode startNode = new PathNode(start, null, 0.0D, heuristic(start, end), startBudget);
         open.add(startNode);
-        allNodes.put(start.asLong(), startNode);
+        allNodes.put(new PathStateKey(start.asLong(), startBudget.contiguousBridgeColumns(), startBudget.totalBridgeColumns()), startNode);
 
         int visited = 0;
         while (!open.isEmpty() && visited++ < MAX_VISITED_NODES) {
@@ -60,7 +76,7 @@ public final class RoadPathfinder {
             current.closed = true;
 
             if (sameColumn(current.pos, end)) {
-                return finalizePath(level, reconstructPath(current));
+                return finalizePath(level, reconstructPath(current), blockedColumns);
             }
 
             for (int[] direction : DIRECTIONS) {
@@ -71,25 +87,43 @@ public final class RoadPathfinder {
                 }
 
                 BlockPos neighbor = findSurface(level, nextX, nextZ);
-                if (neighbor == null || Math.abs(neighbor.getY() - current.pos.getY()) > MAX_STEP_HEIGHT) {
+                if (neighbor == null
+                        || Math.abs(neighbor.getY() - current.pos.getY()) > MAX_STEP_HEIGHT
+                        || isBlockedRoadColumn(level, neighbor, blockedColumns)) {
                     continue;
                 }
 
-                double stepCost = getMoveCost(level, current, neighbor);
+                boolean bridgeStep = requiresBridge(level, neighbor);
+                RoadBridgeBudgetState nextBudget = current.bridgeBudget.advance(
+                        bridgeStep,
+                        MAX_CONTIGUOUS_BRIDGE_COLUMNS,
+                        MAX_TOTAL_BRIDGE_COLUMNS
+                );
+                if (!nextBudget.accepted()) {
+                    continue;
+                }
+
+                double stepCost = getMoveCost(level, current, neighbor, bridgeStep);
                 if (Double.isInfinite(stepCost)) {
                     continue;
                 }
 
                 double newG = current.gCost + stepCost;
-                PathNode neighborNode = allNodes.get(neighbor.asLong());
+                PathStateKey stateKey = new PathStateKey(
+                        neighbor.asLong(),
+                        nextBudget.contiguousBridgeColumns(),
+                        nextBudget.totalBridgeColumns()
+                );
+                PathNode neighborNode = allNodes.get(stateKey);
                 if (neighborNode == null) {
-                    neighborNode = new PathNode(neighbor, current, newG, heuristic(neighbor, end));
-                    allNodes.put(neighbor.asLong(), neighborNode);
+                    neighborNode = new PathNode(neighbor, current, newG, heuristic(neighbor, end), nextBudget);
+                    allNodes.put(stateKey, neighborNode);
                     open.add(neighborNode);
                 } else if (!neighborNode.closed && newG < neighborNode.gCost) {
                     neighborNode.parent = current;
                     neighborNode.gCost = newG;
                     neighborNode.fCost = newG + heuristic(neighbor, end);
+                    neighborNode.bridgeBudget = nextBudget;
                     open.add(neighborNode);
                 }
             }
@@ -98,15 +132,15 @@ public final class RoadPathfinder {
         return Collections.emptyList();
     }
 
-    private static double getMoveCost(Level level, PathNode current, BlockPos next) {
+    private static double getMoveCost(Level level, PathNode current, BlockPos next, boolean bridgeStep) {
         boolean diagonal = current.pos.getX() != next.getX() && current.pos.getZ() != next.getZ();
         double terrainCost = 1.0D + DISTANCE_COST + (diagonal ? 0.45D : 0.0D);
 
         int heightDiff = Math.abs(next.getY() - current.pos.getY());
         terrainCost += heightDiff * heightDiff * HEIGHT_PENALTY;
 
-        if (crossesWater(level, next)) {
-            terrainCost += WATER_PENALTY;
+        if (bridgeStep) {
+            terrainCost += BRIDGE_PENALTY;
         }
         terrainCost += adjacentWaterCount(level, next) * NEAR_WATER_PENALTY;
         if (isSoftGround(level, next)) {
@@ -150,21 +184,25 @@ public final class RoadPathfinder {
     }
 
     private static List<BlockPos> finalizePath(Level level, List<BlockPos> rawPath) {
+        return finalizePath(level, rawPath, Set.of());
+    }
+
+    private static List<BlockPos> finalizePath(Level level, List<BlockPos> rawPath, Set<Long> blockedColumns) {
         if (rawPath.size() <= 2) {
             return rawPath;
         }
-        List<BlockPos> simplified = simplifyPath(level, rawPath);
-        return smoothPath(level, rasterizeSegments(level, simplified));
+        List<BlockPos> simplified = simplifyPath(level, rawPath, blockedColumns);
+        return smoothPath(level, rasterizeSegments(level, simplified, blockedColumns), blockedColumns);
     }
 
-    private static List<BlockPos> simplifyPath(Level level, List<BlockPos> rawPath) {
+    private static List<BlockPos> simplifyPath(Level level, List<BlockPos> rawPath, Set<Long> blockedColumns) {
         List<BlockPos> simplified = new ArrayList<>();
         int index = 0;
         simplified.add(rawPath.get(0));
         while (index < rawPath.size() - 1) {
             int furthest = index + 1;
             for (int candidate = rawPath.size() - 1; candidate > index + 1; candidate--) {
-                if (hasLineOfTravel(level, rawPath.get(index), rawPath.get(candidate))) {
+                if (hasLineOfTravel(level, rawPath.get(index), rawPath.get(candidate), blockedColumns)) {
                     furthest = candidate;
                     break;
                 }
@@ -175,7 +213,7 @@ public final class RoadPathfinder {
         return simplified;
     }
 
-    private static List<BlockPos> rasterizeSegments(Level level, List<BlockPos> points) {
+    private static List<BlockPos> rasterizeSegments(Level level, List<BlockPos> points, Set<Long> blockedColumns) {
         LinkedHashMap<Long, BlockPos> result = new LinkedHashMap<>();
         BlockPos previous = null;
         for (BlockPos point : points) {
@@ -185,7 +223,7 @@ public final class RoadPathfinder {
                 continue;
             }
             for (BlockPos segmentPos : bresenham(previous, point)) {
-                BlockPos surface = findNearestSurface(level, segmentPos.getX(), segmentPos.getZ(), previous.getY());
+                BlockPos surface = findNearestSurface(level, segmentPos.getX(), segmentPos.getZ(), previous.getY(), blockedColumns);
                 if (surface != null) {
                     result.put(surface.asLong(), surface);
                     previous = surface;
@@ -195,14 +233,26 @@ public final class RoadPathfinder {
         return new ArrayList<>(result.values());
     }
 
-    private static boolean hasLineOfTravel(Level level, BlockPos from, BlockPos to) {
+    private static boolean hasLineOfTravel(Level level, BlockPos from, BlockPos to, Set<Long> blockedColumns) {
         BlockPos previous = from;
+        RoadBridgeBudgetState budget = RoadBridgeBudgetState.empty().advance(
+                requiresBridge(level, from),
+                MAX_CONTIGUOUS_BRIDGE_COLUMNS,
+                MAX_TOTAL_BRIDGE_COLUMNS
+        );
+        if (!budget.accepted()) {
+            return false;
+        }
         for (BlockPos step : bresenham(from, to)) {
-            BlockPos surface = findNearestSurface(level, step.getX(), step.getZ(), previous.getY());
+            BlockPos surface = findNearestSurface(level, step.getX(), step.getZ(), previous.getY(), blockedColumns);
             if (surface == null || Math.abs(surface.getY() - previous.getY()) > MAX_STEP_HEIGHT) {
                 return false;
             }
-            if (crossesWater(level, surface) && !isRoad(level, surface)) {
+            if (isBlockedRoadColumn(level, surface, blockedColumns)) {
+                return false;
+            }
+            budget = budget.advance(requiresBridge(level, surface), MAX_CONTIGUOUS_BRIDGE_COLUMNS, MAX_TOTAL_BRIDGE_COLUMNS);
+            if (!budget.accepted()) {
                 return false;
             }
             previous = surface;
@@ -240,7 +290,7 @@ public final class RoadPathfinder {
         return line;
     }
 
-    private static List<BlockPos> smoothPath(Level level, List<BlockPos> path) {
+    private static List<BlockPos> smoothPath(Level level, List<BlockPos> path, Set<Long> blockedColumns) {
         if (path.size() <= 3) {
             return path;
         }
@@ -257,7 +307,7 @@ public final class RoadPathfinder {
                 int nextDx = Integer.compare(next.getX(), current.getX());
                 int nextDz = Integer.compare(next.getZ(), current.getZ());
                 boolean zigZag = prevDx == -nextDx && prevDz == -nextDz;
-                if (zigZag || hasLineOfTravel(level, previous, next)) {
+                if (zigZag || hasLineOfTravel(level, previous, next, blockedColumns)) {
                     smoothed.remove(i);
                     changed = true;
                     break;
@@ -268,17 +318,25 @@ public final class RoadPathfinder {
     }
 
     private static BlockPos findNearestSurface(Level level, int x, int z, int preferredY) {
+        return findNearestSurface(level, x, z, preferredY, Set.of());
+    }
+
+    private static BlockPos findNearestSurface(Level level, int x, int z, int preferredY, Set<Long> blockedColumns) {
         BlockPos direct = findSurface(level, x, z);
-        if (direct != null && Math.abs(direct.getY() - preferredY) <= MAX_STEP_HEIGHT) {
+        if (direct != null
+                && Math.abs(direct.getY() - preferredY) <= MAX_STEP_HEIGHT
+                && !isBlockedRoadColumn(level, direct, blockedColumns)) {
             return direct;
         }
 
         BlockPos best = direct;
-        int bestDiff = direct == null ? Integer.MAX_VALUE : Math.abs(direct.getY() - preferredY);
+        int bestDiff = direct == null || isBlockedRoadColumn(level, direct, blockedColumns)
+                ? Integer.MAX_VALUE
+                : Math.abs(direct.getY() - preferredY);
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
                 BlockPos candidate = findSurface(level, x + dx, z + dz);
-                if (candidate == null) {
+                if (candidate == null || isBlockedRoadColumn(level, candidate, blockedColumns)) {
                     continue;
                 }
                 int diff = Math.abs(candidate.getY() - preferredY);
@@ -295,12 +353,36 @@ public final class RoadPathfinder {
         BlockPos pos = level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below();
         for (int i = 0; i < 5; i++) {
             BlockState state = level.getBlockState(pos);
-            if (!state.isAir() && !state.liquid() && state.isFaceSturdy(level, pos, net.minecraft.core.Direction.UP)) {
+            if (!state.isAir() && !state.liquid() && state.isFaceSturdy(level, pos, Direction.UP)) {
                 return pos;
             }
             pos = pos.below();
         }
         return null;
+    }
+
+    private static boolean requiresBridge(Level level, BlockPos pos) {
+        return crossesWater(level, pos) || adjacentWaterCount(level, pos) > 0;
+    }
+
+    private static boolean isBlockedRoadColumn(Level level, BlockPos surfacePos, Set<Long> blockedColumns) {
+        if (surfacePos == null) {
+            return true;
+        }
+        if (blockedColumns.contains(columnKey(surfacePos.getX(), surfacePos.getZ()))) {
+            return true;
+        }
+        BlockPos roadPos = surfacePos.above();
+        BlockState roadState = level.getBlockState(roadPos);
+        if (!roadState.isAir() && !roadState.canBeReplaced() && !roadState.liquid() && !isRoad(level, surfacePos)) {
+            return true;
+        }
+        BlockState headState = level.getBlockState(roadPos.above());
+        return !headState.isAir() && !headState.canBeReplaced() && !headState.liquid();
+    }
+
+    private static long columnKey(int x, int z) {
+        return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
     private static boolean crossesWater(Level level, BlockPos pos) {
@@ -352,18 +434,23 @@ public final class RoadPathfinder {
         }
     }
 
+    private record PathStateKey(long posKey, int contiguousBridgeColumns, int totalBridgeColumns) {
+    }
+
     private static final class PathNode {
         private final BlockPos pos;
         private PathNode parent;
         private double gCost;
         private double fCost;
+        private RoadBridgeBudgetState bridgeBudget;
         private boolean closed;
 
-        private PathNode(BlockPos pos, PathNode parent, double gCost, double hCost) {
+        private PathNode(BlockPos pos, PathNode parent, double gCost, double hCost, RoadBridgeBudgetState bridgeBudget) {
             this.pos = pos;
             this.parent = parent;
             this.gCost = gCost;
             this.fCost = gCost + hCost;
+            this.bridgeBudget = bridgeBudget;
         }
     }
 }
