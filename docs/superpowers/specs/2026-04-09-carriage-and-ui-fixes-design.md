@@ -1,4 +1,4 @@
-# Carriage Material, Motion, and Claims UI Fixes Design
+# Carriage, Claims UI, and Road System Fixes Design
 
 ## Scope
 
@@ -8,8 +8,12 @@ This design covers the confirmed issues for the current pass:
 2. The claims-map reset/refresh controls should not appear outside the claims map view.
 3. Carriage motion and sounds should stop feeling like a sailboat.
 4. Finished roads should provide a speed bonus to carriages.
+5. Manual roads should anchor to post-station waiting areas instead of claim boundaries or town cores.
+6. Road routing should avoid steep terrain in a TongDaWay-style cost model.
+7. Road geometry should handle large height differences with smoothed grades, slab ramps, and stair segments when required.
+8. Built roads should be wider and road construction should progress more slowly.
 
-This pass does not include the broader manual road anchor redesign, station waiting-area routing, or road width/slope generation refactor. Those remain separate follow-up work.
+This pass does not include a full transport architecture split for carriage versus sailboat, and it does not attempt a complete rewrite of automatic non-manual road generation beyond the shared geometry/runtime pieces touched by manual roads.
 
 ## Goals
 
@@ -19,6 +23,10 @@ This pass does not include the broader manual road anchor redesign, station wait
 - Give carriages a ground-vehicle movement profile instead of inherited sailboat feel.
 - Add carriage-appropriate placement/attach/detach/rolling sounds.
 - Apply a controlled speed bonus only while the carriage is travelling on completed road surfaces.
+- Build manual roads from source post-station waiting-area exits to target post-station waiting-area exits.
+- Bias route search toward human-like, gentler terrain instead of brute-force shortest lines.
+- Produce cart-capable roads with wider cross-sections and continuous slope handling.
+- Slow road construction to a visibly progressive pace.
 
 ## Non-Goals
 
@@ -27,6 +35,7 @@ This pass does not include the broader manual road anchor redesign, station wait
 - No new separate carriage entity base class in this pass.
 - No changes to ship handling.
 - No expansion beyond the three selected wood families.
+- No abandonment of Bezier smoothing for road visuals; Bezier remains the visual centerline smoother after route search.
 
 ## Design Decisions
 
@@ -97,6 +106,56 @@ Road acceleration is a carriage-only surface bonus.
 - The same road bonus applies to manual driving and autopilot.
 - Off-road travel immediately falls back to normal carriage movement.
 
+### 6. Manual Road Anchors
+
+Manual roads should no longer be anchored by claim boundaries except as an emergency fallback.
+
+- The preferred anchor for each town is a post-station waiting area.
+- The route should connect from a computed exit point on the source waiting area to a computed exit point on the target waiting area.
+- If a town has multiple post stations, choose the source-target pair with the lowest route cost rather than a fixed primary station.
+- Existing claim-boundary/core logic should only remain as a guarded fallback when a valid waiting-area anchor cannot be resolved.
+
+The waiting area already exists in block-entity data through the post-station zone bounds, so the planner should derive candidate exits from those bounds instead of inventing a second station-area system.
+
+### 7. Route Search Across Height Differences
+
+Pathfinding should keep the existing human-like route foundation and Bezier visual smoothing, but the terrain cost model should become more explicit about avoiding steep ground.
+
+- Use a TongDaWay-style principle for route cost:
+  - higher cost for larger local elevation differences
+  - additional cost for repeated consecutive climbs or descents
+  - strong penalties for water, pits, cliffs, and unstable terrain
+  - prefer flatter, drier, more continuous terrain even if the route is somewhat longer
+- Accept steep segments only when the detour cost is clearly worse.
+- Continue to run Bezier smoothing after node selection; Bezier is for visual/path continuity, not for replacing terrain-aware path search.
+
+This keeps the "human-like" requirement while making slope avoidance deliberate instead of accidental.
+
+### 8. Road Geometry on Slopes
+
+Road geometry needs a second phase after pathfinding to turn the chosen centerline into a buildable surface.
+
+- Target cart road width is roughly five usable blocks, with shoulders handled by the cross-section generator.
+- Height handling should follow this order:
+  - first smooth the height profile where possible
+  - prefer half-step continuity using slabs
+  - when full-block climbing remains necessary for multiple consecutive cells, convert the whole run into a stair segment
+- A stair segment must be generated as a whole ramp section, not as isolated stair blocks:
+  - maintain the full road width across the segment
+  - place foundation/fill beneath the segment to avoid floating cuts
+  - add start/end transitions so the segment does not snap directly between flat and stair states
+- Elevated or carved sections should receive fill/foundation support similar to RoadWeaver-style paving support.
+
+The key rule is that roads should look engineered rather than snapped to raw terrain cells.
+
+### 9. Road Build Pace
+
+Current road construction completes too quickly.
+
+- Increase total build duration enough that manual roads visibly progress over time rather than appearing almost instant.
+- Preserve builder-hammer acceleration as a bonus, but tune around a slower base duration.
+- Runtime ghost previews and saved construction progress should continue to work against the new pace without format changes if possible.
+
 ## Data Flow
 
 ### Wood Variant Flow
@@ -115,6 +174,16 @@ Road acceleration is a carriage-only surface bonus.
 4. If on-road, apply a bounded movement bonus.
 5. Emit carriage sounds at placement and attachment state transitions.
 
+### Manual Road Flow
+
+1. Player selects a valid target town.
+2. Planner resolves source and target post stations and derives waiting-area exit candidates.
+3. Planner chooses the station pair and exits with the best overall route cost.
+4. Terrain-aware route search produces route nodes while penalizing steep and unstable terrain.
+5. Bezier smoothing refines the centerline.
+6. Geometry planning widens the road, smooths grades, and emits slab/stair/foundation build steps.
+7. Construction runtime places the road at the new slower pace.
+
 ## Files Expected to Change
 
 - `src/main/java/com/monpai/sailboatmod/entity/CarriageEntity.java`
@@ -124,8 +193,15 @@ Road acceleration is a carriage-only surface bonus.
 - `src/main/java/com/monpai/sailboatmod/client/renderer/CarriageEntityRenderer.java`
 - `src/main/java/com/monpai/sailboatmod/client/screen/town/TownHomeScreen.java`
 - `src/main/java/com/monpai/sailboatmod/client/screen/nation/NationHomeScreen.java`
+- `src/main/java/com/monpai/sailboatmod/nation/service/ManualRoadPlannerService.java`
+- `src/main/java/com/monpai/sailboatmod/nation/service/RoadPathfinder.java`
+- `src/main/java/com/monpai/sailboatmod/construction/RoadRouteNodePlanner.java`
+- `src/main/java/com/monpai/sailboatmod/construction/RoadBezierCenterline.java`
+- `src/main/java/com/monpai/sailboatmod/construction/RoadGeometryPlanner.java`
+- `src/main/java/com/monpai/sailboatmod/nation/service/StructureConstructionManager.java`
 - `src/main/java/com/monpai/sailboatmod/registry/ModItems.java`
 - `src/main/java/com/monpai/sailboatmod/registry/...` for sound registration if no dedicated sound registry exists yet
+- `src/test/java/...` for new unit coverage around carriage wood parsing, road anchor selection helpers, and road geometry/terrain-cost helpers
 - `src/main/resources/assets/sailboatmod/textures/entity/...` for the three carriage textures
 - `src/main/resources/assets/sailboatmod/lang/en_us.json`
 - `src/main/resources/assets/sailboatmod/lang/zh_cn.json`
@@ -138,12 +214,16 @@ Road acceleration is a carriage-only surface bonus.
 - Existing carriage items without wood NBT must behave as oak.
 - Road bonus logic must default to no bonus if the surface check is inconclusive.
 - UI visibility logic must fail closed: hidden unless on the claims map view.
+- If a town lacks a usable post-station waiting-area anchor, the planner may fall back to the old core/boundary resolution rather than failing silently.
+- Unknown terrain states in routing should bias toward higher cost, not lower cost.
+- Height smoothing must preserve a traversable connection even when slab smoothing is impossible; stair segments are the fallback, not a failure.
 
 ## Testing and Verification
 
 Minimum validation for this pass:
 
 - `./gradlew.bat compileJava`
+- `./gradlew.bat test`
 - `./gradlew.bat build`
 - Confirm generated jar under `build/libs`
 - Manual code-path verification for:
@@ -151,6 +231,8 @@ Minimum validation for this pass:
   - map control visibility in nation/town claims pages
   - carriage ground-motion constants and road bonus gating
   - sound registration/resource wiring
+  - waiting-area anchor selection and fallback behavior
+  - steep-slope route penalties and geometry transitions
 
 Recommended in-game checks after build:
 
@@ -158,3 +240,6 @@ Recommended in-game checks after build:
 - Switch between claims map and claims permissions in town and nation UI and confirm the map controls only show on the map.
 - Drive a carriage on normal terrain versus finished road and compare top speed/feel.
 - Verify carriage placement and coupling interactions use carriage-oriented sounds.
+- Preview and build a road between towns with post stations and confirm anchors originate from waiting areas.
+- Check a hilly route and confirm the road prefers flatter detours when available.
+- Check a forced slope and confirm slab ramps or full stair segments are generated with continuous foundations.
