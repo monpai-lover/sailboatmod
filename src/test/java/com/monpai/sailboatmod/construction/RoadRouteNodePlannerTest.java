@@ -161,6 +161,35 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
+    void searchBoundsAllowShortSpanDetourAroundLargeOffAxisObstacle() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                pos -> {
+                    boolean onWestLeg = pos.getX() == 0 && pos.getZ() >= 0 && pos.getZ() <= 18;
+                    boolean onTopLeg = pos.getZ() == 18 && pos.getX() >= 0 && pos.getX() <= 2;
+                    boolean onEastLeg = pos.getX() == 2 && pos.getZ() >= 0 && pos.getZ() <= 18;
+                    boolean startOrEnd = pos.getZ() == 0 && (pos.getX() == 0 || pos.getX() == 2);
+                    boolean traversable = onWestLeg || onTopLeg || onEastLeg || startOrEnd;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), 64, pos.getZ()) : null,
+                            !traversable,
+                            false,
+                            0,
+                            0,
+                            pos.getZ() == 18
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertFalse(plan.usedBridge());
+        assertTrue(plan.path().contains(new BlockPos(1, 64, 18)));
+    }
+
+    @Test
     void bezierSmoothingSkipsBlockedColumnsAndUnsafeGeometry() {
         List<BlockPos> routeNodes = List.of(
                 new BlockPos(0, 64, 0),
