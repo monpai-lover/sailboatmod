@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -126,6 +127,18 @@ class BuilderHammerSupportTest {
         assertEquals(3, invokeNextRoadBuildBatchSize(plan, 3));
     }
 
+    @Test
+    void roadBuildStepCompletionRequiresExactPlannedState() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 65, 0),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        assertTrue(invokeRoadBuildStepPlaced(step.state(), step));
+        assertFalse(invokeRoadBuildStepPlaced(Blocks.SPRUCE_SLAB.defaultBlockState(), step));
+    }
+
     @SuppressWarnings("unchecked")
     private static List<BlockPos> invokeRemainingRoadGhostPositions(RoadPlacementPlan plan, int placedStepCount) {
         try {
@@ -161,6 +174,18 @@ class BuilderHammerSupportTest {
             return (int) method.invoke(null, plan, placedStepCount);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect road hammer batch sizing", ex);
+        }
+    }
+
+    private static boolean invokeRoadBuildStepPlaced(BlockState currentState, RoadGeometryPlanner.RoadBuildStep step) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("isRoadBuildStepPlaced", BlockState.class, RoadGeometryPlanner.RoadBuildStep.class);
+            method.setAccessible(true);
+            return (boolean) method.invoke(null, currentState, step);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect exact road build-step completion", ex);
         }
     }
 }

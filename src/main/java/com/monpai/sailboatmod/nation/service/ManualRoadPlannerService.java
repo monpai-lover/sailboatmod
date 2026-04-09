@@ -120,7 +120,7 @@ public final class ManualRoadPlannerService {
         }
 
         CompoundTag tag = stack.getOrCreateTag();
-        String previewHash = previewHash(candidate.road());
+        String previewHash = previewHash(candidate.plan());
         long now = System.currentTimeMillis();
         boolean confirmable = candidate.targetTown().townId().equalsIgnoreCase(tag.getString(TAG_PREVIEW_TARGET_TOWN_ID))
                 && candidate.road().roadId().equalsIgnoreCase(tag.getString(TAG_PREVIEW_ROAD_ID))
@@ -556,14 +556,43 @@ public final class ManualRoadPlannerService {
         tag.remove(TAG_PREVIEW_AT);
     }
 
-    private static String previewHash(RoadNetworkRecord road) {
-        int hash = road == null ? 0 : road.roadId().hashCode();
-        if (road != null) {
-            for (BlockPos pos : road.path()) {
-                hash = 31 * hash + Long.hashCode(pos.asLong());
-            }
+    private static String previewHash(RoadPlacementPlan plan) {
+        int hash = 1;
+        if (plan == null) {
+            return Integer.toHexString(hash);
         }
+        for (BlockPos pos : plan.centerPath()) {
+            hash = 31 * hash + Long.hashCode(pos.asLong());
+        }
+        hash = 31 * hash + hashPos(plan.sourceInternalAnchor());
+        hash = 31 * hash + hashPos(plan.sourceBoundaryAnchor());
+        hash = 31 * hash + hashPos(plan.targetBoundaryAnchor());
+        hash = 31 * hash + hashPos(plan.targetInternalAnchor());
+        for (RoadPlacementPlan.BridgeRange range : plan.bridgeRanges()) {
+            hash = 31 * hash + range.startIndex();
+            hash = 31 * hash + range.endIndex();
+        }
+        for (var block : plan.ghostBlocks()) {
+            hash = 31 * hash + hashPos(block.pos());
+            hash = 31 * hash + hashState(block.state());
+        }
+        for (var step : plan.buildSteps()) {
+            hash = 31 * hash + step.order();
+            hash = 31 * hash + hashPos(step.pos());
+            hash = 31 * hash + hashState(step.state());
+        }
+        hash = 31 * hash + hashPos(plan.startHighlightPos());
+        hash = 31 * hash + hashPos(plan.endHighlightPos());
+        hash = 31 * hash + hashPos(plan.focusPos());
         return Integer.toHexString(hash);
+    }
+
+    private static int hashPos(BlockPos pos) {
+        return pos == null ? 0 : Long.hashCode(pos.asLong());
+    }
+
+    private static int hashState(net.minecraft.world.level.block.state.BlockState state) {
+        return state == null ? 0 : state.toString().hashCode();
     }
 
     private static String displayTownName(TownRecord town) {

@@ -1531,11 +1531,11 @@ public final class StructureConstructionManager {
     }
 
     private static boolean isRoadBuildStepPlaced(ServerLevel level, RoadGeometryPlanner.RoadBuildStep step) {
-        if (level == null || step == null) {
-            return false;
-        }
-        BlockState current = level.getBlockState(step.pos());
-        return current.equals(step.state()) || isRoadSurface(current);
+        return level != null && step != null && isRoadBuildStepPlaced(level.getBlockState(step.pos()), step);
+    }
+
+    private static boolean isRoadBuildStepPlaced(BlockState currentState, RoadGeometryPlanner.RoadBuildStep step) {
+        return currentState != null && step != null && currentState.equals(step.state());
     }
 
     private static List<RoadGeometryPlanner.GhostRoadBlock> remainingRoadGhostBlocks(RoadPlacementPlan plan, int placedStepCount) {
@@ -1549,11 +1549,13 @@ public final class StructureConstructionManager {
     }
 
     private static List<RoadGeometryPlanner.GhostRoadBlock> remainingRoadGhostBlocks(ServerLevel level, RoadConstructionJob job) {
-        if (job == null) {
+        if (level == null || job == null) {
             return List.of();
         }
-        return remainingRoadGhostBlocks(job.plan, job.placedStepCount).stream()
-                .filter(block -> !isRoadSurface(level.getBlockState(block.pos())))
+        return job.plan.buildSteps().stream()
+                .skip(Math.max(0, job.placedStepCount))
+                .filter(step -> !isRoadBuildStepPlaced(level, step))
+                .map(step -> new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state()))
                 .toList();
     }
 
@@ -2359,35 +2361,10 @@ public final class StructureConstructionManager {
 
         List<String> staleRoadJobs = new ArrayList<>();
         for (ConstructionRuntimeSavedData.RoadJobState state : runtimeData.getRoadJobs()) {
-            if (!dimensionId.equals(state.dimensionId()) || ACTIVE_ROAD_CONSTRUCTIONS.containsKey(state.roadId())) {
-                continue;
-            }
-            RoadNetworkRecord road = NationSavedData.get(level).getRoadNetwork(state.roadId());
-            List<BlockPos> path = road == null ? toBlockPosList(state.path()) : road.path();
-            if (path.size() < 2) {
+            if (dimensionId.equals(state.dimensionId())) {
+                // Task 4 keeps runtime road persistence out of scope until a plan-native save format exists.
                 staleRoadJobs.add(state.roadId());
-                continue;
             }
-            RoadPlacementPlan runtimePlan = createRoadPlacementPlan(level, path, path.get(0), path.get(0), path.get(path.size() - 1), path.get(path.size() - 1));
-            int placedStepCount = findRoadPlacedStepCount(level, runtimePlan);
-            if (placedStepCount >= runtimePlan.buildSteps().size()) {
-                staleRoadJobs.add(state.roadId());
-                continue;
-            }
-            UUID ownerUuid = parseUuid(state.ownerUuid());
-            String[] resolvedNames = resolveRoadTownNames(level, road);
-            ACTIVE_ROAD_CONSTRUCTIONS.put(state.roadId(), new RoadConstructionJob(
-                    level,
-                    state.roadId(),
-                    ownerUuid,
-                    road == null ? "" : road.townId(),
-                    road == null ? "" : road.nationId(),
-                    resolvedNames[0],
-                    resolvedNames[1],
-                    runtimePlan,
-                    placedStepCount,
-                    placedStepCount
-            ));
         }
         staleRoadJobs.forEach(runtimeData::removeRoadJob);
     }

@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import io.netty.buffer.Unpooled;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -9,8 +11,12 @@ import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class SyncRoadPlannerPreviewPacketTest {
     @BeforeAll
@@ -60,6 +66,39 @@ class SyncRoadPlannerPreviewPacketTest {
         assertArrayEquals(toByteArray(encoded), toByteArray(roundTrip));
     }
 
+    @Test
+    void previewFingerprintChangesWhenPlanDetailsChangeWithoutPathChange() {
+        List<BlockPos> centerPath = List.of(new BlockPos(1, 64, 1), new BlockPos(2, 64, 1));
+        RoadPlacementPlan firstPlan = new RoadPlacementPlan(
+                centerPath,
+                new BlockPos(0, 64, 1),
+                centerPath.get(0),
+                centerPath.get(1),
+                new BlockPos(3, 64, 1),
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 65, 1), Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(1, 65, 1), Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(),
+                centerPath.get(0).above(),
+                centerPath.get(1).above(),
+                new BlockPos(1, 65, 1)
+        );
+        RoadPlacementPlan secondPlan = new RoadPlacementPlan(
+                centerPath,
+                new BlockPos(0, 64, 1),
+                centerPath.get(0),
+                centerPath.get(1),
+                new BlockPos(3, 64, 1),
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 65, 1), Blocks.SMOOTH_SANDSTONE_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(1, 65, 1), Blocks.SMOOTH_SANDSTONE_SLAB.defaultBlockState())),
+                List.of(),
+                centerPath.get(0).above(),
+                centerPath.get(1).above(),
+                new BlockPos(1, 65, 1)
+        );
+
+        assertNotEquals(invokePreviewFingerprint(firstPlan), invokePreviewFingerprint(secondPlan));
+    }
+
     private static FriendlyByteBuf encode(SyncRoadPlannerPreviewPacket packet) {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         SyncRoadPlannerPreviewPacket.encode(packet, buffer);
@@ -74,5 +113,17 @@ class SyncRoadPlannerPreviewPacketTest {
         byte[] bytes = new byte[buffer.readableBytes()];
         buffer.getBytes(0, bytes);
         return bytes;
+    }
+
+    private static String invokePreviewFingerprint(RoadPlacementPlan plan) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.ManualRoadPlannerService")
+                    .getDeclaredMethod("previewHash", RoadPlacementPlan.class);
+            method.setAccessible(true);
+            return (String) method.invoke(null, plan);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect road preview fingerprinting", ex);
+        }
     }
 }
