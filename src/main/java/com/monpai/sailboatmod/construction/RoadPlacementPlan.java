@@ -32,7 +32,8 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
     }
 
     private static List<BlockPos> copyPositions(List<BlockPos> positions) {
-        if (positions == null || positions.isEmpty()) {
+        Objects.requireNonNull(positions, "centerPath");
+        if (positions.isEmpty()) {
             return List.of();
         }
         List<BlockPos> copied = new ArrayList<>(positions.size());

@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.IntStream;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -66,12 +65,40 @@ class RoadGeometryPlannerTest {
         List<BlockPos> secondPositions = second.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList();
 
         assertEquals(firstPositions, secondPositions);
+        assertEquals(List.of(
+                new BlockPos(0, 65, 0),
+                new BlockPos(0, 65, -1),
+                new BlockPos(0, 65, 1),
+                new BlockPos(1, 65, 0),
+                new BlockPos(2, 65, 0),
+                new BlockPos(1, 65, 1),
+                new BlockPos(1, 65, -1),
+                new BlockPos(2, 65, 1),
+                new BlockPos(1, 65, 2),
+                new BlockPos(2, 65, 2),
+                new BlockPos(0, 65, 2)
+        ), firstPositions);
         assertEquals(new LinkedHashSet<>(firstPositions).size(), firstPositions.size());
-        assertFalse(firstPositions.isEmpty());
-        assertEquals(new BlockPos(0, 65, 0), firstPositions.get(0));
 
         List<Integer> firstOrders = first.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::order).toList();
-        assertEquals(IntStream.range(0, firstOrders.size()).boxed().toList(), firstOrders);
+        assertEquals(List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), firstOrders);
+    }
+
+    @Test
+    void roadPlacementPlanRejectsNullCenterPathList() {
+        assertThrows(NullPointerException.class, () -> new RoadPlacementPlan(
+                null,
+                new BlockPos(9, 64, 10),
+                new BlockPos(10, 64, 10),
+                new BlockPos(11, 64, 10),
+                new BlockPos(12, 64, 10),
+                List.of(),
+                List.of(),
+                List.of(),
+                new BlockPos(10, 65, 10),
+                new BlockPos(11, 65, 10),
+                new BlockPos(10, 65, 10)
+        ));
     }
 
     @Test
