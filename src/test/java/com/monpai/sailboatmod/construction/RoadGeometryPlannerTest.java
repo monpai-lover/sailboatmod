@@ -76,8 +76,13 @@ class RoadGeometryPlannerTest {
 
     @Test
     void roadPlacementPlanRejectsNullCenterPathElements() {
+        List<BlockPos> centerPath = new ArrayList<>();
+        centerPath.add(new BlockPos(10, 64, 10));
+        centerPath.add(null);
+        centerPath.add(new BlockPos(12, 64, 10));
+
         assertThrows(NullPointerException.class, () -> new RoadPlacementPlan(
-                List.of(new BlockPos(10, 64, 10), null, new BlockPos(12, 64, 10)),
+                centerPath,
                 new BlockPos(9, 64, 10),
                 new BlockPos(10, 64, 10),
                 new BlockPos(11, 64, 10),
@@ -101,6 +106,30 @@ class RoadGeometryPlannerTest {
         assertThrows(NullPointerException.class, () -> RoadGeometryPlanner.plan(
                 centerPath,
                 pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        ));
+    }
+
+    @Test
+    void plannerRejectsNullCenterPathList() {
+        assertThrows(NullPointerException.class, () -> RoadGeometryPlanner.plan(
+                null,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        ));
+    }
+
+    @Test
+    void plannerRejectsNullBlockStateSupplier() {
+        assertThrows(NullPointerException.class, () -> RoadGeometryPlanner.plan(
+                List.of(new BlockPos(10, 64, 10)),
+                null
+        ));
+    }
+
+    @Test
+    void plannerRejectsNullBlockStateResults() {
+        assertThrows(NullPointerException.class, () -> RoadGeometryPlanner.plan(
+                List.of(new BlockPos(10, 64, 10)),
+                pos -> null
         ));
     }
 

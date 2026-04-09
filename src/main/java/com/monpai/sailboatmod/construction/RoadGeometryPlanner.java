@@ -14,7 +14,9 @@ public final class RoadGeometryPlanner {
     }
 
     public static RoadGeometryPlan plan(List<BlockPos> centerPath, Function<BlockPos, BlockState> blockStateSupplier) {
-        if (centerPath == null || centerPath.isEmpty() || blockStateSupplier == null) {
+        Objects.requireNonNull(centerPath, "centerPath");
+        Objects.requireNonNull(blockStateSupplier, "blockStateSupplier");
+        if (centerPath.isEmpty()) {
             return new RoadGeometryPlan(List.of(), List.of());
         }
 
@@ -71,17 +73,12 @@ public final class RoadGeometryPlanner {
     private static void addGhost(LinkedHashMap<Long, GhostRoadBlock> ghostByPos,
                                  BlockPos pos,
                                  Function<BlockPos, BlockState> blockStateSupplier) {
-        if (pos == null) {
-            return;
-        }
+        Objects.requireNonNull(pos, "pos");
         long key = pos.asLong();
         if (ghostByPos.containsKey(key)) {
             return;
         }
-        BlockState state = blockStateSupplier.apply(pos);
-        if (state == null) {
-            return;
-        }
+        BlockState state = Objects.requireNonNull(blockStateSupplier.apply(pos), "blockStateSupplier returned null for pos " + pos);
         ghostByPos.put(key, new GhostRoadBlock(pos.immutable(), state));
     }
 
