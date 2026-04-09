@@ -143,6 +143,7 @@ class ConstructionRuntimeSavedDataTest {
         RoadLegacyJobRebuilder.RebuildResult result = RoadLegacyJobRebuilder.rebuild(
                 legacyState,
                 path -> rebuiltPlan,
+                plan -> "",
                 step -> step.order() == 0
         );
 
@@ -173,6 +174,7 @@ class ConstructionRuntimeSavedDataTest {
         RoadLegacyJobRebuilder.RebuildResult result = RoadLegacyJobRebuilder.rebuild(
                 legacyState,
                 path -> new RoadPlacementPlan(path, path.get(0), path.get(0), path.get(1), path.get(1), List.of(), List.of(), List.of(), null, null, null),
+                plan -> "",
                 step -> false
         );
 
@@ -180,6 +182,99 @@ class ConstructionRuntimeSavedDataTest {
         assertEquals(0, result.placedStepCount());
         assertTrue(result.plan() == null || result.plan().buildSteps().isEmpty());
         assertTrue(result.failureReason().contains("buildSteps"));
+    }
+
+    @Test
+    void rejectsLegacyRoadJobsWhenCurrentWorldValidationFails() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(1, 64, 1),
+                new BlockPos(2, 64, 1)
+        );
+        ConstructionRuntimeSavedData.RoadJobState legacyState = new ConstructionRuntimeSavedData.RoadJobState(
+                "legacy-road",
+                "minecraft:overworld",
+                UUID.fromString("00000000-0000-0000-0000-000000000555").toString(),
+                centerPath.stream().map(BlockPos::asLong).toList(),
+                List.of(),
+                List.of(),
+                0,
+                true
+        );
+        RoadPlacementPlan rebuiltPlan = new RoadPlacementPlan(
+                centerPath,
+                centerPath.get(0),
+                centerPath.get(0),
+                centerPath.get(1),
+                centerPath.get(1),
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(centerPath.get(0).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, centerPath.get(0).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(),
+                centerPath.get(0),
+                centerPath.get(1),
+                centerPath.get(0)
+        );
+
+        RoadLegacyJobRebuilder.RebuildResult result = RoadLegacyJobRebuilder.rebuild(
+                legacyState,
+                path -> rebuiltPlan,
+                plan -> "blocked by world changes",
+                step -> false
+        );
+
+        assertFalse(result.success());
+        assertEquals(0, result.placedStepCount());
+        assertTrue(result.failureReason().contains("blocked by world changes"));
+    }
+
+    @Test
+    void rejectsLegacyRoadJobsWhenCompletedStepsContainAGap() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(1, 64, 1),
+                new BlockPos(2, 64, 1),
+                new BlockPos(3, 64, 1)
+        );
+        ConstructionRuntimeSavedData.RoadJobState legacyState = new ConstructionRuntimeSavedData.RoadJobState(
+                "legacy-road",
+                "minecraft:overworld",
+                UUID.fromString("00000000-0000-0000-0000-000000000666").toString(),
+                centerPath.stream().map(BlockPos::asLong).toList(),
+                List.of(),
+                List.of(),
+                0,
+                true
+        );
+        RoadPlacementPlan rebuiltPlan = new RoadPlacementPlan(
+                centerPath,
+                centerPath.get(0),
+                centerPath.get(0),
+                centerPath.get(2),
+                centerPath.get(2),
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(centerPath.get(0).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(centerPath.get(1).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(centerPath.get(2).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, centerPath.get(0).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(1, centerPath.get(1).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(2, centerPath.get(2).above(), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(),
+                centerPath.get(0),
+                centerPath.get(2),
+                centerPath.get(1)
+        );
+
+        RoadLegacyJobRebuilder.RebuildResult result = RoadLegacyJobRebuilder.rebuild(
+                legacyState,
+                path -> rebuiltPlan,
+                plan -> "",
+                step -> step.order() == 0 || step.order() == 2
+        );
+
+        assertFalse(result.success());
+        assertEquals(0, result.placedStepCount());
+        assertTrue(result.failureReason().contains("gap"));
     }
 
     private static CompoundTag blockStatePayload(String blockName) {

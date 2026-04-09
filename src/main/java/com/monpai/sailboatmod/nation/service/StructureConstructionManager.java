@@ -2611,6 +2611,7 @@ public final class StructureConstructionManager {
                         BlockPos end = path.get(path.size() - 1);
                         return createRoadPlacementPlan(level, path, start, start, end, end);
                     },
+                    plan -> validateLegacyRoadPlanResumable(level, plan),
                     step -> isRoadBuildStepPlaced(level, step)
             );
             if (!rebuilt.success()) {
@@ -2632,6 +2633,54 @@ public final class StructureConstructionManager {
                 findRoadPlacedStepCount(level, restoredPlan),
                 ""
         );
+    }
+
+    private static String validateLegacyRoadPlanResumable(ServerLevel level, RoadPlacementPlan plan) {
+        if (level == null) {
+            return "missing level";
+        }
+        if (plan == null) {
+            return "missing runtime road plan";
+        }
+        if (plan.centerPath().size() < 2) {
+            return "centerPath has fewer than two points";
+        }
+        if (plan.buildSteps().isEmpty()) {
+            return "buildSteps are missing";
+        }
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            if (step == null) {
+                return "runtime road plan contains a null build step";
+            }
+            String stepFailure = validateLegacyRoadBuildStepResumable(level, step);
+            if (!stepFailure.isBlank()) {
+                return stepFailure;
+            }
+        }
+        return "";
+    }
+
+    private static String validateLegacyRoadBuildStepResumable(ServerLevel level, RoadGeometryPlanner.RoadBuildStep step) {
+        if (level == null) {
+            return "missing level";
+        }
+        if (step == null) {
+            return "missing build step";
+        }
+        if (isRoadBuildStepPlaced(level, step)) {
+            return "";
+        }
+        BlockState currentState = level.getBlockState(step.pos());
+        if (currentState == null) {
+            return "missing block state at " + step.pos().toShortString();
+        }
+        if (isRoadSurface(currentState) && !currentState.equals(step.state())) {
+            return "conflicting road block at " + step.pos().toShortString();
+        }
+        if (!currentState.isAir() && !currentState.canBeReplaced() && !currentState.liquid()) {
+            return "blocked build step at " + step.pos().toShortString();
+        }
+        return "";
     }
 
     private static RoadPlacementPlan restoreRoadPlacementPlan(ServerLevel level,
