@@ -15,7 +15,7 @@ public class SyncRoadConstructionProgressPacket {
     public record Entry(String roadId,
                         String sourceTownName,
                         String targetTownName,
-                        BlockPos origin,
+                        BlockPos focusPos,
                         int progressPercent,
                         int activeWorkers) {
     }
@@ -32,7 +32,7 @@ public class SyncRoadConstructionProgressPacket {
             buf.writeUtf(entry.roadId(), ConstructionPacketStringLimits.MAX_ROAD_ID_LENGTH);
             buf.writeUtf(entry.sourceTownName(), 64);
             buf.writeUtf(entry.targetTownName(), 64);
-            buf.writeBlockPos(entry.origin());
+            buf.writeBlockPos(entry.focusPos());
             buf.writeVarInt(entry.progressPercent());
             buf.writeVarInt(entry.activeWorkers());
         }
@@ -66,7 +66,7 @@ public class SyncRoadConstructionProgressPacket {
                         entry.roadId(),
                         entry.sourceTownName(),
                         entry.targetTownName(),
-                        entry.origin(),
+                        entry.focusPos(),
                         entry.progressPercent(),
                         entry.activeWorkers()))
                 .toList();

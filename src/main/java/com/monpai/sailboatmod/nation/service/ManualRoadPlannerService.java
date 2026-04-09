@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
@@ -130,6 +131,7 @@ public final class ManualRoadPlannerService {
             StructureConstructionManager.scheduleManualRoad(
                     player.serverLevel(),
                     candidate.road(),
+                    candidate.plan(),
                     player.getUUID(),
                     displayTownName(candidate.sourceTown()),
                     displayTownName(candidate.targetTown())
@@ -191,6 +193,19 @@ public final class ManualRoadPlannerService {
         if (path.size() < 2) {
             return null;
         }
+        BlockPos sourceInternalAnchor = townCorePos(level, sourceTown);
+        BlockPos targetInternalAnchor = townCorePos(level, targetTown);
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlan(
+                level,
+                path,
+                sourceInternalAnchor == null ? sourceAnchor : sourceInternalAnchor,
+                sourceAnchor,
+                targetAnchor,
+                targetInternalAnchor == null ? targetAnchor : targetInternalAnchor
+        );
+        if (plan.buildSteps().isEmpty()) {
+            return null;
+        }
 
         String leftId = "town:" + sourceTown.townId();
         String rightId = "town:" + targetTown.townId();
@@ -210,7 +225,7 @@ public final class ManualRoadPlannerService {
                 System.currentTimeMillis(),
                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
         );
-        return new PlanCandidate(sourceTown, targetTown, road);
+        return new PlanCandidate(sourceTown, targetTown, road, plan);
     }
 
     private static TownRecord resolveSelectedTarget(ItemStack stack, List<TownRecord> targets) {
@@ -509,7 +524,12 @@ public final class ManualRoadPlannerService {
                 new SyncRoadPlannerPreviewPacket(
                         displayTownName(candidate.sourceTown()),
                         displayTownName(candidate.targetTown()),
-                        candidate.road().path(),
+                        candidate.plan().ghostBlocks().stream()
+                                .map(block -> new SyncRoadPlannerPreviewPacket.GhostBlock(block.pos(), block.state()))
+                                .toList(),
+                        candidate.plan().startHighlightPos(),
+                        candidate.plan().endHighlightPos(),
+                        candidate.plan().focusPos(),
                         awaitingConfirmation
                 )
         );
@@ -518,7 +538,7 @@ public final class ManualRoadPlannerService {
     private static void sendPreviewClear(ServerPlayer player) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new SyncRoadPlannerPreviewPacket("", "", List.of(), false)
+                new SyncRoadPlannerPreviewPacket("", "", List.of(), null, null, null, false)
         );
     }
 
@@ -554,6 +574,6 @@ public final class ManualRoadPlannerService {
         return name.isBlank() ? town.townId().toLowerCase(Locale.ROOT) : name;
     }
 
-    private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road) {
+    private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road, RoadPlacementPlan plan) {
     }
 }
