@@ -41,10 +41,10 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
-    void allowsShortBridgeOnlyAfterLandOnlySearchFails() {
+    void allowsShortBridgeOnlyAfterLandOnlySearchFailsWhenFinalShareStaysWithinBudget() {
         RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),
-                new BlockPos(6, 64, 0),
+                new BlockPos(10, 64, 0),
                 pos -> {
                     if (pos.getZ() != 0) {
                         return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
@@ -69,11 +69,41 @@ class RoadRouteNodePlannerTest {
                 new BlockPos(3, 64, 0),
                 new BlockPos(4, 64, 0),
                 new BlockPos(5, 64, 0),
-                new BlockPos(6, 64, 0)
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0)
         ), plan.path());
         assertTrue(plan.usedBridge());
         assertEquals(2, plan.totalBridgeColumns());
         assertEquals(2, plan.longestBridgeRun());
+    }
+
+    @Test
+    void rejectsBridgeFallbackWhenFinalBridgeShareWouldExceedTwentyPercent() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(6, 64, 0),
+                pos -> {
+                    if (pos.getZ() != 0) {
+                        return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
+                    }
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            new BlockPos(pos.getX(), 64, 0),
+                            false,
+                            pos.getX() >= 2 && pos.getX() <= 3,
+                            0,
+                            0,
+                            false
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertTrue(plan.path().isEmpty());
+        assertFalse(plan.usedBridge());
     }
 
     @Test
@@ -141,6 +171,55 @@ class RoadRouteNodePlannerTest {
         ), smoothed);
         assertFalse(smoothed.contains(new BlockPos(3, 64, 1)));
         assertTrue(smoothed.stream().noneMatch(pos -> blockedColumns.contains(columnKey(pos.getX(), pos.getZ()))));
+    }
+
+    @Test
+    void bezierSmoothingFallsBackWhenCurveWouldIntroduceBridgeColumns() {
+        List<BlockPos> routeNodes = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 2),
+                new BlockPos(4, 64, 2),
+                new BlockPos(5, 64, 2),
+                new BlockPos(6, 64, 2)
+        );
+
+        List<BlockPos> smoothed = RoadBezierCenterline.build(
+                routeNodes,
+                pos -> {
+                    long key = columnKey(pos.getX(), pos.getZ());
+                    BlockPos surface;
+                    if (key == columnKey(0, 0)) {
+                        surface = new BlockPos(0, 64, 0);
+                    } else if (key == columnKey(1, 0)) {
+                        surface = new BlockPos(1, 64, 0);
+                    } else if (key == columnKey(2, 0)) {
+                        surface = new BlockPos(2, 64, 0);
+                    } else if (key == columnKey(3, 1)) {
+                        surface = new BlockPos(3, 64, 1);
+                    } else if (key == columnKey(3, 2)) {
+                        surface = new BlockPos(3, 64, 2);
+                    } else if (key == columnKey(4, 2)) {
+                        surface = new BlockPos(4, 64, 2);
+                    } else if (key == columnKey(5, 2)) {
+                        surface = new BlockPos(5, 64, 2);
+                    } else if (key == columnKey(6, 2)) {
+                        surface = new BlockPos(6, 64, 2);
+                    } else {
+                        surface = null;
+                    }
+                    return new RoadBezierCenterline.SurfaceSample(
+                            surface,
+                            false,
+                            pos.getX() == 3 && pos.getZ() == 1
+                    );
+                },
+                Set.of()
+        );
+
+        assertEquals(routeNodes, smoothed);
+        assertFalse(smoothed.contains(new BlockPos(3, 64, 1)));
     }
 
     private static long columnKey(int x, int z) {

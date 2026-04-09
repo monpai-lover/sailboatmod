@@ -21,6 +21,7 @@ public final class RoadRouteNodePlanner {
     private static final int MAX_STEP_HEIGHT = 5;
     private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 5;
     private static final int MAX_TOTAL_BRIDGE_COLUMNS = 14;
+    private static final double MAX_BRIDGE_SHARE = 0.20D;
     private static final double HEIGHT_PENALTY = 2.5D;
     private static final double BRIDGE_PENALTY = 7.5D;
     private static final double WATER_PENALTY = 2.25D;
@@ -55,9 +56,17 @@ public final class RoadRouteNodePlanner {
 
         PriorityQueue<PathNode> open = new PriorityQueue<>(Comparator.comparingDouble(PathNode::fCost));
         Map<PathStateKey, PathNode> seen = new HashMap<>();
-        PathNode startNode = new PathNode(start, null, 0.0D, heuristic(start.surfacePos(), end.surfacePos()), startBudget, startBudget.contiguousBridgeColumns());
+        PathNode startNode = new PathNode(
+                start,
+                null,
+                0.0D,
+                heuristic(start.surfacePos(), end.surfacePos()),
+                startBudget,
+                startBudget.contiguousBridgeColumns(),
+                1
+        );
         open.add(startNode);
-        seen.put(new PathStateKey(columnKey(start.surfacePos()), startBudget.contiguousBridgeColumns(), startBudget.totalBridgeColumns()), startNode);
+        seen.put(new PathStateKey(columnKey(start.surfacePos()), startBudget.contiguousBridgeColumns(), startBudget.totalBridgeColumns(), 1), startNode);
 
         int visited = 0;
         while (!open.isEmpty() && visited++ < MAX_VISITED_NODES) {
@@ -68,12 +77,16 @@ public final class RoadRouteNodePlanner {
             current.close();
 
             if (sameColumn(current.column().surfacePos(), end.surfacePos())) {
-                return new RoutePlan(
-                        reconstructPath(current),
-                        current.bridgeBudget().totalBridgeColumns() > 0,
-                        current.bridgeBudget().totalBridgeColumns(),
-                        current.longestBridgeRun()
-                );
+                List<BlockPos> candidatePath = reconstructPath(current);
+                if (bridgeShareWithinLimit(candidatePath.size(), current.bridgeBudget().totalBridgeColumns())) {
+                    return new RoutePlan(
+                            candidatePath,
+                            current.bridgeBudget().totalBridgeColumns() > 0,
+                            current.bridgeBudget().totalBridgeColumns(),
+                            current.longestBridgeRun()
+                    );
+                }
+                continue;
             }
 
             for (int[] direction : DIRECTIONS) {
@@ -86,6 +99,9 @@ public final class RoadRouteNodePlanner {
                 RouteColumn next = map.columnAt(nextX, nextZ);
                 if (!isTraversable(next, allowBridgeColumns)
                         || Math.abs(next.surfacePos().getY() - current.column().surfacePos().getY()) > MAX_STEP_HEIGHT) {
+                    continue;
+                }
+                if (containsColumn(current, next.surfacePos())) {
                     continue;
                 }
                 if (direction[0] != 0 && direction[1] != 0 && cutsCorner(map, current.column().surfacePos(), direction, allowBridgeColumns)) {
@@ -103,10 +119,12 @@ public final class RoadRouteNodePlanner {
 
                 double newG = current.gCost() + stepCost(current, next);
                 int longestBridgeRun = Math.max(current.longestBridgeRun(), nextBudget.contiguousBridgeColumns());
+                int nextStepCount = current.stepCount() + 1;
                 PathStateKey key = new PathStateKey(
                         columnKey(next.surfacePos()),
                         nextBudget.contiguousBridgeColumns(),
-                        nextBudget.totalBridgeColumns()
+                        nextBudget.totalBridgeColumns(),
+                        nextStepCount
                 );
                 PathNode existing = seen.get(key);
                 if (existing == null) {
@@ -116,12 +134,13 @@ public final class RoadRouteNodePlanner {
                             newG,
                             heuristic(next.surfacePos(), end.surfacePos()),
                             nextBudget,
-                            longestBridgeRun
+                            longestBridgeRun,
+                            nextStepCount
                     );
                     seen.put(key, created);
                     open.add(created);
                 } else if (!existing.closed() && newG < existing.gCost()) {
-                    existing.reopen(current, newG, heuristic(next.surfacePos(), end.surfacePos()), nextBudget, longestBridgeRun);
+                    existing.reopen(current, newG, heuristic(next.surfacePos(), end.surfacePos()), nextBudget, longestBridgeRun, nextStepCount);
                     open.add(existing);
                 }
             }
@@ -193,6 +212,22 @@ public final class RoadRouteNodePlanner {
 
     private static boolean sameColumn(BlockPos left, BlockPos right) {
         return left.getX() == right.getX() && left.getZ() == right.getZ();
+    }
+
+    private static boolean containsColumn(PathNode node, BlockPos candidate) {
+        PathNode current = node;
+        while (current != null) {
+            if (sameColumn(current.column().surfacePos(), candidate)) {
+                return true;
+            }
+            current = current.parent();
+        }
+        return false;
+    }
+
+    private static boolean bridgeShareWithinLimit(int pathLength, int totalBridgeColumns) {
+        return totalBridgeColumns == 0
+                || (pathLength > 0 && (totalBridgeColumns / (double) pathLength) <= MAX_BRIDGE_SHARE);
     }
 
     private static long columnKey(BlockPos pos) {
@@ -291,7 +326,7 @@ public final class RoadRouteNodePlanner {
         }
     }
 
-    private record PathStateKey(long columnKey, int contiguousBridgeColumns, int totalBridgeColumns) {
+    private record PathStateKey(long columnKey, int contiguousBridgeColumns, int totalBridgeColumns, int stepCount) {
     }
 
     private static final class PathNode {
@@ -301,6 +336,7 @@ public final class RoadRouteNodePlanner {
         private double fCost;
         private RoadBridgeBudgetState bridgeBudget;
         private int longestBridgeRun;
+        private int stepCount;
         private boolean closed;
 
         private PathNode(RouteColumn column,
@@ -308,13 +344,15 @@ public final class RoadRouteNodePlanner {
                          double gCost,
                          double hCost,
                          RoadBridgeBudgetState bridgeBudget,
-                         int longestBridgeRun) {
+                         int longestBridgeRun,
+                         int stepCount) {
             this.column = column;
             this.parent = parent;
             this.gCost = gCost;
             this.fCost = gCost + hCost;
             this.bridgeBudget = bridgeBudget;
             this.longestBridgeRun = longestBridgeRun;
+            this.stepCount = stepCount;
         }
 
         private RouteColumn column() {
@@ -341,6 +379,10 @@ public final class RoadRouteNodePlanner {
             return longestBridgeRun;
         }
 
+        private int stepCount() {
+            return stepCount;
+        }
+
         private boolean closed() {
             return closed;
         }
@@ -353,12 +395,14 @@ public final class RoadRouteNodePlanner {
                             double gCost,
                             double hCost,
                             RoadBridgeBudgetState bridgeBudget,
-                            int longestBridgeRun) {
+                            int longestBridgeRun,
+                            int stepCount) {
             this.parent = parent;
             this.gCost = gCost;
             this.fCost = gCost + hCost;
             this.bridgeBudget = bridgeBudget;
             this.longestBridgeRun = longestBridgeRun;
+            this.stepCount = stepCount;
             this.closed = false;
         }
     }

@@ -86,7 +86,7 @@ public final class RoadPathfinder {
     }
 
     private static boolean requiresBridge(Level level, BlockPos pos) {
-        return crossesWater(level, pos) || adjacentWaterCount(level, pos) > 0;
+        return crossesWater(level, pos);
     }
 
     private static boolean isBlockedRoadColumn(Level level, BlockPos surfacePos, Set<Long> blockedColumns) {

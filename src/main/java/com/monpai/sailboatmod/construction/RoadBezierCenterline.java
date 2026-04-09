@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -13,6 +14,7 @@ public final class RoadBezierCenterline {
     private static final int MAX_SAFE_STEP_HEIGHT = 5;
     private static final int MAX_SEARCH_RADIUS = 1;
     private static final int MAX_SMOOTHABLE_SPAN = 8;
+    private static final double MAX_BRIDGE_SHARE = 0.20D;
     private static final double[] CORNER_SAMPLE_T = {0.2D, 0.5D, 0.8D};
 
     private RoadBezierCenterline() {
@@ -29,10 +31,15 @@ public final class RoadBezierCenterline {
             return List.of();
         }
 
+        List<BlockPos> baselinePath = simplifyColumns(routeNodes);
+        Set<Long> allowedBridgeColumns = collectBridgeColumns(baselinePath, sampler, blockedColumns);
         List<BlockPos> controlPoints = simplify(routeNodes);
-        List<BlockPos> basePath = rasterize(controlPoints, sampler, blockedColumns, true);
+        List<BlockPos> basePath = rasterize(controlPoints, sampler, blockedColumns, allowedBridgeColumns);
+        if (!isConservativeCandidate(basePath, baselinePath, sampler, blockedColumns, allowedBridgeColumns)) {
+            basePath = baselinePath;
+        }
         if (controlPoints.size() < 3 || basePath.isEmpty()) {
-            return basePath.isEmpty() ? List.copyOf(controlPoints) : basePath;
+            return basePath;
         }
 
         List<BlockPos> smoothedSeedPoints = new ArrayList<>();
@@ -52,8 +59,10 @@ public final class RoadBezierCenterline {
         }
         smoothedSeedPoints.add(controlPoints.get(controlPoints.size() - 1));
 
-        List<BlockPos> smoothedPath = rasterize(smoothedSeedPoints, sampler, blockedColumns, true);
-        return smoothedPath.isEmpty() ? basePath : smoothedPath;
+        List<BlockPos> smoothedPath = rasterize(smoothedSeedPoints, sampler, blockedColumns, allowedBridgeColumns);
+        return isConservativeCandidate(smoothedPath, basePath, sampler, blockedColumns, allowedBridgeColumns)
+                ? smoothedPath
+                : basePath;
     }
 
     private static List<BlockPos> simplify(List<BlockPos> routeNodes) {
@@ -82,6 +91,16 @@ public final class RoadBezierCenterline {
         return List.copyOf(simplified);
     }
 
+    private static List<BlockPos> simplifyColumns(List<BlockPos> routeNodes) {
+        List<BlockPos> simplified = new ArrayList<>();
+        for (BlockPos pos : routeNodes) {
+            if (simplified.isEmpty() || !sameColumn(simplified.get(simplified.size() - 1), pos)) {
+                simplified.add(pos.immutable());
+            }
+        }
+        return List.copyOf(simplified);
+    }
+
     private static List<BlockPos> trySmoothCorner(BlockPos previous,
                                                   BlockPos current,
                                                   BlockPos next,
@@ -93,9 +112,9 @@ public final class RoadBezierCenterline {
             return List.of();
         }
 
-        SurfaceSample previousSample = safeExact(previous, sampler, blockedColumns, false);
-        SurfaceSample currentSample = safeExact(current, sampler, blockedColumns, false);
-        SurfaceSample nextSample = safeExact(next, sampler, blockedColumns, false);
+        SurfaceSample previousSample = safeExact(previous, sampler, blockedColumns, Set.of());
+        SurfaceSample currentSample = safeExact(current, sampler, blockedColumns, Set.of());
+        SurfaceSample nextSample = safeExact(next, sampler, blockedColumns, Set.of());
         if (previousSample == null || currentSample == null || nextSample == null) {
             return List.of();
         }
@@ -106,7 +125,7 @@ public final class RoadBezierCenterline {
         for (double t : CORNER_SAMPLE_T) {
             int x = (int) Math.round(quadratic(previous.getX(), current.getX(), next.getX(), t));
             int z = (int) Math.round(quadratic(previous.getZ(), current.getZ(), next.getZ(), t));
-            BlockPos resolved = findNearestSurface(x, z, last.getY(), sampler, blockedColumns, false);
+            BlockPos resolved = findNearestSurface(x, z, last.getY(), sampler, blockedColumns, Set.of());
             if (resolved == null || Math.abs(resolved.getY() - last.getY()) > MAX_SAFE_STEP_HEIGHT) {
                 return List.of();
             }
@@ -127,7 +146,7 @@ public final class RoadBezierCenterline {
     private static List<BlockPos> rasterize(List<BlockPos> seedPoints,
                                             Function<BlockPos, SurfaceSample> sampler,
                                             Set<Long> blockedColumns,
-                                            boolean allowBridge) {
+                                            Set<Long> allowedBridgeColumns) {
         LinkedHashMap<Long, BlockPos> rasterized = new LinkedHashMap<>();
         BlockPos start = findNearestSurface(
                 seedPoints.get(0).getX(),
@@ -135,7 +154,7 @@ public final class RoadBezierCenterline {
                 seedPoints.get(0).getY(),
                 sampler,
                 blockedColumns,
-                allowBridge
+                allowedBridgeColumns
         );
         if (start == null) {
             return List.of();
@@ -147,7 +166,7 @@ public final class RoadBezierCenterline {
                 if (sameColumn(rawStep, last)) {
                     continue;
                 }
-                BlockPos resolved = findNearestSurface(rawStep.getX(), rawStep.getZ(), last.getY(), sampler, blockedColumns, allowBridge);
+                BlockPos resolved = findNearestSurface(rawStep.getX(), rawStep.getZ(), last.getY(), sampler, blockedColumns, allowedBridgeColumns);
                 if (resolved == null || Math.abs(resolved.getY() - last.getY()) > MAX_SAFE_STEP_HEIGHT) {
                     return List.of();
                 }
@@ -161,9 +180,9 @@ public final class RoadBezierCenterline {
     private static SurfaceSample safeExact(BlockPos pos,
                                            Function<BlockPos, SurfaceSample> sampler,
                                            Set<Long> blockedColumns,
-                                           boolean allowBridge) {
+                                           Set<Long> allowedBridgeColumns) {
         SurfaceSample sample = sampler.apply(new BlockPos(pos.getX(), 0, pos.getZ()));
-        return isSafe(sample, blockedColumns, allowBridge) ? sample : null;
+        return isSafe(sample, blockedColumns, allowedBridgeColumns) ? sample : null;
     }
 
     private static BlockPos findNearestSurface(int x,
@@ -171,7 +190,7 @@ public final class RoadBezierCenterline {
                                                int preferredY,
                                                Function<BlockPos, SurfaceSample> sampler,
                                                Set<Long> blockedColumns,
-                                               boolean allowBridge) {
+                                               Set<Long> allowedBridgeColumns) {
         BlockPos best = null;
         int bestDistance = Integer.MAX_VALUE;
         int bestHeightDiff = Integer.MAX_VALUE;
@@ -182,7 +201,7 @@ public final class RoadBezierCenterline {
                         continue;
                     }
                     SurfaceSample sample = sampler.apply(new BlockPos(x + dx, 0, z + dz));
-                    if (!isSafe(sample, blockedColumns, allowBridge)) {
+                    if (!isSafe(sample, blockedColumns, allowedBridgeColumns)) {
                         continue;
                     }
                     BlockPos surfacePos = sample.surfacePos();
@@ -202,12 +221,65 @@ public final class RoadBezierCenterline {
         return null;
     }
 
-    private static boolean isSafe(SurfaceSample sample, Set<Long> blockedColumns, boolean allowBridge) {
+    private static boolean isSafe(SurfaceSample sample, Set<Long> blockedColumns, Set<Long> allowedBridgeColumns) {
         return sample != null
                 && sample.surfacePos() != null
                 && !sample.blocked()
                 && !blockedColumns.contains(columnKey(sample.surfacePos()))
-                && (allowBridge || !sample.requiresBridge());
+                && (!sample.requiresBridge() || allowedBridgeColumns.contains(columnKey(sample.surfacePos())));
+    }
+
+    private static Set<Long> collectBridgeColumns(List<BlockPos> path,
+                                                  Function<BlockPos, SurfaceSample> sampler,
+                                                  Set<Long> blockedColumns) {
+        Set<Long> bridgeColumns = new HashSet<>();
+        for (BlockPos pos : path) {
+            SurfaceSample sample = safeExact(pos, sampler, blockedColumns, Set.of(columnKey(pos)));
+            if (sample == null) {
+                return Set.of();
+            }
+            if (sample.requiresBridge()) {
+                bridgeColumns.add(columnKey(sample.surfacePos()));
+            }
+        }
+        return Set.copyOf(bridgeColumns);
+    }
+
+    private static boolean isConservativeCandidate(List<BlockPos> candidate,
+                                                   List<BlockPos> baseline,
+                                                   Function<BlockPos, SurfaceSample> sampler,
+                                                   Set<Long> blockedColumns,
+                                                   Set<Long> allowedBridgeColumns) {
+        if (candidate.isEmpty() || baseline.isEmpty()) {
+            return false;
+        }
+        if (!sameColumn(candidate.get(0), baseline.get(0))
+                || !sameColumn(candidate.get(candidate.size() - 1), baseline.get(baseline.size() - 1))) {
+            return false;
+        }
+
+        int bridgeColumns = 0;
+        int lastY = Integer.MIN_VALUE;
+        for (BlockPos pos : candidate) {
+            SurfaceSample sample = safeExact(pos, sampler, blockedColumns, allowedBridgeColumns);
+            if (sample == null || !sameColumn(sample.surfacePos(), pos)) {
+                return false;
+            }
+            if (lastY != Integer.MIN_VALUE && Math.abs(sample.surfacePos().getY() - lastY) > MAX_SAFE_STEP_HEIGHT) {
+                return false;
+            }
+            if (sample.requiresBridge()) {
+                bridgeColumns++;
+            }
+            lastY = sample.surfacePos().getY();
+        }
+        return bridgeColumns <= allowedBridgeColumns.size()
+                && bridgeShareWithinLimit(candidate.size(), bridgeColumns);
+    }
+
+    private static boolean bridgeShareWithinLimit(int pathLength, int totalBridgeColumns) {
+        return totalBridgeColumns == 0
+                || (pathLength > 0 && (totalBridgeColumns / (double) pathLength) <= MAX_BRIDGE_SHARE);
     }
 
     private static List<BlockPos> bresenham(BlockPos from, BlockPos to) {
