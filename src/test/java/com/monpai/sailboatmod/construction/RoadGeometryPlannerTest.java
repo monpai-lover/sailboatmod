@@ -30,8 +30,11 @@ class RoadGeometryPlannerTest {
         );
 
         List<BlockPos> positions = plan.ghostBlocks().stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
-        assertTrue(positions.contains(new BlockPos(0, 65, -1)));
-        assertTrue(positions.contains(new BlockPos(1, 65, 2)));
+        BlockPos interiorCorner = new BlockPos(1, 65, 0);
+        assertTrue(positions.contains(interiorCorner.north()));
+        assertTrue(positions.contains(interiorCorner.south()));
+        assertTrue(positions.contains(interiorCorner.east()));
+        assertTrue(positions.contains(interiorCorner.west()));
     }
 
     @Test
