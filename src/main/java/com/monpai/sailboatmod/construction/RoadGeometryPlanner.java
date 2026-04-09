@@ -18,12 +18,9 @@ public final class RoadGeometryPlanner {
             return new RoadGeometryPlan(List.of(), List.of());
         }
 
-        List<BlockPos> path = centerPath.stream()
-                .filter(Objects::nonNull)
-                .map(BlockPos::immutable)
-                .toList();
-        if (path.isEmpty()) {
-            return new RoadGeometryPlan(List.of(), List.of());
+        List<BlockPos> path = new ArrayList<>(centerPath.size());
+        for (int i = 0; i < centerPath.size(); i++) {
+            path.add(Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i).immutable());
         }
 
         LinkedHashMap<Long, GhostRoadBlock> ghostByPos = new LinkedHashMap<>();

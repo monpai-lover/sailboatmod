@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -87,6 +88,19 @@ class RoadGeometryPlannerTest {
                 new BlockPos(10, 65, 10),
                 new BlockPos(11, 65, 10),
                 new BlockPos(10, 65, 10)
+        ));
+    }
+
+    @Test
+    void plannerRejectsNullCenterPathElements() {
+        List<BlockPos> centerPath = new ArrayList<>();
+        centerPath.add(new BlockPos(10, 64, 10));
+        centerPath.add(null);
+        centerPath.add(new BlockPos(12, 64, 10));
+
+        assertThrows(NullPointerException.class, () -> RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
         ));
     }
 
