@@ -39,6 +39,21 @@ class RoadConstructionSupportTest {
     }
 
     @Test
+    void rejectsBridgeBudgetThatExceedsTotalLimitEvenAcrossSeparateRuns() {
+        RoadBridgeBudgetState budget = RoadBridgeBudgetState.empty()
+                .advance(true, 5, 3)
+                .advance(false, 5, 3)
+                .advance(true, 5, 3)
+                .advance(true, 5, 3);
+
+        RoadBridgeBudgetState rejected = budget.advance(true, 5, 3);
+
+        assertFalse(rejected.accepted());
+        assertEquals(3, rejected.contiguousBridgeColumns());
+        assertEquals(4, rejected.totalBridgeColumns());
+    }
+
+    @Test
     void selectsNearestRoadPreviewForRuntimeProgressOverlay() {
         RoadRuntimeProgressSelection selected = RoadRuntimeProgressSelector.pickNearest(
                 new BlockPos(10, 64, 10),
