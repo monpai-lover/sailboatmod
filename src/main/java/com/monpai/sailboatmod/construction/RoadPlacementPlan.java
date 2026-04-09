@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public record RoadPlacementPlan(List<BlockPos> centerPath,
                                 BlockPos sourceInternalAnchor,
@@ -35,10 +36,9 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
             return List.of();
         }
         List<BlockPos> copied = new ArrayList<>(positions.size());
-        for (BlockPos pos : positions) {
-            if (pos != null) {
-                copied.add(pos.immutable());
-            }
+        for (int i = 0; i < positions.size(); i++) {
+            BlockPos pos = Objects.requireNonNull(positions.get(i), "centerPath contains null at index " + i);
+            copied.add(pos.immutable());
         }
         return List.copyOf(copied);
     }

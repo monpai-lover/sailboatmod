@@ -97,7 +97,7 @@ public final class RoadGeometryPlanner {
 
     public record GhostRoadBlock(BlockPos pos, BlockState state) {
         public GhostRoadBlock {
-            pos = pos == null ? BlockPos.ZERO : pos.immutable();
+            pos = Objects.requireNonNull(pos, "pos").immutable();
             state = Objects.requireNonNull(state, "state");
         }
     }
@@ -107,7 +107,7 @@ public final class RoadGeometryPlanner {
             if (order < 0) {
                 throw new IllegalArgumentException("order must be non-negative");
             }
-            pos = pos == null ? BlockPos.ZERO : pos.immutable();
+            pos = Objects.requireNonNull(pos, "pos").immutable();
             state = Objects.requireNonNull(state, "state");
         }
     }

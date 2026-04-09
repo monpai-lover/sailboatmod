@@ -7,12 +7,16 @@ import net.minecraft.SharedConstants;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.IntStream;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadGeometryPlannerTest {
@@ -70,6 +74,62 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
+    void roadPlacementPlanRejectsNullCenterPathElements() {
+        assertThrows(NullPointerException.class, () -> new RoadPlacementPlan(
+                List.of(new BlockPos(10, 64, 10), null, new BlockPos(12, 64, 10)),
+                new BlockPos(9, 64, 10),
+                new BlockPos(10, 64, 10),
+                new BlockPos(11, 64, 10),
+                new BlockPos(12, 64, 10),
+                List.of(),
+                List.of(),
+                List.of(),
+                new BlockPos(10, 65, 10),
+                new BlockPos(11, 65, 10),
+                new BlockPos(10, 65, 10)
+        ));
+    }
+
+    @Test
+    void ghostRoadBlockRejectsNullPosition() {
+        assertThrows(NullPointerException.class, () -> new RoadGeometryPlanner.GhostRoadBlock(
+                null,
+                Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        ));
+    }
+
+    @Test
+    void roadBuildStepRejectsNullPosition() {
+        assertThrows(NullPointerException.class, () -> new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                null,
+                Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        ));
+    }
+
+    @Test
+    void plannerGeometryMatchesCurrentRuntimeRoadSliceSemantics() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(1, 64, 1),
+                new BlockPos(2, 64, 1),
+                new BlockPos(3, 64, 1)
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        Set<BlockPos> plannerPositions = plan.ghostBlocks().stream()
+                .map(RoadGeometryPlanner.GhostRoadBlock::pos)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        assertEquals(runtimeRoadPlacementPositions(centerPath), plannerPositions);
+    }
+
+    @Test
     void roadPlacementPlanConstructorMatchesSharedContractOrder() {
         List<BlockPos> centerPath = List.of(new BlockPos(10, 64, 10), new BlockPos(11, 64, 10));
         BlockPos sourceInternalAnchor = new BlockPos(9, 64, 10);
@@ -112,5 +172,24 @@ class RoadGeometryPlannerTest {
         assertEquals(startHighlightPos, plan.startHighlightPos());
         assertEquals(endHighlightPos, plan.endHighlightPos());
         assertEquals(focusPos, plan.focusPos());
+    }
+
+    private static Set<BlockPos> runtimeRoadPlacementPositions(List<BlockPos> centerPath) {
+        try {
+            Method collectRoadSlicePositions = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("collectRoadSlicePositions", List.class, int.class);
+            collectRoadSlicePositions.setAccessible(true);
+
+            LinkedHashSet<BlockPos> positions = new LinkedHashSet<>();
+            for (int i = 0; i < centerPath.size(); i++) {
+                @SuppressWarnings("unchecked")
+                Set<BlockPos> slice = (Set<BlockPos>) collectRoadSlicePositions.invoke(null, centerPath, i);
+                positions.addAll(slice);
+            }
+            return positions;
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to read runtime road-slice semantics", ex);
+        }
     }
 }
