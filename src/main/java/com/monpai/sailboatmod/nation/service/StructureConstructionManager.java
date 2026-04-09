@@ -1070,6 +1070,7 @@ public final class StructureConstructionManager {
             }
             clearRoad(level, road, desiredCoverage);
             ACTIVE_ROAD_CONSTRUCTIONS.remove(road.roadId());
+            removePersistedRoadJob(level, road.roadId());
             data.removeRoadNetwork(road.roadId());
         }
 
@@ -2512,6 +2513,14 @@ public final class StructureConstructionManager {
                 continue;
             }
 
+            RoadNetworkRecord road = nationData.getRoadNetwork(state.roadId());
+            String validationFailure = validatePersistedRoadJobState(state, road);
+            if (!validationFailure.isBlank()) {
+                LOGGER.warn("Dropping persisted road job {} in {}: {}", state.roadId(), dimensionId, validationFailure);
+                staleRoadJobs.add(state.roadId());
+                continue;
+            }
+
             RestoredRoadRuntime restoredRoad = restorePersistedRoadRuntime(level, state);
             if (!restoredRoad.success()) {
                 LOGGER.warn("Dropping persisted road job {} in {}: {}", state.roadId(), dimensionId, restoredRoad.failureReason());
@@ -2525,7 +2534,6 @@ public final class StructureConstructionManager {
             }
 
             UUID ownerUuid = parseUuid(state.ownerUuid());
-            RoadNetworkRecord road = nationData.getRoadNetwork(state.roadId());
             String[] resolvedNames = road == null
                     ? new String[] { "-", "-" }
                     : resolveRoadTownNames(level, road);
@@ -2633,6 +2641,83 @@ public final class StructureConstructionManager {
                 findRoadPlacedStepCount(level, restoredPlan),
                 ""
         );
+    }
+
+    private static String validatePersistedRoadJobState(ConstructionRuntimeSavedData.RoadJobState state,
+                                                        RoadNetworkRecord road) {
+        if (state == null) {
+            return "missing persisted road runtime state";
+        }
+        if (state.roadId() == null || state.roadId().isBlank()) {
+            return "missing road id";
+        }
+        if (road == null) {
+            return "missing road network record";
+        }
+        if (!state.roadId().equals(road.roadId())) {
+            return "persisted road id does not match road network record";
+        }
+
+        List<BlockPos> centerPath = toBlockPosList(state.centerPath());
+        if (centerPath.size() < 2) {
+            return "centerPath has fewer than two points";
+        }
+        if (!road.path().equals(centerPath)) {
+            return "persisted centerPath no longer matches road network";
+        }
+        if (state.dimensionId() == null || state.dimensionId().isBlank()) {
+            return "missing dimension id";
+        }
+        if (!road.dimensionId().isBlank() && !road.dimensionId().equals(state.dimensionId())) {
+            return "persisted dimension does not match road network";
+        }
+        if (state.isLegacyPathOnly()) {
+            return "";
+        }
+        if (state.ghostBlocks().isEmpty()) {
+            return "ghostBlocks are missing";
+        }
+        if (state.buildSteps().isEmpty()) {
+            return "buildSteps are missing";
+        }
+        if (state.placedStepCount() < 0 || state.placedStepCount() > state.buildSteps().size()) {
+            return "placedStepCount is out of range";
+        }
+
+        LinkedHashSet<Long> ghostPositions = new LinkedHashSet<>();
+        for (ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState ghostBlock : state.ghostBlocks()) {
+            if (ghostBlock == null) {
+                return "ghostBlocks contain a null entry";
+            }
+            if (ghostBlock.statePayload() == null || ghostBlock.statePayload().isEmpty() || !ghostBlock.statePayload().contains("Name", net.minecraft.nbt.Tag.TAG_STRING)) {
+                return "ghostBlocks contain an invalid state payload";
+            }
+            if (!ghostPositions.add(ghostBlock.pos())) {
+                return "ghostBlocks contain duplicate positions";
+            }
+        }
+
+        LinkedHashSet<Long> buildPositions = new LinkedHashSet<>();
+        int expectedOrder = 0;
+        for (ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState buildStep : state.buildSteps()) {
+            if (buildStep == null) {
+                return "buildSteps contain a null entry";
+            }
+            if (buildStep.order() != expectedOrder) {
+                return "buildSteps are not contiguous";
+            }
+            if (buildStep.statePayload() == null || buildStep.statePayload().isEmpty() || !buildStep.statePayload().contains("Name", net.minecraft.nbt.Tag.TAG_STRING)) {
+                return "buildSteps contain an invalid state payload";
+            }
+            if (!buildPositions.add(buildStep.pos())) {
+                return "buildSteps contain duplicate positions";
+            }
+            expectedOrder++;
+        }
+        if (!ghostPositions.equals(buildPositions)) {
+            return "ghostBlocks do not match buildSteps";
+        }
+        return "";
     }
 
     private static String validateLegacyRoadPlanResumable(ServerLevel level, RoadPlacementPlan plan) {
