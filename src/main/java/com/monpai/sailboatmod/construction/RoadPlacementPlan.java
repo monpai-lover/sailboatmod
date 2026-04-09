@@ -5,19 +5,18 @@ import net.minecraft.core.BlockPos;
 import java.util.ArrayList;
 import java.util.List;
 
-public record RoadPlacementPlan(List<BridgeRange> bridgeRanges,
-                                List<BlockPos> centerPath,
+public record RoadPlacementPlan(List<BlockPos> centerPath,
                                 BlockPos sourceInternalAnchor,
                                 BlockPos sourceBoundaryAnchor,
                                 BlockPos targetBoundaryAnchor,
                                 BlockPos targetInternalAnchor,
                                 List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
                                 List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
+                                List<BridgeRange> bridgeRanges,
                                 BlockPos startHighlightPos,
                                 BlockPos endHighlightPos,
                                 BlockPos focusPos) {
     public RoadPlacementPlan {
-        bridgeRanges = bridgeRanges == null ? List.of() : List.copyOf(bridgeRanges);
         centerPath = copyPositions(centerPath);
         sourceInternalAnchor = immutable(sourceInternalAnchor);
         sourceBoundaryAnchor = immutable(sourceBoundaryAnchor);
@@ -25,6 +24,7 @@ public record RoadPlacementPlan(List<BridgeRange> bridgeRanges,
         targetInternalAnchor = immutable(targetInternalAnchor);
         ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
         buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
+        bridgeRanges = bridgeRanges == null ? List.of() : List.copyOf(bridgeRanges);
         startHighlightPos = immutable(startHighlightPos);
         endHighlightPos = immutable(endHighlightPos);
         focusPos = immutable(focusPos);

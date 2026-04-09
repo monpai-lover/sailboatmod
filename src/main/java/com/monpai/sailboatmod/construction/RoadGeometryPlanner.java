@@ -62,25 +62,6 @@ public final class RoadGeometryPlanner {
             }
         }
 
-        if (path.size() > 1) {
-            BlockPos start = path.get(0).above();
-            BlockPos second = path.get(1);
-            int startDx = Integer.compare(path.get(0).getX(), second.getX());
-            int startDz = Integer.compare(path.get(0).getZ(), second.getZ());
-            if (startDx != 0 || startDz != 0) {
-                addGhost(ghostByPos, start.offset(startDx, 0, startDz), blockStateSupplier);
-            }
-
-            BlockPos end = path.get(path.size() - 1).above();
-            BlockPos beforeEnd = path.get(path.size() - 2);
-            BlockPos endSurface = path.get(path.size() - 1);
-            int endDx = Integer.compare(endSurface.getX(), beforeEnd.getX());
-            int endDz = Integer.compare(endSurface.getZ(), beforeEnd.getZ());
-            if (endDx != 0 || endDz != 0) {
-                addGhost(ghostByPos, end.offset(endDx, 0, endDz), blockStateSupplier);
-            }
-        }
-
         List<GhostRoadBlock> ghostBlocks = List.copyOf(ghostByPos.values());
         List<RoadBuildStep> buildSteps = new ArrayList<>(ghostBlocks.size());
         for (int i = 0; i < ghostBlocks.size(); i++) {

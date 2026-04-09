@@ -35,6 +35,8 @@ class RoadGeometryPlannerTest {
         assertTrue(positions.contains(interiorCorner.south()));
         assertTrue(positions.contains(interiorCorner.east()));
         assertTrue(positions.contains(interiorCorner.west()));
+        assertFalse(positions.contains(new BlockPos(-1, 65, 0)));
+        assertFalse(positions.contains(new BlockPos(1, 65, 2)));
     }
 
     @Test
@@ -65,5 +67,50 @@ class RoadGeometryPlannerTest {
 
         List<Integer> firstOrders = first.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::order).toList();
         assertEquals(IntStream.range(0, firstOrders.size()).boxed().toList(), firstOrders);
+    }
+
+    @Test
+    void roadPlacementPlanConstructorMatchesSharedContractOrder() {
+        List<BlockPos> centerPath = List.of(new BlockPos(10, 64, 10), new BlockPos(11, 64, 10));
+        BlockPos sourceInternalAnchor = new BlockPos(9, 64, 10);
+        BlockPos sourceBoundaryAnchor = new BlockPos(10, 64, 10);
+        BlockPos targetBoundaryAnchor = new BlockPos(11, 64, 10);
+        BlockPos targetInternalAnchor = new BlockPos(12, 64, 10);
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(10, 65, 10), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = List.of(
+                new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(10, 65, 10), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = List.of(new RoadPlacementPlan.BridgeRange(0, 1));
+        BlockPos startHighlightPos = new BlockPos(10, 65, 10);
+        BlockPos endHighlightPos = new BlockPos(11, 65, 10);
+        BlockPos focusPos = new BlockPos(10, 65, 10);
+
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                centerPath,
+                sourceInternalAnchor,
+                sourceBoundaryAnchor,
+                targetBoundaryAnchor,
+                targetInternalAnchor,
+                ghostBlocks,
+                buildSteps,
+                bridgeRanges,
+                startHighlightPos,
+                endHighlightPos,
+                focusPos
+        );
+
+        assertEquals(centerPath, plan.centerPath());
+        assertEquals(sourceInternalAnchor, plan.sourceInternalAnchor());
+        assertEquals(sourceBoundaryAnchor, plan.sourceBoundaryAnchor());
+        assertEquals(targetBoundaryAnchor, plan.targetBoundaryAnchor());
+        assertEquals(targetInternalAnchor, plan.targetInternalAnchor());
+        assertEquals(ghostBlocks, plan.ghostBlocks());
+        assertEquals(buildSteps, plan.buildSteps());
+        assertEquals(bridgeRanges, plan.bridgeRanges());
+        assertEquals(startHighlightPos, plan.startHighlightPos());
+        assertEquals(endHighlightPos, plan.endHighlightPos());
+        assertEquals(focusPos, plan.focusPos());
     }
 }
