@@ -401,7 +401,7 @@ public final class StructureConstructionManager {
             if (job.level != level || job.plan.centerPath().isEmpty()) {
                 continue;
             }
-            BlockPos focusPos = getRoadFocusPos(job);
+            BlockPos focusPos = getRoadFocusPos(level, job);
             BlockPos approachPos = getRoadApproachPos(level, focusPos);
             double distance = workerPos.distSqr(approachPos);
             if (distance > maxDistanceSqr) {
@@ -409,7 +409,7 @@ public final class StructureConstructionManager {
             }
 
             int activeWorkers = getActiveRoadWorkerCount(level, entry.getKey());
-            int progressPercent = roadProgressPercent(job);
+            int progressPercent = roadProgressPercent(level, job);
             double score = distance + (activeWorkers * 48.0D) + 12.0D;
             if (score < bestScore) {
                 bestScore = score;
@@ -449,14 +449,14 @@ public final class StructureConstructionManager {
         if (roadJob == null || roadJob.level != level || roadJob.plan.centerPath().isEmpty()) {
             return null;
         }
-        BlockPos focusPos = getRoadFocusPos(roadJob);
+        BlockPos focusPos = getRoadFocusPos(level, roadJob);
         BlockPos approachPos = getRoadApproachPos(level, focusPos);
         return new WorkerSiteAssignment(
                 jobId,
                 focusPos,
                 approachPos,
                 focusPos.above(),
-                roadProgressPercent(roadJob),
+                roadProgressPercent(level, roadJob),
                 getActiveRoadWorkerCount(level, jobId)
         );
     }
@@ -518,7 +518,7 @@ public final class StructureConstructionManager {
         Set<ServerPlayer> playersToSync = Collections.newSetFromMap(new IdentityHashMap<>());
 
         for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
-            RoadConstructionJob job = entry.getValue();
+            RoadConstructionJob job = refreshRoadConstructionState(level, entry.getValue());
             if (job.level != level) continue;
 
             ServerPlayer owner = ownerPlayer(level, job.ownerUuid);
@@ -537,8 +537,9 @@ public final class StructureConstructionManager {
 
             double progressPerTick = (totalSteps / (double) ROAD_BUILD_DURATION_TICKS) * speedMultiplier;
             double targetProgress = job.progressSteps + progressPerTick;
-            int targetPlacedStepCount = Math.min(totalSteps, (int) targetProgress);
-            RoadConstructionJob advancedJob = placeRoadBuildSteps(level, job, targetPlacedStepCount - job.placedStepCount);
+            int actualPlacedStepCount = findRoadPlacedStepCount(level, job.plan);
+            int targetPlacedStepCount = Math.min(totalSteps, Math.max(actualPlacedStepCount, (int) targetProgress));
+            RoadConstructionJob advancedJob = placeRoadBuildSteps(level, job, targetPlacedStepCount - actualPlacedStepCount);
             int newPlacedStepCount = advancedJob.placedStepCount;
 
             if (newPlacedStepCount >= totalSteps) {
@@ -627,10 +628,12 @@ public final class StructureConstructionManager {
 
     private static RoadConstructionJob consumeRoadHammerCredit(ServerLevel level, String jobId, RoadConstructionJob job) {
         Integer queuedCredits = ACTIVE_ROAD_HAMMER_CREDITS.get(jobId);
-        if (queuedCredits == null || queuedCredits <= 0 || job == null || job.placedStepCount >= job.plan.buildSteps().size()) {
+        if (queuedCredits == null || queuedCredits <= 0 || job == null) {
             return job;
         }
-        int batchSize = nextRoadBuildBatchSize(job.plan, job.placedStepCount);
+        job = refreshRoadConstructionState(level, job);
+        Set<Long> completedStepKeys = completedRoadBuildStepKeys(level, job.plan);
+        int batchSize = nextRoadBuildBatchSize(job.plan, completedStepKeys);
         if (batchSize <= 0) {
             return job;
         }
@@ -687,7 +690,7 @@ public final class StructureConstructionManager {
 
     private static HammerUseResult queueRoadHammer(ServerLevel level, ServerPlayer player, String jobId, BlockPos hitPos) {
         RoadConstructionJob job = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
-        if (job == null || job.level != level || job.placedStepCount >= job.plan.buildSteps().size()) {
+        if (job == null || job.level != level) {
             return HammerUseResult.failure("message.sailboatmod.builder_hammer.invalid_target");
         }
         if (!canManageRoad(level, player, job)) {
@@ -715,24 +718,13 @@ public final class StructureConstructionManager {
         ));
     }
 
-    private static BlockPos getRoadFocusPos(RoadConstructionJob job) {
+    private static BlockPos getRoadFocusPos(ServerLevel level, RoadConstructionJob job) {
         if (job == null || job.plan.centerPath().isEmpty()) {
             return BlockPos.ZERO;
         }
-        int index = roadBuildBatchIndex(job.plan, job.placedStepCount);
+        int index = roadBuildBatchIndex(job.plan, completedRoadBuildStepKeys(level, job.plan));
         index = Math.max(0, Math.min(index, job.plan.centerPath().size() - 1));
         return job.plan.centerPath().get(index);
-    }
-
-    private static BlockPos getRoadGhostFocusPos(RoadConstructionJob job) {
-        if (job == null) {
-            return null;
-        }
-        List<RoadGeometryPlanner.GhostRoadBlock> remaining = remainingRoadGhostBlocks(job.plan, job.placedStepCount);
-        if (!remaining.isEmpty()) {
-            return remaining.get(0).pos();
-        }
-        return job.plan.focusPos();
     }
 
     private static BlockPos getRoadApproachPos(ServerLevel level, BlockPos focusPos) {
@@ -761,8 +753,8 @@ public final class StructureConstructionManager {
                 && !below.liquid();
     }
 
-    private static int roadProgressPercent(RoadConstructionJob job) {
-        return roadProgressPercent(job == null ? null : job.plan, job == null ? 0 : job.placedStepCount);
+    private static int roadProgressPercent(ServerLevel level, RoadConstructionJob job) {
+        return roadProgressPercent(job == null ? null : job.plan, job == null ? Set.of() : completedRoadBuildStepKeys(level, job.plan));
     }
 
     private static int roadProgressPercent(RoadPlacementPlan plan, int placedStepCount) {
@@ -771,6 +763,14 @@ public final class StructureConstructionManager {
         }
         int clamped = Math.max(0, Math.min(placedStepCount, plan.buildSteps().size()));
         return Math.max(0, Math.min(100, (clamped * 100) / plan.buildSteps().size()));
+    }
+
+    private static int roadProgressPercent(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        if (plan == null || plan.buildSteps().isEmpty()) {
+            return 100;
+        }
+        int completed = countCompletedRoadBuildSteps(plan, completedStepKeys);
+        return Math.max(0, Math.min(100, (completed * 100) / plan.buildSteps().size()));
     }
 
     private static int getActiveRoadWorkerCount(ServerLevel level, String jobId) {
@@ -1382,27 +1382,54 @@ public final class StructureConstructionManager {
         return createRoadPlacementPlan(level, centerPath, start, start, end, end);
     }
 
+    private static RoadConstructionJob refreshRoadConstructionState(ServerLevel level, RoadConstructionJob job) {
+        if (level == null || job == null) {
+            return job;
+        }
+        int placedStepCount = findRoadPlacedStepCount(level, job.plan);
+        return new RoadConstructionJob(
+                job.level,
+                job.roadId,
+                job.ownerUuid,
+                job.townId,
+                job.nationId,
+                job.sourceTownName,
+                job.targetTownName,
+                job.plan,
+                placedStepCount,
+                Math.max(job.progressSteps, placedStepCount)
+        );
+    }
+
     private static RoadConstructionJob placeRoadBuildSteps(ServerLevel level, RoadConstructionJob job, int stepCount) {
         if (job == null || stepCount <= 0) {
             return job;
         }
+        job = refreshRoadConstructionState(level, job);
         int totalSteps = job.plan.buildSteps().size();
-        int startIndex = Math.max(0, Math.min(job.placedStepCount, totalSteps));
-        int requestedEndIndex = Math.max(startIndex, Math.min(totalSteps, startIndex + stepCount));
+        Set<Long> completedStepKeys = new LinkedHashSet<>(completedRoadBuildStepKeys(level, job.plan));
+        int startCount = completedStepKeys.size();
+        int targetCount = Math.max(startCount, Math.min(totalSteps, startCount + stepCount));
         boolean placedAny = false;
-        int completedIndex = startIndex;
+        int completedCount = startCount;
         BlockPos effectPos = null;
-        for (int i = startIndex; i < requestedEndIndex; i++) {
-            RoadGeometryPlanner.RoadBuildStep step = job.plan.buildSteps().get(i);
+        for (RoadGeometryPlanner.RoadBuildStep step : job.plan.buildSteps()) {
+            if (completedStepKeys.contains(step.pos().asLong())) {
+                continue;
+            }
             placedAny |= tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
             if (!isRoadBuildStepPlaced(level, step)) {
+                continue;
+            }
+            completedStepKeys.add(step.pos().asLong());
+            completedCount++;
+            effectPos = step.pos();
+            if (completedCount >= targetCount) {
                 break;
             }
-            completedIndex = i + 1;
-            effectPos = step.pos();
         }
         if (placedAny) {
-            BlockPos center = effectPos == null ? job.plan.buildSteps().get(startIndex).pos() : effectPos;
+            BlockPos center = effectPos == null ? job.plan.buildSteps().get(Math.min(job.plan.buildSteps().size() - 1, Math.max(0, startCount))).pos() : effectPos;
             level.sendParticles(ParticleTypes.CLOUD,
                     center.getX() + 0.5D,
                     center.getY() + 0.25D,
@@ -1419,8 +1446,8 @@ public final class StructureConstructionManager {
                 job.sourceTownName,
                 job.targetTownName,
                 job.plan,
-                completedIndex,
-                Math.max(job.progressSteps, completedIndex)
+                completedCount,
+                Math.max(job.progressSteps, completedCount)
         );
     }
 
@@ -1519,15 +1546,7 @@ public final class StructureConstructionManager {
     }
 
     private static int findRoadPlacedStepCount(ServerLevel level, RoadPlacementPlan plan) {
-        if (level == null || plan == null || plan.buildSteps().isEmpty()) {
-            return 0;
-        }
-        for (int i = 0; i < plan.buildSteps().size(); i++) {
-            if (!isRoadBuildStepPlaced(level, plan.buildSteps().get(i))) {
-                return i;
-            }
-        }
-        return plan.buildSteps().size();
+        return countCompletedRoadBuildSteps(plan, completedRoadBuildStepKeys(level, plan));
     }
 
     private static boolean isRoadBuildStepPlaced(ServerLevel level, RoadGeometryPlanner.RoadBuildStep step) {
@@ -1548,15 +1567,17 @@ public final class StructureConstructionManager {
                 .toList();
     }
 
+    private static List<RoadGeometryPlanner.GhostRoadBlock> remainingRoadGhostBlocks(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        return remainingRoadBuildSteps(plan, completedStepKeys).stream()
+                .map(step -> new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state()))
+                .toList();
+    }
+
     private static List<RoadGeometryPlanner.GhostRoadBlock> remainingRoadGhostBlocks(ServerLevel level, RoadConstructionJob job) {
         if (level == null || job == null) {
             return List.of();
         }
-        return job.plan.buildSteps().stream()
-                .skip(Math.max(0, job.placedStepCount))
-                .filter(step -> !isRoadBuildStepPlaced(level, step))
-                .map(step -> new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state()))
-                .toList();
+        return remainingRoadGhostBlocks(job.plan, completedRoadBuildStepKeys(level, job.plan));
     }
 
     private static int nextRoadBuildBatchSize(RoadPlacementPlan plan, int placedStepCount) {
@@ -1578,6 +1599,21 @@ public final class StructureConstructionManager {
         return plan.buildSteps().size() - clamped;
     }
 
+    private static int nextRoadBuildBatchSize(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        for (List<RoadGeometryPlanner.RoadBuildStep> batch : roadBuildBatches(plan)) {
+            int remaining = 0;
+            for (RoadGeometryPlanner.RoadBuildStep step : batch) {
+                if (!completedStepKeys.contains(step.pos().asLong())) {
+                    remaining++;
+                }
+            }
+            if (remaining > 0) {
+                return remaining;
+            }
+        }
+        return 0;
+    }
+
     private static int roadBuildBatchIndex(RoadPlacementPlan plan, int placedStepCount) {
         if (plan == null || plan.centerPath().isEmpty()) {
             return 0;
@@ -1592,6 +1628,21 @@ public final class StructureConstructionManager {
             }
         }
         return Math.max(0, Math.min(plan.centerPath().size() - 1, batchSizes.size() - 1));
+    }
+
+    private static int roadBuildBatchIndex(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        if (plan == null || plan.centerPath().isEmpty()) {
+            return 0;
+        }
+        List<List<RoadGeometryPlanner.RoadBuildStep>> batches = roadBuildBatches(plan);
+        for (int i = 0; i < batches.size(); i++) {
+            for (RoadGeometryPlanner.RoadBuildStep step : batches.get(i)) {
+                if (!completedStepKeys.contains(step.pos().asLong())) {
+                    return i;
+                }
+            }
+        }
+        return Math.max(0, Math.min(plan.centerPath().size() - 1, batches.size() - 1));
     }
 
     private static List<Integer> roadBuildBatchSizes(RoadPlacementPlan plan) {
@@ -1620,6 +1671,81 @@ public final class StructureConstructionManager {
             batchSizes.add(plan.buildSteps().size());
         }
         return List.copyOf(batchSizes);
+    }
+
+    private static List<List<RoadGeometryPlanner.RoadBuildStep>> roadBuildBatches(RoadPlacementPlan plan) {
+        if (plan == null || plan.centerPath().isEmpty() || plan.buildSteps().isEmpty()) {
+            return List.of();
+        }
+        LinkedHashMap<Long, RoadGeometryPlanner.RoadBuildStep> buildStepsByPos = new LinkedHashMap<>();
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            buildStepsByPos.put(step.pos().asLong(), step);
+        }
+        Set<Long> seen = new LinkedHashSet<>();
+        List<List<RoadGeometryPlanner.RoadBuildStep>> batches = new ArrayList<>();
+        for (int i = 0; i < plan.centerPath().size(); i++) {
+            List<RoadGeometryPlanner.RoadBuildStep> batch = new ArrayList<>();
+            for (BlockPos pos : collectRoadSlicePositions(plan.centerPath(), i)) {
+                long key = pos.asLong();
+                if (!seen.add(key)) {
+                    continue;
+                }
+                RoadGeometryPlanner.RoadBuildStep step = buildStepsByPos.get(key);
+                if (step != null) {
+                    batch.add(step);
+                }
+            }
+            if (!batch.isEmpty()) {
+                batches.add(List.copyOf(batch));
+            }
+        }
+        if (batches.isEmpty()) {
+            batches.add(List.copyOf(plan.buildSteps()));
+        }
+        return List.copyOf(batches);
+    }
+
+    private static Set<Long> completedRoadBuildStepKeys(ServerLevel level, RoadPlacementPlan plan) {
+        if (level == null || plan == null || plan.buildSteps().isEmpty()) {
+            return Set.of();
+        }
+        Set<Long> completed = new LinkedHashSet<>();
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            if (isRoadBuildStepPlaced(level, step)) {
+                completed.add(step.pos().asLong());
+            }
+        }
+        return completed;
+    }
+
+    private static int countCompletedRoadBuildSteps(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        if (plan == null || plan.buildSteps().isEmpty()) {
+            return 0;
+        }
+        if (completedStepKeys == null || completedStepKeys.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            if (completedStepKeys.contains(step.pos().asLong())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static List<RoadGeometryPlanner.RoadBuildStep> remainingRoadBuildSteps(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        if (plan == null || plan.buildSteps().isEmpty()) {
+            return List.of();
+        }
+        Set<Long> completed = completedStepKeys == null ? Set.of() : completedStepKeys;
+        return plan.buildSteps().stream()
+                .filter(step -> !completed.contains(step.pos().asLong()))
+                .toList();
+    }
+
+    private static BlockPos selectRoadGhostTargetPos(List<RoadGeometryPlanner.GhostRoadBlock> remainingGhosts) {
+        return remainingGhosts == null || remainingGhosts.isEmpty() ? null : remainingGhosts.get(0).pos();
     }
 
     private static boolean tryPlaceRoad(ServerLevel level, BlockPos pos, RoadPlacementStyle style) {
@@ -2002,8 +2128,8 @@ public final class StructureConstructionManager {
                         job.roadId,
                         job.sourceTownName == null ? "" : job.sourceTownName,
                         job.targetTownName == null ? "" : job.targetTownName,
-                        getRoadFocusPos(job),
-                        roadProgressPercent(job),
+                        getRoadFocusPos(level, job),
+                        roadProgressPercent(level, job),
                         getActiveRoadWorkerCount(level, activeEntry.getKey())
                 ));
             }
@@ -2064,7 +2190,7 @@ public final class StructureConstructionManager {
         List<SyncConstructionGhostPreviewPacket.RoadEntry> entries = new ArrayList<>();
         for (Map.Entry<String, RoadConstructionJob> activeEntry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
             RoadConstructionJob job = activeEntry.getValue();
-            if (job.level != level || player.blockPosition().distSqr(getRoadFocusPos(job)) > GHOST_PREVIEW_RADIUS_SQR) {
+            if (job.level != level || player.blockPosition().distSqr(getRoadFocusPos(level, job)) > GHOST_PREVIEW_RADIUS_SQR) {
                 continue;
             }
             List<RoadGeometryPlanner.GhostRoadBlock> remainingBlocks = remainingRoadGhostBlocks(level, job);
@@ -2083,9 +2209,11 @@ public final class StructureConstructionManager {
             for (RoadGeometryPlanner.GhostRoadBlock block : remainingBlocks) {
                 clippedBlockIndex.put(block.pos().asLong(), block);
             }
-            List<SyncConstructionGhostPreviewPacket.GhostBlock> blocks = clippedPositions.stream()
+            List<RoadGeometryPlanner.GhostRoadBlock> filteredBlocks = clippedPositions.stream()
                     .map(pos -> clippedBlockIndex.get(pos.asLong()))
                     .filter(Objects::nonNull)
+                    .toList();
+            List<SyncConstructionGhostPreviewPacket.GhostBlock> blocks = filteredBlocks.stream()
                     .map(block -> new SyncConstructionGhostPreviewPacket.GhostBlock(block.pos(), block.state()))
                     .toList();
             entries.add(new SyncConstructionGhostPreviewPacket.RoadEntry(
@@ -2094,8 +2222,8 @@ public final class StructureConstructionManager {
                     job.sourceTownName,
                     job.targetTownName,
                     blocks,
-                    getRoadGhostFocusPos(job),
-                    roadProgressPercent(job),
+                    selectRoadGhostTargetPos(filteredBlocks),
+                    roadProgressPercent(level, job),
                     getActiveRoadWorkerCount(level, activeEntry.getKey())
             ));
         }

@@ -10,9 +10,11 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BuilderHammerSupportTest {
@@ -139,6 +141,49 @@ class BuilderHammerSupportTest {
         assertFalse(invokeRoadBuildStepPlaced(Blocks.SPRUCE_SLAB.defaultBlockState(), step));
     }
 
+    @Test
+    void roadRuntimeUsesActualCompletedStepsInsteadOfPrefixCount() {
+        List<BlockPos> centerPath = List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0));
+        RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                centerPath,
+                new BlockPos(-1, 64, 0),
+                centerPath.get(0),
+                centerPath.get(centerPath.size() - 1),
+                new BlockPos(2, 64, 0),
+                geometry.ghostBlocks(),
+                geometry.buildSteps(),
+                List.of(),
+                centerPath.get(0).above(),
+                centerPath.get(centerPath.size() - 1).above(),
+                centerPath.get(0).above()
+        );
+        Set<Long> completedStepKeys = geometry.buildSteps().subList(3, geometry.buildSteps().size()).stream()
+                .map(RoadGeometryPlanner.RoadBuildStep::pos)
+                .map(BlockPos::asLong)
+                .collect(java.util.stream.Collectors.toSet());
+
+        List<BlockPos> remaining = invokeRemainingRoadGhostPositions(plan, completedStepKeys);
+
+        assertEquals(geometry.buildSteps().subList(0, 3).stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList(), remaining);
+        assertEquals(50, invokeRoadProgressPercent(plan, completedStepKeys));
+        assertEquals(3, invokeNextRoadBuildBatchSize(plan, completedStepKeys));
+    }
+
+    @Test
+    void roadGhostTargetUsesActualFilteredRemainingGhosts() {
+        BlockPos target = invokeRoadGhostTargetPos(List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(3, 65, 3), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(4, 65, 4), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        ));
+
+        assertEquals(new BlockPos(3, 65, 3), target);
+        assertNull(invokeRoadGhostTargetPos(List.of()));
+    }
+
     @SuppressWarnings("unchecked")
     private static List<BlockPos> invokeRemainingRoadGhostPositions(RoadPlacementPlan plan, int placedStepCount) {
         try {
@@ -150,6 +195,20 @@ class BuilderHammerSupportTest {
             return remaining.stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect remaining road ghost projection", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeRemainingRoadGhostPositions(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("remainingRoadGhostBlocks", RoadPlacementPlan.class, Set.class);
+            method.setAccessible(true);
+            List<RoadGeometryPlanner.GhostRoadBlock> remaining = (List<RoadGeometryPlanner.GhostRoadBlock>) method.invoke(null, plan, completedStepKeys);
+            return remaining.stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect live-world road ghost projection", ex);
         }
     }
 
@@ -165,6 +224,18 @@ class BuilderHammerSupportTest {
         }
     }
 
+    private static int invokeRoadProgressPercent(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("roadProgressPercent", RoadPlacementPlan.class, Set.class);
+            method.setAccessible(true);
+            return (int) method.invoke(null, plan, completedStepKeys);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect live-world road progress calculation", ex);
+        }
+    }
+
     private static int invokeNextRoadBuildBatchSize(RoadPlacementPlan plan, int placedStepCount) {
         try {
             Method method = Class
@@ -177,6 +248,18 @@ class BuilderHammerSupportTest {
         }
     }
 
+    private static int invokeNextRoadBuildBatchSize(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("nextRoadBuildBatchSize", RoadPlacementPlan.class, Set.class);
+            method.setAccessible(true);
+            return (int) method.invoke(null, plan, completedStepKeys);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect live-world road hammer batch sizing", ex);
+        }
+    }
+
     private static boolean invokeRoadBuildStepPlaced(BlockState currentState, RoadGeometryPlanner.RoadBuildStep step) {
         try {
             Method method = Class
@@ -186,6 +269,18 @@ class BuilderHammerSupportTest {
             return (boolean) method.invoke(null, currentState, step);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect exact road build-step completion", ex);
+        }
+    }
+
+    private static BlockPos invokeRoadGhostTargetPos(List<RoadGeometryPlanner.GhostRoadBlock> remainingGhosts) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("selectRoadGhostTargetPos", List.class);
+            method.setAccessible(true);
+            return (BlockPos) method.invoke(null, remainingGhosts);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect road ghost target selection", ex);
         }
     }
 }
