@@ -3,26 +3,47 @@ package com.monpai.sailboatmod.client;
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public final class RoadPlannerClientHooks {
     public record TargetEntry(String townId, String townName, int distanceBlocks) {
     }
 
+    public record PreviewGhostBlock(BlockPos pos, BlockState state) {
+        public PreviewGhostBlock {
+            pos = pos == null ? null : pos.immutable();
+            state = Objects.requireNonNull(state, "state");
+        }
+    }
+
     public record PreviewState(String sourceTownName,
                                String targetTownName,
-                               List<BlockPos> path,
+                               List<PreviewGhostBlock> ghostBlocks,
+                               BlockPos startHighlightPos,
+                               BlockPos endHighlightPos,
+                               BlockPos focusPos,
                                boolean awaitingConfirmation) {
+        public PreviewState {
+            ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
+            startHighlightPos = startHighlightPos == null ? null : startHighlightPos.immutable();
+            endHighlightPos = endHighlightPos == null ? null : endHighlightPos.immutable();
+            focusPos = focusPos == null ? null : focusPos.immutable();
+        }
     }
 
     public record ProgressState(String roadId,
                                 String sourceTownName,
                                 String targetTownName,
-                                BlockPos origin,
+                                BlockPos focusPos,
                                 int progressPercent,
                                 int activeWorkers) {
+        public ProgressState {
+            focusPos = focusPos == null ? null : focusPos.immutable();
+        }
     }
 
     private static PreviewState previewState;

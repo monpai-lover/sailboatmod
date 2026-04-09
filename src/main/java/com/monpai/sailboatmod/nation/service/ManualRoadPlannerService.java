@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
@@ -119,7 +120,7 @@ public final class ManualRoadPlannerService {
         }
 
         CompoundTag tag = stack.getOrCreateTag();
-        String previewHash = previewHash(candidate.road());
+        String previewHash = previewHash(candidate.plan());
         long now = System.currentTimeMillis();
         boolean confirmable = candidate.targetTown().townId().equalsIgnoreCase(tag.getString(TAG_PREVIEW_TARGET_TOWN_ID))
                 && candidate.road().roadId().equalsIgnoreCase(tag.getString(TAG_PREVIEW_ROAD_ID))
@@ -130,6 +131,7 @@ public final class ManualRoadPlannerService {
             StructureConstructionManager.scheduleManualRoad(
                     player.serverLevel(),
                     candidate.road(),
+                    candidate.plan(),
                     player.getUUID(),
                     displayTownName(candidate.sourceTown()),
                     displayTownName(candidate.targetTown())
@@ -191,6 +193,19 @@ public final class ManualRoadPlannerService {
         if (path.size() < 2) {
             return null;
         }
+        BlockPos sourceInternalAnchor = townCorePos(level, sourceTown);
+        BlockPos targetInternalAnchor = townCorePos(level, targetTown);
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlan(
+                level,
+                path,
+                sourceInternalAnchor == null ? sourceAnchor : sourceInternalAnchor,
+                sourceAnchor,
+                targetAnchor,
+                targetInternalAnchor == null ? targetAnchor : targetInternalAnchor
+        );
+        if (plan.buildSteps().isEmpty()) {
+            return null;
+        }
 
         String leftId = "town:" + sourceTown.townId();
         String rightId = "town:" + targetTown.townId();
@@ -210,7 +225,7 @@ public final class ManualRoadPlannerService {
                 System.currentTimeMillis(),
                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
         );
-        return new PlanCandidate(sourceTown, targetTown, road);
+        return new PlanCandidate(sourceTown, targetTown, road, plan);
     }
 
     private static TownRecord resolveSelectedTarget(ItemStack stack, List<TownRecord> targets) {
@@ -509,7 +524,12 @@ public final class ManualRoadPlannerService {
                 new SyncRoadPlannerPreviewPacket(
                         displayTownName(candidate.sourceTown()),
                         displayTownName(candidate.targetTown()),
-                        candidate.road().path(),
+                        candidate.plan().ghostBlocks().stream()
+                                .map(block -> new SyncRoadPlannerPreviewPacket.GhostBlock(block.pos(), block.state()))
+                                .toList(),
+                        candidate.plan().startHighlightPos(),
+                        candidate.plan().endHighlightPos(),
+                        candidate.plan().focusPos(),
                         awaitingConfirmation
                 )
         );
@@ -518,7 +538,7 @@ public final class ManualRoadPlannerService {
     private static void sendPreviewClear(ServerPlayer player) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new SyncRoadPlannerPreviewPacket("", "", List.of(), false)
+                new SyncRoadPlannerPreviewPacket("", "", List.of(), null, null, null, false)
         );
     }
 
@@ -536,14 +556,43 @@ public final class ManualRoadPlannerService {
         tag.remove(TAG_PREVIEW_AT);
     }
 
-    private static String previewHash(RoadNetworkRecord road) {
-        int hash = road == null ? 0 : road.roadId().hashCode();
-        if (road != null) {
-            for (BlockPos pos : road.path()) {
-                hash = 31 * hash + Long.hashCode(pos.asLong());
-            }
+    private static String previewHash(RoadPlacementPlan plan) {
+        int hash = 1;
+        if (plan == null) {
+            return Integer.toHexString(hash);
         }
+        for (BlockPos pos : plan.centerPath()) {
+            hash = 31 * hash + Long.hashCode(pos.asLong());
+        }
+        hash = 31 * hash + hashPos(plan.sourceInternalAnchor());
+        hash = 31 * hash + hashPos(plan.sourceBoundaryAnchor());
+        hash = 31 * hash + hashPos(plan.targetBoundaryAnchor());
+        hash = 31 * hash + hashPos(plan.targetInternalAnchor());
+        for (RoadPlacementPlan.BridgeRange range : plan.bridgeRanges()) {
+            hash = 31 * hash + range.startIndex();
+            hash = 31 * hash + range.endIndex();
+        }
+        for (var block : plan.ghostBlocks()) {
+            hash = 31 * hash + hashPos(block.pos());
+            hash = 31 * hash + hashState(block.state());
+        }
+        for (var step : plan.buildSteps()) {
+            hash = 31 * hash + step.order();
+            hash = 31 * hash + hashPos(step.pos());
+            hash = 31 * hash + hashState(step.state());
+        }
+        hash = 31 * hash + hashPos(plan.startHighlightPos());
+        hash = 31 * hash + hashPos(plan.endHighlightPos());
+        hash = 31 * hash + hashPos(plan.focusPos());
         return Integer.toHexString(hash);
+    }
+
+    private static int hashPos(BlockPos pos) {
+        return pos == null ? 0 : Long.hashCode(pos.asLong());
+    }
+
+    private static int hashState(net.minecraft.world.level.block.state.BlockState state) {
+        return state == null ? 0 : state.toString().hashCode();
     }
 
     private static String displayTownName(TownRecord town) {
@@ -554,6 +603,6 @@ public final class ManualRoadPlannerService {
         return name.isBlank() ? town.townId().toLowerCase(Locale.ROOT) : name;
     }
 
-    private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road) {
+    private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road, RoadPlacementPlan plan) {
     }
 }

@@ -144,7 +144,7 @@ public class SyncConstructionGhostPreviewPacket {
         buf.writeVarInt(safeBlocks.size());
         for (GhostBlock block : safeBlocks) {
             buf.writeBlockPos(block.pos());
-            buf.writeId(Block.BLOCK_STATE_REGISTRY, block.state());
+            buf.writeVarInt(Block.getId(block.state()));
         }
     }
 
@@ -152,7 +152,7 @@ public class SyncConstructionGhostPreviewPacket {
         int size = buf.readVarInt();
         List<GhostBlock> blocks = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            blocks.add(new GhostBlock(buf.readBlockPos(), buf.readById(Block.BLOCK_STATE_REGISTRY)));
+            blocks.add(new GhostBlock(buf.readBlockPos(), Block.stateById(buf.readVarInt())));
         }
         return List.copyOf(blocks);
     }
