@@ -2520,6 +2520,14 @@ public final class StructureConstructionManager {
                 staleRoadJobs.add(state.roadId());
                 continue;
             }
+            if (!state.isLegacyPathOnly()) {
+                String planFailure = validatePersistedRoadJobMatchesPlan(state, createRoadPlacementPlan(level, road));
+                if (!planFailure.isBlank()) {
+                    LOGGER.warn("Dropping persisted road job {} in {}: {}", state.roadId(), dimensionId, planFailure);
+                    staleRoadJobs.add(state.roadId());
+                    continue;
+                }
+            }
 
             RestoredRoadRuntime restoredRoad = restorePersistedRoadRuntime(level, state);
             if (!restoredRoad.success()) {
@@ -2717,6 +2725,61 @@ public final class StructureConstructionManager {
         if (!ghostPositions.equals(buildPositions)) {
             return "ghostBlocks do not match buildSteps";
         }
+        return "";
+    }
+
+    private static String validatePersistedRoadJobMatchesPlan(ConstructionRuntimeSavedData.RoadJobState state,
+                                                              RoadPlacementPlan expectedPlan) {
+        if (state == null) {
+            return "missing persisted road runtime state";
+        }
+        if (state.isLegacyPathOnly()) {
+            return "";
+        }
+        if (expectedPlan == null) {
+            return "missing derived runtime road plan";
+        }
+        if (expectedPlan.buildSteps().isEmpty() || expectedPlan.ghostBlocks().isEmpty()) {
+            return "derived runtime road plan is incomplete";
+        }
+
+        if (state.ghostBlocks().size() != expectedPlan.ghostBlocks().size()) {
+            return "persisted road geometry does not match derived ghost block count";
+        }
+        for (int i = 0; i < expectedPlan.ghostBlocks().size(); i++) {
+            ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState persisted = state.ghostBlocks().get(i);
+            RoadGeometryPlanner.GhostRoadBlock expected = expectedPlan.ghostBlocks().get(i);
+            if (persisted == null || expected == null) {
+                return "persisted road geometry contains null ghost blocks";
+            }
+            if (persisted.pos() != expected.pos().asLong()) {
+                return "persisted road geometry does not match derived ghost block positions";
+            }
+            if (!NbtUtils.writeBlockState(expected.state()).equals(persisted.statePayload())) {
+                return "persisted road state does not match derived ghost block state";
+            }
+        }
+
+        if (state.buildSteps().size() != expectedPlan.buildSteps().size()) {
+            return "persisted road geometry does not match derived build step count";
+        }
+        for (int i = 0; i < expectedPlan.buildSteps().size(); i++) {
+            ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState persisted = state.buildSteps().get(i);
+            RoadGeometryPlanner.RoadBuildStep expected = expectedPlan.buildSteps().get(i);
+            if (persisted == null || expected == null) {
+                return "persisted road geometry contains null build steps";
+            }
+            if (persisted.order() != expected.order()) {
+                return "persisted road geometry does not match derived build step order";
+            }
+            if (persisted.pos() != expected.pos().asLong()) {
+                return "persisted road geometry does not match derived build step positions";
+            }
+            if (!NbtUtils.writeBlockState(expected.state()).equals(persisted.statePayload())) {
+                return "persisted road state does not match derived build step state";
+            }
+        }
+
         return "";
     }
 

@@ -403,6 +403,67 @@ class ConstructionRuntimeSavedDataTest {
         assertTrue(reason.isBlank());
     }
 
+    @Test
+    void rejectsPersistedRoadJobsWhoseGeometryDoesNotMatchDerivedPlan() throws Exception {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(40, 70, 40),
+                new BlockPos(41, 70, 40)
+        );
+        ConstructionRuntimeSavedData.RoadJobState state = new ConstructionRuntimeSavedData.RoadJobState(
+                "road:off_geometry",
+                "minecraft:overworld",
+                UUID.fromString("00000000-0000-0000-0000-000000001010").toString(),
+                centerPath.stream().map(BlockPos::asLong).toList(),
+                List.of(
+                        new ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState(
+                                new BlockPos(40, 71, 39).asLong(),
+                                blockStatePayload("minecraft:stone_brick_slab")
+                        ),
+                        new ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState(
+                                new BlockPos(41, 71, 39).asLong(),
+                                blockStatePayload("minecraft:stone_brick_slab")
+                        )
+                ),
+                List.of(
+                        new ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState(
+                                0,
+                                new BlockPos(40, 71, 39).asLong(),
+                                blockStatePayload("minecraft:stone_brick_slab")
+                        ),
+                        new ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState(
+                                1,
+                                new BlockPos(41, 71, 39).asLong(),
+                                blockStatePayload("minecraft:stone_brick_slab")
+                        )
+                ),
+                0,
+                false
+        );
+        RoadPlacementPlan expectedPlan = new RoadPlacementPlan(
+                centerPath,
+                centerPath.get(0),
+                centerPath.get(0),
+                centerPath.get(1),
+                centerPath.get(1),
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(40, 71, 40), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(41, 71, 40), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(40, 71, 40), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(1, new BlockPos(41, 71, 40), net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(),
+                centerPath.get(0),
+                centerPath.get(1),
+                centerPath.get(0)
+        );
+
+        String reason = invokePersistedRoadPlanValidation(state, expectedPlan);
+
+        assertTrue(reason.contains("geometry") || reason.contains("derived"));
+    }
+
     private static CompoundTag blockStatePayload(String blockName) {
         CompoundTag tag = new CompoundTag();
         tag.putString("Name", blockName);
@@ -418,5 +479,16 @@ class ConstructionRuntimeSavedDataTest {
         );
         method.setAccessible(true);
         return (String) method.invoke(null, state, road);
+    }
+
+    private static String invokePersistedRoadPlanValidation(ConstructionRuntimeSavedData.RoadJobState state,
+                                                            RoadPlacementPlan expectedPlan) throws Exception {
+        java.lang.reflect.Method method = StructureConstructionManager.class.getDeclaredMethod(
+                "validatePersistedRoadJobMatchesPlan",
+                ConstructionRuntimeSavedData.RoadJobState.class,
+                RoadPlacementPlan.class
+        );
+        method.setAccessible(true);
+        return (String) method.invoke(null, state, expectedPlan);
     }
 }
