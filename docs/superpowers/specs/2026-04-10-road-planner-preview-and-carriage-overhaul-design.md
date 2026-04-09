@@ -12,8 +12,9 @@ Included:
 4. Manual road preview must not show long hint lines; only true build ghosts and anchor highlights remain.
 5. Road centerline smoothing must move beyond local corner patching into full-segment Bezier sampling.
 6. Road structure generation should support road-side lighting inspired by RoadWeaver-style engineered roads.
-7. Carriage wood choice remains `oak`, `spruce`, and `dark_oak`, but wood appearance should come from model coloring rather than full texture swaps.
-8. Carriage movement should stop feeling like a sailboat while keeping the existing transport-route framework.
+7. Road construction should overwrite minor surface clutter such as small flowers and grass instead of leaving gaps.
+8. Carriage wood choice remains `oak`, `spruce`, and `dark_oak`, but wood appearance should come from model coloring rather than full texture swaps.
+9. Carriage movement should stop feeling like a sailboat while keeping the existing transport-route framework.
 
 Not included:
 
@@ -29,6 +30,7 @@ Not included:
 - Make the road preview feel like real temporary placed blocks in the world.
 - Improve road curvature so long roads stop reading as stitched line segments with only local corner smoothing.
 - Add restrained engineering details to roads, including consistent lighting placement.
+- Ensure finished road placement clears minor decorative vegetation so the built surface reads as continuous.
 - Make carriage material read as true wood variation on the model rather than item-like texture replacement.
 - Restore meaning to carriage throttle/gears by introducing real land-vehicle speed behavior.
 
@@ -207,7 +209,24 @@ Implementation shape:
 
 This first pass should stay practical: a consistent lamp standard, not a decoration framework.
 
-### 6. Carriage Appearance Moves from Texture Swap to Model Wood Coloring
+### 6. Road Surface Placement Should Clear Minor Vegetation
+
+Road creation should not leave holes or visual noise because of trivial surface clutter.
+
+- Road build steps should treat minor replaceable decoration as removable surface clutter.
+- At minimum this includes common small plants such as:
+  - grass,
+  - flowers,
+  - ferns,
+  - similar replaceable non-structural surface plants.
+- When a road surface, shoulder, support, or lamp foundation is placed, these clutter blocks should be overwritten automatically.
+- This should stay narrow in scope:
+  - overwrite minor surface decoration,
+  - do not silently delete solid structures, logs, walls, chests, or other meaningful blocks.
+
+The rule is that a valid road footprint should build a continuous engineered surface, while still respecting real obstacles.
+
+### 7. Carriage Appearance Moves from Texture Swap to Model Wood Coloring
 
 Current carriage wood support changes whole textures. That reads like an item-skin swap rather than material variation.
 
@@ -223,7 +242,7 @@ Expected implementation boundary:
 - Change model/render lookup so the wood type provides tint/material parameters instead of alternative full textures.
 - If the current model format makes per-bone tinting awkward, the acceptable fallback is a shared texture atlas plus explicit colorized wood masks, but still not full texture replacement per type.
 
-### 7. Carriage Motion Becomes a Dedicated Land-Vehicle Layer
+### 8. Carriage Motion Becomes a Dedicated Land-Vehicle Layer
 
 The carriage should keep the current autopilot, station, cargo, and routing integration, but movement resolution must stop behaving like a damped sailboat.
 
