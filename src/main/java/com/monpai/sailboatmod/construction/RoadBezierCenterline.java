@@ -14,6 +14,8 @@ public final class RoadBezierCenterline {
     private static final int MAX_SAFE_STEP_HEIGHT = 5;
     private static final int MAX_SEARCH_RADIUS = 1;
     private static final int MAX_SMOOTHABLE_SPAN = 8;
+    private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 5;
+    private static final int MAX_TOTAL_BRIDGE_COLUMNS = 14;
     private static final double MAX_BRIDGE_SHARE = 0.20D;
     private static final double[] CORNER_SAMPLE_T = {0.2D, 0.5D, 0.8D};
 
@@ -32,10 +34,9 @@ public final class RoadBezierCenterline {
         }
 
         List<BlockPos> baselinePath = simplifyColumns(routeNodes);
-        Set<Long> allowedBridgeColumns = collectBridgeColumns(baselinePath, sampler, blockedColumns);
         List<BlockPos> controlPoints = simplify(routeNodes);
-        List<BlockPos> basePath = rasterize(controlPoints, sampler, blockedColumns, allowedBridgeColumns);
-        if (!isConservativeCandidate(basePath, baselinePath, sampler, blockedColumns, allowedBridgeColumns)) {
+        List<BlockPos> basePath = rasterize(controlPoints, sampler, blockedColumns, collectBridgeColumns(baselinePath, sampler, blockedColumns));
+        if (!isValidCandidatePath(basePath, baselinePath, sampler, blockedColumns)) {
             basePath = baselinePath;
         }
         if (controlPoints.size() < 3 || basePath.isEmpty()) {
@@ -59,8 +60,8 @@ public final class RoadBezierCenterline {
         }
         smoothedSeedPoints.add(controlPoints.get(controlPoints.size() - 1));
 
-        List<BlockPos> smoothedPath = rasterize(smoothedSeedPoints, sampler, blockedColumns, allowedBridgeColumns);
-        return isConservativeCandidate(smoothedPath, basePath, sampler, blockedColumns, allowedBridgeColumns)
+        List<BlockPos> smoothedPath = rasterize(smoothedSeedPoints, sampler, blockedColumns, collectBridgeColumns(basePath, sampler, blockedColumns));
+        return isValidCandidatePath(smoothedPath, basePath, sampler, blockedColumns)
                 ? smoothedPath
                 : basePath;
     }
@@ -245,11 +246,10 @@ public final class RoadBezierCenterline {
         return Set.copyOf(bridgeColumns);
     }
 
-    private static boolean isConservativeCandidate(List<BlockPos> candidate,
-                                                   List<BlockPos> baseline,
-                                                   Function<BlockPos, SurfaceSample> sampler,
-                                                   Set<Long> blockedColumns,
-                                                   Set<Long> allowedBridgeColumns) {
+    static boolean isValidCandidatePath(List<BlockPos> candidate,
+                                        List<BlockPos> baseline,
+                                        Function<BlockPos, SurfaceSample> sampler,
+                                        Set<Long> blockedColumns) {
         if (candidate.isEmpty() || baseline.isEmpty()) {
             return false;
         }
@@ -258,7 +258,12 @@ public final class RoadBezierCenterline {
             return false;
         }
 
+        Set<Long> allowedBridgeColumns = collectBridgeColumns(baseline, sampler, blockedColumns);
+        Set<Long> allowedAdjacentWaterColumns = collectAdjacentWaterColumns(baseline, sampler, blockedColumns);
         int bridgeColumns = 0;
+        int contiguousBridgeColumns = 0;
+        int longestBridgeRun = 0;
+        int adjacentWaterColumns = 0;
         int lastY = Integer.MIN_VALUE;
         for (BlockPos pos : candidate) {
             SurfaceSample sample = safeExact(pos, sampler, blockedColumns, allowedBridgeColumns);
@@ -270,11 +275,40 @@ public final class RoadBezierCenterline {
             }
             if (sample.requiresBridge()) {
                 bridgeColumns++;
+                contiguousBridgeColumns++;
+                longestBridgeRun = Math.max(longestBridgeRun, contiguousBridgeColumns);
+            } else {
+                contiguousBridgeColumns = 0;
+            }
+            if (sample.adjacentWaterColumns() > 0) {
+                if (!allowedAdjacentWaterColumns.contains(columnKey(sample.surfacePos()))) {
+                    return false;
+                }
+                adjacentWaterColumns++;
             }
             lastY = sample.surfacePos().getY();
         }
         return bridgeColumns <= allowedBridgeColumns.size()
+                && bridgeColumns <= MAX_TOTAL_BRIDGE_COLUMNS
+                && longestBridgeRun <= MAX_CONTIGUOUS_BRIDGE_COLUMNS
+                && adjacentWaterColumns <= allowedAdjacentWaterColumns.size()
                 && bridgeShareWithinLimit(candidate.size(), bridgeColumns);
+    }
+
+    private static Set<Long> collectAdjacentWaterColumns(List<BlockPos> path,
+                                                         Function<BlockPos, SurfaceSample> sampler,
+                                                         Set<Long> blockedColumns) {
+        Set<Long> adjacentWaterColumns = new HashSet<>();
+        for (BlockPos pos : path) {
+            SurfaceSample sample = safeExact(pos, sampler, blockedColumns, Set.of(columnKey(pos)));
+            if (sample == null) {
+                return Set.of();
+            }
+            if (sample.adjacentWaterColumns() > 0) {
+                adjacentWaterColumns.add(columnKey(sample.surfacePos()));
+            }
+        }
+        return Set.copyOf(adjacentWaterColumns);
     }
 
     private static boolean bridgeShareWithinLimit(int pathLength, int totalBridgeColumns) {
@@ -339,6 +373,14 @@ public final class RoadBezierCenterline {
         return (((long) pos.getX()) << 32) ^ (pos.getZ() & 0xffffffffL);
     }
 
-    public record SurfaceSample(BlockPos surfacePos, boolean blocked, boolean requiresBridge) {
+    public record SurfaceSample(BlockPos surfacePos,
+                                boolean blocked,
+                                boolean requiresBridge,
+                                int adjacentWaterColumns) {
+        public SurfaceSample {
+            if (adjacentWaterColumns < 0) {
+                throw new IllegalArgumentException("adjacentWaterColumns must be >= 0");
+            }
+        }
     }
 }

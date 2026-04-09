@@ -64,12 +64,13 @@ public final class RoadPathfinder {
     private static RoadBezierCenterline.SurfaceSample sampleSurface(Level level, BlockPos pos, Set<Long> blockedColumns) {
         BlockPos surface = findSurface(level, pos.getX(), pos.getZ());
         if (surface == null) {
-            return new RoadBezierCenterline.SurfaceSample(null, true, false);
+            return new RoadBezierCenterline.SurfaceSample(null, true, false, 0);
         }
         return new RoadBezierCenterline.SurfaceSample(
                 surface,
                 isBlockedRoadColumn(level, surface, blockedColumns),
-                requiresBridge(level, surface)
+                requiresBridge(level, surface),
+                adjacentWaterCount(level, surface)
         );
     }
 

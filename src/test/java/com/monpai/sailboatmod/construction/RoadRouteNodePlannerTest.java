@@ -155,7 +155,8 @@ class RoadRouteNodePlannerTest {
                             default -> null;
                         },
                         pos.getX() == 3 && pos.getZ() == 1,
-                        false
+                        false,
+                        0
                 ),
                 blockedColumns
         );
@@ -212,7 +213,8 @@ class RoadRouteNodePlannerTest {
                     return new RoadBezierCenterline.SurfaceSample(
                             surface,
                             false,
-                            pos.getX() == 3 && pos.getZ() == 1
+                            pos.getX() == 3 && pos.getZ() == 1,
+                            0
                     );
                 },
                 Set.of()
@@ -222,7 +224,83 @@ class RoadRouteNodePlannerTest {
         assertFalse(smoothed.contains(new BlockPos(3, 64, 1)));
     }
 
+    @Test
+    void finalPathValidationRejectsBridgeRunLongerThanFive() {
+        List<BlockPos> baseline = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(5, 64, 1),
+                new BlockPos(6, 64, 1),
+                new BlockPos(7, 64, 1)
+        );
+        List<BlockPos> candidate = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 1),
+                new BlockPos(7, 64, 1)
+        );
+
+        boolean valid = RoadBezierCenterline.isValidCandidatePath(
+                candidate,
+                baseline,
+                pos -> new RoadBezierCenterline.SurfaceSample(
+                        new BlockPos(pos.getX(), 64, pos.getZ()),
+                        false,
+                        isBridgeColumn(pos),
+                        0
+                ),
+                Set.of()
+        );
+
+        assertFalse(valid);
+    }
+
+    @Test
+    void finalPathValidationRejectsNewNearWaterExposure() {
+        List<BlockPos> baseline = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0)
+        );
+        List<BlockPos> candidate = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 1),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0)
+        );
+
+        boolean valid = RoadBezierCenterline.isValidCandidatePath(
+                candidate,
+                baseline,
+                pos -> new RoadBezierCenterline.SurfaceSample(
+                        new BlockPos(pos.getX(), 64, pos.getZ()),
+                        false,
+                        false,
+                        pos.getX() == 2 && pos.getZ() == 1 ? 2 : 0
+                ),
+                Set.of()
+        );
+
+        assertFalse(valid);
+    }
+
     private static long columnKey(int x, int z) {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
+    }
+
+    private static boolean isBridgeColumn(BlockPos pos) {
+        return (pos.getZ() == 0 && pos.getX() >= 1 && pos.getX() <= 5)
+                || (pos.getZ() == 1 && pos.getX() >= 6 && pos.getX() <= 7);
     }
 }
