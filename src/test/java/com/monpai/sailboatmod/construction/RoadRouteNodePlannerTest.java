@@ -132,46 +132,77 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
-    void bezierSmoothingSkipsBlockedColumnsAndUnsafeGeometry() {
-        List<BlockPos> controlPoints = List.of(
+    void searchBoundsAllowDryDetourBeyondDirectHalfSpan() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),
+                new BlockPos(12, 64, 0),
+                pos -> {
+                    boolean onWestLeg = pos.getX() == 0 && pos.getZ() >= 0 && pos.getZ() <= 10;
+                    boolean onTopLeg = pos.getZ() == 10 && pos.getX() >= 0 && pos.getX() <= 12;
+                    boolean onEastLeg = pos.getX() == 12 && pos.getZ() >= 0 && pos.getZ() <= 10;
+                    boolean startOrEnd = pos.getZ() == 0 && (pos.getX() == 0 || pos.getX() == 12);
+                    boolean traversable = onWestLeg || onTopLeg || onEastLeg || startOrEnd;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), 64, pos.getZ()) : null,
+                            !traversable,
+                            false,
+                            0,
+                            0,
+                            pos.getZ() == 10
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertFalse(plan.usedBridge());
+        assertTrue(plan.path().contains(new BlockPos(6, 64, 10)));
+    }
+
+    @Test
+    void bezierSmoothingSkipsBlockedColumnsAndUnsafeGeometry() {
+        List<BlockPos> routeNodes = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
                 new BlockPos(2, 64, 0),
+                new BlockPos(2, 64, 1),
+                new BlockPos(3, 64, 2),
                 new BlockPos(4, 64, 2),
+                new BlockPos(5, 64, 2),
                 new BlockPos(6, 64, 2)
         );
         Set<Long> blockedColumns = Set.of(columnKey(3, 1));
 
         List<BlockPos> smoothed = RoadBezierCenterline.build(
-                controlPoints,
-                pos -> new RoadBezierCenterline.SurfaceSample(
-                        switch (pos.getX()) {
-                            case 0 -> new BlockPos(0, 64, 0);
-                            case 1 -> new BlockPos(1, 64, 0);
-                            case 2 -> new BlockPos(2, 64, 0);
-                            case 3 -> pos.getZ() == 2 ? new BlockPos(3, 64, 2) : null;
-                            case 4 -> new BlockPos(4, 64, 2);
-                            case 5 -> new BlockPos(5, 64, 2);
-                            case 6 -> new BlockPos(6, 64, 2);
-                            default -> null;
-                        },
-                        pos.getX() == 3 && pos.getZ() == 1,
-                        false,
-                        0
-                ),
+                routeNodes,
+                pos -> {
+                    BlockPos surface = switch (pos.getX()) {
+                        case 0 -> new BlockPos(0, 64, 0);
+                        case 1 -> new BlockPos(1, 64, 0);
+                        case 2 -> pos.getZ() == 1 ? new BlockPos(2, 64, 1) : new BlockPos(2, 64, 0);
+                        case 3 -> pos.getZ() == 2 ? new BlockPos(3, 64, 2) : null;
+                        case 4 -> new BlockPos(4, 64, 2);
+                        case 5 -> new BlockPos(5, 64, 2);
+                        case 6 -> new BlockPos(6, 64, 2);
+                        default -> null;
+                    };
+                    return new RoadBezierCenterline.SurfaceSample(
+                            surface,
+                            pos.getX() == 3 && pos.getZ() == 1,
+                            false,
+                            0
+                    );
+                },
                 blockedColumns
         );
 
-        assertEquals(List.of(
-                new BlockPos(0, 64, 0),
-                new BlockPos(1, 64, 0),
-                new BlockPos(2, 64, 0),
-                new BlockPos(3, 64, 2),
-                new BlockPos(4, 64, 2),
-                new BlockPos(5, 64, 2),
-                new BlockPos(6, 64, 2)
-        ), smoothed);
+        assertFalse(smoothed.isEmpty());
+        assertTrue(smoothed.contains(new BlockPos(2, 64, 1)));
+        assertTrue(smoothed.contains(new BlockPos(3, 64, 2)));
         assertFalse(smoothed.contains(new BlockPos(3, 64, 1)));
         assertTrue(smoothed.stream().noneMatch(pos -> blockedColumns.contains(columnKey(pos.getX(), pos.getZ()))));
+        assertTrue(isContiguous(smoothed));
     }
 
     @Test
@@ -295,6 +326,35 @@ class RoadRouteNodePlannerTest {
         assertFalse(valid);
     }
 
+    @Test
+    void finalPathValidationRejectsNonContiguousCandidate() {
+        List<BlockPos> baseline = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0)
+        );
+        List<BlockPos> candidate = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0)
+        );
+
+        boolean valid = RoadBezierCenterline.isValidCandidatePath(
+                candidate,
+                baseline,
+                pos -> new RoadBezierCenterline.SurfaceSample(
+                        new BlockPos(pos.getX(), 64, pos.getZ()),
+                        false,
+                        false,
+                        0
+                ),
+                Set.of()
+        );
+
+        assertFalse(valid);
+    }
+
     private static long columnKey(int x, int z) {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
@@ -302,5 +362,16 @@ class RoadRouteNodePlannerTest {
     private static boolean isBridgeColumn(BlockPos pos) {
         return (pos.getZ() == 0 && pos.getX() >= 1 && pos.getX() <= 5)
                 || (pos.getZ() == 1 && pos.getX() >= 6 && pos.getX() <= 7);
+    }
+
+    private static boolean isContiguous(List<BlockPos> path) {
+        for (int i = 1; i < path.size(); i++) {
+            int dx = Math.abs(path.get(i).getX() - path.get(i - 1).getX());
+            int dz = Math.abs(path.get(i).getZ() - path.get(i - 1).getZ());
+            if (Math.max(dx, dz) != 1) {
+                return false;
+            }
+        }
+        return true;
     }
 }

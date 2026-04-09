@@ -312,7 +312,7 @@ public final class RoadRouteNodePlanner {
         private static SearchBounds around(BlockPos start, BlockPos end) {
             int dx = Math.abs(end.getX() - start.getX());
             int dz = Math.abs(end.getZ() - start.getZ());
-            int margin = Math.max(6, (Math.max(dx, dz) / 2) + 2);
+            int margin = Math.max(8, Math.max(dx, dz) + 2);
             return new SearchBounds(
                     Math.min(start.getX(), end.getX()) - margin,
                     Math.max(start.getX(), end.getX()) + margin,

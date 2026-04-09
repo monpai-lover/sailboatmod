@@ -171,11 +171,51 @@ public final class RoadBezierCenterline {
                 if (resolved == null || Math.abs(resolved.getY() - last.getY()) > MAX_SAFE_STEP_HEIGHT) {
                     return List.of();
                 }
-                rasterized.put(columnKey(resolved), resolved);
-                last = resolved;
+                List<BlockPos> contiguousSegment = connectContiguous(last, resolved, sampler, blockedColumns, allowedBridgeColumns);
+                if (contiguousSegment.isEmpty()) {
+                    return List.of();
+                }
+                for (int stepIndex = 1; stepIndex < contiguousSegment.size(); stepIndex++) {
+                    BlockPos step = contiguousSegment.get(stepIndex);
+                    rasterized.put(columnKey(step), step);
+                }
+                last = contiguousSegment.get(contiguousSegment.size() - 1);
             }
         }
         return List.copyOf(rasterized.values().stream().toList());
+    }
+
+    private static List<BlockPos> connectContiguous(BlockPos from,
+                                                    BlockPos to,
+                                                    Function<BlockPos, SurfaceSample> sampler,
+                                                    Set<Long> blockedColumns,
+                                                    Set<Long> allowedBridgeColumns) {
+        if (sameColumn(from, to)) {
+            return List.of(from);
+        }
+        if (isAdjacent(from, to)) {
+            return List.of(from, to);
+        }
+
+        List<BlockPos> connected = new ArrayList<>();
+        connected.add(from);
+        BlockPos current = from;
+        for (BlockPos rawStep : bresenham(from, to)) {
+            if (sameColumn(rawStep, current)) {
+                continue;
+            }
+            BlockPos resolved = findNearestSurface(rawStep.getX(), rawStep.getZ(), current.getY(), sampler, blockedColumns, allowedBridgeColumns);
+            if (resolved == null
+                    || !isAdjacent(current, resolved)
+                    || Math.abs(resolved.getY() - current.getY()) > MAX_SAFE_STEP_HEIGHT) {
+                return List.of();
+            }
+            if (!sameColumn(current, resolved)) {
+                connected.add(resolved);
+                current = resolved;
+            }
+        }
+        return sameColumn(current, to) ? List.copyOf(connected) : List.of();
     }
 
     private static SurfaceSample safeExact(BlockPos pos,
@@ -265,9 +305,13 @@ public final class RoadBezierCenterline {
         int longestBridgeRun = 0;
         int adjacentWaterColumns = 0;
         int lastY = Integer.MIN_VALUE;
+        BlockPos previous = null;
         for (BlockPos pos : candidate) {
             SurfaceSample sample = safeExact(pos, sampler, blockedColumns, allowedBridgeColumns);
             if (sample == null || !sameColumn(sample.surfacePos(), pos)) {
+                return false;
+            }
+            if (previous != null && !isAdjacent(previous, sample.surfacePos())) {
                 return false;
             }
             if (lastY != Integer.MIN_VALUE && Math.abs(sample.surfacePos().getY() - lastY) > MAX_SAFE_STEP_HEIGHT) {
@@ -287,6 +331,7 @@ public final class RoadBezierCenterline {
                 adjacentWaterColumns++;
             }
             lastY = sample.surfacePos().getY();
+            previous = sample.surfacePos();
         }
         return bridgeColumns <= allowedBridgeColumns.size()
                 && bridgeColumns <= MAX_TOTAL_BRIDGE_COLUMNS
@@ -348,6 +393,12 @@ public final class RoadBezierCenterline {
 
     private static boolean sameColumn(BlockPos left, BlockPos right) {
         return left.getX() == right.getX() && left.getZ() == right.getZ();
+    }
+
+    private static boolean isAdjacent(BlockPos left, BlockPos right) {
+        int dx = Math.abs(left.getX() - right.getX());
+        int dz = Math.abs(left.getZ() - right.getZ());
+        return Math.max(dx, dz) == 1;
     }
 
     private static boolean isCollinear(BlockPos previous, BlockPos current, BlockPos next) {
