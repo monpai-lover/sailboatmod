@@ -1,8 +1,13 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Blocks;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import sun.misc.Unsafe;
 
@@ -10,6 +15,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -18,6 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadLifecycleServiceTest {
+    @BeforeAll
+    static void bootstrapMinecraftRegistries() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+    }
+
     @Test
     void rollbackTargetsAllOwnedRoadBlocksInReverseOrder() {
         List<BlockPos> removed = RoadLifecycleService.ownedBlocksRemovalOrderForTest(
@@ -66,6 +78,78 @@ class RoadLifecycleServiceTest {
             restoreMapEntry(activeRoads, "manual|town:a|town:b", previousRoad);
             restoreMapEntry(activeWorkers, "manual|town:a|town:b", previousWorkers);
             restoreMapEntry(activeCredits, "manual|town:a|town:b", previousCredits);
+        }
+    }
+
+    @Test
+    void widenedRoadbedTopDerivesFromFootprintColumnsNotCenterPathOnly() {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(-1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 72, 0), Blocks.COBBLESTONE_WALL.defaultBlockState())
+        );
+
+        List<BlockPos> roadbedTop = invokeRoadbedTopFromFootprint(ghostBlocks);
+
+        assertTrue(roadbedTop.contains(new BlockPos(0, 73, 0)));
+        assertTrue(roadbedTop.contains(new BlockPos(1, 71, 0)));
+        assertTrue(roadbedTop.contains(new BlockPos(-1, 71, 0)));
+        assertEquals(3, roadbedTop.size());
+    }
+
+    @Test
+    void widenedOwnedBlocksIncludeFootprintAndTerrainEditsForCleanup() {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(-1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+        List<BlockPos> terrainEdits = List.of(
+                new BlockPos(-1, 69, 0),
+                new BlockPos(1, 69, 0)
+        );
+
+        List<BlockPos> owned = invokeOwnedRoadBlocksFromFootprint(ghostBlocks, terrainEdits);
+        List<BlockPos> removalOrder = RoadLifecycleService.ownedBlocksRemovalOrderForTest(owned);
+
+        assertEquals(Set.of(
+                new BlockPos(-1, 70, 0),
+                new BlockPos(0, 70, 0),
+                new BlockPos(1, 70, 0),
+                new BlockPos(-1, 69, 0),
+                new BlockPos(1, 69, 0)
+        ), Set.copyOf(owned));
+        assertEquals(owned.get(owned.size() - 1), removalOrder.get(0));
+        assertEquals(owned.get(0), removalOrder.get(removalOrder.size() - 1));
+    }
+
+    private static List<BlockPos> invokeRoadbedTopFromFootprint(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("deriveRoadbedTopFromGhostFootprint", List.class);
+            method.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            List<BlockPos> result = (List<BlockPos>) method.invoke(null, ghostBlocks);
+            return result;
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect roadbed-top footprint derivation", ex);
+        }
+    }
+
+    private static List<BlockPos> invokeOwnedRoadBlocksFromFootprint(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                                      List<BlockPos> terrainEdits) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("collectOwnedRoadBlocks", List.class, List.class);
+            method.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            List<BlockPos> result = (List<BlockPos>) method.invoke(null, ghostBlocks, terrainEdits);
+            return result;
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect widened road owned-block collection", ex);
         }
     }
 

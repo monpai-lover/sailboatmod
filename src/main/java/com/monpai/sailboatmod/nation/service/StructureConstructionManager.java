@@ -1387,23 +1387,14 @@ public final class StructureConstructionManager {
         );
         List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = withLampGhosts(geometry.ghostBlocks(), lampBases);
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = toBuildSteps(ghostBlocks);
-        List<BlockPos> roadbedTop = centerPath.stream()
-                .filter(java.util.Objects::nonNull)
-                .map(BlockPos::above)
-                .toList();
+        List<BlockPos> roadbedTop = deriveRoadbedTopFromGhostFootprint(ghostBlocks);
         List<BlockPos> terrainEdits = RoadTerrainShaper.shapeRoadbed(
                         roadbedTop,
                         pos -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, pos).below().getY()
                 ).stream()
                 .map(RoadTerrainShaper.TerrainEdit::pos)
                 .toList();
-        java.util.LinkedHashSet<BlockPos> ownedBlocks = new java.util.LinkedHashSet<>();
-        for (RoadGeometryPlanner.GhostRoadBlock block : ghostBlocks) {
-            if (block != null && block.pos() != null) {
-                ownedBlocks.add(block.pos());
-            }
-        }
-        ownedBlocks.addAll(terrainEdits);
+        List<BlockPos> ownedBlocks = collectOwnedRoadBlocks(ghostBlocks, terrainEdits);
         return new RoadPlacementPlan(
                 centerPath,
                 sourceInternalAnchor,
@@ -1413,7 +1404,7 @@ public final class StructureConstructionManager {
                 ghostBlocks,
                 buildSteps,
                 bridgeRanges,
-                List.copyOf(ownedBlocks),
+                ownedBlocks,
                 highlightPos(sourceBoundaryAnchor, centerPath, true),
                 highlightPos(targetBoundaryAnchor, centerPath, false),
                 resolveRoadPlanFocusPos(centerPath, ghostBlocks)
@@ -1937,6 +1928,55 @@ public final class StructureConstructionManager {
             buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(i, block.pos(), block.state()));
         }
         return List.copyOf(buildSteps);
+    }
+
+    private static List<BlockPos> deriveRoadbedTopFromGhostFootprint(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        if (ghostBlocks == null || ghostBlocks.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashMap<Long, BlockPos> highestByColumn = new LinkedHashMap<>();
+        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : ghostBlocks) {
+            if (ghostBlock == null || ghostBlock.pos() == null) {
+                continue;
+            }
+            BlockPos pos = ghostBlock.pos();
+            long columnKey = BlockPos.asLong(pos.getX(), 0, pos.getZ());
+            BlockPos current = highestByColumn.get(columnKey);
+            if (current == null || pos.getY() > current.getY()) {
+                highestByColumn.put(columnKey, pos);
+            }
+        }
+        if (highestByColumn.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<BlockPos> roadbedTop = new ArrayList<>(highestByColumn.size());
+        for (BlockPos top : highestByColumn.values()) {
+            roadbedTop.add(top.above());
+        }
+        return List.copyOf(roadbedTop);
+    }
+
+    private static List<BlockPos> collectOwnedRoadBlocks(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                         List<BlockPos> terrainEdits) {
+        LinkedHashSet<BlockPos> ownedBlocks = new LinkedHashSet<>();
+        if (ghostBlocks != null) {
+            for (RoadGeometryPlanner.GhostRoadBlock block : ghostBlocks) {
+                if (block != null && block.pos() != null) {
+                    ownedBlocks.add(block.pos());
+                }
+            }
+        }
+        if (terrainEdits != null) {
+            for (BlockPos terrainEdit : terrainEdits) {
+                if (terrainEdit != null) {
+                    ownedBlocks.add(terrainEdit);
+                }
+            }
+        }
+        if (ownedBlocks.isEmpty()) {
+            return List.of();
+        }
+        return List.copyOf(ownedBlocks);
     }
 
     private static boolean isRoadPlacementReplaceable(BlockState state) {
