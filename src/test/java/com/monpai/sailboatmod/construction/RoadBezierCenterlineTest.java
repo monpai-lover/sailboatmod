@@ -10,6 +10,7 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadBezierCenterlineTest {
@@ -51,11 +52,15 @@ class RoadBezierCenterlineTest {
             routeNodes.add(new BlockPos(x, 64, 7));
         }
 
-        BlockPos resolvedStart = new BlockPos(2, 64, 1);
-        BlockPos resolvedEnd = new BlockPos(22, 64, 7);
-        List<BlockPos> centerline = RoadBezierCenterline.build(routeNodes, endpointAnchoredSampler(), Set.of());
+        BlockPos rawStart = routeNodes.get(0);
+        BlockPos rawEnd = routeNodes.get(routeNodes.size() - 1);
+        BlockPos resolvedStart = new BlockPos(rawStart.getX(), 66, rawStart.getZ());
+        BlockPos resolvedEnd = new BlockPos(rawEnd.getX(), 63, rawEnd.getZ());
+        List<BlockPos> centerline = RoadBezierCenterline.build(routeNodes, endpointAnchoredSampler(resolvedStart, resolvedEnd), Set.of());
 
         assertFalse(centerline.isEmpty());
+        assertNotEquals(rawStart, resolvedStart, "resolved start must differ from raw route endpoint");
+        assertNotEquals(rawEnd, resolvedEnd, "resolved end must differ from raw route endpoint");
         assertEquals(resolvedStart, centerline.get(0), centerline.toString());
         assertEquals(resolvedEnd, centerline.get(centerline.size() - 1), centerline.toString());
         assertTrue(isContiguous(centerline), centerline.toString());
@@ -75,14 +80,15 @@ class RoadBezierCenterlineTest {
         );
     }
 
-    private static Function<BlockPos, RoadBezierCenterline.SurfaceSample> endpointAnchoredSampler() {
+    private static Function<BlockPos, RoadBezierCenterline.SurfaceSample> endpointAnchoredSampler(BlockPos resolvedStart,
+                                                                                                  BlockPos resolvedEnd) {
         return pos -> {
             long key = columnKey(pos.getX(), pos.getZ());
             BlockPos surface;
-            if (key == columnKey(2, 1)) {
-                surface = new BlockPos(2, 64, 1);
-            } else if (key == columnKey(22, 7)) {
-                surface = new BlockPos(22, 64, 7);
+            if (key == columnKey(resolvedStart.getX(), resolvedStart.getZ())) {
+                surface = resolvedStart;
+            } else if (key == columnKey(resolvedEnd.getX(), resolvedEnd.getZ())) {
+                surface = resolvedEnd;
             } else {
                 surface = new BlockPos(pos.getX(), 64, pos.getZ());
             }
