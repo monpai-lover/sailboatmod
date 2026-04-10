@@ -23,8 +23,8 @@ public class RoadPlannerItem extends Item {
         ItemStack stack = player.getItemInHand(hand);
         if (!level.isClientSide && player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
             Component message = player.isShiftKeyDown()
-                    ? ManualRoadPlannerService.openTargetSelection(serverPlayer, stack, hand == InteractionHand.OFF_HAND)
-                    : ManualRoadPlannerService.previewOrConfirm(serverPlayer, stack);
+                    ? ManualRoadPlannerService.handleSneakUse(serverPlayer, stack, hand == InteractionHand.OFF_HAND)
+                    : ManualRoadPlannerService.handlePrimaryUse(serverPlayer, stack);
             serverPlayer.sendSystemMessage(message);
         }
         return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);

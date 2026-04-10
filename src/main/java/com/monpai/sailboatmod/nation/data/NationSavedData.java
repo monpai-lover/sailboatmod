@@ -1132,6 +1132,10 @@ public class NationSavedData extends SavedData {
         return roadNetworks.get(roadId);
     }
 
+    public boolean hasRoadNetwork(String roadId) {
+        return roadId != null && !roadId.isBlank() && roadNetworks.containsKey(roadId);
+    }
+
     public void putRoadNetwork(com.monpai.sailboatmod.nation.model.RoadNetworkRecord record) {
         if (record == null || record.roadId().isBlank()) return;
         roadNetworks.put(record.roadId(), record);

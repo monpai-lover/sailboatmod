@@ -1,0 +1,64 @@
+package com.monpai.sailboatmod.nation.service;
+
+import net.minecraft.SharedConstants;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.item.ItemStack;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
+
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ManualRoadPlannerServiceTest {
+    @BeforeAll
+    static void bootstrapMinecraftRegistries() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+    }
+
+    @Test
+    void duplicateManualRoadOnSameTownPairIsRejected() {
+        assertTrue(ManualRoadPlannerService.manualRoadAlreadyExistsForTest(
+                "manual|town:alpha|town:beta",
+                Set.of("manual|town:alpha|town:beta")
+        ));
+    }
+
+    @Test
+    void plannerModeCyclesBuildCancelDemolish() {
+        ItemStack stack = new ItemStack(net.minecraft.world.item.Items.STICK);
+
+        assertEquals("BUILD", ManualRoadPlannerService.readPlannerModeForTest(stack).name());
+        ManualRoadPlannerService.cyclePlannerModeForTest(stack);
+        assertEquals("CANCEL", ManualRoadPlannerService.readPlannerModeForTest(stack).name());
+        ManualRoadPlannerService.cyclePlannerModeForTest(stack);
+        assertEquals("DEMOLISH", ManualRoadPlannerService.readPlannerModeForTest(stack).name());
+    }
+
+    @Test
+    void strictManualPlanningRejectsFallbackWhenStationPairIsMissing() {
+        ManualRoadPlannerService.ManualPlanFailure failure =
+                ManualRoadPlannerService.validateStrictPostStationRoute(false, true, false, false);
+
+        assertEquals(ManualRoadPlannerService.ManualPlanFailure.SOURCE_STATION_MISSING, failure);
+    }
+
+    @Test
+    void unblocksChosenStationWaitingAreaAndExitColumns() {
+        Set<Long> blocked = ManualRoadPlannerService.unblockStationFootprint(
+                Set.of(ManualRoadPlannerService.columnKeyForTest(100, 100),
+                        ManualRoadPlannerService.columnKeyForTest(101, 100),
+                        ManualRoadPlannerService.columnKeyForTest(102, 100)),
+                Set.of(new BlockPos(100, 64, 100), new BlockPos(101, 64, 100)),
+                new BlockPos(102, 64, 100)
+        );
+
+        assertFalse(blocked.contains(ManualRoadPlannerService.columnKeyForTest(100, 100)));
+        assertFalse(blocked.contains(ManualRoadPlannerService.columnKeyForTest(101, 100)));
+        assertFalse(blocked.contains(ManualRoadPlannerService.columnKeyForTest(102, 100)));
+    }
+}

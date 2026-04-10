@@ -2,6 +2,9 @@ package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
+import com.monpai.sailboatmod.dock.PostStationRegistry;
+import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
@@ -19,6 +22,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraftforge.network.PacketDistributor;
@@ -36,9 +40,50 @@ public final class ManualRoadPlannerService {
     private static final String TAG_PREVIEW_TARGET_TOWN_ID = "PreviewTargetTownId";
     private static final String TAG_PREVIEW_HASH = "PreviewHash";
     private static final String TAG_PREVIEW_AT = "PreviewAt";
+    private static final String TAG_PREVIEW_FAILURE = "PreviewFailure";
+    private static final String TAG_MODE = "PlannerMode";
     private static final long PREVIEW_TIMEOUT_MS = 45_000L;
 
     private ManualRoadPlannerService() {
+    }
+
+    enum PlannerMode {
+        BUILD,
+        CANCEL,
+        DEMOLISH;
+
+        PlannerMode next() {
+            return switch (this) {
+                case BUILD -> CANCEL;
+                case CANCEL -> DEMOLISH;
+                case DEMOLISH -> BUILD;
+            };
+        }
+    }
+
+    enum ManualPlanFailure {
+        NONE,
+        SOURCE_STATION_MISSING,
+        TARGET_STATION_MISSING,
+        SOURCE_EXIT_MISSING,
+        TARGET_EXIT_MISSING,
+        ROUTE_NOT_FOUND
+    }
+
+    public static Component handleSneakUse(ServerPlayer player, ItemStack stack, boolean offhand) {
+        if (player == null || stack == null) {
+            return Component.translatable("message.sailboatmod.road_planner.unavailable");
+        }
+        if (offhand) {
+            PlannerMode next = readPlannerMode(stack).next();
+            stack.getOrCreateTag().putString(TAG_MODE, next.name());
+            return Component.translatable(modeMessageKey(next));
+        }
+        return openTargetSelection(player, stack, false);
+    }
+
+    public static Component handlePrimaryUse(ServerPlayer player, ItemStack stack) {
+        return previewOrConfirm(player, stack);
     }
 
     public static Component openTargetSelection(ServerPlayer player, ItemStack stack, boolean offhand) {
@@ -115,9 +160,18 @@ public final class ManualRoadPlannerService {
 
         PlanCandidate candidate = buildPlan(player, stack);
         if (candidate == null) {
+            Component failure = readFailureMessage(stack);
+            if (failure != null) {
+                clearFailureMessage(stack);
+                clearPreviewState(stack);
+                sendPreviewClear(player);
+                return failure;
+            }
+            clearPreviewState(stack);
             sendPreviewClear(player);
             return Component.translatable("message.sailboatmod.road_planner.path_failed");
         }
+        clearFailureMessage(stack);
 
         CompoundTag tag = stack.getOrCreateTag();
         String previewHash = previewHash(candidate.plan());
@@ -180,21 +234,21 @@ public final class ManualRoadPlannerService {
             return null;
         }
 
-        BlockPos targetCore = townCorePos(level, targetTown);
-        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, player.blockPosition(), targetCore);
-        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetCore == null ? player.blockPosition() : targetCore, sourceAnchor);
-        if (sourceAnchor == null || targetAnchor == null) {
+        Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
+        WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, sourceClaims, targetClaims, blockedColumns);
+        if (waitingAreaRoute == null) {
             return null;
         }
 
-        Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
-        List<BlockPos> rawPath = RoadPathfinder.findPath(level, sourceAnchor, targetAnchor, blockedColumns);
+        BlockPos sourceAnchor = waitingAreaRoute.sourceExit();
+        BlockPos targetAnchor = waitingAreaRoute.targetExit();
+        BlockPos sourceInternalAnchor = waitingAreaRoute.sourceStationPos();
+        BlockPos targetInternalAnchor = waitingAreaRoute.targetStationPos();
+        List<BlockPos> rawPath = waitingAreaRoute.path();
         List<BlockPos> path = normalizePath(sourceAnchor, rawPath, targetAnchor);
         if (path.size() < 2) {
             return null;
         }
-        BlockPos sourceInternalAnchor = townCorePos(level, sourceTown);
-        BlockPos targetInternalAnchor = townCorePos(level, targetTown);
         RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlan(
                 level,
                 path,
@@ -213,9 +267,14 @@ public final class ManualRoadPlannerService {
         if (edgeKey.isBlank()) {
             return null;
         }
+        String manualRoadId = "manual|" + edgeKey;
+        if (manualRoadExists(level, manualRoadId)) {
+            writeFailureMessage(stack, "message.sailboatmod.road_planner.already_connected");
+            return null;
+        }
 
         RoadNetworkRecord road = new RoadNetworkRecord(
-                "manual|" + edgeKey,
+                manualRoadId,
                 sourceTown.nationId(),
                 sourceTown.townId(),
                 level.dimension().location().toString(),
@@ -226,6 +285,92 @@ public final class ManualRoadPlannerService {
                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
         );
         return new PlanCandidate(sourceTown, targetTown, road, plan);
+    }
+
+    private static WaitingAreaRoute resolveWaitingAreaRoute(ServerLevel level,
+                                                            List<NationClaimRecord> sourceClaims,
+                                                            List<NationClaimRecord> targetClaims,
+                                                            Set<Long> blockedColumns) {
+        List<StationZoneCandidate> sourceStations = collectPostStationsInClaims(level, sourceClaims);
+        List<StationZoneCandidate> targetStations = collectPostStationsInClaims(level, targetClaims);
+        ManualPlanFailure failure = validateStrictPostStationRoute(!sourceStations.isEmpty(), !targetStations.isEmpty(), false, false);
+        if (failure != ManualPlanFailure.NONE) {
+            return null;
+        }
+
+        WaitingAreaRoute best = null;
+        int bestCost = Integer.MAX_VALUE;
+        for (StationZoneCandidate source : sourceStations) {
+            for (StationZoneCandidate target : targetStations) {
+                BlockPos sourceExit = PostStationRoadAnchorHelper.chooseBestExit(
+                        PostStationRoadAnchorHelper.computeExitCandidates(source.zone()),
+                        target.stationPos(),
+                        source.stationPos()
+                );
+                BlockPos targetExit = PostStationRoadAnchorHelper.chooseBestExit(
+                        PostStationRoadAnchorHelper.computeExitCandidates(target.zone()),
+                        source.stationPos(),
+                        target.stationPos()
+                );
+                if (sourceExit == null || targetExit == null) {
+                    continue;
+                }
+
+                BlockPos sourceSurface = surfaceAt(level, sourceExit);
+                BlockPos targetSurface = surfaceAt(level, targetExit);
+                if (!isValidRoadAnchor(level, sourceSurface) || !isValidRoadAnchor(level, targetSurface)) {
+                    continue;
+                }
+
+                Set<Long> adjustedBlockedColumns = unblockStationFootprint(
+                        unblockStationFootprint(
+                                blockedColumns,
+                                PostStationRoadAnchorHelper.computeFootprintColumns(source.zone()),
+                                sourceSurface
+                        ),
+                        PostStationRoadAnchorHelper.computeFootprintColumns(target.zone()),
+                        targetSurface
+                );
+                List<BlockPos> path = RoadPathfinder.findPath(level, sourceSurface, targetSurface, adjustedBlockedColumns);
+                if (path.size() < 2) {
+                    continue;
+                }
+
+                int cost = path.size();
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    best = new WaitingAreaRoute(source.stationPos(), target.stationPos(), sourceSurface, targetSurface, path);
+                }
+            }
+        }
+        return best;
+    }
+
+    private static List<StationZoneCandidate> collectPostStationsInClaims(ServerLevel level, List<NationClaimRecord> claims) {
+        if (level == null || claims == null || claims.isEmpty()) {
+            return List.of();
+        }
+        List<StationZoneCandidate> stations = new ArrayList<>();
+        for (BlockPos stationPos : PostStationRegistry.get(level)) {
+            if (!isInClaims(claims, stationPos)) {
+                continue;
+            }
+            BlockEntity blockEntity = level.getBlockEntity(stationPos);
+            if (!(blockEntity instanceof PostStationBlockEntity station)) {
+                continue;
+            }
+            stations.add(new StationZoneCandidate(
+                    stationPos.immutable(),
+                    new PostStationRoadAnchorHelper.Zone(
+                            stationPos,
+                            station.getZoneMinX(),
+                            station.getZoneMaxX(),
+                            station.getZoneMinZ(),
+                            station.getZoneMaxZ()
+                    )
+            ));
+        }
+        return stations;
     }
 
     private static TownRecord resolveSelectedTarget(ItemStack stack, List<TownRecord> targets) {
@@ -476,6 +621,56 @@ public final class ManualRoadPlannerService {
         blocked.remove(columnKey(corePos.getX(), corePos.getZ()));
     }
 
+    static PlannerMode readPlannerModeForTest(ItemStack stack) {
+        return readPlannerMode(stack);
+    }
+
+    static PlannerMode cyclePlannerModeForTest(ItemStack stack) {
+        PlannerMode next = readPlannerMode(stack).next();
+        if (stack != null) {
+            stack.getOrCreateTag().putString(TAG_MODE, next.name());
+        }
+        return next;
+    }
+
+    static boolean manualRoadAlreadyExistsForTest(String roadId, Set<String> existingRoadIds) {
+        return existingRoadIds != null && existingRoadIds.contains(roadId);
+    }
+
+    static ManualPlanFailure validateStrictPostStationRoute(boolean hasSourceStation,
+                                                            boolean hasTargetStation,
+                                                            boolean hasSourceExit,
+                                                            boolean hasTargetExit) {
+        if (!hasSourceStation) {
+            return ManualPlanFailure.SOURCE_STATION_MISSING;
+        }
+        if (!hasTargetStation) {
+            return ManualPlanFailure.TARGET_STATION_MISSING;
+        }
+        if (!hasSourceExit) {
+            return ManualPlanFailure.SOURCE_EXIT_MISSING;
+        }
+        if (!hasTargetExit) {
+            return ManualPlanFailure.TARGET_EXIT_MISSING;
+        }
+        return ManualPlanFailure.NONE;
+    }
+
+    static Set<Long> unblockStationFootprint(Set<Long> blockedColumns, Set<BlockPos> waitingAreaColumns, BlockPos exitPos) {
+        LinkedHashSet<Long> updated = new LinkedHashSet<>(blockedColumns == null ? Set.of() : blockedColumns);
+        if (waitingAreaColumns != null) {
+            for (BlockPos pos : waitingAreaColumns) {
+                if (pos != null) {
+                    updated.remove(columnKey(pos.getX(), pos.getZ()));
+                }
+            }
+        }
+        if (exitPos != null) {
+            updated.remove(columnKey(exitPos.getX(), exitPos.getZ()));
+        }
+        return Set.copyOf(updated);
+    }
+
     private static boolean isValidRoadAnchor(ServerLevel level, BlockPos pos) {
         if (level == null || pos == null) {
             return false;
@@ -494,6 +689,10 @@ public final class ManualRoadPlannerService {
 
     private static long columnKey(int x, int z) {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
+    }
+
+    static long columnKeyForTest(int x, int z) {
+        return columnKey(x, z);
     }
 
     private static BlockPos surfaceAt(ServerLevel level, BlockPos pos) {
@@ -556,6 +755,89 @@ public final class ManualRoadPlannerService {
         tag.remove(TAG_PREVIEW_AT);
     }
 
+    private static PlannerMode readPlannerMode(ItemStack stack) {
+        if (stack == null || !stack.hasTag()) {
+            return PlannerMode.BUILD;
+        }
+        CompoundTag tag = stack.getTag();
+        if (tag == null) {
+            return PlannerMode.BUILD;
+        }
+        String modeRaw = tag.getString(TAG_MODE);
+        if (modeRaw == null || modeRaw.isBlank()) {
+            return PlannerMode.BUILD;
+        }
+        try {
+            return PlannerMode.valueOf(modeRaw);
+        } catch (IllegalArgumentException ignored) {
+            return PlannerMode.BUILD;
+        }
+    }
+
+    private static void writeFailureMessage(ItemStack stack, String key) {
+        if (stack == null || key == null || key.isBlank()) {
+            return;
+        }
+        stack.getOrCreateTag().putString(TAG_PREVIEW_FAILURE, key);
+    }
+
+    private static Component readFailureMessage(ItemStack stack) {
+        if (stack == null || !stack.hasTag()) {
+            return null;
+        }
+        CompoundTag tag = stack.getTag();
+        if (tag == null) {
+            return null;
+        }
+        String key = tag.getString(TAG_PREVIEW_FAILURE);
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        return Component.translatable(key);
+    }
+
+    private static void clearFailureMessage(ItemStack stack) {
+        if (stack == null || !stack.hasTag()) {
+            return;
+        }
+        CompoundTag tag = stack.getTag();
+        if (tag == null) {
+            return;
+        }
+        tag.remove(TAG_PREVIEW_FAILURE);
+    }
+
+    private static boolean manualRoadExists(ServerLevel level, String roadId) {
+        if (level == null || roadId == null || roadId.isBlank()) {
+            return false;
+        }
+        NationSavedData data = NationSavedData.get(level);
+        if (data.hasRoadNetwork(roadId)) {
+            return true;
+        }
+        ConstructionRuntimeSavedData runtime = ConstructionRuntimeSavedData.get(level);
+        if (runtime == null) {
+            return false;
+        }
+        for (ConstructionRuntimeSavedData.RoadJobState job : runtime.getRoadJobs()) {
+            if (job != null && roadId.equalsIgnoreCase(job.roadId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String modeMessageKey(PlannerMode mode) {
+        if (mode == null) {
+            return "message.sailboatmod.road_planner.mode.build";
+        }
+        return switch (mode) {
+            case BUILD -> "message.sailboatmod.road_planner.mode.build";
+            case CANCEL -> "message.sailboatmod.road_planner.mode.cancel";
+            case DEMOLISH -> "message.sailboatmod.road_planner.mode.demolish";
+        };
+    }
+
     private static String previewHash(RoadPlacementPlan plan) {
         int hash = 1;
         if (plan == null) {
@@ -604,5 +886,15 @@ public final class ManualRoadPlannerService {
     }
 
     private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road, RoadPlacementPlan plan) {
+    }
+
+    private record StationZoneCandidate(BlockPos stationPos, PostStationRoadAnchorHelper.Zone zone) {
+    }
+
+    private record WaitingAreaRoute(BlockPos sourceStationPos,
+                                    BlockPos targetStationPos,
+                                    BlockPos sourceExit,
+                                    BlockPos targetExit,
+                                    List<BlockPos> path) {
     }
 }
