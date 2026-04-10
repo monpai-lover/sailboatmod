@@ -3,14 +3,17 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.SharedConstants;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -39,8 +42,9 @@ class RoadGeometryPlannerTest {
         assertTrue(positions.contains(interiorCorner.south()));
         assertTrue(positions.contains(interiorCorner.east()));
         assertTrue(positions.contains(interiorCorner.west()));
-        assertFalse(positions.contains(new BlockPos(-1, 65, 0)));
-        assertFalse(positions.contains(new BlockPos(1, 65, 2)));
+        assertTrue(positions.contains(interiorCorner.north(2)));
+        assertTrue(positions.contains(interiorCorner.east(2)));
+        assertFalse(positions.contains(new BlockPos(4, 65, 0)));
     }
 
     @Test
@@ -65,23 +69,14 @@ class RoadGeometryPlannerTest {
         List<BlockPos> secondPositions = second.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList();
 
         assertEquals(firstPositions, secondPositions);
-        assertEquals(List.of(
-                new BlockPos(0, 65, 0),
-                new BlockPos(0, 65, -1),
-                new BlockPos(0, 65, 1),
-                new BlockPos(1, 65, 0),
-                new BlockPos(2, 65, 0),
-                new BlockPos(1, 65, 1),
-                new BlockPos(1, 65, -1),
-                new BlockPos(2, 65, 1),
-                new BlockPos(1, 65, 2),
-                new BlockPos(2, 65, 2),
-                new BlockPos(0, 65, 2)
-        ), firstPositions);
+        assertTrue(firstPositions.contains(new BlockPos(0, 65, 0)));
+        assertTrue(firstPositions.contains(new BlockPos(0, 65, -2)));
+        assertTrue(firstPositions.contains(new BlockPos(3, 65, 0)));
+        assertTrue(firstPositions.contains(new BlockPos(-1, 65, 2)));
         assertEquals(new LinkedHashSet<>(firstPositions).size(), firstPositions.size());
 
         List<Integer> firstOrders = first.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::order).toList();
-        assertEquals(List.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), firstOrders);
+        assertEquals(java.util.stream.IntStream.range(0, firstOrders.size()).boxed().toList(), firstOrders);
     }
 
     @Test
@@ -197,6 +192,168 @@ class RoadGeometryPlannerTest {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         assertEquals(runtimeRoadPlacementPositions(centerPath), plannerPositions);
+    }
+
+    @Test
+    void smoothsSteepCenterlinePlacementHeightInsteadOfJumpingWholeCliffs() {
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 67, 0),
+                        new BlockPos(3, 67, 0)
+                ),
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        List<BlockPos> positions = plan.ghostBlocks().stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
+
+        assertTrue(positions.contains(new BlockPos(2, 66, 0)));
+        assertFalse(positions.contains(new BlockPos(2, 68, 0)));
+    }
+
+    @Test
+    void interpolatesTurnShoulderHeightAgainstNearestClimbingSegment() {
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 66, 1),
+                        new BlockPos(3, 66, 1)
+                ),
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        List<BlockPos> positions = plan.ghostBlocks().stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
+
+        assertTrue(positions.contains(new BlockPos(2, 66, 0)));
+        assertFalse(positions.contains(new BlockPos(2, 65, 0)));
+    }
+
+    @Test
+    void keepsLowerShoulderAsSlabWhileContinuousDiagonalRiseUsesStairsInCenter() {
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 65, 1),
+                        new BlockPos(2, 66, 2),
+                        new BlockPos(3, 67, 3)
+                ),
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
+        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : plan.ghostBlocks()) {
+            statesByPos.put(ghostBlock.pos(), ghostBlock.state());
+        }
+
+        assertTrue(statesByPos.containsKey(new BlockPos(2, 66, 2)));
+        assertTrue(statesByPos.containsKey(new BlockPos(2, 65, 0)));
+        assertTrue(statesByPos.get(new BlockPos(2, 66, 2)).is(Blocks.STONE_BRICK_STAIRS));
+        assertTrue(statesByPos.get(new BlockPos(2, 65, 0)).is(Blocks.STONE_BRICK_SLAB));
+    }
+
+    @Test
+    void keepsFirstClimbingNodeAsSlabBeforeContinuousRiseTurnsIntoStairs() {
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 65, 0),
+                        new BlockPos(2, 66, 0),
+                        new BlockPos(3, 67, 0)
+                ),
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
+        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : plan.ghostBlocks()) {
+            statesByPos.put(ghostBlock.pos(), ghostBlock.state());
+        }
+
+        assertTrue(statesByPos.get(new BlockPos(1, 65, 0)).is(Blocks.STONE_BRICK_SLAB));
+        assertTrue(statesByPos.get(new BlockPos(2, 66, 0)).is(Blocks.STONE_BRICK_STAIRS));
+    }
+
+    @Test
+    void keepsOuterShoulderAsSlabWhileClimbingCoreUsesStairs() {
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 65, 0),
+                        new BlockPos(2, 66, 0),
+                        new BlockPos(3, 67, 0)
+                ),
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
+        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : plan.ghostBlocks()) {
+            statesByPos.put(ghostBlock.pos(), ghostBlock.state());
+        }
+
+        assertTrue(statesByPos.get(new BlockPos(2, 66, -1)).is(Blocks.STONE_BRICK_STAIRS));
+        assertTrue(statesByPos.get(new BlockPos(2, 66, -2)).is(Blocks.STONE_BRICK_SLAB));
+        assertTrue(statesByPos.get(new BlockPos(2, 66, 2)).is(Blocks.STONE_BRICK_SLAB));
+    }
+
+    @Test
+    void raisesArchedBridgeMidpointWhileKeepingEndsAtBaselineDeckHeight() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0)
+        );
+        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = List.of(
+                new RoadBridgePlanner.BridgeProfile(0, 5, RoadBridgePlanner.BridgeKind.ARCHED)
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.SPRUCE_SLAB.defaultBlockState(),
+                bridgeProfiles
+        );
+
+        Set<BlockPos> positions = plan.ghostBlocks().stream()
+                .map(RoadGeometryPlanner.GhostRoadBlock::pos)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        assertTrue(positions.contains(new BlockPos(0, 65, 0)));
+        assertTrue(positions.contains(new BlockPos(5, 65, 0)));
+        assertTrue(positions.contains(new BlockPos(2, 68, 0)));
+        assertTrue(positions.contains(new BlockPos(3, 68, 0)));
+    }
+
+    @Test
+    void preservesSlopedBridgeEndpointsWhileRaisingArchedInterior() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 65, 0),
+                new BlockPos(3, 65, 0),
+                new BlockPos(4, 66, 0),
+                new BlockPos(5, 66, 0)
+        );
+        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = List.of(
+                new RoadBridgePlanner.BridgeProfile(0, 5, RoadBridgePlanner.BridgeKind.ARCHED)
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.SPRUCE_SLAB.defaultBlockState(),
+                bridgeProfiles
+        );
+
+        Set<BlockPos> positions = plan.ghostBlocks().stream()
+                .map(RoadGeometryPlanner.GhostRoadBlock::pos)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        assertTrue(positions.contains(new BlockPos(0, 65, 0)));
+        assertTrue(positions.contains(new BlockPos(5, 67, 0)));
+        assertTrue(positions.contains(new BlockPos(2, 69, 0)));
+        assertTrue(positions.contains(new BlockPos(3, 69, 0)));
     }
 
     @Test

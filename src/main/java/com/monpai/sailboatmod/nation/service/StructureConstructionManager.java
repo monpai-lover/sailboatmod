@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.nation.service;
 import com.monpai.sailboatmod.client.ConstructionGhostClientHooks;
 import com.monpai.sailboatmod.construction.BuilderHammerChargePlan;
 import com.monpai.sailboatmod.construction.BuilderHammerCreditState;
+import com.monpai.sailboatmod.construction.RoadBridgePlanner;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadLegacyJobRebuilder;
 import com.monpai.sailboatmod.construction.RoadLightingPlanner;
@@ -1375,9 +1376,11 @@ public final class StructureConstructionManager {
                     List.of(), List.of(), List.of(), null, null, null);
         }
         List<RoadPlacementPlan.BridgeRange> bridgeRanges = detectBridgeRanges(level, centerPath);
+        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges);
         RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
                 centerPath,
-                pos -> selectRoadPlacementStyle(level, pos).surface()
+                pos -> selectRoadPlacementStyle(level, pos).surface(),
+                bridgeProfiles
         );
         List<BlockPos> lampBases = RoadLightingPlanner.planLampPosts(
                 centerPath,
@@ -1537,6 +1540,20 @@ public final class StructureConstructionManager {
             ranges.add(new RoadPlacementPlan.BridgeRange(rangeStart, centerPath.size() - 1));
         }
         return List.copyOf(ranges);
+    }
+
+    private static List<RoadBridgePlanner.BridgeProfile> classifyBridgeProfiles(ServerLevel level,
+                                                                                 List<BlockPos> centerPath,
+                                                                                 List<RoadPlacementPlan.BridgeRange> bridgeRanges) {
+        if (level == null || centerPath == null || centerPath.isEmpty() || bridgeRanges == null || bridgeRanges.isEmpty()) {
+            return List.of();
+        }
+        return RoadBridgePlanner.classifyRanges(
+                centerPath,
+                bridgeRanges,
+                index -> selectRoadPlacementStyle(level, centerPath.get(index).above()).bridge(),
+                index -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, centerPath.get(index)).below().getY()
+        );
     }
 
     private static BlockPos highlightPos(BlockPos anchorPos, List<BlockPos> centerPath, boolean start) {
@@ -1766,10 +1783,14 @@ public final class StructureConstructionManager {
     private static boolean tryPlaceRoad(ServerLevel level, BlockPos pos, RoadPlacementStyle style) {
         stabilizeRoadFoundation(level, pos, style);
         BlockState at = level.getBlockState(pos);
-        if (at.equals(style.surface()) || isRoadSurface(at)) {
+        if (at.equals(style.surface())) {
             return false;
         }
-        if (!isRoadPlacementReplaceable(at)) {
+        boolean replacingRoadSurface = canReplaceRoadSurface(at, style.surface());
+        if (!replacingRoadSurface && isRoadSurface(at)) {
+            return false;
+        }
+        if (!replacingRoadSurface && !isRoadPlacementReplaceable(at)) {
             return false;
         }
         BlockState below = level.getBlockState(pos.below());
@@ -1778,6 +1799,14 @@ public final class StructureConstructionManager {
         }
         level.setBlock(pos, style.surface(), Block.UPDATE_ALL);
         return true;
+    }
+
+    private static boolean canReplaceRoadSurface(BlockState existingState, BlockState plannedState) {
+        return existingState != null
+                && plannedState != null
+                && isRoadSurface(existingState)
+                && isRoadSurface(plannedState)
+                && !existingState.equals(plannedState);
     }
 
     private static RoadPlacementStyle selectRoadPlacementStyle(ServerLevel level, BlockPos pos) {
@@ -2609,15 +2638,6 @@ public final class StructureConstructionManager {
                 staleRoadJobs.add(state.roadId());
                 continue;
             }
-            if (!state.isLegacyPathOnly()) {
-                String planFailure = validatePersistedRoadJobMatchesPlan(state, createRoadPlacementPlan(level, road));
-                if (!planFailure.isBlank()) {
-                    LOGGER.warn("Dropping persisted road job {} in {}: {}", state.roadId(), dimensionId, planFailure);
-                    staleRoadJobs.add(state.roadId());
-                    continue;
-                }
-            }
-
             RestoredRoadRuntime restoredRoad = restorePersistedRoadRuntime(level, state);
             if (!restoredRoad.success()) {
                 LOGGER.warn("Dropping persisted road job {} in {}: {}", state.roadId(), dimensionId, restoredRoad.failureReason());
@@ -2825,50 +2845,9 @@ public final class StructureConstructionManager {
         if (state.isLegacyPathOnly()) {
             return "";
         }
-        if (expectedPlan == null) {
-            return "missing derived runtime road plan";
-        }
-        if (expectedPlan.buildSteps().isEmpty() || expectedPlan.ghostBlocks().isEmpty()) {
-            return "derived runtime road plan is incomplete";
-        }
-
-        if (state.ghostBlocks().size() != expectedPlan.ghostBlocks().size()) {
-            return "persisted road geometry does not match derived ghost block count";
-        }
-        for (int i = 0; i < expectedPlan.ghostBlocks().size(); i++) {
-            ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState persisted = state.ghostBlocks().get(i);
-            RoadGeometryPlanner.GhostRoadBlock expected = expectedPlan.ghostBlocks().get(i);
-            if (persisted == null || expected == null) {
-                return "persisted road geometry contains null ghost blocks";
-            }
-            if (persisted.pos() != expected.pos().asLong()) {
-                return "persisted road geometry does not match derived ghost block positions";
-            }
-            if (!NbtUtils.writeBlockState(expected.state()).equals(persisted.statePayload())) {
-                return "persisted road state does not match derived ghost block state";
-            }
-        }
-
-        if (state.buildSteps().size() != expectedPlan.buildSteps().size()) {
-            return "persisted road geometry does not match derived build step count";
-        }
-        for (int i = 0; i < expectedPlan.buildSteps().size(); i++) {
-            ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState persisted = state.buildSteps().get(i);
-            RoadGeometryPlanner.RoadBuildStep expected = expectedPlan.buildSteps().get(i);
-            if (persisted == null || expected == null) {
-                return "persisted road geometry contains null build steps";
-            }
-            if (persisted.order() != expected.order()) {
-                return "persisted road geometry does not match derived build step order";
-            }
-            if (persisted.pos() != expected.pos().asLong()) {
-                return "persisted road geometry does not match derived build step positions";
-            }
-            if (!NbtUtils.writeBlockState(expected.state()).equals(persisted.statePayload())) {
-                return "persisted road state does not match derived build step state";
-            }
-        }
-
+        // Non-legacy jobs already persist the full runtime road geometry. Restores should trust
+        // that saved plan after internal validation instead of rejecting it because live terrain
+        // or water changed and a freshly derived plan no longer matches.
         return "";
     }
 

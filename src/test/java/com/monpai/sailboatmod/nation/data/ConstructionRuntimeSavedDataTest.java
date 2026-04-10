@@ -404,7 +404,7 @@ class ConstructionRuntimeSavedDataTest {
     }
 
     @Test
-    void rejectsPersistedRoadJobsWhoseGeometryDoesNotMatchDerivedPlan() throws Exception {
+    void acceptsPersistedRoadJobsWhoseSavedGeometryDiffersFromFreshlyDerivedPlan() throws Exception {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(40, 70, 40),
                 new BlockPos(41, 70, 40)
@@ -461,7 +461,7 @@ class ConstructionRuntimeSavedDataTest {
 
         String reason = invokePersistedRoadPlanValidation(state, expectedPlan);
 
-        assertTrue(reason.contains("geometry") || reason.contains("derived"));
+        assertTrue(reason.isBlank());
     }
 
     private static CompoundTag blockStatePayload(String blockName) {

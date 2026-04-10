@@ -147,6 +147,22 @@ class BuilderHammerSupportTest {
     }
 
     @Test
+    void allowsRepairReplacementWhenExistingRoadSurfaceDiffersFromPlannedStep() {
+        assertTrue(invokeCanReplaceRoadSurface(
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(),
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState()
+        ));
+        assertFalse(invokeCanReplaceRoadSurface(
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        ));
+        assertFalse(invokeCanReplaceRoadSurface(
+                Blocks.GRASS_BLOCK.defaultBlockState(),
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState()
+        ));
+    }
+
+    @Test
     void roadRuntimeUsesActualCompletedStepsInsteadOfPrefixCount() {
         List<BlockPos> centerPath = List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0));
         RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
@@ -327,6 +343,18 @@ class BuilderHammerSupportTest {
             return (boolean) method.invoke(null, state);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect road replacement rules", ex);
+        }
+    }
+
+    private static boolean invokeCanReplaceRoadSurface(BlockState existingState, BlockState plannedState) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("canReplaceRoadSurface", BlockState.class, BlockState.class);
+            method.setAccessible(true);
+            return (boolean) method.invoke(null, existingState, plannedState);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect road surface replacement rules", ex);
         }
     }
 }
