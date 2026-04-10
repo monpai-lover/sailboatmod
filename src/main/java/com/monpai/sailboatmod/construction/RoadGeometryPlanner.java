@@ -164,13 +164,16 @@ public final class RoadGeometryPlanner {
         RibbonBasis basis = resolveRibbonBasis(centerPath, index);
 
         int insideHalfWidth = BASE_RIBBON_HALF_WIDTH;
-        int outsideHalfWidth = BASE_RIBBON_HALF_WIDTH + resolveOutsideWidening(
+        int outsideSign = Integer.signum(basis.turnSign());
+        int outsideWidening = outsideSign == 0
+                ? 0
+                : resolveOutsideWidening(
                 basis.incomingX(),
                 basis.incomingZ(),
                 basis.outgoingX(),
                 basis.outgoingZ()
         );
-        int outsideSign = basis.turnSign() == 0 ? 0 : (basis.turnSign() > 0 ? 1 : -1);
+        int outsideHalfWidth = BASE_RIBBON_HALF_WIDTH + outsideWidening;
 
         LinkedHashSet<BlockPos> columns = new LinkedHashSet<>();
         columns.add(current);
@@ -210,12 +213,44 @@ public final class RoadGeometryPlanner {
                                       int normalZ,
                                       int halfWidth,
                                       int sideSign) {
+        int centerX = center.getX();
+        int centerZ = center.getZ();
+        int y = center.getY();
+        int lastX = centerX;
+        int lastZ = centerZ;
         for (int step = 1; step <= halfWidth; step++) {
-            columns.add(new BlockPos(
-                    center.getX() + normalX * step * sideSign,
-                    center.getY(),
-                    center.getZ() + normalZ * step * sideSign
-            ));
+            int targetX = centerX + (normalX * step * sideSign);
+            int targetZ = centerZ + (normalZ * step * sideSign);
+            addContinuousOffsetPath(columns, y, lastX, lastZ, targetX, targetZ);
+            lastX = targetX;
+            lastZ = targetZ;
+        }
+    }
+
+    private static void addContinuousOffsetPath(LinkedHashSet<BlockPos> columns,
+                                                int y,
+                                                int fromX,
+                                                int fromZ,
+                                                int targetX,
+                                                int targetZ) {
+        int currentX = fromX;
+        int currentZ = fromZ;
+        while (currentX != targetX || currentZ != targetZ) {
+            boolean moveX = currentX != targetX;
+            boolean moveZ = currentZ != targetZ;
+            if (moveX && moveZ) {
+                currentX += Integer.compare(targetX, currentX);
+                columns.add(new BlockPos(currentX, y, currentZ));
+                currentZ += Integer.compare(targetZ, currentZ);
+                columns.add(new BlockPos(currentX, y, currentZ));
+                continue;
+            }
+            if (moveX) {
+                currentX += Integer.compare(targetX, currentX);
+            } else {
+                currentZ += Integer.compare(targetZ, currentZ);
+            }
+            columns.add(new BlockPos(currentX, y, currentZ));
         }
     }
 
