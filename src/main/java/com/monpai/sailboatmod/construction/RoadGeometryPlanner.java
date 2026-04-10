@@ -46,17 +46,22 @@ public final class RoadGeometryPlanner {
         int[] sampledHeights = samplePlacementHeights(path);
         int[] placementHeights = buildPlacementHeightProfile(path, bridgeProfiles);
 
-        LinkedHashMap<Long, GhostRoadBlock> ghostByPos = new LinkedHashMap<>();
+        LinkedHashMap<Long, GhostCandidate> ghostByPos = new LinkedHashMap<>();
         for (int i = 0; i < path.size(); i++) {
             boolean stairSegment = isStairSegment(sampledHeights, i);
             List<BlockPos> slicePositions = slicePositions(path, placementHeights, i);
+            BlockPos sourceCenter = path.get(i);
             for (BlockPos pos : slicePositions) {
                 BlockState state = resolveState(path, placementHeights, i, pos, stairSegment, blockStateSupplier);
-                addGhost(ghostByPos, pos, state);
+                addGhost(ghostByPos, pos, state, sourceCenter, i);
             }
         }
 
-        List<GhostRoadBlock> ghostBlocks = List.copyOf(ghostByPos.values());
+        List<GhostRoadBlock> ghostBlocks = new ArrayList<>(ghostByPos.size());
+        for (GhostCandidate candidate : ghostByPos.values()) {
+            ghostBlocks.add(new GhostRoadBlock(candidate.pos(), candidate.state()));
+        }
+        ghostBlocks = List.copyOf(ghostBlocks);
         List<RoadBuildStep> buildSteps = new ArrayList<>(ghostBlocks.size());
         for (int i = 0; i < ghostBlocks.size(); i++) {
             GhostRoadBlock ghost = ghostBlocks.get(i);
@@ -315,12 +320,45 @@ public final class RoadGeometryPlanner {
         return Math.max(min, Math.min(max, value));
     }
 
-    private static void addGhost(LinkedHashMap<Long, GhostRoadBlock> ghostByPos,
+    private static void addGhost(LinkedHashMap<Long, GhostCandidate> ghostByPos,
                                  BlockPos pos,
-                                 BlockState state) {
+                                 BlockState state,
+                                 BlockPos sourceCenter,
+                                 int sourceIndex) {
         Objects.requireNonNull(pos, "pos");
         Objects.requireNonNull(state, "state");
-        ghostByPos.putIfAbsent(pos.asLong(), new GhostRoadBlock(pos.immutable(), state));
+        Objects.requireNonNull(sourceCenter, "sourceCenter");
+
+        int dx = pos.getX() - sourceCenter.getX();
+        int dz = pos.getZ() - sourceCenter.getZ();
+        int distanceSq = (dx * dx) + (dz * dz);
+        GhostCandidate incoming = new GhostCandidate(
+                pos.immutable(),
+                state,
+                sourceIndex,
+                distanceSq,
+                state.getBlock() instanceof StairBlock
+        );
+        long key = pos.asLong();
+        GhostCandidate existing = ghostByPos.get(key);
+        if (existing == null) {
+            ghostByPos.put(key, incoming);
+            return;
+        }
+        ghostByPos.put(key, pickPreferredCandidate(existing, incoming));
+    }
+
+    private static GhostCandidate pickPreferredCandidate(GhostCandidate first, GhostCandidate second) {
+        if (first.stairState() != second.stairState()) {
+            return second.stairState() ? second : first;
+        }
+        if (first.sourceDistanceSq() != second.sourceDistanceSq()) {
+            return second.sourceDistanceSq() < first.sourceDistanceSq() ? second : first;
+        }
+        if (first.sourceIndex() != second.sourceIndex()) {
+            return second.sourceIndex() < first.sourceIndex() ? second : first;
+        }
+        return first;
     }
 
     private static int[] samplePlacementHeights(List<BlockPos> centerPath) {
@@ -559,6 +597,13 @@ public final class RoadGeometryPlanner {
     }
 
     private record Projection(int segmentIndex, double t, double distanceSq) {
+    }
+
+    private record GhostCandidate(BlockPos pos,
+                                  BlockState state,
+                                  int sourceIndex,
+                                  int sourceDistanceSq,
+                                  boolean stairState) {
     }
 
     public record GhostRoadBlock(BlockPos pos, BlockState state) {

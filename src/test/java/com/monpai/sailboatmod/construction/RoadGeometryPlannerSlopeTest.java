@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadGeometryPlannerSlopeTest {
@@ -155,6 +156,28 @@ class RoadGeometryPlannerSlopeTest {
         assertTrue(statesByPos.get(outerPlacement).is(Blocks.STONE_BRICK_SLAB));
     }
 
+    @Test
+    void overlappingSlopedTurnBlockPrefersStairStateOverEarlierSlabCandidate() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 65, 0),
+                new BlockPos(2, 66, 1),
+                new BlockPos(2, 67, 2)
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+        Map<BlockPos, BlockState> statesByPos = statesByPos(plan);
+
+        BlockPos overlapPos = findMixedOverlapWithEarlierSlab(centerPath);
+        assertNotNull(overlapPos, "Expected a mixed slab/stair overlap candidate");
+        assertTrue(statesByPos.containsKey(overlapPos));
+        assertTrue(statesByPos.get(overlapPos).is(Blocks.STONE_BRICK_STAIRS));
+    }
+
     private static Map<BlockPos, BlockState> statesByPos(RoadGeometryPlanner.RoadGeometryPlan plan) {
         Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
         for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : plan.ghostBlocks()) {
@@ -172,5 +195,63 @@ class RoadGeometryPlannerSlopeTest {
     private static BlockPos toPlacement(BlockPos column, List<BlockPos> centerPath, int[] placementHeights) {
         int y = RoadGeometryPlanner.interpolatePlacementHeight(column.getX(), column.getZ(), centerPath, placementHeights);
         return new BlockPos(column.getX(), y, column.getZ());
+    }
+
+    private static BlockPos findMixedOverlapWithEarlierSlab(List<BlockPos> centerPath) {
+        int[] sampledHeights = centerPath.stream().mapToInt(pos -> pos.getY() + 1).toArray();
+        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
+        Map<BlockPos, List<CandidateState>> candidatesByPos = new LinkedHashMap<>();
+
+        for (int i = 0; i < centerPath.size(); i++) {
+            boolean stairSegment = isStairSegment(sampledHeights, i);
+            for (BlockPos pos : RoadGeometryPlanner.slicePositions(centerPath, i)) {
+                boolean stairState = stairSegment
+                        && !RoadGeometryPlanner.shouldUseSlabTransition(pos.getX(), pos.getZ(), pos.getY(), centerPath, placementHeights)
+                        && RoadGeometryPlanner.isWithinStairTravelBand(pos.getX(), pos.getZ(), centerPath);
+                candidatesByPos.computeIfAbsent(pos, key -> new java.util.ArrayList<>())
+                        .add(new CandidateState(i, stairState));
+            }
+        }
+
+        for (Map.Entry<BlockPos, List<CandidateState>> entry : candidatesByPos.entrySet()) {
+            List<CandidateState> candidates = entry.getValue();
+            if (candidates.size() < 2) {
+                continue;
+            }
+            boolean hasStair = false;
+            boolean hasSlab = false;
+            int earliestIndex = Integer.MAX_VALUE;
+            boolean earliestIsStair = false;
+            for (CandidateState candidate : candidates) {
+                if (candidate.stairState()) {
+                    hasStair = true;
+                } else {
+                    hasSlab = true;
+                }
+                if (candidate.index() < earliestIndex) {
+                    earliestIndex = candidate.index();
+                    earliestIsStair = candidate.stairState();
+                }
+            }
+            if (hasStair && hasSlab && !earliestIsStair) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    private static boolean isStairSegment(int[] placementHeights, int index) {
+        if (placementHeights.length < 3) {
+            return false;
+        }
+        int current = placementHeights[index];
+        int previous = index > 0 ? placementHeights[index - 1] : current;
+        int next = index + 1 < placementHeights.length ? placementHeights[index + 1] : current;
+        int riseIn = current - previous;
+        int riseOut = next - current;
+        return riseIn != 0 && riseOut != 0 && Integer.signum(riseIn) == Integer.signum(riseOut);
+    }
+
+    private record CandidateState(int index, boolean stairState) {
     }
 }

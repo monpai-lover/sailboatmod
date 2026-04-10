@@ -193,6 +193,33 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
+    void slicePositionsUseRibbonColumnsWithInterpolatedHeights() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(1, 66, 1),
+                new BlockPos(2, 66, 1)
+        );
+        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
+
+        for (int i = 0; i < centerPath.size(); i++) {
+            Set<BlockPos> actual = new LinkedHashSet<>(RoadGeometryPlanner.slicePositions(centerPath, i));
+            Set<BlockPos> expected = ribbonSlicePlacements(centerPath, i);
+            assertEquals(expected, actual);
+
+            for (BlockPos placed : actual) {
+                int expectedY = RoadGeometryPlanner.interpolatePlacementHeight(
+                        placed.getX(),
+                        placed.getZ(),
+                        centerPath,
+                        placementHeights
+                );
+                assertEquals(expectedY, placed.getY());
+            }
+        }
+    }
+
+    @Test
     void raisesArchedBridgeMidpointWhileKeepingEndsAtBaselineDeckHeight() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
