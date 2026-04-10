@@ -20,6 +20,7 @@ public final class RoadBezierCenterline {
     private static final double CURVE_DENSE_SAMPLES_PER_BLOCK = 4.0D;
     private static final double CORNER_ROUNDING_FACTOR = 0.60D;
     private static final double MAX_CORNER_ROUNDING_DISTANCE = 4.0D;
+    private static final double MIN_SHARED_SEGMENT_REMAINING = 0.05D;
 
     private RoadBezierCenterline() {
     }
@@ -135,6 +136,7 @@ public final class RoadBezierCenterline {
     }
 
     private static List<CurvePoint> sampleDenseCurve(List<BlockPos> controlPoints) {
+        double[] roundingDistances = computeCornerRoundingDistances(controlPoints);
         List<CurvePoint> denseCurve = new ArrayList<>();
         CurvePoint last = point(controlPoints.get(0));
         denseCurve.add(last);
@@ -142,12 +144,7 @@ public final class RoadBezierCenterline {
             BlockPos previous = controlPoints.get(i - 1);
             BlockPos current = controlPoints.get(i);
             BlockPos next = controlPoints.get(i + 1);
-            double previousLength = distance(previous, current);
-            double nextLength = distance(current, next);
-            double roundingDistance = Math.min(
-                    MAX_CORNER_ROUNDING_DISTANCE,
-                    Math.min(previousLength, nextLength) * CORNER_ROUNDING_FACTOR
-            );
+            double roundingDistance = roundingDistances[i];
             if (roundingDistance <= 1.0E-6D) {
                 continue;
             }
@@ -160,6 +157,31 @@ public final class RoadBezierCenterline {
         }
         appendLinearSamples(denseCurve, last, point(controlPoints.get(controlPoints.size() - 1)));
         return List.copyOf(denseCurve);
+    }
+
+    private static double[] computeCornerRoundingDistances(List<BlockPos> controlPoints) {
+        double[] roundingDistances = new double[controlPoints.size()];
+        for (int i = 1; i < controlPoints.size() - 1; i++) {
+            double previousLength = distance(controlPoints.get(i - 1), controlPoints.get(i));
+            double nextLength = distance(controlPoints.get(i), controlPoints.get(i + 1));
+            roundingDistances[i] = Math.min(
+                    MAX_CORNER_ROUNDING_DISTANCE,
+                    Math.min(previousLength, nextLength) * CORNER_ROUNDING_FACTOR
+            );
+        }
+
+        for (int i = 1; i < controlPoints.size() - 2; i++) {
+            double sharedLength = distance(controlPoints.get(i), controlPoints.get(i + 1));
+            double allowedCombined = Math.max(0.0D, sharedLength - MIN_SHARED_SEGMENT_REMAINING);
+            double currentCombined = roundingDistances[i] + roundingDistances[i + 1];
+            if (currentCombined <= allowedCombined || currentCombined <= 1.0E-6D) {
+                continue;
+            }
+            double scale = allowedCombined / currentCombined;
+            roundingDistances[i] *= scale;
+            roundingDistances[i + 1] *= scale;
+        }
+        return roundingDistances;
     }
 
     private static List<BlockPos> rasterize(List<BlockPos> seedPoints,

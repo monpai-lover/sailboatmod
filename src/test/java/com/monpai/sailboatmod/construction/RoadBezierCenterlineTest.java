@@ -71,6 +71,29 @@ class RoadBezierCenterlineTest {
         assertTrue(turnXs.get(turnXs.size() - 1) > 16, centerline.toString());
     }
 
+    @Test
+    void avoidsBacktrackingOnTightAdjacentCorners() {
+        List<BlockPos> routeNodes = new ArrayList<>();
+        for (int x = 0; x <= 5; x++) {
+            routeNodes.add(new BlockPos(x, 64, 0));
+        }
+        routeNodes.add(new BlockPos(6, 64, 1));
+        routeNodes.add(new BlockPos(7, 64, 0));
+        routeNodes.add(new BlockPos(8, 64, 1));
+        routeNodes.add(new BlockPos(9, 64, 0));
+        for (int x = 10; x <= 14; x++) {
+            routeNodes.add(new BlockPos(x, 64, 0));
+        }
+
+        List<BlockPos> centerline = RoadBezierCenterline.build(routeNodes, flatSampler(), Set.of());
+
+        assertFalse(centerline.isEmpty());
+        assertTrue(isContiguous(centerline), centerline.toString());
+        assertTrue(isNonDecreasingX(centerline), centerline.toString());
+        assertTrue(hasNoImmediateDirectionReversal(centerline), centerline.toString());
+        assertTrue(hasUniqueColumns(centerline), centerline.toString());
+    }
+
     private static Function<BlockPos, RoadBezierCenterline.SurfaceSample> flatSampler() {
         return pos -> new RoadBezierCenterline.SurfaceSample(
                 new BlockPos(pos.getX(), 64, pos.getZ()),
@@ -119,6 +142,38 @@ class RoadBezierCenterlineTest {
             int dx = Math.abs(path.get(i).getX() - path.get(i - 1).getX());
             int dz = Math.abs(path.get(i).getZ() - path.get(i - 1).getZ());
             if (Math.max(dx, dz) != 1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isNonDecreasingX(List<BlockPos> path) {
+        for (int i = 1; i < path.size(); i++) {
+            if (path.get(i).getX() < path.get(i - 1).getX()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasNoImmediateDirectionReversal(List<BlockPos> path) {
+        for (int i = 2; i < path.size(); i++) {
+            int previousDx = path.get(i - 1).getX() - path.get(i - 2).getX();
+            int previousDz = path.get(i - 1).getZ() - path.get(i - 2).getZ();
+            int currentDx = path.get(i).getX() - path.get(i - 1).getX();
+            int currentDz = path.get(i).getZ() - path.get(i - 1).getZ();
+            if (currentDx == -previousDx && currentDz == -previousDz) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasUniqueColumns(List<BlockPos> path) {
+        Set<Long> seen = new java.util.HashSet<>();
+        for (BlockPos pos : path) {
+            if (!seen.add(columnKey(pos.getX(), pos.getZ()))) {
                 return false;
             }
         }
