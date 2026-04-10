@@ -1971,6 +1971,66 @@ public final class StructureConstructionManager {
                 || state.is(Blocks.SPRUCE_STAIRS);
     }
 
+    private static List<BlockPos> deriveTerrainOwnedBlocks(ServerLevel level,
+                                                           List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        if (level == null || ghostBlocks == null || ghostBlocks.isEmpty()) {
+            return List.of();
+        }
+        try {
+            List<BlockPos> roadbedTop = deriveRoadbedTopFromRoadSurfaceFootprint(ghostBlocks);
+            if (roadbedTop.isEmpty()) {
+                return List.of();
+            }
+            return RoadTerrainShaper.shapeRoadbed(
+                            roadbedTop,
+                            pos -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, pos).below().getY()
+                    ).stream()
+                    .map(RoadTerrainShaper.TerrainEdit::pos)
+                    .toList();
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
+    }
+
+    private static List<BlockPos> captureLiveRoadFoundation(ServerLevel level,
+                                                            List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        if (level == null || ghostBlocks == null || ghostBlocks.isEmpty()) {
+            return List.of();
+        }
+        try {
+            LinkedHashMap<Long, BlockPos> topByColumn = new LinkedHashMap<>();
+            for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : ghostBlocks) {
+                if (ghostBlock == null || ghostBlock.pos() == null || !isRoadTerrainSurfaceState(ghostBlock.state())) {
+                    continue;
+                }
+                BlockPos pos = ghostBlock.pos();
+                long key = BlockPos.asLong(pos.getX(), 0, pos.getZ());
+                BlockPos existing = topByColumn.get(key);
+                if (existing == null || pos.getY() > existing.getY()) {
+                    topByColumn.put(key, pos);
+                }
+            }
+            if (topByColumn.isEmpty()) {
+                return List.of();
+            }
+            LinkedHashSet<BlockPos> captured = new LinkedHashSet<>();
+            for (BlockPos top : topByColumn.values()) {
+                BlockPos cursor = top.below();
+                for (int depth = 0; depth < 8; depth++) {
+                    BlockState state = level.getBlockState(cursor);
+                    if (!isRoadSurface(state)) {
+                        break;
+                    }
+                    captured.add(cursor);
+                    cursor = cursor.below();
+                }
+            }
+            return List.copyOf(captured);
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
+    }
+
     private static List<BlockPos> collectOwnedRoadBlocks(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
                                                          List<BlockPos> terrainEdits) {
         LinkedHashSet<BlockPos> ownedBlocks = new LinkedHashSet<>();
@@ -2064,14 +2124,18 @@ public final class StructureConstructionManager {
         for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
             RoadConstructionJob job = entry.getValue();
             if (job != null && job.level == level && job.roadId != null && !job.roadId.isBlank()) {
-                ownership.put(job.roadId, roadOwnedBlocks(job.plan));
+                ownership.put(job.roadId, roadOwnedBlocks(level, job.plan));
             }
         }
-        for (RoadNetworkRecord road : NationSavedData.get(level).getRoadNetworks()) {
+        NationSavedData data = safeNationSavedData(level);
+        if (data == null) {
+            return Map.copyOf(ownership);
+        }
+        for (RoadNetworkRecord road : data.getRoadNetworks()) {
             if (road == null || road.roadId().isBlank() || ownership.containsKey(road.roadId())) {
                 continue;
             }
-            ownership.put(road.roadId(), roadOwnedBlocks(createRoadPlacementPlan(level, road)));
+            ownership.put(road.roadId(), roadOwnedBlocks(level, createRoadPlacementPlan(level, road)));
         }
         return Map.copyOf(ownership);
     }
@@ -2115,30 +2179,46 @@ public final class StructureConstructionManager {
         ACTIVE_ROAD_HAMMER_CREDITS.remove(roadId);
     }
 
-    private static List<BlockPos> roadOwnedBlocks(RoadPlacementPlan plan) {
+    private static List<BlockPos> roadOwnedBlocks(ServerLevel level, RoadPlacementPlan plan) {
         if (plan == null) {
             return List.of();
         }
+        LinkedHashSet<BlockPos> resolved = new LinkedHashSet<>();
         if (!plan.ownedBlocks().isEmpty()) {
-            return List.copyOf(plan.ownedBlocks());
+            resolved.addAll(plan.ownedBlocks());
         }
-        LinkedHashSet<BlockPos> fallback = new LinkedHashSet<>();
+        resolved.addAll(collectOwnedRoadBlocks(plan.ghostBlocks(), List.of()));
         for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
             if (step != null && step.pos() != null) {
-                fallback.add(step.pos());
+                resolved.add(step.pos());
             }
         }
-        return List.copyOf(fallback);
+        if (level != null) {
+            resolved.addAll(deriveTerrainOwnedBlocks(level, plan.ghostBlocks()));
+            resolved.addAll(captureLiveRoadFoundation(level, plan.ghostBlocks()));
+        }
+        return resolved.isEmpty() ? List.of() : List.copyOf(resolved);
     }
 
     private static void removeOwnedRoadBlocks(ServerLevel level, RoadPlacementPlan plan) {
         if (level == null || plan == null) {
             return;
         }
-        for (BlockPos pos : RoadLifecycleService.removalOrder(roadOwnedBlocks(plan))) {
+        for (BlockPos pos : RoadLifecycleService.removalOrder(roadOwnedBlocks(level, plan))) {
             if (pos != null && !level.getBlockState(pos).isAir()) {
                 level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
             }
+        }
+    }
+
+    private static NationSavedData safeNationSavedData(ServerLevel level) {
+        if (level == null) {
+            return null;
+        }
+        try {
+            return NationSavedData.get(level);
+        } catch (RuntimeException ignored) {
+            return null;
         }
     }
 

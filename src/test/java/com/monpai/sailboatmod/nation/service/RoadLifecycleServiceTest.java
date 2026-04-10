@@ -124,6 +124,67 @@ class RoadLifecycleServiceTest {
         assertEquals(owned.get(0), removalOrder.get(removalOrder.size() - 1));
     }
 
+    @Test
+    void partialPersistedOwnedBlocksFallBackToWidenedFootprintCoverage() {
+        RoadPlacementPlan plan = widenedPlanWithPartialOwnedBlocks();
+
+        List<BlockPos> resolved = invokeResolvedRoadOwnedBlocks(null, plan);
+
+        assertEquals(Set.of(
+                new BlockPos(-1, 70, 0),
+                new BlockPos(0, 70, 0),
+                new BlockPos(1, 70, 0)
+        ), Set.copyOf(resolved));
+    }
+
+    @Test
+    void snapshotRoadOwnershipUsesResolvedCoverageForActivePlans() {
+        ServerLevel level = allocate(ServerLevel.class);
+        RoadPlacementPlan plan = widenedPlanWithPartialOwnedBlocks();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
+        String roadId = "manual|town:snapshot_a|town:snapshot_b";
+        Object previous = activeRoads.put(roadId, newRoadConstructionJob(level, roadId, plan));
+        try {
+            Map<String, List<BlockPos>> snapshot = StructureConstructionManager.snapshotRoadOwnedBlocks(level);
+            assertTrue(snapshot.containsKey(roadId));
+            assertEquals(Set.of(
+                    new BlockPos(-1, 70, 0),
+                    new BlockPos(0, 70, 0),
+                    new BlockPos(1, 70, 0)
+            ), Set.copyOf(snapshot.get(roadId)));
+        } finally {
+            restoreMapEntry(activeRoads, roadId, previous);
+        }
+    }
+
+    private static RoadPlacementPlan widenedPlanWithPartialOwnedBlocks() {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(-1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = List.of(
+                new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(-1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.RoadBuildStep(1, new BlockPos(0, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.RoadBuildStep(2, new BlockPos(1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+        return new RoadPlacementPlan(
+                List.of(new BlockPos(0, 70, 0), new BlockPos(1, 70, 0)),
+                null,
+                null,
+                null,
+                null,
+                ghostBlocks,
+                buildSteps,
+                List.of(),
+                List.of(new BlockPos(0, 70, 0)),
+                null,
+                null,
+                null
+        );
+    }
+
     private static List<BlockPos> invokeRoadbedTopFromFootprint(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
         try {
             var method = Class
@@ -153,6 +214,20 @@ class RoadLifecycleServiceTest {
         }
     }
 
+    private static List<BlockPos> invokeResolvedRoadOwnedBlocks(ServerLevel level, RoadPlacementPlan plan) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("roadOwnedBlocks", ServerLevel.class, RoadPlacementPlan.class);
+            method.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            List<BlockPos> result = (List<BlockPos>) method.invoke(null, level, plan);
+            return result;
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect resolved road ownership fallback", ex);
+        }
+    }
+
     private static boolean invokeCancelActiveRoadConstruction(ServerLevel level, String roadId) {
         try {
             var method = Class
@@ -178,6 +253,10 @@ class RoadLifecycleServiceTest {
     }
 
     private static Object newRoadConstructionJob(ServerLevel level, String roadId) {
+        return newRoadConstructionJob(level, roadId, new RoadPlacementPlan(List.of(), null, null, null, null, List.of(), List.of(), List.of(), List.of(), null, null, null));
+    }
+
+    private static Object newRoadConstructionJob(ServerLevel level, String roadId, RoadPlacementPlan plan) {
         try {
             Class<?> jobClass = Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadConstructionJob");
             Constructor<?> constructor = jobClass.getDeclaredConstructors()[0];
@@ -190,7 +269,7 @@ class RoadLifecycleServiceTest {
                     "nation_a",
                     "Town A",
                     "Town B",
-                    new RoadPlacementPlan(List.of(), null, null, null, null, List.of(), List.of(), List.of(), List.of(), null, null, null),
+                    plan,
                     0,
                     0.0D
             );
