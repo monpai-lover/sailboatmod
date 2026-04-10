@@ -60,6 +60,7 @@ class ConstructionRuntimeSavedDataTest {
                                 blockStatePayload("minecraft:stone_brick_slab")
                         )
                 ),
+                List.of(start.above().asLong(), start.asLong()),
                 1,
                 false
         );
@@ -74,6 +75,7 @@ class ConstructionRuntimeSavedDataTest {
         assertEquals(2, restored.centerPath().size());
         assertEquals(2, restored.ghostBlocks().size());
         assertEquals(2, restored.buildSteps().size());
+        assertEquals(List.of(start.above().asLong(), start.asLong()), restored.ownedBlocks());
         assertEquals(1, restored.placedStepCount());
         assertEquals("minecraft:stone_bricks", restored.ghostBlocks().get(0).statePayload().getString("Name"));
         assertEquals(List.of(0, 1), restored.buildSteps().stream().map(ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState::order).toList());

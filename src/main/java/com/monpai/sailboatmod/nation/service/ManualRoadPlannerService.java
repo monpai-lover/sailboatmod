@@ -25,6 +25,8 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
@@ -76,6 +78,7 @@ public final class ManualRoadPlannerService {
         }
         if (offhand) {
             PlannerMode next = readPlannerMode(stack).next();
+            clearPreviewState(stack);
             stack.getOrCreateTag().putString(TAG_MODE, next.name());
             return Component.translatable(modeMessageKey(next));
         }
@@ -85,8 +88,8 @@ public final class ManualRoadPlannerService {
     public static Component handlePrimaryUse(ServerPlayer player, ItemStack stack) {
         return switch (readPlannerMode(stack)) {
             case BUILD -> previewOrConfirm(player, stack);
-            case CANCEL -> Component.translatable("message.sailboatmod.road_planner.mode.cancel");
-            case DEMOLISH -> Component.translatable("message.sailboatmod.road_planner.mode.demolish");
+            case CANCEL -> previewOrCancelRoad(player, stack);
+            case DEMOLISH -> previewOrDemolishRoad(player, stack);
         };
     }
 
@@ -215,6 +218,95 @@ public final class ManualRoadPlannerService {
         );
     }
 
+    private static Component previewOrCancelRoad(ServerPlayer player, ItemStack stack) {
+        if (player == null || stack == null) {
+            return Component.translatable("message.sailboatmod.road_planner.unavailable");
+        }
+        SelectedRoadRoute route = resolveSelectedRoadRoute(player, stack);
+        if (route == null) {
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.target_invalid");
+        }
+        RoadPlacementPlan plan = RoadLifecycleService.findActiveRoadPlan(player.serverLevel(), route.roadId());
+        if (plan == null || plan.buildSteps().isEmpty()) {
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.nothing_to_cancel");
+        }
+        return previewOrApplyLifecycleAction(
+                player,
+                stack,
+                route.roadId(),
+                route.sourceName(),
+                route.targetName(),
+                plan,
+                () -> RoadLifecycleService.cancelRoad(player.serverLevel(), route.roadId()),
+                "message.sailboatmod.road_planner.cancel_preview",
+                "message.sailboatmod.road_planner.cancelled"
+        );
+    }
+
+    private static Component previewOrDemolishRoad(ServerPlayer player, ItemStack stack) {
+        if (player == null || stack == null) {
+            return Component.translatable("message.sailboatmod.road_planner.unavailable");
+        }
+        TargetedRoadPreview target = resolveLookedAtRoad(player);
+        if (target == null || target.plan() == null || target.plan().buildSteps().isEmpty()) {
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.not_looking_at_road");
+        }
+        return previewOrApplyLifecycleAction(
+                player,
+                stack,
+                target.roadId(),
+                target.sourceName(),
+                target.targetName(),
+                target.plan(),
+                () -> RoadLifecycleService.demolishRoad(player.serverLevel(), target.roadId()),
+                "message.sailboatmod.road_planner.demolish_preview",
+                "message.sailboatmod.road_planner.demolished"
+        );
+    }
+
+    private static Component previewOrApplyLifecycleAction(ServerPlayer player,
+                                                           ItemStack stack,
+                                                           String roadId,
+                                                           String sourceName,
+                                                           String targetName,
+                                                           RoadPlacementPlan plan,
+                                                           java.util.function.BooleanSupplier action,
+                                                           String previewMessageKey,
+                                                           String successMessageKey) {
+        CompoundTag tag = stack.getOrCreateTag();
+        String previewHash = previewHash(plan);
+        long now = System.currentTimeMillis();
+        boolean confirmable = roadId != null
+                && roadId.equalsIgnoreCase(tag.getString(TAG_PREVIEW_ROAD_ID))
+                && previewHash.equals(tag.getString(TAG_PREVIEW_HASH))
+                && now - tag.getLong(TAG_PREVIEW_AT) <= PREVIEW_TIMEOUT_MS;
+
+        if (confirmable) {
+            boolean changed = action != null && action.getAsBoolean();
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            if (!changed) {
+                return Component.translatable(previewMessageKey.equals("message.sailboatmod.road_planner.cancel_preview")
+                        ? "message.sailboatmod.road_planner.nothing_to_cancel"
+                        : "message.sailboatmod.road_planner.not_looking_at_road");
+            }
+            return Component.translatable(successMessageKey, sourceName, targetName);
+        }
+
+        tag.remove(TAG_PREVIEW_TARGET_TOWN_ID);
+        tag.putString(TAG_PREVIEW_ROAD_ID, roadId == null ? "" : roadId);
+        tag.putString(TAG_PREVIEW_HASH, previewHash);
+        tag.putLong(TAG_PREVIEW_AT, now);
+        sendPreview(player, sourceName, targetName, plan, true);
+        return Component.translatable(previewMessageKey);
+    }
+
     private static PlanCandidate buildPlan(ServerPlayer player, ItemStack stack) {
         ServerLevel level = player.serverLevel();
         NationSavedData data = NationSavedData.get(level);
@@ -265,17 +357,16 @@ public final class ManualRoadPlannerService {
             return null;
         }
 
-        String leftId = "town:" + sourceTown.townId();
-        String rightId = "town:" + targetTown.townId();
-        String edgeKey = RoadNetworkRecord.edgeKey(leftId, rightId);
-        if (edgeKey.isBlank()) {
+        String manualRoadId = manualRoadIdForTownPair(sourceTown.townId(), targetTown.townId());
+        if (manualRoadId.isBlank()) {
             return null;
         }
-        String manualRoadId = "manual|" + edgeKey;
         if (manualRoadExists(level, manualRoadId)) {
             writeFailureMessage(stack, "message.sailboatmod.road_planner.already_connected");
             return null;
         }
+        String leftId = "town:" + sourceTown.townId();
+        String rightId = "town:" + targetTown.townId();
 
         RoadNetworkRecord road = new RoadNetworkRecord(
                 manualRoadId,
@@ -632,6 +723,7 @@ public final class ManualRoadPlannerService {
     static PlannerMode cyclePlannerModeForTest(ItemStack stack) {
         PlannerMode next = readPlannerMode(stack).next();
         if (stack != null) {
+            clearPreviewState(stack);
             stack.getOrCreateTag().putString(TAG_MODE, next.name());
         }
         return next;
@@ -639,6 +731,10 @@ public final class ManualRoadPlannerService {
 
     static boolean manualRoadAlreadyExistsForTest(String roadId, Set<String> existingRoadIds) {
         return existingRoadIds != null && existingRoadIds.contains(roadId);
+    }
+
+    static String manualRoadIdForTest(String sourceTownId, String targetTownId) {
+        return manualRoadIdForTownPair(sourceTownId, targetTownId);
     }
 
     static ManualPlanFailure validateStrictPostStationRoute(boolean hasSourceStation,
@@ -695,6 +791,14 @@ public final class ManualRoadPlannerService {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
+    private static String manualRoadIdForTownPair(String sourceTownId, String targetTownId) {
+        if (sourceTownId == null || sourceTownId.isBlank() || targetTownId == null || targetTownId.isBlank()) {
+            return "";
+        }
+        String edgeKey = RoadNetworkRecord.edgeKey("town:" + sourceTownId, "town:" + targetTownId);
+        return edgeKey.isBlank() ? "" : "manual|" + edgeKey;
+    }
+
     static long columnKeyForTest(int x, int z) {
         return columnKey(x, z);
     }
@@ -721,18 +825,106 @@ public final class ManualRoadPlannerService {
         return List.copyOf(ordered);
     }
 
+    private static SelectedRoadRoute resolveSelectedRoadRoute(ServerPlayer player, ItemStack stack) {
+        if (player == null || stack == null) {
+            return null;
+        }
+        ServerLevel level = player.serverLevel();
+        TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
+        if (sourceTown == null) {
+            return null;
+        }
+        List<TownRecord> targets = eligibleTargets(level, sourceTown);
+        if (targets.isEmpty()) {
+            return null;
+        }
+        TownRecord targetTown = resolveSelectedTarget(stack, targets);
+        if (targetTown == null) {
+            return null;
+        }
+        String roadId = manualRoadIdForTownPair(sourceTown.townId(), targetTown.townId());
+        if (roadId.isBlank()) {
+            return null;
+        }
+        return new SelectedRoadRoute(
+                roadId,
+                displayTownName(sourceTown),
+                displayTownName(targetTown)
+        );
+    }
+
+    private static TargetedRoadPreview resolveLookedAtRoad(ServerPlayer player) {
+        if (player == null) {
+            return null;
+        }
+        HitResult hitResult = player.pick(6.0D, 0.0F, false);
+        if (!(hitResult instanceof BlockHitResult blockHitResult) || hitResult.getType() != HitResult.Type.BLOCK) {
+            return null;
+        }
+        ServerLevel level = player.serverLevel();
+        String roadId = RoadSelectionService.findRoadId(level, blockHitResult.getBlockPos());
+        if (roadId.isBlank()) {
+            return null;
+        }
+        RoadPlacementPlan plan = RoadLifecycleService.findRoadPlan(level, roadId);
+        if (plan == null) {
+            return null;
+        }
+        NationSavedData data = NationSavedData.get(level);
+        RoadNetworkRecord road = data.getRoadNetwork(roadId);
+        String sourceName = "-";
+        String targetName = roadId;
+        if (road != null) {
+            TownRecord sourceTown = data.getTown(road.townId());
+            TownRecord targetTown = data.getTown(resolveRemoteTownId(road));
+            sourceName = displayTownName(sourceTown);
+            targetName = displayTownName(targetTown);
+        }
+        return new TargetedRoadPreview(roadId, sourceName, targetName, plan);
+    }
+
+    private static String resolveRemoteTownId(RoadNetworkRecord road) {
+        if (road == null) {
+            return "";
+        }
+        String sourceId = road.structureAId() == null ? "" : road.structureAId().trim();
+        String targetId = road.structureBId() == null ? "" : road.structureBId().trim();
+        String townPrefix = "town:";
+        if (sourceId.startsWith(townPrefix) && road.townId().equalsIgnoreCase(sourceId.substring(townPrefix.length()))) {
+            return targetId.startsWith(townPrefix) ? targetId.substring(townPrefix.length()) : targetId;
+        }
+        if (targetId.startsWith(townPrefix) && road.townId().equalsIgnoreCase(targetId.substring(townPrefix.length()))) {
+            return sourceId.startsWith(townPrefix) ? sourceId.substring(townPrefix.length()) : sourceId;
+        }
+        return targetId.startsWith(townPrefix) ? targetId.substring(townPrefix.length()) : targetId;
+    }
+
     private static void sendPreview(ServerPlayer player, PlanCandidate candidate, boolean awaitingConfirmation) {
+        sendPreview(
+                player,
+                displayTownName(candidate.sourceTown()),
+                displayTownName(candidate.targetTown()),
+                candidate.plan(),
+                awaitingConfirmation
+        );
+    }
+
+    private static void sendPreview(ServerPlayer player,
+                                    String sourceName,
+                                    String targetName,
+                                    RoadPlacementPlan plan,
+                                    boolean awaitingConfirmation) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
                 new SyncRoadPlannerPreviewPacket(
-                        displayTownName(candidate.sourceTown()),
-                        displayTownName(candidate.targetTown()),
-                        candidate.plan().ghostBlocks().stream()
+                        sourceName == null ? "-" : sourceName,
+                        targetName == null ? "-" : targetName,
+                        plan == null ? List.of() : plan.ghostBlocks().stream()
                                 .map(block -> new SyncRoadPlannerPreviewPacket.GhostBlock(block.pos(), block.state()))
                                 .toList(),
-                        candidate.plan().startHighlightPos(),
-                        candidate.plan().endHighlightPos(),
-                        candidate.plan().focusPos(),
+                        plan == null ? null : plan.startHighlightPos(),
+                        plan == null ? null : plan.endHighlightPos(),
+                        plan == null ? null : plan.focusPos(),
                         awaitingConfirmation
                 )
         );
@@ -890,6 +1082,12 @@ public final class ManualRoadPlannerService {
     }
 
     private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road, RoadPlacementPlan plan) {
+    }
+
+    private record SelectedRoadRoute(String roadId, String sourceName, String targetName) {
+    }
+
+    private record TargetedRoadPreview(String roadId, String sourceName, String targetName, RoadPlacementPlan plan) {
     }
 
     private record StationZoneCandidate(BlockPos stationPos, PostStationRoadAnchorHelper.Zone zone) {

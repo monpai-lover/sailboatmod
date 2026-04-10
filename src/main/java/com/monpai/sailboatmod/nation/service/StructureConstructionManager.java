@@ -589,9 +589,7 @@ public final class StructureConstructionManager {
         }
 
         completed.forEach(jobId -> {
-            ACTIVE_ROAD_CONSTRUCTIONS.remove(jobId);
-            ACTIVE_ROAD_WORKERS.remove(jobId);
-            ACTIVE_ROAD_HAMMER_CREDITS.remove(jobId);
+            clearActiveRoadRuntimeState(jobId);
             removePersistedRoadJob(level, jobId);
         });
         syncRoadConstructionProgress(level, playersToSync);
@@ -1980,6 +1978,115 @@ public final class StructureConstructionManager {
         }
     }
 
+    static RoadPlacementPlan findActiveRoadPlacementPlan(ServerLevel level, String roadId) {
+        if (level == null || roadId == null || roadId.isBlank()) {
+            return null;
+        }
+        RoadConstructionJob job = ACTIVE_ROAD_CONSTRUCTIONS.get(roadId);
+        if (job == null || job.level != level) {
+            return null;
+        }
+        return job.plan;
+    }
+
+    static RoadPlacementPlan findRoadPlacementPlan(ServerLevel level, String roadId) {
+        if (level == null || roadId == null || roadId.isBlank()) {
+            return null;
+        }
+        RoadPlacementPlan activePlan = findActiveRoadPlacementPlan(level, roadId);
+        if (activePlan != null) {
+            return activePlan;
+        }
+        RoadNetworkRecord road = NationSavedData.get(level).getRoadNetwork(roadId);
+        return road == null ? null : createRoadPlacementPlan(level, road);
+    }
+
+    static Map<String, List<BlockPos>> snapshotRoadOwnedBlocks(ServerLevel level) {
+        if (level == null) {
+            return Map.of();
+        }
+        LinkedHashMap<String, List<BlockPos>> ownership = new LinkedHashMap<>();
+        for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
+            RoadConstructionJob job = entry.getValue();
+            if (job != null && job.level == level && job.roadId != null && !job.roadId.isBlank()) {
+                ownership.put(job.roadId, roadOwnedBlocks(job.plan));
+            }
+        }
+        for (RoadNetworkRecord road : NationSavedData.get(level).getRoadNetworks()) {
+            if (road == null || road.roadId().isBlank() || ownership.containsKey(road.roadId())) {
+                continue;
+            }
+            ownership.put(road.roadId(), roadOwnedBlocks(createRoadPlacementPlan(level, road)));
+        }
+        return Map.copyOf(ownership);
+    }
+
+    static boolean cancelActiveRoadConstruction(ServerLevel level, String roadId) {
+        if (level == null || roadId == null || roadId.isBlank()) {
+            return false;
+        }
+        RoadConstructionJob job = ACTIVE_ROAD_CONSTRUCTIONS.get(roadId);
+        if (job == null || job.level != level) {
+            return false;
+        }
+        clearActiveRoadRuntimeState(roadId);
+        removeOwnedRoadBlocks(level, job.plan);
+        removePersistedRoadJob(level, roadId);
+        NationSavedData.get(level).removeRoadNetwork(roadId);
+        return true;
+    }
+
+    static boolean demolishRoadById(ServerLevel level, String roadId) {
+        if (level == null || roadId == null || roadId.isBlank()) {
+            return false;
+        }
+        RoadPlacementPlan plan = findRoadPlacementPlan(level, roadId);
+        if (plan == null) {
+            return false;
+        }
+        clearActiveRoadRuntimeState(roadId);
+        removeOwnedRoadBlocks(level, plan);
+        removePersistedRoadJob(level, roadId);
+        NationSavedData.get(level).removeRoadNetwork(roadId);
+        return true;
+    }
+
+    private static void clearActiveRoadRuntimeState(String roadId) {
+        if (roadId == null || roadId.isBlank()) {
+            return;
+        }
+        ACTIVE_ROAD_CONSTRUCTIONS.remove(roadId);
+        ACTIVE_ROAD_WORKERS.remove(roadId);
+        ACTIVE_ROAD_HAMMER_CREDITS.remove(roadId);
+    }
+
+    private static List<BlockPos> roadOwnedBlocks(RoadPlacementPlan plan) {
+        if (plan == null) {
+            return List.of();
+        }
+        if (!plan.ownedBlocks().isEmpty()) {
+            return List.copyOf(plan.ownedBlocks());
+        }
+        LinkedHashSet<BlockPos> fallback = new LinkedHashSet<>();
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            if (step != null && step.pos() != null) {
+                fallback.add(step.pos());
+            }
+        }
+        return List.copyOf(fallback);
+    }
+
+    private static void removeOwnedRoadBlocks(ServerLevel level, RoadPlacementPlan plan) {
+        if (level == null || plan == null) {
+            return;
+        }
+        for (BlockPos pos : RoadLifecycleService.removalOrder(roadOwnedBlocks(plan))) {
+            if (pos != null && !level.getBlockState(pos).isAir()) {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+            }
+        }
+    }
+
     private static void removeRoadAt(ServerLevel level, BlockPos pos) {
         if (isRoadSurface(level.getBlockState(pos))) {
             level.setBlock(pos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
@@ -2709,6 +2816,7 @@ public final class StructureConstructionManager {
                         toLongList(plan.centerPath()),
                         serializeRoadGhostBlocks(plan.ghostBlocks()),
                         serializeRoadBuildSteps(plan.buildSteps()),
+                        toLongList(plan.ownedBlocks()),
                         placedStepCount,
                         false
                 )
@@ -2923,6 +3031,7 @@ public final class StructureConstructionManager {
                 ghostBlocks,
                 buildSteps,
                 detectBridgeRanges(level, centerPath),
+                toBlockPosList(state.ownedBlocks()),
                 highlightPos(start, centerPath, true),
                 highlightPos(end, centerPath, false),
                 resolveRoadPlanFocusPos(centerPath, ghostBlocks)

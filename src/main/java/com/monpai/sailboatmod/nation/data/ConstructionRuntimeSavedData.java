@@ -162,9 +162,10 @@ public class ConstructionRuntimeSavedData extends SavedData {
                                List<Long> centerPath,
                                List<RoadGhostBlockState> ghostBlocks,
                                List<RoadBuildStepState> buildSteps,
+                               List<Long> ownedBlocks,
                                int placedStepCount,
                                boolean legacyPathOnly) {
-        private static final int FORMAT_VERSION = 2;
+        private static final int FORMAT_VERSION = 3;
 
         public RoadJobState {
             roadId = roadId == null ? "" : roadId;
@@ -173,7 +174,19 @@ public class ConstructionRuntimeSavedData extends SavedData {
             centerPath = centerPath == null ? List.of() : List.copyOf(centerPath);
             ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
             buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
+            ownedBlocks = ownedBlocks == null ? List.of() : List.copyOf(ownedBlocks);
             placedStepCount = Math.max(0, placedStepCount);
+        }
+
+        public RoadJobState(String roadId,
+                            String dimensionId,
+                            String ownerUuid,
+                            List<Long> centerPath,
+                            List<RoadGhostBlockState> ghostBlocks,
+                            List<RoadBuildStepState> buildSteps,
+                            int placedStepCount,
+                            boolean legacyPathOnly) {
+            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), placedStepCount, legacyPathOnly);
         }
 
         public List<Long> path() {
@@ -193,6 +206,8 @@ public class ConstructionRuntimeSavedData extends SavedData {
             long[] centerPathArray = centerPath == null ? new long[0] : centerPath.stream().mapToLong(Long::longValue).toArray();
             tag.putLongArray("CenterPath", centerPathArray);
             tag.putLongArray("Path", centerPathArray);
+            long[] ownedBlocksArray = ownedBlocks == null ? new long[0] : ownedBlocks.stream().mapToLong(Long::longValue).toArray();
+            tag.putLongArray("OwnedBlocks", ownedBlocksArray);
             tag.putInt("PlacedStepCount", placedStepCount);
 
             ListTag ghostBlockTags = new ListTag();
@@ -226,6 +241,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
                     toLongList(tag.getLongArray(pathKey)),
                     toRoadGhostBlockList(tag.getList("GhostBlocks", Tag.TAG_COMPOUND)),
                     toRoadBuildStepList(tag.getList("BuildSteps", Tag.TAG_COMPOUND)),
+                    toLongList(tag.getLongArray("OwnedBlocks")),
                     legacyPathOnly ? 0 : tag.getInt("PlacedStepCount"),
                     legacyPathOnly
             );

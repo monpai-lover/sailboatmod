@@ -40,6 +40,31 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void manualRoadIdForTownPairUsesStableEdgeKey() {
+        assertEquals(
+                "manual|town:alpha|town:beta",
+                ManualRoadPlannerService.manualRoadIdForTest("alpha", "beta")
+        );
+        assertEquals(
+                "manual|town:alpha|town:beta",
+                ManualRoadPlannerService.manualRoadIdForTest("beta", "alpha")
+        );
+    }
+
+    @Test
+    void cyclingPlannerModeClearsPendingPreviewConfirmationState() {
+        ItemStack stack = new ItemStack(net.minecraft.world.item.Items.STICK);
+        stack.getOrCreateTag().putString("PreviewRoadId", "manual|town:a|town:b");
+        stack.getOrCreateTag().putString("PreviewHash", "preview-hash");
+
+        ManualRoadPlannerService.cyclePlannerModeForTest(stack);
+
+        assertFalse(stack.getOrCreateTag().contains("PreviewRoadId"));
+        assertFalse(stack.getOrCreateTag().contains("PreviewHash"));
+        assertEquals("CANCEL", ManualRoadPlannerService.readPlannerModeForTest(stack).name());
+    }
+
+    @Test
     void strictManualPlanningRejectsFallbackWhenStationPairIsMissing() {
         ManualRoadPlannerService.ManualPlanFailure failure =
                 ManualRoadPlannerService.validateStrictPostStationRoute(false, true, false, false);
