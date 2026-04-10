@@ -1415,6 +1415,7 @@
     "item.sailboatmod.road_planner.tip.use": "右键预览或确认一条城镇间道路。",
     "item.sailboatmod.road_planner.tip.select": "Shift+右键打开目标城镇选择界面。",
     "item.sailboatmod.road_planner.tip.confirm": "对同一条预览再次右键即开始施工。",
+    "item.sailboatmod.road_planner.tip.mode": "副手持有时潜行右键可切换规划器模式。",
     "screen.sailboatmod.road_planner.target.title": "道路规划器",
     "screen.sailboatmod.road_planner.target.select": "选择",
     "screen.sailboatmod.road_planner.target.source": "起点城镇：%s",

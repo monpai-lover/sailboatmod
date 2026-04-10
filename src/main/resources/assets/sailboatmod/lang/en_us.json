@@ -1418,6 +1418,7 @@
     ,"item.sailboatmod.road_planner.tip.use": "Right-click to preview or confirm an inter-town road."
     ,"item.sailboatmod.road_planner.tip.select": "Sneak-right-click to choose the destination town."
     ,"item.sailboatmod.road_planner.tip.confirm": "Right-click the same preview again to start construction."
+    ,"item.sailboatmod.road_planner.tip.mode": "Sneak-right-click in the off-hand to cycle planner mode."
     ,"screen.sailboatmod.road_planner.target.title": "Road Planner"
     ,"screen.sailboatmod.road_planner.target.select": "Select"
     ,"screen.sailboatmod.road_planner.target.source": "Source town: %s"

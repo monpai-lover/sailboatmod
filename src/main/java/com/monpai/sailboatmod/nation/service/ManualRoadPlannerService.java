@@ -83,7 +83,11 @@ public final class ManualRoadPlannerService {
     }
 
     public static Component handlePrimaryUse(ServerPlayer player, ItemStack stack) {
-        return previewOrConfirm(player, stack);
+        return switch (readPlannerMode(stack)) {
+            case BUILD -> previewOrConfirm(player, stack);
+            case CANCEL -> Component.translatable("message.sailboatmod.road_planner.mode.cancel");
+            case DEMOLISH -> Component.translatable("message.sailboatmod.road_planner.mode.demolish");
+        };
     }
 
     public static Component openTargetSelection(ServerPlayer player, ItemStack stack, boolean offhand) {

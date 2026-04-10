@@ -35,5 +35,6 @@ public class RoadPlannerItem extends Item {
         tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.use"));
         tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.select"));
         tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.confirm"));
+        tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.mode"));
     }
 }
