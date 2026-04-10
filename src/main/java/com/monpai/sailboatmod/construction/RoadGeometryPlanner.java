@@ -18,6 +18,9 @@ public final class RoadGeometryPlanner {
     private static final double STAIR_TRAVEL_BAND_MAX_DIST_SQ = 2.25D;
     private static final int ARCHED_CROWN_HEIGHT_SHORT = 2;
     private static final int ARCHED_CROWN_HEIGHT_LONG = 3;
+    private static final int BASE_RIBBON_HALF_WIDTH = 3;
+    private static final double SHARP_TURN_MIN_ANGLE_RADIANS = Math.PI / 4.0D;
+    private static final double VERY_SHARP_TURN_MIN_ANGLE_RADIANS = Math.PI * 0.75D;
 
     private RoadGeometryPlanner() {
     }
@@ -150,6 +153,38 @@ public final class RoadGeometryPlanner {
         return new SlopeProfile(false, consecutiveSteepSteps, maxRise);
     }
 
+    public static RibbonSlice buildRibbonSlice(List<BlockPos> centerPath, int index) {
+        Objects.requireNonNull(centerPath, "centerPath");
+        if (index < 0 || index >= centerPath.size()) {
+            throw new IndexOutOfBoundsException("index: " + index + ", size: " + centerPath.size());
+        }
+
+        BlockPos surface = Objects.requireNonNull(centerPath.get(index), "centerPath contains null at index " + index);
+        BlockPos current = new BlockPos(surface.getX(), 0, surface.getZ());
+        RibbonBasis basis = resolveRibbonBasis(centerPath, index);
+
+        int insideHalfWidth = BASE_RIBBON_HALF_WIDTH;
+        int outsideHalfWidth = BASE_RIBBON_HALF_WIDTH + resolveOutsideWidening(
+                basis.incomingX(),
+                basis.incomingZ(),
+                basis.outgoingX(),
+                basis.outgoingZ()
+        );
+        int outsideSign = basis.turnSign() == 0 ? 0 : (basis.turnSign() > 0 ? 1 : -1);
+
+        LinkedHashSet<BlockPos> columns = new LinkedHashSet<>();
+        columns.add(current);
+        if (outsideSign == 0) {
+            addRibbonSide(columns, current, basis.normalX(), basis.normalZ(), insideHalfWidth, 1);
+            addRibbonSide(columns, current, basis.normalX(), basis.normalZ(), insideHalfWidth, -1);
+        } else {
+            addRibbonSide(columns, current, basis.normalX(), basis.normalZ(), outsideHalfWidth, outsideSign);
+            addRibbonSide(columns, current, basis.normalX(), basis.normalZ(), insideHalfWidth, -outsideSign);
+        }
+
+        return new RibbonSlice(List.copyOf(columns), insideHalfWidth, outsideHalfWidth);
+    }
+
     private static List<BlockPos> slicePositions(List<BlockPos> centerPath, int[] placementHeights, int index) {
         Objects.requireNonNull(centerPath, "centerPath");
         Objects.requireNonNull(placementHeights, "placementHeights");
@@ -167,6 +202,82 @@ public final class RoadGeometryPlanner {
             resolved.add(new BlockPos(column.getX(), y, column.getZ()));
         }
         return List.copyOf(resolved);
+    }
+
+    private static void addRibbonSide(LinkedHashSet<BlockPos> columns,
+                                      BlockPos center,
+                                      int normalX,
+                                      int normalZ,
+                                      int halfWidth,
+                                      int sideSign) {
+        for (int step = 1; step <= halfWidth; step++) {
+            columns.add(new BlockPos(
+                    center.getX() + normalX * step * sideSign,
+                    center.getY(),
+                    center.getZ() + normalZ * step * sideSign
+            ));
+        }
+    }
+
+    private static RibbonBasis resolveRibbonBasis(List<BlockPos> centerPath, int index) {
+        BlockPos surface = Objects.requireNonNull(centerPath.get(index), "centerPath contains null at index " + index);
+        BlockPos previousSurface = index > 0
+                ? Objects.requireNonNull(centerPath.get(index - 1), "centerPath contains null at index " + (index - 1))
+                : surface;
+        BlockPos nextSurface = index + 1 < centerPath.size()
+                ? Objects.requireNonNull(centerPath.get(index + 1), "centerPath contains null at index " + (index + 1))
+                : surface;
+
+        int incomingX = Integer.compare(surface.getX() - previousSurface.getX(), 0);
+        int incomingZ = Integer.compare(surface.getZ() - previousSurface.getZ(), 0);
+        int outgoingX = Integer.compare(nextSurface.getX() - surface.getX(), 0);
+        int outgoingZ = Integer.compare(nextSurface.getZ() - surface.getZ(), 0);
+
+        int tangentX = Integer.compare(nextSurface.getX() - previousSurface.getX(), 0);
+        int tangentZ = Integer.compare(nextSurface.getZ() - previousSurface.getZ(), 0);
+        if (tangentX == 0 && tangentZ == 0) {
+            if (outgoingX != 0 || outgoingZ != 0) {
+                tangentX = outgoingX;
+                tangentZ = outgoingZ;
+            } else if (incomingX != 0 || incomingZ != 0) {
+                tangentX = incomingX;
+                tangentZ = incomingZ;
+            } else {
+                tangentX = 1;
+            }
+        }
+
+        int normalX = -tangentZ;
+        int normalZ = tangentX;
+        if (normalX == 0 && normalZ == 0) {
+            normalZ = 1;
+        }
+        int turnSign = Integer.signum(incomingX * outgoingZ - incomingZ * outgoingX);
+        return new RibbonBasis(normalX, normalZ, incomingX, incomingZ, outgoingX, outgoingZ, turnSign);
+    }
+
+    private static int resolveOutsideWidening(int incomingX, int incomingZ, int outgoingX, int outgoingZ) {
+        if ((incomingX == 0 && incomingZ == 0) || (outgoingX == 0 && outgoingZ == 0)) {
+            return 0;
+        }
+        double incomingLength = Math.sqrt((incomingX * incomingX) + (incomingZ * incomingZ));
+        double outgoingLength = Math.sqrt((outgoingX * outgoingX) + (outgoingZ * outgoingZ));
+        if (incomingLength < 1.0E-9D || outgoingLength < 1.0E-9D) {
+            return 0;
+        }
+        double dot = ((incomingX * outgoingX) + (incomingZ * outgoingZ)) / (incomingLength * outgoingLength);
+        double angle = Math.acos(clamp(dot, -1.0D, 1.0D));
+        if (angle >= VERY_SHARP_TURN_MIN_ANGLE_RADIANS) {
+            return 2;
+        }
+        if (angle >= SHARP_TURN_MIN_ANGLE_RADIANS) {
+            return 1;
+        }
+        return 0;
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static void addGhost(LinkedHashMap<Long, GhostRoadBlock> ghostByPos,
@@ -462,6 +573,9 @@ public final class RoadGeometryPlanner {
         return (int) Math.round(startY + t * (endY - startY));
     }
 
+    private record RibbonBasis(int normalX, int normalZ, int incomingX, int incomingZ, int outgoingX, int outgoingZ, int turnSign) {
+    }
+
     public record RoadGeometryPlan(List<GhostRoadBlock> ghostBlocks, List<RoadBuildStep> buildSteps) {
         public RoadGeometryPlan {
             ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
@@ -490,5 +604,21 @@ public final class RoadGeometryPlanner {
     }
 
     public record SlopeProfile(boolean hasStairSegments, int longestSteepRun, int maxRise) {
+    }
+
+    public record RibbonSlice(List<BlockPos> columns, int insideHalfWidth, int outsideHalfWidth) {
+        public RibbonSlice {
+            columns = columns == null ? List.of() : List.copyOf(columns);
+            if (insideHalfWidth < 0) {
+                throw new IllegalArgumentException("insideHalfWidth must be non-negative");
+            }
+            if (outsideHalfWidth < 0) {
+                throw new IllegalArgumentException("outsideHalfWidth must be non-negative");
+            }
+        }
+
+        public int totalWidth() {
+            return insideHalfWidth + outsideHalfWidth + 1;
+        }
     }
 }
