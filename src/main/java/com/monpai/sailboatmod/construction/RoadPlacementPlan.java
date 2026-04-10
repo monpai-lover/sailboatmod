@@ -14,6 +14,7 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
                                 List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
                                 List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
                                 List<BridgeRange> bridgeRanges,
+                                List<BlockPos> ownedBlocks,
                                 BlockPos startHighlightPos,
                                 BlockPos endHighlightPos,
                                 BlockPos focusPos) {
@@ -26,9 +27,35 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
         ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
         buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
         bridgeRanges = bridgeRanges == null ? List.of() : List.copyOf(bridgeRanges);
+        ownedBlocks = copyOwnedBlocks(ownedBlocks);
         startHighlightPos = immutable(startHighlightPos);
         endHighlightPos = immutable(endHighlightPos);
         focusPos = immutable(focusPos);
+    }
+
+    public RoadPlacementPlan(List<BlockPos> centerPath,
+                             BlockPos sourceInternalAnchor,
+                             BlockPos sourceBoundaryAnchor,
+                             BlockPos targetBoundaryAnchor,
+                             BlockPos targetInternalAnchor,
+                             List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                             List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
+                             List<BridgeRange> bridgeRanges,
+                             BlockPos startHighlightPos,
+                             BlockPos endHighlightPos,
+                             BlockPos focusPos) {
+        this(centerPath,
+                sourceInternalAnchor,
+                sourceBoundaryAnchor,
+                targetBoundaryAnchor,
+                targetInternalAnchor,
+                ghostBlocks,
+                buildSteps,
+                bridgeRanges,
+                defaultOwnedBlocks(ghostBlocks),
+                startHighlightPos,
+                endHighlightPos,
+                focusPos);
     }
 
     private static List<BlockPos> copyPositions(List<BlockPos> positions) {
@@ -42,6 +69,31 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
             copied.add(pos.immutable());
         }
         return List.copyOf(copied);
+    }
+
+    private static List<BlockPos> copyOwnedBlocks(List<BlockPos> ownedBlocks) {
+        if (ownedBlocks == null || ownedBlocks.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> copied = new ArrayList<>(ownedBlocks.size());
+        for (int i = 0; i < ownedBlocks.size(); i++) {
+            BlockPos pos = Objects.requireNonNull(ownedBlocks.get(i), "ownedBlocks contains null at index " + i);
+            copied.add(pos.immutable());
+        }
+        return List.copyOf(copied);
+    }
+
+    private static List<BlockPos> defaultOwnedBlocks(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        if (ghostBlocks == null || ghostBlocks.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> owned = new ArrayList<>(ghostBlocks.size());
+        for (RoadGeometryPlanner.GhostRoadBlock block : ghostBlocks) {
+            if (block != null && block.pos() != null) {
+                owned.add(block.pos());
+            }
+        }
+        return List.copyOf(owned);
     }
 
     private static BlockPos immutable(BlockPos pos) {

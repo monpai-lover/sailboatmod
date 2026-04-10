@@ -125,8 +125,13 @@ class BuilderHammerSupportTest {
                 centerPath.get(0).above()
         );
 
-        assertEquals(3, invokeNextRoadBuildBatchSize(plan, 0));
-        assertEquals(3, invokeNextRoadBuildBatchSize(plan, 3));
+        int firstBatchSize = (int) RoadGeometryPlanner.slicePositions(centerPath, 0).stream()
+                .filter(pos -> geometry.buildSteps().stream().anyMatch(step -> step.pos().equals(pos)))
+                .count();
+        int secondBatchStart = Math.max(0, firstBatchSize);
+
+        assertEquals(firstBatchSize, invokeNextRoadBuildBatchSize(plan, 0));
+        assertEquals(geometry.buildSteps().size() - firstBatchSize, invokeNextRoadBuildBatchSize(plan, secondBatchStart));
     }
 
     @Test
@@ -161,16 +166,19 @@ class BuilderHammerSupportTest {
                 centerPath.get(centerPath.size() - 1).above(),
                 centerPath.get(0).above()
         );
-        Set<Long> completedStepKeys = geometry.buildSteps().subList(3, geometry.buildSteps().size()).stream()
+        int firstBatchSize = (int) RoadGeometryPlanner.slicePositions(centerPath, 0).stream()
+                .filter(pos -> geometry.buildSteps().stream().anyMatch(step -> step.pos().equals(pos)))
+                .count();
+        Set<Long> completedStepKeys = geometry.buildSteps().subList(firstBatchSize, geometry.buildSteps().size()).stream()
                 .map(RoadGeometryPlanner.RoadBuildStep::pos)
                 .map(BlockPos::asLong)
                 .collect(java.util.stream.Collectors.toSet());
 
         List<BlockPos> remaining = invokeRemainingRoadGhostPositions(plan, completedStepKeys);
 
-        assertEquals(geometry.buildSteps().subList(0, 3).stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList(), remaining);
-        assertEquals(50, invokeRoadProgressPercent(plan, completedStepKeys));
-        assertEquals(3, invokeNextRoadBuildBatchSize(plan, completedStepKeys));
+        assertEquals(geometry.buildSteps().subList(0, firstBatchSize).stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList(), remaining);
+        assertEquals(Math.round((geometry.buildSteps().size() - firstBatchSize) * 100.0F / geometry.buildSteps().size()), invokeRoadProgressPercent(plan, completedStepKeys));
+        assertEquals(firstBatchSize, invokeNextRoadBuildBatchSize(plan, completedStepKeys));
     }
 
     @Test
@@ -182,6 +190,32 @@ class BuilderHammerSupportTest {
 
         assertEquals(new BlockPos(3, 65, 3), target);
         assertNull(invokeRoadGhostTargetPos(List.of()));
+    }
+
+    @Test
+    void minorSurfaceClutterCountsAsReplaceableRoadBuildTarget() {
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.GRASS.defaultBlockState()));
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.DANDELION.defaultBlockState()));
+    }
+
+    @Test
+    void roadRollbackOwnershipIncludesTerrainEdits() {
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(1, 65, 0)),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(1, 65, 0),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(0, 63, 0)),
+                new BlockPos(0, 65, 0),
+                new BlockPos(1, 66, 0),
+                new BlockPos(0, 65, 0)
+        );
+
+        assertTrue(plan.ownedBlocks().contains(new BlockPos(0, 63, 0)));
     }
 
     @SuppressWarnings("unchecked")
@@ -281,6 +315,18 @@ class BuilderHammerSupportTest {
             return (BlockPos) method.invoke(null, remainingGhosts);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect road ghost target selection", ex);
+        }
+    }
+
+    private static boolean invokeRoadPlacementReplaceableForTest(BlockState state) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("isRoadPlacementReplaceableForTest", BlockState.class);
+            method.setAccessible(true);
+            return (boolean) method.invoke(null, state);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect road replacement rules", ex);
         }
     }
 }

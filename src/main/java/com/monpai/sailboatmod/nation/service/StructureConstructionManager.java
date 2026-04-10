@@ -5,7 +5,9 @@ import com.monpai.sailboatmod.construction.BuilderHammerChargePlan;
 import com.monpai.sailboatmod.construction.BuilderHammerCreditState;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadLegacyJobRebuilder;
+import com.monpai.sailboatmod.construction.RoadLightingPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.construction.RoadTerrainShaper;
 import com.monpai.sailboatmod.construction.RuntimeRoadGhostWindow;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
@@ -174,7 +176,7 @@ public final class StructureConstructionManager {
     private static final Map<UUID, Long> PLAYER_HAMMER_COOLDOWNS = new ConcurrentHashMap<>();
     private static final Set<String> RESTORED_DIMENSIONS = ConcurrentHashMap.newKeySet();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
-    private static final int ROAD_BUILD_DURATION_TICKS = 200; // ~10 seconds for roads
+    private static final int ROAD_BUILD_DURATION_TICKS = 2400; // ~120 seconds baseline for roads
     private static final long ACTIVE_WORKER_TIMEOUT_TICKS = 40L;
     private static final double ROAD_CONNECT_RANGE_SQR = 128.0D * 128.0D;
     private static final double ROAD_EXTRA_EDGE_RANGE_SQR = 56.0D * 56.0D;
@@ -1372,22 +1374,48 @@ public final class StructureConstructionManager {
             return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
                     List.of(), List.of(), List.of(), null, null, null);
         }
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = detectBridgeRanges(level, centerPath);
         RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
                 centerPath,
                 pos -> selectRoadPlacementStyle(level, pos).surface()
         );
+        List<BlockPos> lampBases = RoadLightingPlanner.planLampPosts(
+                centerPath,
+                bridgeRanges,
+                List.of(sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor)
+        );
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = withLampGhosts(geometry.ghostBlocks(), lampBases);
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = toBuildSteps(ghostBlocks);
+        List<BlockPos> roadbedTop = centerPath.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(BlockPos::above)
+                .toList();
+        List<BlockPos> terrainEdits = RoadTerrainShaper.shapeRoadbed(
+                        roadbedTop,
+                        pos -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, pos).below().getY()
+                ).stream()
+                .map(RoadTerrainShaper.TerrainEdit::pos)
+                .toList();
+        java.util.LinkedHashSet<BlockPos> ownedBlocks = new java.util.LinkedHashSet<>();
+        for (RoadGeometryPlanner.GhostRoadBlock block : ghostBlocks) {
+            if (block != null && block.pos() != null) {
+                ownedBlocks.add(block.pos());
+            }
+        }
+        ownedBlocks.addAll(terrainEdits);
         return new RoadPlacementPlan(
                 centerPath,
                 sourceInternalAnchor,
                 sourceBoundaryAnchor,
                 targetBoundaryAnchor,
                 targetInternalAnchor,
-                geometry.ghostBlocks(),
-                geometry.buildSteps(),
-                detectBridgeRanges(level, centerPath),
+                ghostBlocks,
+                buildSteps,
+                bridgeRanges,
+                List.copyOf(ownedBlocks),
                 highlightPos(sourceBoundaryAnchor, centerPath, true),
                 highlightPos(targetBoundaryAnchor, centerPath, false),
-                resolveRoadPlanFocusPos(centerPath, geometry.ghostBlocks())
+                resolveRoadPlanFocusPos(centerPath, ghostBlocks)
         );
     }
 
@@ -1487,39 +1515,7 @@ public final class StructureConstructionManager {
     }
 
     private static Set<BlockPos> collectRoadSlicePositions(List<BlockPos> path, int index) {
-        Set<BlockPos> positions = new LinkedHashSet<>();
-        BlockPos current = path.get(index).above();
-        positions.add(current);
-
-        BlockPos previous = index > 0 ? path.get(index - 1) : path.get(index);
-        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : path.get(index);
-        int dx = Integer.compare(next.getX(), previous.getX());
-        int dz = Integer.compare(next.getZ(), previous.getZ());
-        if (dx != 0 && dz == 0) {
-            positions.add(current.north());
-            positions.add(current.south());
-        } else if (dz != 0 && dx == 0) {
-            positions.add(current.east());
-            positions.add(current.west());
-        } else if (dx != 0 && dz != 0) {
-            positions.add(dx > 0 ? current.east() : current.west());
-            positions.add(dz > 0 ? current.south() : current.north());
-        }
-
-        if (index > 0 && index + 1 < path.size()) {
-            BlockPos surface = path.get(index);
-            int prevDx = Integer.compare(surface.getX(), previous.getX());
-            int prevDz = Integer.compare(surface.getZ(), previous.getZ());
-            int nextDx = Integer.compare(next.getX(), surface.getX());
-            int nextDz = Integer.compare(next.getZ(), surface.getZ());
-            if (prevDx != nextDx || prevDz != nextDz) {
-                positions.add(current.north());
-                positions.add(current.south());
-                positions.add(current.east());
-                positions.add(current.west());
-            }
-        }
-        return positions;
+        return new LinkedHashSet<>(RoadGeometryPlanner.slicePositions(path, index));
     }
 
     private static List<RoadPlacementPlan.BridgeRange> detectBridgeRanges(ServerLevel level, List<BlockPos> centerPath) {
@@ -1773,7 +1769,7 @@ public final class StructureConstructionManager {
         if (at.equals(style.surface()) || isRoadSurface(at)) {
             return false;
         }
-        if (!at.isAir() && !at.canBeReplaced() && !at.liquid()) {
+        if (!isRoadPlacementReplaceable(at)) {
             return false;
         }
         BlockState below = level.getBlockState(pos.below());
@@ -1808,11 +1804,23 @@ public final class StructureConstructionManager {
         if (surfaceState.is(Blocks.SPRUCE_SLAB)) {
             return new RoadPlacementStyle(surfaceState, Blocks.SPRUCE_FENCE.defaultBlockState(), true);
         }
+        if (surfaceState.is(Blocks.SPRUCE_STAIRS)) {
+            return new RoadPlacementStyle(surfaceState, Blocks.SPRUCE_FENCE.defaultBlockState(), true);
+        }
         if (surfaceState.is(Blocks.SMOOTH_SANDSTONE_SLAB)) {
+            return new RoadPlacementStyle(surfaceState, Blocks.SANDSTONE.defaultBlockState(), false);
+        }
+        if (surfaceState.is(Blocks.SMOOTH_SANDSTONE_STAIRS)) {
             return new RoadPlacementStyle(surfaceState, Blocks.SANDSTONE.defaultBlockState(), false);
         }
         if (surfaceState.is(Blocks.MUD_BRICK_SLAB)) {
             return new RoadPlacementStyle(surfaceState, Blocks.MUD_BRICKS.defaultBlockState(), false);
+        }
+        if (surfaceState.is(Blocks.MUD_BRICK_STAIRS)) {
+            return new RoadPlacementStyle(surfaceState, Blocks.MUD_BRICKS.defaultBlockState(), false);
+        }
+        if (surfaceState.is(Blocks.STONE_BRICK_STAIRS)) {
+            return new RoadPlacementStyle(surfaceState, Blocks.COBBLESTONE.defaultBlockState(), false);
         }
         return new RoadPlacementStyle(surfaceState, Blocks.COBBLESTONE.defaultBlockState(), false);
     }
@@ -1833,7 +1841,7 @@ public final class StructureConstructionManager {
         int depth = 0;
         while (depth < 8) {
             BlockState state = level.getBlockState(cursor);
-            if (!state.isAir() && !state.canBeReplaced() && !state.liquid()) {
+            if (!isRoadPlacementReplaceable(state)) {
                 return;
             }
             BlockState fillState = depth == 0 || !style.bridge() ? style.support() : Blocks.SPRUCE_FENCE.defaultBlockState();
@@ -1845,13 +1853,94 @@ public final class StructureConstructionManager {
 
     private static boolean isRoadSurface(BlockState state) {
         return state.is(Blocks.STONE_BRICK_SLAB)
+                || state.is(Blocks.STONE_BRICK_STAIRS)
                 || state.is(Blocks.SMOOTH_SANDSTONE_SLAB)
+                || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS)
                 || state.is(Blocks.MUD_BRICK_SLAB)
+                || state.is(Blocks.MUD_BRICK_STAIRS)
                 || state.is(Blocks.SPRUCE_SLAB)
+                || state.is(Blocks.SPRUCE_STAIRS)
                 || state.is(Blocks.SPRUCE_FENCE)
+                || state.is(Blocks.COBBLESTONE_WALL)
+                || state.is(Blocks.LANTERN)
                 || state.is(Blocks.COBBLESTONE)
                 || state.is(Blocks.SANDSTONE)
                 || state.is(Blocks.MUD_BRICKS);
+    }
+
+    private static List<RoadGeometryPlanner.GhostRoadBlock> withLampGhosts(List<RoadGeometryPlanner.GhostRoadBlock> baseGhosts,
+                                                                            List<BlockPos> lampBases) {
+        LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> merged = new LinkedHashMap<>();
+        if (baseGhosts != null) {
+            for (RoadGeometryPlanner.GhostRoadBlock block : baseGhosts) {
+                if (block != null) {
+                    merged.put(block.pos().asLong(), block);
+                }
+            }
+        }
+        if (lampBases != null) {
+            for (BlockPos base : lampBases) {
+                if (base == null) {
+                    continue;
+                }
+                appendGhost(merged, base, Blocks.COBBLESTONE_WALL.defaultBlockState());
+                appendGhost(merged, base.above(), Blocks.COBBLESTONE_WALL.defaultBlockState());
+                appendGhost(merged, base.above(2), Blocks.LANTERN.defaultBlockState());
+            }
+        }
+        return List.copyOf(merged.values());
+    }
+
+    private static void appendGhost(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> merged,
+                                    BlockPos pos,
+                                    BlockState state) {
+        if (merged == null || pos == null || state == null) {
+            return;
+        }
+        merged.putIfAbsent(pos.asLong(), new RoadGeometryPlanner.GhostRoadBlock(pos, state));
+    }
+
+    private static List<RoadGeometryPlanner.RoadBuildStep> toBuildSteps(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        if (ghostBlocks == null || ghostBlocks.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>(ghostBlocks.size());
+        for (int i = 0; i < ghostBlocks.size(); i++) {
+            RoadGeometryPlanner.GhostRoadBlock block = ghostBlocks.get(i);
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(i, block.pos(), block.state()));
+        }
+        return List.copyOf(buildSteps);
+    }
+
+    private static boolean isRoadPlacementReplaceable(BlockState state) {
+        if (state == null) {
+            return true;
+        }
+        return state.isAir()
+                || state.canBeReplaced()
+                || state.liquid()
+                || state.is(Blocks.GRASS)
+                || state.is(Blocks.TALL_GRASS)
+                || state.is(Blocks.FERN)
+                || state.is(Blocks.LARGE_FERN)
+                || state.is(Blocks.DANDELION)
+                || state.is(Blocks.POPPY)
+                || state.is(Blocks.BLUE_ORCHID)
+                || state.is(Blocks.ALLIUM)
+                || state.is(Blocks.AZURE_BLUET)
+                || state.is(Blocks.RED_TULIP)
+                || state.is(Blocks.ORANGE_TULIP)
+                || state.is(Blocks.WHITE_TULIP)
+                || state.is(Blocks.PINK_TULIP)
+                || state.is(Blocks.OXEYE_DAISY)
+                || state.is(Blocks.CORNFLOWER)
+                || state.is(Blocks.LILY_OF_THE_VALLEY)
+                || state.is(Blocks.TORCHFLOWER)
+                || state.is(Blocks.WITHER_ROSE);
+    }
+
+    private static boolean isRoadPlacementReplaceableForTest(BlockState state) {
+        return isRoadPlacementReplaceable(state);
     }
 
     private static void clearRoad(ServerLevel level, RoadNetworkRecord road, Set<BlockPos> preservedCoverage) {
