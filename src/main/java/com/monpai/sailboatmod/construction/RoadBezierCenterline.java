@@ -13,11 +13,13 @@ import java.util.function.Function;
 public final class RoadBezierCenterline {
     private static final int MAX_SAFE_STEP_HEIGHT = 5;
     private static final int MAX_SEARCH_RADIUS = 1;
-    private static final int MAX_SMOOTHABLE_SPAN = 8;
     private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 5;
     private static final int MAX_TOTAL_BRIDGE_COLUMNS = 14;
     private static final double MAX_BRIDGE_SHARE = 0.20D;
-    private static final double[] CORNER_SAMPLE_T = {0.2D, 0.5D, 0.8D};
+    private static final double CURVE_RESAMPLE_INTERVAL = 0.85D;
+    private static final double CURVE_DENSE_SAMPLES_PER_BLOCK = 4.0D;
+    private static final double CORNER_ROUNDING_FACTOR = 0.60D;
+    private static final double MAX_CORNER_ROUNDING_DISTANCE = 4.0D;
 
     private RoadBezierCenterline() {
     }
@@ -43,23 +45,10 @@ public final class RoadBezierCenterline {
             return basePath;
         }
 
-        List<BlockPos> smoothedSeedPoints = new ArrayList<>();
-        smoothedSeedPoints.add(controlPoints.get(0));
-        for (int i = 1; i < controlPoints.size() - 1; i++) {
-            BlockPos previous = controlPoints.get(i - 1);
-            BlockPos current = controlPoints.get(i);
-            BlockPos next = controlPoints.get(i + 1);
-            List<BlockPos> curve = trySmoothCorner(previous, current, next, sampler, blockedColumns);
-            if (curve.isEmpty()) {
-                smoothedSeedPoints.add(current);
-                continue;
-            }
-            for (int index = 1; index < curve.size() - 1; index++) {
-                smoothedSeedPoints.add(curve.get(index));
-            }
+        List<BlockPos> smoothedSeedPoints = resampleCurve(controlPoints, basePath);
+        if (smoothedSeedPoints.isEmpty()) {
+            return basePath;
         }
-        smoothedSeedPoints.add(controlPoints.get(controlPoints.size() - 1));
-
         List<BlockPos> smoothedPath = rasterize(smoothedSeedPoints, sampler, blockedColumns, collectBridgeColumns(basePath, sampler, blockedColumns));
         return isValidCandidatePath(smoothedPath, basePath, sampler, blockedColumns)
                 ? smoothedPath
@@ -102,46 +91,75 @@ public final class RoadBezierCenterline {
         return List.copyOf(simplified);
     }
 
-    private static List<BlockPos> trySmoothCorner(BlockPos previous,
-                                                  BlockPos current,
-                                                  BlockPos next,
-                                                  Function<BlockPos, SurfaceSample> sampler,
-                                                  Set<Long> blockedColumns) {
-        if (isCollinear(previous, current, next)
-                || squaredDistance(previous, current) > MAX_SMOOTHABLE_SPAN * MAX_SMOOTHABLE_SPAN
-                || squaredDistance(current, next) > MAX_SMOOTHABLE_SPAN * MAX_SMOOTHABLE_SPAN) {
+    private static List<BlockPos> resampleCurve(List<BlockPos> controlPoints, List<BlockPos> basePath) {
+        List<CurvePoint> denseCurve = sampleDenseCurve(controlPoints);
+        if (denseCurve.size() < 2) {
             return List.of();
         }
 
-        SurfaceSample previousSample = safeExact(previous, sampler, blockedColumns, Set.of());
-        SurfaceSample currentSample = safeExact(current, sampler, blockedColumns, Set.of());
-        SurfaceSample nextSample = safeExact(next, sampler, blockedColumns, Set.of());
-        if (previousSample == null || currentSample == null || nextSample == null) {
-            return List.of();
+        BlockPos start = basePath.get(0);
+        BlockPos end = basePath.get(basePath.size() - 1);
+        List<BlockPos> resampled = new ArrayList<>();
+        resampled.add(start.immutable());
+
+        double nextDistance = CURVE_RESAMPLE_INTERVAL;
+        double traversed = 0.0D;
+        CurvePoint previous = denseCurve.get(0);
+        for (int i = 1; i < denseCurve.size(); i++) {
+            CurvePoint current = denseCurve.get(i);
+            double segmentLength = distance(previous, current);
+            if (segmentLength <= 1.0E-6D) {
+                previous = current;
+                continue;
+            }
+            while (traversed + segmentLength >= nextDistance) {
+                double t = (nextDistance - traversed) / segmentLength;
+                BlockPos sample = new BlockPos(
+                        (int) Math.round(lerp(previous.x(), current.x(), t)),
+                        start.getY(),
+                        (int) Math.round(lerp(previous.z(), current.z(), t))
+                );
+                if (!sameColumn(resampled.get(resampled.size() - 1), sample)) {
+                    resampled.add(sample);
+                }
+                nextDistance += CURVE_RESAMPLE_INTERVAL;
+            }
+            traversed += segmentLength;
+            previous = current;
         }
 
-        List<BlockPos> curve = new ArrayList<>();
-        curve.add(previousSample.surfacePos());
-        BlockPos last = previousSample.surfacePos();
-        for (double t : CORNER_SAMPLE_T) {
-            int x = (int) Math.round(quadratic(previous.getX(), current.getX(), next.getX(), t));
-            int z = (int) Math.round(quadratic(previous.getZ(), current.getZ(), next.getZ(), t));
-            BlockPos resolved = findNearestSurface(x, z, last.getY(), sampler, blockedColumns, Set.of());
-            if (resolved == null || Math.abs(resolved.getY() - last.getY()) > MAX_SAFE_STEP_HEIGHT) {
-                return List.of();
+        if (!sameColumn(resampled.get(resampled.size() - 1), end)) {
+            resampled.add(end.immutable());
+        }
+        return List.copyOf(resampled);
+    }
+
+    private static List<CurvePoint> sampleDenseCurve(List<BlockPos> controlPoints) {
+        List<CurvePoint> denseCurve = new ArrayList<>();
+        CurvePoint last = point(controlPoints.get(0));
+        denseCurve.add(last);
+        for (int i = 1; i < controlPoints.size() - 1; i++) {
+            BlockPos previous = controlPoints.get(i - 1);
+            BlockPos current = controlPoints.get(i);
+            BlockPos next = controlPoints.get(i + 1);
+            double previousLength = distance(previous, current);
+            double nextLength = distance(current, next);
+            double roundingDistance = Math.min(
+                    MAX_CORNER_ROUNDING_DISTANCE,
+                    Math.min(previousLength, nextLength) * CORNER_ROUNDING_FACTOR
+            );
+            if (roundingDistance <= 1.0E-6D) {
+                continue;
             }
-            if (!sameColumn(curve.get(curve.size() - 1), resolved)) {
-                curve.add(resolved);
-                last = resolved;
-            }
+
+            CurvePoint entry = pointAlong(current, previous, roundingDistance);
+            CurvePoint exit = pointAlong(current, next, roundingDistance);
+            appendLinearSamples(denseCurve, last, entry);
+            appendQuadraticSamples(denseCurve, entry, point(current), exit);
+            last = exit;
         }
-        if (Math.abs(nextSample.surfacePos().getY() - last.getY()) > MAX_SAFE_STEP_HEIGHT) {
-            return List.of();
-        }
-        if (!sameColumn(curve.get(curve.size() - 1), nextSample.surfacePos())) {
-            curve.add(nextSample.surfacePos());
-        }
-        return curve.size() < 3 ? List.of() : List.copyOf(curve);
+        appendLinearSamples(denseCurve, last, point(controlPoints.get(controlPoints.size() - 1)));
+        return List.copyOf(denseCurve);
     }
 
     private static List<BlockPos> rasterize(List<BlockPos> seedPoints,
@@ -409,15 +427,76 @@ public final class RoadBezierCenterline {
         return firstDx == secondDx && firstDz == secondDz;
     }
 
-    private static int squaredDistance(BlockPos left, BlockPos right) {
-        int dx = right.getX() - left.getX();
-        int dz = right.getZ() - left.getZ();
-        return dx * dx + dz * dz;
+    private static double distance(BlockPos left, BlockPos right) {
+        return distance(
+                new CurvePoint(left.getX(), left.getZ()),
+                new CurvePoint(right.getX(), right.getZ())
+        );
     }
 
-    private static double quadratic(double start, double control, double end, double t) {
+    private static double distance(CurvePoint left, CurvePoint right) {
+        double dx = right.x() - left.x();
+        double dz = right.z() - left.z();
+        return Math.sqrt((dx * dx) + (dz * dz));
+    }
+
+    private static CurvePoint point(BlockPos pos) {
+        return new CurvePoint(pos.getX(), pos.getZ());
+    }
+
+    private static CurvePoint pointAlong(BlockPos origin, BlockPos target, double distance) {
+        double span = distance(origin, target);
+        if (span <= 1.0E-6D) {
+            return point(origin);
+        }
+        double t = distance / span;
+        return new CurvePoint(
+                lerp(origin.getX(), target.getX(), t),
+                lerp(origin.getZ(), target.getZ(), t)
+        );
+    }
+
+    private static void appendLinearSamples(List<CurvePoint> denseCurve, CurvePoint from, CurvePoint to) {
+        int steps = Math.max(1, (int) Math.ceil(distance(from, to) * CURVE_DENSE_SAMPLES_PER_BLOCK));
+        for (int step = 1; step <= steps; step++) {
+            double t = step / (double) steps;
+            CurvePoint sample = new CurvePoint(
+                    lerp(from.x(), to.x(), t),
+                    lerp(from.z(), to.z(), t)
+            );
+            if (!samePoint(denseCurve.get(denseCurve.size() - 1), sample)) {
+                denseCurve.add(sample);
+            }
+        }
+    }
+
+    private static void appendQuadraticSamples(List<CurvePoint> denseCurve, CurvePoint start, CurvePoint control, CurvePoint end) {
+        double approximateLength = distance(start, control) + distance(control, end);
+        int steps = Math.max(2, (int) Math.ceil(approximateLength * CURVE_DENSE_SAMPLES_PER_BLOCK));
+        for (int step = 1; step <= steps; step++) {
+            double t = step / (double) steps;
+            CurvePoint sample = new CurvePoint(
+                    quadraticCoordinate(start.x(), control.x(), end.x(), t),
+                    quadraticCoordinate(start.z(), control.z(), end.z(), t)
+            );
+            if (!samePoint(denseCurve.get(denseCurve.size() - 1), sample)) {
+                denseCurve.add(sample);
+            }
+        }
+    }
+
+    private static double quadraticCoordinate(double start, double control, double end, double t) {
         double inverse = 1.0D - t;
         return (inverse * inverse * start) + (2.0D * inverse * t * control) + (t * t * end);
+    }
+
+    private static double lerp(double start, double end, double t) {
+        return start + ((end - start) * t);
+    }
+
+    private static boolean samePoint(CurvePoint left, CurvePoint right) {
+        return Math.abs(left.x() - right.x()) <= 1.0E-6D
+                && Math.abs(left.z() - right.z()) <= 1.0E-6D;
     }
 
     private static long columnKey(BlockPos pos) {
@@ -433,5 +512,8 @@ public final class RoadBezierCenterline {
                 throw new IllegalArgumentException("adjacentWaterColumns must be >= 0");
             }
         }
+    }
+
+    private record CurvePoint(double x, double z) {
     }
 }
