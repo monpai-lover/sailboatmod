@@ -82,7 +82,7 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
-    void widenedRoadbedTopDerivesFromFootprintColumnsNotCenterPathOnly() {
+    void widenedRoadbedTopUsesRoadSurfaceFootprintNotLampPosts() {
         List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
                 new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
                 new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
@@ -92,7 +92,7 @@ class RoadLifecycleServiceTest {
 
         List<BlockPos> roadbedTop = invokeRoadbedTopFromFootprint(ghostBlocks);
 
-        assertTrue(roadbedTop.contains(new BlockPos(0, 73, 0)));
+        assertTrue(roadbedTop.contains(new BlockPos(0, 71, 0)));
         assertTrue(roadbedTop.contains(new BlockPos(1, 71, 0)));
         assertTrue(roadbedTop.contains(new BlockPos(-1, 71, 0)));
         assertEquals(3, roadbedTop.size());
@@ -128,7 +128,7 @@ class RoadLifecycleServiceTest {
         try {
             var method = Class
                     .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
-                    .getDeclaredMethod("deriveRoadbedTopFromGhostFootprint", List.class);
+                    .getDeclaredMethod("deriveRoadbedTopFromRoadSurfaceFootprint", List.class);
             method.setAccessible(true);
             @SuppressWarnings("unchecked")
             List<BlockPos> result = (List<BlockPos>) method.invoke(null, ghostBlocks);

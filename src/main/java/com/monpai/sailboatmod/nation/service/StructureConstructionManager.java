@@ -1380,14 +1380,15 @@ public final class StructureConstructionManager {
                 pos -> selectRoadPlacementStyle(level, pos).surface(),
                 bridgeProfiles
         );
+        List<RoadGeometryPlanner.GhostRoadBlock> roadSurfaceGhostBlocks = geometry.ghostBlocks();
         List<BlockPos> lampBases = RoadLightingPlanner.planLampPosts(
                 centerPath,
                 bridgeRanges,
                 List.of(sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor)
         );
-        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = withLampGhosts(geometry.ghostBlocks(), lampBases);
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = withLampGhosts(roadSurfaceGhostBlocks, lampBases);
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = toBuildSteps(ghostBlocks);
-        List<BlockPos> roadbedTop = deriveRoadbedTopFromGhostFootprint(ghostBlocks);
+        List<BlockPos> roadbedTop = deriveRoadbedTopFromRoadSurfaceFootprint(roadSurfaceGhostBlocks);
         List<BlockPos> terrainEdits = RoadTerrainShaper.shapeRoadbed(
                         roadbedTop,
                         pos -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, pos).below().getY()
@@ -1930,13 +1931,13 @@ public final class StructureConstructionManager {
         return List.copyOf(buildSteps);
     }
 
-    private static List<BlockPos> deriveRoadbedTopFromGhostFootprint(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+    private static List<BlockPos> deriveRoadbedTopFromRoadSurfaceFootprint(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
         if (ghostBlocks == null || ghostBlocks.isEmpty()) {
             return List.of();
         }
         LinkedHashMap<Long, BlockPos> highestByColumn = new LinkedHashMap<>();
         for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : ghostBlocks) {
-            if (ghostBlock == null || ghostBlock.pos() == null) {
+            if (ghostBlock == null || ghostBlock.pos() == null || !isRoadTerrainSurfaceState(ghostBlock.state())) {
                 continue;
             }
             BlockPos pos = ghostBlock.pos();
@@ -1954,6 +1955,20 @@ public final class StructureConstructionManager {
             roadbedTop.add(top.above());
         }
         return List.copyOf(roadbedTop);
+    }
+
+    private static boolean isRoadTerrainSurfaceState(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        return state.is(Blocks.STONE_BRICK_SLAB)
+                || state.is(Blocks.STONE_BRICK_STAIRS)
+                || state.is(Blocks.SMOOTH_SANDSTONE_SLAB)
+                || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS)
+                || state.is(Blocks.MUD_BRICK_SLAB)
+                || state.is(Blocks.MUD_BRICK_STAIRS)
+                || state.is(Blocks.SPRUCE_SLAB)
+                || state.is(Blocks.SPRUCE_STAIRS);
     }
 
     private static List<BlockPos> collectOwnedRoadBlocks(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
