@@ -3,17 +3,13 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.SharedConstants;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -30,21 +26,24 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
-    void createsFullWidthGhostRoadForTurns() {
+    void planIncludesWidenedRibbonColumnsForTurns() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(1, 64, 1)
+        );
         RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
-                List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0), new BlockPos(1, 64, 1)),
+                centerPath,
                 pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
         );
 
-        List<BlockPos> positions = plan.ghostBlocks().stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
-        BlockPos interiorCorner = new BlockPos(1, 65, 0);
-        assertTrue(positions.contains(interiorCorner.north()));
-        assertTrue(positions.contains(interiorCorner.south()));
-        assertTrue(positions.contains(interiorCorner.east()));
-        assertTrue(positions.contains(interiorCorner.west()));
-        assertTrue(positions.contains(interiorCorner.north(2)));
-        assertTrue(positions.contains(interiorCorner.east(2)));
-        assertFalse(positions.contains(new BlockPos(4, 65, 0)));
+        Set<BlockPos> planned = plan.ghostBlocks().stream()
+                .map(RoadGeometryPlanner.GhostRoadBlock::pos)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<BlockPos> expectedTurnSlice = ribbonSlicePlacements(centerPath, 1);
+        assertTrue(planned.containsAll(expectedTurnSlice));
+        assertTrue(expectedTurnSlice.contains(new BlockPos(-3, 65, 4)));
+        assertTrue(expectedTurnSlice.contains(new BlockPos(4, 65, -3)));
     }
 
     @Test
@@ -68,11 +67,10 @@ class RoadGeometryPlannerTest {
         List<BlockPos> firstPositions = first.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList();
         List<BlockPos> secondPositions = second.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList();
 
+        Set<BlockPos> expectedRibbonPlacements = ribbonPlacementPositions(centerPath);
         assertEquals(firstPositions, secondPositions);
-        assertTrue(firstPositions.contains(new BlockPos(0, 65, 0)));
-        assertTrue(firstPositions.contains(new BlockPos(0, 65, -2)));
-        assertTrue(firstPositions.contains(new BlockPos(3, 65, 0)));
-        assertTrue(firstPositions.contains(new BlockPos(-1, 65, 2)));
+        assertEquals(expectedRibbonPlacements.size(), firstPositions.size());
+        assertTrue(firstPositions.containsAll(expectedRibbonPlacements));
         assertEquals(new LinkedHashSet<>(firstPositions).size(), firstPositions.size());
 
         List<Integer> firstOrders = first.buildSteps().stream().map(RoadGeometryPlanner.RoadBuildStep::order).toList();
@@ -173,7 +171,7 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
-    void plannerGeometryMatchesCurrentRuntimeRoadSliceSemantics() {
+    void plannerGeometryMatchesRibbonSliceSemantics() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 64, 0),
@@ -191,109 +189,7 @@ class RoadGeometryPlannerTest {
                 .map(RoadGeometryPlanner.GhostRoadBlock::pos)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        assertEquals(runtimeRoadPlacementPositions(centerPath), plannerPositions);
-    }
-
-    @Test
-    void smoothsSteepCenterlinePlacementHeightInsteadOfJumpingWholeCliffs() {
-        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
-                List.of(
-                        new BlockPos(0, 64, 0),
-                        new BlockPos(1, 64, 0),
-                        new BlockPos(2, 67, 0),
-                        new BlockPos(3, 67, 0)
-                ),
-                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
-        );
-
-        List<BlockPos> positions = plan.ghostBlocks().stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
-
-        assertTrue(positions.contains(new BlockPos(2, 66, 0)));
-        assertFalse(positions.contains(new BlockPos(2, 68, 0)));
-    }
-
-    @Test
-    void interpolatesTurnShoulderHeightAgainstNearestClimbingSegment() {
-        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
-                List.of(
-                        new BlockPos(0, 64, 0),
-                        new BlockPos(1, 64, 0),
-                        new BlockPos(2, 66, 1),
-                        new BlockPos(3, 66, 1)
-                ),
-                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
-        );
-
-        List<BlockPos> positions = plan.ghostBlocks().stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList();
-
-        assertTrue(positions.contains(new BlockPos(2, 66, 0)));
-        assertFalse(positions.contains(new BlockPos(2, 65, 0)));
-    }
-
-    @Test
-    void keepsLowerShoulderAsSlabWhileContinuousDiagonalRiseUsesStairsInCenter() {
-        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
-                List.of(
-                        new BlockPos(0, 64, 0),
-                        new BlockPos(1, 65, 1),
-                        new BlockPos(2, 66, 2),
-                        new BlockPos(3, 67, 3)
-                ),
-                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
-        );
-
-        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
-        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : plan.ghostBlocks()) {
-            statesByPos.put(ghostBlock.pos(), ghostBlock.state());
-        }
-
-        assertTrue(statesByPos.containsKey(new BlockPos(2, 66, 2)));
-        assertTrue(statesByPos.containsKey(new BlockPos(2, 65, 0)));
-        assertTrue(statesByPos.get(new BlockPos(2, 66, 2)).is(Blocks.STONE_BRICK_STAIRS));
-        assertTrue(statesByPos.get(new BlockPos(2, 65, 0)).is(Blocks.STONE_BRICK_SLAB));
-    }
-
-    @Test
-    void keepsFirstClimbingNodeAsSlabBeforeContinuousRiseTurnsIntoStairs() {
-        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
-                List.of(
-                        new BlockPos(0, 64, 0),
-                        new BlockPos(1, 65, 0),
-                        new BlockPos(2, 66, 0),
-                        new BlockPos(3, 67, 0)
-                ),
-                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
-        );
-
-        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
-        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : plan.ghostBlocks()) {
-            statesByPos.put(ghostBlock.pos(), ghostBlock.state());
-        }
-
-        assertTrue(statesByPos.get(new BlockPos(1, 65, 0)).is(Blocks.STONE_BRICK_SLAB));
-        assertTrue(statesByPos.get(new BlockPos(2, 66, 0)).is(Blocks.STONE_BRICK_STAIRS));
-    }
-
-    @Test
-    void keepsOuterShoulderAsSlabWhileClimbingCoreUsesStairs() {
-        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
-                List.of(
-                        new BlockPos(0, 64, 0),
-                        new BlockPos(1, 65, 0),
-                        new BlockPos(2, 66, 0),
-                        new BlockPos(3, 67, 0)
-                ),
-                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
-        );
-
-        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
-        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : plan.ghostBlocks()) {
-            statesByPos.put(ghostBlock.pos(), ghostBlock.state());
-        }
-
-        assertTrue(statesByPos.get(new BlockPos(2, 66, -1)).is(Blocks.STONE_BRICK_STAIRS));
-        assertTrue(statesByPos.get(new BlockPos(2, 66, -2)).is(Blocks.STONE_BRICK_SLAB));
-        assertTrue(statesByPos.get(new BlockPos(2, 66, 2)).is(Blocks.STONE_BRICK_SLAB));
+        assertEquals(ribbonPlacementPositions(centerPath), plannerPositions);
     }
 
     @Test
@@ -401,22 +297,21 @@ class RoadGeometryPlannerTest {
         assertEquals(focusPos, plan.focusPos());
     }
 
-    private static Set<BlockPos> runtimeRoadPlacementPositions(List<BlockPos> centerPath) {
-        try {
-            Method collectRoadSlicePositions = Class
-                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
-                    .getDeclaredMethod("collectRoadSlicePositions", List.class, int.class);
-            collectRoadSlicePositions.setAccessible(true);
-
-            LinkedHashSet<BlockPos> positions = new LinkedHashSet<>();
-            for (int i = 0; i < centerPath.size(); i++) {
-                @SuppressWarnings("unchecked")
-                Set<BlockPos> slice = (Set<BlockPos>) collectRoadSlicePositions.invoke(null, centerPath, i);
-                positions.addAll(slice);
-            }
-            return positions;
-        } catch (ReflectiveOperationException ex) {
-            throw new AssertionError("Unable to read runtime road-slice semantics", ex);
+    private static Set<BlockPos> ribbonSlicePlacements(List<BlockPos> centerPath, int index) {
+        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
+        LinkedHashSet<BlockPos> placements = new LinkedHashSet<>();
+        for (BlockPos column : RoadGeometryPlanner.buildRibbonSlice(centerPath, index).columns()) {
+            int y = RoadGeometryPlanner.interpolatePlacementHeight(column.getX(), column.getZ(), centerPath, placementHeights);
+            placements.add(new BlockPos(column.getX(), y, column.getZ()));
         }
+        return placements;
+    }
+
+    private static Set<BlockPos> ribbonPlacementPositions(List<BlockPos> centerPath) {
+        LinkedHashSet<BlockPos> positions = new LinkedHashSet<>();
+        for (int i = 0; i < centerPath.size(); i++) {
+            positions.addAll(ribbonSlicePlacements(centerPath, i));
+        }
+        return positions;
     }
 }

@@ -198,7 +198,7 @@ public final class RoadGeometryPlanner {
             throw new IllegalArgumentException("placementHeights size must match centerPath size");
         }
 
-        LinkedHashSet<BlockPos> columns = sliceColumns(centerPath, index);
+        LinkedHashSet<BlockPos> columns = new LinkedHashSet<>(buildRibbonSlice(centerPath, index).columns());
         List<BlockPos> resolved = new ArrayList<>(columns.size());
         for (BlockPos column : columns) {
             int y = interpolatePlacementHeight(column.getX(), column.getZ(), centerPath, placementHeights);
@@ -321,66 +321,6 @@ public final class RoadGeometryPlanner {
         Objects.requireNonNull(pos, "pos");
         Objects.requireNonNull(state, "state");
         ghostByPos.putIfAbsent(pos.asLong(), new GhostRoadBlock(pos.immutable(), state));
-    }
-
-    private static LinkedHashSet<BlockPos> sliceColumns(List<BlockPos> centerPath, int index) {
-        BlockPos surface = Objects.requireNonNull(centerPath.get(index), "centerPath contains null at index " + index);
-        BlockPos current = new BlockPos(surface.getX(), 0, surface.getZ());
-        LinkedHashSet<BlockPos> positions = new LinkedHashSet<>();
-        positions.add(current);
-
-        BlockPos previousSurface = index > 0 ? centerPath.get(index - 1) : surface;
-        BlockPos nextSurface = index + 1 < centerPath.size() ? centerPath.get(index + 1) : surface;
-        int dx = Integer.compare(nextSurface.getX(), previousSurface.getX());
-        int dz = Integer.compare(nextSurface.getZ(), previousSurface.getZ());
-        addCrossSection(positions, current, dx, dz);
-
-        if (index > 0 && index + 1 < centerPath.size()) {
-            int prevDx = Integer.compare(surface.getX(), previousSurface.getX());
-            int prevDz = Integer.compare(surface.getZ(), previousSurface.getZ());
-            int nextDx = Integer.compare(nextSurface.getX(), surface.getX());
-            int nextDz = Integer.compare(nextSurface.getZ(), surface.getZ());
-            if (prevDx != nextDx || prevDz != nextDz) {
-                addTurnShoulders(positions, current);
-            }
-        }
-        return positions;
-    }
-
-    private static void addCrossSection(LinkedHashSet<BlockPos> positions, BlockPos current, int dx, int dz) {
-        if (dx != 0 && dz == 0) {
-            positions.add(current.north());
-            positions.add(current.south());
-            positions.add(current.north(2));
-            positions.add(current.south(2));
-            return;
-        }
-        if (dz != 0 && dx == 0) {
-            positions.add(current.east());
-            positions.add(current.west());
-            positions.add(current.east(2));
-            positions.add(current.west(2));
-            return;
-        }
-        positions.add(current.north());
-        positions.add(current.south());
-        positions.add(current.east());
-        positions.add(current.west());
-        positions.add(current.north(2));
-        positions.add(current.south(2));
-        positions.add(current.east(2));
-        positions.add(current.west(2));
-    }
-
-    private static void addTurnShoulders(LinkedHashSet<BlockPos> positions, BlockPos current) {
-        positions.add(current.north());
-        positions.add(current.south());
-        positions.add(current.east());
-        positions.add(current.west());
-        positions.add(current.north(2));
-        positions.add(current.south(2));
-        positions.add(current.east(2));
-        positions.add(current.west(2));
     }
 
     private static int[] samplePlacementHeights(List<BlockPos> centerPath) {
