@@ -13,11 +13,13 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -158,6 +160,33 @@ class RoadLifecycleServiceTest {
         }
     }
 
+    @Test
+    void liveFoundationFallbackCapturesSupportBlocksUnderWidenedRoadColumns() {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(-1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+        Map<BlockPos, net.minecraft.world.level.block.state.BlockState> states = new HashMap<>();
+        states.put(new BlockPos(-1, 69, 0), Blocks.COBBLESTONE.defaultBlockState());
+        states.put(new BlockPos(-1, 68, 0), Blocks.COBBLESTONE.defaultBlockState());
+        states.put(new BlockPos(0, 69, 0), Blocks.SANDSTONE.defaultBlockState());
+        states.put(new BlockPos(1, 69, 0), Blocks.MUD_BRICKS.defaultBlockState());
+        states.put(new BlockPos(1, 68, 0), Blocks.SPRUCE_FENCE.defaultBlockState());
+        Function<BlockPos, net.minecraft.world.level.block.state.BlockState> lookup =
+                pos -> states.getOrDefault(pos, Blocks.DIRT.defaultBlockState());
+
+        List<BlockPos> captured = invokeCaptureFoundationFromLookup(ghostBlocks, lookup);
+
+        assertEquals(Set.of(
+                new BlockPos(-1, 69, 0),
+                new BlockPos(-1, 68, 0),
+                new BlockPos(0, 69, 0),
+                new BlockPos(1, 69, 0),
+                new BlockPos(1, 68, 0)
+        ), Set.copyOf(captured));
+    }
+
     private static RoadPlacementPlan widenedPlanWithPartialOwnedBlocks() {
         List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
                 new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(-1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
@@ -225,6 +254,21 @@ class RoadLifecycleServiceTest {
             return result;
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect resolved road ownership fallback", ex);
+        }
+    }
+
+    private static List<BlockPos> invokeCaptureFoundationFromLookup(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                                    Function<BlockPos, net.minecraft.world.level.block.state.BlockState> blockLookup) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("captureRoadFoundationFromStateLookup", List.class, Function.class);
+            method.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            List<BlockPos> result = (List<BlockPos>) method.invoke(null, ghostBlocks, blockLookup);
+            return result;
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect live support/foundation fallback capture", ex);
         }
     }
 

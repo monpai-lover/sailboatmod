@@ -1998,37 +1998,58 @@ public final class StructureConstructionManager {
             return List.of();
         }
         try {
-            LinkedHashMap<Long, BlockPos> topByColumn = new LinkedHashMap<>();
-            for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : ghostBlocks) {
-                if (ghostBlock == null || ghostBlock.pos() == null || !isRoadTerrainSurfaceState(ghostBlock.state())) {
-                    continue;
-                }
-                BlockPos pos = ghostBlock.pos();
-                long key = BlockPos.asLong(pos.getX(), 0, pos.getZ());
-                BlockPos existing = topByColumn.get(key);
-                if (existing == null || pos.getY() > existing.getY()) {
-                    topByColumn.put(key, pos);
-                }
-            }
-            if (topByColumn.isEmpty()) {
-                return List.of();
-            }
-            LinkedHashSet<BlockPos> captured = new LinkedHashSet<>();
-            for (BlockPos top : topByColumn.values()) {
-                BlockPos cursor = top.below();
-                for (int depth = 0; depth < 8; depth++) {
-                    BlockState state = level.getBlockState(cursor);
-                    if (!isRoadSurface(state)) {
-                        break;
-                    }
-                    captured.add(cursor);
-                    cursor = cursor.below();
-                }
-            }
-            return List.copyOf(captured);
+            return captureRoadFoundationFromStateLookup(ghostBlocks, level::getBlockState);
         } catch (RuntimeException ignored) {
             return List.of();
         }
+    }
+
+    private static List<BlockPos> captureRoadFoundationFromStateLookup(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                                       java.util.function.Function<BlockPos, BlockState> blockStateLookup) {
+        if (ghostBlocks == null || ghostBlocks.isEmpty() || blockStateLookup == null) {
+            return List.of();
+        }
+        LinkedHashMap<Long, BlockPos> topByColumn = new LinkedHashMap<>();
+        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : ghostBlocks) {
+            if (ghostBlock == null || ghostBlock.pos() == null || !isRoadTerrainSurfaceState(ghostBlock.state())) {
+                continue;
+            }
+            BlockPos pos = ghostBlock.pos();
+            long key = BlockPos.asLong(pos.getX(), 0, pos.getZ());
+            BlockPos existing = topByColumn.get(key);
+            if (existing == null || pos.getY() > existing.getY()) {
+                topByColumn.put(key, pos);
+            }
+        }
+        if (topByColumn.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<BlockPos> captured = new LinkedHashSet<>();
+        for (BlockPos top : topByColumn.values()) {
+            BlockPos cursor = top.below();
+            for (int depth = 0; depth < 8; depth++) {
+                BlockState state = blockStateLookup.apply(cursor);
+                if (!isRoadOwnedFoundationState(state)) {
+                    break;
+                }
+                captured.add(cursor);
+                cursor = cursor.below();
+            }
+        }
+        return List.copyOf(captured);
+    }
+
+    private static boolean isRoadOwnedFoundationState(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        if (isRoadTerrainSurfaceState(state)) {
+            return true;
+        }
+        return state.is(Blocks.COBBLESTONE)
+                || state.is(Blocks.SANDSTONE)
+                || state.is(Blocks.MUD_BRICKS)
+                || state.is(Blocks.SPRUCE_FENCE);
     }
 
     private static List<BlockPos> collectOwnedRoadBlocks(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
