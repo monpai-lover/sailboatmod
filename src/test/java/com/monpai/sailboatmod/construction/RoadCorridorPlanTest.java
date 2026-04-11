@@ -123,7 +123,6 @@ class RoadCorridorPlanTest {
 
         assertThrows(NullPointerException.class, () -> new RoadCorridorPlan(null, List.of(validSlice), channel, true));
         assertThrows(NullPointerException.class, () -> new RoadCorridorPlan(List.of(center), null, channel, true));
-        assertThrows(NullPointerException.class, () -> new RoadCorridorPlan(List.of(center), List.of(validSlice), null, true));
         assertThrows(NullPointerException.class, () -> new RoadCorridorPlan(List.of(center), List.of((RoadCorridorPlan.CorridorSlice) null), channel, true));
         assertThrows(NullPointerException.class, () -> new RoadCorridorPlan(List.of((BlockPos) null), List.of(validSlice), channel, true));
         assertThrows(NullPointerException.class, () -> new RoadCorridorPlan.CorridorSlice(
@@ -137,6 +136,25 @@ class RoadCorridorPlanTest {
                 List.of()
         ));
         assertThrows(NullPointerException.class, () -> new RoadCorridorPlan.NavigationChannel(null, center));
+    }
+
+    @Test
+    void constructorAllowsAbsentNavigationChannel() {
+        BlockPos center = new BlockPos(1, 64, 0);
+        RoadCorridorPlan.CorridorSlice slice = new RoadCorridorPlan.CorridorSlice(
+                0,
+                center,
+                RoadCorridorPlan.SegmentKind.LAND_APPROACH,
+                List.of(center),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+
+        RoadCorridorPlan plan = new RoadCorridorPlan(List.of(center), List.of(slice), null, true);
+
+        assertNull(plan.navigationChannel());
     }
 
     @Test

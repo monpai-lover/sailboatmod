@@ -13,7 +13,6 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
     public RoadCorridorPlan {
         centerPath = copyPositions(centerPath, "centerPath");
         slices = copySlices(slices);
-        navigationChannel = Objects.requireNonNull(navigationChannel, "navigationChannel");
     }
 
     public enum SegmentKind {

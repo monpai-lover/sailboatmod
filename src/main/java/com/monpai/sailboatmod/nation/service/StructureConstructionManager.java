@@ -4,6 +4,8 @@ import com.monpai.sailboatmod.client.ConstructionGhostClientHooks;
 import com.monpai.sailboatmod.construction.BuilderHammerChargePlan;
 import com.monpai.sailboatmod.construction.BuilderHammerCreditState;
 import com.monpai.sailboatmod.construction.RoadBridgePlanner;
+import com.monpai.sailboatmod.construction.RoadCorridorPlan;
+import com.monpai.sailboatmod.construction.RoadCorridorPlanner;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadLegacyJobRebuilder;
 import com.monpai.sailboatmod.construction.RoadLightingPlanner;
@@ -1375,11 +1377,13 @@ public final class StructureConstructionManager {
                                                      BlockPos targetBoundaryAnchor,
                                                      BlockPos targetInternalAnchor) {
         if (centerPath == null || centerPath.isEmpty()) {
+            RoadCorridorPlan corridorPlan = createRoadCorridorPlan(List.of(), List.of(), List.of());
             return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
-                    List.of(), List.of(), List.of(), List.of(), List.of(), null, null, null);
+                    List.of(), List.of(), List.of(), List.of(), List.of(), null, null, null, corridorPlan);
         }
         List<RoadPlacementPlan.BridgeRange> bridgeRanges = detectBridgeRanges(level, centerPath);
         List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = detectNavigableWaterBridgeRanges(level, centerPath, bridgeRanges);
+        RoadCorridorPlan corridorPlan = createRoadCorridorPlan(centerPath, bridgeRanges, navigableWaterBridgeRanges);
         List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
         RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
                 centerPath,
@@ -1421,8 +1425,18 @@ public final class StructureConstructionManager {
                 ownedBlocks,
                 highlightPos(sourceBoundaryAnchor, centerPath, true),
                 highlightPos(targetBoundaryAnchor, centerPath, false),
-                resolveRoadPlanFocusPos(centerPath, ghostBlocks)
+                resolveRoadPlanFocusPos(centerPath, ghostBlocks),
+                corridorPlan
         );
+    }
+
+    private static RoadCorridorPlan createRoadCorridorPlan(List<BlockPos> centerPath,
+                                                           List<RoadPlacementPlan.BridgeRange> bridgeRanges,
+                                                           List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges) {
+        if (centerPath == null) {
+            return RoadCorridorPlanner.plan(List.of());
+        }
+        return RoadCorridorPlanner.plan(centerPath, bridgeRanges, navigableWaterBridgeRanges);
     }
 
     private static RoadPlacementPlan createRoadPlacementPlan(ServerLevel level, RoadNetworkRecord road) {
@@ -1583,23 +1597,11 @@ public final class StructureConstructionManager {
         if (level == null || centerPath == null || centerPath.isEmpty() || bridgeRanges == null || bridgeRanges.isEmpty()) {
             return List.of();
         }
-        List<RoadPlacementPlan.BridgeRange> ranges = new ArrayList<>();
-        for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
-            if (range == null) {
-                continue;
-            }
-            boolean navigable = false;
-            for (int i = Math.max(0, range.startIndex()); i <= Math.min(centerPath.size() - 1, range.endIndex()); i++) {
-                if (isNavigableWaterBridgeColumn(level, centerPath.get(i))) {
-                    navigable = true;
-                    break;
-                }
-            }
-            if (navigable) {
-                ranges.add(range);
-            }
-        }
-        return List.copyOf(ranges);
+        return RoadCorridorPlanner.detectContiguousSubranges(
+                centerPath,
+                bridgeRanges,
+                index -> isNavigableWaterBridgeColumn(level, centerPath.get(index))
+        );
     }
 
     private static boolean isNavigableWaterBridgeColumn(ServerLevel level, BlockPos pos) {
