@@ -41,25 +41,22 @@ public final class RoadPlannerPreviewRenderer {
 
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
-        VertexConsumer fillConsumer = bufferSource.getBuffer(RenderType.debugFilledBox());
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
         Vec3 cameraPos = event.getCamera().getPosition();
 
-        float fillAlpha = preview.awaitingConfirmation() ? 0.24F : 0.16F;
         for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
             if (block == null || block.pos() == null) {
                 continue;
             }
             renderBlockBox(
                     poseStack,
-                    fillConsumer,
                     lineConsumer,
                     block.pos(),
                     cameraPos,
                     0.30F,
                     0.90F,
                     0.88F,
-                    fillAlpha,
+                    0.0F,
                     0.94F,
                     0.76F,
                     0.20F,
@@ -70,7 +67,6 @@ public final class RoadPlannerPreviewRenderer {
         renderHighlightBox(poseStack, lineConsumer, preview.endHighlightPos(), cameraPos, 1.0F, 0.72F, 0.25F, 0.95F, 0.02F);
         renderHighlightBox(poseStack, lineConsumer, preview.focusPos(), cameraPos, 0.94F, 0.76F, 0.20F, 0.98F, 0.06F);
 
-        bufferSource.endBatch(RenderType.debugFilledBox());
         bufferSource.endBatch(RenderType.lines());
     }
 
@@ -158,7 +154,6 @@ public final class RoadPlannerPreviewRenderer {
     }
 
     private static void renderBlockBox(PoseStack poseStack,
-                                       VertexConsumer fillConsumer,
                                        VertexConsumer lineConsumer,
                                        BlockPos pos,
                                        Vec3 cameraPos,
@@ -177,7 +172,6 @@ public final class RoadPlannerPreviewRenderer {
         float maxX = (float) box.maxX();
         float maxY = (float) box.maxY();
         float maxZ = (float) box.maxZ();
-        LevelRenderer.addChainedFilledBoxVertices(poseStack, fillConsumer, minX, minY, minZ, maxX, maxY, maxZ, fillR, fillG, fillB, fillA);
         LevelRenderer.renderLineBox(poseStack, lineConsumer, minX, minY, minZ, maxX, maxY, maxZ, lineR, lineG, lineB, lineA);
     }
 
@@ -228,6 +222,10 @@ public final class RoadPlannerPreviewRenderer {
 
     static PreviewBox highlightBoxForTest(BlockPos pos, Vec3 cameraPos, double inset) {
         return highlightBox(pos, cameraPos, inset);
+    }
+
+    static boolean rendersFilledBoxesForTest() {
+        return false;
     }
 
     record PreviewBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {

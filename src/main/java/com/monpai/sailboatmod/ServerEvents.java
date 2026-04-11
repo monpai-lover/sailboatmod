@@ -23,14 +23,15 @@ public final class ServerEvents {
     private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
     private static final BankLoanService BANK_LOANS = new BankLoanService();
 
+    @FunctionalInterface
+    interface StartupTask {
+        void run() throws Exception;
+    }
+
     @SubscribeEvent
     public static void onServerStarted(ServerStartedEvent event) {
         com.monpai.sailboatmod.market.commodity.CommodityConfigLoader.load();
-        try {
-            MarketDatabase.initialize(event.getServer());
-        } catch (Exception e) {
-            LOGGER.error("Failed to initialize market SQLite database", e);
-        }
+        runStartupTaskSafely("market SQLite database", () -> MarketDatabase.initialize(event.getServer()));
         BlueMapIntegration.onServerStarted(event.getServer());
         ClaimPreviewTerrainService.clearAllPersistedColors(event.getServer().overworld());
     }
@@ -98,5 +99,22 @@ public final class ServerEvents {
     }
 
     private ServerEvents() {
+    }
+
+    static boolean runStartupTaskSafelyForTest(String taskName, StartupTask task) {
+        return runStartupTaskSafely(taskName, task);
+    }
+
+    private static boolean runStartupTaskSafely(String taskName, StartupTask task) {
+        if (task == null) {
+            return true;
+        }
+        try {
+            task.run();
+            return true;
+        } catch (Throwable throwable) {
+            LOGGER.error("Failed to initialize {}", taskName, throwable);
+            return false;
+        }
     }
 }

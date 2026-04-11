@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.market.analytics;
 
 import com.monpai.sailboatmod.ModConfig;
+import com.monpai.sailboatmod.market.db.MarketDatabase;
 import com.monpai.sailboatmod.market.commodity.BuyOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityDefinition;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketRepository;
@@ -34,7 +35,7 @@ public final class MarketAnalyticsService {
     private long lastSnapshotRunAt;
 
     public void maybeRecordSnapshots(MinecraftServer server) {
-        if (server == null || !ModConfig.marketSqliteEnabled()) {
+        if (server == null || !ModConfig.marketSqliteEnabled() || !MarketDatabase.isInitialized()) {
             return;
         }
         long now = System.currentTimeMillis();

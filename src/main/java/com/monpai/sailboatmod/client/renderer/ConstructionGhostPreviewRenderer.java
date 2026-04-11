@@ -41,21 +41,19 @@ public final class ConstructionGhostPreviewRenderer {
 
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
-        VertexConsumer fillConsumer = bufferSource.getBuffer(RenderType.debugFilledBox());
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
         Vec3 cameraPos = event.getCamera().getPosition();
 
         for (ConstructionGhostClientHooks.BuildingPreview preview : ConstructionGhostClientHooks.buildingPreviews()) {
-            renderPreview(poseStack, fillConsumer, lineConsumer, preview.blocks(), preview.targetPos(), cameraPos,
+            renderPreview(poseStack, lineConsumer, preview.blocks(), preview.targetPos(), cameraPos,
                     0.18F, 0.76F, 1.0F, 0.18F,
                     0.85F, 0.70F, 0.18F, 0.95F);
         }
         for (ConstructionGhostClientHooks.RoadPreview preview : ConstructionGhostClientHooks.roadPreviews()) {
-            renderPreview(poseStack, fillConsumer, lineConsumer, preview.blocks(), preview.targetPos(), cameraPos,
+            renderPreview(poseStack, lineConsumer, preview.blocks(), preview.targetPos(), cameraPos,
                     0.30F, 0.90F, 0.88F, 0.16F,
                     0.94F, 0.76F, 0.20F, 0.95F);
         }
-        bufferSource.endBatch(RenderType.debugFilledBox());
         bufferSource.endBatch(RenderType.lines());
     }
 
@@ -138,7 +136,6 @@ public final class ConstructionGhostPreviewRenderer {
     }
 
     private static void renderPreview(PoseStack poseStack,
-                                      VertexConsumer fillConsumer,
                                       VertexConsumer lineConsumer,
                                       java.util.List<ConstructionGhostClientHooks.GhostBlock> blocks,
                                       BlockPos targetPos,
@@ -167,16 +164,6 @@ public final class ConstructionGhostPreviewRenderer {
             float maxZ = (float) box.maxZ();
             boolean highlight = targetPos != null && targetPos.equals(block.pos());
 
-            LevelRenderer.addChainedFilledBoxVertices(
-                    poseStack,
-                    fillConsumer,
-                    minX, minY, minZ,
-                    maxX, maxY, maxZ,
-                    highlight ? highlightR : fillR,
-                    highlight ? highlightG : fillG,
-                    highlight ? highlightB : fillB,
-                    highlight ? 0.28F : fillA
-            );
             LevelRenderer.renderLineBox(
                     poseStack,
                     lineConsumer,
@@ -199,6 +186,10 @@ public final class ConstructionGhostPreviewRenderer {
 
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
         return previewBox(pos, cameraPos);
+    }
+
+    static boolean rendersFilledBoxesForTest() {
+        return false;
     }
 
     record PreviewBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {

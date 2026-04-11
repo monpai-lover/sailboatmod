@@ -5,6 +5,7 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class RoadPlannerPreviewRendererTest {
     @Test
@@ -36,5 +37,10 @@ class RoadPlannerPreviewRendererTest {
         assertEquals(1.27D, box.maxX(), 1.0E-6D);
         assertEquals(1.52D, box.maxY(), 1.0E-6D);
         assertEquals(1.77D, box.maxZ(), 1.0E-6D);
+    }
+
+    @Test
+    void roadPlannerPreviewDisablesFilledBoxesForStability() {
+        assertFalse(RoadPlannerPreviewRenderer.rendersFilledBoxesForTest());
     }
 }

@@ -218,7 +218,10 @@ tasks.named('jar', Jar).configure {
     archiveFileName = "${mod_id}-${mod_version}${fixSuffix}.jar"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     dependsOn 'shadowSqliteJar'
-    exclude 'com/monpai/sailboatmod/market/web/**'
+    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*.class'
+    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*'
+    exclude 'com/monpai/sailboatmod/market/web/SailboatMarketWebAddon.class'
+    exclude 'com/monpai/sailboatmod/market/web/MarketPlayerIdentity.class'
     exclude 'marketweb/**'
 
     // Merge the relocated sqlite-jdbc classes into the runtime jar so the mod does not
@@ -248,7 +251,10 @@ tasks.named('jar', Jar).configure {
 tasks.named('jarJar', Jar).configure {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     dependsOn 'shadowSqliteJar'
-    exclude 'com/monpai/sailboatmod/market/web/**'
+    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*.class'
+    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*'
+    exclude 'com/monpai/sailboatmod/market/web/SailboatMarketWebAddon.class'
+    exclude 'com/monpai/sailboatmod/market/web/MarketPlayerIdentity.class'
     exclude 'marketweb/**'
 
     from({

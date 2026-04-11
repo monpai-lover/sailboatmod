@@ -1,12 +1,23 @@
 package com.monpai.sailboatmod.client.renderer;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.Bootstrap;
 import net.minecraft.world.phys.Vec3;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ConstructionGhostPreviewRendererTest {
+    @BeforeAll
+    static void bootstrapMinecraftRegistries() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+    }
+
     @Test
     void constructionGhostBoxesUseExactCameraOffset() {
         ConstructionGhostPreviewRenderer.PreviewBox box = ConstructionGhostPreviewRenderer.previewBoxForTest(
@@ -20,5 +31,10 @@ class ConstructionGhostPreviewRendererTest {
         assertEquals(1.60D, box.maxX(), 1.0E-6D);
         assertEquals(1.90D, box.maxY(), 1.0E-6D);
         assertEquals(1.80D, box.maxZ(), 1.0E-6D);
+    }
+
+    @Test
+    void constructionGhostPreviewDisablesFilledBoxesForStability() {
+        assertFalse(ConstructionGhostPreviewRenderer.rendersFilledBoxesForTest());
     }
 }
