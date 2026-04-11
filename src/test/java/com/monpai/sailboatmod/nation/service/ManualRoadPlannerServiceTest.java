@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.nation.service;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.item.ItemStack;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
@@ -97,6 +98,23 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void townAnchorFallbackIsAllowedWhenAStationIsMissing() {
+        assertTrue(ManualRoadPlannerService.shouldAttemptTownAnchorFallbackForTest(
+                ManualRoadPlannerService.ManualPlanFailure.SOURCE_STATION_MISSING
+        ));
+        assertTrue(ManualRoadPlannerService.shouldAttemptTownAnchorFallbackForTest(
+                ManualRoadPlannerService.ManualPlanFailure.TARGET_STATION_MISSING
+        ));
+    }
+
+    @Test
+    void townAnchorFallbackIsNotUsedForSuccessfulWaitingAreaResolution() {
+        assertFalse(ManualRoadPlannerService.shouldAttemptTownAnchorFallbackForTest(
+                ManualRoadPlannerService.ManualPlanFailure.NONE
+        ));
+    }
+
+    @Test
     void unblocksChosenStationWaitingAreaAndExitColumns() {
         Set<Long> blocked = ManualRoadPlannerService.unblockStationFootprint(
                 Set.of(ManualRoadPlannerService.columnKeyForTest(100, 100),
@@ -109,5 +127,41 @@ class ManualRoadPlannerServiceTest {
         assertFalse(blocked.contains(ManualRoadPlannerService.columnKeyForTest(100, 100)));
         assertFalse(blocked.contains(ManualRoadPlannerService.columnKeyForTest(101, 100)));
         assertFalse(blocked.contains(ManualRoadPlannerService.columnKeyForTest(102, 100)));
+    }
+
+    @Test
+    void roadSurfaceColumnsCountAsReusableAnchors() {
+        assertTrue(ManualRoadPlannerService.isRoadAnchorColumnForTest(
+                Blocks.GRASS_BLOCK.defaultBlockState(),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(),
+                Blocks.AIR.defaultBlockState()
+        ));
+    }
+
+    @Test
+    void solidNonRoadOccupantsStillInvalidateAnchors() {
+        assertFalse(ManualRoadPlannerService.isRoadAnchorColumnForTest(
+                Blocks.GRASS_BLOCK.defaultBlockState(),
+                Blocks.COBBLESTONE.defaultBlockState(),
+                Blocks.AIR.defaultBlockState()
+        ));
+    }
+
+    @Test
+    void waterFallbackIsDisabledWhenLandPassSucceeds() {
+        assertFalse(ManualRoadPlannerService.shouldUseWaterFallbackForTest(true, true));
+    }
+
+    @Test
+    void waterFallbackActivatesOnlyAfterLandPassFails() {
+        assertTrue(ManualRoadPlannerService.shouldUseWaterFallbackForTest(false, true));
+    }
+
+    @Test
+    void plannerFallsBackToWaterOnlyWhenLandRouteIsUnavailable() {
+        ManualRoadPlannerService.RouteAttemptDecision decision =
+                ManualRoadPlannerService.routeAttemptDecisionForTest(false, true);
+
+        assertTrue(decision.usedWaterFallback());
     }
 }

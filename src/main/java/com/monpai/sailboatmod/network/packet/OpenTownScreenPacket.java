@@ -14,6 +14,11 @@ import java.util.List;
 import java.util.function.Supplier;
 
 public class OpenTownScreenPacket {
+    private static final int MAX_MEMBER_COUNT = 1024;
+    private static final int MAX_TERRAIN_COLOR_COUNT = 20000;
+    private static final int MAX_CLAIM_COUNT = 20000;
+    private static final int MAX_PREVIEW_LINE_COUNT = 256;
+    private static final int MAX_JOINABLE_NATION_TARGET_COUNT = 2048;
     private final TownOverviewData data;
 
     public OpenTownScreenPacket(TownOverviewData data) {
@@ -117,6 +122,11 @@ public class OpenTownScreenPacket {
         writeLines(buffer, data.demandPreviewLines(), 80);
         writeLines(buffer, data.procurementPreviewLines(), 80);
         writeLines(buffer, data.financePreviewLines(), 80);
+        buffer.writeVarInt(data.joinableNationTargets().size());
+        for (TownOverviewData.JoinableNationTarget target : data.joinableNationTargets()) {
+            PacketStringCodec.writeUtfSafe(buffer, target.nationId(), 40);
+            PacketStringCodec.writeUtfSafe(buffer, target.nationName(), 64);
+        }
     }
 
     public static OpenTownScreenPacket decode(FriendlyByteBuf buffer) {
@@ -160,7 +170,7 @@ public class OpenTownScreenPacket {
         boolean canUploadFlag = buffer.readBoolean();
         boolean canAssignMayor = buffer.readBoolean();
         boolean isMayor = buffer.readBoolean();
-        int memberCount = buffer.readVarInt();
+        int memberCount = readBoundedCount(buffer, MAX_MEMBER_COUNT, "memberCount");
         List<NationOverviewMember> members = new ArrayList<>(memberCount);
         for (int i = 0; i < memberCount; i++) {
             members.add(new NationOverviewMember(
@@ -171,12 +181,12 @@ public class OpenTownScreenPacket {
                     buffer.readBoolean()
             ));
         }
-        int terrainColorCount = buffer.readVarInt();
+        int terrainColorCount = readBoundedCount(buffer, MAX_TERRAIN_COLOR_COUNT, "terrainColorCount");
         List<Integer> nearbyTerrainColors = new ArrayList<>(terrainColorCount);
         for (int i = 0; i < terrainColorCount; i++) {
             nearbyTerrainColors.add(buffer.readInt());
         }
-        int claimCount = buffer.readVarInt();
+        int claimCount = readBoundedCount(buffer, MAX_CLAIM_COUNT, "claimCount");
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>(claimCount);
         for (int i = 0; i < claimCount; i++) {
             nearbyClaims.add(new NationOverviewClaim(
@@ -198,13 +208,13 @@ public class OpenTownScreenPacket {
             ));
         }
         String cultureId = buffer.readUtf(32);
-        int cultureDistSize = buffer.readVarInt();
+        int cultureDistSize = readBoundedCount(buffer, MAX_PREVIEW_LINE_COUNT, "cultureDistributionSize");
         java.util.Map<String, Integer> cultureDistribution = new java.util.HashMap<>();
         for (int i = 0; i < cultureDistSize; i++) {
             cultureDistribution.put(buffer.readUtf(32), buffer.readVarInt());
         }
         float averageLiteracy = buffer.readFloat();
-        int eduDistSize = buffer.readVarInt();
+        int eduDistSize = readBoundedCount(buffer, MAX_PREVIEW_LINE_COUNT, "educationDistributionSize");
         java.util.Map<String, Integer> educationLevelDistribution = new java.util.HashMap<>();
         for (int i = 0; i < eduDistSize; i++) {
             educationLevelDistribution.put(buffer.readUtf(32), buffer.readVarInt());
@@ -222,6 +232,14 @@ public class OpenTownScreenPacket {
         List<String> demandPreviewLines = readLines(buffer, 80);
         List<String> procurementPreviewLines = readLines(buffer, 80);
         List<String> financePreviewLines = readLines(buffer, 80);
+        int joinableNationTargetCount = readBoundedCount(buffer, MAX_JOINABLE_NATION_TARGET_COUNT, "joinableNationTargetCount");
+        List<TownOverviewData.JoinableNationTarget> joinableNationTargets = new ArrayList<>(joinableNationTargetCount);
+        for (int i = 0; i < joinableNationTargetCount; i++) {
+            joinableNationTargets.add(new TownOverviewData.JoinableNationTarget(
+                    buffer.readUtf(40),
+                    buffer.readUtf(64)
+            ));
+        }
         return new OpenTownScreenPacket(new TownOverviewData(
                 hasTown,
                 townId,
@@ -282,7 +300,8 @@ public class OpenTownScreenPacket {
                 stockpilePreviewLines,
                 demandPreviewLines,
                 procurementPreviewLines,
-                financePreviewLines
+                financePreviewLines,
+                joinableNationTargets
         ));
     }
 
@@ -301,11 +320,19 @@ public class OpenTownScreenPacket {
     }
 
     private static List<String> readLines(FriendlyByteBuf buffer, int maxLength) {
-        int size = buffer.readVarInt();
+        int size = readBoundedCount(buffer, MAX_PREVIEW_LINE_COUNT, "lineCount");
         List<String> lines = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             lines.add(buffer.readUtf(maxLength));
         }
         return lines;
+    }
+
+    private static int readBoundedCount(FriendlyByteBuf buffer, int maxAllowed, String label) {
+        int count = buffer.readVarInt();
+        if (count < 0 || count > maxAllowed) {
+            throw new IllegalArgumentException(label + " exceeds max allowed count: " + count);
+        }
+        return count;
     }
 }

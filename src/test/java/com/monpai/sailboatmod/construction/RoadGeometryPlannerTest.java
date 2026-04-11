@@ -250,6 +250,35 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
+    void bridgeHeightProfileRaisesWaterSpanAboveApproachTerrain() {
+        RoadBridgePlanner.BridgeProfile profile = RoadBridgePlanner.buildNavigableBridgeProfile(1, 2, 64);
+
+        int[] heights = RoadGeometryPlanner.applyNavigableBridgeProfileForTest(new int[] {64, 64, 64, 64}, profile);
+
+        assertTrue(heights[1] >= 69);
+        assertTrue(heights[2] >= 69);
+    }
+
+    @Test
+    void placementHeightProfileDoesNotSinkBelowSteepCenterPathDeck() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 66, 0),
+                new BlockPos(2, 68, 0),
+                new BlockPos(3, 70, 0),
+                new BlockPos(4, 72, 0)
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
+
+        assertEquals(65, heights[0]);
+        assertEquals(67, heights[1]);
+        assertEquals(69, heights[2]);
+        assertEquals(71, heights[3]);
+        assertEquals(73, heights[4]);
+    }
+
+    @Test
     void preservesSlopedBridgeEndpointsWhileRaisingArchedInterior() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

@@ -163,6 +163,13 @@ class BuilderHammerSupportTest {
     }
 
     @Test
+    void naturalTopsoilCanBeExcavatedForRoadPlacement() {
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.GRASS_BLOCK.defaultBlockState()));
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.DIRT.defaultBlockState()));
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.MUD.defaultBlockState()));
+    }
+
+    @Test
     void roadRuntimeUsesActualCompletedStepsInsteadOfPrefixCount() {
         List<BlockPos> centerPath = List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0));
         RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
@@ -209,9 +216,41 @@ class BuilderHammerSupportTest {
     }
 
     @Test
+    void navigableBridgeAddsRailingGhostBlocks() {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghosts = invokeNavigableBridgeGhosts(
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 69, 0), Blocks.SPRUCE_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(5, 69, 0), Blocks.SPRUCE_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(10, 69, 0), Blocks.SPRUCE_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new BlockPos(0, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(10, 68, 0)
+                ),
+                List.of(new RoadPlacementPlan.BridgeRange(0, 2))
+        );
+
+        assertTrue(ghosts.stream().anyMatch(block -> block.state().is(Blocks.SPRUCE_FENCE)));
+    }
+
+    @Test
     void minorSurfaceClutterCountsAsReplaceableRoadBuildTarget() {
         assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.GRASS.defaultBlockState()));
         assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.DANDELION.defaultBlockState()));
+    }
+
+    @Test
+    void naturalRoadObstaclesCountAsReplaceableRoadBuildTargets() {
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.OAK_LEAVES.defaultBlockState()));
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.OAK_LOG.defaultBlockState()));
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.VINE.defaultBlockState()));
+        assertTrue(invokeRoadPlacementReplaceableForTest(Blocks.SNOW.defaultBlockState()));
+    }
+
+    @Test
+    void storageBlocksDoNotCountAsReplaceableRoadBuildTargets() {
+        assertFalse(invokeRoadPlacementReplaceableForTest(Blocks.CHEST.defaultBlockState()));
     }
 
     @Test
@@ -355,6 +394,21 @@ class BuilderHammerSupportTest {
             return (boolean) method.invoke(null, existingState, plannedState);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect road surface replacement rules", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<RoadGeometryPlanner.GhostRoadBlock> invokeNavigableBridgeGhosts(List<RoadGeometryPlanner.GhostRoadBlock> baseGhosts,
+                                                                                         List<BlockPos> centerPath,
+                                                                                         List<RoadPlacementPlan.BridgeRange> navigableRanges) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("decorateNavigableBridgeGhosts", List.class, List.class, List.class, List.class, List.class);
+            method.setAccessible(true);
+            return (List<RoadGeometryPlanner.GhostRoadBlock>) method.invoke(null, baseGhosts, centerPath, navigableRanges, List.of(), List.of());
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect navigable bridge ghost decoration", ex);
         }
     }
 }

@@ -36,6 +36,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -43,6 +44,10 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.RotatedPillarBlock;
+import net.minecraft.world.level.block.SnowLayerBlock;
+import net.minecraft.world.level.block.VineBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -1371,10 +1376,11 @@ public final class StructureConstructionManager {
                                                      BlockPos targetInternalAnchor) {
         if (centerPath == null || centerPath.isEmpty()) {
             return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
-                    List.of(), List.of(), List.of(), null, null, null);
+                    List.of(), List.of(), List.of(), List.of(), List.of(), null, null, null);
         }
         List<RoadPlacementPlan.BridgeRange> bridgeRanges = detectBridgeRanges(level, centerPath);
-        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges);
+        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = detectNavigableWaterBridgeRanges(level, centerPath, bridgeRanges);
+        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
         RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
                 centerPath,
                 pos -> selectRoadPlacementStyle(level, pos).surface(),
@@ -1386,7 +1392,13 @@ public final class StructureConstructionManager {
                 bridgeRanges,
                 List.of(sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor)
         );
-        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = withLampGhosts(roadSurfaceGhostBlocks, lampBases);
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = decorateNavigableBridgeGhosts(
+                roadSurfaceGhostBlocks,
+                centerPath,
+                navigableWaterBridgeRanges,
+                lampBases,
+                RoadLightingPlanner.navigableBridgeLights(centerPath, navigableWaterBridgeRanges)
+        );
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = toBuildSteps(ghostBlocks);
         List<BlockPos> roadbedTop = deriveRoadbedTopFromRoadSurfaceFootprint(roadSurfaceGhostBlocks);
         List<BlockPos> terrainEdits = RoadTerrainShaper.shapeRoadbed(
@@ -1405,6 +1417,7 @@ public final class StructureConstructionManager {
                 ghostBlocks,
                 buildSteps,
                 bridgeRanges,
+                navigableWaterBridgeRanges,
                 ownedBlocks,
                 highlightPos(sourceBoundaryAnchor, centerPath, true),
                 highlightPos(targetBoundaryAnchor, centerPath, false),
@@ -1534,16 +1547,80 @@ public final class StructureConstructionManager {
 
     private static List<RoadBridgePlanner.BridgeProfile> classifyBridgeProfiles(ServerLevel level,
                                                                                  List<BlockPos> centerPath,
-                                                                                 List<RoadPlacementPlan.BridgeRange> bridgeRanges) {
+                                                                                 List<RoadPlacementPlan.BridgeRange> bridgeRanges,
+                                                                                 List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges) {
         if (level == null || centerPath == null || centerPath.isEmpty() || bridgeRanges == null || bridgeRanges.isEmpty()) {
             return List.of();
         }
-        return RoadBridgePlanner.classifyRanges(
+        List<RoadBridgePlanner.BridgeProfile> baseProfiles = RoadBridgePlanner.classifyRanges(
                 centerPath,
                 bridgeRanges,
                 index -> selectRoadPlacementStyle(level, centerPath.get(index).above()).bridge(),
                 index -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, centerPath.get(index)).below().getY()
         );
+        if (navigableWaterBridgeRanges == null || navigableWaterBridgeRanges.isEmpty()) {
+            return baseProfiles;
+        }
+        List<RoadBridgePlanner.BridgeProfile> profiles = new ArrayList<>(baseProfiles.size());
+        for (RoadBridgePlanner.BridgeProfile profile : baseProfiles) {
+            if (profile == null) {
+                continue;
+            }
+            RoadPlacementPlan.BridgeRange range = new RoadPlacementPlan.BridgeRange(profile.startIndex(), profile.endIndex());
+            if (navigableWaterBridgeRanges.contains(range)) {
+                int waterSurfaceY = findWaterSurfaceY(level, centerPath, range);
+                profiles.add(RoadBridgePlanner.buildNavigableBridgeProfile(profile.startIndex(), profile.endIndex(), waterSurfaceY));
+            } else {
+                profiles.add(profile);
+            }
+        }
+        return List.copyOf(profiles);
+    }
+
+    private static List<RoadPlacementPlan.BridgeRange> detectNavigableWaterBridgeRanges(ServerLevel level,
+                                                                                         List<BlockPos> centerPath,
+                                                                                         List<RoadPlacementPlan.BridgeRange> bridgeRanges) {
+        if (level == null || centerPath == null || centerPath.isEmpty() || bridgeRanges == null || bridgeRanges.isEmpty()) {
+            return List.of();
+        }
+        List<RoadPlacementPlan.BridgeRange> ranges = new ArrayList<>();
+        for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
+            if (range == null) {
+                continue;
+            }
+            boolean navigable = false;
+            for (int i = Math.max(0, range.startIndex()); i <= Math.min(centerPath.size() - 1, range.endIndex()); i++) {
+                if (isNavigableWaterBridgeColumn(level, centerPath.get(i))) {
+                    navigable = true;
+                    break;
+                }
+            }
+            if (navigable) {
+                ranges.add(range);
+            }
+        }
+        return List.copyOf(ranges);
+    }
+
+    private static boolean isNavigableWaterBridgeColumn(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        BlockPos surface = pos;
+        return level.getBlockState(surface).liquid()
+                || !level.getBlockState(surface).getFluidState().isEmpty()
+                || !level.getBlockState(surface.below()).getFluidState().isEmpty()
+                || !level.getBlockState(surface.above()).getFluidState().isEmpty();
+    }
+
+    private static int findWaterSurfaceY(ServerLevel level, List<BlockPos> centerPath, RoadPlacementPlan.BridgeRange range) {
+        int maxWaterSurfaceY = Integer.MIN_VALUE;
+        for (int i = Math.max(0, range.startIndex()); i <= Math.min(centerPath.size() - 1, range.endIndex()); i++) {
+            BlockPos pos = centerPath.get(i);
+            int y = level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(pos.getX(), 0, pos.getZ())).below().getY();
+            maxWaterSurfaceY = Math.max(maxWaterSurfaceY, y);
+        }
+        return maxWaterSurfaceY == Integer.MIN_VALUE ? 0 : maxWaterSurfaceY;
     }
 
     private static BlockPos highlightPos(BlockPos anchorPos, List<BlockPos> centerPath, boolean start) {
@@ -1772,6 +1849,9 @@ public final class StructureConstructionManager {
 
     private static boolean tryPlaceRoad(ServerLevel level, BlockPos pos, RoadPlacementStyle style) {
         stabilizeRoadFoundation(level, pos, style);
+        if (!clearRoadDeckSpace(level, pos)) {
+            return false;
+        }
         BlockState at = level.getBlockState(pos);
         if (at.equals(style.surface())) {
             return false;
@@ -1870,6 +1950,26 @@ public final class StructureConstructionManager {
         }
     }
 
+    private static boolean clearRoadDeckSpace(ServerLevel level, BlockPos pos) {
+        BlockState deckState = level.getBlockState(pos);
+        if (!deckState.isAir() && !deckState.liquid() && !isRoadPlacementReplaceable(deckState) && !isRoadSurface(deckState)) {
+            return false;
+        }
+        if (!deckState.isAir() && !deckState.liquid() && isRoadPlacementReplaceable(deckState) && !isRoadSurface(deckState)) {
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+        }
+
+        BlockPos headPos = pos.above();
+        BlockState headState = level.getBlockState(headPos);
+        if (!headState.isAir() && !headState.liquid() && !isRoadPlacementReplaceable(headState)) {
+            return false;
+        }
+        if (!headState.isAir() && !headState.liquid()) {
+            level.setBlock(headPos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+        }
+        return true;
+    }
+
     private static boolean isRoadSurface(BlockState state) {
         return state.is(Blocks.STONE_BRICK_SLAB)
                 || state.is(Blocks.STONE_BRICK_STAIRS)
@@ -1908,6 +2008,80 @@ public final class StructureConstructionManager {
             }
         }
         return List.copyOf(merged.values());
+    }
+
+    private static List<RoadGeometryPlanner.GhostRoadBlock> decorateNavigableBridgeGhosts(List<RoadGeometryPlanner.GhostRoadBlock> baseGhosts,
+                                                                                           List<BlockPos> centerPath,
+                                                                                           List<RoadPlacementPlan.BridgeRange> navigableRanges,
+                                                                                           List<BlockPos> lampBases,
+                                                                                           List<BlockPos> navigableLightPositions) {
+        LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> merged = new LinkedHashMap<>();
+        if (baseGhosts != null) {
+            for (RoadGeometryPlanner.GhostRoadBlock block : baseGhosts) {
+                if (block != null) {
+                    merged.put(block.pos().asLong(), block);
+                }
+            }
+        }
+        appendNavigableBridgeRailings(merged, baseGhosts, centerPath, navigableRanges);
+        if (navigableLightPositions != null) {
+            for (BlockPos lightPos : navigableLightPositions) {
+                if (lightPos == null) {
+                    continue;
+                }
+                appendGhost(merged, lightPos.above(), Blocks.SPRUCE_FENCE.defaultBlockState());
+                appendGhost(merged, lightPos, Blocks.LANTERN.defaultBlockState());
+            }
+        }
+        return withLampGhosts(List.copyOf(merged.values()), lampBases);
+    }
+
+    private static void appendNavigableBridgeRailings(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> merged,
+                                                      List<RoadGeometryPlanner.GhostRoadBlock> baseGhosts,
+                                                      List<BlockPos> centerPath,
+                                                      List<RoadPlacementPlan.BridgeRange> navigableRanges) {
+        if (merged == null || baseGhosts == null || centerPath == null || navigableRanges == null || navigableRanges.isEmpty()) {
+            return;
+        }
+        for (RoadPlacementPlan.BridgeRange range : navigableRanges) {
+            if (range == null) {
+                continue;
+            }
+            for (int i = Math.max(0, range.startIndex()); i <= Math.min(centerPath.size() - 1, range.endIndex()); i++) {
+                BlockPos center = centerPath.get(i);
+                BlockPos deckCenter = resolveDeckCenterPos(baseGhosts, center);
+                BlockPos previous = centerPath.get(Math.max(0, i - 1));
+                BlockPos next = centerPath.get(Math.min(centerPath.size() - 1, i + 1));
+                int dx = Integer.compare(next.getX(), previous.getX());
+                int dz = Integer.compare(next.getZ(), previous.getZ());
+                for (BlockPos railingPos : lateralBridgeOffsets(deckCenter, dx, dz, 4)) {
+                    appendGhost(merged, railingPos, Blocks.SPRUCE_FENCE.defaultBlockState());
+                }
+            }
+        }
+    }
+
+    private static BlockPos resolveDeckCenterPos(List<RoadGeometryPlanner.GhostRoadBlock> baseGhosts, BlockPos center) {
+        BlockPos best = center.above();
+        for (RoadGeometryPlanner.GhostRoadBlock ghost : baseGhosts) {
+            if (ghost == null || ghost.pos() == null) {
+                continue;
+            }
+            if (ghost.pos().getX() == center.getX() && ghost.pos().getZ() == center.getZ() && ghost.pos().getY() >= best.getY()) {
+                best = ghost.pos();
+            }
+        }
+        return best;
+    }
+
+    private static List<BlockPos> lateralBridgeOffsets(BlockPos center, int dx, int dz, int distance) {
+        if (dx != 0 && dz == 0) {
+            return List.of(center.north(distance), center.south(distance));
+        }
+        if (dz != 0 && dx == 0) {
+            return List.of(center.east(distance), center.west(distance));
+        }
+        return List.of(center.north(distance), center.south(distance));
     }
 
     private static void appendGhost(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> merged,
@@ -2079,9 +2253,28 @@ public final class StructureConstructionManager {
         if (state == null) {
             return true;
         }
+        Block block = state.getBlock();
         return state.isAir()
                 || state.canBeReplaced()
                 || state.liquid()
+                || state.is(BlockTags.LEAVES)
+                || state.is(BlockTags.LOGS)
+                || block instanceof LeavesBlock
+                || block instanceof RotatedPillarBlock
+                || block instanceof VineBlock
+                || block instanceof SnowLayerBlock
+                || state.is(Blocks.VINE)
+                || state.is(Blocks.SNOW)
+                || state.is(Blocks.GRASS_BLOCK)
+                || state.is(Blocks.DIRT)
+                || state.is(Blocks.COARSE_DIRT)
+                || state.is(Blocks.ROOTED_DIRT)
+                || state.is(Blocks.PODZOL)
+                || state.is(Blocks.MYCELIUM)
+                || state.is(Blocks.MUD)
+                || state.is(Blocks.CLAY)
+                || state.is(Blocks.FARMLAND)
+                || state.is(Blocks.DIRT_PATH)
                 || state.is(Blocks.GRASS)
                 || state.is(Blocks.TALL_GRASS)
                 || state.is(Blocks.FERN)
@@ -3187,6 +3380,7 @@ public final class StructureConstructionManager {
                 ghostBlocks,
                 buildSteps,
                 detectBridgeRanges(level, centerPath),
+                detectNavigableWaterBridgeRanges(level, centerPath, detectBridgeRanges(level, centerPath)),
                 toBlockPosList(state.ownedBlocks()),
                 highlightPos(start, centerPath, true),
                 highlightPos(end, centerPath, false),

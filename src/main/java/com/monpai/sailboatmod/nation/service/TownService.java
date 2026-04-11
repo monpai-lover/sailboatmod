@@ -886,6 +886,57 @@ public final class TownService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.invite.not_mayor"));
         }
 
+        return applyTownToNation(data, actor.getUUID(), town, rawNationName);
+    }
+
+    public static NationResult joinTownToNationDirectly(ServerPlayer actor, String rawNationName) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        NationService.updateKnownPlayer(actor);
+
+        TownRecord town = findStandaloneTownForMayor(data, actor.getUUID());
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.invite.not_mayor"));
+        }
+
+        return joinTownToNationDirectly(data, actor.getUUID(), town, rawNationName);
+    }
+
+    public static NationResult joinTownToNationFromGui(ServerPlayer actor, String townId, String rawNationName) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        NationService.updateKnownPlayer(actor);
+
+        TownRecord town = data.getTown(townId);
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.not_found", townId));
+        }
+        if (!canManageTown(actor, data, town)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.no_permission"));
+        }
+        if (town.hasNation()) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.invite.already_in_nation", town.name()));
+        }
+
+        NationRecord nation = data.findNationByName(NationRecord.normalizeName(rawNationName));
+        NationMemberRecord actorMember = data.getMember(actor.getUUID());
+        if (shouldJoinTownDirectly(actorMember, nation)) {
+            return joinTownToNationDirectly(data, actor.getUUID(), town, rawNationName);
+        }
+        return applyTownToNation(data, actor.getUUID(), town, rawNationName);
+    }
+
+    static NationResult joinTownToNationDirectlyForTest(NationSavedData data, UUID actorUuid, String rawNationName) {
+        TownRecord town = findStandaloneTownForMayor(data, actorUuid);
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.invite.not_mayor"));
+        }
+        return joinTownToNationDirectly(data, actorUuid, town, rawNationName);
+    }
+
+    private static NationResult applyTownToNation(NationSavedData data, UUID actorUuid, TownRecord town, String rawNationName) {
+        if (data == null || actorUuid == null || town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.invite.not_mayor"));
+        }
+
         NationRecord nation = data.findNationByName(NationRecord.normalizeName(rawNationName));
         if (nation == null) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.join.not_found", rawNationName));
@@ -903,9 +954,34 @@ public final class TownService {
         }
 
         data.putTownNationRequest(new TownNationRequestRecord(
-                town.townId(), nation.nationId(), TownNationRequestRecord.DIRECTION_APPLY, actor.getUUID(), System.currentTimeMillis()
+                town.townId(), nation.nationId(), TownNationRequestRecord.DIRECTION_APPLY, actorUuid, System.currentTimeMillis()
         ));
         return NationResult.success(Component.translatable("command.sailboatmod.nation.town.apply.success", town.name(), nation.name()));
+    }
+
+    private static NationResult joinTownToNationDirectly(NationSavedData data, UUID actorUuid, TownRecord town, String rawNationName) {
+        if (data == null || actorUuid == null || town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.invite.not_mayor"));
+        }
+
+        NationRecord nation = data.findNationByName(NationRecord.normalizeName(rawNationName));
+        if (nation == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.join.not_found", rawNationName));
+        }
+
+        NationMemberRecord actorMember = data.getMember(actorUuid);
+        if (!shouldJoinTownDirectly(actorMember, nation)) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.invite.no_nation"));
+        }
+
+        bindTownToNation(data, town, nation.nationId());
+        return NationResult.success(Component.translatable("command.sailboatmod.nation.town.join.success", town.name(), nation.name()));
+    }
+
+    private static boolean shouldJoinTownDirectly(NationMemberRecord actorMember, NationRecord nation) {
+        return actorMember != null
+                && nation != null
+                && nation.nationId().equals(actorMember.nationId());
     }
 
     public static NationResult townJoinNation(ServerPlayer actor, String rawNationName) {

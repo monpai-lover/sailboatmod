@@ -19,10 +19,14 @@ public final class RoadPathfinder {
     }
 
     public static List<BlockPos> findPath(Level level, BlockPos from, BlockPos to) {
-        return findPath(level, from, to, Set.of());
+        return findPath(level, from, to, Set.of(), false);
     }
 
     public static List<BlockPos> findPath(Level level, BlockPos from, BlockPos to, Set<Long> blockedColumns) {
+        return findPath(level, from, to, blockedColumns, false);
+    }
+
+    public static List<BlockPos> findPath(Level level, BlockPos from, BlockPos to, Set<Long> blockedColumns, boolean allowWaterFallback) {
         BlockPos start = findSurface(level, from.getX(), from.getZ());
         BlockPos end = findSurface(level, to.getX(), to.getZ());
         if (start == null || end == null || isBlockedRoadColumn(level, start, blockedColumns) || isBlockedRoadColumn(level, end, blockedColumns)) {
@@ -33,7 +37,7 @@ public final class RoadPathfinder {
                 RoadRouteNodePlanner.RouteMap.of(
                         start,
                         end,
-                        pos -> sampleRouteColumn(level, pos, blockedColumns)
+                        pos -> sampleRouteColumn(level, pos, blockedColumns, allowWaterFallback)
                 )
         );
         if (plan.path().isEmpty()) {
@@ -42,36 +46,45 @@ public final class RoadPathfinder {
 
         List<BlockPos> finalized = RoadBezierCenterline.build(
                 plan.path(),
-                pos -> sampleSurface(level, pos, blockedColumns),
+                pos -> sampleSurface(level, pos, blockedColumns, allowWaterFallback),
                 blockedColumns
         );
         return finalized.isEmpty() ? plan.path() : finalized;
     }
 
-    private static RoadRouteNodePlanner.RouteColumn sampleRouteColumn(Level level, BlockPos pos, Set<Long> blockedColumns) {
+    private static RoadRouteNodePlanner.RouteColumn sampleRouteColumn(Level level, BlockPos pos, Set<Long> blockedColumns, boolean allowWaterFallback) {
         BlockPos surface = findSurface(level, pos.getX(), pos.getZ());
         if (surface == null) {
             return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
         }
-        boolean blocked = isBlockedRoadColumn(level, surface, blockedColumns);
         boolean bridge = requiresBridge(level, surface);
+        boolean blocked = isBlockedRoadColumn(level, surface, blockedColumns) || isBridgeBlockedForMode(bridge, allowWaterFallback);
         int adjacentWater = adjacentWaterCount(level, surface);
         int terrainPenalty = terrainPenalty(level, surface);
         boolean preferred = isRoad(level, surface) || (!bridge && adjacentWater == 0 && terrainPenalty <= 1);
         return new RoadRouteNodePlanner.RouteColumn(surface, blocked, bridge, adjacentWater, terrainPenalty, preferred);
     }
 
-    private static RoadBezierCenterline.SurfaceSample sampleSurface(Level level, BlockPos pos, Set<Long> blockedColumns) {
+    private static RoadBezierCenterline.SurfaceSample sampleSurface(Level level, BlockPos pos, Set<Long> blockedColumns, boolean allowWaterFallback) {
         BlockPos surface = findSurface(level, pos.getX(), pos.getZ());
         if (surface == null) {
             return new RoadBezierCenterline.SurfaceSample(null, true, false, 0);
         }
+        boolean bridge = requiresBridge(level, surface);
         return new RoadBezierCenterline.SurfaceSample(
                 surface,
-                isBlockedRoadColumn(level, surface, blockedColumns),
-                requiresBridge(level, surface),
+                isBlockedRoadColumn(level, surface, blockedColumns) || isBridgeBlockedForMode(bridge, allowWaterFallback),
+                bridge,
                 adjacentWaterCount(level, surface)
         );
+    }
+
+    static boolean isBridgeBlockedForModeForTest(boolean bridge, boolean allowWaterFallback) {
+        return isBridgeBlockedForMode(bridge, allowWaterFallback);
+    }
+
+    private static boolean isBridgeBlockedForMode(boolean bridge, boolean allowWaterFallback) {
+        return bridge && !allowWaterFallback;
     }
 
     private static BlockPos findSurface(Level level, int x, int z) {

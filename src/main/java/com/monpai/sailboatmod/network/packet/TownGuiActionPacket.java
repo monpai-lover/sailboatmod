@@ -95,6 +95,7 @@ public class TownGuiActionPacket {
                             ? NationResult.failure(Component.translatable("command.sailboatmod.nation.member.invalid"))
                             : TownService.assignMayorById(player, packet.townId, targetUuid);
                 }
+                case JOIN_NATION -> TownService.joinTownToNationFromGui(player, packet.townId, packet.text);
                 case REMOVE_CORE -> TownService.removeCoreBlock(player, packet.townId);
             };
 
@@ -136,7 +137,16 @@ public class TownGuiActionPacket {
         TOGGLE_FLAG_MIRROR,
         ABANDON_TOWN,
         APPOINT_MAYOR,
+        JOIN_NATION,
         REMOVE_CORE
+    }
+
+    static boolean shouldJoinTownDirectlyForTest(String actorNationId, String targetNationId) {
+        return shouldJoinTownDirectly(actorNationId, targetNationId);
+    }
+
+    private static boolean shouldJoinTownDirectly(String actorNationId, String targetNationId) {
+        return !actorNationId.isBlank() && actorNationId.equalsIgnoreCase(targetNationId);
     }
 
     private static int[] parseAreaBounds(String text) {

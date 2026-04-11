@@ -42,6 +42,16 @@ class RoadLightingPlannerTest {
         assertEquals(List.of(expectedLamp), lamps);
     }
 
+    @Test
+    void navigableBridgeLightingAvoidsCentralBoatLane() {
+        List<BlockPos> centerPath = straightPath(8);
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = List.of(new RoadPlacementPlan.BridgeRange(2, 4));
+
+        List<BlockPos> lights = RoadLightingPlanner.navigableBridgeLightsForTest(centerPath, bridgeRanges);
+
+        assertTrue(lights.stream().noneMatch(pos -> pos.equals(centerPath.get(2).below())));
+    }
+
     private static List<BlockPos> straightPath(int length) {
         List<BlockPos> path = new ArrayList<>(length);
         for (int i = 0; i < length; i++) {

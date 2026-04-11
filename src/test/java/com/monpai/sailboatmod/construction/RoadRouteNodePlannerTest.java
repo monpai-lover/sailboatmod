@@ -190,6 +190,59 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
+    void longStraightDryRouteStillCompletesWithinPlannerBudget() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(400, 64, 0),
+                pos -> new RoadRouteNodePlanner.RouteColumn(
+                        new BlockPos(pos.getX(), 64, pos.getZ()),
+                        false,
+                        false,
+                        0,
+                        0,
+                        pos.getZ() == 0
+                )
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(400, 64, 0), plan.path().get(plan.path().size() - 1));
+        assertFalse(plan.usedBridge());
+    }
+
+    @Test
+    void acceptsRiverbankTransitionWithSevenBlockRise() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 71, 0),
+                pos -> {
+                    if (pos.getZ() != 0) {
+                        return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
+                    }
+                    int y = pos.getX() <= 1 ? 64 : 71;
+                    boolean bridge = pos.getX() == 2;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            new BlockPos(pos.getX(), y, 0),
+                            false,
+                            bridge,
+                            bridge ? 2 : 0,
+                            bridge ? 1 : 0,
+                            !bridge
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(4, 71, 0), plan.path().get(plan.path().size() - 1));
+        assertTrue(plan.path().contains(new BlockPos(2, 71, 0)));
+    }
+
+    @Test
     void bezierSmoothingSkipsBlockedColumnsAndUnsafeGeometry() {
         List<BlockPos> routeNodes = List.of(
                 new BlockPos(0, 64, 0),

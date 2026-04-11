@@ -18,7 +18,7 @@ public final class RoadRouteNodePlanner {
             {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
     };
     private static final int MAX_VISITED_NODES = 32_000;
-    private static final int MAX_STEP_HEIGHT = 5;
+    private static final int MAX_STEP_HEIGHT = 8;
     private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 5;
     private static final int MAX_TOTAL_BRIDGE_COLUMNS = 14;
     private static final double MAX_BRIDGE_SHARE = 0.20D;

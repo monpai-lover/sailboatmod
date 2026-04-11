@@ -22,6 +22,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -331,8 +332,12 @@ public final class ManualRoadPlannerService {
         }
 
         Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
-        WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, sourceClaims, targetClaims, blockedColumns);
+        WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns);
         if (waitingAreaRoute == null) {
+            waitingAreaRoute = resolveTownAnchorFallbackRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns);
+        }
+        if (waitingAreaRoute == null) {
+            writeFailureMessage(stack, "message.sailboatmod.road_planner.path_failed");
             return null;
         }
 
@@ -383,13 +388,19 @@ public final class ManualRoadPlannerService {
     }
 
     private static WaitingAreaRoute resolveWaitingAreaRoute(ServerLevel level,
+                                                            NationSavedData data,
+                                                            TownRecord sourceTown,
+                                                            TownRecord targetTown,
                                                             List<NationClaimRecord> sourceClaims,
                                                             List<NationClaimRecord> targetClaims,
                                                             Set<Long> blockedColumns) {
         List<StationZoneCandidate> sourceStations = collectPostStationsInClaims(level, sourceClaims);
         List<StationZoneCandidate> targetStations = collectPostStationsInClaims(level, targetClaims);
         ManualPlanFailure failure = validateWaitingAreaRouteStations(!sourceStations.isEmpty(), !targetStations.isEmpty());
-        if (failure != ManualPlanFailure.NONE) {
+        if (!shouldAttemptTownAnchorFallback(failure) && failure != ManualPlanFailure.NONE) {
+            return null;
+        }
+        if (sourceStations.isEmpty() || targetStations.isEmpty()) {
             return null;
         }
 
@@ -426,7 +437,22 @@ public final class ManualRoadPlannerService {
                         PostStationRoadAnchorHelper.computeFootprintColumns(target.zone()),
                         targetSurface
                 );
-                List<BlockPos> path = RoadPathfinder.findPath(level, sourceSurface, targetSurface, adjustedBlockedColumns);
+                List<BlockPos> path = findPreferredRoadPath(level, sourceSurface, targetSurface, adjustedBlockedColumns);
+                if (path.size() < 2) {
+                    path = buildConnectedRouteViaTownAnchors(
+                            level,
+                            data,
+                            sourceTown,
+                            targetTown,
+                            sourceClaims,
+                            targetClaims,
+                            source.stationPos(),
+                            target.stationPos(),
+                            sourceSurface,
+                            targetSurface,
+                            adjustedBlockedColumns
+                    );
+                }
                 if (path.size() < 2) {
                     continue;
                 }
@@ -439,6 +465,99 @@ public final class ManualRoadPlannerService {
             }
         }
         return best;
+    }
+
+    private static WaitingAreaRoute resolveTownAnchorFallbackRoute(ServerLevel level,
+                                                                   NationSavedData data,
+                                                                   TownRecord sourceTown,
+                                                                   TownRecord targetTown,
+                                                                   List<NationClaimRecord> sourceClaims,
+                                                                   List<NationClaimRecord> targetClaims,
+                                                                   Set<Long> blockedColumns) {
+        BlockPos sourcePreferred = townCorePos(level, sourceTown);
+        BlockPos targetPreferred = townCorePos(level, targetTown);
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourcePreferred, targetPreferred);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetPreferred, sourcePreferred);
+        if (!isValidRoadAnchor(level, sourceAnchor) || !isValidRoadAnchor(level, targetAnchor)) {
+            return null;
+        }
+
+        List<BlockPos> path = normalizePath(
+                sourceAnchor,
+                findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns),
+                targetAnchor
+        );
+        if (path.size() < 2) {
+            return null;
+        }
+        return new WaitingAreaRoute(sourceAnchor, targetAnchor, sourceAnchor, targetAnchor, path);
+    }
+
+    private static List<BlockPos> buildConnectedRouteViaTownAnchors(ServerLevel level,
+                                                                    NationSavedData data,
+                                                                    TownRecord sourceTown,
+                                                                    TownRecord targetTown,
+                                                                    List<NationClaimRecord> sourceClaims,
+                                                                    List<NationClaimRecord> targetClaims,
+                                                                    BlockPos sourceStationPos,
+                                                                    BlockPos targetStationPos,
+                                                                    BlockPos sourceExit,
+                                                                    BlockPos targetExit,
+                                                                    Set<Long> blockedColumns) {
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourceStationPos, targetStationPos);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetStationPos, sourceStationPos);
+        if (sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+
+        List<BlockPos> sourceLeg = normalizePath(sourceExit, findPreferredRoadPath(level, sourceExit, sourceAnchor, blockedColumns), sourceAnchor);
+        List<BlockPos> trunk = normalizePath(sourceAnchor, findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns), targetAnchor);
+        List<BlockPos> targetLeg = normalizePath(targetAnchor, findPreferredRoadPath(level, targetAnchor, targetExit, blockedColumns), targetExit);
+        if (sourceLeg.size() < 2 || trunk.size() < 2 || targetLeg.size() < 2) {
+            return List.of();
+        }
+        return stitchRouteSegments(sourceLeg, trunk, targetLeg);
+    }
+
+    private static List<BlockPos> stitchRouteSegments(List<BlockPos>... segments) {
+        LinkedHashSet<BlockPos> ordered = new LinkedHashSet<>();
+        if (segments == null) {
+            return List.of();
+        }
+        for (List<BlockPos> segment : segments) {
+            if (segment == null) {
+                continue;
+            }
+            for (BlockPos pos : segment) {
+                if (pos != null) {
+                    ordered.add(pos.immutable());
+                }
+            }
+        }
+        return List.copyOf(ordered);
+    }
+
+    private static List<BlockPos> findPreferredRoadPath(ServerLevel level,
+                                                        BlockPos from,
+                                                        BlockPos to,
+                                                        Set<Long> blockedColumns) {
+        List<BlockPos> landPath = RoadPathfinder.findPath(level, from, to, blockedColumns, false);
+        if (!shouldUseWaterFallback(landPath.size() >= 2, true)) {
+            return landPath;
+        }
+        return RoadPathfinder.findPath(level, from, to, blockedColumns, true);
+    }
+
+    private static boolean shouldUseWaterFallback(boolean landPathFound, boolean waterFallbackAllowed) {
+        return !landPathFound && waterFallbackAllowed;
+    }
+
+    static boolean shouldUseWaterFallbackForTest(boolean landPathFound, boolean waterFallbackAllowed) {
+        return shouldUseWaterFallback(landPathFound, waterFallbackAllowed);
+    }
+
+    static RouteAttemptDecision routeAttemptDecisionForTest(boolean landPathFound, boolean waterFallbackAllowed) {
+        return new RouteAttemptDecision(shouldUseWaterFallback(landPathFound, waterFallbackAllowed));
     }
 
     private static List<StationZoneCandidate> collectPostStationsInClaims(ServerLevel level, List<NationClaimRecord> claims) {
@@ -538,6 +657,10 @@ public final class ManualRoadPlannerService {
         if (isValidRoadAnchor(level, townCore)) {
             return townCore;
         }
+        BlockPos searchedClaimAnchor = nearestClaimSurfaceAnchor(level, claims, towardPos, preferredFallback);
+        if (isValidRoadAnchor(level, searchedClaimAnchor)) {
+            return searchedClaimAnchor;
+        }
         BlockPos fallback = surfaceAt(level, preferredFallback);
         return isValidRoadAnchor(level, fallback) ? fallback : null;
     }
@@ -593,6 +716,39 @@ public final class ManualRoadPlannerService {
                 if (distance < bestDistance) {
                     bestDistance = distance;
                     best = candidate;
+                }
+            }
+        }
+        return best;
+    }
+
+    private static BlockPos nearestClaimSurfaceAnchor(ServerLevel level,
+                                                      List<NationClaimRecord> claims,
+                                                      BlockPos towardPos,
+                                                      BlockPos preferredFallback) {
+        if (level == null || claims == null || claims.isEmpty()) {
+            return null;
+        }
+        BlockPos focus = towardPos != null ? towardPos : preferredFallback;
+        int fallbackY = preferredFallback == null ? level.getSeaLevel() : preferredFallback.getY();
+        BlockPos best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (NationClaimRecord claim : claims) {
+            int minX = claim.chunkX() * 16;
+            int minZ = claim.chunkZ() * 16;
+            int maxX = minX + 15;
+            int maxZ = minZ + 15;
+            for (int x = minX + 1; x <= maxX - 1; x += 2) {
+                for (int z = minZ + 1; z <= maxZ - 1; z += 2) {
+                    BlockPos candidate = surfaceAt(level, new BlockPos(x, fallbackY, z));
+                    if (!isValidRoadAnchor(level, candidate)) {
+                        continue;
+                    }
+                    double distance = focus == null ? 0.0D : candidate.distSqr(focus);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = candidate.immutable();
+                    }
                 }
             }
         }
@@ -770,6 +926,12 @@ public final class ManualRoadPlannerService {
         return ManualPlanFailure.NONE;
     }
 
+    private static boolean shouldAttemptTownAnchorFallback(ManualPlanFailure failure) {
+        return failure == ManualPlanFailure.SOURCE_STATION_MISSING
+                || failure == ManualPlanFailure.TARGET_STATION_MISSING
+                || failure == ManualPlanFailure.ROUTE_NOT_FOUND;
+    }
+
     static Set<Long> unblockStationFootprint(Set<Long> blockedColumns, Set<BlockPos> waitingAreaColumns, BlockPos exitPos) {
         LinkedHashSet<Long> updated = new LinkedHashSet<>(blockedColumns == null ? Set.of() : blockedColumns);
         if (waitingAreaColumns != null) {
@@ -797,8 +959,20 @@ public final class ManualRoadPlannerService {
         }
         BlockState roadState = level.getBlockState(pos.above());
         BlockState headState = level.getBlockState(pos.above(2));
-        return (roadState.isAir() || roadState.canBeReplaced() || roadState.liquid())
+        return isRoadAnchorColumn(surface, roadState, headState)
+                && (roadState.isAir() || roadState.canBeReplaced() || roadState.liquid() || isExistingRoadSurface(roadState))
                 && (headState.isAir() || headState.canBeReplaced() || headState.liquid());
+    }
+
+    private static boolean isRoadAnchorColumn(BlockState surface, BlockState roadState, BlockState headState) {
+        if (surface == null || roadState == null || headState == null) {
+            return false;
+        }
+        return !surface.getFluidState().isEmpty() ? false : (headState.isAir() || headState.canBeReplaced() || headState.liquid());
+    }
+
+    private static boolean isExistingRoadSurface(BlockState roadState) {
+        return roadState.is(Blocks.STONE_BRICK_SLAB);
     }
 
     private static long columnKey(int x, int z) {
@@ -815,6 +989,15 @@ public final class ManualRoadPlannerService {
 
     static long columnKeyForTest(int x, int z) {
         return columnKey(x, z);
+    }
+
+    static boolean isRoadAnchorColumnForTest(BlockState surface, BlockState roadState, BlockState headState) {
+        return isRoadAnchorColumn(surface, roadState, headState)
+                && (roadState.isAir() || roadState.canBeReplaced() || roadState.liquid() || isExistingRoadSurface(roadState));
+    }
+
+    static boolean shouldAttemptTownAnchorFallbackForTest(ManualPlanFailure failure) {
+        return shouldAttemptTownAnchorFallback(failure);
     }
 
     private static BlockPos surfaceAt(ServerLevel level, BlockPos pos) {
@@ -1102,6 +1285,9 @@ public final class ManualRoadPlannerService {
     }
 
     private record TargetedRoadPreview(String roadId, String sourceName, String targetName, RoadPlacementPlan plan) {
+    }
+
+    record RouteAttemptDecision(boolean usedWaterFallback) {
     }
 
     private record StationZoneCandidate(BlockPos stationPos, PostStationRoadAnchorHelper.Zone zone) {

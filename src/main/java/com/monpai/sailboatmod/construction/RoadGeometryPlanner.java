@@ -85,8 +85,10 @@ public final class RoadGeometryPlanner {
         if (centerPath.isEmpty()) {
             return new int[0];
         }
-        int[] smoothed = smoothPlacementHeights(samplePlacementHeights(centerPath));
-        return applyBridgeProfiles(smoothed, bridgeProfiles);
+        int[] sampledHeights = samplePlacementHeights(centerPath);
+        int[] smoothed = smoothPlacementHeights(sampledHeights);
+        int[] bridged = applyBridgeProfiles(smoothed, bridgeProfiles);
+        return constrainToTerrainEnvelope(bridged, sampledHeights, bridgeProfiles);
     }
 
     public static int interpolatePlacementHeight(int x, int z, List<BlockPos> centerPath, int[] placementHeights) {
@@ -497,11 +499,105 @@ public final class RoadGeometryPlanner {
             return adjusted;
         }
         for (RoadBridgePlanner.BridgeProfile profile : bridgeProfiles) {
-            if (profile == null || profile.kind() != RoadBridgePlanner.BridgeKind.ARCHED) {
+            if (profile == null) {
                 continue;
             }
-            applyArchedProfile(adjusted, profile.startIndex(), profile.endIndex());
+            if (profile.navigableWaterBridge()) {
+                applyNavigableBridgeProfile(adjusted, profile);
+                continue;
+            }
+            if (profile.kind() == RoadBridgePlanner.BridgeKind.ARCHED) {
+                applyArchedProfile(adjusted, profile.startIndex(), profile.endIndex());
+            }
         }
+        return adjusted;
+    }
+
+    private static int[] constrainToTerrainEnvelope(int[] placementHeights,
+                                                    int[] sampledHeights,
+                                                    List<RoadBridgePlanner.BridgeProfile> bridgeProfiles) {
+        int[] constrained = placementHeights.clone();
+        boolean[] bridgeColumns = new boolean[constrained.length];
+        boolean[] terrainLockedColumns = steepTerrainLockMask(sampledHeights);
+        for (RoadBridgePlanner.BridgeProfile profile : bridgeProfiles) {
+            if (profile == null) {
+                continue;
+            }
+            int start = Math.max(0, Math.min(profile.startIndex(), bridgeColumns.length - 1));
+            int end = Math.max(0, Math.min(profile.endIndex(), bridgeColumns.length - 1));
+            for (int i = start; i <= end; i++) {
+                bridgeColumns[i] = true;
+            }
+        }
+        for (int i = 0; i < constrained.length; i++) {
+            if (bridgeColumns[i] || !terrainLockedColumns[i]) {
+                continue;
+            }
+            int minDeckHeight = sampledHeights[i];
+            int maxDeckHeight = sampledHeights[i] + 1;
+            constrained[i] = Math.max(minDeckHeight, Math.min(maxDeckHeight, constrained[i]));
+        }
+        return constrained;
+    }
+
+    private static boolean[] steepTerrainLockMask(int[] sampledHeights) {
+        boolean[] locked = new boolean[sampledHeights.length];
+        if (sampledHeights.length < 3) {
+            return locked;
+        }
+        int runStart = -1;
+        int previousDirection = 0;
+        int runSegments = 0;
+        for (int i = 1; i < sampledHeights.length; i++) {
+            int rise = sampledHeights[i] - sampledHeights[i - 1];
+            int direction = Integer.signum(rise);
+            boolean steep = Math.abs(rise) >= 2;
+            if (steep && direction != 0 && (previousDirection == 0 || direction == previousDirection)) {
+                if (runStart < 0) {
+                    runStart = i - 1;
+                    runSegments = 1;
+                } else {
+                    runSegments++;
+                }
+                previousDirection = direction;
+                continue;
+            }
+            if (runStart >= 0 && runSegments >= 2) {
+                markLockedRange(locked, runStart, i - 1);
+            }
+            runStart = steep ? i - 1 : -1;
+            runSegments = steep ? 1 : 0;
+            previousDirection = steep ? direction : 0;
+        }
+        if (runStart >= 0 && runSegments >= 2) {
+            markLockedRange(locked, runStart, sampledHeights.length - 1);
+        }
+        return locked;
+    }
+
+    private static void markLockedRange(boolean[] locked, int startInclusive, int endInclusive) {
+        for (int i = Math.max(0, startInclusive); i <= Math.min(locked.length - 1, endInclusive); i++) {
+            locked[i] = true;
+        }
+    }
+
+    private static void applyNavigableBridgeProfile(int[] placementHeights, RoadBridgePlanner.BridgeProfile profile) {
+        if (placementHeights.length == 0 || profile == null) {
+            return;
+        }
+        int clampedStart = Math.max(0, Math.min(profile.startIndex(), placementHeights.length - 1));
+        int clampedEnd = Math.max(0, Math.min(profile.endIndex(), placementHeights.length - 1));
+        if (clampedEnd < clampedStart) {
+            return;
+        }
+        for (int i = clampedStart; i <= clampedEnd; i++) {
+            placementHeights[i] = Math.max(placementHeights[i], profile.deckHeight());
+        }
+    }
+
+    static int[] applyNavigableBridgeProfileForTest(int[] baseHeights, RoadBridgePlanner.BridgeProfile profile) {
+        int[] adjusted = baseHeights.clone();
+        applyNavigableBridgeProfile(adjusted, profile);
         return adjusted;
     }
 

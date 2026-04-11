@@ -75,6 +75,9 @@ public class TownHomeScreen extends Screen {
     private Button flagTabButton;
     private Button economyTabButton;
     private Button saveTownNameButton;
+    private Button joinNationButton;
+    private Button joinNationConfirmButton;
+    private Button joinNationCancelButton;
     private Button appointMayorButton;
     private Button claimButton;
     private Button unclaimButton;
@@ -103,6 +106,9 @@ public class TownHomeScreen extends Screen {
     private int autoRefreshTicks;
     private int memberScroll;
     private int pageScroll;
+    private boolean joinNationOverlayOpen;
+    private int joinNationScroll;
+    private int selectedJoinNationIndex;
     private String selectedMemberUuid = "";
     private int mapOffsetX = 0;
     private int mapOffsetZ = 0;
@@ -190,7 +196,10 @@ public class TownHomeScreen extends Screen {
         this.addRenderableWidget(this.townNameInput);
         this.saveTownNameButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.save_info"), b -> submitRenameTown()).bounds(left + BODY_X + 162, top + BODY_Y + 154, 96, 18).build());
         this.abandonTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.abandon"), b -> submitAbandonTown()).bounds(left + BODY_X + 266, top + BODY_Y + 154, 96, 18).build());
+        this.joinNationButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.join_nation"), b -> openJoinNationOverlay()).bounds(left + BODY_X + 12, top + BODY_Y + 178, 120, 18).build());
         this.removeCoreButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.remove_core"), b -> submitRemoveCore()).bounds(left + BODY_X + 266, top + BODY_Y + 178, 96, 18).build());
+        this.joinNationConfirmButton = this.addRenderableWidget(Button.builder(Component.translatable("gui.yes"), b -> submitJoinNationSelection()).bounds(left + BODY_X + 196, top + BODY_Y + 164, 74, 18).build());
+        this.joinNationCancelButton = this.addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> closeJoinNationOverlay()).bounds(left + BODY_X + 276, top + BODY_Y + 164, 74, 18).build());
         this.appointMayorButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.town.action.appoint_mayor"), b -> appointSelectedMayor()).bounds(left + BODY_X + 222, top + BODY_Y + 196, 180, 18).build());
 
         this.claimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.claim"), b -> claimSelectedChunk()).bounds(left + BODY_X + 12, top + BODY_Y + BODY_H - 26, 72, 18).build());
@@ -260,6 +269,23 @@ public class TownHomeScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (this.joinNationOverlayOpen) {
+            if (keyCode == 256) {
+                closeJoinNationOverlay();
+                return true;
+            }
+            if (keyCode == 264) {
+                moveJoinNationSelection(1);
+                return true;
+            }
+            if (keyCode == 265) {
+                moveJoinNationSelection(-1);
+                return true;
+            }
+            if (keyCode == 257 || keyCode == 335) {
+                return submitAndTrue(this::submitJoinNationSelection);
+            }
+        }
         if (keyCode == 257 || keyCode == 335) {
             if (this.currentPage == Page.OVERVIEW && this.townNameInput != null && this.townNameInput.isFocused()) return submitAndTrue(this::submitRenameTown);
             if (this.currentPage == Page.FLAG && this.flagPathInput != null && this.flagPathInput.isFocused()) return submitAndTrue(this::submitUpload);
@@ -269,6 +295,10 @@ public class TownHomeScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        if (this.joinNationOverlayOpen && isInsideJoinNationList(mouseX, mouseY)) {
+            this.joinNationScroll = clampJoinNationScroll(this.joinNationScroll + (delta > 0 ? -1 : 1));
+            return true;
+        }
         if (this.currentPage == Page.MEMBERS) {
             int[] bounds = memberListBounds();
             if (mouseX >= bounds[0] && mouseX < bounds[0] + bounds[2] && mouseY >= bounds[1] && mouseY < bounds[1] + bounds[3]) {
@@ -286,6 +316,12 @@ public class TownHomeScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (this.joinNationOverlayOpen) {
+            if (button == 0 && trySelectJoinNation(mouseX, mouseY)) {
+                return true;
+            }
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
         if (button == 0 && this.currentPage == Page.MEMBERS && trySelectMember(mouseX, mouseY)) return true;
         boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
         if (button == 0 && claimsMapView && trySelectClaim(mouseX, mouseY)) return true;
@@ -375,6 +411,9 @@ public class TownHomeScreen extends Screen {
         }
         g.pose().popPose();
         g.disableScissor();
+        if (this.joinNationOverlayOpen) {
+            drawJoinNationOverlay(g, mouseX, mouseY);
+        }
         if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
     }
 
@@ -433,6 +472,38 @@ public class TownHomeScreen extends Screen {
 
         g.drawString(this.font, Component.translatable("screen.sailboatmod.town.name"), x + 12, y + 142, 0xFFB8C0C8);
         drawWrappedLine(g, Component.translatable("screen.sailboatmod.town.overview.manage_hint"), x + 12, y + 204, BODY_W - 24, 0xFF8D98A3);
+    }
+
+    private void drawJoinNationOverlay(GuiGraphics g, int mouseX, int mouseY) {
+        int x = left() + BODY_X + 30;
+        int y = top() + BODY_Y + 36;
+        int w = BODY_W - 60;
+        int h = 130;
+        g.fill(left() + BODY_X, top() + BODY_Y + 24, left() + BODY_X + BODY_W, top() + BODY_Y + BODY_H - 1, 0x88000000);
+        drawPanelFrame(g, x, y, w, h);
+        g.drawString(this.font, Component.translatable("screen.sailboatmod.town.join_nation.title"), x + 10, y + 10, 0xFFE7C977);
+        int listX = x + 10;
+        int listY = y + 28;
+        int listW = w - 20;
+        int rowH = 16;
+        int visibleRows = 5;
+        g.fill(listX, listY, listX + listW, listY + rowH * visibleRows + 4, 0xAA182632);
+        int start = clampJoinNationScroll(this.joinNationScroll);
+        int end = Math.min(joinableNationTargets().size(), start + visibleRows);
+        int rowY = listY + 2;
+        for (int i = start; i < end; i++) {
+            TownOverviewData.JoinableNationTarget target = joinableNationTargets().get(i);
+            boolean selected = i == this.selectedJoinNationIndex;
+            boolean hovered = isInside(listX, rowY, listW, rowH, mouseX, mouseY);
+            if (selected || hovered) {
+                g.fill(listX + 1, rowY, listX + listW - 1, rowY + rowH - 1, selected ? 0xAA4C7A92 : 0x664C5E6A);
+            }
+            g.drawString(this.font, trimToWidth(target.nationName(), listW - 12), listX + 6, rowY + 4, selected ? 0xFFF4F7FB : 0xFFD0E1EC);
+            rowY += rowH;
+        }
+        if (joinableNationTargets().isEmpty()) {
+            g.drawString(this.font, Component.translatable("screen.sailboatmod.town.join_nation.empty"), listX + 6, listY + 10, 0xFF8D98A3);
+        }
     }
 
     private void drawMembersPage(GuiGraphics g, int x, int y) {
@@ -676,10 +747,14 @@ public class TownHomeScreen extends Screen {
         boolean membersPage = this.currentPage == Page.MEMBERS;
         boolean hasTown = this.data.hasTown();
         boolean canManageTown = hasTown && this.data.canManageTown();
+        boolean showJoinNationButton = shouldShowJoinNationButton();
         if (this.townNameInput != null) { this.townNameInput.visible = overviewPage; this.townNameInput.setEditable(overviewPage && canManageTown); }
         if (this.saveTownNameButton != null) { this.saveTownNameButton.visible = overviewPage; this.saveTownNameButton.active = overviewPage && canManageTown && townNameChanged(); }
         if (this.abandonTownButton != null) { this.abandonTownButton.visible = overviewPage && hasTown; this.abandonTownButton.active = overviewPage && hasTown && this.data.isMayor(); }
+        if (this.joinNationButton != null) { this.joinNationButton.visible = overviewPage && showJoinNationButton; this.joinNationButton.active = overviewPage && showJoinNationButton; }
         if (this.removeCoreButton != null) { this.removeCoreButton.visible = overviewPage && hasTown; this.removeCoreButton.active = overviewPage && hasTown && this.data.isMayor() && this.data.hasCore(); }
+        if (this.joinNationConfirmButton != null) { this.joinNationConfirmButton.visible = this.joinNationOverlayOpen; this.joinNationConfirmButton.active = this.joinNationOverlayOpen && selectedJoinNationTarget() != null; }
+        if (this.joinNationCancelButton != null) { this.joinNationCancelButton.visible = this.joinNationOverlayOpen; this.joinNationCancelButton.active = this.joinNationOverlayOpen; }
         if (this.appointMayorButton != null) { this.appointMayorButton.visible = membersPage; this.appointMayorButton.active = membersPage && hasTown && canAssignSelectedMemberAsMayor(); }
 
         boolean claimsPage = this.currentPage == Page.CLAIMS;
@@ -873,7 +948,10 @@ public class TownHomeScreen extends Screen {
         layoutWidget(this.townNameInput, 12, 154, 18, overviewPage);
         layoutWidget(this.saveTownNameButton, 162, 154, 18, overviewPage);
         layoutWidget(this.abandonTownButton, 266, 154, 18, overviewPage);
+        layoutWidget(this.joinNationButton, 12, 178, 18, overviewPage);
         layoutWidget(this.removeCoreButton, 266, 178, 18, overviewPage);
+        layoutFixedWidget(this.joinNationConfirmButton, 196, 164, this.joinNationOverlayOpen);
+        layoutFixedWidget(this.joinNationCancelButton, 276, 164, this.joinNationOverlayOpen);
 
         layoutWidget(this.appointMayorButton, 222, 196, 18, membersPage);
 
@@ -1177,6 +1255,7 @@ public class TownHomeScreen extends Screen {
     }
 
     private void syncSelections() {
+        syncJoinNationSelection();
         if (this.selectedClaimChunkX == Integer.MIN_VALUE || Math.abs(this.selectedClaimChunkX - mapCenterX()) > claimRadius() || Math.abs(this.selectedClaimChunkZ - mapCenterZ()) > claimRadius()) {
             this.selectedClaimChunkX = mapCenterX();
             this.selectedClaimChunkZ = mapCenterZ();
@@ -1246,6 +1325,140 @@ public class TownHomeScreen extends Screen {
         for (NationOverviewClaim claim : this.data.nearbyClaims()) {
             this.cachedClaimOverlays.put(claimKey(claim.chunkX(), claim.chunkZ()), claim);
         }
+    }
+
+    private void syncJoinNationSelection() {
+        if (!shouldShowJoinNationButton()) {
+            this.joinNationOverlayOpen = false;
+            this.joinNationScroll = 0;
+            this.selectedJoinNationIndex = 0;
+            return;
+        }
+        this.selectedJoinNationIndex = Math.max(0, Math.min(this.selectedJoinNationIndex, Math.max(0, joinableNationTargets().size() - 1)));
+        this.joinNationScroll = clampJoinNationScroll(this.joinNationScroll);
+    }
+
+    private boolean shouldShowJoinNationButton() {
+        return this.currentPage == Page.OVERVIEW
+                && this.data.hasTown()
+                && this.data.canManageTown()
+                && this.data.nationId().isBlank()
+                && !joinableNationTargets().isEmpty();
+    }
+
+    private List<TownOverviewData.JoinableNationTarget> joinableNationTargets() {
+        return this.data.joinableNationTargets();
+    }
+
+    private void openJoinNationOverlay() {
+        if (!shouldShowJoinNationButton()) {
+            return;
+        }
+        this.joinNationOverlayOpen = true;
+        syncJoinNationSelection();
+        updateButtonState();
+    }
+
+    private void closeJoinNationOverlay() {
+        this.joinNationOverlayOpen = false;
+        updateButtonState();
+    }
+
+    private void moveJoinNationSelection(int delta) {
+        if (joinableNationTargets().isEmpty()) {
+            return;
+        }
+        this.selectedJoinNationIndex = Math.max(0, Math.min(this.selectedJoinNationIndex + delta, joinableNationTargets().size() - 1));
+        this.joinNationScroll = clampJoinNationScroll(this.selectedJoinNationIndex);
+        updateButtonState();
+    }
+
+    private void submitJoinNationSelection() {
+        TownOverviewData.JoinableNationTarget target = selectedJoinNationTarget();
+        if (target == null) {
+            this.statusLine = Component.translatable("screen.sailboatmod.town.join_nation.none");
+            return;
+        }
+        sendTownAction(
+                new TownGuiActionPacket(TownGuiActionPacket.Action.JOIN_NATION, this.data.townId(), target.nationName()),
+                Component.translatable("screen.sailboatmod.town.join_nation.submitting", target.nationName())
+        );
+        this.joinNationOverlayOpen = false;
+        updateButtonState();
+    }
+
+    private TownOverviewData.JoinableNationTarget selectedJoinNationTarget() {
+        if (joinableNationTargets().isEmpty() || this.selectedJoinNationIndex < 0 || this.selectedJoinNationIndex >= joinableNationTargets().size()) {
+            return null;
+        }
+        return joinableNationTargets().get(this.selectedJoinNationIndex);
+    }
+
+    private boolean trySelectJoinNation(double mouseX, double mouseY) {
+        int listX = left() + BODY_X + 40;
+        int listY = top() + BODY_Y + 66;
+        int listW = BODY_W - 80;
+        int rowH = 16;
+        int visibleRows = 5;
+        if (!isInside(listX, listY, listW, rowH * visibleRows + 4, mouseX, mouseY) || joinableNationTargets().isEmpty()) {
+            return false;
+        }
+        int row = (int) ((mouseY - listY - 2) / rowH);
+        if (row < 0 || row >= visibleRows) {
+            return false;
+        }
+        int index = this.joinNationScroll + row;
+        if (index < 0 || index >= joinableNationTargets().size()) {
+            return false;
+        }
+        this.selectedJoinNationIndex = index;
+        updateButtonState();
+        return true;
+    }
+
+    private boolean isInsideJoinNationList(double mouseX, double mouseY) {
+        return isInside(left() + BODY_X + 40, top() + BODY_Y + 66, BODY_W - 80, 84, mouseX, mouseY);
+    }
+
+    private boolean isInside(int x, int y, int width, int height, double mouseX, double mouseY) {
+        return mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
+    }
+
+    private int clampJoinNationScroll(int value) {
+        int maxScroll = Math.max(0, joinableNationTargets().size() - 5);
+        return Math.max(0, Math.min(value, maxScroll));
+    }
+
+    boolean shouldShowJoinNationButtonForTest() {
+        return shouldShowJoinNationButton();
+    }
+
+    void openJoinNationOverlayForTest() {
+        openJoinNationOverlay();
+    }
+
+    void selectJoinNationIndexForTest(int index) {
+        this.selectedJoinNationIndex = Math.max(0, Math.min(index, Math.max(0, joinableNationTargets().size() - 1)));
+        this.joinNationScroll = clampJoinNationScroll(this.selectedJoinNationIndex);
+    }
+
+    String selectedJoinNationIdForTest() {
+        TownOverviewData.JoinableNationTarget target = selectedJoinNationTarget();
+        return target == null ? "" : target.nationId();
+    }
+
+    boolean joinNationOverlayOpenForTest() {
+        return this.joinNationOverlayOpen;
+    }
+
+    void submitJoinNationSelectionForTest() {
+        TownOverviewData.JoinableNationTarget target = selectedJoinNationTarget();
+        if (target == null) {
+            this.statusLine = Component.translatable("screen.sailboatmod.town.join_nation.none");
+            return;
+        }
+        this.statusLine = Component.translatable("screen.sailboatmod.town.join_nation.submitting", target.nationName());
+        this.joinNationOverlayOpen = false;
     }
 
     private static long claimKey(int chunkX, int chunkZ) {

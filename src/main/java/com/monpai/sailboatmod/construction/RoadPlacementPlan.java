@@ -14,6 +14,7 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
                                 List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
                                 List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
                                 List<BridgeRange> bridgeRanges,
+                                List<BridgeRange> navigableWaterBridgeRanges,
                                 List<BlockPos> ownedBlocks,
                                 BlockPos startHighlightPos,
                                 BlockPos endHighlightPos,
@@ -27,10 +28,38 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
         ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
         buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
         bridgeRanges = bridgeRanges == null ? List.of() : List.copyOf(bridgeRanges);
+        navigableWaterBridgeRanges = navigableWaterBridgeRanges == null ? List.of() : List.copyOf(navigableWaterBridgeRanges);
         ownedBlocks = copyOwnedBlocks(ownedBlocks);
         startHighlightPos = immutable(startHighlightPos);
         endHighlightPos = immutable(endHighlightPos);
         focusPos = immutable(focusPos);
+    }
+
+    public RoadPlacementPlan(List<BlockPos> centerPath,
+                             BlockPos sourceInternalAnchor,
+                             BlockPos sourceBoundaryAnchor,
+                             BlockPos targetBoundaryAnchor,
+                             BlockPos targetInternalAnchor,
+                             List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                             List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
+                             List<BridgeRange> bridgeRanges,
+                             List<BlockPos> ownedBlocks,
+                             BlockPos startHighlightPos,
+                             BlockPos endHighlightPos,
+                             BlockPos focusPos) {
+        this(centerPath,
+                sourceInternalAnchor,
+                sourceBoundaryAnchor,
+                targetBoundaryAnchor,
+                targetInternalAnchor,
+                ghostBlocks,
+                buildSteps,
+                bridgeRanges,
+                List.of(),
+                ownedBlocks,
+                startHighlightPos,
+                endHighlightPos,
+                focusPos);
     }
 
     public RoadPlacementPlan(List<BlockPos> centerPath,
@@ -52,6 +81,7 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
                 ghostBlocks,
                 buildSteps,
                 bridgeRanges,
+                List.of(),
                 defaultOwnedBlocks(ghostBlocks),
                 startHighlightPos,
                 endHighlightPos,

@@ -94,6 +94,40 @@ class RoadBezierCenterlineTest {
         assertTrue(hasUniqueColumns(centerline), centerline.toString());
     }
 
+    @Test
+    void keepsSteepRiverbankApproachConnectedWhenRiseExceedsFiveBlocks() {
+        List<BlockPos> routeNodes = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 71, 0),
+                new BlockPos(4, 71, 0),
+                new BlockPos(5, 71, 0)
+        );
+
+        List<BlockPos> centerline = RoadBezierCenterline.build(
+                routeNodes,
+                pos -> new RoadBezierCenterline.SurfaceSample(
+                        switch (pos.getX()) {
+                            case 0 -> new BlockPos(0, 64, 0);
+                            case 1 -> new BlockPos(1, 64, 0);
+                            case 2 -> new BlockPos(2, 64, 0);
+                            case 3 -> new BlockPos(3, 71, 0);
+                            case 4 -> new BlockPos(4, 71, 0);
+                            case 5 -> new BlockPos(5, 71, 0);
+                            default -> null;
+                        },
+                        false,
+                        false,
+                        0
+                ),
+                Set.of()
+        );
+
+        assertFalse(centerline.isEmpty());
+        assertEquals(routeNodes, centerline);
+    }
+
     private static Function<BlockPos, RoadBezierCenterline.SurfaceSample> flatSampler() {
         return pos -> new RoadBezierCenterline.SurfaceSample(
                 new BlockPos(pos.getX(), 64, pos.getZ()),

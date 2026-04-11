@@ -63,8 +63,136 @@ public record TownOverviewData(
         List<String> stockpilePreviewLines,
         List<String> demandPreviewLines,
         List<String> procurementPreviewLines,
-        List<String> financePreviewLines
+        List<String> financePreviewLines,
+        List<JoinableNationTarget> joinableNationTargets
 ) {
+    public TownOverviewData(
+            boolean hasTown,
+            String townId,
+            String townName,
+            String nationId,
+            String nationName,
+            String mayorUuid,
+            String mayorName,
+            boolean capitalTown,
+            int primaryColorRgb,
+            int secondaryColorRgb,
+            boolean hasCore,
+            String coreDimension,
+            long corePos,
+            int totalClaims,
+            int residentCount,
+            int currentChunkX,
+            int currentChunkZ,
+            int previewCenterChunkX,
+            int previewCenterChunkZ,
+            boolean currentChunkClaimed,
+            boolean currentChunkOwnedByTown,
+            String currentChunkOwnerName,
+            String breakAccessLevel,
+            String placeAccessLevel,
+            String useAccessLevel,
+            String containerAccessLevel,
+            String redstoneAccessLevel,
+            String entityUseAccessLevel,
+            String entityDamageAccessLevel,
+            String flagId,
+            int flagWidth,
+            int flagHeight,
+            long flagByteSize,
+            String flagHash,
+            boolean flagMirrored,
+            boolean canManageTown,
+            boolean canManageClaims,
+            boolean canUploadFlag,
+            boolean canAssignMayor,
+            boolean isMayor,
+            List<NationOverviewMember> members,
+            List<Integer> nearbyTerrainColors,
+            List<NationOverviewClaim> nearbyClaims,
+            String cultureId,
+            Map<String, Integer> cultureDistribution,
+            float averageLiteracy,
+            Map<String, Integer> educationLevelDistribution,
+            float employmentRate,
+            int stockpileCommodityTypes,
+            int stockpileTotalUnits,
+            int openDemandCount,
+            int openDemandUnits,
+            int activeProcurementCount,
+            long totalIncome,
+            long totalExpense,
+            long netBalance,
+            List<String> stockpilePreviewLines,
+            List<String> demandPreviewLines,
+            List<String> procurementPreviewLines,
+            List<String> financePreviewLines
+    ) {
+        this(
+                hasTown,
+                townId,
+                townName,
+                nationId,
+                nationName,
+                mayorUuid,
+                mayorName,
+                capitalTown,
+                primaryColorRgb,
+                secondaryColorRgb,
+                hasCore,
+                coreDimension,
+                corePos,
+                totalClaims,
+                residentCount,
+                currentChunkX,
+                currentChunkZ,
+                previewCenterChunkX,
+                previewCenterChunkZ,
+                currentChunkClaimed,
+                currentChunkOwnedByTown,
+                currentChunkOwnerName,
+                breakAccessLevel,
+                placeAccessLevel,
+                useAccessLevel,
+                containerAccessLevel,
+                redstoneAccessLevel,
+                entityUseAccessLevel,
+                entityDamageAccessLevel,
+                flagId,
+                flagWidth,
+                flagHeight,
+                flagByteSize,
+                flagHash,
+                flagMirrored,
+                canManageTown,
+                canManageClaims,
+                canUploadFlag,
+                canAssignMayor,
+                isMayor,
+                members,
+                nearbyTerrainColors,
+                nearbyClaims,
+                cultureId,
+                cultureDistribution,
+                averageLiteracy,
+                educationLevelDistribution,
+                employmentRate,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines,
+                List.of()
+        );
+    }
+
     public TownOverviewData {
         townId = sanitize(townId, 40);
         townName = sanitize(townName, 64);
@@ -106,6 +234,9 @@ public record TownOverviewData(
         demandPreviewLines = sanitizeLines(demandPreviewLines, 80);
         procurementPreviewLines = sanitizeLines(procurementPreviewLines, 80);
         financePreviewLines = sanitizeLines(financePreviewLines, 80);
+        joinableNationTargets = joinableNationTargets == null ? List.of() : joinableNationTargets.stream()
+                .map(target -> new JoinableNationTarget(target.nationId(), target.nationName()))
+                .toList();
         members = members == null ? List.of() : members.stream()
                 .map(member -> new NationOverviewMember(
                         sanitize(member.playerUuid(), 40),
@@ -115,7 +246,7 @@ public record TownOverviewData(
                         member.online()))
                 .toList();
         nearbyTerrainColors = nearbyTerrainColors == null ? List.of() : nearbyTerrainColors.stream()
-                .map(color -> 0xFF000000 | (color & 0x00FFFFFF))
+                .map(color -> color == null ? 0xFF33414A : 0xFF000000 | (color & 0x00FFFFFF))
                 .toList();
         nearbyClaims = nearbyClaims == null ? List.of() : nearbyClaims.stream()
                 .map(claim -> new NationOverviewClaim(
@@ -198,7 +329,15 @@ public record TownOverviewData(
                 List.of(),
                 List.of(),
                 List.of(),
+                List.of(),
                 List.of());
+    }
+
+    public record JoinableNationTarget(String nationId, String nationName) {
+        public JoinableNationTarget {
+            nationId = sanitize(nationId, 40);
+            nationName = sanitize(nationName, 64);
+        }
     }
 
     private static String sanitize(String value, int maxLength) {

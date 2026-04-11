@@ -8,6 +8,12 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class RoadBridgePlannerTest {
+    @Test
+    void navigableBridgeProfileKeepsFiveBlockClearanceAboveWater() {
+        RoadBridgePlanner.BridgeProfile profile = RoadBridgePlanner.navigableProfileForTest(10, 20, 64);
+
+        assertEquals(69, profile.deckHeight());
+    }
 
     @Test
     void classifiesNoneWhenNoUnsupportedColumns() {

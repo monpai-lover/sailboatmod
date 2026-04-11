@@ -100,6 +100,7 @@ public final class TownOverviewService {
         int primaryColor = nation == null ? DEFAULT_PRIMARY_COLOR : nation.primaryColorRgb();
         int secondaryColor = nation == null ? DEFAULT_SECONDARY_COLOR : nation.secondaryColorRgb();
         TownEconomySnapshotService.TownEconomySnapshot economy = TownEconomySnapshotService.build(player.level(), town.townId());
+        List<TownOverviewData.JoinableNationTarget> joinableNationTargets = joinableNationTargets(player, data, town, canManageTown);
         String ownerName = currentTown != null
                 ? currentTown.name()
                 : displayClaimName(null, currentNation, town, nation, currentClaim);
@@ -164,7 +165,48 @@ public final class TownOverviewService {
                 economy.stockpilePreviewLines(),
                 economy.demandPreviewLines(),
                 economy.procurementPreviewLines(),
-                economy.financePreviewLines());
+                economy.financePreviewLines(),
+                joinableNationTargets);
+    }
+
+    static List<TownOverviewData.JoinableNationTarget> joinableNationTargetsForTest(
+            boolean canManageTown,
+            boolean hasNation,
+            List<TownOverviewData.JoinableNationTarget> candidates
+    ) {
+        return joinableNationTargets(canManageTown, hasNation, candidates);
+    }
+
+    private static List<TownOverviewData.JoinableNationTarget> joinableNationTargets(
+            ServerPlayer player,
+            NationSavedData data,
+            TownRecord town,
+            boolean canManageTown
+    ) {
+        if (player == null || data == null || town == null) {
+            return List.of();
+        }
+        return joinableNationTargets(
+                canManageTown,
+                town.hasNation(),
+                data.getNations().stream()
+                        .map(nation -> new TownOverviewData.JoinableNationTarget(nation.nationId(), nation.name()))
+                        .toList()
+        );
+    }
+
+    private static List<TownOverviewData.JoinableNationTarget> joinableNationTargets(
+            boolean canManageTown,
+            boolean hasNation,
+            List<TownOverviewData.JoinableNationTarget> candidates
+    ) {
+        if (!canManageTown || hasNation || candidates == null) {
+            return List.of();
+        }
+        return candidates.stream()
+                .map(target -> new TownOverviewData.JoinableNationTarget(target.nationId(), target.nationName()))
+                .sorted(Comparator.comparing(TownOverviewData.JoinableNationTarget::nationName, String.CASE_INSENSITIVE_ORDER))
+                .toList();
     }
 
     private static int countClaimsManagedByTown(NationSavedData data, TownRecord town, NationRecord nation) {

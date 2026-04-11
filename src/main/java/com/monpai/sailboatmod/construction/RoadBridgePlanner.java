@@ -12,6 +12,7 @@ public final class RoadBridgePlanner {
 
     private static final int MIN_UNSUPPORTED_FOR_ARCH = 4;
     private static final int MIN_DROP_FOR_ARCH = 6;
+    private static final int NAVIGABLE_WATER_CLEARANCE = 5;
 
     private RoadBridgePlanner() {
     }
@@ -80,13 +81,21 @@ public final class RoadBridgePlanner {
         return List.copyOf(profiles);
     }
 
+    public static BridgeProfile buildNavigableBridgeProfile(int startIndex, int endIndex, int waterSurfaceY) {
+        return new BridgeProfile(startIndex, endIndex, BridgeKind.ARCHED, waterSurfaceY + NAVIGABLE_WATER_CLEARANCE, true);
+    }
+
+    static BridgeProfile navigableProfileForTest(int startIndex, int endIndex, int waterSurfaceY) {
+        return buildNavigableBridgeProfile(startIndex, endIndex, waterSurfaceY);
+    }
+
     public enum BridgeKind {
         NONE,
         FLAT,
         ARCHED
     }
 
-    public record BridgeProfile(int startIndex, int endIndex, BridgeKind kind) {
+    public record BridgeProfile(int startIndex, int endIndex, BridgeKind kind, int deckHeight, boolean navigableWaterBridge) {
         public BridgeProfile {
             if (startIndex < 0) {
                 throw new IllegalArgumentException("startIndex must be non-negative");
@@ -95,6 +104,11 @@ public final class RoadBridgePlanner {
                 throw new IllegalArgumentException("endIndex must be >= startIndex");
             }
             kind = kind == null ? BridgeKind.NONE : kind;
+            deckHeight = Math.max(0, deckHeight);
+        }
+
+        public BridgeProfile(int startIndex, int endIndex, BridgeKind kind) {
+            this(startIndex, endIndex, kind, 0, false);
         }
     }
 }
