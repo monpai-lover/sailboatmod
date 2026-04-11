@@ -1,9 +1,10 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
-import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.dock.PostStationRegistry;
+import com.monpai.sailboatmod.construction.RoadCorridorPlan;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
@@ -358,7 +359,8 @@ public final class ManualRoadPlannerService {
                 targetAnchor,
                 targetInternalAnchor == null ? targetAnchor : targetInternalAnchor
         );
-        if (plan.buildSteps().isEmpty()) {
+        if (!isUsableManualPreviewPlan(plan)) {
+            writeFailureMessage(stack, "message.sailboatmod.road_planner.path_failed");
             return null;
         }
 
@@ -1097,13 +1099,18 @@ public final class ManualRoadPlannerService {
     }
 
     private static void sendPreview(ServerPlayer player, PlanCandidate candidate, boolean awaitingConfirmation) {
-        sendPreview(
-                player,
+        SyncRoadPlannerPreviewPacket packet = previewPacket(
                 displayTownName(candidate.sourceTown()),
                 displayTownName(candidate.targetTown()),
                 candidate.plan(),
-                awaitingConfirmation
+                awaitingConfirmation,
+                true
         );
+        if (packet == null) {
+            sendPreviewClear(player);
+            return;
+        }
+        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), packet);
     }
 
     private static void sendPreview(ServerPlayer player,
@@ -1113,17 +1120,7 @@ public final class ManualRoadPlannerService {
                                     boolean awaitingConfirmation) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new SyncRoadPlannerPreviewPacket(
-                        sourceName == null ? "-" : sourceName,
-                        targetName == null ? "-" : targetName,
-                        plan == null ? List.of() : plan.ghostBlocks().stream()
-                                .map(block -> new SyncRoadPlannerPreviewPacket.GhostBlock(block.pos(), block.state()))
-                                .toList(),
-                        plan == null ? null : plan.startHighlightPos(),
-                        plan == null ? null : plan.endHighlightPos(),
-                        plan == null ? null : plan.focusPos(),
-                        awaitingConfirmation
-                )
+                previewPacket(sourceName, targetName, plan, awaitingConfirmation, false)
         );
     }
 
@@ -1231,6 +1228,17 @@ public final class ManualRoadPlannerService {
         };
     }
 
+    static SyncRoadPlannerPreviewPacket previewPacketForTest(String sourceName,
+                                                             String targetName,
+                                                             RoadPlacementPlan plan,
+                                                             boolean awaitingConfirmation) {
+        return previewPacket(sourceName, targetName, plan, awaitingConfirmation, true);
+    }
+
+    public static String previewHashForTest(RoadPlacementPlan plan) {
+        return previewHash(plan);
+    }
+
     private static String previewHash(RoadPlacementPlan plan) {
         int hash = 1;
         if (plan == null) {
@@ -1260,6 +1268,42 @@ public final class ManualRoadPlannerService {
         hash = 31 * hash + hashPos(plan.endHighlightPos());
         hash = 31 * hash + hashPos(plan.focusPos());
         return Integer.toHexString(hash);
+    }
+
+    private static SyncRoadPlannerPreviewPacket previewPacket(String sourceName,
+                                                              String targetName,
+                                                              RoadPlacementPlan plan,
+                                                              boolean awaitingConfirmation,
+                                                              boolean requireUsableManualPlan) {
+        if (requireUsableManualPlan && !isUsableManualPreviewPlan(plan)) {
+            return null;
+        }
+        return SyncRoadPlannerPreviewPacket.fromPlan(
+                sourceName == null ? "-" : sourceName,
+                targetName == null ? "-" : targetName,
+                plan,
+                awaitingConfirmation
+        );
+    }
+
+    private static boolean isUsableManualPreviewPlan(RoadPlacementPlan plan) {
+        if (plan == null || plan.buildSteps().isEmpty()) {
+            return false;
+        }
+        RoadCorridorPlan corridorPlan = plan.corridorPlan();
+        if (corridorPlan == null || !corridorPlan.valid() || corridorPlan.centerPath().isEmpty()) {
+            return false;
+        }
+        if (corridorPlan.centerPath().size() != corridorPlan.slices().size()) {
+            return false;
+        }
+        for (int i = 0; i < corridorPlan.slices().size(); i++) {
+            RoadCorridorPlan.CorridorSlice slice = corridorPlan.slices().get(i);
+            if (slice == null || slice.index() != i) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int hashPos(BlockPos pos) {

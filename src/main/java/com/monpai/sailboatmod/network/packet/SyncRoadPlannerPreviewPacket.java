@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.block.Block;
@@ -46,9 +47,54 @@ public class SyncRoadPlannerPreviewPacket {
         this.awaitingConfirmation = awaitingConfirmation;
     }
 
+    public static SyncRoadPlannerPreviewPacket fromPlan(String sourceTownName,
+                                                        String targetTownName,
+                                                        RoadPlacementPlan plan,
+                                                        boolean awaitingConfirmation) {
+        return new SyncRoadPlannerPreviewPacket(
+                sourceTownName,
+                targetTownName,
+                plan == null ? List.of() : plan.ghostBlocks().stream()
+                        .map(block -> new GhostBlock(block.pos(), block.state()))
+                        .toList(),
+                plan == null ? null : plan.startHighlightPos(),
+                plan == null ? null : plan.endHighlightPos(),
+                plan == null ? null : plan.focusPos(),
+                awaitingConfirmation
+        );
+    }
+
+    public String sourceTownName() {
+        return sourceTownName;
+    }
+
+    public String targetTownName() {
+        return targetTownName;
+    }
+
+    public List<GhostBlock> ghostBlocks() {
+        return ghostBlocks;
+    }
+
+    public BlockPos startHighlightPos() {
+        return startHighlightPos;
+    }
+
+    public BlockPos endHighlightPos() {
+        return endHighlightPos;
+    }
+
+    public BlockPos focusPos() {
+        return focusPos;
+    }
+
+    public boolean awaitingConfirmation() {
+        return awaitingConfirmation;
+    }
+
     public static void encode(SyncRoadPlannerPreviewPacket msg, FriendlyByteBuf buf) {
-        buf.writeUtf(msg.sourceTownName, 64);
-        buf.writeUtf(msg.targetTownName, 64);
+        PacketStringCodec.writeUtfSafe(buf, msg.sourceTownName, 64);
+        PacketStringCodec.writeUtfSafe(buf, msg.targetTownName, 64);
         writeGhostBlocks(buf, msg.ghostBlocks);
         writeOptionalPos(buf, msg.startHighlightPos);
         writeOptionalPos(buf, msg.endHighlightPos);
