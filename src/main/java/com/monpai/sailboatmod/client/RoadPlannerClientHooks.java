@@ -78,6 +78,16 @@ public final class RoadPlannerClientHooks {
         return new ArrayList<>(activeProgress);
     }
 
+    static void resetStateForTest() {
+        previewState = null;
+        activeProgress = List.of();
+        lastProgressSyncAtMs = 0L;
+    }
+
+    static void setLastProgressSyncAtMsForTest(long timestamp) {
+        lastProgressSyncAtMs = timestamp;
+    }
+
     private RoadPlannerClientHooks() {
     }
 }

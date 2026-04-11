@@ -14,6 +14,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
@@ -42,7 +43,7 @@ public final class ConstructionGhostPreviewRenderer {
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
         VertexConsumer fillConsumer = bufferSource.getBuffer(RenderType.debugFilledBox());
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
-        BlockPos cameraPos = BlockPos.containing(event.getCamera().getPosition());
+        Vec3 cameraPos = event.getCamera().getPosition();
 
         for (ConstructionGhostClientHooks.BuildingPreview preview : ConstructionGhostClientHooks.buildingPreviews()) {
             renderPreview(poseStack, fillConsumer, lineConsumer, preview.blocks(), preview.targetPos(), cameraPos,
@@ -141,7 +142,7 @@ public final class ConstructionGhostPreviewRenderer {
                                       VertexConsumer lineConsumer,
                                       java.util.List<ConstructionGhostClientHooks.GhostBlock> blocks,
                                       BlockPos targetPos,
-                                      BlockPos cameraPos,
+                                      Vec3 cameraPos,
                                       float fillR,
                                       float fillG,
                                       float fillB,
@@ -157,13 +158,13 @@ public final class ConstructionGhostPreviewRenderer {
             if (block == null || block.pos() == null) {
                 continue;
             }
-            BlockPos relative = block.pos().subtract(cameraPos);
-            float minX = relative.getX();
-            float minY = relative.getY();
-            float minZ = relative.getZ();
-            float maxX = minX + 1.0F;
-            float maxY = minY + 1.0F;
-            float maxZ = minZ + 1.0F;
+            PreviewBox box = previewBox(block.pos(), cameraPos);
+            float minX = (float) box.minX();
+            float minY = (float) box.minY();
+            float minZ = (float) box.minZ();
+            float maxX = (float) box.maxX();
+            float maxY = (float) box.maxY();
+            float maxZ = (float) box.maxZ();
             boolean highlight = targetPos != null && targetPos.equals(block.pos());
 
             LevelRenderer.addChainedFilledBoxVertices(
@@ -187,5 +188,19 @@ public final class ConstructionGhostPreviewRenderer {
                     lineA
             );
         }
+    }
+
+    private static PreviewBox previewBox(BlockPos pos, Vec3 cameraPos) {
+        double minX = pos.getX() - cameraPos.x;
+        double minY = pos.getY() - cameraPos.y;
+        double minZ = pos.getZ() - cameraPos.z;
+        return new PreviewBox(minX, minY, minZ, minX + 1.0D, minY + 1.0D, minZ + 1.0D);
+    }
+
+    static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
+        return previewBox(pos, cameraPos);
+    }
+
+    record PreviewBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
     }
 }

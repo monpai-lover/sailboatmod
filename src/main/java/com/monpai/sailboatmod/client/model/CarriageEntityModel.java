@@ -13,7 +13,7 @@ public class CarriageEntityModel extends GeoModel<CarriageEntity> {
 
     @Override
     public ResourceLocation getTextureResource(CarriageEntity animatable) {
-        return new ResourceLocation(SailboatMod.MODID, "textures/entity/carriage.png");
+        return animatable.getWoodType().textureLocation();
     }
 
     @Override

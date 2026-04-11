@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.model;
 
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.client.renderer.CarriageItemRenderer;
 import com.monpai.sailboatmod.item.CarriageItem;
 import net.minecraft.resources.ResourceLocation;
 import software.bernie.geckolib.model.GeoModel;
@@ -13,7 +14,7 @@ public class CarriageItemModel extends GeoModel<CarriageItem> {
 
     @Override
     public ResourceLocation getTextureResource(CarriageItem animatable) {
-        return new ResourceLocation(SailboatMod.MODID, "textures/entity/carriage.png");
+        return CarriageItem.getWoodType(CarriageItemRenderer.currentItemStack()).textureLocation();
     }
 
     @Override

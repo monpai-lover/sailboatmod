@@ -388,7 +388,7 @@ public final class ManualRoadPlannerService {
                                                             Set<Long> blockedColumns) {
         List<StationZoneCandidate> sourceStations = collectPostStationsInClaims(level, sourceClaims);
         List<StationZoneCandidate> targetStations = collectPostStationsInClaims(level, targetClaims);
-        ManualPlanFailure failure = validateStrictPostStationRoute(!sourceStations.isEmpty(), !targetStations.isEmpty(), false, false);
+        ManualPlanFailure failure = validateWaitingAreaRouteStations(!sourceStations.isEmpty(), !targetStations.isEmpty());
         if (failure != ManualPlanFailure.NONE) {
             return null;
         }
@@ -752,6 +752,20 @@ public final class ManualRoadPlannerService {
         }
         if (!hasTargetExit) {
             return ManualPlanFailure.TARGET_EXIT_MISSING;
+        }
+        return ManualPlanFailure.NONE;
+    }
+
+    static ManualPlanFailure validateWaitingAreaRouteStationsForTest(boolean hasSourceStation, boolean hasTargetStation) {
+        return validateWaitingAreaRouteStations(hasSourceStation, hasTargetStation);
+    }
+
+    private static ManualPlanFailure validateWaitingAreaRouteStations(boolean hasSourceStation, boolean hasTargetStation) {
+        if (!hasSourceStation) {
+            return ManualPlanFailure.SOURCE_STATION_MISSING;
+        }
+        if (!hasTargetStation) {
+            return ManualPlanFailure.TARGET_STATION_MISSING;
         }
         return ManualPlanFailure.NONE;
     }

@@ -9,13 +9,20 @@ import net.minecraft.world.item.ItemStack;
 import software.bernie.geckolib.renderer.GeoItemRenderer;
 
 public class CarriageItemRenderer extends GeoItemRenderer<CarriageItem> {
+    private static final ThreadLocal<ItemStack> CURRENT_STACK = ThreadLocal.withInitial(() -> ItemStack.EMPTY);
+
     public CarriageItemRenderer() {
         super(new CarriageItemModel());
+    }
+
+    public static ItemStack currentItemStack() {
+        return CURRENT_STACK.get();
     }
 
     @Override
     public void renderByItem(ItemStack stack, ItemDisplayContext displayContext, PoseStack poseStack,
                              MultiBufferSource bufferSource, int packedLight, int packedOverlay) {
+        CURRENT_STACK.set(stack);
         poseStack.pushPose();
         poseStack.translate(0.5F, 0.5F, 0.5F);
         if (displayContext == ItemDisplayContext.GUI) {
@@ -33,5 +40,6 @@ public class CarriageItemRenderer extends GeoItemRenderer<CarriageItem> {
         poseStack.translate(-0.5F, -0.5F, -0.5F);
         super.renderByItem(stack, displayContext, poseStack, bufferSource, packedLight, packedOverlay);
         poseStack.popPose();
+        CURRENT_STACK.remove();
     }
 }
