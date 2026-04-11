@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen.town;
 
 import com.mojang.logging.LogUtils;
+import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.TownFlagUploadClient;
@@ -98,6 +99,7 @@ public class TownHomeScreen extends Screen {
     private int claimsSubPage;
     private Button claimsSubPageButton;
     private Button resetMapButton;
+    private Button clearTerrainCacheButton;
     private int autoRefreshTicks;
     private int memberScroll;
     private int pageScroll;
@@ -196,10 +198,11 @@ public class TownHomeScreen extends Screen {
         this.claimsSubPageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claims.show_perms"), b -> { this.claimsSubPage = this.claimsSubPage == 0 ? 1 : 0; updateButtonState(); }).bounds(left + BODY_X + 184, top + BODY_Y + BODY_H - 26, 120, 18).build());
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("\u2316"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
         this.resetMapButton.visible = false;
-        this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
+        this.clearTerrainCacheButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
             com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket());
             maybeRequestPreviewRefresh();
         }).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 44, top + BODY_Y + 10, 24, 14).build());
+        this.clearTerrainCacheButton.visible = false;
         this.breakPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("break", selectedBreakAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 50, 100, 18).build());
         this.placePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("place", selectedPlaceAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 50, 100, 18).build());
         this.usePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("use", selectedUseAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 74, 100, 18).build());
@@ -245,7 +248,8 @@ public class TownHomeScreen extends Screen {
             this.autoRefreshTicks = 0;
             return;
         }
-        int interval = this.currentPage == Page.CLAIMS && hasIncompletePreviewTerrain() ? 8 : AUTO_REFRESH_INTERVAL_TICKS;
+        boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
+        int interval = claimsMapView && hasIncompletePreviewTerrain() ? 8 : AUTO_REFRESH_INTERVAL_TICKS;
         this.autoRefreshTicks++;
         if (this.autoRefreshTicks < interval) {
             return;
@@ -283,8 +287,9 @@ public class TownHomeScreen extends Screen {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0 && this.currentPage == Page.MEMBERS && trySelectMember(mouseX, mouseY)) return true;
-        if (button == 0 && this.currentPage == Page.CLAIMS && trySelectClaim(mouseX, mouseY)) return true;
-        if (button == 2 && this.currentPage == Page.CLAIMS) {
+        boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
+        if (button == 0 && claimsMapView && trySelectClaim(mouseX, mouseY)) return true;
+        if (button == 2 && claimsMapView) {
             int mapX = claimMapX(left() + BODY_X);
             int mapY = claimMapY(top() + BODY_Y);
             if (mouseX >= mapX && mouseX < mapX + CLAIM_MAP_W && mouseY >= mapY && mouseY < mapY + CLAIM_MAP_H) {
@@ -309,7 +314,8 @@ public class TownHomeScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
-        if (button == 2 && this.isDraggingMap && this.currentPage == Page.CLAIMS) {
+        if (button == 2 && this.isDraggingMap
+                && ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage)) {
             int diameter = claimRadius() * 2 + 1;
             double cellW = (double) CLAIM_MAP_W / diameter;
             double cellH = (double) CLAIM_MAP_H / diameter;
@@ -677,11 +683,11 @@ public class TownHomeScreen extends Screen {
         if (this.appointMayorButton != null) { this.appointMayorButton.visible = membersPage; this.appointMayorButton.active = membersPage && hasTown && canAssignSelectedMemberAsMayor(); }
 
         boolean claimsPage = this.currentPage == Page.CLAIMS;
-        boolean claimsMapView = claimsPage && this.claimsSubPage == 0;
+        boolean claimsMapView = ClaimsMapVisibility.showMapTools(claimsPage, this.claimsSubPage);
         boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
         boolean areaHasClaim = selectedClaimAreaHasAnyClaim();
         boolean ownClaim = selectedClaimAreaOwnedByTown();
-        if (this.refreshButton != null) { this.refreshButton.visible = claimsPage; this.refreshButton.active = claimsPage && hasTown && !this.refreshPending; }
+        if (this.refreshButton != null) { this.refreshButton.visible = claimsMapView; this.refreshButton.active = claimsMapView && hasTown && !this.refreshPending; }
         if (this.claimButton != null) { this.claimButton.visible = claimsMapView; this.claimButton.active = claimsMapView && hasTown && this.data.canManageTown() && !areaHasClaim; }
         if (this.unclaimButton != null) { this.unclaimButton.visible = claimsMapView; this.unclaimButton.active = claimsMapView && hasTown && this.data.canManageTown() && ownClaim; }
         if (this.claimsSubPageButton != null) { this.claimsSubPageButton.visible = claimsPage; this.claimsSubPageButton.active = claimsPage && hasTown; this.claimsSubPageButton.setMessage(Component.translatable(claimsPermView ? "screen.sailboatmod.nation.claims.show_map" : "screen.sailboatmod.nation.claims.show_perms")); }
@@ -692,7 +698,8 @@ public class TownHomeScreen extends Screen {
         if (this.redstonePermissionButton != null) { this.redstonePermissionButton.visible = claimsPermView; this.redstonePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.redstonePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.redstone", accessName(selectedRedstoneAccessLevel()))); }
         if (this.entityUsePermissionButton != null) { this.entityUsePermissionButton.visible = claimsPermView; this.entityUsePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.entityUsePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_use", accessName(selectedEntityUseAccessLevel()))); }
         if (this.entityDamagePermissionButton != null) { this.entityDamagePermissionButton.visible = claimsPermView; this.entityDamagePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.entityDamagePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_damage", accessName(selectedEntityDamageAccessLevel()))); }
-        if (this.resetMapButton != null) { this.resetMapButton.visible = claimsPage; this.resetMapButton.active = claimsPage; }
+        if (this.resetMapButton != null) { this.resetMapButton.visible = claimsMapView; this.resetMapButton.active = claimsMapView; }
+        if (this.clearTerrainCacheButton != null) { this.clearTerrainCacheButton.visible = claimsMapView; this.clearTerrainCacheButton.active = claimsMapView; }
 
         boolean flagPage = this.currentPage == Page.FLAG;
         if (this.flagPathInput != null) { this.flagPathInput.visible = flagPage; this.flagPathInput.setEditable(flagPage && hasTown && this.data.canUploadFlag()); }
@@ -860,7 +867,7 @@ public class TownHomeScreen extends Screen {
         boolean membersPage = this.currentPage == Page.MEMBERS;
         boolean claimsPage = this.currentPage == Page.CLAIMS;
         boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
-        boolean claimsMapView = claimsPage && this.claimsSubPage == 0;
+        boolean claimsMapView = ClaimsMapVisibility.showMapTools(claimsPage, this.claimsSubPage);
         boolean flagPage = this.currentPage == Page.FLAG;
 
         layoutWidget(this.townNameInput, 12, 154, 18, overviewPage);
@@ -873,7 +880,8 @@ public class TownHomeScreen extends Screen {
         layoutWidget(this.claimButton, 12, BODY_H - 26, 18, claimsMapView);
         layoutWidget(this.unclaimButton, 90, BODY_H - 26, 18, claimsMapView);
         layoutWidget(this.claimsSubPageButton, 184, BODY_H - 26, 18, claimsPage);
-        layoutFixedWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, claimsPage);
+        layoutFixedWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, claimsMapView);
+        layoutFixedWidget(this.clearTerrainCacheButton, BODY_W - CLAIM_MAP_W - 44, 10, claimsMapView);
         layoutWidget(this.breakPermissionButton, 12, 50, 18, claimsPermView);
         layoutWidget(this.placePermissionButton, 120, 50, 18, claimsPermView);
         layoutWidget(this.usePermissionButton, 12, 74, 18, claimsPermView);

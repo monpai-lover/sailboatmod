@@ -73,6 +73,30 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void strictManualPlanningRejectsMissingTargetExit() {
+        ManualRoadPlannerService.ManualPlanFailure failure =
+                ManualRoadPlannerService.validateStrictPostStationRoute(true, true, true, false);
+
+        assertEquals(ManualRoadPlannerService.ManualPlanFailure.TARGET_EXIT_MISSING, failure);
+    }
+
+    @Test
+    void strictManualPlanningAllowsOnlyFullyResolvedWaitingAreaRoute() {
+        ManualRoadPlannerService.ManualPlanFailure failure =
+                ManualRoadPlannerService.validateStrictPostStationRoute(true, true, true, true);
+
+        assertEquals(ManualRoadPlannerService.ManualPlanFailure.NONE, failure);
+    }
+
+    @Test
+    void waitingAreaRouteValidationDoesNotRequireExitsBeforeTheyAreResolved() {
+        ManualRoadPlannerService.ManualPlanFailure failure =
+                ManualRoadPlannerService.validateWaitingAreaRouteStationsForTest(true, true);
+
+        assertEquals(ManualRoadPlannerService.ManualPlanFailure.NONE, failure);
+    }
+
+    @Test
     void unblocksChosenStationWaitingAreaAndExitColumns() {
         Set<Long> blocked = ManualRoadPlannerService.unblockStationFootprint(
                 Set.of(ManualRoadPlannerService.columnKeyForTest(100, 100),

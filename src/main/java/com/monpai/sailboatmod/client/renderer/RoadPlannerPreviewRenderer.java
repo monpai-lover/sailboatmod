@@ -13,6 +13,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
@@ -42,7 +43,7 @@ public final class RoadPlannerPreviewRenderer {
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
         VertexConsumer fillConsumer = bufferSource.getBuffer(RenderType.debugFilledBox());
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
-        BlockPos cameraPos = BlockPos.containing(event.getCamera().getPosition());
+        Vec3 cameraPos = event.getCamera().getPosition();
 
         float fillAlpha = preview.awaitingConfirmation() ? 0.24F : 0.16F;
         for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
@@ -160,7 +161,7 @@ public final class RoadPlannerPreviewRenderer {
                                        VertexConsumer fillConsumer,
                                        VertexConsumer lineConsumer,
                                        BlockPos pos,
-                                       BlockPos cameraPos,
+                                       Vec3 cameraPos,
                                        float fillR,
                                        float fillG,
                                        float fillB,
@@ -169,13 +170,13 @@ public final class RoadPlannerPreviewRenderer {
                                        float lineG,
                                        float lineB,
                                        float lineA) {
-        BlockPos relative = pos.subtract(cameraPos);
-        float minX = relative.getX();
-        float minY = relative.getY();
-        float minZ = relative.getZ();
-        float maxX = minX + 1.0F;
-        float maxY = minY + 1.0F;
-        float maxZ = minZ + 1.0F;
+        PreviewBox box = previewBox(pos, cameraPos);
+        float minX = (float) box.minX();
+        float minY = (float) box.minY();
+        float minZ = (float) box.minZ();
+        float maxX = (float) box.maxX();
+        float maxY = (float) box.maxY();
+        float maxZ = (float) box.maxZ();
         LevelRenderer.addChainedFilledBoxVertices(poseStack, fillConsumer, minX, minY, minZ, maxX, maxY, maxZ, fillR, fillG, fillB, fillA);
         LevelRenderer.renderLineBox(poseStack, lineConsumer, minX, minY, minZ, maxX, maxY, maxZ, lineR, lineG, lineB, lineA);
     }
@@ -183,7 +184,7 @@ public final class RoadPlannerPreviewRenderer {
     private static void renderHighlightBox(PoseStack poseStack,
                                            VertexConsumer lineConsumer,
                                            BlockPos pos,
-                                           BlockPos cameraPos,
+                                           Vec3 cameraPos,
                                            float lineR,
                                            float lineG,
                                            float lineB,
@@ -192,13 +193,43 @@ public final class RoadPlannerPreviewRenderer {
         if (pos == null) {
             return;
         }
-        BlockPos relative = pos.subtract(cameraPos);
-        float minX = relative.getX() - inset;
-        float minY = relative.getY() - inset;
-        float minZ = relative.getZ() - inset;
-        float maxX = relative.getX() + 1.0F + inset;
-        float maxY = relative.getY() + 1.0F + inset;
-        float maxZ = relative.getZ() + 1.0F + inset;
+        PreviewBox box = highlightBox(pos, cameraPos, inset);
+        float minX = (float) box.minX();
+        float minY = (float) box.minY();
+        float minZ = (float) box.minZ();
+        float maxX = (float) box.maxX();
+        float maxY = (float) box.maxY();
+        float maxZ = (float) box.maxZ();
         LevelRenderer.renderLineBox(poseStack, lineConsumer, minX, minY, minZ, maxX, maxY, maxZ, lineR, lineG, lineB, lineA);
+    }
+
+    private static PreviewBox previewBox(BlockPos pos, Vec3 cameraPos) {
+        double minX = pos.getX() - cameraPos.x;
+        double minY = pos.getY() - cameraPos.y;
+        double minZ = pos.getZ() - cameraPos.z;
+        return new PreviewBox(minX, minY, minZ, minX + 1.0D, minY + 1.0D, minZ + 1.0D);
+    }
+
+    private static PreviewBox highlightBox(BlockPos pos, Vec3 cameraPos, double inset) {
+        PreviewBox base = previewBox(pos, cameraPos);
+        return new PreviewBox(
+                base.minX - inset,
+                base.minY - inset,
+                base.minZ - inset,
+                base.maxX + inset,
+                base.maxY + inset,
+                base.maxZ + inset
+        );
+    }
+
+    static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
+        return previewBox(pos, cameraPos);
+    }
+
+    static PreviewBox highlightBoxForTest(BlockPos pos, Vec3 cameraPos, double inset) {
+        return highlightBox(pos, cameraPos, inset);
+    }
+
+    record PreviewBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
     }
 }
