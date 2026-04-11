@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -23,8 +24,25 @@ public final class RoadCorridorPlanner {
     public static RoadCorridorPlan plan(List<BlockPos> centerPath,
                                         List<RoadPlacementPlan.BridgeRange> bridgeRanges,
                                         List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges) {
+        int[] placementHeights = new int[centerPath == null ? 0 : centerPath.size()];
+        if (centerPath != null) {
+            for (int i = 0; i < centerPath.size(); i++) {
+                placementHeights[i] = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i).getY() + 1;
+            }
+        }
+        return plan(centerPath, bridgeRanges, navigableWaterBridgeRanges, placementHeights);
+    }
+
+    public static RoadCorridorPlan plan(List<BlockPos> centerPath,
+                                        List<RoadPlacementPlan.BridgeRange> bridgeRanges,
+                                        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges,
+                                        int[] placementHeights) {
         Objects.requireNonNull(centerPath, "centerPath");
+        Objects.requireNonNull(placementHeights, "placementHeights");
         int size = centerPath.size();
+        if (placementHeights.length != size) {
+            throw new IllegalArgumentException("placementHeights size must match centerPath size");
+        }
         Set<Integer> bridgeIndexes = expandIndexes(bridgeRanges, size);
         Set<Integer> requestedNavigableIndexes = expandIndexes(navigableWaterBridgeRanges, size);
         List<RoadPlacementPlan.BridgeRange> mainChannelRanges = detectContiguousSubranges(
@@ -37,9 +55,13 @@ public final class RoadCorridorPlanner {
         Set<Integer> supportRequiredIndexes = collectSupportRequiredIndexes(bridgeRanges, size);
 
         boolean valid = true;
-        List<RoadCorridorPlan.CorridorSlice> slices = new ArrayList<>(size);
+        List<BlockPos> deckCenters = new ArrayList<>(size);
+        List<RoadCorridorPlan.SegmentKind> segmentKinds = new ArrayList<>(size);
+        List<List<BlockPos>> supportPositionsByIndex = new ArrayList<>(size);
+        List<List<BlockPos>> pierLightPositionsByIndex = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            BlockPos deckCenter = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i).above().immutable();
+            BlockPos center = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
+            BlockPos deckCenter = new BlockPos(center.getX(), placementHeights[i], center.getZ()).immutable();
             RoadCorridorPlan.SegmentKind segmentKind = classify(i, bridgeIndexes, bridgeHeadIndexes, navigableIndexes);
             boolean supportRequired = supportRequiredIndexes.contains(i)
                     && segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
@@ -51,16 +73,23 @@ public final class RoadCorridorPlanner {
                 supportPositions = buildSupportPositions(deckCenter);
                 pierLightPositions = List.of(supportPositions.get(supportPositions.size() - 1).below());
             }
+            deckCenters.add(deckCenter);
+            segmentKinds.add(segmentKind);
+            supportPositionsByIndex.add(supportPositions);
+            pierLightPositionsByIndex.add(pierLightPositions);
+        }
 
+        List<RoadCorridorPlan.CorridorSlice> slices = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
             slices.add(new RoadCorridorPlan.CorridorSlice(
                     i,
-                    deckCenter,
-                    segmentKind,
-                    List.of(deckCenter),
+                    deckCenters.get(i),
+                    segmentKinds.get(i),
+                    buildSurfacePositions(centerPath, i, placementHeights),
                     List.of(),
                     List.of(),
-                    supportPositions,
-                    pierLightPositions
+                    supportPositionsByIndex.get(i),
+                    pierLightPositionsByIndex.get(i)
             ));
         }
         return new RoadCorridorPlan(centerPath, slices, buildNavigationChannel(centerPath, navigableIndexes), valid);
@@ -172,6 +201,20 @@ public final class RoadCorridorPlanner {
             supportPositions.add(deckCenter.below(depth));
         }
         return List.copyOf(supportPositions);
+    }
+
+    private static List<BlockPos> buildSurfacePositions(List<BlockPos> centerPath, int index, int[] deckHeights) {
+        LinkedHashSet<BlockPos> positions = new LinkedHashSet<>();
+        for (BlockPos column : RoadGeometryPlanner.buildRibbonSlice(centerPath, index).columns()) {
+            int y = RoadGeometryPlanner.interpolatePlacementHeight(
+                    column.getX(),
+                    column.getZ(),
+                    centerPath,
+                    deckHeights
+            );
+            positions.add(new BlockPos(column.getX(), y, column.getZ()));
+        }
+        return List.copyOf(positions);
     }
 
     private static RoadCorridorPlan.NavigationChannel buildNavigationChannel(List<BlockPos> centerPath, Set<Integer> navigableIndexes) {

@@ -29,6 +29,34 @@ public final class RoadGeometryPlanner {
         return plan(centerPath, blockStateSupplier, List.of());
     }
 
+    public static RoadGeometryPlan plan(RoadCorridorPlan corridorPlan,
+                                        Function<BlockPos, BlockState> blockStateSupplier) {
+        Objects.requireNonNull(corridorPlan, "corridorPlan");
+        Objects.requireNonNull(blockStateSupplier, "blockStateSupplier");
+        if (!isUsableCorridorPlan(corridorPlan)) {
+            return new RoadGeometryPlan(List.of(), List.of());
+        }
+
+        LinkedHashMap<Long, GhostCandidate> ghostByPos = new LinkedHashMap<>();
+        for (RoadCorridorPlan.CorridorSlice slice : corridorPlan.slices()) {
+            for (GhostRoadBlock ghostBlock : sliceGhostBlocks(corridorPlan, slice.index(), blockStateSupplier)) {
+                addGhost(ghostByPos, ghostBlock.pos(), ghostBlock.state(), corridorPlan.centerPath().get(slice.index()), slice.index());
+            }
+        }
+
+        List<GhostRoadBlock> ghostBlocks = new ArrayList<>(ghostByPos.size());
+        for (GhostCandidate candidate : ghostByPos.values()) {
+            ghostBlocks.add(new GhostRoadBlock(candidate.pos(), candidate.state()));
+        }
+        ghostBlocks = List.copyOf(ghostBlocks);
+        List<RoadBuildStep> buildSteps = new ArrayList<>(ghostBlocks.size());
+        for (int i = 0; i < ghostBlocks.size(); i++) {
+            GhostRoadBlock ghost = ghostBlocks.get(i);
+            buildSteps.add(new RoadBuildStep(i, ghost.pos(), ghost.state()));
+        }
+        return new RoadGeometryPlan(ghostBlocks, List.copyOf(buildSteps));
+    }
+
     public static RoadGeometryPlan plan(List<BlockPos> centerPath,
                                         Function<BlockPos, BlockState> blockStateSupplier,
                                         List<RoadBridgePlanner.BridgeProfile> bridgeProfiles) {
@@ -72,6 +100,51 @@ public final class RoadGeometryPlanner {
 
     public static List<BlockPos> slicePositions(List<BlockPos> centerPath, int index) {
         return slicePositions(centerPath, buildPlacementHeightProfile(centerPath), index);
+    }
+
+    public static List<BlockPos> slicePositions(RoadCorridorPlan corridorPlan, int index) {
+        Objects.requireNonNull(corridorPlan, "corridorPlan");
+        if (!isUsableCorridorPlan(corridorPlan)) {
+            return List.of();
+        }
+        if (index < 0 || index >= corridorPlan.slices().size()) {
+            throw new IndexOutOfBoundsException("index: " + index + ", size: " + corridorPlan.slices().size());
+        }
+        RoadCorridorPlan.CorridorSlice slice = corridorPlan.slices().get(index);
+        if (slice.index() != index) {
+            return List.of();
+        }
+        if (!slice.surfacePositions().isEmpty()) {
+            return slice.surfacePositions();
+        }
+        return slicePositions(corridorPlan.centerPath(), corridorDeckHeights(corridorPlan), index);
+    }
+
+    public static List<GhostRoadBlock> sliceGhostBlocks(RoadCorridorPlan corridorPlan,
+                                                        int index,
+                                                        Function<BlockPos, BlockState> blockStateSupplier) {
+        Objects.requireNonNull(corridorPlan, "corridorPlan");
+        Objects.requireNonNull(blockStateSupplier, "blockStateSupplier");
+        if (!isUsableCorridorPlan(corridorPlan)) {
+            return List.of();
+        }
+        if (index < 0 || index >= corridorPlan.slices().size()) {
+            throw new IndexOutOfBoundsException("index: " + index + ", size: " + corridorPlan.slices().size());
+        }
+        RoadCorridorPlan.CorridorSlice slice = corridorPlan.slices().get(index);
+        if (slice.index() != index) {
+            return List.of();
+        }
+        int[] placementHeights = corridorDeckHeights(corridorPlan);
+        boolean stairSegment = usesSlopeSemantics(slice.segmentKind()) && isStairSegment(placementHeights, index);
+        List<GhostRoadBlock> ghostBlocks = new ArrayList<>();
+        for (BlockPos pos : slicePositions(corridorPlan, index)) {
+            ghostBlocks.add(new GhostRoadBlock(
+                    pos,
+                    resolveState(corridorPlan.centerPath(), placementHeights, index, pos, stairSegment, blockStateSupplier)
+            ));
+        }
+        return List.copyOf(ghostBlocks);
     }
 
     public static int[] buildPlacementHeightProfile(List<BlockPos> centerPath) {
@@ -320,6 +393,38 @@ public final class RoadGeometryPlanner {
 
     private static double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static boolean isUsableCorridorPlan(RoadCorridorPlan corridorPlan) {
+        if (corridorPlan == null || !corridorPlan.valid()) {
+            return false;
+        }
+        List<BlockPos> centerPath = corridorPlan.centerPath();
+        List<RoadCorridorPlan.CorridorSlice> slices = corridorPlan.slices();
+        if (centerPath.isEmpty() || centerPath.size() != slices.size()) {
+            return false;
+        }
+        for (int i = 0; i < slices.size(); i++) {
+            RoadCorridorPlan.CorridorSlice slice = slices.get(i);
+            if (slice == null || slice.index() != i) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int[] corridorDeckHeights(RoadCorridorPlan corridorPlan) {
+        int[] placementHeights = new int[corridorPlan.slices().size()];
+        for (int i = 0; i < corridorPlan.slices().size(); i++) {
+            placementHeights[i] = corridorPlan.slices().get(i).deckCenter().getY();
+        }
+        return placementHeights;
+    }
+
+    private static boolean usesSlopeSemantics(RoadCorridorPlan.SegmentKind segmentKind) {
+        return segmentKind == RoadCorridorPlan.SegmentKind.TOWN_CONNECTION
+                || segmentKind == RoadCorridorPlan.SegmentKind.LAND_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
     }
 
     private static void addGhost(LinkedHashMap<Long, GhostCandidate> ghostByPos,

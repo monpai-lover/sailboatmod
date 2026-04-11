@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -132,6 +133,148 @@ class BuilderHammerSupportTest {
 
         assertEquals(firstBatchSize, invokeNextRoadBuildBatchSize(plan, 0));
         assertEquals(geometry.buildSteps().size() - firstBatchSize, invokeNextRoadBuildBatchSize(plan, secondBatchStart));
+    }
+
+    @Test
+    void roadHammerBatchingUsesCorridorSliceSupportsAndLights() {
+        List<BlockPos> centerPath = List.of(new BlockPos(0, 64, 0));
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                centerPath,
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(
+                                0,
+                                new BlockPos(0, 65, 0),
+                                RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN,
+                                List.of(new BlockPos(0, 65, 0)),
+                                List.of(),
+                                List.of(new BlockPos(0, 66, 1)),
+                                List.of(new BlockPos(0, 64, 0)),
+                                List.of(new BlockPos(0, 63, 1))
+                        )
+                ),
+                null,
+                true
+        );
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 65, 0), Blocks.SPRUCE_SLAB.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.SPRUCE_FENCE.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 66, 1), Blocks.LANTERN.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 63, 1), Blocks.LANTERN.defaultBlockState())
+        );
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = java.util.stream.IntStream.range(0, ghostBlocks.size())
+                .mapToObj(index -> new RoadGeometryPlanner.RoadBuildStep(index, ghostBlocks.get(index).pos(), ghostBlocks.get(index).state()))
+                .toList();
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                centerPath,
+                new BlockPos(-1, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                ghostBlocks,
+                buildSteps,
+                List.of(new RoadPlacementPlan.BridgeRange(0, 0)),
+                List.of(),
+                ghostBlocks.stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList(),
+                new BlockPos(0, 65, 0),
+                new BlockPos(0, 65, 0),
+                new BlockPos(0, 65, 0),
+                corridorPlan
+        );
+
+        assertEquals(4, invokeNextRoadBuildBatchSize(plan, 0));
+    }
+
+    @Test
+    void placementArtifactsAreDerivedFromCorridorSlices() {
+        List<BlockPos> sliceSurface = List.of(
+                new BlockPos(0, 65, 0),
+                new BlockPos(0, 65, 1)
+        );
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(
+                                0,
+                                new BlockPos(0, 65, 0),
+                                RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN,
+                                sliceSurface,
+                                List.of(new BlockPos(0, 63, 0)),
+                                List.of(new BlockPos(0, 66, 1)),
+                                List.of(new BlockPos(0, 64, 0)),
+                                List.of(new BlockPos(0, 63, 1))
+                        )
+                ),
+                null,
+                true
+        );
+
+        Object artifacts = invokeBuildRoadPlacementArtifacts(
+                corridorPlan,
+                newRoadPlacementStyleFactory(
+                        Blocks.SPRUCE_SLAB.defaultBlockState(),
+                        Blocks.SPRUCE_FENCE.defaultBlockState(),
+                        true
+                ),
+                ghostBlocks -> List.of(new BlockPos(0, 62, 0))
+        );
+
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = invokeArtifactsGhostBlocks(artifacts);
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = invokeArtifactsBuildSteps(artifacts);
+        List<BlockPos> ownedBlocks = invokeArtifactsOwnedBlocks(artifacts);
+        Set<BlockPos> ghostPositions = ghostBlocks.stream()
+                .map(RoadGeometryPlanner.GhostRoadBlock::pos)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<BlockPos> buildStepPositions = buildSteps.stream()
+                .map(RoadGeometryPlanner.RoadBuildStep::pos)
+                .collect(java.util.stream.Collectors.toSet());
+
+        assertEquals(Set.of(
+                new BlockPos(0, 65, 0),
+                new BlockPos(0, 65, 1),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 66, 1),
+                new BlockPos(0, 67, 1),
+                new BlockPos(0, 63, 1),
+                new BlockPos(0, 64, 1)
+        ), ghostPositions);
+        assertEquals(ghostPositions, buildStepPositions);
+        assertTrue(ownedBlocks.contains(new BlockPos(0, 63, 0)));
+        assertTrue(ownedBlocks.contains(new BlockPos(0, 62, 0)));
+    }
+
+    @Test
+    void placementArtifactsReturnEmptyWhenCorridorIsInvalid() {
+        RoadCorridorPlan invalidCorridorPlan = new RoadCorridorPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(
+                                0,
+                                new BlockPos(0, 65, 0),
+                                RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN,
+                                List.of(new BlockPos(0, 65, 0)),
+                                List.of(),
+                                List.of(),
+                                List.of(),
+                                List.of()
+                        )
+                ),
+                null,
+                false
+        );
+
+        Object artifacts = invokeBuildRoadPlacementArtifacts(
+                invalidCorridorPlan,
+                newRoadPlacementStyleFactory(
+                        Blocks.SPRUCE_SLAB.defaultBlockState(),
+                        Blocks.SPRUCE_FENCE.defaultBlockState(),
+                        true
+                ),
+                ghostBlocks -> List.of(new BlockPos(0, 62, 0))
+        );
+
+        assertTrue(invokeArtifactsGhostBlocks(artifacts).isEmpty());
+        assertTrue(invokeArtifactsBuildSteps(artifacts).isEmpty());
+        assertTrue(invokeArtifactsOwnedBlocks(artifacts).isEmpty());
     }
 
     @Test
@@ -347,6 +490,68 @@ class BuilderHammerSupportTest {
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect live-world road hammer batch sizing", ex);
         }
+    }
+
+    private static Object invokeBuildRoadPlacementArtifacts(RoadCorridorPlan corridorPlan,
+                                                            Function<BlockPos, Object> styleResolver,
+                                                            Function<List<RoadGeometryPlanner.GhostRoadBlock>, List<BlockPos>> terrainOwnershipResolver) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("buildRoadPlacementArtifacts", RoadCorridorPlan.class, Function.class, Function.class);
+            method.setAccessible(true);
+            return method.invoke(null, corridorPlan, styleResolver, terrainOwnershipResolver);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect corridor-derived road placement artifacts", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<RoadGeometryPlanner.GhostRoadBlock> invokeArtifactsGhostBlocks(Object artifacts) {
+        try {
+            Method method = artifacts.getClass().getDeclaredMethod("ghostBlocks");
+            method.setAccessible(true);
+            return (List<RoadGeometryPlanner.GhostRoadBlock>) method.invoke(artifacts);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect corridor-derived ghost blocks", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<RoadGeometryPlanner.RoadBuildStep> invokeArtifactsBuildSteps(Object artifacts) {
+        try {
+            Method method = artifacts.getClass().getDeclaredMethod("buildSteps");
+            method.setAccessible(true);
+            return (List<RoadGeometryPlanner.RoadBuildStep>) method.invoke(artifacts);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect corridor-derived build steps", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeArtifactsOwnedBlocks(Object artifacts) {
+        try {
+            Method method = artifacts.getClass().getDeclaredMethod("ownedBlocks");
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(artifacts);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect corridor-derived owned blocks", ex);
+        }
+    }
+
+    private static Function<BlockPos, Object> newRoadPlacementStyleFactory(BlockState surfaceState,
+                                                                           BlockState supportState,
+                                                                           boolean bridge) {
+        return ignored -> {
+            try {
+                Class<?> styleClass = Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadPlacementStyle");
+                java.lang.reflect.Constructor<?> ctor = styleClass.getDeclaredConstructor(BlockState.class, BlockState.class, boolean.class);
+                ctor.setAccessible(true);
+                return ctor.newInstance(surfaceState, supportState, bridge);
+            } catch (ReflectiveOperationException ex) {
+                throw new AssertionError("Unable to construct road placement style", ex);
+            }
+        };
     }
 
     private static boolean invokeRoadBuildStepPlaced(BlockState currentState, RoadGeometryPlanner.RoadBuildStep step) {

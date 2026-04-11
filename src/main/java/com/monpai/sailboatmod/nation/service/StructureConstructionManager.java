@@ -8,7 +8,6 @@ import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadCorridorPlanner;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadLegacyJobRebuilder;
-import com.monpai.sailboatmod.construction.RoadLightingPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.construction.RoadTerrainShaper;
 import com.monpai.sailboatmod.construction.RuntimeRoadGhostWindow;
@@ -58,6 +57,7 @@ import org.slf4j.Logger;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 public final class StructureConstructionManager {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -158,6 +158,9 @@ public final class StructureConstructionManager {
             return new HammerUseResult(false, Component.translatable(key));
         }
     }
+    private record RoadPlacementArtifacts(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                          List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
+                                          List<BlockPos> ownedBlocks) {}
     private record HammerChargeResult(boolean success, long walletSpent, long treasurySpent, Component message) {}
     private record RestoredRoadRuntime(RoadPlacementPlan plan, int placedStepCount, String failureReason) {
         private boolean success() {
@@ -1376,67 +1379,46 @@ public final class StructureConstructionManager {
                                                      BlockPos sourceBoundaryAnchor,
                                                      BlockPos targetBoundaryAnchor,
                                                      BlockPos targetInternalAnchor) {
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = centerPath == null || centerPath.isEmpty()
+                ? List.of()
+                : detectBridgeRanges(level, centerPath);
+        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = centerPath == null || centerPath.isEmpty()
+                ? List.of()
+                : detectNavigableWaterBridgeRanges(level, centerPath, bridgeRanges);
+        RoadCorridorPlan corridorPlan = createRoadCorridorPlan(level, centerPath == null ? List.of() : centerPath, bridgeRanges, navigableWaterBridgeRanges);
         if (centerPath == null || centerPath.isEmpty()) {
-            RoadCorridorPlan corridorPlan = createRoadCorridorPlan(List.of(), List.of(), List.of());
             return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
                     List.of(), List.of(), List.of(), List.of(), List.of(), null, null, null, corridorPlan);
         }
-        List<RoadPlacementPlan.BridgeRange> bridgeRanges = detectBridgeRanges(level, centerPath);
-        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = detectNavigableWaterBridgeRanges(level, centerPath, bridgeRanges);
-        RoadCorridorPlan corridorPlan = createRoadCorridorPlan(centerPath, bridgeRanges, navigableWaterBridgeRanges);
-        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
-        RoadGeometryPlanner.RoadGeometryPlan geometry = RoadGeometryPlanner.plan(
-                centerPath,
-                pos -> selectRoadPlacementStyle(level, pos).surface(),
-                bridgeProfiles
-        );
-        List<RoadGeometryPlanner.GhostRoadBlock> roadSurfaceGhostBlocks = geometry.ghostBlocks();
-        List<BlockPos> lampBases = RoadLightingPlanner.planLampPosts(
-                centerPath,
-                bridgeRanges,
-                List.of(sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor)
-        );
-        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = decorateNavigableBridgeGhosts(
-                roadSurfaceGhostBlocks,
-                centerPath,
-                navigableWaterBridgeRanges,
-                lampBases,
-                RoadLightingPlanner.navigableBridgeLights(centerPath, navigableWaterBridgeRanges)
-        );
-        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = toBuildSteps(ghostBlocks);
-        List<BlockPos> roadbedTop = deriveRoadbedTopFromRoadSurfaceFootprint(roadSurfaceGhostBlocks);
-        List<BlockPos> terrainEdits = RoadTerrainShaper.shapeRoadbed(
-                        roadbedTop,
-                        pos -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, pos).below().getY()
-                ).stream()
-                .map(RoadTerrainShaper.TerrainEdit::pos)
-                .toList();
-        List<BlockPos> ownedBlocks = collectOwnedRoadBlocks(ghostBlocks, terrainEdits);
+        RoadPlacementArtifacts artifacts = buildRoadPlacementArtifacts(level, corridorPlan);
         return new RoadPlacementPlan(
                 centerPath,
                 sourceInternalAnchor,
                 sourceBoundaryAnchor,
                 targetBoundaryAnchor,
                 targetInternalAnchor,
-                ghostBlocks,
-                buildSteps,
+                artifacts.ghostBlocks(),
+                artifacts.buildSteps(),
                 bridgeRanges,
                 navigableWaterBridgeRanges,
-                ownedBlocks,
-                highlightPos(sourceBoundaryAnchor, centerPath, true),
-                highlightPos(targetBoundaryAnchor, centerPath, false),
-                resolveRoadPlanFocusPos(centerPath, ghostBlocks),
+                artifacts.ownedBlocks(),
+                artifacts.buildSteps().isEmpty() ? null : highlightPos(sourceBoundaryAnchor, centerPath, true),
+                artifacts.buildSteps().isEmpty() ? null : highlightPos(targetBoundaryAnchor, centerPath, false),
+                artifacts.buildSteps().isEmpty() ? null : resolveRoadPlanFocusPos(centerPath, artifacts.ghostBlocks()),
                 corridorPlan
         );
     }
 
-    private static RoadCorridorPlan createRoadCorridorPlan(List<BlockPos> centerPath,
+    private static RoadCorridorPlan createRoadCorridorPlan(ServerLevel level,
+                                                           List<BlockPos> centerPath,
                                                            List<RoadPlacementPlan.BridgeRange> bridgeRanges,
                                                            List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges) {
         if (centerPath == null) {
             return RoadCorridorPlanner.plan(List.of());
         }
-        return RoadCorridorPlanner.plan(centerPath, bridgeRanges, navigableWaterBridgeRanges);
+        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
+        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath, bridgeProfiles);
+        return RoadCorridorPlanner.plan(centerPath, bridgeRanges, navigableWaterBridgeRanges, placementHeights);
     }
 
     private static RoadPlacementPlan createRoadPlacementPlan(ServerLevel level, RoadNetworkRecord road) {
@@ -1758,7 +1740,7 @@ public final class StructureConstructionManager {
         List<Integer> batchSizes = new ArrayList<>();
         for (int i = 0; i < plan.centerPath().size(); i++) {
             int count = 0;
-            for (BlockPos pos : collectRoadSlicePositions(plan.centerPath(), i)) {
+            for (BlockPos pos : collectRoadSlicePositions(plan, i)) {
                 long key = pos.asLong();
                 if (buildStepPositions.contains(key) && seen.add(key)) {
                     count++;
@@ -1786,7 +1768,7 @@ public final class StructureConstructionManager {
         List<List<RoadGeometryPlanner.RoadBuildStep>> batches = new ArrayList<>();
         for (int i = 0; i < plan.centerPath().size(); i++) {
             List<RoadGeometryPlanner.RoadBuildStep> batch = new ArrayList<>();
-            for (BlockPos pos : collectRoadSlicePositions(plan.centerPath(), i)) {
+            for (BlockPos pos : collectRoadSlicePositions(plan, i)) {
                 long key = pos.asLong();
                 if (!seen.add(key)) {
                     continue;
@@ -2107,6 +2089,62 @@ public final class StructureConstructionManager {
         return List.copyOf(buildSteps);
     }
 
+    private static RoadPlacementArtifacts buildRoadPlacementArtifacts(ServerLevel level, RoadCorridorPlan corridorPlan) {
+        if (level == null) {
+            return new RoadPlacementArtifacts(List.of(), List.of(), List.of());
+        }
+        return buildRoadPlacementArtifacts(
+                corridorPlan,
+                pos -> selectRoadPlacementStyle(level, pos),
+                ghostBlocks -> deriveTerrainOwnedBlocks(level, ghostBlocks)
+        );
+    }
+
+    private static RoadPlacementArtifacts buildRoadPlacementArtifacts(RoadCorridorPlan corridorPlan,
+                                                                      Function<BlockPos, RoadPlacementStyle> styleResolver,
+                                                                      Function<List<RoadGeometryPlanner.GhostRoadBlock>, List<BlockPos>> terrainOwnershipResolver) {
+        if (!isUsableCorridorPlan(corridorPlan) || styleResolver == null) {
+            return new RoadPlacementArtifacts(List.of(), List.of(), List.of());
+        }
+        LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new LinkedHashMap<>();
+        LinkedHashSet<BlockPos> corridorTerrainOwnership = new LinkedHashSet<>();
+        for (RoadCorridorPlan.CorridorSlice slice : corridorPlan.slices()) {
+            if (slice == null) {
+                return new RoadPlacementArtifacts(List.of(), List.of(), List.of());
+            }
+            RoadPlacementStyle sliceStyle = styleResolver.apply(slice.deckCenter());
+            if (sliceStyle == null) {
+                return new RoadPlacementArtifacts(List.of(), List.of(), List.of());
+            }
+            for (RoadGeometryPlanner.GhostRoadBlock block : RoadGeometryPlanner.sliceGhostBlocks(
+                    corridorPlan,
+                    slice.index(),
+                    pos -> {
+                        RoadPlacementStyle style = styleResolver.apply(pos);
+                        return style == null ? null : style.surface();
+                    }
+            )) {
+                ghostBlocks.putIfAbsent(block.pos().asLong(), block);
+            }
+            appendCorridorSupportGhosts(ghostBlocks, slice.supportPositions(), sliceStyle.support());
+            appendCorridorLightGhosts(ghostBlocks, slice.railingLightPositions(), sliceStyle.support());
+            appendCorridorLightGhosts(ghostBlocks, slice.pierLightPositions(), sliceStyle.support());
+            corridorTerrainOwnership.addAll(slice.excavationPositions());
+        }
+        List<RoadGeometryPlanner.GhostRoadBlock> resolvedGhostBlocks = List.copyOf(ghostBlocks.values());
+        if (terrainOwnershipResolver != null) {
+            List<BlockPos> terrainOwnedBlocks = terrainOwnershipResolver.apply(resolvedGhostBlocks);
+            if (terrainOwnedBlocks != null) {
+                corridorTerrainOwnership.addAll(terrainOwnedBlocks);
+            }
+        }
+        return new RoadPlacementArtifacts(
+                resolvedGhostBlocks,
+                toBuildSteps(resolvedGhostBlocks),
+                collectOwnedRoadBlocks(resolvedGhostBlocks, List.copyOf(corridorTerrainOwnership))
+        );
+    }
+
     private static List<BlockPos> deriveRoadbedTopFromRoadSurfaceFootprint(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
         if (ghostBlocks == null || ghostBlocks.isEmpty()) {
             return List.of();
@@ -2249,6 +2287,82 @@ public final class StructureConstructionManager {
             return List.of();
         }
         return List.copyOf(ownedBlocks);
+    }
+
+    private static boolean isUsableCorridorPlan(RoadCorridorPlan corridorPlan) {
+        if (corridorPlan == null || !corridorPlan.valid() || corridorPlan.centerPath().isEmpty()) {
+            return false;
+        }
+        if (corridorPlan.centerPath().size() != corridorPlan.slices().size()) {
+            return false;
+        }
+        for (int i = 0; i < corridorPlan.slices().size(); i++) {
+            RoadCorridorPlan.CorridorSlice slice = corridorPlan.slices().get(i);
+            if (slice == null || slice.index() != i) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static Set<BlockPos> collectRoadSlicePositions(RoadPlacementPlan plan, int index) {
+        if (plan == null || plan.centerPath().isEmpty()) {
+            return Set.of();
+        }
+        RoadCorridorPlan corridorPlan = plan.corridorPlan();
+        if (!isUsableCorridorPlan(corridorPlan)) {
+            return collectRoadSlicePositions(plan.centerPath(), index);
+        }
+        if (index < 0 || index >= corridorPlan.slices().size()) {
+            return Set.of();
+        }
+        RoadCorridorPlan.CorridorSlice slice = corridorPlan.slices().get(index);
+        LinkedHashSet<BlockPos> positions = new LinkedHashSet<>(RoadGeometryPlanner.slicePositions(corridorPlan, index));
+        positions.addAll(slice.supportPositions());
+        appendLightBatchPositions(positions, slice.railingLightPositions());
+        appendLightBatchPositions(positions, slice.pierLightPositions());
+        return positions;
+    }
+
+    private static void appendCorridorSupportGhosts(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                    List<BlockPos> positions,
+                                                    BlockState supportState) {
+        if (ghostBlocks == null || positions == null || positions.isEmpty() || supportState == null) {
+            return;
+        }
+        for (BlockPos pos : positions) {
+            appendGhost(ghostBlocks, pos, supportState);
+        }
+    }
+
+    private static void appendCorridorLightGhosts(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                  List<BlockPos> positions,
+                                                  BlockState supportState) {
+        if (ghostBlocks == null || positions == null || positions.isEmpty()) {
+            return;
+        }
+        for (BlockPos lightPos : positions) {
+            if (lightPos == null) {
+                continue;
+            }
+            if (supportState != null) {
+                appendGhost(ghostBlocks, lightPos.above(), supportState);
+            }
+            appendGhost(ghostBlocks, lightPos, Blocks.LANTERN.defaultBlockState());
+        }
+    }
+
+    private static void appendLightBatchPositions(Set<BlockPos> positions, List<BlockPos> lightPositions) {
+        if (positions == null || lightPositions == null || lightPositions.isEmpty()) {
+            return;
+        }
+        for (BlockPos lightPos : lightPositions) {
+            if (lightPos == null) {
+                continue;
+            }
+            positions.add(lightPos);
+            positions.add(lightPos.above());
+        }
     }
 
     private static boolean isRoadPlacementReplaceable(BlockState state) {
@@ -3373,6 +3487,12 @@ public final class StructureConstructionManager {
 
         BlockPos start = centerPath.get(0);
         BlockPos end = centerPath.get(centerPath.size() - 1);
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = detectBridgeRanges(level, centerPath);
+        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = detectNavigableWaterBridgeRanges(level, centerPath, bridgeRanges);
+        RoadCorridorPlan corridorPlan = createRoadCorridorPlan(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
+        if (!isUsableCorridorPlan(corridorPlan)) {
+            return null;
+        }
         return new RoadPlacementPlan(
                 centerPath,
                 start,
@@ -3381,12 +3501,13 @@ public final class StructureConstructionManager {
                 end,
                 ghostBlocks,
                 buildSteps,
-                detectBridgeRanges(level, centerPath),
-                detectNavigableWaterBridgeRanges(level, centerPath, detectBridgeRanges(level, centerPath)),
+                bridgeRanges,
+                navigableWaterBridgeRanges,
                 toBlockPosList(state.ownedBlocks()),
                 highlightPos(start, centerPath, true),
                 highlightPos(end, centerPath, false),
-                resolveRoadPlanFocusPos(centerPath, ghostBlocks)
+                resolveRoadPlanFocusPos(centerPath, ghostBlocks),
+                corridorPlan
         );
     }
 

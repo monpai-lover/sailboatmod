@@ -132,7 +132,7 @@ class RoadGeometryPlannerTest {
     @Test
     void plannerRejectsNullCenterPathList() {
         assertThrows(NullPointerException.class, () -> RoadGeometryPlanner.plan(
-                null,
+                (List<BlockPos>) null,
                 pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
         ));
     }
@@ -279,6 +279,67 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
+    void corridorPlanUsesExplicitSliceSurfaceFootprints() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 66, 0),
+                new BlockPos(2, 68, 0)
+        );
+        List<BlockPos> slice0 = List.of(new BlockPos(0, 65, 0), new BlockPos(0, 65, 1));
+        List<BlockPos> slice1 = List.of(new BlockPos(1, 67, 0), new BlockPos(1, 67, 1));
+        List<BlockPos> slice2 = List.of(new BlockPos(2, 69, 0), new BlockPos(2, 69, 1));
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                centerPath,
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(0, new BlockPos(0, 65, 0), RoadCorridorPlan.SegmentKind.LAND_APPROACH, slice0, List.of(), List.of(), List.of(), List.of()),
+                        new RoadCorridorPlan.CorridorSlice(1, new BlockPos(1, 67, 0), RoadCorridorPlan.SegmentKind.LAND_APPROACH, slice1, List.of(), List.of(), List.of(), List.of()),
+                        new RoadCorridorPlan.CorridorSlice(2, new BlockPos(2, 69, 0), RoadCorridorPlan.SegmentKind.LAND_APPROACH, slice2, List.of(), List.of(), List.of(), List.of())
+                ),
+                null,
+                true
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                corridorPlan,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        Set<BlockPos> positions = plan.ghostBlocks().stream()
+                .map(RoadGeometryPlanner.GhostRoadBlock::pos)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        assertEquals(Set.copyOf(List.of(
+                new BlockPos(0, 65, 0),
+                new BlockPos(0, 65, 1),
+                new BlockPos(1, 67, 0),
+                new BlockPos(1, 67, 1),
+                new BlockPos(2, 69, 0),
+                new BlockPos(2, 69, 1)
+        )), positions);
+    }
+
+    @Test
+    void corridorPlanReturnsEmptyGeometryWhenInvalid() {
+        List<BlockPos> centerPath = List.of(new BlockPos(0, 64, 0));
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                centerPath,
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(0, new BlockPos(0, 65, 0), RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, List.of(new BlockPos(0, 65, 0)), List.of(), List.of(), List.of(), List.of())
+                ),
+                null,
+                false
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                corridorPlan,
+                pos -> Blocks.SPRUCE_SLAB.defaultBlockState()
+        );
+
+        assertTrue(plan.ghostBlocks().isEmpty());
+        assertTrue(plan.buildSteps().isEmpty());
+    }
+
+    @Test
     void preservesSlopedBridgeEndpointsWhileRaisingArchedInterior() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
@@ -370,4 +431,5 @@ class RoadGeometryPlannerTest {
         }
         return positions;
     }
+
 }

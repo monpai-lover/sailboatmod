@@ -152,4 +152,28 @@ class RoadCorridorPlannerTest {
 
         assertNull(plan.navigationChannel());
     }
+
+    @Test
+    void plannerUsesProvidedPlacementHeightsForRaisedBridgeDecks() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0)
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(
+                centerPath,
+                List.of(new RoadPlacementPlan.BridgeRange(1, 3)),
+                List.of(new RoadPlacementPlan.BridgeRange(2, 2)),
+                new int[] {65, 67, 70, 67, 65}
+        );
+
+        assertEquals(67, plan.slices().get(1).deckCenter().getY());
+        assertEquals(70, plan.slices().get(2).deckCenter().getY());
+        assertEquals(67, plan.slices().get(3).deckCenter().getY());
+        assertTrue(plan.slices().get(2).surfacePositions().stream().allMatch(pos -> pos.getY() >= 70));
+        assertTrue(plan.slices().get(1).surfacePositions().stream().anyMatch(pos -> pos.getY() == 67));
+    }
 }
