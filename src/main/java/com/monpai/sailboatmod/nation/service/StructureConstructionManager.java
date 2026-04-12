@@ -1423,7 +1423,7 @@ public final class StructureConstructionManager {
         if (centerPath == null || centerPath.isEmpty() || placementHeights == null || placementHeights.length != centerPath.size()) {
             return placementHeights == null ? new int[0] : placementHeights;
         }
-        Set<Integer> bridgeIndexes = new HashSet<>();
+        Set<Integer> preservedIndexes = new HashSet<>();
         if (bridgeRanges != null) {
             for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
                 if (range == null) {
@@ -1432,13 +1432,19 @@ public final class StructureConstructionManager {
                 int start = Math.max(0, range.startIndex());
                 int end = Math.min(centerPath.size() - 1, range.endIndex());
                 for (int i = start; i <= end; i++) {
-                    bridgeIndexes.add(i);
+                    preservedIndexes.add(i);
+                }
+                if (start > 0) {
+                    preservedIndexes.add(start - 1);
+                }
+                if (end + 1 < centerPath.size()) {
+                    preservedIndexes.add(end + 1);
                 }
             }
         }
         int[] adjusted = placementHeights.clone();
         for (int i = 0; i < adjusted.length; i++) {
-            if (!bridgeIndexes.contains(i)) {
+            if (!preservedIndexes.contains(i)) {
                 adjusted[i] = centerPath.get(i).getY();
             }
         }
