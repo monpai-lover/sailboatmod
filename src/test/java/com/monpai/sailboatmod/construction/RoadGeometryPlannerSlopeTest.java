@@ -2,8 +2,10 @@ package com.monpai.sailboatmod.construction;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -176,6 +179,55 @@ class RoadGeometryPlannerSlopeTest {
         assertNotNull(overlapPos, "Expected a mixed slab/stair overlap candidate");
         assertTrue(statesByPos.containsKey(overlapPos));
         assertTrue(statesByPos.get(overlapPos).is(Blocks.STONE_BRICK_STAIRS));
+    }
+
+    @Test
+    void uphillSegmentsFaceBackTowardLowerGround() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(2, 66, 0),
+                new BlockPos(3, 66, 0)
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        BlockState state = plan.ghostBlocks().stream()
+                .filter(block -> block.pos().equals(new BlockPos(2, 66, 0)))
+                .findFirst()
+                .orElseThrow()
+                .state();
+
+        assertTrue(state.is(Blocks.STONE_BRICK_STAIRS));
+        assertEquals(Direction.WEST, state.getValue(StairBlock.FACING));
+    }
+
+    @Test
+    void bridgeheadRampKeepsSameFacingAsApproachDirection() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(2, 68, 0),
+                new BlockPos(3, 68, 0)
+        );
+        int[] placementHeights = new int[] {64, 65, 68, 68};
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                RoadCorridorPlanner.plan(
+                        centerPath,
+                        List.of(new RoadPlacementPlan.BridgeRange(2, 3)),
+                        List.of(new RoadPlacementPlan.BridgeRange(2, 3)),
+                        placementHeights
+                ),
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        assertTrue(plan.ghostBlocks().stream().anyMatch(block ->
+                block.state().is(Blocks.STONE_BRICK_STAIRS)
+                        && block.state().getValue(StairBlock.FACING) == Direction.WEST));
     }
 
     private static Map<BlockPos, BlockState> statesByPos(RoadGeometryPlanner.RoadGeometryPlan plan) {

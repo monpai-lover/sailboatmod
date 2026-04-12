@@ -622,7 +622,15 @@ public final class RoadGeometryPlanner {
         int next = index + 1 < placementHeights.length ? placementHeights[index + 1] : current;
         int riseIn = current - previous;
         int riseOut = next - current;
-        return riseIn != 0 && riseOut != 0 && Integer.signum(riseIn) == Integer.signum(riseOut);
+        if (riseIn != 0 && riseOut != 0) {
+            return Integer.signum(riseIn) == Integer.signum(riseOut);
+        }
+        if (riseIn != 0 && riseOut == 0 && index > 1) {
+            int earlier = placementHeights[index - 2];
+            int priorRise = previous - earlier;
+            return priorRise != 0 && Integer.signum(priorRise) == Integer.signum(riseIn);
+        }
+        return false;
     }
 
     private static BlockState resolveState(List<BlockPos> path,
@@ -637,27 +645,52 @@ public final class RoadGeometryPlanner {
                 || !isWithinStairTravelBand(currentPos.getX(), currentPos.getZ(), path)) {
             return state;
         }
-        return staircaseState(state, stairFacing(path, index));
+        return staircaseState(state, stairFacing(path, placementHeights, index));
     }
 
-    private static Direction stairFacing(List<BlockPos> path, int index) {
+    private static Direction stairFacing(List<BlockPos> path, int[] placementHeights, int index) {
         BlockPos current = path.get(index);
+        int currentHeight = placementHeights[index];
+        if (index > 0) {
+            int previousHeight = placementHeights[index - 1];
+            if (previousHeight != currentHeight) {
+                BlockPos previous = path.get(index - 1);
+                return previousHeight < currentHeight
+                        ? stairFacing(previous, current)
+                        : stairFacing(current, previous);
+            }
+        }
+        if (index + 1 < path.size()) {
+            int nextHeight = placementHeights[index + 1];
+            if (nextHeight != currentHeight) {
+                BlockPos next = path.get(index + 1);
+                return currentHeight < nextHeight
+                        ? stairFacing(current, next)
+                        : stairFacing(next, current);
+            }
+        }
+
         BlockPos next = index + 1 < path.size() ? path.get(index + 1) : current;
         BlockPos previous = index > 0 ? path.get(index - 1) : current;
         int dx = Integer.compare(next.getX(), previous.getX());
         int dz = Integer.compare(next.getZ(), previous.getZ());
         if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
-            return dx > 0 ? Direction.EAST : Direction.WEST;
+            return dx > 0 ? Direction.WEST : Direction.EAST;
         }
         if (dz != 0) {
-            return dz > 0 ? Direction.SOUTH : Direction.NORTH;
+            return dz > 0 ? Direction.NORTH : Direction.SOUTH;
         }
         return Direction.NORTH;
     }
 
     private static Direction stairFacing(BlockPos lower, BlockPos higher) {
-        int dx = Integer.compare(higher.getX(), lower.getX());
-        int dz = Integer.compare(higher.getZ(), lower.getZ());
+        Direction uphill = directionBetween(lower, higher);
+        return uphill.getOpposite();
+    }
+
+    private static Direction directionBetween(BlockPos from, BlockPos to) {
+        int dx = Integer.compare(to.getX(), from.getX());
+        int dz = Integer.compare(to.getZ(), from.getZ());
         if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
             return dx > 0 ? Direction.EAST : Direction.WEST;
         }
