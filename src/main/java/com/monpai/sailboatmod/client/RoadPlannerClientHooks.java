@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
+import com.monpai.sailboatmod.client.screen.RoadPlannerOptionSelectionScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
@@ -11,6 +12,14 @@ import java.util.Objects;
 
 public final class RoadPlannerClientHooks {
     public record TargetEntry(String townId, String townName, int distanceBlocks) {
+    }
+
+    public record PreviewOption(String optionId, String label, int pathNodeCount, boolean bridgeBacked) {
+        public PreviewOption {
+            optionId = optionId == null ? "" : optionId;
+            label = label == null ? "" : label;
+            pathNodeCount = Math.max(0, pathNodeCount);
+        }
     }
 
     public record PreviewGhostBlock(BlockPos pos, BlockState state) {
@@ -27,13 +36,17 @@ public final class RoadPlannerClientHooks {
                                BlockPos startHighlightPos,
                                BlockPos endHighlightPos,
                                BlockPos focusPos,
-                               boolean awaitingConfirmation) {
+                               boolean awaitingConfirmation,
+                               List<PreviewOption> options,
+                               String selectedOptionId) {
         public PreviewState {
             ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
             pathNodeCount = Math.max(0, pathNodeCount);
             startHighlightPos = startHighlightPos == null ? null : startHighlightPos.immutable();
             endHighlightPos = endHighlightPos == null ? null : endHighlightPos.immutable();
             focusPos = focusPos == null ? null : focusPos.immutable();
+            options = options == null ? List.of() : List.copyOf(options);
+            selectedOptionId = selectedOptionId == null ? "" : selectedOptionId;
         }
     }
 
@@ -54,6 +67,20 @@ public final class RoadPlannerClientHooks {
 
     public static void openTargetSelection(boolean offhand, String sourceTownName, List<TargetEntry> entries, String selectedTownId) {
         Minecraft.getInstance().setScreen(new RoadPlannerTargetSelectionScreen(offhand, sourceTownName, entries, selectedTownId));
+    }
+
+    public static void openPreviewOptionSelection(String sourceTownName,
+                                                  String targetTownName,
+                                                  List<PreviewOption> options,
+                                                  String selectedOptionId) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (options == null || options.size() < 2) {
+            return;
+        }
+        if (minecraft.screen instanceof RoadPlannerOptionSelectionScreen) {
+            return;
+        }
+        minecraft.setScreen(new RoadPlannerOptionSelectionScreen(sourceTownName, targetTownName, options, selectedOptionId));
     }
 
     public static void updatePreview(PreviewState preview) {

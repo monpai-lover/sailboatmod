@@ -81,7 +81,7 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
-    void rejectsBridgeFallbackWhenFinalBridgeShareWouldExceedThirtyFivePercent() {
+    void allowsBridgeFallbackEvenWhenMostOfShortRouteCrossesWater() {
         RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(6, 64, 0),
@@ -102,12 +102,13 @@ class RoadRouteNodePlannerTest {
 
         RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
 
-        assertTrue(plan.path().isEmpty());
-        assertFalse(plan.usedBridge());
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.usedBridge());
+        assertEquals(3, plan.totalBridgeColumns());
     }
 
     @Test
-    void respectsBridgeBudgetLimitsWhenNoLandOnlyRouteExists() {
+    void allowsLongContinuousBridgeWhenItIsTheOnlyConnection() {
         RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(7, 64, 0),
@@ -128,7 +129,10 @@ class RoadRouteNodePlannerTest {
 
         RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
 
-        assertTrue(plan.path().isEmpty());
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.usedBridge());
+        assertEquals(6, plan.totalBridgeColumns());
+        assertEquals(6, plan.longestBridgeRun());
     }
 
     @Test

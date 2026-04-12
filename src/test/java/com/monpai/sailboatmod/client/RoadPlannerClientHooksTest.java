@@ -20,7 +20,9 @@ class RoadPlannerClientHooksTest {
                 null,
                 null,
                 null,
-                false
+                false,
+                List.of(),
+                ""
         ));
 
         RoadPlannerClientHooks.clearPreview();
@@ -37,5 +39,30 @@ class RoadPlannerClientHooksTest {
         RoadPlannerClientHooks.setLastProgressSyncAtMsForTest(System.currentTimeMillis() - 5000L);
 
         assertTrue(RoadPlannerClientHooks.activeProgress().isEmpty());
+    }
+
+    @Test
+    void previewStateKeepsSelectableOptions() {
+        RoadPlannerClientHooks.resetStateForTest();
+        RoadPlannerClientHooks.updatePreview(new RoadPlannerClientHooks.PreviewState(
+                "alpha",
+                "beta",
+                List.of(),
+                12,
+                null,
+                null,
+                null,
+                true,
+                List.of(
+                        new RoadPlannerClientHooks.PreviewOption("detour", "Detour", 28, false),
+                        new RoadPlannerClientHooks.PreviewOption("bridge", "Bridge", 17, true)
+                ),
+                "bridge"
+        ));
+
+        RoadPlannerClientHooks.PreviewState preview = RoadPlannerClientHooks.previewState();
+        assertTrue(preview != null && preview.options().size() == 2);
+        assertTrue(preview.options().get(1).bridgeBacked());
+        assertTrue("bridge".equals(preview.selectedOptionId()));
     }
 }

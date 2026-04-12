@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.route;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
+import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
@@ -127,6 +128,51 @@ public final class RoadAutoRouteService {
         return true;
     }
 
+    public static List<RouteDefinition> buildRoadNetworkRoutes(ServerLevel level, PostStationBlockEntity startDock) {
+        if (level == null || startDock == null) {
+            return List.of();
+        }
+        List<RouteDefinition> generated = new ArrayList<>();
+        for (BlockPos stationPos : PostStationRegistry.get(level)) {
+            if (stationPos == null || stationPos.equals(startDock.getBlockPos())) {
+                continue;
+            }
+            if (!(level.getBlockEntity(stationPos) instanceof PostStationBlockEntity targetDock)) {
+                continue;
+            }
+            if (!canCreateAutoRoute(level, startDock, targetDock)) {
+                continue;
+            }
+            List<BlockPos> path = findRoadRoute(level, startDock.getBlockPos(), targetDock.getBlockPos());
+            if (path.size() < 2) {
+                continue;
+            }
+            generated.add(routeDefinitionFromPath(startDock, targetDock, path));
+        }
+        generated.sort(Comparator.comparing(RouteDefinition::name, String.CASE_INSENSITIVE_ORDER));
+        return List.copyOf(generated);
+    }
+
+    static List<RouteDefinition> mergeRoutesForTest(List<RouteDefinition> storedRoutes, List<RouteDefinition> generatedRoutes) {
+        return mergeRoutes(storedRoutes, generatedRoutes);
+    }
+
+    public static List<RouteDefinition> mergeRoutes(List<RouteDefinition> storedRoutes, List<RouteDefinition> generatedRoutes) {
+        List<RouteDefinition> merged = new ArrayList<>();
+        for (RouteDefinition route : storedRoutes == null ? List.<RouteDefinition>of() : storedRoutes) {
+            if (route != null) {
+                merged.add(route.copy());
+            }
+        }
+        for (RouteDefinition route : generatedRoutes == null ? List.<RouteDefinition>of() : generatedRoutes) {
+            if (route == null || containsRouteShape(merged, route)) {
+                continue;
+            }
+            merged.add(route.copy());
+        }
+        return List.copyOf(merged);
+    }
+
     private static RouteResolution resolveAutoRoute(ServerLevel level, BlockPos start, BlockPos end) {
         List<BlockPos> roadPath = findRoadRoute(level, start, end);
         if (roadPath.size() >= 2) {
@@ -137,6 +183,55 @@ public final class RoadAutoRouteService {
             return new RouteResolution(PathSource.LAND_TERRAIN, landPath);
         }
         return RouteResolution.none();
+    }
+
+    private static RouteDefinition routeDefinitionFromPath(PostStationBlockEntity startDock,
+                                                           PostStationBlockEntity endDock,
+                                                           List<BlockPos> path) {
+        List<Vec3> waypoints = new ArrayList<>(path.size());
+        double routeLength = 0.0D;
+        Vec3 previous = null;
+        for (BlockPos pos : path) {
+            Vec3 waypoint = new Vec3(pos.getX() + 0.5D, pos.getY() + 1.05D, pos.getZ() + 0.5D);
+            if (previous != null) {
+                routeLength += previous.distanceTo(waypoint);
+            }
+            waypoints.add(waypoint);
+            previous = waypoint;
+        }
+        return new RouteDefinition(
+                "Road Link: " + endDock.getDockName(),
+                waypoints,
+                "System",
+                "",
+                System.currentTimeMillis(),
+                routeLength,
+                startDock.getDockName(),
+                endDock.getDockName()
+        );
+    }
+
+    private static boolean containsRouteShape(List<RouteDefinition> routes, RouteDefinition incoming) {
+        for (RouteDefinition existing : routes) {
+            if (sameRouteShape(existing, incoming)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean sameRouteShape(RouteDefinition left, RouteDefinition right) {
+        if (left == null || right == null || left.waypoints().size() != right.waypoints().size()) {
+            return false;
+        }
+        for (int i = 0; i < left.waypoints().size(); i++) {
+            Vec3 a = left.waypoints().get(i);
+            Vec3 b = right.waypoints().get(i);
+            if (Math.abs(a.x - b.x) > 0.01D || Math.abs(a.y - b.y) > 0.01D || Math.abs(a.z - b.z) > 0.01D) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Graph buildGraph(ServerLevel level) {

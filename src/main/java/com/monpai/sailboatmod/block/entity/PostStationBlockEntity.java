@@ -4,6 +4,8 @@ import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.menu.PostStationMenu;
+import com.monpai.sailboatmod.route.RoadAutoRouteService;
+import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -17,6 +19,8 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
+
+import java.util.List;
 
 public class PostStationBlockEntity extends DockBlockEntity {
     public PostStationBlockEntity(BlockPos pos, BlockState state) {
@@ -80,6 +84,17 @@ public class PostStationBlockEntity extends DockBlockEntity {
     @Override
     protected String transportLoadFailedTranslationKey() {
         return "screen.sailboatmod.post_station.error.vehicle_load_failed";
+    }
+
+    @Override
+    protected List<RouteDefinition> availableRoutes() {
+        if (!(level instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
+            return super.availableRoutes();
+        }
+        return RoadAutoRouteService.mergeRoutes(
+                super.availableRoutes(),
+                RoadAutoRouteService.buildRoadNetworkRoutes(serverLevel, this)
+        );
     }
 
     @Override

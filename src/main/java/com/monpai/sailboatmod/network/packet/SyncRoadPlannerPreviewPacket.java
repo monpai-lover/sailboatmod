@@ -23,6 +23,14 @@ public class SyncRoadPlannerPreviewPacket {
         }
     }
 
+    public record PreviewOption(String optionId, String label, int pathNodeCount, boolean bridgeBacked) {
+        public PreviewOption {
+            optionId = optionId == null ? "" : optionId;
+            label = label == null ? "" : label;
+            pathNodeCount = Math.max(0, pathNodeCount);
+        }
+    }
+
     private final String sourceTownName;
     private final String targetTownName;
     private final List<GhostBlock> ghostBlocks;
@@ -31,6 +39,8 @@ public class SyncRoadPlannerPreviewPacket {
     private final BlockPos endHighlightPos;
     private final BlockPos focusPos;
     private final boolean awaitingConfirmation;
+    private final List<PreviewOption> options;
+    private final String selectedOptionId;
 
     public SyncRoadPlannerPreviewPacket(String sourceTownName,
                                         String targetTownName,
@@ -39,7 +49,9 @@ public class SyncRoadPlannerPreviewPacket {
                                         BlockPos startHighlightPos,
                                         BlockPos endHighlightPos,
                                         BlockPos focusPos,
-                                        boolean awaitingConfirmation) {
+                                        boolean awaitingConfirmation,
+                                        List<PreviewOption> options,
+                                        String selectedOptionId) {
         this.sourceTownName = sourceTownName == null ? "" : sourceTownName;
         this.targetTownName = targetTownName == null ? "" : targetTownName;
         this.ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
@@ -48,6 +60,8 @@ public class SyncRoadPlannerPreviewPacket {
         this.endHighlightPos = immutable(endHighlightPos);
         this.focusPos = immutable(focusPos);
         this.awaitingConfirmation = awaitingConfirmation;
+        this.options = options == null ? List.of() : List.copyOf(options);
+        this.selectedOptionId = selectedOptionId == null ? "" : selectedOptionId;
     }
 
     public static SyncRoadPlannerPreviewPacket fromPlan(String sourceTownName,
@@ -64,7 +78,24 @@ public class SyncRoadPlannerPreviewPacket {
                 plan == null ? null : plan.startHighlightPos(),
                 plan == null ? null : plan.endHighlightPos(),
                 plan == null ? null : plan.focusPos(),
-                awaitingConfirmation
+                awaitingConfirmation,
+                List.of(),
+                ""
+        );
+    }
+
+    public SyncRoadPlannerPreviewPacket withOptions(List<PreviewOption> options, String selectedOptionId) {
+        return new SyncRoadPlannerPreviewPacket(
+                sourceTownName,
+                targetTownName,
+                ghostBlocks,
+                pathNodeCount,
+                startHighlightPos,
+                endHighlightPos,
+                focusPos,
+                awaitingConfirmation,
+                options,
+                selectedOptionId
         );
     }
 
@@ -100,6 +131,14 @@ public class SyncRoadPlannerPreviewPacket {
         return awaitingConfirmation;
     }
 
+    public List<PreviewOption> options() {
+        return options;
+    }
+
+    public String selectedOptionId() {
+        return selectedOptionId;
+    }
+
     public static void encode(SyncRoadPlannerPreviewPacket msg, FriendlyByteBuf buf) {
         PacketStringCodec.writeUtfSafe(buf, msg.sourceTownName, 64);
         PacketStringCodec.writeUtfSafe(buf, msg.targetTownName, 64);
@@ -109,6 +148,14 @@ public class SyncRoadPlannerPreviewPacket {
         writeOptionalPos(buf, msg.endHighlightPos);
         writeOptionalPos(buf, msg.focusPos);
         buf.writeBoolean(msg.awaitingConfirmation);
+        buf.writeVarInt(msg.options.size());
+        for (PreviewOption option : msg.options) {
+            PacketStringCodec.writeUtfSafe(buf, option.optionId(), 32);
+            PacketStringCodec.writeUtfSafe(buf, option.label(), 64);
+            buf.writeVarInt(option.pathNodeCount());
+            buf.writeBoolean(option.bridgeBacked());
+        }
+        PacketStringCodec.writeUtfSafe(buf, msg.selectedOptionId, 32);
     }
 
     public static SyncRoadPlannerPreviewPacket decode(FriendlyByteBuf buf) {
@@ -120,6 +167,12 @@ public class SyncRoadPlannerPreviewPacket {
         BlockPos endHighlightPos = readOptionalPos(buf);
         BlockPos focusPos = readOptionalPos(buf);
         boolean awaitingConfirmation = buf.readBoolean();
+        int optionCount = buf.readVarInt();
+        List<PreviewOption> options = new ArrayList<>(optionCount);
+        for (int i = 0; i < optionCount; i++) {
+            options.add(new PreviewOption(buf.readUtf(32), buf.readUtf(64), buf.readVarInt(), buf.readBoolean()));
+        }
+        String selectedOptionId = buf.readUtf(32);
         return new SyncRoadPlannerPreviewPacket(
                 sourceTownName,
                 targetTownName,
@@ -128,7 +181,9 @@ public class SyncRoadPlannerPreviewPacket {
                 startHighlightPos,
                 endHighlightPos,
                 focusPos,
-                awaitingConfirmation
+                awaitingConfirmation,
+                options,
+                selectedOptionId
         );
     }
 
@@ -153,8 +208,22 @@ public class SyncRoadPlannerPreviewPacket {
                 msg.startHighlightPos,
                 msg.endHighlightPos,
                 msg.focusPos,
-                msg.awaitingConfirmation
+                msg.awaitingConfirmation,
+                msg.options.stream()
+                        .map(option -> new RoadPlannerClientHooks.PreviewOption(option.optionId(), option.label(), option.pathNodeCount(), option.bridgeBacked()))
+                        .toList(),
+                msg.selectedOptionId
         ));
+        if (msg.options.size() >= 2) {
+            RoadPlannerClientHooks.openPreviewOptionSelection(
+                    msg.sourceTownName,
+                    msg.targetTownName,
+                    msg.options.stream()
+                            .map(option -> new RoadPlannerClientHooks.PreviewOption(option.optionId(), option.label(), option.pathNodeCount(), option.bridgeBacked()))
+                            .toList(),
+                    msg.selectedOptionId
+            );
+        }
     }
 
     private static void writeGhostBlocks(FriendlyByteBuf buf, List<GhostBlock> blocks) {

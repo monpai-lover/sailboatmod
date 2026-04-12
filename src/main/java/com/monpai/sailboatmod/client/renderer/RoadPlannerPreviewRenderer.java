@@ -113,6 +113,22 @@ public final class RoadPlannerPreviewRenderer {
                     false
             );
             textY += 12;
+            if (!preview.selectedOptionId().isBlank()) {
+                String selectedLabel = preview.options().stream()
+                        .filter(option -> option.optionId().equalsIgnoreCase(preview.selectedOptionId()))
+                        .map(RoadPlannerClientHooks.PreviewOption::label)
+                        .findFirst()
+                        .orElse(preview.selectedOptionId());
+                guiGraphics.drawString(
+                        minecraft.font,
+                        Component.translatable("screen.sailboatmod.road_planner.overlay.option", selectedLabel),
+                        x + 10,
+                        textY,
+                        0xFFB7C8D6,
+                        false
+                );
+                textY += 12;
+            }
             guiGraphics.drawString(
                     minecraft.font,
                     Component.translatable(preview.awaitingConfirmation()

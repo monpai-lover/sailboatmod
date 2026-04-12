@@ -41,7 +41,12 @@ class SyncRoadPlannerPreviewPacketTest {
                 new BlockPos(1, 65, 1),
                 new BlockPos(8, 65, 8),
                 new BlockPos(5, 65, 5),
-                true
+                true,
+                java.util.List.of(
+                        new SyncRoadPlannerPreviewPacket.PreviewOption("detour", "Detour", 21, false),
+                        new SyncRoadPlannerPreviewPacket.PreviewOption("bridge", "Bridge", 18, true)
+                ),
+                "bridge"
         );
 
         FriendlyByteBuf encoded = assertDoesNotThrow(() -> encode(packet));
@@ -61,7 +66,9 @@ class SyncRoadPlannerPreviewPacketTest {
                 null,
                 null,
                 null,
-                false
+                false,
+                java.util.List.of(),
+                ""
         );
 
         FriendlyByteBuf encoded = assertDoesNotThrow(() -> encode(packet));
@@ -85,7 +92,9 @@ class SyncRoadPlannerPreviewPacketTest {
                 new BlockPos(1, 65, 1),
                 new BlockPos(8, 65, 8),
                 new BlockPos(5, 65, 5),
-                true
+                true,
+                java.util.List.of(),
+                ""
         );
 
         FriendlyByteBuf encoded = assertDoesNotThrow(() -> encode(packet));
@@ -151,6 +160,31 @@ class SyncRoadPlannerPreviewPacketTest {
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(2, 70, 0))));
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(1, 61, 0))));
         assertEquals(plan.centerPath().size(), packet.pathNodeCount());
+    }
+
+    @Test
+    void roundTripsPreviewOptionsAndSelectedOptionId() {
+        SyncRoadPlannerPreviewPacket packet = new SyncRoadPlannerPreviewPacket(
+                "SourceTown",
+                "TargetTown",
+                java.util.List.of(),
+                5,
+                null,
+                null,
+                null,
+                false,
+                java.util.List.of(
+                        new SyncRoadPlannerPreviewPacket.PreviewOption("detour", "Detour", 25, false),
+                        new SyncRoadPlannerPreviewPacket.PreviewOption("bridge", "Bridge", 17, true)
+                ),
+                "bridge"
+        );
+
+        SyncRoadPlannerPreviewPacket decoded = assertDoesNotThrow(() -> SyncRoadPlannerPreviewPacket.decode(copy(encode(packet))));
+
+        assertEquals(2, decoded.options().size());
+        assertEquals("bridge", decoded.selectedOptionId());
+        assertTrue(decoded.options().get(1).bridgeBacked());
     }
 
     private static FriendlyByteBuf encode(SyncRoadPlannerPreviewPacket packet) {

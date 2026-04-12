@@ -45,6 +45,7 @@ public final class ManualRoadPlannerService {
     private static final String TAG_PREVIEW_HASH = "PreviewHash";
     private static final String TAG_PREVIEW_AT = "PreviewAt";
     private static final String TAG_PREVIEW_FAILURE = "PreviewFailure";
+    private static final String TAG_PREVIEW_OPTION_ID = "PreviewOptionId";
     private static final String TAG_MODE = "PlannerMode";
     private static final long PREVIEW_TIMEOUT_MS = 45_000L;
 
@@ -72,6 +73,19 @@ public final class ManualRoadPlannerService {
         SOURCE_EXIT_MISSING,
         TARGET_EXIT_MISSING,
         ROUTE_NOT_FOUND
+    }
+
+    enum PreviewOptionKind {
+        DETOUR("detour", "Detour"),
+        BRIDGE("bridge", "Bridge");
+
+        private final String optionId;
+        private final String label;
+
+        PreviewOptionKind(String optionId, String label) {
+            this.optionId = optionId;
+            this.label = label;
+        }
     }
 
     public static Component handleSneakUse(ServerPlayer player, ItemStack stack, boolean offhand) {
@@ -167,7 +181,8 @@ public final class ManualRoadPlannerService {
             return Component.translatable("message.sailboatmod.road_planner.unavailable");
         }
 
-        PlanCandidate candidate = buildPlan(player, stack);
+        List<PlanCandidate> candidates = buildPlanCandidates(player, stack);
+        PlanCandidate candidate = selectPlanCandidate(stack, candidates);
         if (candidate == null) {
             Component failure = readFailureMessage(stack);
             if (failure != null) {
@@ -208,11 +223,8 @@ public final class ManualRoadPlannerService {
             );
         }
 
-        tag.putString(TAG_PREVIEW_TARGET_TOWN_ID, candidate.targetTown().townId());
-        tag.putString(TAG_PREVIEW_ROAD_ID, candidate.road().roadId());
-        tag.putString(TAG_PREVIEW_HASH, previewHash);
-        tag.putLong(TAG_PREVIEW_AT, now);
-        sendPreview(player, candidate, true);
+        cachePreviewState(tag, candidate, previewHash, now);
+        sendPreview(player, candidate, candidates, true);
         return Component.translatable(
                 "message.sailboatmod.road_planner.preview_ready",
                 displayTownName(candidate.sourceTown()),
@@ -309,39 +321,72 @@ public final class ManualRoadPlannerService {
         return Component.translatable(previewMessageKey);
     }
 
-    private static PlanCandidate buildPlan(ServerPlayer player, ItemStack stack) {
+    private static List<PlanCandidate> buildPlanCandidates(ServerPlayer player, ItemStack stack) {
         ServerLevel level = player.serverLevel();
         NationSavedData data = NationSavedData.get(level);
         TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
         if (sourceTown == null) {
-            return null;
+            return List.of();
         }
 
         List<TownRecord> targets = eligibleTargets(level, sourceTown);
         if (targets.isEmpty()) {
-            return null;
+            return List.of();
         }
         TownRecord targetTown = resolveSelectedTarget(stack, targets);
         if (targetTown == null) {
-            return null;
+            return List.of();
         }
 
         List<NationClaimRecord> sourceClaims = claimsInDimension(data, sourceTown, level.dimension().location().toString());
         List<NationClaimRecord> targetClaims = claimsInDimension(data, targetTown, level.dimension().location().toString());
         if (sourceClaims.isEmpty() || targetClaims.isEmpty()) {
-            return null;
+            return List.of();
+        }
+
+        String manualRoadId = manualRoadIdForTownPair(sourceTown.townId(), targetTown.townId());
+        if (manualRoadId.isBlank()) {
+            return List.of();
+        }
+        if (manualRoadExists(level, manualRoadId)) {
+            writeFailureMessage(stack, "message.sailboatmod.road_planner.already_connected");
+            return List.of();
         }
 
         Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
-        WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns);
+        List<PlanCandidate> candidates = new ArrayList<>();
+        PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false);
+        if (detour != null) {
+            candidates.add(detour);
+        }
+        PlanCandidate bridge = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, data, manualRoadId, PreviewOptionKind.BRIDGE, true);
+        if (bridge != null && candidates.stream().noneMatch(existing -> previewHash(existing.plan()).equals(previewHash(bridge.plan())))) {
+            candidates.add(bridge);
+        }
+        if (candidates.isEmpty()) {
+            writeFailureMessage(stack, "message.sailboatmod.road_planner.path_failed");
+            return List.of();
+        }
+        return List.copyOf(candidates);
+    }
+
+    private static PlanCandidate buildPlanCandidate(ServerLevel level,
+                                                    TownRecord sourceTown,
+                                                    TownRecord targetTown,
+                                                    List<NationClaimRecord> sourceClaims,
+                                                    List<NationClaimRecord> targetClaims,
+                                                    Set<Long> blockedColumns,
+                                                    NationSavedData data,
+                                                    String manualRoadId,
+                                                    PreviewOptionKind optionKind,
+                                                    boolean allowWaterFallback) {
+        WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, allowWaterFallback);
         if (waitingAreaRoute == null) {
-            waitingAreaRoute = resolveTownAnchorFallbackRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns);
+            waitingAreaRoute = resolveTownAnchorFallbackRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, allowWaterFallback);
         }
         if (waitingAreaRoute == null) {
-            writeFailureMessage(stack, "message.sailboatmod.road_planner.path_failed");
             return null;
         }
-
         BlockPos sourceAnchor = waitingAreaRoute.sourceExit();
         BlockPos targetAnchor = waitingAreaRoute.targetExit();
         BlockPos sourceInternalAnchor = waitingAreaRoute.sourceStationPos();
@@ -360,16 +405,6 @@ public final class ManualRoadPlannerService {
                 targetInternalAnchor == null ? targetAnchor : targetInternalAnchor
         );
         if (!isUsableManualPreviewPlan(plan)) {
-            writeFailureMessage(stack, "message.sailboatmod.road_planner.path_failed");
-            return null;
-        }
-
-        String manualRoadId = manualRoadIdForTownPair(sourceTown.townId(), targetTown.townId());
-        if (manualRoadId.isBlank()) {
-            return null;
-        }
-        if (manualRoadExists(level, manualRoadId)) {
-            writeFailureMessage(stack, "message.sailboatmod.road_planner.already_connected");
             return null;
         }
         String leftId = "town:" + sourceTown.townId();
@@ -386,7 +421,7 @@ public final class ManualRoadPlannerService {
                 System.currentTimeMillis(),
                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
         );
-        return new PlanCandidate(sourceTown, targetTown, road, plan);
+        return new PlanCandidate(sourceTown, targetTown, road, plan, optionKind.optionId, optionKind.label, allowWaterFallback);
     }
 
     private static WaitingAreaRoute resolveWaitingAreaRoute(ServerLevel level,
@@ -395,7 +430,8 @@ public final class ManualRoadPlannerService {
                                                             TownRecord targetTown,
                                                             List<NationClaimRecord> sourceClaims,
                                                             List<NationClaimRecord> targetClaims,
-                                                            Set<Long> blockedColumns) {
+                                                            Set<Long> blockedColumns,
+                                                            boolean allowWaterFallback) {
         List<StationZoneCandidate> sourceStations = collectPostStationsInClaims(level, sourceClaims);
         List<StationZoneCandidate> targetStations = collectPostStationsInClaims(level, targetClaims);
         ManualPlanFailure failure = validateWaitingAreaRouteStations(!sourceStations.isEmpty(), !targetStations.isEmpty());
@@ -439,7 +475,7 @@ public final class ManualRoadPlannerService {
                         PostStationRoadAnchorHelper.computeFootprintColumns(target.zone()),
                         targetSurface
                 );
-                List<BlockPos> path = findPreferredRoadPath(level, sourceSurface, targetSurface, adjustedBlockedColumns);
+                List<BlockPos> path = findPreferredRoadPath(level, sourceSurface, targetSurface, adjustedBlockedColumns, allowWaterFallback);
                 if (path.size() < 2) {
                     path = buildConnectedRouteViaTownAnchors(
                             level,
@@ -452,7 +488,8 @@ public final class ManualRoadPlannerService {
                             target.stationPos(),
                             sourceSurface,
                             targetSurface,
-                            adjustedBlockedColumns
+                            adjustedBlockedColumns,
+                            allowWaterFallback
                     );
                 }
                 if (path.size() < 2) {
@@ -475,7 +512,8 @@ public final class ManualRoadPlannerService {
                                                                    TownRecord targetTown,
                                                                    List<NationClaimRecord> sourceClaims,
                                                                    List<NationClaimRecord> targetClaims,
-                                                                   Set<Long> blockedColumns) {
+                                                                   Set<Long> blockedColumns,
+                                                                   boolean allowWaterFallback) {
         BlockPos sourcePreferred = townCorePos(level, sourceTown);
         BlockPos targetPreferred = townCorePos(level, targetTown);
         BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourcePreferred, targetPreferred);
@@ -486,7 +524,7 @@ public final class ManualRoadPlannerService {
 
         List<BlockPos> path = normalizePath(
                 sourceAnchor,
-                findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns),
+                findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback),
                 targetAnchor
         );
         if (path.size() < 2) {
@@ -505,16 +543,17 @@ public final class ManualRoadPlannerService {
                                                                     BlockPos targetStationPos,
                                                                     BlockPos sourceExit,
                                                                     BlockPos targetExit,
-                                                                    Set<Long> blockedColumns) {
+                                                                    Set<Long> blockedColumns,
+                                                                    boolean allowWaterFallback) {
         BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourceStationPos, targetStationPos);
         BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetStationPos, sourceStationPos);
         if (sourceAnchor == null || targetAnchor == null) {
             return List.of();
         }
 
-        List<BlockPos> sourceLeg = normalizePath(sourceExit, findPreferredRoadPath(level, sourceExit, sourceAnchor, blockedColumns), sourceAnchor);
-        List<BlockPos> trunk = normalizePath(sourceAnchor, findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns), targetAnchor);
-        List<BlockPos> targetLeg = normalizePath(targetAnchor, findPreferredRoadPath(level, targetAnchor, targetExit, blockedColumns), targetExit);
+        List<BlockPos> sourceLeg = normalizePath(sourceExit, findPreferredRoadPath(level, sourceExit, sourceAnchor, blockedColumns, allowWaterFallback), sourceAnchor);
+        List<BlockPos> trunk = normalizePath(sourceAnchor, findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback), targetAnchor);
+        List<BlockPos> targetLeg = normalizePath(targetAnchor, findPreferredRoadPath(level, targetAnchor, targetExit, blockedColumns, allowWaterFallback), targetExit);
         if (sourceLeg.size() < 2 || trunk.size() < 2 || targetLeg.size() < 2) {
             return List.of();
         }
@@ -535,9 +574,10 @@ public final class ManualRoadPlannerService {
     private static List<BlockPos> findPreferredRoadPath(ServerLevel level,
                                                         BlockPos from,
                                                         BlockPos to,
-                                                        Set<Long> blockedColumns) {
+                                                        Set<Long> blockedColumns,
+                                                        boolean allowWaterFallback) {
         List<BlockPos> landPath = RoadPathfinder.findPath(level, from, to, blockedColumns, false);
-        if (!shouldUseWaterFallback(landPath.size() >= 2, true)) {
+        if (!shouldUseWaterFallback(landPath.size() >= 2, allowWaterFallback)) {
             return landPath;
         }
         return RoadPathfinder.findPath(level, from, to, blockedColumns, true);
@@ -1108,11 +1148,33 @@ public final class ManualRoadPlannerService {
         return targetId.startsWith(townPrefix) ? targetId.substring(townPrefix.length()) : targetId;
     }
 
-    private static void sendPreview(ServerPlayer player, PlanCandidate candidate, boolean awaitingConfirmation) {
+    public static void applySelectedPreviewOption(ServerPlayer player, ItemStack stack, String optionId) {
+        if (player == null || stack == null) {
+            return;
+        }
+        if (optionId == null || optionId.isBlank()) {
+            return;
+        }
+        stack.getOrCreateTag().putString(TAG_PREVIEW_OPTION_ID, optionId);
+        clearFailureMessage(stack);
+        List<PlanCandidate> candidates = buildPlanCandidates(player, stack);
+        PlanCandidate candidate = selectPlanCandidate(stack, candidates);
+        if (candidate == null) {
+            sendPreviewClear(player);
+            return;
+        }
+        String previewHash = previewHash(candidate.plan());
+        cachePreviewState(stack.getOrCreateTag(), candidate, previewHash, System.currentTimeMillis());
+        sendPreview(player, candidate, candidates, true);
+    }
+
+    private static void sendPreview(ServerPlayer player, PlanCandidate candidate, List<PlanCandidate> candidates, boolean awaitingConfirmation) {
         SyncRoadPlannerPreviewPacket packet = previewPacket(
                 displayTownName(candidate.sourceTown()),
                 displayTownName(candidate.targetTown()),
                 candidate.plan(),
+                candidates,
+                candidate.optionId(),
                 awaitingConfirmation,
                 true
         );
@@ -1130,14 +1192,14 @@ public final class ManualRoadPlannerService {
                                     boolean awaitingConfirmation) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                previewPacket(sourceName, targetName, plan, awaitingConfirmation, false)
+                previewPacket(sourceName, targetName, plan, List.of(), "", awaitingConfirmation, false)
         );
     }
 
     private static void sendPreviewClear(ServerPlayer player) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new SyncRoadPlannerPreviewPacket("", "", List.of(), 0, null, null, null, false)
+                new SyncRoadPlannerPreviewPacket("", "", List.of(), 0, null, null, null, false, List.of(), "")
         );
     }
 
@@ -1153,6 +1215,7 @@ public final class ManualRoadPlannerService {
         tag.remove(TAG_PREVIEW_ROAD_ID);
         tag.remove(TAG_PREVIEW_HASH);
         tag.remove(TAG_PREVIEW_AT);
+        tag.remove(TAG_PREVIEW_OPTION_ID);
     }
 
     private static PlannerMode readPlannerMode(ItemStack stack) {
@@ -1242,7 +1305,7 @@ public final class ManualRoadPlannerService {
                                                              String targetName,
                                                              RoadPlacementPlan plan,
                                                              boolean awaitingConfirmation) {
-        return previewPacket(sourceName, targetName, plan, awaitingConfirmation, true);
+        return previewPacket(sourceName, targetName, plan, List.of(), "", awaitingConfirmation, true);
     }
 
     public static String previewHashForTest(RoadPlacementPlan plan) {
@@ -1283,6 +1346,8 @@ public final class ManualRoadPlannerService {
     private static SyncRoadPlannerPreviewPacket previewPacket(String sourceName,
                                                               String targetName,
                                                               RoadPlacementPlan plan,
+                                                              List<PlanCandidate> candidates,
+                                                              String selectedOptionId,
                                                               boolean awaitingConfirmation,
                                                               boolean requireUsableManualPlan) {
         if (requireUsableManualPlan && !isUsableManualPreviewPlan(plan)) {
@@ -1293,7 +1358,38 @@ public final class ManualRoadPlannerService {
                 targetName == null ? "-" : targetName,
                 plan,
                 awaitingConfirmation
+        ).withOptions(
+                candidates == null ? List.of() : candidates.stream()
+                        .map(candidate -> new SyncRoadPlannerPreviewPacket.PreviewOption(
+                                candidate.optionId(),
+                                candidate.optionLabel(),
+                                candidate.plan().centerPath().size(),
+                                candidate.bridgeBacked()
+                        ))
+                        .toList(),
+                selectedOptionId
         );
+    }
+
+    private static void cachePreviewState(CompoundTag tag, PlanCandidate candidate, String previewHash, long now) {
+        tag.putString(TAG_PREVIEW_TARGET_TOWN_ID, candidate.targetTown().townId());
+        tag.putString(TAG_PREVIEW_ROAD_ID, candidate.road().roadId());
+        tag.putString(TAG_PREVIEW_HASH, previewHash);
+        tag.putLong(TAG_PREVIEW_AT, now);
+        tag.putString(TAG_PREVIEW_OPTION_ID, candidate.optionId());
+    }
+
+    private static PlanCandidate selectPlanCandidate(ItemStack stack, List<PlanCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        String preferred = stack == null ? "" : stack.getOrCreateTag().getString(TAG_PREVIEW_OPTION_ID);
+        for (PlanCandidate candidate : candidates) {
+            if (candidate.optionId().equalsIgnoreCase(preferred)) {
+                return candidate;
+            }
+        }
+        return candidates.get(0);
     }
 
     private static boolean isUsableManualPreviewPlan(RoadPlacementPlan plan) {
@@ -1332,7 +1428,13 @@ public final class ManualRoadPlannerService {
         return name.isBlank() ? town.townId().toLowerCase(Locale.ROOT) : name;
     }
 
-    private record PlanCandidate(TownRecord sourceTown, TownRecord targetTown, RoadNetworkRecord road, RoadPlacementPlan plan) {
+    private record PlanCandidate(TownRecord sourceTown,
+                                 TownRecord targetTown,
+                                 RoadNetworkRecord road,
+                                 RoadPlacementPlan plan,
+                                 String optionId,
+                                 String optionLabel,
+                                 boolean bridgeBacked) {
     }
 
     private record SelectedRoadRoute(String roadId, String sourceName, String targetName) {

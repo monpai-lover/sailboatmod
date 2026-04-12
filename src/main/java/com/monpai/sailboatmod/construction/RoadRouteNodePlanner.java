@@ -19,9 +19,9 @@ public final class RoadRouteNodePlanner {
     };
     private static final int MAX_VISITED_NODES = 32_000;
     private static final int MAX_STEP_HEIGHT = 8;
-    private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 8;
-    private static final int MAX_TOTAL_BRIDGE_COLUMNS = 20;
-    private static final double MAX_BRIDGE_SHARE = 0.35D;
+    private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 256;
+    private static final int MAX_TOTAL_BRIDGE_COLUMNS = 4096;
+    private static final double MAX_BRIDGE_SHARE = 1.0D;
     private static final double HEIGHT_PENALTY = 2.5D;
     private static final double BRIDGE_PENALTY = 7.5D;
     private static final double WATER_PENALTY = 2.25D;

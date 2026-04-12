@@ -139,6 +139,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         setChanged();
     }
 
+    protected List<RouteDefinition> availableRoutes() {
+        return routes.stream().map(RouteDefinition::copy).toList();
+    }
+
     public String getDockName() {
         if (dockName == null || dockName.isBlank()) {
             return ownerName != null && !ownerName.isBlank() ? ownerName + defaultFacilityNameSuffix() : defaultFacilityName();
@@ -360,22 +364,23 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public int selectRouteDelta(int delta) {
-        if (routes.isEmpty()) {
+        int size = availableRoutes().size();
+        if (size == 0) {
             selectedRouteIndex = 0;
             return selectedRouteIndex;
         }
-        int size = routes.size();
         selectedRouteIndex = (selectedRouteIndex + delta % size + size) % size;
         setChanged();
         return selectedRouteIndex;
     }
 
     public int selectRouteIndex(int index) {
-        if (routes.isEmpty()) {
+        int size = availableRoutes().size();
+        if (size == 0) {
             selectedRouteIndex = 0;
             return selectedRouteIndex;
         }
-        selectedRouteIndex = Mth.clamp(index, 0, routes.size() - 1);
+        selectedRouteIndex = Mth.clamp(index, 0, size - 1);
         setChanged();
         return selectedRouteIndex;
     }
@@ -460,7 +465,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         SailboatEntity boat = boats.get(idx);
         boat.setAllowNonOrderAutoReturn(nonOrderAutoReturnEnabled);
         boat.setAllowNonOrderAutoUnload(nonOrderAutoUnloadEnabled);
-        boolean assigned = assignLoadedBoatToRouteIndex(boat, Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, player);
+        boolean assigned = assignLoadedBoatToRouteIndex(boat, Mth.clamp(selectedRouteIndex, 0, availableRoutes().size() - 1), autoStart, player);
         if (!assigned) {
             boat.setAllowNonOrderAutoReturn(false);
             boat.setAllowNonOrderAutoUnload(false);
@@ -491,12 +496,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             player.displayClientMessage(Component.translatable(noAssignableTransportTranslationKey()), true);
             return false;
         }
-        if (routes.isEmpty()) {
+        List<RouteDefinition> availableRoutes = availableRoutes();
+        if (availableRoutes.isEmpty()) {
             player.displayClientMessage(Component.translatable(noRouteTranslationKey()), true);
             return false;
         }
         int safeBoatIndex = Mth.clamp(selectedBoatIndex, 0, boats.size() - 1);
-        int safeRouteIndex = Mth.clamp(selectedRouteIndex, 0, routes.size() - 1);
+        int safeRouteIndex = Mth.clamp(selectedRouteIndex, 0, availableRoutes.size() - 1);
         SailboatEntity boat = boats.get(safeBoatIndex);
         List<ItemStack> cargo = splitCargo(stack, group.totalCount());
         if (!boat.canLoadCargo(cargo)) {
@@ -582,7 +588,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean assignBoat(SailboatEntity sailboat, boolean autoStart) {
-        return assignBoatToRouteIndex(sailboat, Mth.clamp(selectedRouteIndex, 0, routes.size() - 1), autoStart, null);
+        return assignBoatToRouteIndex(sailboat, Mth.clamp(selectedRouteIndex, 0, availableRoutes().size() - 1), autoStart, null);
     }
 
     public boolean assignBoatToRouteIndex(SailboatEntity sailboat, int routeIndex, boolean autoStart, @Nullable Player operator) {
@@ -595,7 +601,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     private boolean assignBoatToRouteIndex(SailboatEntity sailboat, int routeIndex, boolean autoStart,
                                            @Nullable Player operator, boolean allowCargo) {
-        if (routes.isEmpty()) {
+        List<RouteDefinition> availableRoutes = availableRoutes();
+        if (availableRoutes.isEmpty()) {
             if (operator != null) {
                 operator.displayClientMessage(Component.translatable(noRouteTranslationKey()), true);
             }
@@ -607,7 +614,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
             return false;
         }
-        int safeRouteIndex = Mth.clamp(routeIndex, 0, routes.size() - 1);
+        int safeRouteIndex = Mth.clamp(routeIndex, 0, availableRoutes.size() - 1);
         if (operator != null && !isBoatOwnedBy(sailboat, operator) && !sailboat.isAvailableForRent()) {
             operator.displayClientMessage(Component.translatable("block.sailboatmod.dock.not_for_rent", sailboat.getName()), true);
             return false;
@@ -631,7 +638,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             chargedRental = true;
         }
         assignments.put(sailboat.getUUID(), safeRouteIndex);
-        sailboat.setRouteCatalog(routes, safeRouteIndex, worldPosition);
+        sailboat.setRouteCatalog(availableRoutes, safeRouteIndex, worldPosition);
         sailboat.setPendingShipper(operator != null ? operator.getName().getString() : null);
         if (autoStart) {
             boolean started = sailboat.startAutopilotFromRouteStart();
@@ -665,8 +672,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     public int findRouteIndexByDestinationDock(@Nullable BlockPos dockPos, @Nullable String dockName) {
         if (dockPos != null) {
-            for (int i = 0; i < routes.size(); i++) {
-                BlockPos routeDockPos = findRouteEndDockPos(routes.get(i));
+            List<RouteDefinition> availableRoutes = availableRoutes();
+            for (int i = 0; i < availableRoutes.size(); i++) {
+                BlockPos routeDockPos = findRouteEndDockPos(availableRoutes.get(i));
                 if (dockPos.equals(routeDockPos)) {
                     return i;
                 }
@@ -675,8 +683,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (dockName == null || dockName.isBlank()) {
             return -1;
         }
-        for (int i = 0; i < routes.size(); i++) {
-            RouteDefinition route = routes.get(i);
+        List<RouteDefinition> availableRoutes = availableRoutes();
+        for (int i = 0; i < availableRoutes.size(); i++) {
+            RouteDefinition route = availableRoutes.get(i);
             if (dockName.equalsIgnoreCase(route.endDockName())) {
                 return i;
             }
@@ -698,21 +707,23 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public String getRouteName(int routeIndex) {
-        if (routes.isEmpty()) {
+        List<RouteDefinition> availableRoutes = availableRoutes();
+        if (availableRoutes.isEmpty()) {
             return "-";
         }
-        int safeIndex = Mth.clamp(routeIndex, 0, routes.size() - 1);
-        String name = routes.get(safeIndex).name();
+        int safeIndex = Mth.clamp(routeIndex, 0, availableRoutes.size() - 1);
+        String name = availableRoutes.get(safeIndex).name();
         return name == null || name.isBlank() ? "Route-" + (safeIndex + 1) : name;
     }
 
     public DockScreenData buildScreenData(Player player) {
         boolean canManageDock = canManageDock(player);
+        List<RouteDefinition> availableRoutes = availableRoutes();
         List<String> routeNames = new ArrayList<>();
         List<String> routeMetas = new ArrayList<>();
         List<Vec3> selectedPoints = List.of();
-        for (int i = 0; i < routes.size(); i++) {
-            RouteDefinition route = routes.get(i);
+        for (int i = 0; i < availableRoutes.size(); i++) {
+            RouteDefinition route = availableRoutes.get(i);
             String name = route.name();
             if (name == null || name.isBlank()) {
                 name = "Route-" + (i + 1);
@@ -724,9 +735,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     : new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(new Date(route.createdAtEpochMillis()));
             routeMetas.add(String.format(Locale.ROOT, "Len %.0fm | By %s | %s", route.routeLengthMeters(), author, time));
         }
-        if (!routes.isEmpty()) {
-            int selected = Mth.clamp(selectedRouteIndex, 0, routes.size() - 1);
-            selectedPoints = List.copyOf(routes.get(selected).waypoints());
+        if (!availableRoutes.isEmpty()) {
+            int selected = Mth.clamp(selectedRouteIndex, 0, availableRoutes.size() - 1);
+            selectedPoints = List.copyOf(availableRoutes.get(selected).waypoints());
         }
 
         List<SailboatEntity> boats = getNearbySailboats(player);
@@ -774,7 +785,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 routeBook.copy(),
                 routeNames,
                 routeMetas,
-                routes.isEmpty() ? 0 : Mth.clamp(selectedRouteIndex, 0, routes.size() - 1),
+                availableRoutes.isEmpty() ? 0 : Mth.clamp(selectedRouteIndex, 0, availableRoutes.size() - 1),
                 selectedPoints,
                 zoneMinX,
                 zoneMaxX,

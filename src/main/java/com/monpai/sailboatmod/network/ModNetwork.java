@@ -39,6 +39,7 @@ import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
 import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerTargetPacket;
+import com.monpai.sailboatmod.network.packet.SelectRoadPlannerPreviewOptionPacket;
 import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionGhostPreviewPacket;
@@ -451,6 +452,13 @@ public final class ModNetwork {
                 SelectRoadPlannerTargetPacket::encode,
                 SelectRoadPlannerTargetPacket::decode,
                 SelectRoadPlannerTargetPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SelectRoadPlannerPreviewOptionPacket.class,
+                SelectRoadPlannerPreviewOptionPacket::encode,
+                SelectRoadPlannerPreviewOptionPacket::decode,
+                SelectRoadPlannerPreviewOptionPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,
