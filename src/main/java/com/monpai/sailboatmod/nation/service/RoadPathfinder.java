@@ -83,13 +83,17 @@ public final class RoadPathfinder {
         return isBridgeBlockedForMode(bridge, allowWaterFallback);
     }
 
+    static BlockPos findSurfaceForTest(Level level, int x, int z) {
+        return findSurface(level, x, z);
+    }
+
     private static boolean isBridgeBlockedForMode(boolean bridge, boolean allowWaterFallback) {
         return bridge && !allowWaterFallback;
     }
 
     private static BlockPos findSurface(Level level, int x, int z) {
         BlockPos pos = level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below();
-        for (int i = 0; i < 5; i++) {
+        while (pos.getY() >= level.getMinBuildHeight()) {
             BlockState state = level.getBlockState(pos);
             if (!state.isAir() && !state.liquid() && state.isFaceSturdy(level, pos, Direction.UP)) {
                 return pos;
