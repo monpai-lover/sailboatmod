@@ -32,6 +32,7 @@ public final class RoadPlannerClientHooks {
     public record PreviewState(String sourceTownName,
                                String targetTownName,
                                List<PreviewGhostBlock> ghostBlocks,
+                               List<BlockPos> pathNodes,
                                int pathNodeCount,
                                BlockPos startHighlightPos,
                                BlockPos endHighlightPos,
@@ -41,6 +42,7 @@ public final class RoadPlannerClientHooks {
                                String selectedOptionId) {
         public PreviewState {
             ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
+            pathNodes = immutablePositions(pathNodes);
             pathNodeCount = Math.max(0, pathNodeCount);
             startHighlightPos = startHighlightPos == null ? null : startHighlightPos.immutable();
             endHighlightPos = endHighlightPos == null ? null : endHighlightPos.immutable();
@@ -118,5 +120,18 @@ public final class RoadPlannerClientHooks {
     }
 
     private RoadPlannerClientHooks() {
+    }
+
+    private static List<BlockPos> immutablePositions(List<BlockPos> positions) {
+        if (positions == null || positions.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> copied = new ArrayList<>(positions.size());
+        for (BlockPos pos : positions) {
+            if (pos != null) {
+                copied.add(pos.immutable());
+            }
+        }
+        return copied.isEmpty() ? List.of() : List.copyOf(copied);
     }
 }

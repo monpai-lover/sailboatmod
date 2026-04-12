@@ -14,6 +14,9 @@ public final class RoadCorridorPlanner {
     private static final int SUPPORT_INTERVAL = 3;
     private static final int SUPPORT_DEPTH = 3;
 
+    private record SupportPlacementPlan(Set<Integer> supportIndexes, boolean valid) {
+    }
+
     private RoadCorridorPlanner() {
     }
 
@@ -52,9 +55,15 @@ public final class RoadCorridorPlanner {
         );
         Set<Integer> navigableIndexes = expandIndexes(mainChannelRanges, size);
         Set<Integer> bridgeHeadIndexes = collectBridgeHeadIndexes(bridgeRanges, size);
-        Set<Integer> supportRequiredIndexes = collectSupportRequiredIndexes(bridgeRanges, size);
+        SupportPlacementPlan supportPlacementPlan = collectSupportRequiredIndexes(
+                bridgeRanges,
+                bridgeHeadIndexes,
+                navigableIndexes,
+                size
+        );
+        Set<Integer> supportRequiredIndexes = supportPlacementPlan.supportIndexes();
 
-        boolean valid = true;
+        boolean valid = supportPlacementPlan.valid();
         List<BlockPos> deckCenters = new ArrayList<>(size);
         List<RoadCorridorPlan.SegmentKind> segmentKinds = new ArrayList<>(size);
         List<List<BlockPos>> supportPositionsByIndex = new ArrayList<>(size);
@@ -67,9 +76,7 @@ public final class RoadCorridorPlanner {
                     && segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
             List<BlockPos> supportPositions = List.of();
             List<BlockPos> pierLightPositions = List.of();
-            if (supportRequiredIndexes.contains(i) && navigableIndexes.contains(i)) {
-                valid = false;
-            } else if (supportRequired) {
+            if (supportRequired) {
                 supportPositions = buildSupportPositions(deckCenter);
                 pierLightPositions = List.of(supportPositions.get(supportPositions.size() - 1).below());
             }
@@ -86,13 +93,21 @@ public final class RoadCorridorPlanner {
         for (int i = 0; i < size - 1; i++) {
             RoadCorridorPlan.SegmentKind currentKind = segmentKinds.get(i);
             RoadCorridorPlan.SegmentKind nextKind = segmentKinds.get(i + 1);
-            if (!requiresBridgeheadOverlapRepair(currentKind, nextKind)) {
+            if (requiresBridgeheadOverlapRepair(currentKind, nextKind)) {
+                if (usesTerrainEnvelope(currentKind) && !usesTerrainEnvelope(nextKind)) {
+                    surfacePositionsByIndex.set(i + 1, ensureTransitionOverlap(surfacePositionsByIndex.get(i), surfacePositionsByIndex.get(i + 1)));
+                } else if (!usesTerrainEnvelope(currentKind) && usesTerrainEnvelope(nextKind)) {
+                    surfacePositionsByIndex.set(i, ensureTransitionOverlap(surfacePositionsByIndex.get(i + 1), surfacePositionsByIndex.get(i)));
+                }
                 continue;
             }
-            if (usesTerrainEnvelope(currentKind) && !usesTerrainEnvelope(nextKind)) {
+            if (requiresAdjacentSliceClosureRepair(
+                    surfacePositionsByIndex.get(i),
+                    surfacePositionsByIndex.get(i + 1),
+                    placementHeights[i],
+                    placementHeights[i + 1]
+            )) {
                 surfacePositionsByIndex.set(i + 1, ensureTransitionOverlap(surfacePositionsByIndex.get(i), surfacePositionsByIndex.get(i + 1)));
-            } else if (!usesTerrainEnvelope(currentKind) && usesTerrainEnvelope(nextKind)) {
-                surfacePositionsByIndex.set(i, ensureTransitionOverlap(surfacePositionsByIndex.get(i + 1), surfacePositionsByIndex.get(i)));
             }
         }
 
@@ -203,22 +218,41 @@ public final class RoadCorridorPlanner {
         return bridgeHeads;
     }
 
-    private static Set<Integer> collectSupportRequiredIndexes(List<RoadPlacementPlan.BridgeRange> bridgeRanges, int pathSize) {
+    private static SupportPlacementPlan collectSupportRequiredIndexes(List<RoadPlacementPlan.BridgeRange> bridgeRanges,
+                                                                      Set<Integer> bridgeHeadIndexes,
+                                                                      Set<Integer> navigableIndexes,
+                                                                      int pathSize) {
         Set<Integer> supportIndexes = new HashSet<>();
         if (bridgeRanges == null || bridgeRanges.isEmpty() || pathSize <= 0) {
-            return supportIndexes;
+            return new SupportPlacementPlan(supportIndexes, true);
         }
+        boolean valid = true;
         for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
             if (range == null) {
                 continue;
             }
             int start = Math.max(0, range.startIndex());
             int end = Math.min(pathSize - 1, range.endIndex());
-            for (int i = start; i <= end; i += SUPPORT_INTERVAL) {
-                supportIndexes.add(i);
+            List<Integer> supportableInterior = new ArrayList<>();
+            for (int i = start; i <= end; i++) {
+                if (bridgeHeadIndexes.contains(i) || navigableIndexes.contains(i)) {
+                    continue;
+                }
+                supportableInterior.add(i);
+            }
+            if (supportableInterior.isEmpty()) {
+                continue;
+            }
+            int lastPlaced = Integer.MIN_VALUE / 4;
+            for (int index : supportableInterior) {
+                if (index - lastPlaced < SUPPORT_INTERVAL) {
+                    continue;
+                }
+                supportIndexes.add(index);
+                lastPlaced = index;
             }
         }
-        return supportIndexes;
+        return new SupportPlacementPlan(Set.copyOf(supportIndexes), valid);
     }
 
     private static List<BlockPos> buildSupportPositions(BlockPos deckCenter) {
@@ -290,6 +324,16 @@ public final class RoadCorridorPlanner {
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
                 || segmentKind == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
                 || segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
+    }
+
+    private static boolean requiresAdjacentSliceClosureRepair(List<BlockPos> current,
+                                                              List<BlockPos> next,
+                                                              int currentDeckHeight,
+                                                              int nextDeckHeight) {
+        if (hasSurfaceOverlap(current, next)) {
+            return false;
+        }
+        return Math.abs(currentDeckHeight - nextDeckHeight) >= 1;
     }
 
     private static List<BlockPos> ensureTransitionOverlap(List<BlockPos> source, List<BlockPos> target) {

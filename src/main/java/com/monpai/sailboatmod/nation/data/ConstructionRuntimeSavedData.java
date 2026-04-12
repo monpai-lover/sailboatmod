@@ -162,10 +162,11 @@ public class ConstructionRuntimeSavedData extends SavedData {
                                List<Long> centerPath,
                                List<RoadGhostBlockState> ghostBlocks,
                                List<RoadBuildStepState> buildSteps,
+                               List<RoadRestorableBlockState> rollbackStates,
                                List<Long> ownedBlocks,
                                int placedStepCount,
                                boolean legacyPathOnly) {
-        private static final int FORMAT_VERSION = 3;
+        private static final int FORMAT_VERSION = 4;
 
         public RoadJobState {
             roadId = roadId == null ? "" : roadId;
@@ -174,6 +175,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
             centerPath = centerPath == null ? List.of() : List.copyOf(centerPath);
             ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
             buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
+            rollbackStates = rollbackStates == null ? List.of() : List.copyOf(rollbackStates);
             ownedBlocks = ownedBlocks == null ? List.of() : List.copyOf(ownedBlocks);
             placedStepCount = Math.max(0, placedStepCount);
         }
@@ -184,9 +186,21 @@ public class ConstructionRuntimeSavedData extends SavedData {
                             List<Long> centerPath,
                             List<RoadGhostBlockState> ghostBlocks,
                             List<RoadBuildStepState> buildSteps,
+                            List<Long> ownedBlocks,
                             int placedStepCount,
                             boolean legacyPathOnly) {
-            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), placedStepCount, legacyPathOnly);
+            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), ownedBlocks, placedStepCount, legacyPathOnly);
+        }
+
+        public RoadJobState(String roadId,
+                            String dimensionId,
+                            String ownerUuid,
+                            List<Long> centerPath,
+                            List<RoadGhostBlockState> ghostBlocks,
+                            List<RoadBuildStepState> buildSteps,
+                            int placedStepCount,
+                            boolean legacyPathOnly) {
+            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), List.of(), placedStepCount, legacyPathOnly);
         }
 
         public List<Long> path() {
@@ -221,6 +235,12 @@ public class ConstructionRuntimeSavedData extends SavedData {
                 buildStepTags.add(buildStep.save());
             }
             tag.put("BuildSteps", buildStepTags);
+
+            ListTag rollbackStateTags = new ListTag();
+            for (RoadRestorableBlockState rollbackState : rollbackStates) {
+                rollbackStateTags.add(rollbackState.save());
+            }
+            tag.put("RollbackStates", rollbackStateTags);
             return tag;
         }
 
@@ -241,6 +261,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
                     toLongList(tag.getLongArray(pathKey)),
                     toRoadGhostBlockList(tag.getList("GhostBlocks", Tag.TAG_COMPOUND)),
                     toRoadBuildStepList(tag.getList("BuildSteps", Tag.TAG_COMPOUND)),
+                    toRoadRollbackStateList(tag.getList("RollbackStates", Tag.TAG_COMPOUND)),
                     toLongList(tag.getLongArray("OwnedBlocks")),
                     legacyPathOnly ? 0 : tag.getInt("PlacedStepCount"),
                     legacyPathOnly
@@ -296,6 +317,29 @@ public class ConstructionRuntimeSavedData extends SavedData {
             }
         }
 
+        public record RoadRestorableBlockState(long pos, CompoundTag statePayload) {
+            public RoadRestorableBlockState {
+                statePayload = copyPayload(statePayload);
+            }
+
+            public CompoundTag save() {
+                CompoundTag tag = new CompoundTag();
+                tag.putLong("Pos", pos);
+                tag.put("State", copyPayload(statePayload));
+                return tag;
+            }
+
+            public static RoadRestorableBlockState load(CompoundTag tag) {
+                if (tag == null) {
+                    return null;
+                }
+                return new RoadRestorableBlockState(
+                        tag.getLong("Pos"),
+                        tag.contains("State", Tag.TAG_COMPOUND) ? tag.getCompound("State") : new CompoundTag()
+                );
+            }
+        }
+
         private static CompoundTag copyPayload(CompoundTag statePayload) {
             return statePayload == null ? new CompoundTag() : statePayload.copy();
         }
@@ -336,6 +380,23 @@ public class ConstructionRuntimeSavedData extends SavedData {
                 continue;
             }
             RoadJobState.RoadBuildStepState state = RoadJobState.RoadBuildStepState.load(compound);
+            if (state != null) {
+                result.add(state);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<RoadJobState.RoadRestorableBlockState> toRoadRollbackStateList(ListTag tags) {
+        if (tags == null || tags.isEmpty()) {
+            return List.of();
+        }
+        java.util.ArrayList<RoadJobState.RoadRestorableBlockState> result = new java.util.ArrayList<>(tags.size());
+        for (Tag raw : tags) {
+            if (!(raw instanceof CompoundTag compound)) {
+                continue;
+            }
+            RoadJobState.RoadRestorableBlockState state = RoadJobState.RoadRestorableBlockState.load(compound);
             if (state != null) {
                 result.add(state);
             }

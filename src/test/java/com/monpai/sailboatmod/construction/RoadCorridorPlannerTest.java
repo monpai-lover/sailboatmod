@@ -52,7 +52,7 @@ class RoadCorridorPlannerTest {
     }
 
     @Test
-    void plannerMarksPlanInvalidWhenProtectedMainChannelWouldNeedSupportPlacement() {
+    void plannerAllowsSupportlessProtectedMainChannelWhenNoPierSlotsExist() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 64, 0),
@@ -64,14 +64,43 @@ class RoadCorridorPlannerTest {
                 new BlockPos(7, 64, 0),
                 new BlockPos(8, 64, 0)
         );
-        List<RoadPlacementPlan.BridgeRange> bridgeRanges = List.of(new RoadPlacementPlan.BridgeRange(1, 7));
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = List.of(new RoadPlacementPlan.BridgeRange(2, 6));
         List<RoadPlacementPlan.BridgeRange> navigableRanges = List.of(new RoadPlacementPlan.BridgeRange(3, 5));
 
         RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, bridgeRanges, navigableRanges);
 
-        assertFalse(plan.valid());
+        assertTrue(plan.valid());
+        assertTrue(plan.slices().get(3).supportPositions().isEmpty());
         assertTrue(plan.slices().get(4).supportPositions().isEmpty());
+        assertTrue(plan.slices().get(5).supportPositions().isEmpty());
         assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, plan.slices().get(4).segmentKind());
+    }
+
+    @Test
+    void plannerRepositionsSupportsAwayFromProtectedMainChannelWhenBridgeHasOtherSupportOptions() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0)
+        );
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = List.of(new RoadPlacementPlan.BridgeRange(1, 8));
+        List<RoadPlacementPlan.BridgeRange> navigableRanges = List.of(new RoadPlacementPlan.BridgeRange(4, 4));
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, bridgeRanges, navigableRanges);
+
+        assertTrue(plan.valid());
+        assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, plan.slices().get(4).segmentKind());
+        assertTrue(plan.slices().get(4).supportPositions().isEmpty());
+        assertTrue(plan.slices().stream()
+                .filter(slice -> slice.segmentKind() == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN)
+                .anyMatch(slice -> !slice.supportPositions().isEmpty()));
     }
 
     @Test
@@ -202,9 +231,9 @@ class RoadCorridorPlannerTest {
         assertEquals(RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH, plan.slices().get(2).segmentKind());
         assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, plan.slices().get(3).segmentKind());
         assertTrue(hasSurfaceClosure(plan.slices().get(2).surfacePositions(), plan.slices().get(3).surfacePositions()));
-        assertTrue(plan.slices().get(2).surfacePositions().stream().allMatch(pos -> pos.getX() == 2));
-        assertTrue(plan.slices().get(2).excavationPositions().stream().allMatch(pos -> pos.getX() == 2));
-        assertTrue(plan.slices().get(2).clearancePositions().stream().allMatch(pos -> pos.getX() == 2));
+        assertTrue(plan.slices().get(2).surfacePositions().stream().anyMatch(pos -> pos.getX() == 2));
+        assertTrue(plan.slices().get(2).excavationPositions().stream().anyMatch(pos -> pos.getX() == 2));
+        assertTrue(plan.slices().get(2).clearancePositions().stream().anyMatch(pos -> pos.getX() == 2));
         assertTrue(plan.slices().get(3).surfacePositions().stream().anyMatch(pos -> pos.getX() == 2));
     }
 

@@ -6,6 +6,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.SharedConstants;
@@ -380,6 +381,29 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
+    void productionPlacementGhostBlocksStayConnectedAcrossConsecutiveSlices() {
+        RoadPlacementPlan plan = buildProductionRiverPlanForTest();
+        RoadCorridorPlan corridorPlan = plan.corridorPlan();
+
+        for (int i = 1; i < corridorPlan.slices().size(); i++) {
+            Set<BlockPos> previous = new LinkedHashSet<>(RoadGeometryPlanner.sliceGhostBlocks(
+                    corridorPlan,
+                    i - 1,
+                    pos -> Blocks.SPRUCE_SLAB.defaultBlockState()
+            ).stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList());
+            Set<BlockPos> current = new LinkedHashSet<>(RoadGeometryPlanner.sliceGhostBlocks(
+                    corridorPlan,
+                    i,
+                    pos -> Blocks.SPRUCE_SLAB.defaultBlockState()
+            ).stream().map(RoadGeometryPlanner.GhostRoadBlock::pos).toList());
+            assertTrue(
+                    touchesOrOverlaps(previous, current),
+                    "slice " + (i - 1) + " -> " + i + " disconnected: " + summarizeGhostContinuity(previous, current, corridorPlan)
+            );
+        }
+    }
+
+    @Test
     void preservesSlopedBridgeEndpointsWhileRaisingArchedInterior() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
@@ -407,6 +431,60 @@ class RoadGeometryPlannerTest {
         assertTrue(positions.contains(new BlockPos(5, 67, 0)));
         assertTrue(positions.contains(new BlockPos(2, 69, 0)));
         assertTrue(positions.contains(new BlockPos(3, 69, 0)));
+    }
+
+    @Test
+    void corridorApproachRampSlicesPromoteBridgeEntranceToStairs() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(2, 65, 0)
+        );
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                centerPath,
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(0, new BlockPos(0, 65, 0), RoadCorridorPlan.SegmentKind.APPROACH_RAMP, List.of(new BlockPos(0, 65, 0)), List.of(), List.of(), List.of(), List.of()),
+                        new RoadCorridorPlan.CorridorSlice(1, new BlockPos(1, 66, 0), RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, List.of(new BlockPos(1, 66, 0)), List.of(), List.of(), List.of(), List.of()),
+                        new RoadCorridorPlan.CorridorSlice(2, new BlockPos(2, 66, 0), RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, List.of(new BlockPos(2, 66, 0)), List.of(), List.of(), List.of(), List.of())
+                ),
+                null,
+                true
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                corridorPlan,
+                pos -> Blocks.SPRUCE_SLAB.defaultBlockState()
+        );
+
+        BlockState entranceState = stateAt(plan, new BlockPos(0, 65, 0));
+        assertTrue(entranceState.getBlock() instanceof StairBlock, String.valueOf(entranceState));
+    }
+
+    @Test
+    void adjacentBridgeSlicesUseLowerSideStairInsteadOfVerticalPatchColumn() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0)
+        );
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                centerPath,
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(0, new BlockPos(0, 65, 0), RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, List.of(new BlockPos(0, 65, 0)), List.of(), List.of(), List.of(), List.of()),
+                        new RoadCorridorPlan.CorridorSlice(1, new BlockPos(1, 66, 0), RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, List.of(new BlockPos(1, 66, 0)), List.of(), List.of(), List.of(), List.of())
+                ),
+                null,
+                true
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                corridorPlan,
+                pos -> Blocks.SPRUCE_SLAB.defaultBlockState()
+        );
+
+        BlockState lowerState = stateAt(plan, new BlockPos(0, 65, 0));
+        assertTrue(lowerState.getBlock() instanceof StairBlock, String.valueOf(lowerState));
+        assertFalse(plan.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(1, 65, 0))),
+                () -> plan.ghostBlocks().toString());
     }
 
     @Test
@@ -462,6 +540,14 @@ class RoadGeometryPlannerTest {
             placements.add(new BlockPos(column.getX(), y, column.getZ()));
         }
         return placements;
+    }
+
+    private static BlockState stateAt(RoadGeometryPlanner.RoadGeometryPlan plan, BlockPos pos) {
+        return plan.ghostBlocks().stream()
+                .filter(block -> block.pos().equals(pos))
+                .map(RoadGeometryPlanner.GhostRoadBlock::state)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing ghost block at " + pos));
     }
 
     private static Set<BlockPos> ribbonPlacementPositions(List<BlockPos> centerPath) {
@@ -558,6 +644,24 @@ class RoadGeometryPlannerTest {
                 .map(slice -> slice.index() + ":" + slice.segmentKind() + "@" + slice.deckCenter().getY())
                 .toList()
                 .toString();
+    }
+
+    private static boolean touchesOrOverlaps(Set<BlockPos> first, Set<BlockPos> second) {
+        for (BlockPos left : first) {
+            for (BlockPos right : second) {
+                int dx = Math.abs(left.getX() - right.getX());
+                int dy = Math.abs(left.getY() - right.getY());
+                int dz = Math.abs(left.getZ() - right.getZ());
+                if (dx + dy + dz <= 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static String summarizeGhostContinuity(Set<BlockPos> previous, Set<BlockPos> current, RoadCorridorPlan corridorPlan) {
+        return "prev=" + previous + " current=" + current + " corridor=" + summarizeCorridorPlan(corridorPlan);
     }
 
     @SuppressWarnings("unchecked")

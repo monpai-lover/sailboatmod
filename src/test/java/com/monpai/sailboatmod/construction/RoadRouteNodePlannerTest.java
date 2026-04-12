@@ -247,6 +247,36 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
+    void acceptsTenBlockRiverbankTransitionWhenBridgeIsOnlyConnection() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(5, 74, 0),
+                pos -> {
+                    if (pos.getZ() != 0) {
+                        return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
+                    }
+                    int y = pos.getX() <= 1 ? 64 : 74;
+                    boolean bridge = pos.getX() >= 2 && pos.getX() <= 4;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            new BlockPos(pos.getX(), y, 0),
+                            false,
+                            bridge,
+                            bridge ? 2 : 0,
+                            bridge ? 1 : 0,
+                            !bridge
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(5, 74, 0), plan.path().get(plan.path().size() - 1));
+        assertTrue(plan.path().contains(new BlockPos(2, 74, 0)));
+    }
+
+    @Test
     void acceptsSevenColumnBridgeWhenCrossingRemainsMinorityOfRoute() {
         RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),
@@ -304,6 +334,35 @@ class RoadRouteNodePlannerTest {
         assertFalse(plan.path().isEmpty());
         assertFalse(plan.usedBridge());
         assertTrue(plan.path().contains(new BlockPos(10, 64, 24)));
+    }
+
+    @Test
+    void searchBoundsAllowVeryLongOffAxisDetourWhenOnlyRouteLoopsFarAroundObstacle() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                pos -> {
+                    boolean onWestLeg = pos.getX() == 0 && pos.getZ() >= 0 && pos.getZ() <= 40;
+                    boolean onTopLeg = pos.getZ() == 40 && pos.getX() >= 0 && pos.getX() <= 2;
+                    boolean onEastLeg = pos.getX() == 2 && pos.getZ() >= 0 && pos.getZ() <= 40;
+                    boolean startOrEnd = pos.getZ() == 0 && (pos.getX() == 0 || pos.getX() == 2);
+                    boolean traversable = onWestLeg || onTopLeg || onEastLeg || startOrEnd;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), 64, pos.getZ()) : null,
+                            !traversable,
+                            false,
+                            0,
+                            0,
+                            pos.getZ() == 40
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertFalse(plan.usedBridge());
+        assertTrue(plan.path().contains(new BlockPos(1, 64, 40)));
     }
 
     @Test
@@ -499,6 +558,115 @@ class RoadRouteNodePlannerTest {
         );
 
         assertFalse(valid);
+    }
+
+    @Test
+    void findsFarDetourThroughSingleGapAcrossLargeOpenField() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(60, 64, 0),
+                pos -> {
+                    boolean insideField = pos.getX() >= 0 && pos.getX() <= 60 && pos.getZ() >= -30 && pos.getZ() <= 30;
+                    boolean wall = pos.getX() == 30 && pos.getZ() < 30 && pos.getZ() > -30;
+                    boolean gap = pos.getX() == 30 && pos.getZ() == 30;
+                    boolean traversable = insideField && (!wall || gap);
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), 64, pos.getZ()) : null,
+                            !traversable,
+                            false,
+                            0,
+                            0,
+                            pos.getZ() == 30
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.path().contains(new BlockPos(30, 64, 30)));
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(60, 64, 0), plan.path().get(plan.path().size() - 1));
+    }
+
+    @Test
+    void findsVeryLargeFieldDetourWithoutExhaustingPlannerStateBudget() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(120, 64, 0),
+                pos -> {
+                    boolean insideField = pos.getX() >= 0 && pos.getX() <= 120 && pos.getZ() >= -60 && pos.getZ() <= 60;
+                    boolean wall = pos.getX() == 60 && pos.getZ() < 60 && pos.getZ() > -60;
+                    boolean gap = pos.getX() == 60 && pos.getZ() == 60;
+                    boolean traversable = insideField && (!wall || gap);
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), 64, pos.getZ()) : null,
+                            !traversable,
+                            false,
+                            0,
+                            0,
+                            pos.getZ() == 60
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.path().contains(new BlockPos(60, 64, 60)));
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(120, 64, 0), plan.path().get(plan.path().size() - 1));
+    }
+
+    @Test
+    void diagonalMoveIsAllowedWhenOnlyOneFlankIsBlocked() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 2),
+                pos -> {
+                    BlockPos surface = new BlockPos(pos.getX(), 64, pos.getZ());
+                    boolean blocked = pos.equals(new BlockPos(1, 0, 0));
+                    return new RoadRouteNodePlanner.RouteColumn(surface, blocked, false, 0, 0, true);
+                }
+        );
+
+        boolean cutsCorner = RoadRouteNodePlanner.cutsCornerForTest(
+                map,
+                new BlockPos(0, 64, 0),
+                new int[]{1, 1},
+                false
+        );
+
+        assertFalse(cutsCorner);
+    }
+
+    @Test
+    void bridgeSearchCanCrossLargeWaterFieldWithoutStateExplosionFromTotalBridgeCount() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 64, 0),
+                pos -> {
+                    if (pos.getZ() < -20 || pos.getZ() > 20 || pos.getX() < 0 || pos.getX() > 40) {
+                        return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
+                    }
+                    boolean bridge = pos.getX() >= 5 && pos.getX() <= 35;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            new BlockPos(pos.getX(), 64, pos.getZ()),
+                            false,
+                            bridge,
+                            bridge ? 2 : 0,
+                            0,
+                            pos.getZ() == 0
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.usedBridge());
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(40, 64, 0), plan.path().get(plan.path().size() - 1));
     }
 
     private static long columnKey(int x, int z) {

@@ -39,18 +39,26 @@ public final class PostStationRoadAnchorHelper {
     }
 
     public static BlockPos chooseBestExit(List<BlockPos> exits, BlockPos target, BlockPos fallback) {
-        if (exits == null || exits.isEmpty()) {
+        List<BlockPos> ordered = orderedExitsByDistance(exits, target, fallback);
+        if (ordered.isEmpty()) {
             return fallback == null ? null : fallback.immutable();
         }
+        return ordered.get(0).immutable();
+    }
+
+    public static List<BlockPos> orderedExitsByDistance(List<BlockPos> exits, BlockPos target, BlockPos fallback) {
+        if (exits == null || exits.isEmpty()) {
+            return fallback == null ? List.of() : List.of(fallback.immutable());
+        }
         if (target == null) {
-            return exits.get(0).immutable();
+            return exits.stream().map(BlockPos::immutable).toList();
         }
         List<BlockPos> ordered = new ArrayList<>(exits);
         ordered.sort(Comparator
                 .comparingDouble((BlockPos pos) -> pos.distSqr(target))
                 .thenComparingInt(BlockPos::getX)
                 .thenComparingInt(BlockPos::getZ));
-        return ordered.get(0).immutable();
+        return ordered.stream().map(BlockPos::immutable).toList();
     }
 
     public record Zone(BlockPos origin, int minX, int maxX, int minZ, int maxZ) {

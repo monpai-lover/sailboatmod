@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -156,6 +157,24 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void surfaceAtSkipsLeafCanopyAndFindsRealGround() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.surfaceHeights.put(columnKey(0, 0), 70);
+        level.blockStates.put(new BlockPos(0, 70, 0).asLong(), Blocks.OAK_LEAVES.defaultBlockState());
+        level.blockStates.put(new BlockPos(0, 69, 0).asLong(), Blocks.AIR.defaultBlockState());
+        level.blockStates.put(new BlockPos(0, 68, 0).asLong(), Blocks.DIRT.defaultBlockState());
+
+        BlockPos surface = ManualRoadPlannerService.surfaceAtForTest(level, new BlockPos(0, 0, 0));
+
+        assertNotNull(surface);
+        assertEquals(new BlockPos(0, 68, 0), surface);
+    }
+
+    @Test
     void solidNonRoadOccupantsStillInvalidateAnchors() {
         assertFalse(ManualRoadPlannerService.isRoadAnchorColumnForTest(
                 Blocks.GRASS_BLOCK.defaultBlockState(),
@@ -172,6 +191,43 @@ class ManualRoadPlannerServiceTest {
     @Test
     void waterFallbackActivatesOnlyAfterLandPassFails() {
         assertTrue(ManualRoadPlannerService.shouldUseWaterFallbackForTest(false, true));
+    }
+
+    @Test
+    void nearestBoundaryAnchorPrefersAccessibleCandidateOverCloserSteepBoundary() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        NationClaimRecord claim = new NationClaimRecord(
+                "minecraft:overworld", 0, 0, "nation", "town2",
+                "member", "member", "member", "member", "member", "member", "member", 0L
+        );
+        BlockPos toward = new BlockPos(-20, 64, 2);
+
+        for (int z = 1; z <= 14; z++) {
+            setSurfaceColumn(level, 1, z, 64, Blocks.WATER.defaultBlockState());
+        }
+
+        setSurfaceColumn(level, 1, 2, 80, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 1, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 3, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 0, 2, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 2, 2, 64, Blocks.DIRT.defaultBlockState());
+
+        setSurfaceColumn(level, 1, 10, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 9, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 11, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 0, 10, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 2, 10, 64, Blocks.DIRT.defaultBlockState());
+
+        BlockPos anchor = invokeNearestBoundaryAnchor(level, List.of(claim), toward, 64);
+
+        assertNotNull(anchor);
+        assertEquals(1, anchor.getX());
+        assertEquals(64, anchor.getY());
+        assertFalse(anchor.equals(new BlockPos(1, 80, 2)));
     }
 
     @Test
@@ -496,6 +552,25 @@ class ManualRoadPlannerServiceTest {
         return BlockPos.asLong(x, 0, z);
     }
 
+    private static BlockPos invokeNearestBoundaryAnchor(ServerLevel level,
+                                                        List<NationClaimRecord> claims,
+                                                        BlockPos towardPos,
+                                                        int fallbackY) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "nearestBoundaryAnchor",
+                    ServerLevel.class,
+                    List.class,
+                    BlockPos.class,
+                    int.class
+            );
+            method.setAccessible(true);
+            return (BlockPos) method.invoke(null, level, claims, towardPos, fallbackY);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private static String summarizeCorridorPlan(RoadCorridorPlan corridorPlan) {
         if (corridorPlan == null) {
             return "corridor=null";
@@ -574,6 +649,11 @@ class ManualRoadPlannerServiceTest {
         public BlockPos getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types heightmapType, BlockPos pos) {
             int surfaceY = surfaceHeights.getOrDefault(columnKey(pos.getX(), pos.getZ()), 63);
             return new BlockPos(pos.getX(), surfaceY + 1, pos.getZ());
+        }
+
+        @Override
+        public int getMinBuildHeight() {
+            return 0;
         }
 
         @Override

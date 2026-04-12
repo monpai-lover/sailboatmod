@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.construction;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
+import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -13,12 +15,13 @@ import java.util.PriorityQueue;
 import java.util.function.Function;
 
 public final class RoadRouteNodePlanner {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final int[][] DIRECTIONS = {
             {-1, 0}, {1, 0}, {0, -1}, {0, 1},
             {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
     };
-    private static final int MAX_VISITED_NODES = 32_000;
-    private static final int MAX_STEP_HEIGHT = 8;
+    private static final int MAX_VISITED_NODES = 96_000;
+    private static final int MAX_STEP_HEIGHT = 12;
     private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 256;
     private static final int MAX_TOTAL_BRIDGE_COLUMNS = 4096;
     private static final double MAX_BRIDGE_SHARE = 1.0D;
@@ -35,13 +38,36 @@ public final class RoadRouteNodePlanner {
     public static RoutePlan plan(RouteMap map) {
         Objects.requireNonNull(map, "map");
         RoutePlan landOnly = search(map, false);
-        return landOnly.path().isEmpty() ? search(map, true) : landOnly;
+        if (!landOnly.path().isEmpty()) {
+            return landOnly;
+        }
+
+        RouteMap expanded = map.expanded();
+        if (expanded != map) {
+            RoutePlan expandedLandOnly = search(expanded, false);
+            if (!expandedLandOnly.path().isEmpty()) {
+                return expandedLandOnly;
+            }
+        }
+
+        RoutePlan bridge = search(map, true);
+        if (!bridge.path().isEmpty()) {
+            return bridge;
+        }
+        return expanded == map ? bridge : search(expanded, true);
     }
 
     private static RoutePlan search(RouteMap map, boolean allowBridgeColumns) {
         RouteColumn start = map.columnAt(map.start().getX(), map.start().getZ());
         RouteColumn end = map.columnAt(map.end().getX(), map.end().getZ());
         if (!isTraversable(start, allowBridgeColumns) || !isTraversable(end, allowBridgeColumns)) {
+            LOGGER.warn(
+                    "RoadRouteNodePlanner anchor_rejected allowBridgeColumns={} bounds={} start={} end={}",
+                    allowBridgeColumns,
+                    map.bounds(),
+                    start,
+                    end
+            );
             return RoutePlan.empty();
         }
 
@@ -51,6 +77,13 @@ public final class RoadRouteNodePlanner {
                 MAX_TOTAL_BRIDGE_COLUMNS
         );
         if (!startBudget.accepted()) {
+            LOGGER.warn(
+                    "RoadRouteNodePlanner start_budget_rejected allowBridgeColumns={} bounds={} start={} startBudget={}",
+                    allowBridgeColumns,
+                    map.bounds(),
+                    start,
+                    startBudget
+            );
             return RoutePlan.empty();
         }
 
@@ -66,7 +99,7 @@ public final class RoadRouteNodePlanner {
                 1
         );
         open.add(startNode);
-        seen.put(new PathStateKey(columnKey(start.surfacePos()), startBudget.contiguousBridgeColumns(), startBudget.totalBridgeColumns(), 1), startNode);
+        seen.put(new PathStateKey(columnKey(start.surfacePos()), startBudget.contiguousBridgeColumns()), startNode);
 
         int visited = 0;
         while (!open.isEmpty() && visited++ < MAX_VISITED_NODES) {
@@ -122,9 +155,7 @@ public final class RoadRouteNodePlanner {
                 int nextStepCount = current.stepCount() + 1;
                 PathStateKey key = new PathStateKey(
                         columnKey(next.surfacePos()),
-                        nextBudget.contiguousBridgeColumns(),
-                        nextBudget.totalBridgeColumns(),
-                        nextStepCount
+                        nextBudget.contiguousBridgeColumns()
                 );
                 PathNode existing = seen.get(key);
                 if (existing == null) {
@@ -146,13 +177,27 @@ public final class RoadRouteNodePlanner {
             }
         }
 
+        LOGGER.warn(
+                "RoadRouteNodePlanner search_exhausted allowBridgeColumns={} bounds={} visited={} seen={} openRemaining={} start={} end={}",
+                allowBridgeColumns,
+                map.bounds(),
+                visited,
+                seen.size(),
+                open.size(),
+                start,
+                end
+        );
         return RoutePlan.empty();
     }
 
     private static boolean cutsCorner(RouteMap map, BlockPos currentPos, int[] direction, boolean allowBridgeColumns) {
         RouteColumn horizontal = map.columnAt(currentPos.getX() + direction[0], currentPos.getZ());
         RouteColumn vertical = map.columnAt(currentPos.getX(), currentPos.getZ() + direction[1]);
-        return !isTraversable(horizontal, allowBridgeColumns) || !isTraversable(vertical, allowBridgeColumns);
+        return !isTraversable(horizontal, allowBridgeColumns) && !isTraversable(vertical, allowBridgeColumns);
+    }
+
+    static boolean cutsCornerForTest(RouteMap map, BlockPos currentPos, int[] direction, boolean allowBridgeColumns) {
+        return cutsCorner(map, currentPos, direction, allowBridgeColumns);
     }
 
     private static boolean isTraversable(RouteColumn column, boolean allowBridgeColumns) {
@@ -293,6 +338,10 @@ public final class RoadRouteNodePlanner {
             return end;
         }
 
+        SearchBounds bounds() {
+            return bounds;
+        }
+
         boolean contains(int x, int z) {
             return bounds.contains(x, z);
         }
@@ -305,6 +354,11 @@ public final class RoadRouteNodePlanner {
                 RouteColumn sampled = sampler.apply(new BlockPos(x, 0, z));
                 return sampled == null ? new RouteColumn(null, true, false, 0, 0, false) : sampled;
             });
+        }
+
+        RouteMap expanded() {
+            SearchBounds expandedBounds = bounds.expanded(start, end);
+            return expandedBounds.equals(bounds) ? this : new RouteMap(start, end, expandedBounds, sampler);
         }
     }
 
@@ -325,12 +379,28 @@ public final class RoadRouteNodePlanner {
             );
         }
 
+        private SearchBounds expanded(BlockPos start, BlockPos end) {
+            int dx = Math.abs(end.getX() - start.getX());
+            int dz = Math.abs(end.getZ() - start.getZ());
+            int dominantSpan = Math.max(dx, dz);
+            int expandedLongitudinalMargin = Math.max(24, (dominantSpan / 2) + 16);
+            int expandedLateralMargin = Math.max(48, dominantSpan + 48);
+            int expandedXMargin = dx > dz ? expandedLongitudinalMargin : expandedLateralMargin;
+            int expandedZMargin = dz > dx ? expandedLongitudinalMargin : expandedLateralMargin;
+            return new SearchBounds(
+                    Math.min(start.getX(), end.getX()) - expandedXMargin,
+                    Math.max(start.getX(), end.getX()) + expandedXMargin,
+                    Math.min(start.getZ(), end.getZ()) - expandedZMargin,
+                    Math.max(start.getZ(), end.getZ()) + expandedZMargin
+            );
+        }
+
         private boolean contains(int x, int z) {
             return x >= minX && x <= maxX && z >= minZ && z <= maxZ;
         }
     }
 
-    private record PathStateKey(long columnKey, int contiguousBridgeColumns, int totalBridgeColumns, int stepCount) {
+    private record PathStateKey(long columnKey, int contiguousBridgeColumns) {
     }
 
     private static final class PathNode {

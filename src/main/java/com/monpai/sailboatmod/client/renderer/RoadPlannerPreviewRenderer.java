@@ -63,6 +63,26 @@ public final class RoadPlannerPreviewRenderer {
                     0.95F
             );
         }
+        List<BlockPos> pathNodes = preview.pathNodes();
+        for (int i = 1; i < pathNodes.size(); i++) {
+            BlockPos from = pathNodes.get(i - 1);
+            BlockPos to = pathNodes.get(i);
+            if (from == null || to == null) {
+                continue;
+            }
+            renderPathSegmentBox(
+                    poseStack,
+                    lineConsumer,
+                    from,
+                    to,
+                    cameraPos,
+                    0.86F,
+                    0.94F,
+                    1.0F,
+                    0.95F,
+                    0.08D
+            );
+        }
         renderHighlightBox(poseStack, lineConsumer, preview.startHighlightPos(), cameraPos, 0.18F, 0.76F, 1.0F, 0.95F, 0.02F);
         renderHighlightBox(poseStack, lineConsumer, preview.endHighlightPos(), cameraPos, 1.0F, 0.72F, 0.25F, 0.95F, 0.02F);
         renderHighlightBox(poseStack, lineConsumer, preview.focusPos(), cameraPos, 0.94F, 0.76F, 0.20F, 0.98F, 0.06F);
@@ -213,6 +233,33 @@ public final class RoadPlannerPreviewRenderer {
         LevelRenderer.renderLineBox(poseStack, lineConsumer, minX, minY, minZ, maxX, maxY, maxZ, lineR, lineG, lineB, lineA);
     }
 
+    private static void renderPathSegmentBox(PoseStack poseStack,
+                                             VertexConsumer lineConsumer,
+                                             BlockPos from,
+                                             BlockPos to,
+                                             Vec3 cameraPos,
+                                             float lineR,
+                                             float lineG,
+                                             float lineB,
+                                             float lineA,
+                                             double thickness) {
+        PreviewBox box = pathSegmentBox(from, to, cameraPos, thickness);
+        LevelRenderer.renderLineBox(
+                poseStack,
+                lineConsumer,
+                (float) box.minX(),
+                (float) box.minY(),
+                (float) box.minZ(),
+                (float) box.maxX(),
+                (float) box.maxY(),
+                (float) box.maxZ(),
+                lineR,
+                lineG,
+                lineB,
+                lineA
+        );
+    }
+
     private static PreviewBox previewBox(BlockPos pos, Vec3 cameraPos) {
         double minX = pos.getX() - cameraPos.x;
         double minY = pos.getY() - cameraPos.y;
@@ -232,12 +279,33 @@ public final class RoadPlannerPreviewRenderer {
         );
     }
 
+    private static PreviewBox pathSegmentBox(BlockPos from, BlockPos to, Vec3 cameraPos, double thickness) {
+        double fromX = from.getX() + 0.5D - cameraPos.x;
+        double fromY = from.getY() + 0.5D - cameraPos.y;
+        double fromZ = from.getZ() + 0.5D - cameraPos.z;
+        double toX = to.getX() + 0.5D - cameraPos.x;
+        double toY = to.getY() + 0.5D - cameraPos.y;
+        double toZ = to.getZ() + 0.5D - cameraPos.z;
+        return new PreviewBox(
+                Math.min(fromX, toX) - thickness,
+                Math.min(fromY, toY) - thickness,
+                Math.min(fromZ, toZ) - thickness,
+                Math.max(fromX, toX) + thickness,
+                Math.max(fromY, toY) + thickness,
+                Math.max(fromZ, toZ) + thickness
+        );
+    }
+
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
         return previewBox(pos, cameraPos);
     }
 
     static PreviewBox highlightBoxForTest(BlockPos pos, Vec3 cameraPos, double inset) {
         return highlightBox(pos, cameraPos, inset);
+    }
+
+    static PreviewBox pathSegmentBoxForTest(BlockPos from, BlockPos to, Vec3 cameraPos, double thickness) {
+        return pathSegmentBox(from, to, cameraPos, thickness);
     }
 
     static boolean rendersFilledBoxesForTest() {

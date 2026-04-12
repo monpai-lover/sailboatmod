@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,6 +56,26 @@ class RoadPathfinderTest {
 
         assertNotNull(surface);
         assertTrue(surface.getY() <= 57);
+    }
+
+    @Test
+    void columnDiagnosticsExposeBlockingOccupantAboveSurface() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.surfaceHeights.put(columnKey(4, 5), 64);
+        level.blockStates.put(new BlockPos(4, 64, 5).asLong(), Blocks.DIRT.defaultBlockState());
+        level.blockStates.put(new BlockPos(4, 65, 5).asLong(), Blocks.COBBLESTONE.defaultBlockState());
+
+        RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForTest(level, new BlockPos(4, 70, 5), false);
+
+        assertNotNull(diagnostics.surface());
+        assertEquals(new BlockPos(4, 64, 5), diagnostics.surface());
+        assertTrue(diagnostics.blockedByOccupant());
+        assertFalse(diagnostics.blockedByPlanner());
+        assertFalse(diagnostics.bridgeRequired());
     }
 
     private static long columnKey(int x, int z) {

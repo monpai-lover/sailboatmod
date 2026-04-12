@@ -6,6 +6,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -187,6 +188,99 @@ class RoadLifecycleServiceTest {
         ), Set.copyOf(captured));
     }
 
+    @Test
+    void rollbackTrackedPositionsIncludeHeadspaceAboveRoadDeck() {
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0)),
+                null,
+                null,
+                null,
+                null,
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(),
+                List.of(),
+                List.of(new BlockPos(0, 64, 0)),
+                null,
+                null,
+                null
+        );
+
+        List<BlockPos> tracked = invokeRoadRollbackTrackedPositions(null, plan);
+
+        assertEquals(Set.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 65, 0)
+        ), Set.copyOf(tracked));
+    }
+
+    @Test
+    void rollbackSnapshotsRestoreOriginalTerrainFluidAndClearedHeadspace() {
+        List<BlockPos> tracked = List.of(
+                new BlockPos(0, 63, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 65, 0)
+        );
+        Map<BlockPos, net.minecraft.world.level.block.state.BlockState> states = new HashMap<>();
+        states.put(new BlockPos(0, 63, 0), Blocks.SAND.defaultBlockState());
+        states.put(new BlockPos(0, 64, 0), Blocks.WATER.defaultBlockState());
+        states.put(new BlockPos(0, 65, 0), Blocks.POPPY.defaultBlockState());
+
+        List<Object> snapshots = invokeCaptureRoadRollbackSnapshots(tracked, pos -> states.getOrDefault(pos, Blocks.AIR.defaultBlockState()));
+
+        states.put(new BlockPos(0, 63, 0), Blocks.COBBLESTONE.defaultBlockState());
+        states.put(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState());
+        states.put(new BlockPos(0, 65, 0), Blocks.AIR.defaultBlockState());
+
+        invokeRestoreRoadRollbackSnapshots(snapshots, states::put);
+
+        assertEquals(Blocks.SAND.defaultBlockState(), states.get(new BlockPos(0, 63, 0)));
+        assertEquals(Blocks.WATER.defaultBlockState(), states.get(new BlockPos(0, 64, 0)));
+        assertEquals(Blocks.POPPY.defaultBlockState(), states.get(new BlockPos(0, 65, 0)));
+    }
+
+    @Test
+    void roadPlacementReplaceableStaysOnNaturalTerrainAndDecorations() {
+        assertTrue(invokeIsRoadPlacementReplaceable(Blocks.STONE.defaultBlockState()));
+        assertTrue(invokeIsRoadPlacementReplaceable(Blocks.SAND.defaultBlockState()));
+        assertTrue(invokeIsRoadPlacementReplaceable(Blocks.GRAVEL.defaultBlockState()));
+        assertTrue(invokeIsRoadPlacementReplaceable(Blocks.GRASS.defaultBlockState()));
+        assertTrue(invokeIsRoadPlacementReplaceable(Blocks.POPPY.defaultBlockState()));
+        assertTrue(invokeIsRoadPlacementReplaceable(Blocks.WATER.defaultBlockState()));
+
+        assertFalse(invokeIsRoadPlacementReplaceable(Blocks.OAK_LOG.defaultBlockState()));
+        assertFalse(invokeIsRoadPlacementReplaceable(Blocks.CHEST.defaultBlockState()));
+        assertFalse(invokeIsRoadPlacementReplaceable(Blocks.CRAFTING_TABLE.defaultBlockState()));
+    }
+
+    @Test
+    void placedRoadStepAcceptsWaterloggedSurfaceVariant() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 64, 0),
+                Blocks.SPRUCE_SLAB.defaultBlockState()
+        );
+
+        assertTrue(invokeIsRoadBuildStepPlaced(
+                Blocks.SPRUCE_SLAB.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true),
+                step
+        ));
+    }
+
+    @Test
+    void placedRoadStepRejectsDifferentRoadBlockType() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 64, 0),
+                Blocks.SPRUCE_SLAB.defaultBlockState()
+        );
+
+        assertFalse(invokeIsRoadBuildStepPlaced(
+                Blocks.SPRUCE_STAIRS.defaultBlockState(),
+                step
+        ));
+    }
+
     private static RoadPlacementPlan widenedPlanWithPartialOwnedBlocks() {
         List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
                 new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(-1, 70, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
@@ -272,6 +366,73 @@ class RoadLifecycleServiceTest {
         }
     }
 
+    private static List<BlockPos> invokeRoadRollbackTrackedPositions(ServerLevel level, RoadPlacementPlan plan) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("roadRollbackTrackedPositions", ServerLevel.class, RoadPlacementPlan.class);
+            method.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            List<BlockPos> result = (List<BlockPos>) method.invoke(null, level, plan);
+            return result;
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect tracked rollback positions", ex);
+        }
+    }
+
+    private static List<Object> invokeCaptureRoadRollbackSnapshots(List<BlockPos> positions,
+                                                                   Function<BlockPos, net.minecraft.world.level.block.state.BlockState> blockLookup) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("captureRoadRollbackStatesFromStateLookup", List.class, Function.class);
+            method.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            List<Object> result = (List<Object>) method.invoke(null, positions, blockLookup);
+            return result;
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect rollback snapshot capture", ex);
+        }
+    }
+
+    private static void invokeRestoreRoadRollbackSnapshots(List<Object> snapshots,
+                                                           java.util.function.BiConsumer<BlockPos, net.minecraft.world.level.block.state.BlockState> setter) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("restoreRoadRollbackStatesWithSetter", List.class, java.util.function.BiConsumer.class);
+            method.setAccessible(true);
+            method.invoke(null, snapshots, setter);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect rollback snapshot restore", ex);
+        }
+    }
+
+    private static boolean invokeIsRoadPlacementReplaceable(net.minecraft.world.level.block.state.BlockState state) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("isRoadPlacementReplaceableForTest", net.minecraft.world.level.block.state.BlockState.class);
+            method.setAccessible(true);
+            return (boolean) method.invoke(null, state);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect road replaceable classification", ex);
+        }
+    }
+
+    private static boolean invokeIsRoadBuildStepPlaced(net.minecraft.world.level.block.state.BlockState currentState,
+                                                       RoadGeometryPlanner.RoadBuildStep step) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("isRoadBuildStepPlaced", net.minecraft.world.level.block.state.BlockState.class, RoadGeometryPlanner.RoadBuildStep.class);
+            method.setAccessible(true);
+            return (boolean) method.invoke(null, currentState, step);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect road build step completion matching", ex);
+        }
+    }
+
     private static boolean invokeCancelActiveRoadConstruction(ServerLevel level, String roadId) {
         try {
             var method = Class
@@ -314,6 +475,7 @@ class RoadLifecycleServiceTest {
                     "Town A",
                     "Town B",
                     plan,
+                    List.of(),
                     0,
                     0.0D
             );

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
 class PostStationRoadAnchorHelperTest {
     @Test
@@ -40,6 +41,27 @@ class PostStationRoadAnchorHelperTest {
         assertEquals(
                 new BlockPos(198, 64, 200),
                 PostStationRoadAnchorHelper.chooseBestExit(exits, new BlockPos(160, 64, 200), zone.origin())
+        );
+    }
+
+    @Test
+    void ordersAllExitCandidatesByDistanceToTarget() {
+        PostStationRoadAnchorHelper.Zone zone =
+                new PostStationRoadAnchorHelper.Zone(new BlockPos(200, 64, 200), -2, 2, -1, 1);
+
+        List<BlockPos> ordered = PostStationRoadAnchorHelper.orderedExitsByDistance(
+                PostStationRoadAnchorHelper.computeExitCandidates(zone),
+                new BlockPos(240, 64, 200),
+                zone.origin()
+        );
+
+        assertIterableEquals(
+                List.of(
+                        new BlockPos(203, 64, 200),
+                        new BlockPos(203, 64, 199),
+                        new BlockPos(203, 64, 201)
+                ),
+                ordered.subList(0, 3)
         );
     }
 }

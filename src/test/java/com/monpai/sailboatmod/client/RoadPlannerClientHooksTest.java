@@ -16,6 +16,7 @@ class RoadPlannerClientHooksTest {
                 "alpha",
                 "beta",
                 List.of(),
+                List.of(),
                 0,
                 null,
                 null,
@@ -48,6 +49,7 @@ class RoadPlannerClientHooksTest {
                 "alpha",
                 "beta",
                 List.of(),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 1)),
                 12,
                 null,
                 null,
@@ -62,6 +64,7 @@ class RoadPlannerClientHooksTest {
 
         RoadPlannerClientHooks.PreviewState preview = RoadPlannerClientHooks.previewState();
         assertTrue(preview != null && preview.options().size() == 2);
+        assertTrue(preview != null && preview.pathNodes().size() == 2);
         assertTrue(preview.options().get(1).bridgeBacked());
         assertTrue("bridge".equals(preview.selectedOptionId()));
     }

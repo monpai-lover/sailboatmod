@@ -43,6 +43,11 @@ public final class RoadGeometryPlanner {
                 addGhost(ghostByPos, ghostBlock.pos(), ghostBlock.state(), corridorPlan.centerPath().get(slice.index()), slice.index());
             }
         }
+        for (int i = 1; i < corridorPlan.slices().size(); i++) {
+            for (GhostRoadBlock connector : connectAdjacentSlices(corridorPlan, i - 1, i, blockStateSupplier)) {
+                addGhost(ghostByPos, connector.pos(), connector.state(), corridorPlan.centerPath().get(i), i);
+            }
+        }
 
         List<GhostRoadBlock> ghostBlocks = new ArrayList<>(ghostByPos.size());
         for (GhostCandidate candidate : ghostByPos.values()) {
@@ -136,7 +141,7 @@ public final class RoadGeometryPlanner {
             return List.of();
         }
         int[] placementHeights = corridorDeckHeights(corridorPlan);
-        boolean stairSegment = usesSlopeSemantics(slice.segmentKind()) && isStairSegment(placementHeights, index);
+        boolean stairSegment = shouldUseCorridorStairState(corridorPlan, index, placementHeights);
         List<GhostRoadBlock> ghostBlocks = new ArrayList<>();
         for (BlockPos pos : slicePositions(corridorPlan, index)) {
             ghostBlocks.add(new GhostRoadBlock(
@@ -145,6 +150,43 @@ public final class RoadGeometryPlanner {
             ));
         }
         return List.copyOf(ghostBlocks);
+    }
+
+    private static List<GhostRoadBlock> connectAdjacentSlices(RoadCorridorPlan corridorPlan,
+                                                              int previousIndex,
+                                                              int currentIndex,
+                                                              Function<BlockPos, BlockState> blockStateSupplier) {
+        List<BlockPos> previous = slicePositions(corridorPlan, previousIndex);
+        List<BlockPos> current = slicePositions(corridorPlan, currentIndex);
+        if (touchesOrOverlaps(previous, current)) {
+            return List.of();
+        }
+        List<GhostRoadBlock> connectors = new ArrayList<>();
+        for (BlockPos currentPos : current) {
+            BlockPos nearest = nearestHorizontalMatch(currentPos, previous);
+            if (nearest == null || horizontalDistance(currentPos, nearest) > 1) {
+                continue;
+            }
+            GhostRoadBlock stairConnector = buildTransitionConnector(
+                    corridorPlan,
+                    previousIndex,
+                    currentIndex,
+                    nearest,
+                    currentPos,
+                    blockStateSupplier
+            );
+            if (stairConnector != null) {
+                connectors.add(stairConnector);
+                continue;
+            }
+            for (BlockPos connectorPos : connectorPositions(nearest, currentPos)) {
+                connectors.add(new GhostRoadBlock(
+                        connectorPos,
+                        Objects.requireNonNull(blockStateSupplier.apply(connectorPos), "blockStateSupplier returned null for pos " + connectorPos)
+                ));
+            }
+        }
+        return connectors.isEmpty() ? List.of() : List.copyOf(connectors);
     }
 
     public static int[] buildPlacementHeightProfile(List<BlockPos> centerPath) {
@@ -424,7 +466,27 @@ public final class RoadGeometryPlanner {
     private static boolean usesSlopeSemantics(RoadCorridorPlan.SegmentKind segmentKind) {
         return segmentKind == RoadCorridorPlan.SegmentKind.TOWN_CONNECTION
                 || segmentKind == RoadCorridorPlan.SegmentKind.LAND_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
+                || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
+    }
+
+    private static boolean shouldUseCorridorStairState(RoadCorridorPlan corridorPlan,
+                                                       int index,
+                                                       int[] placementHeights) {
+        RoadCorridorPlan.SegmentKind segmentKind = corridorPlan.slices().get(index).segmentKind();
+        if (!usesSlopeSemantics(segmentKind)) {
+            return false;
+        }
+        if (isStairSegment(placementHeights, index)) {
+            return true;
+        }
+        int current = placementHeights[index];
+        int previous = index > 0 ? placementHeights[index - 1] : current;
+        int next = index + 1 < placementHeights.length ? placementHeights[index + 1] : current;
+        int riseIn = current - previous;
+        int riseOut = next - current;
+        return Math.abs(riseIn) == 1 || Math.abs(riseOut) == 1;
     }
 
     private static void addGhost(LinkedHashMap<Long, GhostCandidate> ghostByPos,
@@ -468,6 +530,80 @@ public final class RoadGeometryPlanner {
         return first;
     }
 
+    private static boolean touchesOrOverlaps(List<BlockPos> first, List<BlockPos> second) {
+        for (BlockPos left : first) {
+            for (BlockPos right : second) {
+                int dx = Math.abs(left.getX() - right.getX());
+                int dy = Math.abs(left.getY() - right.getY());
+                int dz = Math.abs(left.getZ() - right.getZ());
+                if (dx + dy + dz <= 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static BlockPos nearestHorizontalMatch(BlockPos target, List<BlockPos> candidates) {
+        BlockPos best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        for (BlockPos candidate : candidates) {
+            int distance = horizontalDistance(target, candidate);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    private static int horizontalDistance(BlockPos first, BlockPos second) {
+        return Math.abs(first.getX() - second.getX()) + Math.abs(first.getZ() - second.getZ());
+    }
+
+    private static List<BlockPos> connectorPositions(BlockPos from, BlockPos to) {
+        LinkedHashSet<BlockPos> positions = new LinkedHashSet<>();
+        int bridgeY = Math.max(from.getY(), to.getY());
+        int x = from.getX();
+        int z = from.getZ();
+        while (x != to.getX()) {
+            x += Integer.compare(to.getX(), x);
+            positions.add(new BlockPos(x, bridgeY, z));
+        }
+        while (z != to.getZ()) {
+            z += Integer.compare(to.getZ(), z);
+            positions.add(new BlockPos(x, bridgeY, z));
+        }
+        int minY = Math.min(bridgeY, to.getY());
+        int maxY = Math.max(bridgeY, to.getY());
+        for (int y = minY; y <= maxY; y++) {
+            positions.add(new BlockPos(to.getX(), y, to.getZ()));
+        }
+        return List.copyOf(positions);
+    }
+
+    private static GhostRoadBlock buildTransitionConnector(RoadCorridorPlan corridorPlan,
+                                                           int previousIndex,
+                                                           int currentIndex,
+                                                           BlockPos previousPos,
+                                                           BlockPos currentPos,
+                                                           Function<BlockPos, BlockState> blockStateSupplier) {
+        if (Math.abs(previousPos.getY() - currentPos.getY()) != 1 || horizontalDistance(previousPos, currentPos) != 1) {
+            return null;
+        }
+        boolean previousLower = previousPos.getY() < currentPos.getY();
+        BlockPos lowerPos = previousLower ? previousPos : currentPos;
+        int lowerIndex = previousLower ? previousIndex : currentIndex;
+        BlockPos higherPos = previousLower ? currentPos : previousPos;
+        BlockState stairState = staircaseState(
+                Objects.requireNonNull(blockStateSupplier.apply(lowerPos), "blockStateSupplier returned null for pos " + lowerPos),
+                stairFacing(lowerPos, higherPos)
+        );
+        return stairState.getBlock() instanceof StairBlock
+                ? new GhostRoadBlock(lowerPos, stairState)
+                : null;
+    }
+
     private static int[] samplePlacementHeights(List<BlockPos> centerPath) {
         int[] sampled = new int[centerPath.size()];
         for (int i = 0; i < centerPath.size(); i++) {
@@ -501,7 +637,37 @@ public final class RoadGeometryPlanner {
                 || !isWithinStairTravelBand(currentPos.getX(), currentPos.getZ(), path)) {
             return state;
         }
-        Direction facing = stairFacing(path, index);
+        return staircaseState(state, stairFacing(path, index));
+    }
+
+    private static Direction stairFacing(List<BlockPos> path, int index) {
+        BlockPos current = path.get(index);
+        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : current;
+        BlockPos previous = index > 0 ? path.get(index - 1) : current;
+        int dx = Integer.compare(next.getX(), previous.getX());
+        int dz = Integer.compare(next.getZ(), previous.getZ());
+        if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
+            return dx > 0 ? Direction.EAST : Direction.WEST;
+        }
+        if (dz != 0) {
+            return dz > 0 ? Direction.SOUTH : Direction.NORTH;
+        }
+        return Direction.NORTH;
+    }
+
+    private static Direction stairFacing(BlockPos lower, BlockPos higher) {
+        int dx = Integer.compare(higher.getX(), lower.getX());
+        int dz = Integer.compare(higher.getZ(), lower.getZ());
+        if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
+            return dx > 0 ? Direction.EAST : Direction.WEST;
+        }
+        if (dz != 0) {
+            return dz > 0 ? Direction.SOUTH : Direction.NORTH;
+        }
+        return Direction.NORTH;
+    }
+
+    private static BlockState staircaseState(BlockState state, Direction facing) {
         if (state.is(net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB)) {
             return net.minecraft.world.level.block.Blocks.STONE_BRICK_STAIRS.defaultBlockState()
                     .setValue(StairBlock.FACING, facing)
@@ -523,21 +689,6 @@ public final class RoadGeometryPlanner {
                     .setValue(StairBlock.HALF, Half.BOTTOM);
         }
         return state;
-    }
-
-    private static Direction stairFacing(List<BlockPos> path, int index) {
-        BlockPos current = path.get(index);
-        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : current;
-        BlockPos previous = index > 0 ? path.get(index - 1) : current;
-        int dx = Integer.compare(next.getX(), previous.getX());
-        int dz = Integer.compare(next.getZ(), previous.getZ());
-        if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
-            return dx > 0 ? Direction.EAST : Direction.WEST;
-        }
-        if (dz != 0) {
-            return dz > 0 ? Direction.SOUTH : Direction.NORTH;
-        }
-        return Direction.NORTH;
     }
 
     private static int[] smoothPlacementHeights(int[] baseHeights) {

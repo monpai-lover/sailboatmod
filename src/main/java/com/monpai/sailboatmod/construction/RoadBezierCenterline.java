@@ -11,7 +11,7 @@ import java.util.Set;
 import java.util.function.Function;
 
 public final class RoadBezierCenterline {
-    private static final int MAX_SAFE_STEP_HEIGHT = 8;
+    private static final int MAX_SAFE_STEP_HEIGHT = 12;
     private static final int MAX_SEARCH_RADIUS = 1;
     private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 5;
     private static final int MAX_TOTAL_BRIDGE_COLUMNS = 14;

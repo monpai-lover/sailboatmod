@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerPreviewRendererTest {
     @Test
@@ -42,5 +43,21 @@ class RoadPlannerPreviewRendererTest {
     @Test
     void roadPlannerPreviewDisablesFilledBoxesForStability() {
         assertFalse(RoadPlannerPreviewRenderer.rendersFilledBoxesForTest());
+    }
+
+    @Test
+    void pathSegmentBoxSpansBetweenAdjacentPreviewNodes() {
+        RoadPlannerPreviewRenderer.PreviewBox box = RoadPlannerPreviewRenderer.pathSegmentBoxForTest(
+                new BlockPos(10, 64, 20),
+                new BlockPos(11, 64, 20),
+                new Vec3(9.75D, 63.50D, 19.25D),
+                0.08D
+        );
+
+        assertTrue(box.maxX() > box.minX());
+        assertEquals(0.92D, box.minY(), 1.0E-6D);
+        assertEquals(1.08D, box.maxY(), 1.0E-6D);
+        assertEquals(1.17D, box.minZ(), 1.0E-6D);
+        assertEquals(1.33D, box.maxZ(), 1.0E-6D);
     }
 }
