@@ -32,6 +32,7 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1235,6 +1236,22 @@ public final class ManualRoadPlannerService {
         return previewPacket(sourceName, targetName, plan, awaitingConfirmation, true);
     }
 
+    static RoadPlacementPlan createRoadPlacementPlanForTest(ServerLevel level,
+                                                            List<BlockPos> centerPath,
+                                                            BlockPos sourceInternalAnchor,
+                                                            BlockPos sourceBoundaryAnchor,
+                                                            BlockPos targetBoundaryAnchor,
+                                                            BlockPos targetInternalAnchor) {
+        return StructureConstructionManager.createRoadPlacementPlan(
+                level,
+                centerPath,
+                sourceInternalAnchor,
+                sourceBoundaryAnchor,
+                targetBoundaryAnchor,
+                targetInternalAnchor
+        );
+    }
+
     public static String previewHashForTest(RoadPlacementPlan plan) {
         return previewHash(plan);
     }
@@ -1299,11 +1316,22 @@ public final class ManualRoadPlannerService {
         }
         for (int i = 0; i < corridorPlan.slices().size(); i++) {
             RoadCorridorPlan.CorridorSlice slice = corridorPlan.slices().get(i);
-            if (slice == null || slice.index() != i) {
+            if (slice == null || slice.index() != i || slice.surfacePositions().isEmpty()) {
+                return false;
+            }
+            if (i > 0 && !hasAdjacentSurfaceClosure(corridorPlan.slices().get(i - 1), slice)) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static boolean hasAdjacentSurfaceClosure(RoadCorridorPlan.CorridorSlice current,
+                                                     RoadCorridorPlan.CorridorSlice next) {
+        if (current == null || next == null) {
+            return false;
+        }
+        return !Collections.disjoint(current.surfacePositions(), next.surfacePositions());
     }
 
     private static int hashPos(BlockPos pos) {
