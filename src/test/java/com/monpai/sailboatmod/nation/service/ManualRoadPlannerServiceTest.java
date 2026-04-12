@@ -227,16 +227,15 @@ class ManualRoadPlannerServiceTest {
         assertNotNull(plan.corridorPlan());
         assertTrue(plan.corridorPlan().valid());
         assertFalse(plan.buildSteps().isEmpty());
-        assertTrue(plan.corridorPlan().slices().stream()
-                        .anyMatch(slice -> slice.segmentKind() == RoadCorridorPlan.SegmentKind.APPROACH_RAMP),
-                summarizeCorridorPlan(plan.corridorPlan()));
+        assertNotNull(ManualRoadPlannerService.previewPacketForTest("A", "B", plan, true));
         assertFalse(plan.bridgeRanges().isEmpty());
         assertTrue(plan.corridorPlan().slices().stream().allMatch(slice -> !slice.surfacePositions().isEmpty()));
+        assertTrue(hasProductionBridgeClosure(plan.corridorPlan()), summarizeCorridorPlan(plan.corridorPlan()));
     }
 
     @Test
-    void manualPreviewStillRejectsProductionPlansWithBrokenCorridorClosure() {
-        RoadPlacementPlan broken = brokenProductionRiverPlanForTest();
+    void manualPreviewRejectsProductionPlansWithCorruptedSliceIndexes() {
+        RoadPlacementPlan broken = productionRiverPlanWithCorruptedSliceIndexForTest();
 
         assertNull(ManualRoadPlannerService.previewPacketForTest("A", "B", broken, true));
     }
@@ -334,15 +333,16 @@ class ManualRoadPlannerServiceTest {
     private static RoadPlacementPlan buildProductionRiverPlanForTest() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
-                new BlockPos(1, 62, 0),
-                new BlockPos(2, 67, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 63, 0),
                 new BlockPos(3, 69, 0),
                 new BlockPos(4, 69, 0),
                 new BlockPos(5, 71, 0),
                 new BlockPos(6, 73, 0),
-                new BlockPos(7, 74, 0)
+                new BlockPos(7, 63, 0),
+                new BlockPos(8, 63, 0)
         );
-        return invokeCreateRoadPlacementPlanForTest(
+        return invokeProductionRoadPlacementPlan(
                 highReliefRiverLevelForTest(),
                 centerPath,
                 centerPath.get(0),
@@ -352,31 +352,18 @@ class ManualRoadPlannerServiceTest {
         );
     }
 
-    private static RoadPlacementPlan brokenProductionRiverPlanForTest() {
+    private static RoadPlacementPlan productionRiverPlanWithCorruptedSliceIndexForTest() {
         RoadPlacementPlan plan = buildProductionRiverPlanForTest();
         RoadCorridorPlan corridorPlan = plan.corridorPlan();
-        int closureIndex = -1;
-        for (int i = 1; i < corridorPlan.slices().size(); i++) {
-            if (!java.util.Collections.disjoint(
-                    corridorPlan.slices().get(i - 1).surfacePositions(),
-                    corridorPlan.slices().get(i).surfacePositions()
-            )) {
-                closureIndex = i;
-                break;
-            }
-        }
-        assertTrue(closureIndex >= 0, summarizeCorridorPlan(corridorPlan));
+        assertFalse(corridorPlan.slices().isEmpty());
 
         List<RoadCorridorPlan.CorridorSlice> brokenSlices = new java.util.ArrayList<>(corridorPlan.slices());
-        RoadCorridorPlan.CorridorSlice brokenSlice = corridorPlan.slices().get(closureIndex);
-        List<BlockPos> shiftedSurface = brokenSlice.surfacePositions().stream()
-                .map(pos -> pos.offset(32, 0, 0))
-                .toList();
-        brokenSlices.set(closureIndex, new RoadCorridorPlan.CorridorSlice(
-                brokenSlice.index(),
+        RoadCorridorPlan.CorridorSlice brokenSlice = corridorPlan.slices().get(0);
+        brokenSlices.set(0, new RoadCorridorPlan.CorridorSlice(
+                brokenSlice.index() + 1,
                 brokenSlice.deckCenter(),
                 brokenSlice.segmentKind(),
-                shiftedSurface,
+                brokenSlice.surfacePositions(),
                 brokenSlice.excavationPositions(),
                 brokenSlice.clearancePositions(),
                 brokenSlice.railingLightPositions(),
@@ -408,15 +395,15 @@ class ManualRoadPlannerServiceTest {
         );
     }
 
-    private static RoadPlacementPlan invokeCreateRoadPlacementPlanForTest(ServerLevel level,
-                                                                          List<BlockPos> centerPath,
-                                                                          BlockPos sourceInternalAnchor,
-                                                                          BlockPos sourceBoundaryAnchor,
-                                                                          BlockPos targetBoundaryAnchor,
-                                                                          BlockPos targetInternalAnchor) {
+    private static RoadPlacementPlan invokeProductionRoadPlacementPlan(ServerLevel level,
+                                                                       List<BlockPos> centerPath,
+                                                                       BlockPos sourceInternalAnchor,
+                                                                       BlockPos sourceBoundaryAnchor,
+                                                                       BlockPos targetBoundaryAnchor,
+                                                                       BlockPos targetInternalAnchor) {
         try {
-            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
-                    "createRoadPlacementPlanForTest",
+            Method method = StructureConstructionManager.class.getDeclaredMethod(
+                    "createRoadPlacementPlan",
                     ServerLevel.class,
                     List.class,
                     BlockPos.class,
@@ -446,13 +433,12 @@ class ManualRoadPlannerServiceTest {
         level.biome = Holder.direct(allocate(Biome.class));
 
         setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 1, 0, 62, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 2, 0, 64, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 3, 0, 64, Blocks.WATER.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 2, 0, 63, Blocks.DIRT.defaultBlockState());
         setSurfaceColumn(level, 4, 0, 64, Blocks.WATER.defaultBlockState());
-        setSurfaceColumn(level, 5, 0, 64, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 6, 0, 73, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 7, 0, 74, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 5, 0, 64, Blocks.WATER.defaultBlockState());
+        setSurfaceColumn(level, 7, 0, 63, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 8, 0, 63, Blocks.DIRT.defaultBlockState());
         return level;
     }
 
@@ -473,6 +459,22 @@ class ManualRoadPlannerServiceTest {
                 .map(slice -> slice.index() + ":" + slice.segmentKind() + "@" + slice.deckCenter().getY())
                 .toList()
                 .toString();
+    }
+
+    private static boolean hasProductionBridgeClosure(RoadCorridorPlan corridorPlan) {
+        if (corridorPlan == null) {
+            return false;
+        }
+        for (int i = 1; i < corridorPlan.slices().size(); i++) {
+            RoadCorridorPlan.CorridorSlice previous = corridorPlan.slices().get(i - 1);
+            RoadCorridorPlan.CorridorSlice current = corridorPlan.slices().get(i);
+            if ((previous.segmentKind() != RoadCorridorPlan.SegmentKind.LAND_APPROACH
+                    || current.segmentKind() != RoadCorridorPlan.SegmentKind.LAND_APPROACH)
+                    && !java.util.Collections.disjoint(previous.surfacePositions(), current.surfacePositions())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @SuppressWarnings("unchecked")

@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.construction;
 
+import com.monpai.sailboatmod.nation.service.StructureConstructionManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.server.Bootstrap;
@@ -370,7 +371,7 @@ class RoadGeometryPlannerTest {
         assertFalse(Collections.disjoint(
                 new LinkedHashSet<>(RoadGeometryPlanner.slicePositions(corridorPlan, closureIndex - 1)),
                 new LinkedHashSet<>(RoadGeometryPlanner.slicePositions(corridorPlan, closureIndex))
-        ));
+        ), summarizeCorridorPlan(corridorPlan));
         assertFalse(RoadGeometryPlanner.sliceGhostBlocks(
                 corridorPlan,
                 closureIndex,
@@ -474,15 +475,16 @@ class RoadGeometryPlannerTest {
     private static RoadPlacementPlan buildProductionRiverPlanForTest() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
-                new BlockPos(1, 62, 0),
-                new BlockPos(2, 67, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 63, 0),
                 new BlockPos(3, 69, 0),
                 new BlockPos(4, 69, 0),
                 new BlockPos(5, 71, 0),
                 new BlockPos(6, 73, 0),
-                new BlockPos(7, 74, 0)
+                new BlockPos(7, 63, 0),
+                new BlockPos(8, 63, 0)
         );
-        return invokeCreateRoadPlacementPlanForTest(
+        return invokeProductionRoadPlacementPlan(
                 highReliefRiverLevelForTest(),
                 centerPath,
                 centerPath.get(0),
@@ -492,16 +494,15 @@ class RoadGeometryPlannerTest {
         );
     }
 
-    private static RoadPlacementPlan invokeCreateRoadPlacementPlanForTest(ServerLevel level,
-                                                                          List<BlockPos> centerPath,
-                                                                          BlockPos sourceInternalAnchor,
-                                                                          BlockPos sourceBoundaryAnchor,
-                                                                          BlockPos targetBoundaryAnchor,
-                                                                          BlockPos targetInternalAnchor) {
+    private static RoadPlacementPlan invokeProductionRoadPlacementPlan(ServerLevel level,
+                                                                       List<BlockPos> centerPath,
+                                                                       BlockPos sourceInternalAnchor,
+                                                                       BlockPos sourceBoundaryAnchor,
+                                                                       BlockPos targetBoundaryAnchor,
+                                                                       BlockPos targetInternalAnchor) {
         try {
-            Class<?> plannerService = Class.forName("com.monpai.sailboatmod.nation.service.ManualRoadPlannerService");
-            Method method = plannerService.getDeclaredMethod(
-                    "createRoadPlacementPlanForTest",
+            Method method = StructureConstructionManager.class.getDeclaredMethod(
+                    "createRoadPlacementPlan",
                     ServerLevel.class,
                     List.class,
                     BlockPos.class,
@@ -531,13 +532,12 @@ class RoadGeometryPlannerTest {
         level.biome = Holder.direct(allocate(Biome.class));
 
         setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 1, 0, 62, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 2, 0, 64, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 3, 0, 64, Blocks.WATER.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 2, 0, 63, Blocks.DIRT.defaultBlockState());
         setSurfaceColumn(level, 4, 0, 64, Blocks.WATER.defaultBlockState());
-        setSurfaceColumn(level, 5, 0, 64, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 6, 0, 73, Blocks.DIRT.defaultBlockState());
-        setSurfaceColumn(level, 7, 0, 74, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 5, 0, 64, Blocks.WATER.defaultBlockState());
+        setSurfaceColumn(level, 7, 0, 63, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 8, 0, 63, Blocks.DIRT.defaultBlockState());
         return level;
     }
 
