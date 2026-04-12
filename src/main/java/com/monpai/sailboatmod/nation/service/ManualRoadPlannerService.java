@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.dock.PostStationRegistry;
+import com.monpai.sailboatmod.construction.RoadCoreExclusion;
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
@@ -11,6 +12,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
+import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -34,6 +36,7 @@ import net.minecraftforge.network.PacketDistributor;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -358,6 +361,7 @@ public final class ManualRoadPlannerService {
         }
 
         Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
+        blockedColumns.addAll(collectCoreExclusionColumns(level, data));
         List<PlanCandidate> candidates = new ArrayList<>();
         long startedAt = System.nanoTime();
         PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false);
@@ -528,7 +532,7 @@ public final class ManualRoadPlannerService {
                                 PostStationRoadAnchorHelper.computeFootprintColumns(target.zone()),
                                 targetSurface
                         );
-                        List<BlockPos> path = findPreferredRoadPath(level, sourceSurface, targetSurface, adjustedBlockedColumns, allowWaterFallback);
+                        List<BlockPos> path = resolveHybridRoadPath(level, sourceSurface, targetSurface, adjustedBlockedColumns, allowWaterFallback);
                         if (path.size() < 2) {
                             path = buildConnectedRouteViaTownAnchors(
                                     level,
@@ -586,7 +590,7 @@ public final class ManualRoadPlannerService {
 
         List<BlockPos> path = normalizePath(
                 sourceAnchor,
-                findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback),
+                resolveHybridRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback),
                 targetAnchor
         );
         if (path.size() < 2) {
@@ -613,13 +617,36 @@ public final class ManualRoadPlannerService {
             return List.of();
         }
 
-        List<BlockPos> sourceLeg = normalizePath(sourceExit, findPreferredRoadPath(level, sourceExit, sourceAnchor, blockedColumns, allowWaterFallback), sourceAnchor);
-        List<BlockPos> trunk = normalizePath(sourceAnchor, findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback), targetAnchor);
-        List<BlockPos> targetLeg = normalizePath(targetAnchor, findPreferredRoadPath(level, targetAnchor, targetExit, blockedColumns, allowWaterFallback), targetExit);
+        List<BlockPos> sourceLeg = normalizePath(sourceExit, resolveHybridRoadPath(level, sourceExit, sourceAnchor, blockedColumns, allowWaterFallback), sourceAnchor);
+        List<BlockPos> trunk = normalizePath(sourceAnchor, resolveHybridRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback), targetAnchor);
+        List<BlockPos> targetLeg = normalizePath(targetAnchor, resolveHybridRoadPath(level, targetAnchor, targetExit, blockedColumns, allowWaterFallback), targetExit);
         if (sourceLeg.size() < 2 || trunk.size() < 2 || targetLeg.size() < 2) {
             return List.of();
         }
         return stitchRouteSegments(sourceLeg, trunk, targetLeg);
+    }
+
+    private static List<BlockPos> resolveHybridRoadPath(ServerLevel level,
+                                                        BlockPos sourceAnchor,
+                                                        BlockPos targetAnchor,
+                                                        Set<Long> blockedColumns,
+                                                        boolean allowWaterFallback) {
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+
+        List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(level).getRoadNetworks());
+        RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
+                List.of(sourceAnchor),
+                List.of(targetAnchor),
+                RoadHybridRouteResolver.collectNetworkNodes(roads),
+                RoadHybridRouteResolver.collectNetworkAdjacency(roads),
+                (from, to, allowBridgeColumns) -> {
+                    List<BlockPos> path = findPreferredRoadPath(level, from, to, blockedColumns, allowBridgeColumns && allowWaterFallback);
+                    return RoadHybridRouteResolver.summarizePath(level, path, allowBridgeColumns && allowWaterFallback);
+                }
+        );
+        return route.fullPath().size() >= 2 ? route.fullPath() : List.of();
     }
 
     private static List<BlockPos> stitchRouteSegments(List<BlockPos>... segments) {
@@ -661,6 +688,10 @@ public final class ManualRoadPlannerService {
 
     static RouteAttemptDecision routeAttemptDecisionForTest(boolean landPathFound, boolean waterFallbackAllowed) {
         return new RouteAttemptDecision(shouldUseWaterFallback(landPathFound, waterFallbackAllowed));
+    }
+
+    static List<BlockPos> normalizePathForTest(BlockPos start, List<BlockPos> path, BlockPos end) {
+        return normalizePath(start, path, end);
     }
 
     private static List<StationZoneCandidate> collectPostStationsInClaims(ServerLevel level, List<NationClaimRecord> claims) {
@@ -773,6 +804,13 @@ public final class ManualRoadPlannerService {
             return null;
         }
         return surfaceAt(level, BlockPos.of(town.corePos()));
+    }
+
+    private static BlockPos nationCorePos(ServerLevel level, NationRecord nation) {
+        if (nation == null || !nation.hasCore() || !level.dimension().location().toString().equalsIgnoreCase(nation.coreDimension())) {
+            return null;
+        }
+        return surfaceAt(level, BlockPos.of(nation.corePos()));
     }
 
     private static BlockPos nearestRoadNodeInClaims(ServerLevel level, NationSavedData data, List<NationClaimRecord> claims, BlockPos towardPos) {
@@ -974,6 +1012,44 @@ public final class ManualRoadPlannerService {
         return blocked;
     }
 
+    private static Set<Long> collectCoreExclusionColumns(ServerLevel level, NationSavedData data) {
+        if (level == null || data == null) {
+            return Set.of();
+        }
+        LinkedHashSet<BlockPos> cores = new LinkedHashSet<>();
+        collectPresentCorePositions(cores, townsInDimension(level, data.getTowns()), level, true);
+        collectPresentCorePositions(cores, data.getNations(), level, false);
+        return RoadCoreExclusion.collectExcludedColumns(cores, RoadCoreExclusion.DEFAULT_RADIUS);
+    }
+
+    private static List<TownRecord> townsInDimension(ServerLevel level, List<TownRecord> towns) {
+        if (level == null || towns == null || towns.isEmpty()) {
+            return List.of();
+        }
+        return towns.stream()
+                .filter(town -> town != null
+                        && town.hasCore()
+                        && level.dimension().location().toString().equalsIgnoreCase(town.coreDimension()))
+                .toList();
+    }
+
+    private static void collectPresentCorePositions(Set<BlockPos> destination,
+                                                    Collection<?> records,
+                                                    ServerLevel level,
+                                                    boolean townRecords) {
+        if (destination == null || records == null || level == null) {
+            return;
+        }
+        for (Object record : records) {
+            BlockPos corePos = townRecords
+                    ? townCorePos(level, (TownRecord) record)
+                    : nationCorePos(level, (NationRecord) record);
+            if (corePos != null) {
+                destination.add(corePos);
+            }
+        }
+    }
+
     private static void addBlockedColumns(Set<Long> blocked, com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure) {
         if (blocked == null || structure == null) {
             return;
@@ -999,6 +1075,17 @@ public final class ManualRoadPlannerService {
 
     static PlannerMode readPlannerModeForTest(ItemStack stack) {
         return readPlannerMode(stack);
+    }
+
+    static Set<Long> collectCoreExclusionColumnsForTest(List<BlockPos> townCores, List<BlockPos> nationCores) {
+        LinkedHashSet<BlockPos> cores = new LinkedHashSet<>();
+        if (townCores != null) {
+            cores.addAll(townCores);
+        }
+        if (nationCores != null) {
+            cores.addAll(nationCores);
+        }
+        return RoadCoreExclusion.collectExcludedColumns(cores, RoadCoreExclusion.DEFAULT_RADIUS);
     }
 
     static PlannerMode cyclePlannerModeForTest(ItemStack stack) {

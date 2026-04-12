@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,6 +38,28 @@ public final class RoadRouteNodePlanner {
 
     public static RoutePlan plan(RouteMap map) {
         Objects.requireNonNull(map, "map");
+        RoutePlan landOnly = searchLandVariants(map);
+        if (!landOnly.path().isEmpty()) {
+            return landOnly;
+        }
+        return searchBridgeVariants(map);
+    }
+
+    public static RoutePlan planWithBridgePiers(RouteMap map, List<RoadBridgePierPlanner.PierNode> pierNodes) {
+        Objects.requireNonNull(map, "map");
+        RoutePlan landOnly = searchLandVariants(map);
+        if (!landOnly.path().isEmpty()) {
+            return landOnly;
+        }
+
+        RoutePlan pierBridge = searchBridgeGraph(map, pierNodes);
+        if (!pierBridge.path().isEmpty()) {
+            return pierBridge;
+        }
+        return searchBridgeVariants(map);
+    }
+
+    private static RoutePlan searchLandVariants(RouteMap map) {
         RoutePlan landOnly = search(map, false);
         if (!landOnly.path().isEmpty()) {
             return landOnly;
@@ -49,12 +72,149 @@ public final class RoadRouteNodePlanner {
                 return expandedLandOnly;
             }
         }
+        return RoutePlan.empty();
+    }
 
+    private static RoutePlan searchBridgeVariants(RouteMap map) {
         RoutePlan bridge = search(map, true);
         if (!bridge.path().isEmpty()) {
             return bridge;
         }
+        RouteMap expanded = map.expanded();
         return expanded == map ? bridge : search(expanded, true);
+    }
+
+    private static RoutePlan searchBridgeGraph(RouteMap map, List<RoadBridgePierPlanner.PierNode> pierNodes) {
+        if (pierNodes == null || pierNodes.isEmpty()) {
+            return RoutePlan.empty();
+        }
+
+        RouteColumn start = map.columnAt(map.start().getX(), map.start().getZ());
+        RouteColumn end = map.columnAt(map.end().getX(), map.end().getZ());
+        if (!isTraversable(start, false) || !isTraversable(end, false)) {
+            return RoutePlan.empty();
+        }
+
+        List<RoadBridgePierPlanner.PierNode> orderedPiers = orderPiersAlongRoute(map.start(), map.end(), pierNodes);
+        if (orderedPiers.isEmpty()) {
+            return RoutePlan.empty();
+        }
+
+        ArrayList<BlockPos> waypoints = new ArrayList<>(orderedPiers.size() + 2);
+        waypoints.add(start.surfacePos());
+        for (RoadBridgePierPlanner.PierNode pierNode : orderedPiers) {
+            if (pierNode == null || pierNode.foundationPos() == null) {
+                continue;
+            }
+            waypoints.add(new BlockPos(
+                    pierNode.foundationPos().getX(),
+                    pierNode.deckY(),
+                    pierNode.foundationPos().getZ()
+            ));
+        }
+        waypoints.add(end.surfacePos());
+
+        if (waypoints.size() < 3) {
+            return RoutePlan.empty();
+        }
+
+        LinkedHashSet<BlockPos> path = new LinkedHashSet<>();
+        int totalBridgeColumns = 0;
+        int currentBridgeRun = 0;
+        int longestBridgeRun = 0;
+        for (int i = 0; i < waypoints.size() - 1; i++) {
+            List<BlockPos> segment = rasterizeSegment(waypoints.get(i), waypoints.get(i + 1));
+            if (segment.isEmpty()) {
+                return RoutePlan.empty();
+            }
+            for (int j = 0; j < segment.size(); j++) {
+                if (i > 0 && j == 0) {
+                    continue;
+                }
+                BlockPos step = segment.get(j);
+                if (!map.contains(step.getX(), step.getZ())) {
+                    return RoutePlan.empty();
+                }
+                RouteColumn column = map.columnAt(step.getX(), step.getZ());
+                if (!isTraversable(column, true)) {
+                    return RoutePlan.empty();
+                }
+                path.add(step);
+
+                boolean bridgeStep = step.getY() > column.surfacePos().getY() || column.requiresBridge();
+                if (bridgeStep) {
+                    totalBridgeColumns++;
+                    currentBridgeRun++;
+                    longestBridgeRun = Math.max(longestBridgeRun, currentBridgeRun);
+                } else {
+                    currentBridgeRun = 0;
+                }
+            }
+        }
+
+        List<BlockPos> candidatePath = List.copyOf(path);
+        if (candidatePath.size() < 2 || !bridgeShareWithinLimit(candidatePath.size(), totalBridgeColumns)) {
+            return RoutePlan.empty();
+        }
+        return new RoutePlan(candidatePath, totalBridgeColumns > 0, totalBridgeColumns, longestBridgeRun);
+    }
+
+    private static List<RoadBridgePierPlanner.PierNode> orderPiersAlongRoute(BlockPos start,
+                                                                              BlockPos end,
+                                                                              List<RoadBridgePierPlanner.PierNode> pierNodes) {
+        if (start == null || end == null || pierNodes == null || pierNodes.isEmpty()) {
+            return List.of();
+        }
+        double dx = end.getX() - start.getX();
+        double dz = end.getZ() - start.getZ();
+        double denominator = (dx * dx) + (dz * dz);
+        if (denominator <= 0.0D) {
+            return List.of();
+        }
+        return pierNodes.stream()
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingDouble(pier -> projectionAlongRoute(start, pier.foundationPos(), dx, dz, denominator)))
+                .toList();
+    }
+
+    private static double projectionAlongRoute(BlockPos start,
+                                               BlockPos pos,
+                                               double dx,
+                                               double dz,
+                                               double denominator) {
+        if (start == null || pos == null) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        double px = pos.getX() - start.getX();
+        double pz = pos.getZ() - start.getZ();
+        return ((px * dx) + (pz * dz)) / denominator;
+    }
+
+    private static List<BlockPos> rasterizeSegment(BlockPos from, BlockPos to) {
+        if (from == null || to == null) {
+            return List.of();
+        }
+        int steps = Math.max(Math.abs(to.getX() - from.getX()), Math.abs(to.getZ() - from.getZ()));
+        if (steps == 0) {
+            return List.of(from);
+        }
+
+        ArrayList<BlockPos> positions = new ArrayList<>(steps + 1);
+        double dx = (to.getX() - from.getX()) / (double) steps;
+        double dy = (to.getY() - from.getY()) / (double) steps;
+        double dz = (to.getZ() - from.getZ()) / (double) steps;
+        LinkedHashSet<Long> seen = new LinkedHashSet<>();
+        for (int i = 0; i <= steps; i++) {
+            BlockPos pos = new BlockPos(
+                    (int) Math.round(from.getX() + (dx * i)),
+                    (int) Math.round(from.getY() + (dy * i)),
+                    (int) Math.round(from.getZ() + (dz * i))
+            );
+            if (seen.add(pos.asLong())) {
+                positions.add(pos);
+            }
+        }
+        return List.copyOf(positions);
     }
 
     private static RoutePlan search(RouteMap map, boolean allowBridgeColumns) {

@@ -133,6 +133,18 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void manualPlannerExcludesColumnsWithinFiveBlocksOfCore() {
+        Set<Long> excluded = ManualRoadPlannerService.collectCoreExclusionColumnsForTest(
+                List.of(new BlockPos(50, 64, 50)),
+                List.of(new BlockPos(90, 64, 90))
+        );
+
+        assertTrue(excluded.contains(BlockPos.asLong(45, 0, 50)));
+        assertTrue(excluded.contains(BlockPos.asLong(95, 0, 90)));
+        assertFalse(excluded.contains(BlockPos.asLong(96, 0, 90)));
+    }
+
+    @Test
     void unblocksChosenStationWaitingAreaAndExitColumns() {
         Set<Long> blocked = ManualRoadPlannerService.unblockStationFootprint(
                 Set.of(ManualRoadPlannerService.columnKeyForTest(100, 100),
@@ -339,6 +351,26 @@ class ManualRoadPlannerServiceTest {
         );
 
         assertTrue(normalized.isEmpty());
+    }
+
+    @Test
+    void selectedHybridPathIsNormalizedAndUsedForPlacementPlanInputs() {
+        List<BlockPos> normalized = ManualRoadPlannerService.normalizePathForTest(
+                new BlockPos(1, 64, 2),
+                List.of(new BlockPos(2, 64, 2), new BlockPos(4, 64, 2), new BlockPos(6, 64, 2)),
+                new BlockPos(7, 64, 2)
+        );
+
+        assertEquals(
+                List.of(
+                        new BlockPos(1, 64, 2),
+                        new BlockPos(2, 64, 2),
+                        new BlockPos(4, 64, 2),
+                        new BlockPos(6, 64, 2),
+                        new BlockPos(7, 64, 2)
+                ),
+                normalized
+        );
     }
 
     private static RoadPlacementPlan bridgePreviewPlanFixture(RoadCorridorPlan corridorPlan) {

@@ -41,6 +41,33 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
+    void bridgeModeUsesPierNodesInsteadOfExploringWholeWaterSheet() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(8, 64, 0),
+                pos -> new RoadRouteNodePlanner.RouteColumn(
+                        new BlockPos(pos.getX(), 64, pos.getZ()),
+                        pos.getZ() != 0,
+                        pos.getX() >= 2 && pos.getX() <= 6,
+                        4,
+                        0,
+                        false
+                )
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.planWithBridgePiers(
+                map,
+                List.of(
+                        new RoadBridgePierPlanner.PierNode(new BlockPos(2, 58, 0), 63, 68),
+                        new RoadBridgePierPlanner.PierNode(new BlockPos(5, 58, 0), 63, 68)
+                )
+        );
+
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.usedBridge());
+    }
+
+    @Test
     void allowsShortBridgeOnlyAfterLandOnlySearchFailsWhenFinalShareStaysWithinBudget() {
         RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),
