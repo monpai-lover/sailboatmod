@@ -27,9 +27,51 @@ class RoadCorridorPlanTest {
     void segmentKindDefinesRequiredValues() {
         assertEquals(RoadCorridorPlan.SegmentKind.TOWN_CONNECTION, RoadCorridorPlan.SegmentKind.valueOf("TOWN_CONNECTION"));
         assertEquals(RoadCorridorPlan.SegmentKind.LAND_APPROACH, RoadCorridorPlan.SegmentKind.valueOf("LAND_APPROACH"));
+        assertEquals(RoadCorridorPlan.SegmentKind.APPROACH_RAMP, RoadCorridorPlan.SegmentKind.valueOf("APPROACH_RAMP"));
         assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, RoadCorridorPlan.SegmentKind.valueOf("BRIDGE_HEAD"));
         assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, RoadCorridorPlan.SegmentKind.valueOf("NAVIGABLE_MAIN_SPAN"));
         assertEquals(RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN, RoadCorridorPlan.SegmentKind.valueOf("NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN"));
+        assertEquals(RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH, RoadCorridorPlan.SegmentKind.valueOf("ELEVATED_APPROACH"));
+    }
+
+    @Test
+    void corridorSliceCapturesClearanceAndElevatedApproachSegmentKinds() {
+        RoadCorridorPlan plan = new RoadCorridorPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                List.of(new RoadCorridorPlan.CorridorSlice(
+                        0,
+                        new BlockPos(0, 70, 0),
+                        RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH,
+                        List.of(new BlockPos(0, 70, 0)),
+                        List.of(new BlockPos(0, 69, 0)),
+                        List.of(new BlockPos(0, 71, 0), new BlockPos(0, 72, 0)),
+                        List.of(),
+                        List.of(),
+                        List.of()
+                )),
+                null,
+                true
+        );
+
+        assertEquals(RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH, plan.slices().get(0).segmentKind());
+        assertEquals(List.of(new BlockPos(0, 71, 0), new BlockPos(0, 72, 0)), plan.slices().get(0).clearancePositions());
+    }
+
+    @Test
+    void corridorSliceDefaultsClearanceToEmptyList() {
+        RoadCorridorPlan.CorridorSlice slice = new RoadCorridorPlan.CorridorSlice(
+                0,
+                new BlockPos(0, 65, 0),
+                RoadCorridorPlan.SegmentKind.APPROACH_RAMP,
+                List.of(new BlockPos(0, 65, 0)),
+                List.of(),
+                null,
+                List.of(),
+                List.of(),
+                List.of()
+        );
+
+        assertTrue(slice.clearancePositions().isEmpty());
     }
 
     @Test

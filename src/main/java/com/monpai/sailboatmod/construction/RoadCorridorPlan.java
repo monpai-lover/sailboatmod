@@ -18,6 +18,8 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
     public enum SegmentKind {
         TOWN_CONNECTION,
         LAND_APPROACH,
+        APPROACH_RAMP,
+        ELEVATED_APPROACH,
         BRIDGE_HEAD,
         NAVIGABLE_MAIN_SPAN,
         NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN
@@ -28,9 +30,29 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
                                 SegmentKind segmentKind,
                                 List<BlockPos> surfacePositions,
                                 List<BlockPos> excavationPositions,
+                                List<BlockPos> clearancePositions,
                                 List<BlockPos> railingLightPositions,
                                 List<BlockPos> supportPositions,
                                 List<BlockPos> pierLightPositions) {
+        public CorridorSlice(int index,
+                             BlockPos deckCenter,
+                             SegmentKind segmentKind,
+                             List<BlockPos> surfacePositions,
+                             List<BlockPos> excavationPositions,
+                             List<BlockPos> railingLightPositions,
+                             List<BlockPos> supportPositions,
+                             List<BlockPos> pierLightPositions) {
+            this(index,
+                    deckCenter,
+                    segmentKind,
+                    surfacePositions,
+                    excavationPositions,
+                    null,
+                    railingLightPositions,
+                    supportPositions,
+                    pierLightPositions);
+        }
+
         public CorridorSlice {
             if (index < 0) {
                 throw new IllegalArgumentException("index must be non-negative");
@@ -39,6 +61,7 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
             segmentKind = Objects.requireNonNull(segmentKind, "segmentKind");
             surfacePositions = copyOptionalPositions(surfacePositions, "surfacePositions");
             excavationPositions = copyOptionalPositions(excavationPositions, "excavationPositions");
+            clearancePositions = copyOptionalPositions(clearancePositions, "clearancePositions");
             railingLightPositions = copyOptionalPositions(railingLightPositions, "railingLightPositions");
             supportPositions = copyOptionalPositions(supportPositions, "supportPositions");
             pierLightPositions = copyOptionalPositions(pierLightPositions, "pierLightPositions");
