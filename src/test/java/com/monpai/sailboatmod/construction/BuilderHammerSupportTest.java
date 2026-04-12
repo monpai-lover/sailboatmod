@@ -243,6 +243,44 @@ class BuilderHammerSupportTest {
     }
 
     @Test
+    void corridorArtifactsIncludeExcavationAndClearanceOwnership() {
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                List.of(
+                        new RoadCorridorPlan.CorridorSlice(
+                                0,
+                                new BlockPos(0, 70, 0),
+                                RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH,
+                                List.of(new BlockPos(0, 70, 0)),
+                                List.of(new BlockPos(0, 69, 0)),
+                                List.of(new BlockPos(0, 71, 0), new BlockPos(0, 72, 0)),
+                                List.of(),
+                                List.of(new BlockPos(0, 68, 0)),
+                                List.of(new BlockPos(0, 67, 0))
+                        )
+                ),
+                null,
+                true
+        );
+
+        Object artifacts = invokeBuildRoadPlacementArtifacts(
+                corridorPlan,
+                newRoadPlacementStyleFactory(
+                        Blocks.SPRUCE_SLAB.defaultBlockState(),
+                        Blocks.SPRUCE_FENCE.defaultBlockState(),
+                        true
+                ),
+                ghostBlocks -> List.of()
+        );
+
+        List<BlockPos> ownedBlocks = invokeArtifactsOwnedBlocks(artifacts);
+
+        assertTrue(ownedBlocks.contains(new BlockPos(0, 69, 0)));
+        assertTrue(ownedBlocks.contains(new BlockPos(0, 71, 0)));
+        assertTrue(ownedBlocks.contains(new BlockPos(0, 72, 0)));
+    }
+
+    @Test
     void placementArtifactsReturnEmptyWhenCorridorIsInvalid() {
         RoadCorridorPlan invalidCorridorPlan = new RoadCorridorPlan(
                 List.of(new BlockPos(0, 64, 0)),

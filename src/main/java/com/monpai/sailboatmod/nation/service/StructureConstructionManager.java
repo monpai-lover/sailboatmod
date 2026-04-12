@@ -2130,6 +2130,7 @@ public final class StructureConstructionManager {
             appendCorridorLightGhosts(ghostBlocks, slice.railingLightPositions(), sliceStyle.support());
             appendCorridorLightGhosts(ghostBlocks, slice.pierLightPositions(), sliceStyle.support());
             corridorTerrainOwnership.addAll(slice.excavationPositions());
+            corridorTerrainOwnership.addAll(slice.clearancePositions());
         }
         List<RoadGeometryPlanner.GhostRoadBlock> resolvedGhostBlocks = List.copyOf(ghostBlocks.values());
         if (terrainOwnershipResolver != null) {
