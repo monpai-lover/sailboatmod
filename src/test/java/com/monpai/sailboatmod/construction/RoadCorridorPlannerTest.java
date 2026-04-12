@@ -202,6 +202,10 @@ class RoadCorridorPlannerTest {
         assertEquals(RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH, plan.slices().get(2).segmentKind());
         assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, plan.slices().get(3).segmentKind());
         assertTrue(hasSurfaceClosure(plan.slices().get(2).surfacePositions(), plan.slices().get(3).surfacePositions()));
+        assertTrue(plan.slices().get(2).surfacePositions().stream().allMatch(pos -> pos.getX() == 2));
+        assertTrue(plan.slices().get(2).excavationPositions().stream().allMatch(pos -> pos.getX() == 2));
+        assertTrue(plan.slices().get(2).clearancePositions().stream().allMatch(pos -> pos.getX() == 2));
+        assertTrue(plan.slices().get(3).surfacePositions().stream().anyMatch(pos -> pos.getX() == 2));
     }
 
     @Test
@@ -221,6 +225,45 @@ class RoadCorridorPlannerTest {
 
         assertFalse(plan.slices().get(1).clearancePositions().isEmpty());
         assertFalse(plan.slices().get(1).excavationPositions().isEmpty());
+    }
+
+    @Test
+    void plannerPreservesPerRangeBridgeHeadsForAdjacentAndOverlappingBridgeRanges() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0)
+        );
+
+        RoadCorridorPlan adjacentPlan = RoadCorridorPlanner.plan(
+                centerPath,
+                List.of(
+                        new RoadPlacementPlan.BridgeRange(2, 3),
+                        new RoadPlacementPlan.BridgeRange(4, 5)
+                ),
+                List.of()
+        );
+        RoadCorridorPlan overlappingPlan = RoadCorridorPlanner.plan(
+                centerPath,
+                List.of(
+                        new RoadPlacementPlan.BridgeRange(2, 4),
+                        new RoadPlacementPlan.BridgeRange(4, 6)
+                ),
+                List.of()
+        );
+
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, adjacentPlan.slices().get(2).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, adjacentPlan.slices().get(3).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, adjacentPlan.slices().get(4).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, adjacentPlan.slices().get(5).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, overlappingPlan.slices().get(2).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, overlappingPlan.slices().get(4).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, overlappingPlan.slices().get(6).segmentKind());
     }
 
     private static boolean hasSurfaceClosure(List<BlockPos> current, List<BlockPos> next) {

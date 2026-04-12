@@ -3,7 +3,6 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -52,6 +51,7 @@ public final class RoadCorridorPlanner {
                 requestedNavigableIndexes::contains
         );
         Set<Integer> navigableIndexes = expandIndexes(mainChannelRanges, size);
+        Set<Integer> bridgeHeadIndexes = collectBridgeHeadIndexes(bridgeRanges, size);
         Set<Integer> supportRequiredIndexes = collectSupportRequiredIndexes(bridgeRanges, size);
 
         boolean valid = true;
@@ -62,7 +62,7 @@ public final class RoadCorridorPlanner {
         for (int i = 0; i < size; i++) {
             BlockPos center = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
             BlockPos deckCenter = new BlockPos(center.getX(), placementHeights[i], center.getZ()).immutable();
-            RoadCorridorPlan.SegmentKind segmentKind = classify(i, placementHeights, bridgeIndexes, navigableIndexes);
+            RoadCorridorPlan.SegmentKind segmentKind = classify(i, placementHeights, bridgeIndexes, bridgeHeadIndexes, navigableIndexes);
             boolean supportRequired = supportRequiredIndexes.contains(i)
                     && segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
             List<BlockPos> supportPositions = List.of();
@@ -86,13 +86,14 @@ public final class RoadCorridorPlanner {
         for (int i = 0; i < size - 1; i++) {
             RoadCorridorPlan.SegmentKind currentKind = segmentKinds.get(i);
             RoadCorridorPlan.SegmentKind nextKind = segmentKinds.get(i + 1);
-            if (!requiresAdjacentClosure(currentKind, nextKind)) {
+            if (!requiresBridgeheadOverlapRepair(currentKind, nextKind)) {
                 continue;
             }
-            List<BlockPos> closedCurrent = ensureAdjacentClosure(surfacePositionsByIndex.get(i), surfacePositionsByIndex.get(i + 1));
-            List<BlockPos> closedNext = ensureAdjacentClosure(surfacePositionsByIndex.get(i + 1), closedCurrent);
-            surfacePositionsByIndex.set(i, closedCurrent);
-            surfacePositionsByIndex.set(i + 1, closedNext);
+            if (usesTerrainEnvelope(currentKind) && !usesTerrainEnvelope(nextKind)) {
+                surfacePositionsByIndex.set(i + 1, ensureTransitionOverlap(surfacePositionsByIndex.get(i), surfacePositionsByIndex.get(i + 1)));
+            } else if (!usesTerrainEnvelope(currentKind) && usesTerrainEnvelope(nextKind)) {
+                surfacePositionsByIndex.set(i, ensureTransitionOverlap(surfacePositionsByIndex.get(i + 1), surfacePositionsByIndex.get(i)));
+            }
         }
 
         List<RoadCorridorPlan.CorridorSlice> slices = new ArrayList<>(size);
@@ -147,6 +148,7 @@ public final class RoadCorridorPlanner {
     private static RoadCorridorPlan.SegmentKind classify(int index,
                                                          int[] placementHeights,
                                                          Set<Integer> bridgeIndexes,
+                                                         Set<Integer> bridgeHeadIndexes,
                                                          Set<Integer> navigableIndexes) {
         if (navigableIndexes.contains(index)) {
             return RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN;
@@ -155,7 +157,7 @@ public final class RoadCorridorPlanner {
             if (isElevatedApproach(index, placementHeights, bridgeIndexes)) {
                 return RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH;
             }
-            if (isBridgeBoundary(index, bridgeIndexes)) {
+            if (bridgeHeadIndexes.contains(index)) {
                 return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
             }
             return RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
@@ -182,6 +184,23 @@ public final class RoadCorridorPlanner {
             }
         }
         return indexes;
+    }
+
+    private static Set<Integer> collectBridgeHeadIndexes(List<RoadPlacementPlan.BridgeRange> bridgeRanges, int pathSize) {
+        Set<Integer> bridgeHeads = new HashSet<>();
+        if (bridgeRanges == null || bridgeRanges.isEmpty() || pathSize <= 0) {
+            return bridgeHeads;
+        }
+        for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
+            if (range == null) {
+                continue;
+            }
+            int start = Math.max(0, Math.min(pathSize - 1, range.startIndex()));
+            int end = Math.max(0, Math.min(pathSize - 1, range.endIndex()));
+            bridgeHeads.add(start);
+            bridgeHeads.add(end);
+        }
+        return bridgeHeads;
     }
 
     private static Set<Integer> collectSupportRequiredIndexes(List<RoadPlacementPlan.BridgeRange> bridgeRanges, int pathSize) {
@@ -249,10 +268,6 @@ public final class RoadCorridorPlanner {
         return false;
     }
 
-    private static boolean isBridgeBoundary(int index, Set<Integer> bridgeIndexes) {
-        return isBridgeRangeStart(index, bridgeIndexes) || isBridgeRangeEnd(index, bridgeIndexes);
-    }
-
     private static boolean isBridgeRangeStart(int index, Set<Integer> bridgeIndexes) {
         return bridgeIndexes.contains(index) && (index == 0 || !bridgeIndexes.contains(index - 1));
     }
@@ -261,12 +276,15 @@ public final class RoadCorridorPlanner {
         return bridgeIndexes.contains(index) && !bridgeIndexes.contains(index + 1);
     }
 
-    private static boolean requiresAdjacentClosure(RoadCorridorPlan.SegmentKind current,
-                                                   RoadCorridorPlan.SegmentKind next) {
-        return current != next && (usesBridgeClosure(current) || usesBridgeClosure(next));
+    private static boolean requiresBridgeheadOverlapRepair(RoadCorridorPlan.SegmentKind current,
+                                                           RoadCorridorPlan.SegmentKind next) {
+        if (current == next || usesTerrainEnvelope(current) == usesTerrainEnvelope(next)) {
+            return false;
+        }
+        return isBridgeTransitionKind(current) && isBridgeTransitionKind(next);
     }
 
-    private static boolean usesBridgeClosure(RoadCorridorPlan.SegmentKind segmentKind) {
+    private static boolean isBridgeTransitionKind(RoadCorridorPlan.SegmentKind segmentKind) {
         return segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
                 || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
@@ -274,22 +292,32 @@ public final class RoadCorridorPlanner {
                 || segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
     }
 
-    private static List<BlockPos> ensureAdjacentClosure(List<BlockPos> current, List<BlockPos> next) {
-        LinkedHashSet<BlockPos> closed = new LinkedHashSet<>(current);
-        if (Collections.disjoint(current, next)) {
-            closed.addAll(overlapBridge(current, next));
+    private static List<BlockPos> ensureTransitionOverlap(List<BlockPos> source, List<BlockPos> target) {
+        LinkedHashSet<BlockPos> overlapped = new LinkedHashSet<>(target);
+        if (hasSurfaceOverlap(source, target)) {
+            return List.copyOf(overlapped);
         }
-        return List.copyOf(closed);
+        overlapped.addAll(transitionOverlapPositions(source, target));
+        return List.copyOf(overlapped);
     }
 
-    private static List<BlockPos> overlapBridge(List<BlockPos> current, List<BlockPos> next) {
+    private static List<BlockPos> transitionOverlapPositions(List<BlockPos> source, List<BlockPos> target) {
         LinkedHashSet<BlockPos> overlap = new LinkedHashSet<>();
-        for (BlockPos nextPos : next) {
-            if (isAdjacentToAny(nextPos, current)) {
-                overlap.add(nextPos.immutable());
+        for (BlockPos sourcePos : source) {
+            if (isAdjacentToAny(sourcePos, target)) {
+                overlap.add(sourcePos.immutable());
             }
         }
         return List.copyOf(overlap);
+    }
+
+    private static boolean hasSurfaceOverlap(List<BlockPos> current, List<BlockPos> next) {
+        for (BlockPos pos : current) {
+            if (next.contains(pos)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isAdjacentToAny(BlockPos candidate, List<BlockPos> positions) {
