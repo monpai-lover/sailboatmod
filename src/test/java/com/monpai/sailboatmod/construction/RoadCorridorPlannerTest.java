@@ -208,6 +208,45 @@ class RoadCorridorPlannerTest {
     }
 
     @Test
+    void plannerBuildsBridgeDeckAtWaterSurfacePlusFiveAndPopulatesRailingLights() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0)
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(
+                centerPath,
+                List.of(new RoadPlacementPlan.BridgeRange(1, 3)),
+                List.of(new RoadPlacementPlan.BridgeRange(1, 3)),
+                new int[] {64, 68, 68, 68, 64}
+        );
+
+        assertEquals(68, plan.slices().get(1).deckCenter().getY());
+        assertEquals(68, plan.slices().get(2).deckCenter().getY());
+        assertEquals(68, plan.slices().get(3).deckCenter().getY());
+        assertFalse(plan.slices().get(2).railingLightPositions().isEmpty());
+    }
+
+    @Test
+    void defaultLandSlicesTrackSurfaceReplacementAtTerrainHeightAndTwoBlockClearanceEnvelope() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(2, 65, 0)
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, List.of(), List.of());
+
+        assertTrue(plan.slices().get(0).surfacePositions().contains(new BlockPos(0, 64, 0)));
+        assertTrue(plan.slices().get(0).clearancePositions().contains(new BlockPos(0, 65, 0)));
+        assertTrue(plan.slices().get(0).clearancePositions().contains(new BlockPos(0, 66, 0)));
+        assertFalse(plan.slices().get(0).surfacePositions().contains(new BlockPos(0, 65, 0)));
+    }
+
+    @Test
     void plannerBuildsElevatedApproachesForHighReliefRiverCrossing() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

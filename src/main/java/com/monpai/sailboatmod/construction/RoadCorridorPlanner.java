@@ -30,7 +30,7 @@ public final class RoadCorridorPlanner {
         int[] placementHeights = new int[centerPath == null ? 0 : centerPath.size()];
         if (centerPath != null) {
             for (int i = 0; i < centerPath.size(); i++) {
-                placementHeights[i] = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i).getY() + 1;
+                placementHeights[i] = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i).getY();
             }
         }
         return plan(centerPath, bridgeRanges, navigableWaterBridgeRanges, placementHeights);
@@ -66,12 +66,14 @@ public final class RoadCorridorPlanner {
         boolean valid = supportPlacementPlan.valid();
         List<BlockPos> deckCenters = new ArrayList<>(size);
         List<RoadCorridorPlan.SegmentKind> segmentKinds = new ArrayList<>(size);
+        List<List<BlockPos>> railingLightPositionsByIndex = new ArrayList<>(size);
         List<List<BlockPos>> supportPositionsByIndex = new ArrayList<>(size);
         List<List<BlockPos>> pierLightPositionsByIndex = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             BlockPos center = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
             BlockPos deckCenter = new BlockPos(center.getX(), placementHeights[i], center.getZ()).immutable();
             RoadCorridorPlan.SegmentKind segmentKind = classify(i, placementHeights, bridgeIndexes, bridgeHeadIndexes, navigableIndexes);
+            List<BlockPos> railingLightPositions = buildRailingLightPositions(centerPath, i, deckCenter, segmentKind);
             boolean supportRequired = supportRequiredIndexes.contains(i)
                     && segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
             List<BlockPos> supportPositions = List.of();
@@ -82,6 +84,7 @@ public final class RoadCorridorPlanner {
             }
             deckCenters.add(deckCenter);
             segmentKinds.add(segmentKind);
+            railingLightPositionsByIndex.add(railingLightPositions);
             supportPositionsByIndex.add(supportPositions);
             pierLightPositionsByIndex.add(pierLightPositions);
         }
@@ -121,12 +124,12 @@ public final class RoadCorridorPlanner {
                     surfacePositions,
                     buildExcavationPositions(surfacePositions, segmentKinds.get(i)),
                     buildClearancePositions(surfacePositions, segmentKinds.get(i)),
-                    List.of(),
+                    railingLightPositionsByIndex.get(i),
                     supportPositionsByIndex.get(i),
                     pierLightPositionsByIndex.get(i)
             ));
         }
-        return new RoadCorridorPlan(centerPath, slices, buildNavigationChannel(centerPath, navigableIndexes), valid);
+        return new RoadCorridorPlan(centerPath, slices, buildNavigationChannel(deckCenters, navigableIndexes), valid);
     }
 
     public static List<RoadPlacementPlan.BridgeRange> detectContiguousSubranges(List<BlockPos> centerPath,
@@ -261,6 +264,35 @@ public final class RoadCorridorPlanner {
             supportPositions.add(deckCenter.below(depth));
         }
         return List.copyOf(supportPositions);
+    }
+
+    private static List<BlockPos> buildRailingLightPositions(List<BlockPos> centerPath,
+                                                             int index,
+                                                             BlockPos deckCenter,
+                                                             RoadCorridorPlan.SegmentKind segmentKind) {
+        if (deckCenter == null || centerPath == null || centerPath.isEmpty() || !supportsBridgeRailings(segmentKind)) {
+            return List.of();
+        }
+        BlockPos current = centerPath.get(index);
+        BlockPos previous = index > 0 ? centerPath.get(index - 1) : current;
+        BlockPos next = index + 1 < centerPath.size() ? centerPath.get(index + 1) : current;
+        int dx = Integer.compare(next.getX() - previous.getX(), 0);
+        int dz = Integer.compare(next.getZ() - previous.getZ(), 0);
+
+        int sideX = 0;
+        int sideZ = 0;
+        if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
+            sideZ = 1;
+        } else if (dz != 0) {
+            sideX = 1;
+        } else {
+            sideX = 1;
+        }
+
+        return List.of(
+                new BlockPos(deckCenter.getX() + sideX, deckCenter.getY(), deckCenter.getZ() + sideZ),
+                new BlockPos(deckCenter.getX() - sideX, deckCenter.getY(), deckCenter.getZ() - sideZ)
+        );
     }
 
     private static List<BlockPos> buildSurfacePositions(List<BlockPos> centerPath, int index, int[] deckHeights) {
@@ -409,8 +441,15 @@ public final class RoadCorridorPlanner {
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
     }
 
-    private static RoadCorridorPlan.NavigationChannel buildNavigationChannel(List<BlockPos> centerPath, Set<Integer> navigableIndexes) {
-        if (centerPath.isEmpty() || navigableIndexes.isEmpty()) {
+    private static boolean supportsBridgeRailings(RoadCorridorPlan.SegmentKind segmentKind) {
+        return segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
+                || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
+                || segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
+    }
+
+    private static RoadCorridorPlan.NavigationChannel buildNavigationChannel(List<BlockPos> deckCenters, Set<Integer> navigableIndexes) {
+        if (deckCenters.isEmpty() || navigableIndexes.isEmpty()) {
             return null;
         }
         int minX = Integer.MAX_VALUE;
@@ -420,10 +459,10 @@ public final class RoadCorridorPlanner {
         int maxY = Integer.MIN_VALUE;
         int maxZ = Integer.MIN_VALUE;
         for (int index : navigableIndexes) {
-            if (index < 0 || index >= centerPath.size()) {
+            if (index < 0 || index >= deckCenters.size()) {
                 continue;
             }
-            BlockPos deckCenter = centerPath.get(index).above();
+            BlockPos deckCenter = deckCenters.get(index);
             minX = Math.min(minX, deckCenter.getX());
             minY = Math.min(minY, deckCenter.getY() - 4);
             minZ = Math.min(minZ, deckCenter.getZ());
