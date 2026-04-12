@@ -156,6 +156,7 @@ public final class StructureConstructionManager {
     private record RoadAnchor(BlockPos pos, Direction side) {}
     private record PreviewRoadTarget(BlockPos pos, PreviewRoadTargetKind kind) {}
     private record RoadPlacementStyle(BlockState surface, BlockState support, boolean bridge) {}
+    static record TestRoadPlacementResult(BlockState surfaceState, int foundationTopY) {}
     private record HammerUseResult(boolean success, Component message) {
         private static HammerUseResult failure(String key) {
             return new HammerUseResult(false, Component.translatable(key));
@@ -1229,32 +1230,19 @@ public final class StructureConstructionManager {
                                                    com.monpai.sailboatmod.nation.model.PlacedStructureRecord second) {
         List<RoadAnchor> firstAnchors = getRoadAnchors(first);
         List<RoadAnchor> secondAnchors = getRoadAnchors(second);
-        List<BlockPos> bestPath = List.of();
-        double bestScore = Double.MAX_VALUE;
-
-        for (RoadAnchor firstAnchor : firstAnchors) {
-            for (RoadAnchor secondAnchor : secondAnchors) {
-                double directDistance = firstAnchor.pos().distSqr(secondAnchor.pos());
-                List<BlockPos> path = RoadPathfinder.findPath(level, firstAnchor.pos(), secondAnchor.pos());
-                if (path.size() < 2) {
-                    continue;
+        List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(level).getRoadNetworks());
+        RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
+                firstAnchors.stream().map(RoadAnchor::pos).toList(),
+                secondAnchors.stream().map(RoadAnchor::pos).toList(),
+                RoadHybridRouteResolver.collectNetworkNodes(roads),
+                RoadHybridRouteResolver.collectNetworkAdjacency(roads),
+                (from, to, allowWaterFallback) -> {
+                    List<BlockPos> path = RoadPathfinder.findPath(level, from, to, Set.of(), allowWaterFallback);
+                    return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
                 }
-                double score = path.size() + (directDistance * 0.05D);
-                if (firstAnchor.side() == primaryRoadSide(first.rotation())) {
-                    score -= 2.0D;
-                }
-                if (secondAnchor.side() == primaryRoadSide(second.rotation())) {
-                    score -= 2.0D;
-                }
-                if (score < bestScore) {
-                    bestScore = score;
-                    bestPath = path;
-                }
-            }
-        }
-
-        if (!bestPath.isEmpty()) {
-            return bestPath;
+        );
+        if (route.fullPath().size() >= 2) {
+            return route.fullPath();
         }
         return RoadPathfinder.findPath(level, first.center(), second.center());
     }
@@ -1425,7 +1413,36 @@ public final class StructureConstructionManager {
         }
         List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
         int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath, bridgeProfiles);
+        placementHeights = surfaceReplacementPlacementHeights(centerPath, placementHeights, bridgeRanges);
         return RoadCorridorPlanner.plan(centerPath, bridgeRanges, navigableWaterBridgeRanges, placementHeights);
+    }
+
+    private static int[] surfaceReplacementPlacementHeights(List<BlockPos> centerPath,
+                                                            int[] placementHeights,
+                                                            List<RoadPlacementPlan.BridgeRange> bridgeRanges) {
+        if (centerPath == null || centerPath.isEmpty() || placementHeights == null || placementHeights.length != centerPath.size()) {
+            return placementHeights == null ? new int[0] : placementHeights;
+        }
+        Set<Integer> bridgeIndexes = new HashSet<>();
+        if (bridgeRanges != null) {
+            for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
+                if (range == null) {
+                    continue;
+                }
+                int start = Math.max(0, range.startIndex());
+                int end = Math.min(centerPath.size() - 1, range.endIndex());
+                for (int i = start; i <= end; i++) {
+                    bridgeIndexes.add(i);
+                }
+            }
+        }
+        int[] adjusted = placementHeights.clone();
+        for (int i = 0; i < adjusted.length; i++) {
+            if (!bridgeIndexes.contains(i)) {
+                adjusted[i] = centerPath.get(i).getY();
+            }
+        }
+        return adjusted;
     }
 
     private static RoadPlacementPlan createRoadPlacementPlan(ServerLevel level, RoadNetworkRecord road) {
@@ -1968,23 +1985,63 @@ public final class StructureConstructionManager {
     }
 
     private static boolean clearRoadDeckSpace(ServerLevel level, BlockPos pos) {
-        BlockState deckState = level.getBlockState(pos);
-        if (!deckState.isAir() && !deckState.liquid() && !isRoadPlacementReplaceable(deckState) && !isRoadSurface(deckState)) {
-            return false;
-        }
-        if (!deckState.isAir() && !deckState.liquid() && isRoadPlacementReplaceable(deckState) && !isRoadSurface(deckState)) {
-            level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
-        }
+        return clearRoadBlock(level, pos, true)
+                && clearRoadBlock(level, pos.above(), false)
+                && clearRoadBlock(level, pos.above(2), false);
+    }
 
-        BlockPos headPos = pos.above();
-        BlockState headState = level.getBlockState(headPos);
-        if (!headState.isAir() && !headState.liquid() && !isRoadPlacementReplaceable(headState)) {
+    private static boolean clearRoadBlock(ServerLevel level, BlockPos pos, boolean deckBlock) {
+        BlockState state = level.getBlockState(pos);
+        if (state.isAir() || state.liquid() || isRoadSurface(state)) {
+            return true;
+        }
+        boolean safeToRemove = deckBlock ? isRoadPlacementReplaceable(state) : clearanceStateIsSafeToRemove(state);
+        if (!safeToRemove) {
             return false;
         }
-        if (!headState.isAir() && !headState.liquid()) {
-            level.setBlock(headPos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
-        }
+        level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
         return true;
+    }
+
+    private static boolean clearanceStateIsSafeToRemove(BlockState state) {
+        if (state == null) {
+            return true;
+        }
+        Block block = state.getBlock();
+        return state.isAir()
+                || state.canBeReplaced()
+                || state.liquid()
+                || state.is(BlockTags.LEAVES)
+                || block instanceof LeavesBlock
+                || block instanceof VineBlock
+                || block instanceof SnowLayerBlock
+                || state.is(Blocks.VINE)
+                || state.is(Blocks.SNOW)
+                || state.is(Blocks.GRASS)
+                || state.is(Blocks.TALL_GRASS)
+                || state.is(Blocks.FERN)
+                || state.is(Blocks.LARGE_FERN)
+                || state.is(Blocks.SEAGRASS)
+                || state.is(Blocks.TALL_SEAGRASS)
+                || state.is(Blocks.KELP)
+                || state.is(Blocks.KELP_PLANT)
+                || state.is(Blocks.DANDELION)
+                || state.is(Blocks.POPPY)
+                || state.is(Blocks.BLUE_ORCHID)
+                || state.is(Blocks.ALLIUM)
+                || state.is(Blocks.AZURE_BLUET)
+                || state.is(Blocks.RED_TULIP)
+                || state.is(Blocks.ORANGE_TULIP)
+                || state.is(Blocks.WHITE_TULIP)
+                || state.is(Blocks.PINK_TULIP)
+                || state.is(Blocks.OXEYE_DAISY)
+                || state.is(Blocks.CORNFLOWER)
+                || state.is(Blocks.LILY_OF_THE_VALLEY)
+                || state.is(Blocks.SUNFLOWER)
+                || state.is(Blocks.LILAC)
+                || state.is(Blocks.ROSE_BUSH)
+                || state.is(Blocks.PEONY)
+                || isNaturalWoodObstacle(state);
     }
 
     private static boolean isRoadSurface(BlockState state) {
@@ -2429,6 +2486,7 @@ public final class StructureConstructionManager {
                 || state.is(Blocks.GRANITE)
                 || state.is(Blocks.TUFF)
                 || state.is(Blocks.DEEPSLATE)
+                || isNaturalWoodObstacle(state)
                 || state.is(BlockTags.LEAVES)
                 || block instanceof LeavesBlock
                 || block instanceof VineBlock
@@ -2455,8 +2513,43 @@ public final class StructureConstructionManager {
                 || state.is(Blocks.WITHER_ROSE);
     }
 
+    private static boolean isNaturalWoodObstacle(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        if (state.is(BlockTags.LOGS)) {
+            return true;
+        }
+        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        return path.endsWith("_log")
+                || path.endsWith("_wood")
+                || path.endsWith("_stem")
+                || path.endsWith("_hyphae");
+    }
+
     private static boolean isRoadPlacementReplaceableForTest(BlockState state) {
         return isRoadPlacementReplaceable(state);
+    }
+
+    static boolean clearanceStateIsSafeToRemoveForTest(BlockState state) {
+        return clearanceStateIsSafeToRemove(state);
+    }
+
+    static TestRoadPlacementResult placeRoadColumnForTest(BlockState surfaceState,
+                                                          BlockState belowState,
+                                                          BlockState aboveState,
+                                                          BlockState plannedSurfaceState) {
+        if (plannedSurfaceState == null || belowState == null || belowState.isAir() || belowState.liquid()) {
+            return new TestRoadPlacementResult(surfaceState, Integer.MIN_VALUE);
+        }
+        if (aboveState != null && !aboveState.isAir() && !aboveState.liquid() && !clearanceStateIsSafeToRemove(aboveState)) {
+            return new TestRoadPlacementResult(surfaceState, Integer.MIN_VALUE);
+        }
+        if (surfaceState != null && !surfaceState.isAir() && !surfaceState.liquid()
+                && !isRoadPlacementReplaceable(surfaceState) && !isRoadSurface(surfaceState)) {
+            return new TestRoadPlacementResult(surfaceState, Integer.MIN_VALUE);
+        }
+        return new TestRoadPlacementResult(plannedSurfaceState, 63);
     }
 
     private static void clearRoad(ServerLevel level, RoadNetworkRecord road, Set<BlockPos> preservedCoverage) {
@@ -2488,6 +2581,45 @@ public final class StructureConstructionManager {
         }
         RoadNetworkRecord road = NationSavedData.get(level).getRoadNetwork(roadId);
         return road == null ? null : createRoadPlacementPlan(level, road);
+    }
+
+    static RoadPlacementPlan createRoadPlacementPlanForTest(List<BlockPos> centerPath,
+                                                            List<RoadPlacementPlan.BridgeRange> bridgeRanges,
+                                                            List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges) {
+        List<BlockPos> safePath = centerPath == null ? List.of() : List.copyOf(centerPath);
+        int[] placementHeights = new int[safePath.size()];
+        for (int i = 0; i < safePath.size(); i++) {
+            placementHeights[i] = safePath.get(i).getY();
+        }
+        RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(
+                safePath,
+                bridgeRanges == null ? List.of() : bridgeRanges,
+                navigableWaterBridgeRanges == null ? List.of() : navigableWaterBridgeRanges,
+                placementHeights
+        );
+        RoadPlacementArtifacts artifacts = buildRoadPlacementArtifacts(
+                corridorPlan,
+                pos -> new RoadPlacementStyle(Blocks.SPRUCE_SLAB.defaultBlockState(), Blocks.SPRUCE_FENCE.defaultBlockState(), true),
+                ghostBlocks -> List.of()
+        );
+        BlockPos start = safePath.isEmpty() ? null : safePath.get(0);
+        BlockPos end = safePath.isEmpty() ? null : safePath.get(safePath.size() - 1);
+        return new RoadPlacementPlan(
+                safePath,
+                start,
+                start,
+                end,
+                end,
+                artifacts.ghostBlocks(),
+                artifacts.buildSteps(),
+                bridgeRanges == null ? List.of() : bridgeRanges,
+                navigableWaterBridgeRanges == null ? List.of() : navigableWaterBridgeRanges,
+                artifacts.ownedBlocks(),
+                null,
+                null,
+                null,
+                corridorPlan
+        );
     }
 
     static Map<String, List<BlockPos>> snapshotRoadOwnedBlocks(ServerLevel level) {
@@ -2564,6 +2696,7 @@ public final class StructureConstructionManager {
         if (!plan.ownedBlocks().isEmpty()) {
             resolved.addAll(plan.ownedBlocks());
         }
+        resolved.addAll(collectCorridorOwnedBlocks(plan.corridorPlan()));
         resolved.addAll(collectOwnedRoadBlocks(plan.ghostBlocks(), List.of()));
         for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
             if (step != null && step.pos() != null) {
@@ -2575,6 +2708,25 @@ public final class StructureConstructionManager {
             resolved.addAll(captureLiveRoadFoundation(level, plan.ghostBlocks()));
         }
         return resolved.isEmpty() ? List.of() : List.copyOf(resolved);
+    }
+
+    private static List<BlockPos> collectCorridorOwnedBlocks(RoadCorridorPlan corridorPlan) {
+        if (!isUsableCorridorPlan(corridorPlan)) {
+            return List.of();
+        }
+        LinkedHashSet<BlockPos> owned = new LinkedHashSet<>();
+        for (RoadCorridorPlan.CorridorSlice slice : corridorPlan.slices()) {
+            if (slice == null) {
+                continue;
+            }
+            owned.addAll(slice.surfacePositions());
+            owned.addAll(slice.excavationPositions());
+            owned.addAll(slice.clearancePositions());
+            owned.addAll(slice.supportPositions());
+            appendLightBatchPositions(owned, slice.railingLightPositions());
+            appendLightBatchPositions(owned, slice.pierLightPositions());
+        }
+        return owned.isEmpty() ? List.of() : List.copyOf(owned);
     }
 
     private static List<BlockPos> roadRollbackTrackedPositions(ServerLevel level, RoadPlacementPlan plan) {
@@ -2712,18 +2864,13 @@ public final class StructureConstructionManager {
                 if (anchor.pos().distSqr(target.pos()) > ROAD_CONNECT_RANGE_SQR) {
                     continue;
                 }
-                List<BlockPos> path = RoadPathfinder.findPath(level, anchor.pos(), target.pos());
+                List<BlockPos> path = resolvePreviewRoadPath(level, anchor.pos(), target.pos());
                 if (path.size() < 2) {
                     continue;
                 }
-                double score = path.size() + (anchor.pos().distSqr(target.pos()) * 0.02D);
-                if (target.kind() == PreviewRoadTargetKind.ROAD) {
-                    score -= 2.5D;
-                }
-                if (anchor.side() == primaryRoadSide(rotation)) {
-                    score -= 1.0D;
-                }
-                scored.add(new ScoredConnection(new PreviewRoadConnection(path, target.kind(), target.pos()), score));
+                PreviewRoadConnection connection = new PreviewRoadConnection(path, target.kind(), target.pos());
+                double score = previewConnectionScore(connection, anchor.pos().distSqr(target.pos()) * 0.02D, anchor.side() == primaryRoadSide(rotation));
+                scored.add(new ScoredConnection(connection, score));
             }
         }
 
@@ -2748,6 +2895,49 @@ public final class StructureConstructionManager {
                 });
 
         return new PreviewRoadHint(chosen);
+    }
+
+    private static List<BlockPos> resolvePreviewRoadPath(Level level, BlockPos start, BlockPos end) {
+        if (!(level instanceof ServerLevel serverLevel) || start == null || end == null) {
+            return RoadPathfinder.findPath(level, start, end);
+        }
+
+        List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(serverLevel).getRoadNetworks());
+        RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
+                List.of(start),
+                List.of(end),
+                RoadHybridRouteResolver.collectNetworkNodes(roads),
+                RoadHybridRouteResolver.collectNetworkAdjacency(roads),
+                (from, to, allowWaterFallback) -> {
+                    List<BlockPos> path = RoadPathfinder.findPath(serverLevel, from, to, Set.of(), allowWaterFallback);
+                    return RoadHybridRouteResolver.summarizePath(serverLevel, path, allowWaterFallback);
+                }
+        );
+        return route.fullPath().size() >= 2 ? route.fullPath() : RoadPathfinder.findPath(level, start, end);
+    }
+
+    private static double previewConnectionScore(PreviewRoadConnection connection, double distancePenalty, boolean primarySide) {
+        if (connection == null) {
+            return Double.MAX_VALUE;
+        }
+        double score = connection.path().size() + distancePenalty;
+        if (connection.targetKind() == PreviewRoadTargetKind.ROAD) {
+            score -= 2.5D;
+        }
+        if (primarySide) {
+            score -= 1.0D;
+        }
+        return score;
+    }
+
+    static PreviewRoadConnection choosePreviewConnectionForTest(List<PreviewRoadConnection> connections, int rotation) {
+        return (connections == null ? List.<PreviewRoadConnection>of() : connections).stream()
+                .min(Comparator.comparingDouble(connection -> previewConnectionScore(
+                        connection,
+                        0.0D,
+                        false
+                )))
+                .orElseThrow();
     }
 
     private static List<PreviewRoadTarget> collectPreviewRoadTargets(Level level, BlockPos origin, StructureType type, int rotation) {

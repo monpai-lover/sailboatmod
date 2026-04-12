@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
+import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -215,6 +216,48 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
+    void rollbackTrackedPositionsIncludeBridgeSupportsAndLights() {
+        RoadCorridorPlan corridorPlan = new RoadCorridorPlan(
+                List.of(new BlockPos(0, 68, 0)),
+                List.of(new RoadCorridorPlan.CorridorSlice(
+                        0,
+                        new BlockPos(0, 68, 0),
+                        RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN,
+                        List.of(new BlockPos(0, 68, 0)),
+                        List.of(),
+                        List.of(new BlockPos(0, 69, 0)),
+                        List.of(new BlockPos(0, 68, 1)),
+                        List.of(new BlockPos(0, 67, 0), new BlockPos(0, 66, 0)),
+                        List.of(new BlockPos(0, 68, -1))
+                )),
+                null,
+                true
+        );
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 68, 0)),
+                null,
+                null,
+                null,
+                null,
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 68, 0), Blocks.SPRUCE_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 68, 0), Blocks.SPRUCE_SLAB.defaultBlockState())),
+                List.of(),
+                List.of(),
+                List.of(new BlockPos(0, 68, 0)),
+                null,
+                null,
+                null,
+                corridorPlan
+        );
+
+        List<BlockPos> tracked = invokeRoadRollbackTrackedPositions(null, plan);
+
+        assertTrue(tracked.contains(new BlockPos(0, 67, 0)));
+        assertTrue(tracked.contains(new BlockPos(0, 68, 1)));
+        assertTrue(tracked.contains(new BlockPos(0, 68, -1)));
+    }
+
+    @Test
     void rollbackSnapshotsRestoreOriginalTerrainFluidAndClearedHeadspace() {
         List<BlockPos> tracked = List.of(
                 new BlockPos(0, 63, 0),
@@ -247,10 +290,31 @@ class RoadLifecycleServiceTest {
         assertTrue(invokeIsRoadPlacementReplaceable(Blocks.GRASS.defaultBlockState()));
         assertTrue(invokeIsRoadPlacementReplaceable(Blocks.POPPY.defaultBlockState()));
         assertTrue(invokeIsRoadPlacementReplaceable(Blocks.WATER.defaultBlockState()));
+        assertTrue(invokeIsRoadPlacementReplaceable(Blocks.OAK_LOG.defaultBlockState()));
 
-        assertFalse(invokeIsRoadPlacementReplaceable(Blocks.OAK_LOG.defaultBlockState()));
         assertFalse(invokeIsRoadPlacementReplaceable(Blocks.CHEST.defaultBlockState()));
         assertFalse(invokeIsRoadPlacementReplaceable(Blocks.CRAFTING_TABLE.defaultBlockState()));
+    }
+
+    @Test
+    void landRoadPlacementReplacesSurfaceBlockInsteadOfFloatingAboveIt() {
+        StructureConstructionManager.TestRoadPlacementResult result =
+                StructureConstructionManager.placeRoadColumnForTest(
+                        Blocks.GRASS_BLOCK.defaultBlockState(),
+                        Blocks.DIRT.defaultBlockState(),
+                        Blocks.AIR.defaultBlockState(),
+                        Blocks.STONE_BRICK_SLAB.defaultBlockState()
+                );
+
+        assertEquals(Blocks.STONE_BRICK_SLAB, result.surfaceState().getBlock());
+        assertEquals(63, result.foundationTopY());
+    }
+
+    @Test
+    void clearanceEnvelopeRemovesNaturalBlocksAboveRoadButNotPlacedStructures() {
+        assertTrue(StructureConstructionManager.clearanceStateIsSafeToRemoveForTest(Blocks.OAK_LEAVES.defaultBlockState()));
+        assertTrue(StructureConstructionManager.clearanceStateIsSafeToRemoveForTest(Blocks.GRASS.defaultBlockState()));
+        assertFalse(StructureConstructionManager.clearanceStateIsSafeToRemoveForTest(Blocks.CHEST.defaultBlockState()));
     }
 
     @Test
