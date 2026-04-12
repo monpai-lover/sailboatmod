@@ -19,9 +19,9 @@ public final class RoadRouteNodePlanner {
     };
     private static final int MAX_VISITED_NODES = 32_000;
     private static final int MAX_STEP_HEIGHT = 8;
-    private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 5;
-    private static final int MAX_TOTAL_BRIDGE_COLUMNS = 14;
-    private static final double MAX_BRIDGE_SHARE = 0.20D;
+    private static final int MAX_CONTIGUOUS_BRIDGE_COLUMNS = 8;
+    private static final int MAX_TOTAL_BRIDGE_COLUMNS = 20;
+    private static final double MAX_BRIDGE_SHARE = 0.35D;
     private static final double HEIGHT_PENALTY = 2.5D;
     private static final double BRIDGE_PENALTY = 7.5D;
     private static final double WATER_PENALTY = 2.25D;
@@ -314,7 +314,7 @@ public final class RoadRouteNodePlanner {
             int dz = Math.abs(end.getZ() - start.getZ());
             int dominantSpan = Math.max(dx, dz);
             int longitudinalMargin = Math.max(8, (dominantSpan / 3) + 4);
-            int lateralMargin = Math.max(18, (dominantSpan / 2) + 4);
+            int lateralMargin = Math.max(24, dominantSpan + 4);
             int xMargin = dx > dz ? longitudinalMargin : lateralMargin;
             int zMargin = dz > dx ? longitudinalMargin : lateralMargin;
             return new SearchBounds(

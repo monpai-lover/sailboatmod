@@ -274,6 +274,17 @@ class ManualRoadPlannerServiceTest {
         );
     }
 
+    @Test
+    void normalizePathRejectsMissingRawRouteInsteadOfFabricatingTwoPointPath() {
+        List<BlockPos> normalized = invokeNormalizePathForTest(
+                new BlockPos(10, 64, 10),
+                List.of(),
+                new BlockPos(20, 64, 20)
+        );
+
+        assertTrue(normalized.isEmpty());
+    }
+
     private static RoadPlacementPlan bridgePreviewPlanFixture(RoadCorridorPlan corridorPlan) {
         return bridgePreviewPlanFixture(corridorPlan, bridgeBuildStepsFixture());
     }
@@ -517,6 +528,17 @@ class ManualRoadPlannerServiceTest {
             Method method = ManualRoadPlannerService.class.getDeclaredMethod("stitchRouteSegments", List[].class);
             method.setAccessible(true);
             return (List<BlockPos>) method.invoke(null, new Object[] {segments});
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeNormalizePathForTest(BlockPos start, List<BlockPos> path, BlockPos end) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod("normalizePath", BlockPos.class, List.class, BlockPos.class);
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, start, path, end);
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
             throw new AssertionError(e);
         }

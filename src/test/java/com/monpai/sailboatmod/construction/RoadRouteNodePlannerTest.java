@@ -81,7 +81,7 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
-    void rejectsBridgeFallbackWhenFinalBridgeShareWouldExceedTwentyPercent() {
+    void rejectsBridgeFallbackWhenFinalBridgeShareWouldExceedThirtyFivePercent() {
         RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(6, 64, 0),
@@ -92,11 +92,11 @@ class RoadRouteNodePlannerTest {
                     return new RoadRouteNodePlanner.RouteColumn(
                             new BlockPos(pos.getX(), 64, 0),
                             false,
-                            pos.getX() >= 2 && pos.getX() <= 3,
+                            pos.getX() >= 2 && pos.getX() <= 4,
                             0,
                             0,
                             false
-                    );
+                        );
                 }
         );
 
@@ -240,6 +240,66 @@ class RoadRouteNodePlannerTest {
         assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
         assertEquals(new BlockPos(4, 71, 0), plan.path().get(plan.path().size() - 1));
         assertTrue(plan.path().contains(new BlockPos(2, 71, 0)));
+    }
+
+    @Test
+    void acceptsSevenColumnBridgeWhenCrossingRemainsMinorityOfRoute() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(24, 64, 0),
+                pos -> {
+                    if (pos.getZ() != 0) {
+                        return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
+                    }
+                    boolean bridge = pos.getX() >= 9 && pos.getX() <= 15;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            new BlockPos(pos.getX(), 64, 0),
+                            false,
+                            bridge,
+                            bridge ? 2 : 0,
+                            bridge ? 1 : 0,
+                            !bridge
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.usedBridge());
+        assertEquals(7, plan.totalBridgeColumns());
+        assertEquals(7, plan.longestBridgeRun());
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(24, 64, 0), plan.path().get(plan.path().size() - 1));
+    }
+
+    @Test
+    void searchBoundsAllowWideRiverBendDetourBeyondTwentyFourBlocks() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(20, 64, 0),
+                pos -> {
+                    boolean onWestLeg = pos.getX() == 0 && pos.getZ() >= 0 && pos.getZ() <= 24;
+                    boolean onTopLeg = pos.getZ() == 24 && pos.getX() >= 0 && pos.getX() <= 20;
+                    boolean onEastLeg = pos.getX() == 20 && pos.getZ() >= 0 && pos.getZ() <= 24;
+                    boolean startOrEnd = pos.getZ() == 0 && (pos.getX() == 0 || pos.getX() == 20);
+                    boolean traversable = onWestLeg || onTopLeg || onEastLeg || startOrEnd;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), 64, pos.getZ()) : null,
+                            !traversable,
+                            false,
+                            0,
+                            0,
+                            pos.getZ() == 24
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertFalse(plan.usedBridge());
+        assertTrue(plan.path().contains(new BlockPos(10, 64, 24)));
     }
 
     @Test

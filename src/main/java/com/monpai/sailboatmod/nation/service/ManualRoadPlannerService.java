@@ -1004,6 +1004,9 @@ public final class ManualRoadPlannerService {
     }
 
     private static List<BlockPos> normalizePath(BlockPos start, List<BlockPos> path, BlockPos end) {
+        if (start == null || end == null || path == null || path.isEmpty()) {
+            return List.of();
+        }
         List<BlockPos> ordered = new ArrayList<>();
         appendPathNode(ordered, start);
         appendPathPreservingOrder(ordered, path);
