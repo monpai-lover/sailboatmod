@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,7 +52,6 @@ public final class RoadCorridorPlanner {
                 requestedNavigableIndexes::contains
         );
         Set<Integer> navigableIndexes = expandIndexes(mainChannelRanges, size);
-        Set<Integer> bridgeHeadIndexes = collectBridgeHeadIndexes(bridgeRanges, size);
         Set<Integer> supportRequiredIndexes = collectSupportRequiredIndexes(bridgeRanges, size);
 
         boolean valid = true;
@@ -62,7 +62,7 @@ public final class RoadCorridorPlanner {
         for (int i = 0; i < size; i++) {
             BlockPos center = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
             BlockPos deckCenter = new BlockPos(center.getX(), placementHeights[i], center.getZ()).immutable();
-            RoadCorridorPlan.SegmentKind segmentKind = classify(i, bridgeIndexes, bridgeHeadIndexes, navigableIndexes);
+            RoadCorridorPlan.SegmentKind segmentKind = classify(i, placementHeights, bridgeIndexes, navigableIndexes);
             boolean supportRequired = supportRequiredIndexes.contains(i)
                     && segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
             List<BlockPos> supportPositions = List.of();
@@ -79,14 +79,32 @@ public final class RoadCorridorPlanner {
             pierLightPositionsByIndex.add(pierLightPositions);
         }
 
+        List<List<BlockPos>> surfacePositionsByIndex = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            surfacePositionsByIndex.add(buildSurfacePositions(centerPath, i, placementHeights));
+        }
+        for (int i = 0; i < size - 1; i++) {
+            RoadCorridorPlan.SegmentKind currentKind = segmentKinds.get(i);
+            RoadCorridorPlan.SegmentKind nextKind = segmentKinds.get(i + 1);
+            if (!requiresAdjacentClosure(currentKind, nextKind)) {
+                continue;
+            }
+            List<BlockPos> closedCurrent = ensureAdjacentClosure(surfacePositionsByIndex.get(i), surfacePositionsByIndex.get(i + 1));
+            List<BlockPos> closedNext = ensureAdjacentClosure(surfacePositionsByIndex.get(i + 1), closedCurrent);
+            surfacePositionsByIndex.set(i, closedCurrent);
+            surfacePositionsByIndex.set(i + 1, closedNext);
+        }
+
         List<RoadCorridorPlan.CorridorSlice> slices = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
+            List<BlockPos> surfacePositions = surfacePositionsByIndex.get(i);
             slices.add(new RoadCorridorPlan.CorridorSlice(
                     i,
                     deckCenters.get(i),
                     segmentKinds.get(i),
-                    buildSurfacePositions(centerPath, i, placementHeights),
-                    List.of(),
+                    surfacePositions,
+                    buildExcavationPositions(surfacePositions, segmentKinds.get(i)),
+                    buildClearancePositions(surfacePositions, segmentKinds.get(i)),
                     List.of(),
                     supportPositionsByIndex.get(i),
                     pierLightPositionsByIndex.get(i)
@@ -127,17 +145,23 @@ public final class RoadCorridorPlanner {
     }
 
     private static RoadCorridorPlan.SegmentKind classify(int index,
+                                                         int[] placementHeights,
                                                          Set<Integer> bridgeIndexes,
-                                                         Set<Integer> bridgeHeadIndexes,
                                                          Set<Integer> navigableIndexes) {
         if (navigableIndexes.contains(index)) {
             return RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN;
         }
-        if (bridgeHeadIndexes.contains(index)) {
-            return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
-        }
         if (bridgeIndexes.contains(index)) {
+            if (isElevatedApproach(index, placementHeights, bridgeIndexes)) {
+                return RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH;
+            }
+            if (isBridgeBoundary(index, bridgeIndexes)) {
+                return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
+            }
             return RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
+        }
+        if (isRampTransition(index, placementHeights, bridgeIndexes)) {
+            return RoadCorridorPlan.SegmentKind.APPROACH_RAMP;
         }
         return RoadCorridorPlan.SegmentKind.LAND_APPROACH;
     }
@@ -158,23 +182,6 @@ public final class RoadCorridorPlanner {
             }
         }
         return indexes;
-    }
-
-    private static Set<Integer> collectBridgeHeadIndexes(List<RoadPlacementPlan.BridgeRange> bridgeRanges, int pathSize) {
-        Set<Integer> bridgeHeads = new HashSet<>();
-        if (bridgeRanges == null || bridgeRanges.isEmpty() || pathSize <= 0) {
-            return bridgeHeads;
-        }
-        for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
-            if (range == null) {
-                continue;
-            }
-            int start = Math.max(0, Math.min(pathSize - 1, range.startIndex()));
-            int end = Math.max(0, Math.min(pathSize - 1, range.endIndex()));
-            bridgeHeads.add(start);
-            bridgeHeads.add(end);
-        }
-        return bridgeHeads;
     }
 
     private static Set<Integer> collectSupportRequiredIndexes(List<RoadPlacementPlan.BridgeRange> bridgeRanges, int pathSize) {
@@ -215,6 +222,119 @@ public final class RoadCorridorPlanner {
             positions.add(new BlockPos(column.getX(), y, column.getZ()));
         }
         return List.copyOf(positions);
+    }
+
+    private static boolean isElevatedApproach(int index, int[] placementHeights, Set<Integer> bridgeIndexes) {
+        Integer landBaseline = landSideBaseline(index, placementHeights, bridgeIndexes);
+        return landBaseline != null && placementHeights[index] > landBaseline + 1;
+    }
+
+    private static Integer landSideBaseline(int index, int[] placementHeights, Set<Integer> bridgeIndexes) {
+        if (isBridgeRangeStart(index, bridgeIndexes) && index > 0 && !bridgeIndexes.contains(index - 1)) {
+            return placementHeights[index - 1];
+        }
+        if (isBridgeRangeEnd(index, bridgeIndexes) && index + 1 < placementHeights.length && !bridgeIndexes.contains(index + 1)) {
+            return placementHeights[index + 1];
+        }
+        return null;
+    }
+
+    private static boolean isRampTransition(int index, int[] placementHeights, Set<Integer> bridgeIndexes) {
+        if (index + 1 < placementHeights.length && isBridgeRangeStart(index + 1, bridgeIndexes)) {
+            return Math.abs(placementHeights[index + 1] - placementHeights[index]) > 1;
+        }
+        if (index > 0 && isBridgeRangeEnd(index - 1, bridgeIndexes)) {
+            return Math.abs(placementHeights[index] - placementHeights[index - 1]) > 1;
+        }
+        return false;
+    }
+
+    private static boolean isBridgeBoundary(int index, Set<Integer> bridgeIndexes) {
+        return isBridgeRangeStart(index, bridgeIndexes) || isBridgeRangeEnd(index, bridgeIndexes);
+    }
+
+    private static boolean isBridgeRangeStart(int index, Set<Integer> bridgeIndexes) {
+        return bridgeIndexes.contains(index) && (index == 0 || !bridgeIndexes.contains(index - 1));
+    }
+
+    private static boolean isBridgeRangeEnd(int index, Set<Integer> bridgeIndexes) {
+        return bridgeIndexes.contains(index) && !bridgeIndexes.contains(index + 1);
+    }
+
+    private static boolean requiresAdjacentClosure(RoadCorridorPlan.SegmentKind current,
+                                                   RoadCorridorPlan.SegmentKind next) {
+        return current != next && (usesBridgeClosure(current) || usesBridgeClosure(next));
+    }
+
+    private static boolean usesBridgeClosure(RoadCorridorPlan.SegmentKind segmentKind) {
+        return segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
+                || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
+                || segmentKind == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
+                || segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
+    }
+
+    private static List<BlockPos> ensureAdjacentClosure(List<BlockPos> current, List<BlockPos> next) {
+        LinkedHashSet<BlockPos> closed = new LinkedHashSet<>(current);
+        if (Collections.disjoint(current, next)) {
+            closed.addAll(overlapBridge(current, next));
+        }
+        return List.copyOf(closed);
+    }
+
+    private static List<BlockPos> overlapBridge(List<BlockPos> current, List<BlockPos> next) {
+        LinkedHashSet<BlockPos> overlap = new LinkedHashSet<>();
+        for (BlockPos nextPos : next) {
+            if (isAdjacentToAny(nextPos, current)) {
+                overlap.add(nextPos.immutable());
+            }
+        }
+        return List.copyOf(overlap);
+    }
+
+    private static boolean isAdjacentToAny(BlockPos candidate, List<BlockPos> positions) {
+        for (BlockPos pos : positions) {
+            if (Math.abs(candidate.getY() - pos.getY()) > 2) {
+                continue;
+            }
+            int horizontalDistance = Math.abs(candidate.getX() - pos.getX()) + Math.abs(candidate.getZ() - pos.getZ());
+            if (horizontalDistance == 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<BlockPos> buildExcavationPositions(List<BlockPos> surfacePositions,
+                                                           RoadCorridorPlan.SegmentKind segmentKind) {
+        if (!usesTerrainEnvelope(segmentKind)) {
+            return List.of();
+        }
+        LinkedHashSet<BlockPos> excavation = new LinkedHashSet<>();
+        for (BlockPos surface : surfacePositions) {
+            excavation.add(surface.below().immutable());
+        }
+        return List.copyOf(excavation);
+    }
+
+    private static List<BlockPos> buildClearancePositions(List<BlockPos> surfacePositions,
+                                                          RoadCorridorPlan.SegmentKind segmentKind) {
+        if (!usesTerrainEnvelope(segmentKind)) {
+            return List.of();
+        }
+        LinkedHashSet<BlockPos> clearance = new LinkedHashSet<>();
+        for (BlockPos surface : surfacePositions) {
+            clearance.add(surface.above().immutable());
+            clearance.add(surface.above(2).immutable());
+        }
+        return List.copyOf(clearance);
+    }
+
+    private static boolean usesTerrainEnvelope(RoadCorridorPlan.SegmentKind segmentKind) {
+        return segmentKind == RoadCorridorPlan.SegmentKind.LAND_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
+                || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
     }
 
     private static RoadCorridorPlan.NavigationChannel buildNavigationChannel(List<BlockPos> centerPath, Set<Integer> navigableIndexes) {

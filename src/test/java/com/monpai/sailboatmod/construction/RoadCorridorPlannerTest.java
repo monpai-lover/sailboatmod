@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.function.IntPredicate;
 
@@ -175,5 +176,54 @@ class RoadCorridorPlannerTest {
         assertEquals(67, plan.slices().get(3).deckCenter().getY());
         assertTrue(plan.slices().get(2).surfacePositions().stream().allMatch(pos -> pos.getY() >= 70));
         assertTrue(plan.slices().get(1).surfacePositions().stream().anyMatch(pos -> pos.getY() == 67));
+    }
+
+    @Test
+    void plannerBuildsElevatedApproachesForHighReliefRiverCrossing() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 74, 0),
+                new BlockPos(6, 74, 0),
+                new BlockPos(7, 74, 0)
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(
+                centerPath,
+                List.of(new RoadPlacementPlan.BridgeRange(2, 5)),
+                List.of(new RoadPlacementPlan.BridgeRange(3, 4)),
+                new int[] {65, 66, 68, 70, 70, 72, 74, 75}
+        );
+
+        assertEquals(RoadCorridorPlan.SegmentKind.APPROACH_RAMP, plan.slices().get(1).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH, plan.slices().get(2).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, plan.slices().get(3).segmentKind());
+        assertTrue(hasSurfaceClosure(plan.slices().get(2).surfacePositions(), plan.slices().get(3).surfacePositions()));
+    }
+
+    @Test
+    void plannerAddsExcavationAndClearanceForBuriedApproachColumns() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(2, 66, 0)
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(
+                centerPath,
+                List.of(),
+                List.of(),
+                new int[] {65, 66, 67}
+        );
+
+        assertFalse(plan.slices().get(1).clearancePositions().isEmpty());
+        assertFalse(plan.slices().get(1).excavationPositions().isEmpty());
+    }
+
+    private static boolean hasSurfaceClosure(List<BlockPos> current, List<BlockPos> next) {
+        return !Collections.disjoint(current, next);
     }
 }
