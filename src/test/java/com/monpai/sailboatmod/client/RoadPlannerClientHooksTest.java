@@ -16,6 +16,7 @@ class RoadPlannerClientHooksTest {
                 "alpha",
                 "beta",
                 List.of(),
+                0,
                 null,
                 null,
                 null,

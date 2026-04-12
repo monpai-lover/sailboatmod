@@ -522,19 +522,12 @@ public final class ManualRoadPlannerService {
     }
 
     private static List<BlockPos> stitchRouteSegments(List<BlockPos>... segments) {
-        LinkedHashSet<BlockPos> ordered = new LinkedHashSet<>();
+        List<BlockPos> ordered = new ArrayList<>();
         if (segments == null) {
             return List.of();
         }
         for (List<BlockPos> segment : segments) {
-            if (segment == null) {
-                continue;
-            }
-            for (BlockPos pos : segment) {
-                if (pos != null) {
-                    ordered.add(pos.immutable());
-                }
-            }
+            appendPathPreservingOrder(ordered, segment);
         }
         return List.copyOf(ordered);
     }
@@ -1011,17 +1004,31 @@ public final class ManualRoadPlannerService {
     }
 
     private static List<BlockPos> normalizePath(BlockPos start, List<BlockPos> path, BlockPos end) {
-        LinkedHashSet<BlockPos> ordered = new LinkedHashSet<>();
-        ordered.add(start.immutable());
-        if (path != null) {
-            for (BlockPos pos : path) {
-                if (pos != null) {
-                    ordered.add(pos.immutable());
-                }
-            }
-        }
-        ordered.add(end.immutable());
+        List<BlockPos> ordered = new ArrayList<>();
+        appendPathNode(ordered, start);
+        appendPathPreservingOrder(ordered, path);
+        appendPathNode(ordered, end);
         return List.copyOf(ordered);
+    }
+
+    private static void appendPathPreservingOrder(List<BlockPos> ordered, List<BlockPos> segment) {
+        if (ordered == null || segment == null) {
+            return;
+        }
+        for (BlockPos pos : segment) {
+            appendPathNode(ordered, pos);
+        }
+    }
+
+    private static void appendPathNode(List<BlockPos> ordered, BlockPos pos) {
+        if (ordered == null || pos == null) {
+            return;
+        }
+        BlockPos immutable = pos.immutable();
+        if (!ordered.isEmpty() && ordered.get(ordered.size() - 1).equals(immutable)) {
+            return;
+        }
+        ordered.add(immutable);
     }
 
     private static SelectedRoadRoute resolveSelectedRoadRoute(ServerPlayer player, ItemStack stack) {
@@ -1127,7 +1134,7 @@ public final class ManualRoadPlannerService {
     private static void sendPreviewClear(ServerPlayer player) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new SyncRoadPlannerPreviewPacket("", "", List.of(), null, null, null, false)
+                new SyncRoadPlannerPreviewPacket("", "", List.of(), 0, null, null, null, false)
         );
     }
 

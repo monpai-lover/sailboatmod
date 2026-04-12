@@ -106,7 +106,7 @@ public final class RoadPlannerPreviewRenderer {
             textY += 12;
             guiGraphics.drawString(
                     minecraft.font,
-                    Component.translatable("screen.sailboatmod.road_planner.overlay.length", preview.ghostBlocks().size()),
+                    Component.translatable("screen.sailboatmod.road_planner.overlay.length", preview.pathNodeCount()),
                     x + 10,
                     textY,
                     0xFFB7C8D6,

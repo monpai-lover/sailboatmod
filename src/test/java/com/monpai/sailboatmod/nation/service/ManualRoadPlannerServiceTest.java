@@ -19,6 +19,7 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -238,6 +239,39 @@ class ManualRoadPlannerServiceTest {
         RoadPlacementPlan broken = productionRiverPlanWithCorruptedSliceIndexForTest();
 
         assertNull(ManualRoadPlannerService.previewPacketForTest("A", "B", broken, true));
+    }
+
+    @Test
+    void stitchRouteSegmentsPreservesSegmentOrderBeyondSharedBoundaries() {
+        List<BlockPos> stitched = invokeStitchRouteSegmentsForTest(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(3, 64, 0)
+                ),
+                List.of(
+                        new BlockPos(3, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(0, 64, 1)
+                )
+        );
+
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(3, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(0, 64, 1)
+                ),
+                stitched
+        );
     }
 
     private static RoadPlacementPlan bridgePreviewPlanFixture(RoadCorridorPlan corridorPlan) {
@@ -475,6 +509,17 @@ class ManualRoadPlannerServiceTest {
             }
         }
         return false;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeStitchRouteSegmentsForTest(List<BlockPos>... segments) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod("stitchRouteSegments", List[].class);
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, new Object[] {segments});
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
     }
 
     @SuppressWarnings("unchecked")

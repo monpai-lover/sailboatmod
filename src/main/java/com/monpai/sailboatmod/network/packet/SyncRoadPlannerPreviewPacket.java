@@ -26,6 +26,7 @@ public class SyncRoadPlannerPreviewPacket {
     private final String sourceTownName;
     private final String targetTownName;
     private final List<GhostBlock> ghostBlocks;
+    private final int pathNodeCount;
     private final BlockPos startHighlightPos;
     private final BlockPos endHighlightPos;
     private final BlockPos focusPos;
@@ -34,6 +35,7 @@ public class SyncRoadPlannerPreviewPacket {
     public SyncRoadPlannerPreviewPacket(String sourceTownName,
                                         String targetTownName,
                                         List<GhostBlock> ghostBlocks,
+                                        int pathNodeCount,
                                         BlockPos startHighlightPos,
                                         BlockPos endHighlightPos,
                                         BlockPos focusPos,
@@ -41,6 +43,7 @@ public class SyncRoadPlannerPreviewPacket {
         this.sourceTownName = sourceTownName == null ? "" : sourceTownName;
         this.targetTownName = targetTownName == null ? "" : targetTownName;
         this.ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
+        this.pathNodeCount = Math.max(0, pathNodeCount);
         this.startHighlightPos = immutable(startHighlightPos);
         this.endHighlightPos = immutable(endHighlightPos);
         this.focusPos = immutable(focusPos);
@@ -57,6 +60,7 @@ public class SyncRoadPlannerPreviewPacket {
                 plan == null ? List.of() : plan.ghostBlocks().stream()
                         .map(block -> new GhostBlock(block.pos(), block.state()))
                         .toList(),
+                plan == null ? 0 : plan.centerPath().size(),
                 plan == null ? null : plan.startHighlightPos(),
                 plan == null ? null : plan.endHighlightPos(),
                 plan == null ? null : plan.focusPos(),
@@ -74,6 +78,10 @@ public class SyncRoadPlannerPreviewPacket {
 
     public List<GhostBlock> ghostBlocks() {
         return ghostBlocks;
+    }
+
+    public int pathNodeCount() {
+        return pathNodeCount;
     }
 
     public BlockPos startHighlightPos() {
@@ -96,6 +104,7 @@ public class SyncRoadPlannerPreviewPacket {
         PacketStringCodec.writeUtfSafe(buf, msg.sourceTownName, 64);
         PacketStringCodec.writeUtfSafe(buf, msg.targetTownName, 64);
         writeGhostBlocks(buf, msg.ghostBlocks);
+        buf.writeVarInt(msg.pathNodeCount);
         writeOptionalPos(buf, msg.startHighlightPos);
         writeOptionalPos(buf, msg.endHighlightPos);
         writeOptionalPos(buf, msg.focusPos);
@@ -106,6 +115,7 @@ public class SyncRoadPlannerPreviewPacket {
         String sourceTownName = buf.readUtf(64);
         String targetTownName = buf.readUtf(64);
         List<GhostBlock> ghostBlocks = readGhostBlocks(buf);
+        int pathNodeCount = buf.readVarInt();
         BlockPos startHighlightPos = readOptionalPos(buf);
         BlockPos endHighlightPos = readOptionalPos(buf);
         BlockPos focusPos = readOptionalPos(buf);
@@ -114,6 +124,7 @@ public class SyncRoadPlannerPreviewPacket {
                 sourceTownName,
                 targetTownName,
                 ghostBlocks,
+                pathNodeCount,
                 startHighlightPos,
                 endHighlightPos,
                 focusPos,
@@ -138,6 +149,7 @@ public class SyncRoadPlannerPreviewPacket {
                 msg.ghostBlocks.stream()
                         .map(block -> new RoadPlannerClientHooks.PreviewGhostBlock(block.pos(), block.state()))
                         .toList(),
+                msg.pathNodeCount,
                 msg.startHighlightPos,
                 msg.endHighlightPos,
                 msg.focusPos,

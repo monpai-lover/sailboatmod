@@ -23,12 +23,14 @@ public final class RoadPlannerClientHooks {
     public record PreviewState(String sourceTownName,
                                String targetTownName,
                                List<PreviewGhostBlock> ghostBlocks,
+                               int pathNodeCount,
                                BlockPos startHighlightPos,
                                BlockPos endHighlightPos,
                                BlockPos focusPos,
                                boolean awaitingConfirmation) {
         public PreviewState {
             ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
+            pathNodeCount = Math.max(0, pathNodeCount);
             startHighlightPos = startHighlightPos == null ? null : startHighlightPos.immutable();
             endHighlightPos = endHighlightPos == null ? null : endHighlightPos.immutable();
             focusPos = focusPos == null ? null : focusPos.immutable();

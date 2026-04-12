@@ -37,6 +37,7 @@ class SyncRoadPlannerPreviewPacketTest {
                         new BlockPos(2, 65, 2),
                         Blocks.STONE_BRICK_SLAB.defaultBlockState()
                 )),
+                7,
                 new BlockPos(1, 65, 1),
                 new BlockPos(8, 65, 8),
                 new BlockPos(5, 65, 5),
@@ -56,6 +57,7 @@ class SyncRoadPlannerPreviewPacketTest {
                 "",
                 "",
                 java.util.List.of(),
+                0,
                 null,
                 null,
                 null,
@@ -79,6 +81,7 @@ class SyncRoadPlannerPreviewPacketTest {
                         new BlockPos(2, 65, 2),
                         Blocks.STONE_BRICK_SLAB.defaultBlockState()
                 )),
+                9,
                 new BlockPos(1, 65, 1),
                 new BlockPos(8, 65, 8),
                 new BlockPos(5, 65, 5),
@@ -147,6 +150,7 @@ class SyncRoadPlannerPreviewPacketTest {
         );
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(2, 70, 0))));
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(1, 61, 0))));
+        assertEquals(plan.centerPath().size(), packet.pathNodeCount());
     }
 
     private static FriendlyByteBuf encode(SyncRoadPlannerPreviewPacket packet) {
