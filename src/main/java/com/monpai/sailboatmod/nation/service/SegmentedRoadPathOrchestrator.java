@@ -167,14 +167,15 @@ public final class SegmentedRoadPathOrchestrator {
                                                  List<SegmentAttempt> failedSegments) {
         SegmentRequest request = new SegmentRequest(from, to, depth);
         SegmentPlan plan = planner.plan(request);
-        if (plan != null && plan.success()) {
+        if (plan != null && plan.success() && isContinuousResolvedPath(from, to, plan.path())) {
             SegmentAttempt success = new SegmentAttempt(from, to, plan.path(), FailureReason.NONE);
             successfulSegments.add(success);
             return success;
         }
 
+        FailureReason plannerFailure = plan == null ? FailureReason.SEARCH_EXHAUSTED : plan.failureReason();
         if (depth >= MAX_SUBDIVISION_DEPTH || !maySubdivide.test(request)) {
-            SegmentAttempt failure = new SegmentAttempt(from, to, List.of(), FailureReason.SUBDIVISION_LIMIT_EXCEEDED);
+            SegmentAttempt failure = new SegmentAttempt(from, to, List.of(), plannerFailure);
             failedSegments.add(failure);
             return failure;
         }
@@ -193,6 +194,32 @@ public final class SegmentedRoadPathOrchestrator {
         stitched.addAll(left.path());
         stitched.addAll(right.path());
         return new SegmentAttempt(from, to, List.copyOf(stitched), FailureReason.NONE);
+    }
+
+    static boolean isContinuousResolvedPath(BlockPos expectedStart, BlockPos expectedEnd, List<BlockPos> path) {
+        if (expectedStart == null || expectedEnd == null || path == null || path.size() < 2) {
+            return false;
+        }
+        if (!expectedStart.equals(path.get(0)) || !expectedEnd.equals(path.get(path.size() - 1))) {
+            return false;
+        }
+        if (path.size() == 2) {
+            return true;
+        }
+        for (int i = 1; i < path.size(); i++) {
+            BlockPos previous = path.get(i - 1);
+            BlockPos current = path.get(i);
+            if (previous == null || current == null) {
+                return false;
+            }
+            int dx = Math.abs(current.getX() - previous.getX());
+            int dy = Math.abs(current.getY() - previous.getY());
+            int dz = Math.abs(current.getZ() - previous.getZ());
+            if (Math.max(dx, Math.max(dy, dz)) > 1) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static double projectedFraction(BlockPos start, BlockPos end, BlockPos anchor) {

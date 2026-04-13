@@ -61,8 +61,49 @@ class SegmentedRoadPathOrchestratorTest {
         );
 
         assertFalse(result.success());
-        assertEquals(SegmentedRoadPathOrchestrator.FailureReason.SUBDIVISION_LIMIT_EXCEEDED, result.failureReason());
+        assertEquals(SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED, result.failureReason());
         assertFalse(result.failedSegments().isEmpty());
+    }
+
+    @Test
+    void failedSegmentKeepsUnderlyingFailureReason() {
+        BlockPos start = new BlockPos(0, 64, 0);
+        BlockPos end = new BlockPos(30, 64, 0);
+
+        SegmentedRoadPathOrchestrator.OrchestratedPath path = SegmentedRoadPathOrchestrator.plan(
+                start,
+                end,
+                List.of(),
+                request -> new SegmentedRoadPathOrchestrator.SegmentPlan(
+                        List.of(),
+                        SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED
+                ),
+                request -> false
+        );
+
+        assertEquals(SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED, path.failureReason());
+    }
+
+    @Test
+    void rejectsDisconnectedSegmentPlannerOutput() {
+        BlockPos start = new BlockPos(0, 64, 0);
+        BlockPos end = new BlockPos(10, 64, 0);
+
+        SegmentedRoadPathOrchestrator.OrchestratedPath result = SegmentedRoadPathOrchestrator.planForTest(
+                start,
+                end,
+                List.of(),
+                request -> List.of(
+                        request.from(),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(9, 64, 0),
+                        request.to()
+                ),
+                request -> false
+        );
+
+        assertFalse(result.success());
+        assertEquals(SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED, result.failureReason());
     }
 
     @Test
