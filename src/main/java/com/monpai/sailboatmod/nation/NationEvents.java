@@ -25,6 +25,8 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.chat.TextColor;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseFireBlock;
@@ -50,6 +52,8 @@ import java.util.UUID;
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class NationEvents {
     private static final int CONTAINER_ACCESS_TTL_TICKS = 4;
+    private static final int ROAD_SPEED_DURATION_TICKS = 40;
+    private static final int ROAD_SPEED_REFRESH_THRESHOLD_TICKS = 10;
     private static final Map<UUID, TerritoryPresence> LAST_TERRITORY = new HashMap<>();
     private static final Map<UUID, String> LAST_TAB_LIST_KEYS = new HashMap<>();
     private static final Map<UUID, ContainerAccessAttempt> PENDING_CONTAINER_ACCESS = new HashMap<>();
@@ -89,6 +93,7 @@ public final class NationEvents {
         if (event.phase != TickEvent.Phase.END || !(event.player instanceof ServerPlayer player)) {
             return;
         }
+        refreshRoadTravelEffects(player);
         TerritoryPresence current = territoryPresence(player);
         TerritoryPresence previous = LAST_TERRITORY.put(player.getUUID(), current);
         if ((player.tickCount % 20) == 0) {
@@ -327,6 +332,36 @@ public final class NationEvents {
             return;
         }
         PENDING_CONTAINER_ACCESS.put(player.getUUID(), new ContainerAccessAttempt(pos.immutable(), player.tickCount));
+    }
+
+    private static void refreshRoadTravelEffects(ServerPlayer player) {
+        if (player == null || player.isSpectator()) {
+            return;
+        }
+        BlockPos supportPos = BlockPos.containing(player.getX(), player.getBoundingBox().minY - 0.1D, player.getZ());
+        if (!RoadTravelHelper.shouldGrantRoadSpeed(
+                player.serverLevel().getBlockState(supportPos),
+                player.serverLevel().getBlockState(supportPos.below())
+        )) {
+            return;
+        }
+        MobEffectInstance existing = player.getEffect(MobEffects.MOVEMENT_SPEED);
+        if (existing != null) {
+            if (existing.getAmplifier() > 0) {
+                return;
+            }
+            if (existing.getAmplifier() == 0 && existing.getDuration() > ROAD_SPEED_REFRESH_THRESHOLD_TICKS) {
+                return;
+            }
+        }
+        player.addEffect(new MobEffectInstance(
+                MobEffects.MOVEMENT_SPEED,
+                ROAD_SPEED_DURATION_TICKS,
+                0,
+                true,
+                false,
+                false
+        ));
     }
 
     private static TerritoryPresence territoryPresence(ServerPlayer player) {

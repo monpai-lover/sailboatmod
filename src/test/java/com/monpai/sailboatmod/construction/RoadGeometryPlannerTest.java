@@ -272,6 +272,26 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
+    void navigableBridgeProfileUsesInternalRampSegmentsBeforeFullDeck() {
+        RoadBridgePlanner.BridgeProfile profile = RoadBridgePlanner.buildNavigableBridgeProfile(3, 11, 64);
+
+        int[] heights = RoadGeometryPlanner.applyNavigableBridgeProfileForTest(
+                new int[] {65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65},
+                profile
+        );
+
+        assertEquals(65, heights[3]);
+        assertEquals(66, heights[4]);
+        assertEquals(67, heights[5]);
+        assertEquals(68, heights[6]);
+        assertEquals(69, heights[7]);
+        assertEquals(68, heights[8]);
+        assertEquals(67, heights[9]);
+        assertEquals(66, heights[10]);
+        assertEquals(65, heights[11]);
+    }
+
+    @Test
     void placementHeightProfileDoesNotSinkBelowSteepCenterPathDeck() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

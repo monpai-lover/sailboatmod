@@ -296,6 +296,23 @@ class RoadCorridorPlannerTest {
     }
 
     @Test
+    void plannerAddsTongDaWayStyleStreetlightsAlongLongLandApproachSegments() {
+        List<BlockPos> centerPath = java.util.stream.IntStream.rangeClosed(0, 48)
+                .mapToObj(x -> new BlockPos(x, 64, 0))
+                .toList();
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, List.of(), List.of());
+
+        assertTrue(plan.slices().get(24).railingLightPositions().size() == 1,
+                () -> String.valueOf(plan.slices().get(24).railingLightPositions()));
+        assertTrue(plan.slices().get(48).railingLightPositions().size() == 1,
+                () -> String.valueOf(plan.slices().get(48).railingLightPositions()));
+        assertTrue(plan.slices().get(12).railingLightPositions().isEmpty());
+        assertTrue(plan.slices().get(23).railingLightPositions().isEmpty());
+        assertTrue(plan.slices().get(25).railingLightPositions().isEmpty());
+    }
+
+    @Test
     void plannerPreservesPerRangeBridgeHeadsForAdjacentAndOverlappingBridgeRanges() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
@@ -332,6 +349,27 @@ class RoadCorridorPlannerTest {
         assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, overlappingPlan.slices().get(2).segmentKind());
         assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, overlappingPlan.slices().get(4).segmentKind());
         assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD, overlappingPlan.slices().get(6).segmentKind());
+    }
+
+    @Test
+    void plannerDistributesLongBridgeSupportsAcrossWholeElevatedSpan() {
+        List<BlockPos> centerPath = java.util.stream.IntStream.rangeClosed(0, 8)
+                .mapToObj(x -> new BlockPos(x, 64, 0))
+                .toList();
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(
+                centerPath,
+                List.of(new RoadPlacementPlan.BridgeRange(1, 7)),
+                List.of()
+        );
+
+        assertEquals(
+                List.of(2, 4, 6),
+                plan.slices().stream()
+                        .filter(slice -> !slice.supportPositions().isEmpty())
+                        .map(RoadCorridorPlan.CorridorSlice::index)
+                        .toList()
+        );
     }
 
     private static boolean hasSurfaceClosure(List<BlockPos> current, List<BlockPos> next) {

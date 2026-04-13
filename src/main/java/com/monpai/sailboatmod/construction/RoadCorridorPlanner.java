@@ -11,8 +11,10 @@ import java.util.Set;
 import java.util.function.IntPredicate;
 
 public final class RoadCorridorPlanner {
-    private static final int SUPPORT_INTERVAL = 3;
     private static final int SUPPORT_DEPTH = 3;
+    private static final int RAILING_LIGHT_OFFSET = 3;
+    private static final int LAND_STREETLIGHT_INTERVAL = 24;
+    private static final int BRIDGE_LIGHT_INTERVAL = 5;
 
     private record SupportPlacementPlan(Set<Integer> supportIndexes, boolean valid) {
     }
@@ -80,7 +82,7 @@ public final class RoadCorridorPlanner {
             List<BlockPos> pierLightPositions = List.of();
             if (supportRequired) {
                 supportPositions = buildSupportPositions(deckCenter);
-                pierLightPositions = List.of(supportPositions.get(supportPositions.size() - 1).below());
+                pierLightPositions = buildBridgeEdgeMarkerPositions(centerPath, i, deckCenter);
             }
             deckCenters.add(deckCenter);
             segmentKinds.add(segmentKind);
@@ -88,6 +90,7 @@ public final class RoadCorridorPlanner {
             supportPositionsByIndex.add(supportPositions);
             pierLightPositionsByIndex.add(pierLightPositions);
         }
+        ensureBridgeLightingCoverage(centerPath, bridgeRanges, segmentKinds, deckCenters, railingLightPositionsByIndex);
 
         List<List<BlockPos>> surfacePositionsByIndex = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
@@ -163,6 +166,58 @@ public final class RoadCorridorPlanner {
         return List.copyOf(ranges);
     }
 
+    private static void ensureBridgeLightingCoverage(List<BlockPos> centerPath,
+                                                     List<RoadPlacementPlan.BridgeRange> bridgeRanges,
+                                                     List<RoadCorridorPlan.SegmentKind> segmentKinds,
+                                                     List<BlockPos> deckCenters,
+                                                     List<List<BlockPos>> railingLightPositionsByIndex) {
+        if (centerPath == null
+                || centerPath.isEmpty()
+                || bridgeRanges == null
+                || bridgeRanges.isEmpty()
+                || segmentKinds == null
+                || deckCenters == null
+                || railingLightPositionsByIndex == null) {
+            return;
+        }
+        for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
+            if (range == null) {
+                continue;
+            }
+            int start = Math.max(0, range.startIndex());
+            int end = Math.min(centerPath.size() - 1, range.endIndex());
+            boolean alreadyLit = false;
+            for (int i = start; i <= end; i++) {
+                List<BlockPos> positions = railingLightPositionsByIndex.get(i);
+                if (positions != null && !positions.isEmpty()) {
+                    alreadyLit = true;
+                    break;
+                }
+            }
+            if (alreadyLit) {
+                continue;
+            }
+            int fallbackIndex = (start + end) / 2;
+            int navigableStart = -1;
+            int navigableEnd = -1;
+            for (int i = start; i <= end; i++) {
+                if (segmentKinds.get(i) == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN) {
+                    if (navigableStart < 0) {
+                        navigableStart = i;
+                    }
+                    navigableEnd = i;
+                }
+            }
+            if (navigableStart >= 0) {
+                fallbackIndex = (navigableStart + navigableEnd) / 2;
+            }
+            railingLightPositionsByIndex.set(
+                    fallbackIndex,
+                    buildBridgeEdgeMarkerPositions(centerPath, fallbackIndex, deckCenters.get(fallbackIndex))
+            );
+        }
+    }
+
     private static RoadCorridorPlan.SegmentKind classify(int index,
                                                          int[] placementHeights,
                                                          Set<Integer> bridgeIndexes,
@@ -236,6 +291,27 @@ public final class RoadCorridorPlanner {
             }
             int start = Math.max(0, range.startIndex());
             int end = Math.min(pathSize - 1, range.endIndex());
+            int navigableStart = -1;
+            int navigableEnd = -1;
+            for (int i = start; i <= end; i++) {
+                if (navigableIndexes.contains(i)) {
+                    if (navigableStart < 0) {
+                        navigableStart = i;
+                    }
+                    navigableEnd = i;
+                    continue;
+                }
+                if (navigableStart >= 0) {
+                    addPierAnchorIndex(supportIndexes, navigableStart - 1, start, end, bridgeHeadIndexes, navigableIndexes);
+                    addPierAnchorIndex(supportIndexes, navigableEnd + 1, start, end, bridgeHeadIndexes, navigableIndexes);
+                    navigableStart = -1;
+                    navigableEnd = -1;
+                }
+            }
+            if (navigableStart >= 0) {
+                addPierAnchorIndex(supportIndexes, navigableStart - 1, start, end, bridgeHeadIndexes, navigableIndexes);
+                addPierAnchorIndex(supportIndexes, navigableEnd + 1, start, end, bridgeHeadIndexes, navigableIndexes);
+            }
             List<Integer> supportableInterior = new ArrayList<>();
             for (int i = start; i <= end; i++) {
                 if (bridgeHeadIndexes.contains(i) || navigableIndexes.contains(i)) {
@@ -246,16 +322,26 @@ public final class RoadCorridorPlanner {
             if (supportableInterior.isEmpty()) {
                 continue;
             }
-            int lastPlaced = Integer.MIN_VALUE / 4;
-            for (int index : supportableInterior) {
-                if (index - lastPlaced < SUPPORT_INTERVAL) {
-                    continue;
-                }
+            for (int index : RoadBridgePlanner.distributePierAnchors(start, end, supportableInterior)) {
                 supportIndexes.add(index);
-                lastPlaced = index;
             }
         }
         return new SupportPlacementPlan(Set.copyOf(supportIndexes), valid);
+    }
+
+    private static void addPierAnchorIndex(Set<Integer> supportIndexes,
+                                           int candidateIndex,
+                                           int rangeStart,
+                                           int rangeEnd,
+                                           Set<Integer> bridgeHeadIndexes,
+                                           Set<Integer> navigableIndexes) {
+        if (candidateIndex < rangeStart || candidateIndex > rangeEnd) {
+            return;
+        }
+        if (bridgeHeadIndexes.contains(candidateIndex) || navigableIndexes.contains(candidateIndex)) {
+            return;
+        }
+        supportIndexes.add(candidateIndex);
     }
 
     private static List<BlockPos> buildSupportPositions(BlockPos deckCenter) {
@@ -270,9 +356,58 @@ public final class RoadCorridorPlanner {
                                                              int index,
                                                              BlockPos deckCenter,
                                                              RoadCorridorPlan.SegmentKind segmentKind) {
-        if (deckCenter == null || centerPath == null || centerPath.isEmpty() || !supportsBridgeRailings(segmentKind)) {
+        if (deckCenter == null || centerPath == null || centerPath.isEmpty()) {
             return List.of();
         }
+        if (segmentKind == RoadCorridorPlan.SegmentKind.LAND_APPROACH) {
+            return buildLandStreetlightPositions(centerPath, index, deckCenter);
+        }
+        if (!supportsBridgeRailings(segmentKind)) {
+            return List.of();
+        }
+        if (!shouldPlaceBridgeLight(index, segmentKind)) {
+            return List.of();
+        }
+        int[] sideOffsets = resolveSideOffsets(centerPath, index);
+        int sideX = sideOffsets[0];
+        int sideZ = sideOffsets[1];
+
+        return List.of(
+                new BlockPos(deckCenter.getX() + (sideX * RAILING_LIGHT_OFFSET), deckCenter.getY(), deckCenter.getZ() + (sideZ * RAILING_LIGHT_OFFSET)),
+                new BlockPos(deckCenter.getX() - (sideX * RAILING_LIGHT_OFFSET), deckCenter.getY(), deckCenter.getZ() - (sideZ * RAILING_LIGHT_OFFSET))
+        );
+    }
+
+    private static List<BlockPos> buildLandStreetlightPositions(List<BlockPos> centerPath,
+                                                                int index,
+                                                                BlockPos deckCenter) {
+        if (index <= 0 || index % LAND_STREETLIGHT_INTERVAL != 0) {
+            return List.of();
+        }
+        int[] sideOffsets = resolveSideOffsets(centerPath, index);
+        int sideX = sideOffsets[0];
+        int sideZ = sideOffsets[1];
+        int sideSign = ((index / LAND_STREETLIGHT_INTERVAL) % 2 == 0) ? 1 : -1;
+        return List.of(new BlockPos(
+                deckCenter.getX() + (sideX * RAILING_LIGHT_OFFSET * sideSign),
+                deckCenter.getY(),
+                deckCenter.getZ() + (sideZ * RAILING_LIGHT_OFFSET * sideSign)
+        ));
+    }
+
+    private static List<BlockPos> buildBridgeEdgeMarkerPositions(List<BlockPos> centerPath,
+                                                                 int index,
+                                                                 BlockPos deckCenter) {
+        int[] sideOffsets = resolveSideOffsets(centerPath, index);
+        int sideX = sideOffsets[0];
+        int sideZ = sideOffsets[1];
+        return List.of(
+                new BlockPos(deckCenter.getX() + (sideX * RAILING_LIGHT_OFFSET), deckCenter.getY(), deckCenter.getZ() + (sideZ * RAILING_LIGHT_OFFSET)),
+                new BlockPos(deckCenter.getX() - (sideX * RAILING_LIGHT_OFFSET), deckCenter.getY(), deckCenter.getZ() - (sideZ * RAILING_LIGHT_OFFSET))
+        );
+    }
+
+    private static int[] resolveSideOffsets(List<BlockPos> centerPath, int index) {
         BlockPos current = centerPath.get(index);
         BlockPos previous = index > 0 ? centerPath.get(index - 1) : current;
         BlockPos next = index + 1 < centerPath.size() ? centerPath.get(index + 1) : current;
@@ -288,11 +423,21 @@ public final class RoadCorridorPlanner {
         } else {
             sideX = 1;
         }
+        return new int[] {sideX, sideZ};
+    }
 
-        return List.of(
-                new BlockPos(deckCenter.getX() + sideX, deckCenter.getY(), deckCenter.getZ() + sideZ),
-                new BlockPos(deckCenter.getX() - sideX, deckCenter.getY(), deckCenter.getZ() - sideZ)
-        );
+    private static boolean shouldPlaceBridgeLight(int index, RoadCorridorPlan.SegmentKind segmentKind) {
+        if (segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD) {
+            return true;
+        }
+        if (segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN) {
+            return index % BRIDGE_LIGHT_INTERVAL == 0;
+        }
+        if (segmentKind == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN) {
+            return index % (BRIDGE_LIGHT_INTERVAL + 1) == 0;
+        }
+        return segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
+                && index % BRIDGE_LIGHT_INTERVAL == 0;
     }
 
     private static List<BlockPos> buildSurfacePositions(List<BlockPos> centerPath, int index, int[] deckHeights) {
@@ -442,7 +587,8 @@ public final class RoadCorridorPlanner {
     }
 
     private static boolean supportsBridgeRailings(RoadCorridorPlan.SegmentKind segmentKind) {
-        return segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
+        return segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
                 || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
                 || segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;

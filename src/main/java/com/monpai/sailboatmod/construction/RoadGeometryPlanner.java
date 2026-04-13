@@ -15,6 +15,7 @@ import java.util.function.Function;
 
 public final class RoadGeometryPlanner {
     private static final int MAX_SLOPE_STEP_PER_TWO_SEGMENTS = 1;
+    private static final int DEFAULT_NAVIGABLE_BRIDGE_RAMP_SEGMENTS = 4;
     private static final double STAIR_TRAVEL_BAND_MAX_DIST_SQ = 2.25D;
     private static final int ARCHED_CROWN_HEIGHT_SHORT = 2;
     private static final int ARCHED_CROWN_HEIGHT_LONG = 3;
@@ -203,7 +204,8 @@ public final class RoadGeometryPlanner {
         int[] sampledHeights = samplePlacementHeights(centerPath);
         int[] smoothed = smoothPlacementHeights(sampledHeights);
         int[] bridged = applyBridgeProfiles(smoothed, bridgeProfiles);
-        return constrainToTerrainEnvelope(bridged, sampledHeights, bridgeProfiles);
+        int[] transitioned = propagateBridgeApproachHeights(bridged, bridgeProfiles);
+        return constrainToTerrainEnvelope(transitioned, sampledHeights, bridgeProfiles);
     }
 
     public static int interpolatePlacementHeight(int x, int z, List<BlockPos> centerPath, int[] placementHeights) {
@@ -640,9 +642,12 @@ public final class RoadGeometryPlanner {
                                            boolean stairSegment,
                                            Function<BlockPos, BlockState> blockStateSupplier) {
         BlockState state = Objects.requireNonNull(blockStateSupplier.apply(currentPos), "blockStateSupplier returned null for pos " + currentPos);
-        if (!stairSegment
-                || shouldUseSlabTransition(currentPos.getX(), currentPos.getZ(), currentPos.getY(), path, placementHeights)
-                || !isWithinStairTravelBand(currentPos.getX(), currentPos.getZ(), path)) {
+        if (!stairSegment || !isWithinStairTravelBand(currentPos.getX(), currentPos.getZ(), path)) {
+            return state;
+        }
+        boolean fullBlockBridgeDeck = state.is(net.minecraft.world.level.block.Blocks.STONE_BRICKS);
+        if (!fullBlockBridgeDeck
+                && shouldUseSlabTransition(currentPos.getX(), currentPos.getZ(), currentPos.getY(), path, placementHeights)) {
             return state;
         }
         return staircaseState(state, stairFacing(path, placementHeights, index));
@@ -701,6 +706,11 @@ public final class RoadGeometryPlanner {
     }
 
     private static BlockState staircaseState(BlockState state, Direction facing) {
+        if (state.is(net.minecraft.world.level.block.Blocks.STONE_BRICKS)) {
+            return net.minecraft.world.level.block.Blocks.STONE_BRICK_STAIRS.defaultBlockState()
+                    .setValue(StairBlock.FACING, facing)
+                    .setValue(StairBlock.HALF, Half.BOTTOM);
+        }
         if (state.is(net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB)) {
             return net.minecraft.world.level.block.Blocks.STONE_BRICK_STAIRS.defaultBlockState()
                     .setValue(StairBlock.FACING, facing)
@@ -792,12 +802,44 @@ public final class RoadGeometryPlanner {
                 continue;
             }
             if (profile.navigableWaterBridge()) {
-                applyNavigableBridgeProfile(adjusted, profile);
+                applyNavigableBridgeProfile(adjusted, baseHeights, profile);
                 continue;
             }
             if (profile.kind() == RoadBridgePlanner.BridgeKind.ARCHED) {
                 applyArchedProfile(adjusted, profile.startIndex(), profile.endIndex());
             }
+        }
+        return adjusted;
+    }
+
+    private static int[] propagateBridgeApproachHeights(int[] baseHeights,
+                                                        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles) {
+        int[] adjusted = baseHeights.clone();
+        if (adjusted.length == 0 || bridgeProfiles == null || bridgeProfiles.isEmpty()) {
+            return adjusted;
+        }
+        boolean[] bridgeColumns = new boolean[adjusted.length];
+        for (RoadBridgePlanner.BridgeProfile profile : bridgeProfiles) {
+            if (profile == null) {
+                continue;
+            }
+            int start = Math.max(0, Math.min(profile.startIndex(), adjusted.length - 1));
+            int end = Math.max(0, Math.min(profile.endIndex(), adjusted.length - 1));
+            for (int i = start; i <= end; i++) {
+                bridgeColumns[i] = true;
+            }
+        }
+        for (int i = 1; i < adjusted.length; i++) {
+            if (bridgeColumns[i]) {
+                continue;
+            }
+            adjusted[i] = Math.max(adjusted[i], adjusted[i - 1] - 1);
+        }
+        for (int i = adjusted.length - 2; i >= 0; i--) {
+            if (bridgeColumns[i]) {
+                continue;
+            }
+            adjusted[i] = Math.max(adjusted[i], adjusted[i + 1] - 1);
         }
         return adjusted;
     }
@@ -870,8 +912,10 @@ public final class RoadGeometryPlanner {
         }
     }
 
-    private static void applyNavigableBridgeProfile(int[] placementHeights, RoadBridgePlanner.BridgeProfile profile) {
-        if (placementHeights.length == 0 || profile == null) {
+    private static void applyNavigableBridgeProfile(int[] placementHeights,
+                                                    int[] baseHeights,
+                                                    RoadBridgePlanner.BridgeProfile profile) {
+        if (placementHeights.length == 0 || baseHeights == null || baseHeights.length != placementHeights.length || profile == null) {
             return;
         }
         int clampedStart = Math.max(0, Math.min(profile.startIndex(), placementHeights.length - 1));
@@ -879,15 +923,67 @@ public final class RoadGeometryPlanner {
         if (clampedEnd < clampedStart) {
             return;
         }
+        int leftBoundaryHeight = resolveBoundaryHeight(baseHeights, clampedStart - 1, clampedStart);
+        int rightBoundaryHeight = resolveBoundaryHeight(baseHeights, clampedEnd + 1, clampedEnd);
+        RampBudget rampBudget = resolveNavigableRampBudget(
+                profile.deckHeight(),
+                leftBoundaryHeight,
+                rightBoundaryHeight,
+                clampedEnd - clampedStart + 1
+        );
         for (int i = clampedStart; i <= clampedEnd; i++) {
-            placementHeights[i] = Math.max(placementHeights[i], profile.deckHeight());
+            int targetHeight = profile.deckHeight();
+            int leftDistance = i - clampedStart;
+            int rightDistance = clampedEnd - i;
+            if (leftDistance < rampBudget.leftSegments()) {
+                targetHeight = Math.min(profile.deckHeight(), leftBoundaryHeight + leftDistance);
+            } else if (rightDistance < rampBudget.rightSegments()) {
+                targetHeight = Math.min(profile.deckHeight(), rightBoundaryHeight + rightDistance);
+            }
+            placementHeights[i] = Math.max(placementHeights[i], targetHeight);
         }
     }
 
     static int[] applyNavigableBridgeProfileForTest(int[] baseHeights, RoadBridgePlanner.BridgeProfile profile) {
         int[] adjusted = baseHeights.clone();
-        applyNavigableBridgeProfile(adjusted, profile);
+        applyNavigableBridgeProfile(adjusted, baseHeights, profile);
         return adjusted;
+    }
+
+    private static int resolveBoundaryHeight(int[] baseHeights, int preferredIndex, int fallbackIndex) {
+        if (preferredIndex >= 0 && preferredIndex < baseHeights.length) {
+            return baseHeights[preferredIndex];
+        }
+        int clampedFallback = Math.max(0, Math.min(baseHeights.length - 1, fallbackIndex));
+        return baseHeights[clampedFallback];
+    }
+
+    private static RampBudget resolveNavigableRampBudget(int deckHeight,
+                                                         int leftBoundaryHeight,
+                                                         int rightBoundaryHeight,
+                                                         int spanLength) {
+        if (spanLength <= 2) {
+            return new RampBudget(0, 0);
+        }
+        int maxRampBudget = Math.max(0, spanLength - 1);
+        int leftSegments = Math.max(0, Math.min(DEFAULT_NAVIGABLE_BRIDGE_RAMP_SEGMENTS, deckHeight - leftBoundaryHeight));
+        int rightSegments = Math.max(0, Math.min(DEFAULT_NAVIGABLE_BRIDGE_RAMP_SEGMENTS, deckHeight - rightBoundaryHeight));
+        if ((leftSegments + rightSegments) > maxRampBudget) {
+            return new RampBudget(0, 0);
+        }
+        while ((leftSegments + rightSegments) > maxRampBudget) {
+            if (leftSegments >= rightSegments && leftSegments > 0) {
+                leftSegments--;
+            } else if (rightSegments > 0) {
+                rightSegments--;
+            } else {
+                break;
+            }
+        }
+        return new RampBudget(leftSegments, rightSegments);
+    }
+
+    private record RampBudget(int leftSegments, int rightSegments) {
     }
 
     private static void applyArchedProfile(int[] placementHeights, int startIndex, int endIndex) {

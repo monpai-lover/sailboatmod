@@ -128,6 +128,23 @@ class RoadBezierCenterlineTest {
         assertEquals(routeNodes, centerline);
     }
 
+    @Test
+    void preservesElevatedBridgeDeckDuringCenterlineResampling() {
+        List<BlockPos> routeNodes = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 67, 0),
+                new BlockPos(2, 67, 0),
+                new BlockPos(3, 67, 0),
+                new BlockPos(4, 64, 0)
+        );
+
+        List<BlockPos> centerline = RoadBezierCenterline.build(routeNodes, requestedHeightBridgeSampler(), Set.of());
+
+        assertFalse(centerline.isEmpty());
+        assertTrue(centerline.stream().anyMatch(pos -> pos.getX() == 2 && pos.getY() == 67), centerline.toString());
+        assertTrue(centerline.stream().filter(pos -> pos.getY() >= 67).count() >= 3, centerline.toString());
+    }
+
     private static Function<BlockPos, RoadBezierCenterline.SurfaceSample> flatSampler() {
         return pos -> new RoadBezierCenterline.SurfaceSample(
                 new BlockPos(pos.getX(), 64, pos.getZ()),
@@ -150,6 +167,19 @@ class RoadBezierCenterlineTest {
                 surface = new BlockPos(pos.getX(), 64, pos.getZ());
             }
             return new RoadBezierCenterline.SurfaceSample(surface, false, false, 0);
+        };
+    }
+
+    private static Function<BlockPos, RoadBezierCenterline.SurfaceSample> requestedHeightBridgeSampler() {
+        return pos -> {
+            boolean bridgeColumn = pos.getX() >= 1 && pos.getX() <= 3;
+            int y = bridgeColumn && pos.getY() >= 67 ? 67 : 64;
+            return new RoadBezierCenterline.SurfaceSample(
+                    new BlockPos(pos.getX(), y, pos.getZ()),
+                    false,
+                    bridgeColumn,
+                    bridgeColumn ? 1 : 0
+            );
         };
     }
 

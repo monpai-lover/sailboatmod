@@ -9,6 +9,46 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class RoadBridgePlannerTest {
     @Test
+    void normalizeRangesDropsTinyBridgeSpans() {
+        assertEquals(
+                List.of(new RoadPlacementPlan.BridgeRange(7, 9)),
+                RoadBridgePlanner.normalizeRangesForTest(
+                        List.of(
+                                new RoadPlacementPlan.BridgeRange(1, 1),
+                                new RoadPlacementPlan.BridgeRange(7, 9)
+                        ),
+                        10
+                )
+        );
+    }
+
+    @Test
+    void normalizeRangesMergesNearbyElevatedSpans() {
+        assertEquals(
+                List.of(new RoadPlacementPlan.BridgeRange(1, 6)),
+                RoadBridgePlanner.normalizeRangesForTest(
+                        List.of(
+                                new RoadPlacementPlan.BridgeRange(1, 2),
+                                new RoadPlacementPlan.BridgeRange(5, 6)
+                        ),
+                        8
+                )
+        );
+    }
+
+    @Test
+    void distributePierAnchorsUsesFullElevatedSpanLength() {
+        assertEquals(
+                List.of(2, 4, 6),
+                RoadBridgePlanner.distributePierAnchorsForTest(
+                        1,
+                        7,
+                        List.of(2, 3, 4, 5, 6)
+                )
+        );
+    }
+
+    @Test
     void navigableBridgeProfileKeepsFiveBlockClearanceAboveWater() {
         RoadBridgePlanner.BridgeProfile profile = RoadBridgePlanner.navigableProfileForTest(10, 20, 64);
 

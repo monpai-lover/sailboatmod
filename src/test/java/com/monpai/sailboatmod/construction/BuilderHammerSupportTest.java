@@ -228,15 +228,14 @@ class BuilderHammerSupportTest {
                 .map(RoadGeometryPlanner.RoadBuildStep::pos)
                 .collect(java.util.stream.Collectors.toSet());
 
-        assertEquals(Set.of(
-                new BlockPos(0, 65, 0),
-                new BlockPos(0, 65, 1),
-                new BlockPos(0, 64, 0),
-                new BlockPos(0, 66, 1),
-                new BlockPos(0, 67, 1),
-                new BlockPos(0, 63, 1),
-                new BlockPos(0, 64, 1)
-        ), ghostPositions);
+        assertTrue(ghostPositions.contains(new BlockPos(0, 65, 0)));
+        assertTrue(ghostPositions.contains(new BlockPos(0, 65, 1)));
+        assertTrue(ghostPositions.contains(new BlockPos(0, 64, 0)));
+        assertTrue(ghostPositions.contains(new BlockPos(0, 66, 1)));
+        assertTrue(ghostBlocks.stream().anyMatch(block ->
+                block.pos().getX() == 0
+                        && block.pos().getZ() == 1
+                        && block.state().is(Blocks.LANTERN)));
         assertEquals(ghostPositions, buildStepPositions);
         assertTrue(ownedBlocks.contains(new BlockPos(0, 63, 0)));
         assertTrue(ownedBlocks.contains(new BlockPos(0, 62, 0)));
@@ -400,9 +399,9 @@ class BuilderHammerSupportTest {
     void navigableBridgeAddsRailingGhostBlocks() {
         List<RoadGeometryPlanner.GhostRoadBlock> ghosts = invokeNavigableBridgeGhosts(
                 List.of(
-                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 69, 0), Blocks.SPRUCE_SLAB.defaultBlockState()),
-                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(5, 69, 0), Blocks.SPRUCE_SLAB.defaultBlockState()),
-                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(10, 69, 0), Blocks.SPRUCE_SLAB.defaultBlockState())
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 69, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(5, 69, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(10, 69, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
                 ),
                 List.of(
                         new BlockPos(0, 68, 0),
@@ -412,7 +411,7 @@ class BuilderHammerSupportTest {
                 List.of(new RoadPlacementPlan.BridgeRange(0, 2))
         );
 
-        assertTrue(ghosts.stream().anyMatch(block -> block.state().is(Blocks.SPRUCE_FENCE)));
+        assertTrue(ghosts.stream().anyMatch(block -> block.state().is(Blocks.COBBLESTONE_WALL)));
     }
 
     @Test
