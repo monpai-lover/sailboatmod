@@ -169,6 +169,15 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void bridgeStairColumnsAlsoCountAsReusableAnchors() {
+        assertTrue(ManualRoadPlannerService.isRoadAnchorColumnForTest(
+                Blocks.GRASS_BLOCK.defaultBlockState(),
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState(),
+                Blocks.AIR.defaultBlockState()
+        ));
+    }
+
+    @Test
     void surfaceAtSkipsLeafCanopyAndFindsRealGround() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
@@ -203,6 +212,16 @@ class ManualRoadPlannerServiceTest {
     @Test
     void waterFallbackActivatesOnlyAfterLandPassFails() {
         assertTrue(ManualRoadPlannerService.shouldUseWaterFallbackForTest(false, true));
+    }
+
+    @Test
+    void structuredGroundFailureMapsToLocalizedFailureComponent() {
+        assertEquals(
+                "message.sailboatmod.road_planner.failure.no_continuous_ground_route",
+                ManualRoadPlannerService.manualFailureMessageKeyForTest(
+                        RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE
+                )
+        );
     }
 
     @Test
@@ -243,11 +262,182 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void nearestBoundaryAnchorSkipsCoreExcludedCandidateEvenWhenItIsCloserToTarget() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        NationClaimRecord claim = new NationClaimRecord(
+                "minecraft:overworld", 0, 0, "nation", "town2",
+                "member", "member", "member", "member", "member", "member", "member", 0L
+        );
+        BlockPos toward = new BlockPos(-20, 64, 2);
+
+        for (int z = 1; z <= 14; z++) {
+            setSurfaceColumn(level, 1, z, 64, Blocks.DIRT.defaultBlockState());
+        }
+
+        BlockPos excludedCandidate = new BlockPos(1, 64, 2);
+        Set<Long> excludedColumns = Set.of(BlockPos.asLong(excludedCandidate.getX(), 0, excludedCandidate.getZ()));
+
+        BlockPos anchor = invokeNearestBoundaryAnchor(level, List.of(claim), toward, 64, excludedColumns);
+
+        assertNotNull(anchor);
+        assertEquals(new BlockPos(1, 64, 1), anchor);
+        assertFalse(excludedCandidate.equals(anchor));
+    }
+
+    @Test
+    void expandedBoundaryAnchorFallsBackOutsideClaimWhenInClaimAnchorsAreUnavailable() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        NationClaimRecord claim = new NationClaimRecord(
+                "minecraft:overworld", 0, 0, "nation", "town2",
+                "member", "member", "member", "member", "member", "member", "member", 0L
+        );
+
+        for (int x = -2; x <= 18; x++) {
+            for (int z = -2; z <= 18; z++) {
+                setSurfaceColumn(level, x, z, 64, Blocks.DIRT.defaultBlockState());
+            }
+        }
+        Set<Long> excludedColumns = new java.util.LinkedHashSet<>();
+        for (int x = 0; x <= 15; x++) {
+            for (int z = 0; z <= 15; z++) {
+                excludedColumns.add(BlockPos.asLong(x, 0, z));
+            }
+        }
+
+        BlockPos anchor = invokeNearestExtendedBoundaryAnchor(
+                level,
+                List.of(claim),
+                new BlockPos(-20, 64, 8),
+                64,
+                excludedColumns
+        );
+
+        assertEquals(new BlockPos(-2, 64, 8), anchor);
+    }
+
+    @Test
     void plannerFallsBackToWaterOnlyWhenLandRouteIsUnavailable() {
         ManualRoadPlannerService.RouteAttemptDecision decision =
                 ManualRoadPlannerService.routeAttemptDecisionForTest(false, true);
 
         assertTrue(decision.usedWaterFallback());
+    }
+
+    @Test
+    void collectSegmentAnchorsFiltersBlockedIntermediateNodes() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = 0; x <= 10; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.DIRT.defaultBlockState());
+        }
+        level.blockStates.put(new BlockPos(6, 65, 0).asLong(), Blocks.COBBLESTONE.defaultBlockState());
+
+        List<BlockPos> anchors = invokeCollectSegmentAnchors(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(10, 64, 0),
+                Set.of(),
+                Set.of(
+                        new BlockPos(3, 64, 0),
+                        new BlockPos(6, 64, 0)
+                )
+        );
+
+        assertEquals(List.of(new BlockPos(3, 64, 0)), anchors);
+    }
+
+    @Test
+    void collectSegmentAnchorsFiltersCoreExcludedIntermediateNodes() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = 0; x <= 10; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.DIRT.defaultBlockState());
+        }
+
+        List<BlockPos> anchors = invokeCollectSegmentAnchors(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(10, 64, 0),
+                Set.of(),
+                Set.of(ManualRoadPlannerService.columnKeyForTest(3, 0)),
+                Set.of(
+                        new BlockPos(3, 64, 0),
+                        new BlockPos(6, 64, 0)
+                )
+        );
+
+        assertEquals(List.of(new BlockPos(6, 64, 0)), anchors);
+    }
+
+    @Test
+    void blockedBridgeDeckAnchorRemainsEligibleForSegmentSubdivision() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.surfaceHeights.put(columnKey(5, 0), 62);
+        level.blockStates.put(new BlockPos(5, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+        for (int y = 63; y <= 66; y++) {
+            level.blockStates.put(new BlockPos(5, y, 0).asLong(), Blocks.WATER.defaultBlockState());
+        }
+
+        List<BlockPos> anchors = invokeFilterTraversableIntermediateAnchors(
+                level,
+                Set.of(new BlockPos(5, 67, 0)),
+                Set.of(columnKey(5, 0)),
+                Set.of()
+        );
+
+        assertEquals(List.of(new BlockPos(5, 67, 0)), anchors);
+    }
+
+    @Test
+    void mergedIntermediateAnchorsAreSortedAlongRouteProgress() {
+        List<BlockPos> ordered = invokeSortAnchorsAlongRoute(
+                new BlockPos(0, 64, 0),
+                new BlockPos(10, 64, 0),
+                Set.of(
+                        new BlockPos(8, 64, 0),
+                        new BlockPos(3, 67, 0)
+                )
+        );
+
+        assertEquals(
+                List.of(
+                        new BlockPos(3, 67, 0),
+                        new BlockPos(8, 64, 0)
+                ),
+                ordered
+        );
+    }
+
+    @Test
+    void normalizePathRejectsDisconnectedDetailedSegments() {
+        List<BlockPos> normalized = invokeNormalizePath(
+                new BlockPos(0, 64, 0),
+                List.of(
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(9, 64, 0)
+                ),
+                new BlockPos(10, 64, 0)
+        );
+
+        assertTrue(normalized.isEmpty());
     }
 
     @Test
@@ -357,7 +547,13 @@ class ManualRoadPlannerServiceTest {
     void selectedHybridPathIsNormalizedAndUsedForPlacementPlanInputs() {
         List<BlockPos> normalized = ManualRoadPlannerService.normalizePathForTest(
                 new BlockPos(1, 64, 2),
-                List.of(new BlockPos(2, 64, 2), new BlockPos(4, 64, 2), new BlockPos(6, 64, 2)),
+                List.of(
+                        new BlockPos(2, 64, 2),
+                        new BlockPos(3, 64, 2),
+                        new BlockPos(4, 64, 2),
+                        new BlockPos(5, 64, 2),
+                        new BlockPos(6, 64, 2)
+                ),
                 new BlockPos(7, 64, 2)
         );
 
@@ -365,7 +561,9 @@ class ManualRoadPlannerServiceTest {
                 List.of(
                         new BlockPos(1, 64, 2),
                         new BlockPos(2, 64, 2),
+                        new BlockPos(3, 64, 2),
                         new BlockPos(4, 64, 2),
+                        new BlockPos(5, 64, 2),
                         new BlockPos(6, 64, 2),
                         new BlockPos(7, 64, 2)
                 ),
@@ -598,6 +796,150 @@ class ManualRoadPlannerServiceTest {
             );
             method.setAccessible(true);
             return (BlockPos) method.invoke(null, level, claims, towardPos, fallbackY);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static BlockPos invokeNearestBoundaryAnchor(ServerLevel level,
+                                                        List<NationClaimRecord> claims,
+                                                        BlockPos towardPos,
+                                                        int fallbackY,
+                                                        Set<Long> excludedColumns) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "nearestBoundaryAnchor",
+                    ServerLevel.class,
+                    List.class,
+                    BlockPos.class,
+                    int.class,
+                    Set.class
+            );
+            method.setAccessible(true);
+            return (BlockPos) method.invoke(null, level, claims, towardPos, fallbackY, excludedColumns);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static BlockPos invokeNearestExtendedBoundaryAnchor(ServerLevel level,
+                                                                List<NationClaimRecord> claims,
+                                                                BlockPos towardPos,
+                                                                int fallbackY,
+                                                                Set<Long> excludedColumns) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "nearestExtendedBoundaryAnchor",
+                    ServerLevel.class,
+                    List.class,
+                    BlockPos.class,
+                    int.class,
+                    Set.class
+            );
+            method.setAccessible(true);
+            return (BlockPos) method.invoke(null, level, claims, towardPos, fallbackY, excludedColumns);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeCollectSegmentAnchors(ServerLevel level,
+                                                              BlockPos sourceAnchor,
+                                                              BlockPos targetAnchor,
+                                                              Set<Long> blockedColumns,
+                                                              Set<BlockPos> networkNodes) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "collectSegmentAnchors",
+                    ServerLevel.class,
+                    BlockPos.class,
+                    BlockPos.class,
+                    Set.class,
+                    Set.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, level, sourceAnchor, targetAnchor, blockedColumns, networkNodes);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeCollectSegmentAnchors(ServerLevel level,
+                                                              BlockPos sourceAnchor,
+                                                              BlockPos targetAnchor,
+                                                              Set<Long> blockedColumns,
+                                                              Set<Long> excludedColumns,
+                                                              Set<BlockPos> networkNodes) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "collectSegmentAnchors",
+                    ServerLevel.class,
+                    BlockPos.class,
+                    BlockPos.class,
+                    Set.class,
+                    Set.class,
+                    Set.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, networkNodes);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeFilterTraversableIntermediateAnchors(ServerLevel level,
+                                                                             Set<BlockPos> anchors,
+                                                                             Set<Long> blockedColumns,
+                                                                             Set<Long> excludedColumns) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "filterTraversableIntermediateAnchors",
+                    ServerLevel.class,
+                    Set.class,
+                    Set.class,
+                    Set.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, level, anchors, blockedColumns, excludedColumns);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeSortAnchorsAlongRoute(BlockPos sourceAnchor,
+                                                              BlockPos targetAnchor,
+                                                              Set<BlockPos> anchors) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "sortAnchorsAlongRoute",
+                    BlockPos.class,
+                    BlockPos.class,
+                    Set.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, sourceAnchor, targetAnchor, anchors);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeNormalizePath(BlockPos start,
+                                                      List<BlockPos> path,
+                                                      BlockPos end) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "normalizePath",
+                    BlockPos.class,
+                    List.class,
+                    BlockPos.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, start, path, end);
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
             throw new AssertionError(e);
         }

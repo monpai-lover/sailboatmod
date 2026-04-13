@@ -37,10 +37,12 @@ import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 public final class ManualRoadPlannerService {
@@ -57,6 +59,7 @@ public final class ManualRoadPlannerService {
     private static final int MAX_EXIT_CANDIDATES_PER_STATION = 6;
     private static final int SEGMENT_SUBDIVIDE_MANHATTAN = 96;
     private static final int MAX_SEGMENT_INTERMEDIATE_ANCHORS = 24;
+    private static final int EXTENDED_BOUNDARY_SEARCH_RADIUS = 6;
     private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
     private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
 
@@ -364,28 +367,40 @@ public final class ManualRoadPlannerService {
             return List.of();
         }
 
+        RoadPlanningRequestContext context = RoadPlanningRequestContext.create(
+                "manual-road",
+                displayTownName(sourceTown),
+                displayTownName(targetTown),
+                townCorePos(level, sourceTown),
+                townCorePos(level, targetTown)
+        );
+
         Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
-        blockedColumns.addAll(collectCoreExclusionColumns(level, data));
+        Set<Long> excludedColumns = collectCoreExclusionColumns(level, data);
         List<PlanCandidate> candidates = new ArrayList<>();
         long startedAt = System.nanoTime();
-        PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false);
+        PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false);
         if (detour != null) {
             candidates.add(detour);
         }
-        PlanCandidate bridge = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, data, manualRoadId, PreviewOptionKind.BRIDGE, true);
+        PlanCandidate bridge = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.BRIDGE, true);
         if (bridge != null && candidates.stream().noneMatch(existing -> previewHash(existing.plan()).equals(previewHash(bridge.plan())))) {
             candidates.add(bridge);
         }
         if (candidates.isEmpty()) {
             LOGGER.warn(
-                    "Manual road planning failed for {} -> {} in {} after {} ms (blockedColumns={})",
-                    displayTownName(sourceTown),
-                    displayTownName(targetTown),
-                    level.dimension().location(),
-                    elapsedMillis(startedAt),
-                    blockedColumns.size()
+                    "{}",
+                    RoadPlanningDebugLogger.failure(
+                            "GroundRouteAttempt",
+                            context,
+                            RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE,
+                            "dimension=" + level.dimension().location()
+                                    + " elapsedMs=" + elapsedMillis(startedAt)
+                                    + " blockedColumns=" + blockedColumns.size()
+                                    + " excludedColumns=" + excludedColumns.size()
+                    )
             );
-            writeFailureMessage(stack, "message.sailboatmod.road_planner.path_failed");
+            writeFailureMessage(stack, RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE);
             return List.of();
         }
         LOGGER.info(
@@ -404,14 +419,15 @@ public final class ManualRoadPlannerService {
                                                     List<NationClaimRecord> sourceClaims,
                                                     List<NationClaimRecord> targetClaims,
                                                     Set<Long> blockedColumns,
+                                                    Set<Long> excludedColumns,
                                                     NationSavedData data,
                                                     String manualRoadId,
                                                     PreviewOptionKind optionKind,
                                                     boolean allowWaterFallback) {
         long startedAt = System.nanoTime();
-        WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, allowWaterFallback);
+        WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, allowWaterFallback);
         if (waitingAreaRoute == null) {
-            waitingAreaRoute = resolveTownAnchorFallbackRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, allowWaterFallback);
+            waitingAreaRoute = resolveTownAnchorFallbackRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, allowWaterFallback);
         }
         if (waitingAreaRoute == null) {
             LOGGER.warn(
@@ -487,6 +503,7 @@ public final class ManualRoadPlannerService {
                                                             List<NationClaimRecord> sourceClaims,
                                                             List<NationClaimRecord> targetClaims,
                                                             Set<Long> blockedColumns,
+                                                            Set<Long> excludedColumns,
                                                             boolean allowWaterFallback) {
         List<StationZoneCandidate> sourceStations = collectPostStationsInClaims(level, sourceClaims);
         List<StationZoneCandidate> targetStations = collectPostStationsInClaims(level, targetClaims);
@@ -518,12 +535,12 @@ public final class ManualRoadPlannerService {
 
                 for (BlockPos sourceExit : sourceExits) {
                     BlockPos sourceSurface = surfaceAt(level, sourceExit);
-                    if (!isValidRoadAnchor(level, sourceSurface)) {
+                    if (!isValidRoadAnchor(level, sourceSurface) || isExcludedColumn(sourceSurface, excludedColumns)) {
                         continue;
                     }
                     for (BlockPos targetExit : targetExits) {
                         BlockPos targetSurface = surfaceAt(level, targetExit);
-                        if (!isValidRoadAnchor(level, targetSurface)) {
+                        if (!isValidRoadAnchor(level, targetSurface) || isExcludedColumn(targetSurface, excludedColumns)) {
                             continue;
                         }
 
@@ -536,7 +553,7 @@ public final class ManualRoadPlannerService {
                                 PostStationRoadAnchorHelper.computeFootprintColumns(target.zone()),
                                 targetSurface
                         );
-                        List<BlockPos> path = resolveHybridRoadPath(level, sourceSurface, targetSurface, adjustedBlockedColumns, allowWaterFallback);
+                        List<BlockPos> path = resolveHybridRoadPath(level, sourceSurface, targetSurface, adjustedBlockedColumns, excludedColumns, allowWaterFallback);
                         if (path.size() < 2) {
                             path = buildConnectedRouteViaTownAnchors(
                                     level,
@@ -550,6 +567,7 @@ public final class ManualRoadPlannerService {
                                     sourceSurface,
                                     targetSurface,
                                     adjustedBlockedColumns,
+                                    excludedColumns,
                                     allowWaterFallback
                             );
                         }
@@ -583,18 +601,22 @@ public final class ManualRoadPlannerService {
                                                                    List<NationClaimRecord> sourceClaims,
                                                                    List<NationClaimRecord> targetClaims,
                                                                    Set<Long> blockedColumns,
+                                                                   Set<Long> excludedColumns,
                                                                    boolean allowWaterFallback) {
         BlockPos sourcePreferred = townCorePos(level, sourceTown);
         BlockPos targetPreferred = townCorePos(level, targetTown);
-        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourcePreferred, targetPreferred);
-        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetPreferred, sourcePreferred);
-        if (!isValidRoadAnchor(level, sourceAnchor) || !isValidRoadAnchor(level, targetAnchor)) {
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourcePreferred, targetPreferred, excludedColumns);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetPreferred, sourcePreferred, excludedColumns);
+        if (!isValidRoadAnchor(level, sourceAnchor)
+                || !isValidRoadAnchor(level, targetAnchor)
+                || isExcludedColumn(sourceAnchor, excludedColumns)
+                || isExcludedColumn(targetAnchor, excludedColumns)) {
             return null;
         }
 
         List<BlockPos> path = normalizePath(
                 sourceAnchor,
-                resolveHybridRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback),
+                resolveHybridRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, allowWaterFallback),
                 targetAnchor
         );
         if (path.size() < 2) {
@@ -614,16 +636,19 @@ public final class ManualRoadPlannerService {
                                                                     BlockPos sourceExit,
                                                                     BlockPos targetExit,
                                                                     Set<Long> blockedColumns,
+                                                                    Set<Long> excludedColumns,
                                                                     boolean allowWaterFallback) {
-        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourceStationPos, targetStationPos);
-        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetStationPos, sourceStationPos);
-        if (sourceAnchor == null || targetAnchor == null) {
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims, sourceStationPos, targetStationPos, excludedColumns);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims, targetStationPos, sourceStationPos, excludedColumns);
+        if (sourceAnchor == null || targetAnchor == null
+                || isExcludedColumn(sourceAnchor, excludedColumns)
+                || isExcludedColumn(targetAnchor, excludedColumns)) {
             return List.of();
         }
 
-        List<BlockPos> sourceLeg = normalizePath(sourceExit, resolveHybridRoadPath(level, sourceExit, sourceAnchor, blockedColumns, allowWaterFallback), sourceAnchor);
-        List<BlockPos> trunk = normalizePath(sourceAnchor, resolveHybridRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, allowWaterFallback), targetAnchor);
-        List<BlockPos> targetLeg = normalizePath(targetAnchor, resolveHybridRoadPath(level, targetAnchor, targetExit, blockedColumns, allowWaterFallback), targetExit);
+        List<BlockPos> sourceLeg = normalizePath(sourceExit, resolveHybridRoadPath(level, sourceExit, sourceAnchor, blockedColumns, excludedColumns, allowWaterFallback), sourceAnchor);
+        List<BlockPos> trunk = normalizePath(sourceAnchor, resolveHybridRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, allowWaterFallback), targetAnchor);
+        List<BlockPos> targetLeg = normalizePath(targetAnchor, resolveHybridRoadPath(level, targetAnchor, targetExit, blockedColumns, excludedColumns, allowWaterFallback), targetExit);
         if (sourceLeg.size() < 2 || trunk.size() < 2 || targetLeg.size() < 2) {
             return List.of();
         }
@@ -634,6 +659,7 @@ public final class ManualRoadPlannerService {
                                                         BlockPos sourceAnchor,
                                                         BlockPos targetAnchor,
                                                         Set<Long> blockedColumns,
+                                                        Set<Long> excludedColumns,
                                                         boolean allowWaterFallback) {
         if (level == null || sourceAnchor == null || targetAnchor == null) {
             return List.of();
@@ -642,7 +668,7 @@ public final class ManualRoadPlannerService {
         List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(level).getRoadNetworks());
         Set<BlockPos> networkNodes = RoadHybridRouteResolver.collectNetworkNodes(roads);
         java.util.Map<BlockPos, Set<BlockPos>> adjacency = RoadHybridRouteResolver.collectNetworkAdjacency(roads);
-        List<BlockPos> anchors = collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, networkNodes);
+        List<BlockPos> anchors = collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, networkNodes);
         SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
                 sourceAnchor,
                 targetAnchor,
@@ -653,6 +679,7 @@ public final class ManualRoadPlannerService {
                                 request.from(),
                                 request.to(),
                                 blockedColumns,
+                                excludedColumns,
                                 allowWaterFallback,
                                 networkNodes,
                                 adjacency
@@ -678,16 +705,18 @@ public final class ManualRoadPlannerService {
                                                            BlockPos sourceAnchor,
                                                            BlockPos targetAnchor,
                                                            Set<Long> blockedColumns,
+                                                           Set<Long> excludedColumns,
                                                            boolean allowWaterFallback,
                                                            Set<BlockPos> networkNodes,
                                                            java.util.Map<BlockPos, Set<BlockPos>> adjacency) {
+        Set<Long> segmentBlockedColumns = unblockPathEndpoints(blockedColumns, sourceAnchor, targetAnchor);
         RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
                 List.of(sourceAnchor),
                 List.of(targetAnchor),
                 networkNodes,
                 adjacency,
                 (from, to, allowBridgeColumns) -> {
-                    List<BlockPos> path = findPreferredRoadPath(level, from, to, blockedColumns, allowBridgeColumns && allowWaterFallback);
+                    List<BlockPos> path = findPreferredRoadPath(level, from, to, segmentBlockedColumns, excludedColumns, allowBridgeColumns && allowWaterFallback);
                     return RoadHybridRouteResolver.summarizePath(level, path, allowBridgeColumns && allowWaterFallback);
                 }
         );
@@ -698,6 +727,15 @@ public final class ManualRoadPlannerService {
                                                         BlockPos sourceAnchor,
                                                         BlockPos targetAnchor,
                                                         Set<Long> blockedColumns,
+                                                        Set<BlockPos> networkNodes) {
+        return collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, Set.of(), networkNodes);
+    }
+
+    private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
+                                                        BlockPos sourceAnchor,
+                                                        BlockPos targetAnchor,
+                                                        Set<Long> blockedColumns,
+                                                        Set<Long> excludedColumns,
                                                         Set<BlockPos> networkNodes) {
         LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
         merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
@@ -714,7 +752,116 @@ public final class ManualRoadPlannerService {
                 Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
                 BRIDGE_ANCHOR_CORRIDOR_DISTANCE
         ));
-        return List.copyOf(merged);
+        return filterTraversableIntermediateAnchors(
+                level,
+                sortAnchorsAlongRoute(sourceAnchor, targetAnchor, merged),
+                blockedColumns,
+                excludedColumns
+        );
+    }
+
+    private static List<BlockPos> filterTraversableIntermediateAnchors(ServerLevel level,
+                                                                       Collection<BlockPos> anchors,
+                                                                       Set<Long> blockedColumns) {
+        return filterTraversableIntermediateAnchors(level, anchors, blockedColumns, Set.of());
+    }
+
+    private static List<BlockPos> filterTraversableIntermediateAnchors(ServerLevel level,
+                                                                       Set<BlockPos> anchors,
+                                                                       Set<Long> blockedColumns,
+                                                                       Set<Long> excludedColumns) {
+        return filterTraversableIntermediateAnchors(level, (Collection<BlockPos>) anchors, blockedColumns, excludedColumns);
+    }
+
+    private static List<BlockPos> filterTraversableIntermediateAnchors(ServerLevel level,
+                                                                       Collection<BlockPos> anchors,
+                                                                       Set<Long> blockedColumns,
+                                                                       Set<Long> excludedColumns) {
+        if (anchors == null || anchors.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> filtered = new ArrayList<>(anchors.size());
+        for (BlockPos anchor : anchors) {
+            if (anchor == null) {
+                continue;
+            }
+            if (isExcludedColumn(anchor, excludedColumns)) {
+                continue;
+            }
+            RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForAnchorSelection(
+                    level,
+                    anchor,
+                    unblockPathEndpoints(blockedColumns, anchor)
+            );
+            if (diagnostics == null || diagnostics.surface() == null || diagnostics.blocked()) {
+                continue;
+            }
+            filtered.add(diagnostics.surface());
+        }
+        return List.copyOf(filtered);
+    }
+
+    private static List<BlockPos> sortAnchorsAlongRoute(BlockPos sourceAnchor,
+                                                        BlockPos targetAnchor,
+                                                        Set<BlockPos> anchors) {
+        if (sourceAnchor == null || targetAnchor == null || anchors == null || anchors.isEmpty()) {
+            return List.of();
+        }
+        double routeDx = targetAnchor.getX() - sourceAnchor.getX();
+        double routeDz = targetAnchor.getZ() - sourceAnchor.getZ();
+        double routeLengthSq = (routeDx * routeDx) + (routeDz * routeDz);
+        if (routeLengthSq <= 0.0D) {
+            return anchors.stream()
+                    .filter(Objects::nonNull)
+                    .map(BlockPos::immutable)
+                    .toList();
+        }
+        return anchors.stream()
+                .filter(Objects::nonNull)
+                .map(BlockPos::immutable)
+                .sorted((left, right) -> {
+                    double leftProjection = projectedFractionAlongRoute(sourceAnchor, routeDx, routeDz, routeLengthSq, left);
+                    double rightProjection = projectedFractionAlongRoute(sourceAnchor, routeDx, routeDz, routeLengthSq, right);
+                    int cmp = Double.compare(leftProjection, rightProjection);
+                    if (cmp != 0) {
+                        return cmp;
+                    }
+                    cmp = Integer.compare(left.getX(), right.getX());
+                    if (cmp != 0) {
+                        return cmp;
+                    }
+                    cmp = Integer.compare(left.getY(), right.getY());
+                    if (cmp != 0) {
+                        return cmp;
+                    }
+                    return Integer.compare(left.getZ(), right.getZ());
+                })
+                .toList();
+    }
+
+    private static double projectedFractionAlongRoute(BlockPos sourceAnchor,
+                                                      double routeDx,
+                                                      double routeDz,
+                                                      double routeLengthSq,
+                                                      BlockPos anchor) {
+        double anchorDx = anchor.getX() - sourceAnchor.getX();
+        double anchorDz = anchor.getZ() - sourceAnchor.getZ();
+        return ((anchorDx * routeDx) + (anchorDz * routeDz)) / routeLengthSq;
+    }
+
+    private static Set<Long> unblockPathEndpoints(Set<Long> blockedColumns, BlockPos... anchors) {
+        if (blockedColumns == null || blockedColumns.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<Long> updated = new LinkedHashSet<>(blockedColumns);
+        if (anchors != null) {
+            for (BlockPos anchor : anchors) {
+                if (anchor != null) {
+                    updated.remove(columnKey(anchor.getX(), anchor.getZ()));
+                }
+            }
+        }
+        return updated.isEmpty() ? Set.of() : Set.copyOf(updated);
     }
 
     private static boolean shouldSubdivideSegment(BlockPos from, BlockPos to) {
@@ -736,15 +883,16 @@ public final class ManualRoadPlannerService {
                                                         BlockPos from,
                                                         BlockPos to,
                                                         Set<Long> blockedColumns,
+                                                        Set<Long> excludedColumns,
                                                         boolean allowWaterFallback) {
         long startedAt = System.nanoTime();
-        List<BlockPos> landPath = RoadPathfinder.findPath(level, from, to, blockedColumns, false);
+        List<BlockPos> landPath = RoadPathfinder.findPath(level, from, to, blockedColumns, excludedColumns, false);
         if (!shouldUseWaterFallback(landPath.size() >= 2, allowWaterFallback)) {
             logPathAttempt(from, to, false, landPath.size(), elapsedMillis(startedAt));
             return landPath;
         }
         long fallbackStartedAt = System.nanoTime();
-        List<BlockPos> bridgePath = RoadPathfinder.findPath(level, from, to, blockedColumns, true);
+        List<BlockPos> bridgePath = RoadPathfinder.findPath(level, from, to, blockedColumns, excludedColumns, true);
         logPathAttempt(from, to, false, landPath.size(), elapsedMillis(startedAt));
         logPathAttempt(from, to, true, bridgePath.size(), elapsedMillis(fallbackStartedAt));
         return bridgePath;
@@ -851,24 +999,34 @@ public final class ManualRoadPlannerService {
 
     private static BlockPos resolveTownAnchor(ServerLevel level, NationSavedData data, TownRecord town,
                                               List<NationClaimRecord> claims, BlockPos preferredFallback, BlockPos towardPos) {
-        BlockPos roadNode = nearestRoadNodeInClaims(level, data, claims, towardPos);
-        if (isValidRoadAnchor(level, roadNode)) {
+        return resolveTownAnchor(level, data, town, claims, preferredFallback, towardPos, Set.of());
+    }
+
+    private static BlockPos resolveTownAnchor(ServerLevel level, NationSavedData data, TownRecord town,
+                                              List<NationClaimRecord> claims, BlockPos preferredFallback, BlockPos towardPos,
+                                              Set<Long> excludedColumns) {
+        BlockPos roadNode = nearestRoadNodeInClaims(level, data, claims, towardPos, excludedColumns);
+        if (isUsableAnchor(level, roadNode, excludedColumns)) {
             return roadNode;
         }
-        BlockPos boundary = nearestBoundaryAnchor(level, claims, towardPos, preferredFallback == null ? level.getSeaLevel() : preferredFallback.getY());
-        if (isValidRoadAnchor(level, boundary)) {
+        BlockPos boundary = nearestBoundaryAnchor(level, claims, towardPos, preferredFallback == null ? level.getSeaLevel() : preferredFallback.getY(), excludedColumns);
+        if (isUsableAnchor(level, boundary, excludedColumns)) {
             return boundary;
         }
+        BlockPos extendedBoundary = nearestExtendedBoundaryAnchor(level, claims, towardPos, preferredFallback == null ? level.getSeaLevel() : preferredFallback.getY(), excludedColumns);
+        if (isUsableAnchor(level, extendedBoundary, excludedColumns)) {
+            return extendedBoundary;
+        }
         BlockPos townCore = townCorePos(level, town);
-        if (isValidRoadAnchor(level, townCore)) {
+        if (isUsableAnchor(level, townCore, excludedColumns)) {
             return townCore;
         }
-        BlockPos searchedClaimAnchor = nearestClaimSurfaceAnchor(level, claims, towardPos, preferredFallback);
-        if (isValidRoadAnchor(level, searchedClaimAnchor)) {
+        BlockPos searchedClaimAnchor = nearestClaimSurfaceAnchor(level, claims, towardPos, preferredFallback, excludedColumns);
+        if (isUsableAnchor(level, searchedClaimAnchor, excludedColumns)) {
             return searchedClaimAnchor;
         }
         BlockPos fallback = surfaceAt(level, preferredFallback);
-        return isValidRoadAnchor(level, fallback) ? fallback : null;
+        return isUsableAnchor(level, fallback, excludedColumns) ? fallback : null;
     }
 
     private static BlockPos townCorePos(ServerLevel level, TownRecord town) {
@@ -886,6 +1044,14 @@ public final class ManualRoadPlannerService {
     }
 
     private static BlockPos nearestRoadNodeInClaims(ServerLevel level, NationSavedData data, List<NationClaimRecord> claims, BlockPos towardPos) {
+        return nearestRoadNodeInClaims(level, data, claims, towardPos, Set.of());
+    }
+
+    private static BlockPos nearestRoadNodeInClaims(ServerLevel level,
+                                                    NationSavedData data,
+                                                    List<NationClaimRecord> claims,
+                                                    BlockPos towardPos,
+                                                    Set<Long> excludedColumns) {
         BlockPos best = null;
         double bestDistance = Double.MAX_VALUE;
         String dimensionId = level.dimension().location().toString();
@@ -894,7 +1060,7 @@ public final class ManualRoadPlannerService {
                 continue;
             }
             for (BlockPos pos : road.path()) {
-                if (!isInClaims(claims, pos) || !isValidRoadAnchor(level, pos)) {
+                if (!isInClaims(claims, pos) || !isUsableAnchor(level, pos, excludedColumns)) {
                     continue;
                 }
                 double distance = towardPos == null ? 0.0D : pos.distSqr(towardPos);
@@ -908,6 +1074,14 @@ public final class ManualRoadPlannerService {
     }
 
     private static BlockPos nearestBoundaryAnchor(ServerLevel level, List<NationClaimRecord> claims, BlockPos towardPos, int fallbackY) {
+        return nearestBoundaryAnchor(level, claims, towardPos, fallbackY, Set.of());
+    }
+
+    private static BlockPos nearestBoundaryAnchor(ServerLevel level,
+                                                  List<NationClaimRecord> claims,
+                                                  BlockPos towardPos,
+                                                  int fallbackY,
+                                                  Set<Long> excludedColumns) {
         if (claims.isEmpty() || towardPos == null) {
             return null;
         }
@@ -923,10 +1097,10 @@ public final class ManualRoadPlannerService {
                 continue;
             }
             for (BlockPos candidate : exposedBoundaryCandidates(level, claim, claimKeys, towardPos, fallbackY)) {
-                if (!isValidRoadAnchor(level, candidate)) {
+                if (!isUsableAnchor(level, candidate, excludedColumns)) {
                     continue;
                 }
-                double score = roadAnchorScore(level, candidate);
+                double score = roadAnchorScore(level, candidate, excludedColumns);
                 double distance = candidate.distSqr(towardPos);
                 if (score < bestScore || (score == bestScore && distance < bestDistance)) {
                     bestScore = score;
@@ -942,6 +1116,14 @@ public final class ManualRoadPlannerService {
                                                       List<NationClaimRecord> claims,
                                                       BlockPos towardPos,
                                                       BlockPos preferredFallback) {
+        return nearestClaimSurfaceAnchor(level, claims, towardPos, preferredFallback, Set.of());
+    }
+
+    private static BlockPos nearestClaimSurfaceAnchor(ServerLevel level,
+                                                      List<NationClaimRecord> claims,
+                                                      BlockPos towardPos,
+                                                      BlockPos preferredFallback,
+                                                      Set<Long> excludedColumns) {
         if (level == null || claims == null || claims.isEmpty()) {
             return null;
         }
@@ -958,10 +1140,10 @@ public final class ManualRoadPlannerService {
             for (int x = minX + 1; x <= maxX - 1; x += 2) {
                 for (int z = minZ + 1; z <= maxZ - 1; z += 2) {
                     BlockPos candidate = surfaceAt(level, new BlockPos(x, fallbackY, z));
-                    if (!isValidRoadAnchor(level, candidate)) {
+                    if (!isUsableAnchor(level, candidate, excludedColumns)) {
                         continue;
                     }
-                    double score = roadAnchorScore(level, candidate);
+                    double score = roadAnchorScore(level, candidate, excludedColumns);
                     double distance = focus == null ? 0.0D : candidate.distSqr(focus);
                     if (score < bestScore || (score == bestScore && distance < bestDistance)) {
                         bestScore = score;
@@ -974,8 +1156,50 @@ public final class ManualRoadPlannerService {
         return best;
     }
 
+    private static BlockPos nearestExtendedBoundaryAnchor(ServerLevel level,
+                                                          List<NationClaimRecord> claims,
+                                                          BlockPos towardPos,
+                                                          int fallbackY,
+                                                          Set<Long> excludedColumns) {
+        if (claims == null || claims.isEmpty() || towardPos == null) {
+            return null;
+        }
+        Set<Long> claimKeys = new LinkedHashSet<>();
+        for (NationClaimRecord claim : claims) {
+            claimKeys.add(chunkKey(claim.chunkX(), claim.chunkZ()));
+        }
+        BlockPos best = null;
+        double bestScore = Double.MAX_VALUE;
+        double bestDistance = Double.MAX_VALUE;
+        for (NationClaimRecord claim : claims) {
+            if (!isBoundaryClaim(claim, claimKeys)) {
+                continue;
+            }
+            for (BlockPos candidate : extendedBoundaryCandidates(level, claim, claimKeys, towardPos, fallbackY)) {
+                if (!isUsableAnchor(level, candidate, excludedColumns)) {
+                    continue;
+                }
+                double score = roadAnchorScore(level, candidate, excludedColumns);
+                double distance = candidate.distSqr(towardPos);
+                if (score < bestScore || (score == bestScore && distance < bestDistance)) {
+                    bestScore = score;
+                    bestDistance = distance;
+                    best = candidate.immutable();
+                }
+            }
+        }
+        return best;
+    }
+
     private static double roadAnchorScore(ServerLevel level, BlockPos pos) {
+        return roadAnchorScore(level, pos, Set.of());
+    }
+
+    private static double roadAnchorScore(ServerLevel level, BlockPos pos, Set<Long> excludedColumns) {
         if (level == null || pos == null) {
+            return Double.MAX_VALUE;
+        }
+        if (isExcludedColumn(pos, excludedColumns)) {
             return Double.MAX_VALUE;
         }
         RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForAnchorSelection(level, pos);
@@ -988,6 +1212,14 @@ public final class ManualRoadPlannerService {
             score += 50.0D;
         }
         return score;
+    }
+
+    private static boolean isUsableAnchor(ServerLevel level, BlockPos pos, Set<Long> excludedColumns) {
+        return isValidRoadAnchor(level, pos) && !isExcludedColumn(pos, excludedColumns);
+    }
+
+    private static boolean isExcludedColumn(BlockPos pos, Set<Long> excludedColumns) {
+        return pos != null && excludedColumns != null && !excludedColumns.isEmpty() && RoadCoreExclusion.isExcluded(pos, excludedColumns);
     }
 
     private static int targetEdgeCoordinate(int target, int min, int max) {
@@ -1054,6 +1286,60 @@ public final class ManualRoadPlannerService {
             int z = maxZ - 1;
             for (int x = minX + 1; x <= maxX - 1; x++) {
                 candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+            }
+        }
+
+        List<BlockPos> ordered = new ArrayList<>();
+        for (BlockPos candidate : candidates) {
+            if (candidate != null) {
+                ordered.add(candidate);
+            }
+        }
+        ordered.sort((left, right) -> Double.compare(left.distSqr(towardPos), right.distSqr(towardPos)));
+        return ordered;
+    }
+
+    private static List<BlockPos> extendedBoundaryCandidates(ServerLevel level,
+                                                             NationClaimRecord claim,
+                                                             Set<Long> claimKeys,
+                                                             BlockPos towardPos,
+                                                             int fallbackY) {
+        LinkedHashSet<BlockPos> candidates = new LinkedHashSet<>();
+        int minX = claim.chunkX() * 16;
+        int minZ = claim.chunkZ() * 16;
+        int maxX = minX + 15;
+        int maxZ = minZ + 15;
+
+        if (!claimKeys.contains(chunkKey(claim.chunkX() - 1, claim.chunkZ()))) {
+            for (int depth = 1; depth <= EXTENDED_BOUNDARY_SEARCH_RADIUS; depth++) {
+                int x = minX - depth;
+                for (int z = minZ + 1; z <= maxZ - 1; z++) {
+                    candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+                }
+            }
+        }
+        if (!claimKeys.contains(chunkKey(claim.chunkX() + 1, claim.chunkZ()))) {
+            for (int depth = 1; depth <= EXTENDED_BOUNDARY_SEARCH_RADIUS; depth++) {
+                int x = maxX + depth;
+                for (int z = minZ + 1; z <= maxZ - 1; z++) {
+                    candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+                }
+            }
+        }
+        if (!claimKeys.contains(chunkKey(claim.chunkX(), claim.chunkZ() - 1))) {
+            for (int depth = 1; depth <= EXTENDED_BOUNDARY_SEARCH_RADIUS; depth++) {
+                int z = minZ - depth;
+                for (int x = minX + 1; x <= maxX - 1; x++) {
+                    candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+                }
+            }
+        }
+        if (!claimKeys.contains(chunkKey(claim.chunkX(), claim.chunkZ() + 1))) {
+            for (int depth = 1; depth <= EXTENDED_BOUNDARY_SEARCH_RADIUS; depth++) {
+                int z = maxZ + depth;
+                for (int x = minX + 1; x <= maxX - 1; x++) {
+                    candidates.add(surfaceAt(level, new BlockPos(x, fallbackY, z)));
+                }
             }
         }
 
@@ -1256,11 +1542,22 @@ public final class ManualRoadPlannerService {
     }
 
     private static boolean isExistingRoadSurface(BlockState roadState) {
-        return roadState.is(Blocks.STONE_BRICK_SLAB);
+        return roadState.is(Blocks.STONE_BRICKS)
+                || roadState.is(Blocks.STONE_BRICK_SLAB)
+                || roadState.is(Blocks.STONE_BRICK_STAIRS)
+                || roadState.is(Blocks.SMOOTH_SANDSTONE)
+                || roadState.is(Blocks.SMOOTH_SANDSTONE_SLAB)
+                || roadState.is(Blocks.SMOOTH_SANDSTONE_STAIRS)
+                || roadState.is(Blocks.MUD_BRICKS)
+                || roadState.is(Blocks.MUD_BRICK_SLAB)
+                || roadState.is(Blocks.MUD_BRICK_STAIRS)
+                || roadState.is(Blocks.SPRUCE_PLANKS)
+                || roadState.is(Blocks.SPRUCE_SLAB)
+                || roadState.is(Blocks.SPRUCE_STAIRS);
     }
 
     private static long columnKey(int x, int z) {
-        return (((long) x) << 32) ^ (z & 0xffffffffL);
+        return RoadCoreExclusion.columnKey(x, z);
     }
 
     private static String manualRoadIdForTownPair(String sourceTownId, String targetTownId) {
@@ -1313,6 +1610,9 @@ public final class ManualRoadPlannerService {
         appendPathNode(ordered, start);
         appendPathPreservingOrder(ordered, path);
         appendPathNode(ordered, end);
+        if (!SegmentedRoadPathOrchestrator.isContinuousResolvedPath(start, end, ordered)) {
+            return List.of();
+        }
         return List.copyOf(ordered);
     }
 
@@ -1499,11 +1799,27 @@ public final class ManualRoadPlannerService {
         }
     }
 
+    private static Component planningFailureComponent(RoadPlanningFailureReason reason) {
+        RoadPlanningFailureReason safeReason = reason == null ? RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE : reason;
+        return Component.translatable(safeReason.translationKey());
+    }
+
+    static String manualFailureMessageKeyForTest(RoadPlanningFailureReason reason) {
+        return (reason == null ? RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE : reason).translationKey();
+    }
+
     private static void writeFailureMessage(ItemStack stack, String key) {
         if (stack == null || key == null || key.isBlank()) {
             return;
         }
         stack.getOrCreateTag().putString(TAG_PREVIEW_FAILURE, key);
+    }
+
+    private static void writeFailureMessage(ItemStack stack, RoadPlanningFailureReason reason) {
+        if (reason == null) {
+            return;
+        }
+        writeFailureMessage(stack, reason.translationKey());
     }
 
     private static Component readFailureMessage(ItemStack stack) {
