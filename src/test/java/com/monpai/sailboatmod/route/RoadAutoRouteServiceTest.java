@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadAutoRouteServiceTest {
     @Test
@@ -49,5 +50,27 @@ class RoadAutoRouteServiceTest {
         assertEquals(2, merged.size());
         assertEquals("Manual Route", merged.get(0).name());
         assertEquals("Road Link: Other", merged.get(1).name());
+    }
+
+    @Test
+    void prefersHybridNetworkResolutionOverLongerDirectFallback() {
+        RoadAutoRouteService.RouteResolution direct = new RoadAutoRouteService.RouteResolution(
+                RoadAutoRouteService.PathSource.LAND_TERRAIN,
+                List.of(new net.minecraft.core.BlockPos(0, 64, 0), new net.minecraft.core.BlockPos(10, 64, 0))
+        );
+        RoadAutoRouteService.RouteResolution hybrid = new RoadAutoRouteService.RouteResolution(
+                RoadAutoRouteService.PathSource.ROAD_NETWORK,
+                List.of(
+                        new net.minecraft.core.BlockPos(0, 64, 0),
+                        new net.minecraft.core.BlockPos(4, 64, 0),
+                        new net.minecraft.core.BlockPos(10, 64, 0)
+                )
+        );
+
+        RoadAutoRouteService.RouteResolution chosen = RoadAutoRouteService.preferResolutionForTest(direct, hybrid);
+
+        assertTrue(chosen.found());
+        assertEquals(RoadAutoRouteService.PathSource.ROAD_NETWORK, chosen.source());
+        assertEquals(3, chosen.path().size());
     }
 }
