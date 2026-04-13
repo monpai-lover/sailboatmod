@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.nation.service;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.construction.RoadBezierCenterline;
 import com.monpai.sailboatmod.construction.RoadBridgePierPlanner;
+import com.monpai.sailboatmod.construction.RoadCoreExclusion;
 import com.monpai.sailboatmod.construction.RoadRouteNodePlanner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -25,6 +26,17 @@ public final class RoadPathfinder {
     private RoadPathfinder() {
     }
 
+    public record PlannedPathResult(List<BlockPos> path, RoadPlanningFailureReason failureReason) {
+        public PlannedPathResult {
+            path = path == null ? List.of() : List.copyOf(path);
+            failureReason = failureReason == null ? RoadPlanningFailureReason.NONE : failureReason;
+        }
+
+        public boolean success() {
+            return path.size() >= 2;
+        }
+    }
+
     public static List<BlockPos> findPath(Level level, BlockPos from, BlockPos to) {
         return findPath(level, from, to, Set.of(), false);
     }
@@ -43,7 +55,8 @@ public final class RoadPathfinder {
                                           Set<Long> blockedColumns,
                                           Set<Long> excludedColumns,
                                           boolean allowWaterFallback) {
-        Set<Long> combinedBlocked = mergeBlockedColumns(blockedColumns, excludedColumns);
+        Set<Long> adjustedBlocked = unblockColumns(blockedColumns, from, to);
+        Set<Long> combinedBlocked = mergeBlockedColumns(adjustedBlocked, excludedColumns);
         ColumnDiagnostics startDiagnostics = describeColumn(level, from, combinedBlocked, allowWaterFallback);
         ColumnDiagnostics endDiagnostics = describeColumn(level, to, combinedBlocked, allowWaterFallback);
         if (startDiagnostics.surface() == null
@@ -81,30 +94,43 @@ public final class RoadPathfinder {
         return finalized.isEmpty() ? plan.path() : finalized;
     }
 
+    static PlannedPathResult findGroundPathForPlan(Level level,
+                                                   BlockPos from,
+                                                   BlockPos to,
+                                                   Set<Long> blockedColumns,
+                                                   Set<Long> excludedColumns) {
+        List<BlockPos> path = findPath(level, from, to, blockedColumns, excludedColumns, false);
+        return path.isEmpty()
+                ? new PlannedPathResult(List.of(), RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE)
+                : new PlannedPathResult(path, RoadPlanningFailureReason.NONE);
+    }
+
     private static RoadRouteNodePlanner.RouteColumn sampleRouteColumn(Level level, BlockPos pos, Set<Long> blockedColumns, boolean allowWaterFallback) {
-        BlockPos surface = findSurface(level, pos.getX(), pos.getZ());
-        if (surface == null) {
+        BlockPos terrainSurface = findSurface(level, pos.getX(), pos.getZ());
+        if (terrainSurface == null) {
             return new RoadRouteNodePlanner.RouteColumn(null, true, false, 0, 0, false);
         }
-        boolean bridge = requiresBridge(level, surface);
-        boolean blocked = isBlockedRoadColumn(level, surface, blockedColumns) || isBridgeBlockedForMode(bridge, allowWaterFallback);
-        int adjacentWater = adjacentWaterCount(level, surface);
-        int terrainPenalty = terrainPenalty(level, surface);
-        boolean preferred = isRoad(level, surface) || (!bridge && adjacentWater == 0 && terrainPenalty <= 1);
-        return new RoadRouteNodePlanner.RouteColumn(surface, blocked, bridge, adjacentWater, terrainPenalty, preferred);
+        BlockPos traversableSurface = resolveTraversableSurface(level, pos, terrainSurface, allowWaterFallback);
+        boolean bridge = requiresBridge(level, terrainSurface);
+        boolean blocked = isBlockedRoadColumn(level, traversableSurface, blockedColumns) || isBridgeBlockedForMode(bridge, allowWaterFallback);
+        int adjacentWater = adjacentWaterCount(level, terrainSurface);
+        int terrainPenalty = terrainPenalty(level, terrainSurface);
+        boolean preferred = isRoad(level, traversableSurface) || (!bridge && adjacentWater == 0 && terrainPenalty <= 1);
+        return new RoadRouteNodePlanner.RouteColumn(traversableSurface, blocked, bridge, adjacentWater, terrainPenalty, preferred);
     }
 
     private static RoadBezierCenterline.SurfaceSample sampleSurface(Level level, BlockPos pos, Set<Long> blockedColumns, boolean allowWaterFallback) {
-        BlockPos surface = findSurface(level, pos.getX(), pos.getZ());
-        if (surface == null) {
+        BlockPos terrainSurface = findSurface(level, pos.getX(), pos.getZ());
+        if (terrainSurface == null) {
             return new RoadBezierCenterline.SurfaceSample(null, true, false, 0);
         }
-        boolean bridge = requiresBridge(level, surface);
+        BlockPos traversableSurface = resolveTraversableSurface(level, pos, terrainSurface, allowWaterFallback);
+        boolean bridge = requiresBridge(level, terrainSurface);
         return new RoadBezierCenterline.SurfaceSample(
-                surface,
-                isBlockedRoadColumn(level, surface, blockedColumns) || isBridgeBlockedForMode(bridge, allowWaterFallback),
+                traversableSurface,
+                isBlockedRoadColumn(level, traversableSurface, blockedColumns) || isBridgeBlockedForMode(bridge, allowWaterFallback),
                 bridge,
-                adjacentWaterCount(level, surface)
+                adjacentWaterCount(level, terrainSurface)
         );
     }
 
@@ -124,31 +150,37 @@ public final class RoadPathfinder {
         return describeColumn(level, pos, Set.of(), true);
     }
 
+    static ColumnDiagnostics describeColumnForAnchorSelection(Level level, BlockPos pos, Set<Long> blockedColumns) {
+        return describeColumn(level, pos, blockedColumns == null ? Set.of() : blockedColumns, true);
+    }
+
     private static boolean isBridgeBlockedForMode(boolean bridge, boolean allowWaterFallback) {
         return bridge && !allowWaterFallback;
     }
 
     private static ColumnDiagnostics describeColumn(Level level, BlockPos pos, Set<Long> blockedColumns, boolean allowWaterFallback) {
-        BlockPos surface = pos == null ? null : findSurface(level, pos.getX(), pos.getZ());
-        if (surface == null) {
+        BlockPos terrainSurface = pos == null ? null : findSurface(level, pos.getX(), pos.getZ());
+        if (terrainSurface == null) {
             return new ColumnDiagnostics(pos, null, false, false, false, false, true, false, false, 0, 0, false, "surface_missing");
         }
 
-        boolean bridgeRequired = requiresBridge(level, surface);
-        boolean blockedByPlanner = blockedColumns.contains(columnKey(surface.getX(), surface.getZ()));
-        BlockPos roadPos = surface.above();
+        BlockPos traversableSurface = resolveTraversableSurface(level, pos, terrainSurface, allowWaterFallback);
+        boolean bridgeRequired = requiresBridge(level, terrainSurface);
+        boolean blockedByPlanner = blockedColumns.contains(columnKey(terrainSurface.getX(), terrainSurface.getZ()));
+        BlockPos occupancySurface = traversableSurface == null ? terrainSurface : traversableSurface;
+        BlockPos roadPos = occupancySurface.above();
         BlockState roadState = level.getBlockState(roadPos);
-        boolean roadOccupantSolid = !roadState.isAir() && !roadState.canBeReplaced() && !roadState.liquid() && !isRoad(level, surface);
+        boolean roadOccupantSolid = !isPassableRoadSpace(roadState) && !isRoad(level, occupancySurface);
         BlockState headState = level.getBlockState(roadPos.above());
-        boolean headBlocked = !headState.isAir() && !headState.canBeReplaced() && !headState.liquid();
+        boolean headBlocked = !isPassableRoadSpace(headState);
         boolean bridgeBlockedByMode = isBridgeBlockedForMode(bridgeRequired, allowWaterFallback);
-        int adjacentWater = adjacentWaterCount(level, surface);
-        int terrainPenalty = terrainPenalty(level, surface);
-        boolean preferred = isRoad(level, surface) || (!bridgeRequired && adjacentWater == 0 && terrainPenalty <= 1);
-        String reason = blockingReason(surface != null, blockedByPlanner, roadOccupantSolid, headBlocked, bridgeBlockedByMode);
+        int adjacentWater = adjacentWaterCount(level, terrainSurface);
+        int terrainPenalty = terrainPenalty(level, terrainSurface);
+        boolean preferred = isRoad(level, occupancySurface) || (!bridgeRequired && adjacentWater == 0 && terrainPenalty <= 1);
+        String reason = blockingReason(traversableSurface != null, blockedByPlanner, roadOccupantSolid, headBlocked, bridgeBlockedByMode);
         return new ColumnDiagnostics(
                 pos,
-                surface,
+                traversableSurface,
                 blockedByPlanner || roadOccupantSolid || headBlocked || bridgeBlockedByMode,
                 blockedByPlanner,
                 roadOccupantSolid,
@@ -161,6 +193,67 @@ public final class RoadPathfinder {
                 preferred,
                 reason
         );
+    }
+
+    private static BlockPos resolveTraversableSurface(Level level,
+                                                      BlockPos requestedPos,
+                                                      BlockPos terrainSurface,
+                                                      boolean allowWaterFallback) {
+        if (terrainSurface == null) {
+            return null;
+        }
+        if (shouldPreserveRaisedBridgeAnchor(level, requestedPos, terrainSurface, allowWaterFallback)) {
+            return new BlockPos(terrainSurface.getX(), requestedPos.getY(), terrainSurface.getZ());
+        }
+        return terrainSurface;
+    }
+
+    private static boolean shouldPreserveRaisedBridgeAnchor(Level level,
+                                                            BlockPos requestedPos,
+                                                            BlockPos terrainSurface,
+                                                            boolean allowWaterFallback) {
+        return level != null
+                && requestedPos != null
+                && terrainSurface != null
+                && allowWaterFallback
+                && requestedPos.getY() > terrainSurface.getY()
+                && (hasFluidColumnBetween(level, terrainSurface, requestedPos)
+                || hasClearRaisedAnchorColumn(level, terrainSurface, requestedPos)
+                || hasExistingRaisedRoadDeck(level, requestedPos));
+    }
+
+    private static boolean hasExistingRaisedRoadDeck(Level level, BlockPos requestedPos) {
+        if (level == null || requestedPos == null) {
+            return false;
+        }
+        BlockState roadState = level.getBlockState(requestedPos.above());
+        BlockState headState = level.getBlockState(requestedPos.above(2));
+        return isKnownRoadSurface(roadState) && isPassableRoadSpace(headState);
+    }
+
+    private static boolean hasFluidColumnBetween(Level level, BlockPos lower, BlockPos upper) {
+        if (level == null || lower == null || upper == null || upper.getY() <= lower.getY()) {
+            return false;
+        }
+        for (int y = lower.getY() + 1; y < upper.getY(); y++) {
+            if (isFluidColumn(level.getBlockState(new BlockPos(lower.getX(), y, lower.getZ())))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasClearRaisedAnchorColumn(Level level, BlockPos lower, BlockPos upper) {
+        if (level == null || lower == null || upper == null || upper.getY() <= lower.getY()) {
+            return false;
+        }
+        for (int y = lower.getY() + 1; y <= upper.getY(); y++) {
+            BlockState state = level.getBlockState(new BlockPos(lower.getX(), y, lower.getZ()));
+            if (!isPassableRoadSpace(state)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String blockingReason(boolean hasSurface,
@@ -235,15 +328,15 @@ public final class RoadPathfinder {
         }
         BlockPos roadPos = surfacePos.above();
         BlockState roadState = level.getBlockState(roadPos);
-        if (!roadState.isAir() && !roadState.canBeReplaced() && !roadState.liquid() && !isRoad(level, surfacePos)) {
+        if (!isPassableRoadSpace(roadState) && !isRoad(level, surfacePos)) {
             return true;
         }
         BlockState headState = level.getBlockState(roadPos.above());
-        return !headState.isAir() && !headState.canBeReplaced() && !headState.liquid();
+        return !isPassableRoadSpace(headState);
     }
 
     private static long columnKey(int x, int z) {
-        return (((long) x) << 32) ^ (z & 0xffffffffL);
+        return RoadCoreExclusion.columnKey(x, z);
     }
 
     private static Set<Long> mergeBlockedColumns(Set<Long> blockedColumns, Set<Long> excludedColumns) {
@@ -268,10 +361,30 @@ public final class RoadPathfinder {
         return Set.copyOf(merged.keySet());
     }
 
+    private static Set<Long> unblockColumns(Set<Long> blockedColumns, BlockPos... positions) {
+        if (blockedColumns == null || blockedColumns.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashMap<Long, Long> updated = new LinkedHashMap<>();
+        for (Long blocked : blockedColumns) {
+            if (blocked != null) {
+                updated.put(blocked, blocked);
+            }
+        }
+        if (positions != null) {
+            for (BlockPos pos : positions) {
+                if (pos != null) {
+                    updated.remove(columnKey(pos.getX(), pos.getZ()));
+                }
+            }
+        }
+        return updated.isEmpty() ? Set.of() : Set.copyOf(updated.keySet());
+    }
+
     private static List<RoadBridgePierPlanner.PierNode> buildBridgePierNodes(Level level,
-                                                                              BlockPos start,
-                                                                              BlockPos end,
-                                                                              Set<Long> blockedColumns) {
+                                                                               BlockPos start,
+                                                                               BlockPos end,
+                                                                               Set<Long> blockedColumns) {
         if (level == null || start == null || end == null) {
             return List.of();
         }
@@ -346,7 +459,7 @@ public final class RoadPathfinder {
     private static int findWaterSurfaceY(Level level, int x, int z) {
         BlockPos cursor = level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below();
         while (cursor.getY() >= level.getMinBuildHeight()) {
-            if (!level.getBlockState(cursor).getFluidState().isEmpty()) {
+            if (isFluidColumn(level.getBlockState(cursor))) {
                 return cursor.getY();
             }
             cursor = cursor.below();
@@ -355,20 +468,31 @@ public final class RoadPathfinder {
     }
 
     private static boolean crossesWater(Level level, BlockPos pos) {
-        return !level.getBlockState(pos).getFluidState().isEmpty()
-                || !level.getBlockState(pos.above()).getFluidState().isEmpty()
-                || !level.getBlockState(pos.below()).getFluidState().isEmpty();
+        return isFluidColumn(level.getBlockState(pos))
+                || isFluidColumn(level.getBlockState(pos.above()))
+                || isFluidColumn(level.getBlockState(pos.below()));
     }
 
     private static int adjacentWaterCount(Level level, BlockPos pos) {
         int count = 0;
         for (BlockPos nearby : List.of(pos.north(), pos.south(), pos.east(), pos.west())) {
-            if (!level.getBlockState(nearby).getFluidState().isEmpty()
-                    || !level.getBlockState(nearby.below()).getFluidState().isEmpty()) {
+            if (isFluidColumn(level.getBlockState(nearby))
+                    || isFluidColumn(level.getBlockState(nearby.below()))) {
                 count++;
             }
         }
         return count;
+    }
+
+    private static boolean isFluidColumn(BlockState state) {
+        return state != null && (state.liquid() || !state.getFluidState().isEmpty());
+    }
+
+    private static boolean isPassableRoadSpace(BlockState state) {
+        return state == null
+                || state.isAir()
+                || state.canBeReplaced()
+                || isFluidColumn(state);
     }
 
     private static boolean isSoftGround(Level level, BlockPos pos) {
@@ -380,7 +504,23 @@ public final class RoadPathfinder {
     }
 
     private static boolean isRoad(Level level, BlockPos pos) {
-        return level.getBlockState(pos.above()).is(Blocks.STONE_BRICK_SLAB);
+        return level != null && pos != null && isKnownRoadSurface(level.getBlockState(pos.above()));
+    }
+
+    private static boolean isKnownRoadSurface(BlockState roadState) {
+        return roadState != null
+                && (roadState.is(Blocks.STONE_BRICKS)
+                || roadState.is(Blocks.STONE_BRICK_SLAB)
+                || roadState.is(Blocks.STONE_BRICK_STAIRS)
+                || roadState.is(Blocks.SMOOTH_SANDSTONE)
+                || roadState.is(Blocks.SMOOTH_SANDSTONE_SLAB)
+                || roadState.is(Blocks.SMOOTH_SANDSTONE_STAIRS)
+                || roadState.is(Blocks.MUD_BRICKS)
+                || roadState.is(Blocks.MUD_BRICK_SLAB)
+                || roadState.is(Blocks.MUD_BRICK_STAIRS)
+                || roadState.is(Blocks.SPRUCE_PLANKS)
+                || roadState.is(Blocks.SPRUCE_SLAB)
+                || roadState.is(Blocks.SPRUCE_STAIRS));
     }
 
     private static int terrainPenalty(Level level, BlockPos pos) {
