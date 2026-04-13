@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
+import com.monpai.sailboatmod.nation.service.RoadHybridRouteResolver;
 import com.monpai.sailboatmod.nation.service.RoadPathfinder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -157,6 +158,10 @@ public final class RoadAutoRouteService {
         return mergeRoutes(storedRoutes, generatedRoutes);
     }
 
+    static RouteResolution preferResolutionForTest(RouteResolution direct, RouteResolution hybrid) {
+        return preferResolution(direct, hybrid);
+    }
+
     public static List<RouteDefinition> mergeRoutes(List<RouteDefinition> storedRoutes, List<RouteDefinition> generatedRoutes) {
         List<RouteDefinition> merged = new ArrayList<>();
         for (RouteDefinition route : storedRoutes == null ? List.<RouteDefinition>of() : storedRoutes) {
@@ -174,15 +179,26 @@ public final class RoadAutoRouteService {
     }
 
     private static RouteResolution resolveAutoRoute(ServerLevel level, BlockPos start, BlockPos end) {
-        List<BlockPos> roadPath = findRoadRoute(level, start, end);
-        if (roadPath.size() >= 2) {
-            return new RouteResolution(PathSource.ROAD_NETWORK, roadPath);
+        if (level == null || start == null || end == null) {
+            return RouteResolution.none();
         }
-        List<BlockPos> landPath = findLandRoute(level, start, end);
-        if (landPath.size() >= 2) {
-            return new RouteResolution(PathSource.LAND_TERRAIN, landPath);
-        }
-        return RouteResolution.none();
+
+        Graph graph = buildGraph(level);
+        RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
+                List.of(start),
+                List.of(end),
+                graph.nodes(),
+                graph.adjacency(),
+                (from, to, allowWaterFallback) -> {
+                    List<BlockPos> path = combineRouteEndpoints(from, RoadPathfinder.findPath(level, from, to, Set.of(), allowWaterFallback), to);
+                    return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
+                }
+        );
+        RouteResolution hybrid = route.kind() == RoadHybridRouteResolver.ResolutionKind.NONE || route.fullPath().size() < 2
+                ? RouteResolution.none()
+                : new RouteResolution(route.usedExistingNetwork() ? PathSource.ROAD_NETWORK : PathSource.LAND_TERRAIN, route.fullPath());
+        RouteResolution direct = new RouteResolution(PathSource.LAND_TERRAIN, findLandRoute(level, start, end));
+        return preferResolution(direct, hybrid);
     }
 
     private static RouteDefinition routeDefinitionFromPath(PostStationBlockEntity startDock,
@@ -235,27 +251,15 @@ public final class RoadAutoRouteService {
     }
 
     private static Graph buildGraph(ServerLevel level) {
-        Set<BlockPos> nodes = new HashSet<>();
-        Map<Long, Set<BlockPos>> adjacency = new HashMap<>();
-        String dimensionId = level.dimension().location().toString();
-        for (RoadNetworkRecord road : NationSavedData.get(level).getRoadNetworks()) {
-            if (!dimensionId.equals(road.dimensionId()) || road.path().size() < 2) {
-                continue;
-            }
-            for (int i = 0; i < road.path().size(); i++) {
-                BlockPos current = road.path().get(i).immutable();
-                nodes.add(current);
-                adjacency.computeIfAbsent(current.asLong(), ignored -> new LinkedHashSet<>());
-                if (i + 1 >= road.path().size()) {
-                    continue;
-                }
-                BlockPos next = road.path().get(i + 1).immutable();
-                nodes.add(next);
-                adjacency.computeIfAbsent(current.asLong(), ignored -> new LinkedHashSet<>()).add(next);
-                adjacency.computeIfAbsent(next.asLong(), ignored -> new LinkedHashSet<>()).add(current);
-            }
-        }
-        return new Graph(nodes, adjacency);
+        List<RoadNetworkRecord> roads = NationSavedData.get(level).getRoadNetworks().stream()
+                .filter(road -> road != null
+                        && level.dimension().location().toString().equals(road.dimensionId())
+                        && road.path().size() >= 2)
+                .toList();
+        return new Graph(
+                RoadHybridRouteResolver.collectNetworkNodes(roads),
+                RoadHybridRouteResolver.collectNetworkAdjacency(roads)
+        );
     }
 
     private static BlockPos nearestRoadNode(BlockPos origin, Set<BlockPos> candidates, double maxDistance) {
@@ -271,32 +275,31 @@ public final class RoadAutoRouteService {
         return best;
     }
 
-    private static List<BlockPos> dijkstra(BlockPos start, BlockPos end, Map<Long, Set<BlockPos>> adjacency) {
+    private static List<BlockPos> dijkstra(BlockPos start, BlockPos end, Map<BlockPos, Set<BlockPos>> adjacency) {
         PriorityQueue<RouteNode> open = new PriorityQueue<>(Comparator.comparingDouble(RouteNode::score));
-        Map<Long, Double> dist = new HashMap<>();
-        Map<Long, BlockPos> prev = new HashMap<>();
+        Map<BlockPos, Double> dist = new HashMap<>();
+        Map<BlockPos, BlockPos> prev = new HashMap<>();
         open.add(new RouteNode(start, 0.0D));
-        dist.put(start.asLong(), 0.0D);
+        dist.put(start, 0.0D);
 
         while (!open.isEmpty()) {
             RouteNode current = open.poll();
             if (current.pos().equals(end)) {
                 break;
             }
-            for (BlockPos neighbor : adjacency.getOrDefault(current.pos().asLong(), Set.of())) {
+            for (BlockPos neighbor : adjacency.getOrDefault(current.pos(), Set.of())) {
                 double step = Math.sqrt(current.pos().distSqr(neighbor));
                 double candidate = current.score() + step;
-                long key = neighbor.asLong();
-                if (candidate >= dist.getOrDefault(key, Double.MAX_VALUE)) {
+                if (candidate >= dist.getOrDefault(neighbor, Double.MAX_VALUE)) {
                     continue;
                 }
-                dist.put(key, candidate);
-                prev.put(key, current.pos());
+                dist.put(neighbor, candidate);
+                prev.put(neighbor, current.pos());
                 open.add(new RouteNode(neighbor, candidate));
             }
         }
 
-        if (!dist.containsKey(end.asLong())) {
+        if (!dist.containsKey(end)) {
             return List.of();
         }
 
@@ -304,7 +307,7 @@ public final class RoadAutoRouteService {
         BlockPos cursor = end;
         path.add(cursor);
         while (!cursor.equals(start)) {
-            cursor = prev.get(cursor.asLong());
+            cursor = prev.get(cursor);
             if (cursor == null) {
                 return List.of();
             }
@@ -319,6 +322,13 @@ public final class RoadAutoRouteService {
             return List.of();
         }
         return combineRouteEndpoints(start, RoadPathfinder.findPath(level, start, end), end);
+    }
+
+    private static RouteResolution preferResolution(RouteResolution direct, RouteResolution hybrid) {
+        if (hybrid != null && hybrid.found()) {
+            return hybrid;
+        }
+        return direct != null && direct.found() ? direct : RouteResolution.none();
     }
 
     private static List<BlockPos> combineRouteEndpoints(BlockPos start, List<BlockPos> path, BlockPos end) {
@@ -336,7 +346,7 @@ public final class RoadAutoRouteService {
         return new ArrayList<>(out);
     }
 
-    private record Graph(Set<BlockPos> nodes, Map<Long, Set<BlockPos>> adjacency) {
+    private record Graph(Set<BlockPos> nodes, Map<BlockPos, Set<BlockPos>> adjacency) {
     }
 
     private record RouteNode(BlockPos pos, double score) {
