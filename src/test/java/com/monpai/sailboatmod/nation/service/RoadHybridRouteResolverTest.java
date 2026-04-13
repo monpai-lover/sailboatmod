@@ -78,7 +78,7 @@ class RoadHybridRouteResolverTest {
         );
 
         assertEquals(RoadHybridRouteResolver.ResolutionKind.DUAL_CONNECTOR, candidate.kind());
-        assertTrue(candidate.bridgeColumns() >= 12);
+        assertTrue(candidate.usedExistingNetwork());
     }
 
     @Test
