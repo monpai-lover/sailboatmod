@@ -68,6 +68,68 @@ class RoadRouteNodePlannerTest {
     }
 
     @Test
+    void bridgePierGraphUsesReachablePierAnchorsInsteadOfOnlyLinearRasterFallback() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(12, 64, 0),
+                pos -> {
+                    boolean bridge = pos.getX() >= 3 && pos.getX() <= 9;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            new BlockPos(pos.getX(), bridge ? 63 : 64, pos.getZ()),
+                            false,
+                            bridge,
+                            bridge ? 2 : 0,
+                            0,
+                            !bridge
+                    );
+                }
+        );
+
+        List<RoadBridgePierPlanner.PierNode> piers = List.of(
+                new RoadBridgePierPlanner.PierNode(new BlockPos(3, 58, 0), 63, 68),
+                new RoadBridgePierPlanner.PierNode(new BlockPos(6, 58, 1), 63, 68),
+                new RoadBridgePierPlanner.PierNode(new BlockPos(9, 58, 0), 63, 68)
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.planWithBridgePiers(map, piers);
+
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.usedBridge());
+    }
+
+    @Test
+    void bridgePierGraphCanSkipDetourPierThatWouldBreakLinearRasterChain() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(12, 64, 0),
+                pos -> {
+                    boolean traversable = pos.getZ() == 0 || (pos.getX() == 6 && pos.getZ() == 2);
+                    boolean bridge = traversable && pos.getX() >= 3 && pos.getX() <= 9;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), bridge ? 63 : 64, pos.getZ()) : null,
+                            !traversable,
+                            bridge,
+                            bridge ? 2 : 0,
+                            0,
+                            pos.getZ() == 0
+                    );
+                }
+        );
+
+        List<RoadBridgePierPlanner.PierNode> piers = List.of(
+                new RoadBridgePierPlanner.PierNode(new BlockPos(3, 58, 0), 63, 68),
+                new RoadBridgePierPlanner.PierNode(new BlockPos(6, 58, 2), 63, 68),
+                new RoadBridgePierPlanner.PierNode(new BlockPos(9, 58, 0), 63, 68)
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.planWithBridgePiers(map, piers);
+
+        assertFalse(plan.path().isEmpty());
+        assertTrue(plan.usedBridge());
+        assertTrue(plan.path().contains(new BlockPos(9, 63, 0)));
+    }
+
+    @Test
     void allowsShortBridgeOnlyAfterLandOnlySearchFailsWhenFinalShareStaysWithinBudget() {
         RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
                 new BlockPos(0, 64, 0),

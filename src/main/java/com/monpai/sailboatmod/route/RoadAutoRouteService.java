@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.service.RoadHybridRouteResolver;
 import com.monpai.sailboatmod.nation.service.RoadPathfinder;
+import com.monpai.sailboatmod.nation.service.SegmentedRoadPathOrchestrator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -26,6 +27,10 @@ import java.util.Set;
 
 public final class RoadAutoRouteService {
     private static final double STATION_CONNECT_RADIUS = 16.0D;
+    private static final int SEGMENT_SUBDIVIDE_MANHATTAN = 96;
+    private static final int MAX_SEGMENT_INTERMEDIATE_ANCHORS = 24;
+    private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
+    private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
 
     private RoadAutoRouteService() {
     }
@@ -184,21 +189,82 @@ public final class RoadAutoRouteService {
         }
 
         Graph graph = buildGraph(level);
+        SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
+                start,
+                end,
+                collectSegmentAnchors(level, start, end, graph.nodes()),
+                request -> new SegmentedRoadPathOrchestrator.SegmentPlan(
+                        resolveHybridSegment(level, request.from(), request.to(), graph.nodes(), graph.adjacency()),
+                        SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED
+                ),
+                request -> shouldSubdivideSegment(request.from(), request.to())
+        );
+        RouteResolution hybrid = orchestrated.success()
+                ? new RouteResolution(
+                        usesExistingNetwork(orchestrated.path(), graph.nodes()) ? PathSource.ROAD_NETWORK : PathSource.LAND_TERRAIN,
+                        orchestrated.path()
+                )
+                : RouteResolution.none();
+        RouteResolution direct = new RouteResolution(PathSource.LAND_TERRAIN, findLandRoute(level, start, end));
+        return preferResolution(direct, hybrid);
+    }
+
+    private static List<BlockPos> resolveHybridSegment(ServerLevel level,
+                                                       BlockPos start,
+                                                       BlockPos end,
+                                                       Set<BlockPos> networkNodes,
+                                                       Map<BlockPos, Set<BlockPos>> adjacency) {
         RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
                 List.of(start),
                 List.of(end),
-                graph.nodes(),
-                graph.adjacency(),
+                networkNodes,
+                adjacency,
                 (from, to, allowWaterFallback) -> {
                     List<BlockPos> path = combineRouteEndpoints(from, RoadPathfinder.findPath(level, from, to, Set.of(), allowWaterFallback), to);
                     return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
                 }
         );
-        RouteResolution hybrid = route.kind() == RoadHybridRouteResolver.ResolutionKind.NONE || route.fullPath().size() < 2
-                ? RouteResolution.none()
-                : new RouteResolution(route.usedExistingNetwork() ? PathSource.ROAD_NETWORK : PathSource.LAND_TERRAIN, route.fullPath());
-        RouteResolution direct = new RouteResolution(PathSource.LAND_TERRAIN, findLandRoute(level, start, end));
-        return preferResolution(direct, hybrid);
+        return route.kind() == RoadHybridRouteResolver.ResolutionKind.NONE || route.fullPath().size() < 2
+                ? List.of()
+                : route.fullPath();
+    }
+
+    private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
+                                                        BlockPos start,
+                                                        BlockPos end,
+                                                        Set<BlockPos> networkNodes) {
+        LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
+        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
+                start,
+                end,
+                networkNodes == null ? List.of() : List.copyOf(networkNodes),
+                MAX_SEGMENT_INTERMEDIATE_ANCHORS,
+                NETWORK_ANCHOR_CORRIDOR_DISTANCE
+        ));
+        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
+                start,
+                end,
+                RoadPathfinder.collectBridgeDeckAnchors(level, start, end, Set.of()),
+                Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
+                BRIDGE_ANCHOR_CORRIDOR_DISTANCE
+        ));
+        return List.copyOf(merged);
+    }
+
+    private static boolean usesExistingNetwork(List<BlockPos> path, Set<BlockPos> networkNodes) {
+        if (path == null || path.isEmpty() || networkNodes == null || networkNodes.isEmpty()) {
+            return false;
+        }
+        for (BlockPos pos : path) {
+            if (pos != null && networkNodes.contains(pos)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean shouldSubdivideSegment(BlockPos from, BlockPos to) {
+        return from != null && to != null && from.distManhattan(to) > SEGMENT_SUBDIVIDE_MANHATTAN;
     }
 
     private static RouteDefinition routeDefinitionFromPath(PostStationBlockEntity startDock,

@@ -55,6 +55,10 @@ public final class ManualRoadPlannerService {
     private static final String TAG_MODE = "PlannerMode";
     private static final long PREVIEW_TIMEOUT_MS = 45_000L;
     private static final int MAX_EXIT_CANDIDATES_PER_STATION = 6;
+    private static final int SEGMENT_SUBDIVIDE_MANHATTAN = 96;
+    private static final int MAX_SEGMENT_INTERMEDIATE_ANCHORS = 24;
+    private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
+    private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
 
     private ManualRoadPlannerService() {
     }
@@ -636,17 +640,85 @@ public final class ManualRoadPlannerService {
         }
 
         List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(level).getRoadNetworks());
+        Set<BlockPos> networkNodes = RoadHybridRouteResolver.collectNetworkNodes(roads);
+        java.util.Map<BlockPos, Set<BlockPos>> adjacency = RoadHybridRouteResolver.collectNetworkAdjacency(roads);
+        List<BlockPos> anchors = collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, networkNodes);
+        SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
+                sourceAnchor,
+                targetAnchor,
+                anchors,
+                request -> new SegmentedRoadPathOrchestrator.SegmentPlan(
+                        resolveHybridRoadSegment(
+                                level,
+                                request.from(),
+                                request.to(),
+                                blockedColumns,
+                                allowWaterFallback,
+                                networkNodes,
+                                adjacency
+                        ),
+                        SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED
+                ),
+                request -> shouldSubdivideSegment(request.from(), request.to())
+        );
+        if (orchestrated.success()) {
+            return orchestrated.path();
+        }
+        LOGGER.warn(
+                "ManualRoadPlanner segmented failure from {} to {} reason={} failedSegments={}",
+                sourceAnchor,
+                targetAnchor,
+                orchestrated.failureReason(),
+                orchestrated.failedSegments().size()
+        );
+        return List.of();
+    }
+
+    private static List<BlockPos> resolveHybridRoadSegment(ServerLevel level,
+                                                           BlockPos sourceAnchor,
+                                                           BlockPos targetAnchor,
+                                                           Set<Long> blockedColumns,
+                                                           boolean allowWaterFallback,
+                                                           Set<BlockPos> networkNodes,
+                                                           java.util.Map<BlockPos, Set<BlockPos>> adjacency) {
         RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
                 List.of(sourceAnchor),
                 List.of(targetAnchor),
-                RoadHybridRouteResolver.collectNetworkNodes(roads),
-                RoadHybridRouteResolver.collectNetworkAdjacency(roads),
+                networkNodes,
+                adjacency,
                 (from, to, allowBridgeColumns) -> {
                     List<BlockPos> path = findPreferredRoadPath(level, from, to, blockedColumns, allowBridgeColumns && allowWaterFallback);
                     return RoadHybridRouteResolver.summarizePath(level, path, allowBridgeColumns && allowWaterFallback);
                 }
         );
         return route.fullPath().size() >= 2 ? route.fullPath() : List.of();
+    }
+
+    private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
+                                                        BlockPos sourceAnchor,
+                                                        BlockPos targetAnchor,
+                                                        Set<Long> blockedColumns,
+                                                        Set<BlockPos> networkNodes) {
+        LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
+        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
+                sourceAnchor,
+                targetAnchor,
+                networkNodes == null ? List.of() : List.copyOf(networkNodes),
+                MAX_SEGMENT_INTERMEDIATE_ANCHORS,
+                NETWORK_ANCHOR_CORRIDOR_DISTANCE
+        ));
+        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
+                sourceAnchor,
+                targetAnchor,
+                RoadPathfinder.collectBridgeDeckAnchors(level, sourceAnchor, targetAnchor, blockedColumns),
+                Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
+                BRIDGE_ANCHOR_CORRIDOR_DISTANCE
+        ));
+        return List.copyOf(merged);
+    }
+
+    private static boolean shouldSubdivideSegment(BlockPos from, BlockPos to) {
+        return from != null && to != null && from.distManhattan(to) > SEGMENT_SUBDIVIDE_MANHATTAN;
     }
 
     private static List<BlockPos> stitchRouteSegments(List<BlockPos>... segments) {

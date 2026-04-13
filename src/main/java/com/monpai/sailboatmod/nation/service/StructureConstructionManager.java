@@ -205,6 +205,10 @@ public final class StructureConstructionManager {
     private static final double GHOST_PREVIEW_RADIUS_SQR = 72.0D * 72.0D;
     private static final int ROAD_GHOST_WINDOW_RADIUS = 20;
     private static final double BUILDER_HAMMER_REACH_SQR = 64.0D;
+    private static final int SEGMENT_SUBDIVIDE_MANHATTAN = 96;
+    private static final int MAX_SEGMENT_INTERMEDIATE_ANCHORS = 24;
+    private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
+    private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
 
     private StructureConstructionManager() {}
 
@@ -1231,18 +1235,24 @@ public final class StructureConstructionManager {
         List<RoadAnchor> firstAnchors = getRoadAnchors(first);
         List<RoadAnchor> secondAnchors = getRoadAnchors(second);
         List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(level).getRoadNetworks());
-        RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
-                firstAnchors.stream().map(RoadAnchor::pos).toList(),
-                secondAnchors.stream().map(RoadAnchor::pos).toList(),
-                RoadHybridRouteResolver.collectNetworkNodes(roads),
-                RoadHybridRouteResolver.collectNetworkAdjacency(roads),
-                (from, to, allowWaterFallback) -> {
-                    List<BlockPos> path = RoadPathfinder.findPath(level, from, to, Set.of(), allowWaterFallback);
-                    return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
+        Set<BlockPos> networkNodes = RoadHybridRouteResolver.collectNetworkNodes(roads);
+        Map<BlockPos, Set<BlockPos>> adjacency = RoadHybridRouteResolver.collectNetworkAdjacency(roads);
+        for (BlockPos sourceAnchor : firstAnchors.stream().map(RoadAnchor::pos).toList()) {
+            for (BlockPos targetAnchor : secondAnchors.stream().map(RoadAnchor::pos).toList()) {
+                SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
+                        sourceAnchor,
+                        targetAnchor,
+                        collectSegmentAnchors(level, sourceAnchor, targetAnchor, networkNodes),
+                        request -> new SegmentedRoadPathOrchestrator.SegmentPlan(
+                                resolveHybridRoadSegment(level, request.from(), request.to(), networkNodes, adjacency),
+                                SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED
+                        ),
+                        request -> shouldSubdivideSegment(request.from(), request.to())
+                );
+                if (orchestrated.success()) {
+                    return orchestrated.path();
                 }
-        );
-        if (route.fullPath().size() >= 2) {
-            return route.fullPath();
+            }
         }
         return RoadPathfinder.findPath(level, first.center(), second.center());
     }
@@ -2909,17 +2919,63 @@ public final class StructureConstructionManager {
         }
 
         List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(serverLevel).getRoadNetworks());
+        Set<BlockPos> networkNodes = RoadHybridRouteResolver.collectNetworkNodes(roads);
+        Map<BlockPos, Set<BlockPos>> adjacency = RoadHybridRouteResolver.collectNetworkAdjacency(roads);
+        SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
+                start,
+                end,
+                collectSegmentAnchors(serverLevel, start, end, networkNodes),
+                request -> new SegmentedRoadPathOrchestrator.SegmentPlan(
+                        resolveHybridRoadSegment(serverLevel, request.from(), request.to(), networkNodes, adjacency),
+                        SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED
+                ),
+                request -> shouldSubdivideSegment(request.from(), request.to())
+        );
+        return orchestrated.success() ? orchestrated.path() : RoadPathfinder.findPath(level, start, end);
+    }
+
+    private static List<BlockPos> resolveHybridRoadSegment(ServerLevel level,
+                                                           BlockPos start,
+                                                           BlockPos end,
+                                                           Set<BlockPos> networkNodes,
+                                                           Map<BlockPos, Set<BlockPos>> adjacency) {
         RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
                 List.of(start),
                 List.of(end),
-                RoadHybridRouteResolver.collectNetworkNodes(roads),
-                RoadHybridRouteResolver.collectNetworkAdjacency(roads),
+                networkNodes,
+                adjacency,
                 (from, to, allowWaterFallback) -> {
-                    List<BlockPos> path = RoadPathfinder.findPath(serverLevel, from, to, Set.of(), allowWaterFallback);
-                    return RoadHybridRouteResolver.summarizePath(serverLevel, path, allowWaterFallback);
+                    List<BlockPos> path = RoadPathfinder.findPath(level, from, to, Set.of(), allowWaterFallback);
+                    return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
                 }
         );
-        return route.fullPath().size() >= 2 ? route.fullPath() : RoadPathfinder.findPath(level, start, end);
+        return route.fullPath().size() >= 2 ? route.fullPath() : List.of();
+    }
+
+    private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
+                                                        BlockPos start,
+                                                        BlockPos end,
+                                                        Set<BlockPos> networkNodes) {
+        LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
+        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
+                start,
+                end,
+                networkNodes == null ? List.of() : List.copyOf(networkNodes),
+                MAX_SEGMENT_INTERMEDIATE_ANCHORS,
+                NETWORK_ANCHOR_CORRIDOR_DISTANCE
+        ));
+        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
+                start,
+                end,
+                RoadPathfinder.collectBridgeDeckAnchors(level, start, end, Set.of()),
+                Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
+                BRIDGE_ANCHOR_CORRIDOR_DISTANCE
+        ));
+        return List.copyOf(merged);
+    }
+
+    private static boolean shouldSubdivideSegment(BlockPos from, BlockPos to) {
+        return from != null && to != null && from.distManhattan(to) > SEGMENT_SUBDIVIDE_MANHATTAN;
     }
 
     private static double previewConnectionScore(PreviewRoadConnection connection, double distancePenalty, boolean primarySide) {

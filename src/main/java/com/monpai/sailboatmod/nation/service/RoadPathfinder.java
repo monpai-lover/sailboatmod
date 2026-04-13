@@ -308,13 +308,35 @@ public final class RoadPathfinder {
         return RoadBridgePierPlanner.planPierNodes(thinPierCandidates(new ArrayList<>(candidates.values())), 5);
     }
 
+    public static List<BlockPos> collectBridgeDeckAnchors(Level level,
+                                                          BlockPos start,
+                                                          BlockPos end,
+                                                          Set<Long> blockedColumns) {
+        List<RoadBridgePierPlanner.PierNode> pierNodes = buildBridgePierNodes(level, start, end, blockedColumns);
+        if (pierNodes.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> anchors = new ArrayList<>(pierNodes.size());
+        for (RoadBridgePierPlanner.PierNode pierNode : pierNodes) {
+            if (pierNode == null || pierNode.foundationPos() == null) {
+                continue;
+            }
+            anchors.add(new BlockPos(
+                    pierNode.foundationPos().getX(),
+                    pierNode.deckY(),
+                    pierNode.foundationPos().getZ()
+            ));
+        }
+        return List.copyOf(anchors);
+    }
+
     private static List<RoadBridgePierPlanner.WaterColumn> thinPierCandidates(List<RoadBridgePierPlanner.WaterColumn> columns) {
-        if (columns == null || columns.size() <= 2) {
+        if (columns == null || columns.size() <= 24) {
             return columns == null ? List.of() : List.copyOf(columns);
         }
         ArrayList<RoadBridgePierPlanner.WaterColumn> thinned = new ArrayList<>();
         for (int i = 0; i < columns.size(); i++) {
-            if (i == 0 || i == columns.size() - 1 || i % 4 == 0) {
+            if (i == 0 || i == columns.size() - 1 || i % 2 == 0) {
                 thinned.add(columns.get(i));
             }
         }
