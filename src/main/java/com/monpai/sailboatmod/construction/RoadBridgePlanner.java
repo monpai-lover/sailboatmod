@@ -329,8 +329,8 @@ public final class RoadBridgePlanner {
                                                 IntUnaryOperator terrainYAt) {
         BlockPos startPos = Objects.requireNonNull(centerPath.get(start), "centerPath contains null at start");
         BlockPos endPos = Objects.requireNonNull(centerPath.get(end), "centerPath contains null at end");
-        int startDeckY = Math.max(startPos.getY() + 1, terrainYAt.applyAsInt(start) + 1);
-        int endDeckY = Math.max(endPos.getY() + 1, terrainYAt.applyAsInt(end) + 1);
+        int startDeckY = terrainYAt.applyAsInt(start) + 1;
+        int endDeckY = terrainYAt.applyAsInt(end) + 1;
         List<BridgePierNode> nodes = List.of(
                 new BridgePierNode(start, new BlockPos(startPos.getX(), startDeckY, startPos.getZ()),
                         new BlockPos(startPos.getX(), terrainYAt.applyAsInt(start), startPos.getZ()), startDeckY, BridgeNodeRole.ABUTMENT),

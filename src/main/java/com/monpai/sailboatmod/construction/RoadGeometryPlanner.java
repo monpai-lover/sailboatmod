@@ -216,6 +216,7 @@ public final class RoadGeometryPlanner {
         int[] sampledHeights = samplePlacementHeights(centerPath);
         int[] smoothed = smoothPlacementHeights(sampledHeights);
         int[] adjusted = applyBridgeSpanPlans(smoothed, bridgePlans);
+        adjusted = propagateBridgeApproachHeightsFromSpanPlans(adjusted, bridgePlans);
         return constrainToTerrainEnvelopeFromSpanPlans(adjusted, sampledHeights, bridgePlans);
     }
 
@@ -938,6 +939,38 @@ public final class RoadGeometryPlanner {
             constrained[i] = Math.max(minDeckHeight, Math.min(maxDeckHeight, constrained[i]));
         }
         return constrained;
+    }
+
+    private static int[] propagateBridgeApproachHeightsFromSpanPlans(int[] baseHeights,
+                                                                     List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
+        int[] adjusted = baseHeights.clone();
+        if (adjusted.length == 0 || bridgePlans == null || bridgePlans.isEmpty()) {
+            return adjusted;
+        }
+        boolean[] bridgeColumns = new boolean[adjusted.length];
+        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
+            if (plan == null || !plan.valid()) {
+                continue;
+            }
+            int start = clampIndex(plan.startIndex(), adjusted.length);
+            int end = clampIndex(plan.endIndex(), adjusted.length);
+            for (int i = start; i <= end; i++) {
+                bridgeColumns[i] = true;
+            }
+        }
+        for (int i = 1; i < adjusted.length; i++) {
+            if (bridgeColumns[i]) {
+                continue;
+            }
+            adjusted[i] = Math.max(adjusted[i], adjusted[i - 1] - 1);
+        }
+        for (int i = adjusted.length - 2; i >= 0; i--) {
+            if (bridgeColumns[i]) {
+                continue;
+            }
+            adjusted[i] = Math.max(adjusted[i], adjusted[i + 1] - 1);
+        }
+        return adjusted;
     }
 
     private static boolean[] steepTerrainLockMask(int[] sampledHeights) {

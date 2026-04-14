@@ -153,7 +153,12 @@ public final class RoadCorridorPlanner {
         Map<Integer, RoadBridgePlanner.BridgeSpanPlan> planByIndex = expandBridgePlans(bridgePlans, size);
         Map<Integer, RoadBridgePlanner.BridgePierNode> supportNodeByIndex = supportNodesByIndex(bridgePlans);
         List<BlockPos> deckCenters = new ArrayList<>(size);
-        List<RoadCorridorPlan.CorridorSlice> slices = new ArrayList<>(size);
+        List<RoadCorridorPlan.SegmentKind> segmentKinds = new ArrayList<>(size);
+        List<RoadBridgePlanner.BridgeMode> bridgeModes = new ArrayList<>(size);
+        List<List<BlockPos>> surfacePositionsByIndex = new ArrayList<>(size);
+        List<List<BlockPos>> railingLightPositionsByIndex = new ArrayList<>(size);
+        List<List<BlockPos>> supportPositionsByIndex = new ArrayList<>(size);
+        List<List<BlockPos>> pierLightPositionsByIndex = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             BlockPos center = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
             BlockPos deckCenter = new BlockPos(center.getX(), placementHeights[i], center.getZ()).immutable();
@@ -162,6 +167,7 @@ public final class RoadCorridorPlanner {
             RoadBridgePlanner.BridgeMode bridgeMode = bridgePlan == null ? RoadBridgePlanner.BridgeMode.NONE : bridgePlan.mode();
             RoadCorridorPlan.SegmentKind segmentKind = classify(i, bridgePlan, supportNodeByIndex, size);
             List<BlockPos> surfacePositions = buildSurfacePositions(centerPath, i, placementHeights);
+            List<BlockPos> railingLightPositions = buildRailingLightPositions(centerPath, i, deckCenter, segmentKind);
             List<BlockPos> supportPositions = List.of();
             List<BlockPos> pierLightPositions = List.of();
             RoadBridgePlanner.BridgePierNode supportNode = supportNodeByIndex.get(i);
@@ -169,17 +175,50 @@ public final class RoadCorridorPlanner {
                 supportPositions = buildSupportPositions(supportNode.foundationPos(), deckCenter.getY());
                 pierLightPositions = buildBridgeEdgeMarkerPositions(centerPath, i, deckCenter);
             }
+            segmentKinds.add(segmentKind);
+            bridgeModes.add(bridgeMode);
+            surfacePositionsByIndex.add(surfacePositions);
+            railingLightPositionsByIndex.add(railingLightPositions);
+            supportPositionsByIndex.add(supportPositions);
+            pierLightPositionsByIndex.add(pierLightPositions);
+        }
+
+        for (int i = 0; i < size - 1; i++) {
+            RoadCorridorPlan.SegmentKind currentKind = segmentKinds.get(i);
+            RoadCorridorPlan.SegmentKind nextKind = segmentKinds.get(i + 1);
+            if (requiresBridgeheadOverlapRepair(currentKind, nextKind)) {
+                if (usesTerrainEnvelope(currentKind) && !usesTerrainEnvelope(nextKind)) {
+                    surfacePositionsByIndex.set(i + 1, ensureTransitionOverlap(surfacePositionsByIndex.get(i), surfacePositionsByIndex.get(i + 1)));
+                } else if (!usesTerrainEnvelope(currentKind) && usesTerrainEnvelope(nextKind)) {
+                    surfacePositionsByIndex.set(i, ensureTransitionOverlap(surfacePositionsByIndex.get(i + 1), surfacePositionsByIndex.get(i)));
+                }
+                continue;
+            }
+            if (requiresAdjacentSliceClosureRepair(
+                    surfacePositionsByIndex.get(i),
+                    surfacePositionsByIndex.get(i + 1),
+                    placementHeights[i],
+                    placementHeights[i + 1]
+            )) {
+                surfacePositionsByIndex.set(i + 1, ensureTransitionOverlap(surfacePositionsByIndex.get(i), surfacePositionsByIndex.get(i + 1)));
+            }
+        }
+
+        List<RoadCorridorPlan.CorridorSlice> slices = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            List<BlockPos> surfacePositions = surfacePositionsByIndex.get(i);
+            RoadCorridorPlan.SegmentKind segmentKind = segmentKinds.get(i);
             slices.add(new RoadCorridorPlan.CorridorSlice(
                     i,
-                    deckCenter,
+                    deckCenters.get(i),
                     segmentKind,
-                    bridgeMode,
+                    bridgeModes.get(i),
                     surfacePositions,
                     buildExcavationPositions(surfacePositions, segmentKind),
                     buildClearancePositions(surfacePositions, segmentKind),
-                    buildRailingLightPositions(centerPath, i, deckCenter, segmentKind),
-                    supportPositions,
-                    pierLightPositions
+                    railingLightPositionsByIndex.get(i),
+                    supportPositionsByIndex.get(i),
+                    pierLightPositionsByIndex.get(i)
             ));
         }
         return new RoadCorridorPlan(centerPath, slices, buildNavigationChannelFromPlans(deckCenters, bridgePlans), true);
