@@ -728,6 +728,16 @@ public final class ManualRoadPlannerService {
                                                            Set<BlockPos> networkNodes,
                                                            java.util.Map<BlockPos, Set<BlockPos>> adjacency) {
         Set<Long> segmentBlockedColumns = unblockPathEndpoints(blockedColumns, sourceAnchor, targetAnchor);
+        if (!shouldUseHybridNetworkForSegment(level, sourceAnchor, targetAnchor, allowWaterFallback)) {
+            return resolveBridgeAwareDirectSegment(
+                    level,
+                    sourceAnchor,
+                    targetAnchor,
+                    segmentBlockedColumns,
+                    excludedColumns,
+                    allowWaterFallback
+            );
+        }
         RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
                 List.of(sourceAnchor),
                 List.of(targetAnchor),
@@ -739,6 +749,65 @@ public final class ManualRoadPlannerService {
                 }
         );
         return route.fullPath().size() >= 2 ? route.fullPath() : List.of();
+    }
+
+    private static boolean shouldUseHybridNetworkForSegment(ServerLevel level,
+                                                            BlockPos sourceAnchor,
+                                                            BlockPos targetAnchor,
+                                                            boolean allowWaterFallback) {
+        if (!allowWaterFallback || level == null || sourceAnchor == null || targetAnchor == null) {
+            return true;
+        }
+        return !isBridgeSegmentEndpoint(level, sourceAnchor) && !isBridgeSegmentEndpoint(level, targetAnchor);
+    }
+
+    private static boolean isBridgeSegmentEndpoint(ServerLevel level, BlockPos anchor) {
+        RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForAnchorSelection(level, anchor);
+        if (diagnostics == null || diagnostics.surface() == null) {
+            return false;
+        }
+        return diagnostics.bridgeRequired() || anchor.getY() > diagnostics.surface().getY();
+    }
+
+    private static List<BlockPos> resolveBridgeAwareDirectSegment(ServerLevel level,
+                                                                  BlockPos sourceAnchor,
+                                                                  BlockPos targetAnchor,
+                                                                  Set<Long> blockedColumns,
+                                                                  Set<Long> excludedColumns,
+                                                                  boolean allowWaterFallback) {
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        List<BlockPos> localBridgeAnchors = filterTraversableIntermediateAnchors(
+                level,
+                collectBridgeSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns),
+                blockedColumns,
+                excludedColumns
+        );
+        if (localBridgeAnchors.isEmpty()) {
+            return findPreferredRoadPath(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, allowWaterFallback);
+        }
+
+        ArrayList<BlockPos> stitched = new ArrayList<>();
+        BlockPos previous = sourceAnchor;
+        for (BlockPos anchor : localBridgeAnchors) {
+            if (anchor == null || anchor.equals(previous) || anchor.equals(targetAnchor)) {
+                continue;
+            }
+            List<BlockPos> segment = findPreferredRoadPath(level, previous, anchor, blockedColumns, excludedColumns, allowWaterFallback);
+            if (segment.size() < 2) {
+                return List.of();
+            }
+            appendPathPreservingOrder(stitched, segment);
+            previous = anchor;
+        }
+
+        List<BlockPos> finalSegment = findPreferredRoadPath(level, previous, targetAnchor, blockedColumns, excludedColumns, allowWaterFallback);
+        if (finalSegment.size() < 2) {
+            return List.of();
+        }
+        appendPathPreservingOrder(stitched, finalSegment);
+        return List.copyOf(stitched);
     }
 
     private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
@@ -773,9 +842,6 @@ public final class ManualRoadPlannerService {
                 MAX_SEGMENT_INTERMEDIATE_ANCHORS,
                 NETWORK_ANCHOR_CORRIDOR_DISTANCE
         ));
-        if (allowWaterFallback) {
-            merged.addAll(collectBridgeSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns));
-        }
         return filterTraversableIntermediateAnchors(
                 level,
                 sortAnchorsAlongRoute(sourceAnchor, targetAnchor, merged),

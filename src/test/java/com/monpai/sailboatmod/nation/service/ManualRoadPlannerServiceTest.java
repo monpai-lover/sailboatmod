@@ -482,7 +482,7 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
-    void collectSegmentAnchorsIncludesBridgeDeckCandidatesWhenWaterFallbackAllowed() {
+    void collectSegmentAnchorsDoesNotForceBridgeDeckCandidatesIntoGlobalHybridChain() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
@@ -509,8 +509,30 @@ class ManualRoadPlannerServiceTest {
                 true
         );
 
-        assertTrue(anchors.contains(new BlockPos(4, 71, 0)));
-        assertTrue(anchors.contains(new BlockPos(8, 71, 0)));
+        assertEquals(List.of(), anchors);
+    }
+
+    @Test
+    void bridgeEndpointSegmentsBypassHybridNetworkResolver() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        level.surfaceHeights.put(columnKey(5, 0), 62);
+        level.blockStates.put(new BlockPos(5, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+        for (int y = 63; y <= 66; y++) {
+            level.blockStates.put(new BlockPos(5, y, 0).asLong(), Blocks.WATER.defaultBlockState());
+        }
+        setSurfaceColumn(level, 10, 0, 64, Blocks.DIRT.defaultBlockState());
+
+        assertFalse(invokeShouldUseHybridNetworkForSegment(
+                level,
+                new BlockPos(5, 67, 0),
+                new BlockPos(10, 64, 0),
+                true
+        ));
     }
 
     @Test
@@ -1034,6 +1056,25 @@ class ManualRoadPlannerServiceTest {
             );
             method.setAccessible(true);
             return (List<BlockPos>) method.invoke(null, level, sourceAnchor, targetAnchor, blockedColumns, networkNodes);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static boolean invokeShouldUseHybridNetworkForSegment(ServerLevel level,
+                                                                  BlockPos sourceAnchor,
+                                                                  BlockPos targetAnchor,
+                                                                  boolean allowWaterFallback) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "shouldUseHybridNetworkForSegment",
+                    ServerLevel.class,
+                    BlockPos.class,
+                    BlockPos.class,
+                    boolean.class
+            );
+            method.setAccessible(true);
+            return (boolean) method.invoke(null, level, sourceAnchor, targetAnchor, allowWaterFallback);
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
             throw new AssertionError(e);
         }
