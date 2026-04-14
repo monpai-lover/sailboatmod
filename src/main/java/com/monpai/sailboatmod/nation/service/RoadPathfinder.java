@@ -94,7 +94,15 @@ public final class RoadPathfinder {
         if (finalized.isEmpty()) {
             logPathFailure("centerline_fallback_to_route_nodes", from, to, allowWaterFallback, combinedBlocked, startDiagnostics, endDiagnostics, plan);
         }
-        return finalized.isEmpty() ? plan.path() : finalized;
+        List<BlockPos> normalizedFinalized = normalizeReturnedPath(from, to, finalized);
+        if (!normalizedFinalized.isEmpty()) {
+            return normalizedFinalized;
+        }
+        List<BlockPos> normalizedPlanned = normalizeReturnedPath(from, to, plan.path());
+        if (normalizedPlanned.isEmpty()) {
+            logPathFailure("normalized_path_invalid", from, to, allowWaterFallback, combinedBlocked, startDiagnostics, endDiagnostics, plan);
+        }
+        return normalizedPlanned;
     }
 
     static PlannedPathResult findGroundPathForPlan(Level level,
@@ -157,8 +165,55 @@ public final class RoadPathfinder {
         return describeColumn(level, pos, blockedColumns == null ? Set.of() : blockedColumns, true);
     }
 
+    static List<BlockPos> normalizeReturnedPathForTest(BlockPos from, BlockPos to, List<BlockPos> path) {
+        return normalizeReturnedPath(from, to, path);
+    }
+
     private static boolean isBridgeBlockedForMode(boolean bridge, boolean allowWaterFallback) {
         return bridge && !allowWaterFallback;
+    }
+
+    private static List<BlockPos> normalizeReturnedPath(BlockPos from, BlockPos to, List<BlockPos> path) {
+        if (from == null || to == null || path == null || path.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> normalized = new ArrayList<>();
+        appendPathNode(normalized, from);
+        for (BlockPos pos : path) {
+            appendPathNode(normalized, pos);
+        }
+        appendPathNode(normalized, to);
+        return isContinuousPath(normalized) ? List.copyOf(normalized) : List.of();
+    }
+
+    private static boolean isContinuousPath(List<BlockPos> path) {
+        if (path == null || path.size() < 2) {
+            return false;
+        }
+        for (int i = 1; i < path.size(); i++) {
+            BlockPos previous = path.get(i - 1);
+            BlockPos current = path.get(i);
+            if (previous == null || current == null) {
+                return false;
+            }
+            int dx = Math.abs(current.getX() - previous.getX());
+            int dz = Math.abs(current.getZ() - previous.getZ());
+            if (Math.max(dx, dz) > 1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void appendPathNode(List<BlockPos> ordered, BlockPos pos) {
+        if (ordered == null || pos == null) {
+            return;
+        }
+        BlockPos immutable = pos.immutable();
+        if (!ordered.isEmpty() && ordered.get(ordered.size() - 1).equals(immutable)) {
+            return;
+        }
+        ordered.add(immutable);
     }
 
     private static ColumnDiagnostics describeColumn(Level level, BlockPos pos, Set<Long> blockedColumns, boolean allowWaterFallback) {

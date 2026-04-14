@@ -312,6 +312,60 @@ class RoadPathfinderTest {
         assertTrue(path.stream().allMatch(pos -> pos.getY() >= 62), path.toString());
     }
 
+    @Test
+    void returnedPathNormalizationRepairsMissingRequestedEndpoints() {
+        List<BlockPos> normalized = RoadPathfinder.normalizeReturnedPathForTest(
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 64, 0),
+                List.of(
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(3, 64, 0)
+                )
+        );
+
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(3, 64, 0),
+                        new BlockPos(4, 64, 0)
+                ),
+                normalized
+        );
+    }
+
+    @Test
+    void returnedPathNormalizationRejectsDisconnectedCandidate() {
+        List<BlockPos> normalized = RoadPathfinder.normalizeReturnedPathForTest(
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 64, 0),
+                List.of(
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(3, 64, 0)
+                )
+        );
+
+        assertTrue(normalized.isEmpty());
+    }
+
+    @Test
+    void returnedPathNormalizationAllowsElevatedBridgeDeckWhenColumnsStayAdjacent() {
+        List<BlockPos> normalized = RoadPathfinder.normalizeReturnedPathForTest(
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 64, 0),
+                List.of(
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0)
+                )
+        );
+
+        assertFalse(normalized.isEmpty());
+        assertEquals(new BlockPos(2, 68, 0), normalized.get(2));
+    }
+
     private static long columnKey(int x, int z) {
         return BlockPos.asLong(x, 0, z);
     }

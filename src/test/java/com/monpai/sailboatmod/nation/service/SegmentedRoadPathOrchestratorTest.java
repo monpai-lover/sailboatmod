@@ -107,6 +107,28 @@ class SegmentedRoadPathOrchestratorTest {
     }
 
     @Test
+    void acceptsBridgeDeckSegmentsWithVerticalElevationChanges() {
+        BlockPos start = new BlockPos(0, 64, 0);
+        BlockPos end = new BlockPos(4, 64, 0);
+
+        SegmentedRoadPathOrchestrator.OrchestratedPath result = SegmentedRoadPathOrchestrator.planForTest(
+                start,
+                end,
+                List.of(),
+                request -> List.of(
+                        request.from(),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        request.to()
+                ),
+                request -> false
+        );
+
+        assertTrue(result.success());
+    }
+
+    @Test
     void collectsIntermediateAnchorsInRouteOrderAndDropsOffCorridorCandidates() {
         BlockPos start = new BlockPos(0, 64, 0);
         BlockPos end = new BlockPos(100, 64, 0);

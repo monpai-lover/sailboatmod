@@ -213,9 +213,8 @@ public final class SegmentedRoadPathOrchestrator {
                 return false;
             }
             int dx = Math.abs(current.getX() - previous.getX());
-            int dy = Math.abs(current.getY() - previous.getY());
             int dz = Math.abs(current.getZ() - previous.getZ());
-            if (Math.max(dx, Math.max(dy, dz)) > 1) {
+            if (Math.max(dx, dz) > 1) {
                 return false;
             }
         }
