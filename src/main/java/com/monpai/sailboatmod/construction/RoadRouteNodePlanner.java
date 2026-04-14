@@ -89,8 +89,8 @@ public final class RoadRouteNodePlanner {
             return RoutePlan.empty();
         }
 
-        RouteColumn start = map.columnAt(map.start().getX(), map.start().getZ());
-        RouteColumn end = map.columnAt(map.end().getX(), map.end().getZ());
+        RouteColumn start = map.columnAt(map.start());
+        RouteColumn end = map.columnAt(map.end());
         if (!isTraversable(start, false) || !isTraversable(end, false)) {
             return RoutePlan.empty();
         }
@@ -135,7 +135,7 @@ public final class RoadRouteNodePlanner {
                 if (!map.contains(step.getX(), step.getZ())) {
                     return RoutePlan.empty();
                 }
-                RouteColumn column = map.columnAt(step.getX(), step.getZ());
+                RouteColumn column = map.columnAt(step);
                 if (!isTraversable(column, true)) {
                     return RoutePlan.empty();
                 }
@@ -218,8 +218,8 @@ public final class RoadRouteNodePlanner {
     }
 
     private static RoutePlan search(RouteMap map, boolean allowBridgeColumns) {
-        RouteColumn start = map.columnAt(map.start().getX(), map.start().getZ());
-        RouteColumn end = map.columnAt(map.end().getX(), map.end().getZ());
+        RouteColumn start = map.columnAt(map.start());
+        RouteColumn end = map.columnAt(map.end());
         if (!isTraversable(start, allowBridgeColumns) || !isTraversable(end, allowBridgeColumns)) {
             LOGGER.warn(
                     "RoadRouteNodePlanner anchor_rejected allowBridgeColumns={} bounds={} start={} end={}",
@@ -289,7 +289,7 @@ public final class RoadRouteNodePlanner {
                     continue;
                 }
 
-                RouteColumn next = map.columnAt(nextX, nextZ);
+                RouteColumn next = map.columnAt(new BlockPos(nextX, current.column().surfacePos().getY(), nextZ));
                 if (!isTraversable(next, allowBridgeColumns)
                         || Math.abs(next.surfacePos().getY() - current.column().surfacePos().getY()) > MAX_STEP_HEIGHT) {
                     continue;
@@ -351,8 +351,8 @@ public final class RoadRouteNodePlanner {
     }
 
     private static boolean cutsCorner(RouteMap map, BlockPos currentPos, int[] direction, boolean allowBridgeColumns) {
-        RouteColumn horizontal = map.columnAt(currentPos.getX() + direction[0], currentPos.getZ());
-        RouteColumn vertical = map.columnAt(currentPos.getX(), currentPos.getZ() + direction[1]);
+        RouteColumn horizontal = map.columnAt(new BlockPos(currentPos.getX() + direction[0], currentPos.getY(), currentPos.getZ()));
+        RouteColumn vertical = map.columnAt(new BlockPos(currentPos.getX(), currentPos.getY(), currentPos.getZ() + direction[1]));
         return !isTraversable(horizontal, allowBridgeColumns) && !isTraversable(vertical, allowBridgeColumns);
     }
 
@@ -507,13 +507,42 @@ public final class RoadRouteNodePlanner {
         }
 
         RouteColumn columnAt(int x, int z) {
+            return columnAt(new BlockPos(x, interpolateHintY(x, z), z));
+        }
+
+        RouteColumn columnAt(BlockPos preferredPos) {
+            if (preferredPos == null) {
+                return new RouteColumn(null, true, false, 0, 0, false);
+            }
+            int x = preferredPos.getX();
+            int z = preferredPos.getZ();
             if (!contains(x, z)) {
                 return new RouteColumn(null, true, false, 0, 0, false);
             }
+            BlockPos hint = preferredPos.immutable();
             return cache.computeIfAbsent(columnKey(x, z), key -> {
-                RouteColumn sampled = sampler.apply(new BlockPos(x, 0, z));
+                RouteColumn sampled = sampler.apply(hint);
                 return sampled == null ? new RouteColumn(null, true, false, 0, 0, false) : sampled;
             });
+        }
+
+        private int interpolateHintY(int x, int z) {
+            int dx = end.getX() - start.getX();
+            int dz = end.getZ() - start.getZ();
+            int dominant = Math.max(Math.abs(dx), Math.abs(dz));
+            if (dominant <= 0) {
+                return start.getY();
+            }
+            double progress;
+            if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
+                progress = (x - start.getX()) / (double) dx;
+            } else if (dz != 0) {
+                progress = (z - start.getZ()) / (double) dz;
+            } else {
+                progress = 0.0D;
+            }
+            progress = Math.max(0.0D, Math.min(1.0D, progress));
+            return (int) Math.round(start.getY() + ((end.getY() - start.getY()) * progress));
         }
 
         RouteMap expanded() {

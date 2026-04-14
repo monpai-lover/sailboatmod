@@ -257,6 +257,35 @@ class RoadPathfinderTest {
         assertTrue(path.stream().anyMatch(pos -> pos.getX() >= 2 && pos.getX() <= 6 && pos.getY() >= 68), path.toString());
     }
 
+    @Test
+    void findPathKeepsRaisedExistingDeckInsteadOfDroppingToBlockedSupportSurface() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = 0; x <= 3; x++) {
+            level.surfaceHeights.put(columnKey(x, 0), 59);
+            level.blockStates.put(new BlockPos(x, 58, 0).asLong(), Blocks.STONE.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 59, 0).asLong(), Blocks.OAK_FENCE.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, 0).asLong(), Blocks.STONE_BRICK_SLAB.defaultBlockState());
+        }
+
+        List<BlockPos> path = RoadPathfinder.findPath(
+                level,
+                new BlockPos(0, 62, 0),
+                new BlockPos(3, 62, 0),
+                java.util.Set.of(),
+                java.util.Set.of(),
+                true
+        );
+
+        assertFalse(path.isEmpty(), "raised deck path should not be empty");
+        assertEquals(new BlockPos(0, 62, 0), path.get(0));
+        assertEquals(new BlockPos(3, 62, 0), path.get(path.size() - 1));
+        assertTrue(path.stream().allMatch(pos -> pos.getY() >= 62), path.toString());
+    }
+
     private static long columnKey(int x, int z) {
         return BlockPos.asLong(x, 0, z);
     }
