@@ -14,7 +14,7 @@ public final class RoadBridgePlanner {
 
     private static final int BRIDGE_RANGE_MERGE_GAP = 4;
     private static final int MIN_BRIDGE_RANGE_LENGTH = 3;
-    private static final int MAX_ARCH_SPAN_COLUMNS = 3;
+    private static final int MAX_ARCH_SPAN_COLUMNS = 6;
     private static final int MIN_UNSUPPORTED_FOR_ARCH = 4;
     private static final int MIN_DROP_FOR_ARCH = 6;
     private static final int MAX_PIER_ANCHOR_GAP = 3;
@@ -357,14 +357,6 @@ public final class RoadBridgePlanner {
                                                   IntUnaryOperator terrainYAt,
                                                   IntUnaryOperator waterSurfaceYAt,
                                                   IntPredicate foundationSupportedAt) {
-        List<Integer> supportableInterior = new ArrayList<>();
-        for (int i = start + 1; i < end; i++) {
-            if (foundationSupportedAt.test(i)) {
-                supportableInterior.add(i);
-            }
-        }
-
-        List<Integer> interiorAnchors = distributePierAnchors(start, end, supportableInterior);
         int navigableStart = -1;
         int navigableEnd = -1;
         for (int i = start; i <= end; i++) {
@@ -375,6 +367,16 @@ public final class RoadBridgePlanner {
                 navigableEnd = i;
             }
         }
+
+        List<Integer> supportableInterior = new ArrayList<>();
+        for (int i = start + 1; i < end; i++) {
+            boolean channelBoundary = i == navigableStart || i == navigableEnd;
+            if (foundationSupportedAt.test(i) && (!navigableAt.test(i) || channelBoundary)) {
+                supportableInterior.add(i);
+            }
+        }
+
+        List<Integer> interiorAnchors = distributePierAnchors(start, end, supportableInterior);
 
         LinkedHashSet<Integer> channelAnchors = new LinkedHashSet<>();
         if (navigableStart >= 0) {
