@@ -259,6 +259,34 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
+    void rollbackTrackedPositionsIncludePlannedPierColumnsFromLongBridgePlan() {
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 68, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        new BlockPos(4, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(6, 68, 0),
+                        new BlockPos(7, 68, 0),
+                        new BlockPos(8, 68, 0),
+                        new BlockPos(9, 64, 0)
+                ),
+                List.of(new RoadPlacementPlan.BridgeRange(1, 8)),
+                List.of(new RoadPlacementPlan.BridgeRange(4, 5))
+        );
+
+        List<BlockPos> tracked = invokeRoadRollbackTrackedPositions(null, plan);
+        List<BlockPos> pierBlocks = plan.corridorPlan().slices().stream()
+                .flatMap(slice -> slice.supportPositions().stream())
+                .toList();
+
+        assertFalse(pierBlocks.isEmpty());
+        assertTrue(tracked.containsAll(pierBlocks), () -> tracked.toString());
+    }
+
+    @Test
     void rollbackSnapshotsRestoreOriginalTerrainFluidAndClearedHeadspace() {
         List<BlockPos> tracked = List.of(
                 new BlockPos(0, 63, 0),

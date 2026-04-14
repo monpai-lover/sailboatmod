@@ -234,8 +234,8 @@ public final class RoadHybridRouteResolver {
             return HybridRoute.none();
         }
 
-        ConnectorResult connector = planner.plan(source, node, true);
-        if (connector == null || !connector.hasPath()) {
+        ConnectorResult connector = planConnector(source, node, planner);
+        if (!hasConnectorPath(source, node, connector)) {
             return HybridRoute.none();
         }
 
@@ -245,7 +245,7 @@ public final class RoadHybridRouteResolver {
                 target,
                 stitch(connector.path(), networkPath),
                 true,
-                1,
+                connectorCount(source, node),
                 connector.bridgeColumns(),
                 connector.longestBridgeRun(),
                 connector.adjacentWaterColumns()
@@ -262,8 +262,8 @@ public final class RoadHybridRouteResolver {
             return HybridRoute.none();
         }
 
-        ConnectorResult connector = planner.plan(node, target, true);
-        if (connector == null || !connector.hasPath()) {
+        ConnectorResult connector = planConnector(node, target, planner);
+        if (!hasConnectorPath(node, target, connector)) {
             return HybridRoute.none();
         }
 
@@ -273,7 +273,7 @@ public final class RoadHybridRouteResolver {
                 target,
                 stitch(networkPath, connector.path()),
                 true,
-                1,
+                connectorCount(node, target),
                 connector.bridgeColumns(),
                 connector.longestBridgeRun(),
                 connector.adjacentWaterColumns()
@@ -294,9 +294,9 @@ public final class RoadHybridRouteResolver {
             return HybridRoute.none();
         }
 
-        ConnectorResult left = planner.plan(source, leftNode, true);
-        ConnectorResult right = planner.plan(rightNode, target, true);
-        if (left == null || right == null || !left.hasPath() || !right.hasPath()) {
+        ConnectorResult left = planConnector(source, leftNode, planner);
+        ConnectorResult right = planConnector(rightNode, target, planner);
+        if (!hasConnectorPath(source, leftNode, left) || !hasConnectorPath(rightNode, target, right)) {
             return HybridRoute.none();
         }
 
@@ -310,7 +310,7 @@ public final class RoadHybridRouteResolver {
                 target,
                 merged,
                 true,
-                2,
+                connectorCount(source, leftNode) + connectorCount(rightNode, target),
                 bridgeColumns,
                 longestBridgeRun,
                 adjacentWaterColumns
@@ -471,6 +471,27 @@ public final class RoadHybridRouteResolver {
         }
         appendPathNode(normalized, expectedEnd);
         return List.copyOf(normalized);
+    }
+
+    private static ConnectorResult planConnector(BlockPos from, BlockPos to, ConnectorPlanner planner) {
+        if (from == null || to == null || planner == null) {
+            return null;
+        }
+        if (from.equals(to)) {
+            return new ConnectorResult(List.of(from.immutable()), 0, 0, 0, false);
+        }
+        return planner.plan(from, to, true);
+    }
+
+    private static boolean hasConnectorPath(BlockPos from, BlockPos to, ConnectorResult connector) {
+        if (from != null && from.equals(to)) {
+            return connector != null && !connector.path().isEmpty();
+        }
+        return connector != null && connector.hasPath();
+    }
+
+    private static int connectorCount(BlockPos from, BlockPos to) {
+        return from != null && from.equals(to) ? 0 : 1;
     }
 
     private static void appendPathNode(List<BlockPos> ordered, BlockPos pos) {

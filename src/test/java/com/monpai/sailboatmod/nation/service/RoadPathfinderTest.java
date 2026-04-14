@@ -366,6 +366,19 @@ class RoadPathfinderTest {
         assertEquals(new BlockPos(2, 68, 0), normalized.get(2));
     }
 
+    @Test
+    void returnedPathNormalizationTreatsSamePointRequestAsSatisfiedNoOp() {
+        BlockPos anchor = new BlockPos(8, 64, 8);
+
+        List<BlockPos> normalized = RoadPathfinder.normalizeReturnedPathForTest(
+                anchor,
+                anchor,
+                List.of(anchor)
+        );
+
+        assertEquals(List.of(anchor), normalized);
+    }
+
     private static long columnKey(int x, int z) {
         return BlockPos.asLong(x, 0, z);
     }

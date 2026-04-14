@@ -1,10 +1,8 @@
 package com.monpai.sailboatmod.construction;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.Half;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -508,7 +506,7 @@ public final class RoadGeometryPlanner {
                 state,
                 sourceIndex,
                 distanceSq,
-                state.getBlock() instanceof StairBlock
+                isPreferredTransitionState(state)
         );
         long key = pos.asLong();
         GhostCandidate existing = ghostByPos.get(key);
@@ -597,12 +595,11 @@ public final class RoadGeometryPlanner {
         BlockPos lowerPos = previousLower ? previousPos : currentPos;
         int lowerIndex = previousLower ? previousIndex : currentIndex;
         BlockPos higherPos = previousLower ? currentPos : previousPos;
-        BlockState stairState = staircaseState(
-                Objects.requireNonNull(blockStateSupplier.apply(lowerPos), "blockStateSupplier returned null for pos " + lowerPos),
-                stairFacing(lowerPos, higherPos)
+        BlockState transitionState = slabStateForFamily(
+                Objects.requireNonNull(blockStateSupplier.apply(lowerPos), "blockStateSupplier returned null for pos " + lowerPos)
         );
-        return stairState.getBlock() instanceof StairBlock
-                ? new GhostRoadBlock(lowerPos, stairState)
+        return isPreferredTransitionState(transitionState)
+                ? new GhostRoadBlock(lowerPos, transitionState)
                 : null;
     }
 
@@ -648,12 +645,10 @@ public final class RoadGeometryPlanner {
         if (isAmbiguousDiagonalClimb(path, index)) {
             return state;
         }
-        boolean fullBlockBridgeDeck = state.is(net.minecraft.world.level.block.Blocks.STONE_BRICKS);
-        if (!fullBlockBridgeDeck
-                && shouldUseSlabTransition(currentPos.getX(), currentPos.getZ(), currentPos.getY(), path, placementHeights)) {
-            return state;
+        if (shouldUseSlabTransition(currentPos.getX(), currentPos.getZ(), currentPos.getY(), path, placementHeights)) {
+            return slabStateForFamily(state);
         }
-        return staircaseState(state, stairFacing(path, placementHeights, index));
+        return fullBlockStateForFamily(state);
     }
 
     private static boolean isAmbiguousDiagonalClimb(List<BlockPos> path, int index) {
@@ -675,85 +670,50 @@ public final class RoadGeometryPlanner {
         return dx > 0 && dz > 0;
     }
 
-    private static Direction stairFacing(List<BlockPos> path, int[] placementHeights, int index) {
-        BlockPos current = path.get(index);
-        int currentHeight = placementHeights[index];
-        if (index > 0) {
-            int previousHeight = placementHeights[index - 1];
-            if (previousHeight != currentHeight) {
-                BlockPos previous = path.get(index - 1);
-                return previousHeight < currentHeight
-                        ? stairFacing(previous, current)
-                        : stairFacing(current, previous);
-            }
+    private static BlockState slabStateForFamily(BlockState state) {
+        if (state == null) {
+            return Blocks.AIR.defaultBlockState();
         }
-        if (index + 1 < path.size()) {
-            int nextHeight = placementHeights[index + 1];
-            if (nextHeight != currentHeight) {
-                BlockPos next = path.get(index + 1);
-                return currentHeight < nextHeight
-                        ? stairFacing(current, next)
-                        : stairFacing(next, current);
-            }
+        if (state.is(Blocks.STONE_BRICKS) || state.is(Blocks.STONE_BRICK_SLAB) || state.is(Blocks.STONE_BRICK_STAIRS)) {
+            return Blocks.STONE_BRICK_SLAB.defaultBlockState();
         }
-
-        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : current;
-        BlockPos previous = index > 0 ? path.get(index - 1) : current;
-        int dx = Integer.compare(next.getX(), previous.getX());
-        int dz = Integer.compare(next.getZ(), previous.getZ());
-        if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
-            return dx > 0 ? Direction.WEST : Direction.EAST;
+        if (state.is(Blocks.SMOOTH_SANDSTONE_SLAB) || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS)) {
+            return Blocks.SMOOTH_SANDSTONE_SLAB.defaultBlockState();
         }
-        if (dz != 0) {
-            return dz > 0 ? Direction.NORTH : Direction.SOUTH;
+        if (state.is(Blocks.MUD_BRICK_SLAB) || state.is(Blocks.MUD_BRICK_STAIRS)) {
+            return Blocks.MUD_BRICK_SLAB.defaultBlockState();
         }
-        return Direction.NORTH;
-    }
-
-    private static Direction stairFacing(BlockPos lower, BlockPos higher) {
-        Direction uphill = directionBetween(lower, higher);
-        return uphill.getOpposite();
-    }
-
-    private static Direction directionBetween(BlockPos from, BlockPos to) {
-        int dx = Integer.compare(to.getX(), from.getX());
-        int dz = Integer.compare(to.getZ(), from.getZ());
-        if (Math.abs(dx) >= Math.abs(dz) && dx != 0) {
-            return dx > 0 ? Direction.EAST : Direction.WEST;
-        }
-        if (dz != 0) {
-            return dz > 0 ? Direction.SOUTH : Direction.NORTH;
-        }
-        return Direction.NORTH;
-    }
-
-    private static BlockState staircaseState(BlockState state, Direction facing) {
-        if (state.is(net.minecraft.world.level.block.Blocks.STONE_BRICKS)) {
-            return net.minecraft.world.level.block.Blocks.STONE_BRICK_STAIRS.defaultBlockState()
-                    .setValue(StairBlock.FACING, facing)
-                    .setValue(StairBlock.HALF, Half.BOTTOM);
-        }
-        if (state.is(net.minecraft.world.level.block.Blocks.STONE_BRICK_SLAB)) {
-            return net.minecraft.world.level.block.Blocks.STONE_BRICK_STAIRS.defaultBlockState()
-                    .setValue(StairBlock.FACING, facing)
-                    .setValue(StairBlock.HALF, Half.BOTTOM);
-        }
-        if (state.is(net.minecraft.world.level.block.Blocks.SMOOTH_SANDSTONE_SLAB)) {
-            return net.minecraft.world.level.block.Blocks.SMOOTH_SANDSTONE_STAIRS.defaultBlockState()
-                    .setValue(StairBlock.FACING, facing)
-                    .setValue(StairBlock.HALF, Half.BOTTOM);
-        }
-        if (state.is(net.minecraft.world.level.block.Blocks.MUD_BRICK_SLAB)) {
-            return net.minecraft.world.level.block.Blocks.MUD_BRICK_STAIRS.defaultBlockState()
-                    .setValue(StairBlock.FACING, facing)
-                    .setValue(StairBlock.HALF, Half.BOTTOM);
-        }
-        if (state.is(net.minecraft.world.level.block.Blocks.SPRUCE_SLAB)) {
-            return net.minecraft.world.level.block.Blocks.SPRUCE_STAIRS.defaultBlockState()
-                    .setValue(StairBlock.FACING, facing)
-                    .setValue(StairBlock.HALF, Half.BOTTOM);
+        if (state.is(Blocks.SPRUCE_SLAB) || state.is(Blocks.SPRUCE_STAIRS)) {
+            return Blocks.SPRUCE_SLAB.defaultBlockState();
         }
         return state;
+    }
+
+    private static BlockState fullBlockStateForFamily(BlockState state) {
+        if (state == null) {
+            return Blocks.AIR.defaultBlockState();
+        }
+        if (state.is(Blocks.STONE_BRICK_SLAB) || state.is(Blocks.STONE_BRICK_STAIRS)) {
+            return Blocks.STONE_BRICKS.defaultBlockState();
+        }
+        if (state.is(Blocks.SMOOTH_SANDSTONE_SLAB) || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS)) {
+            return Blocks.SANDSTONE.defaultBlockState();
+        }
+        if (state.is(Blocks.MUD_BRICK_SLAB) || state.is(Blocks.MUD_BRICK_STAIRS)) {
+            return Blocks.MUD_BRICKS.defaultBlockState();
+        }
+        if (state.is(Blocks.SPRUCE_SLAB) || state.is(Blocks.SPRUCE_STAIRS)) {
+            return Blocks.SPRUCE_PLANKS.defaultBlockState();
+        }
+        return state;
+    }
+
+    private static boolean isPreferredTransitionState(BlockState state) {
+        return state != null
+                && (state.is(Blocks.STONE_BRICK_SLAB)
+                || state.is(Blocks.SMOOTH_SANDSTONE_SLAB)
+                || state.is(Blocks.MUD_BRICK_SLAB)
+                || state.is(Blocks.SPRUCE_SLAB));
     }
 
     private static int[] smoothPlacementHeights(int[] baseHeights) {

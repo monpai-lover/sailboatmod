@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -251,6 +252,40 @@ class RoadHybridRouteResolverTest {
                 ),
                 candidate.fullPath()
         );
+    }
+
+    @Test
+    void existingRoadEndpointCandidatesDoNotRequestSamePointConnectors() {
+        BlockPos source = new BlockPos(0, 64, 0);
+        BlockPos target = new BlockPos(4, 64, 0);
+
+        RoadHybridRouteResolver.HybridRoute candidate = assertDoesNotThrow(() ->
+                RoadHybridRouteResolver.resolveForTest(
+                        List.of(source),
+                        List.of(target),
+                        Set.of(source, target),
+                        Map.of(
+                                source, Set.of(target),
+                                target, Set.of(source)
+                        ),
+                        (from, to, allowWaterFallback) -> {
+                            if (from.equals(to)) {
+                                throw new AssertionError("same-point connector should be treated as a no-op");
+                            }
+                            return new RoadHybridRouteResolver.ConnectorResult(
+                                    straightPath(from.getX(), to.getX()),
+                                    0,
+                                    0,
+                                    0,
+                                    true
+                            );
+                        }
+                )
+        );
+
+        assertTrue(candidate.usedExistingNetwork());
+        assertEquals(source, candidate.fullPath().get(0));
+        assertEquals(target, candidate.fullPath().get(candidate.fullPath().size() - 1));
     }
 
     @Test

@@ -15,6 +15,8 @@ public final class RoadCorridorPlanner {
     private static final int RAILING_LIGHT_OFFSET = 3;
     private static final int LAND_STREETLIGHT_INTERVAL = 24;
     private static final int BRIDGE_LIGHT_INTERVAL = 5;
+    private static final int MIN_BRIDGE_SPAN_FOR_PIERS = 7;
+    private static final int TARGET_PIER_SPACING = 4;
 
     private record SupportPlacementPlan(Set<Integer> supportIndexes, boolean valid) {
     }
@@ -291,6 +293,10 @@ public final class RoadCorridorPlanner {
             }
             int start = Math.max(0, range.startIndex());
             int end = Math.min(pathSize - 1, range.endIndex());
+            int spanLength = end - start + 1;
+            if (spanLength < MIN_BRIDGE_SPAN_FOR_PIERS) {
+                continue;
+            }
             int navigableStart = -1;
             int navigableEnd = -1;
             for (int i = start; i <= end; i++) {
@@ -322,11 +328,36 @@ public final class RoadCorridorPlanner {
             if (supportableInterior.isEmpty()) {
                 continue;
             }
-            for (int index : RoadBridgePlanner.distributePierAnchors(start, end, supportableInterior)) {
+            for (int index : distributeDiscretePierAnchors(supportableInterior)) {
                 supportIndexes.add(index);
             }
         }
         return new SupportPlacementPlan(Set.copyOf(supportIndexes), valid);
+    }
+
+    private static List<Integer> distributeDiscretePierAnchors(List<Integer> supportableInterior) {
+        if (supportableInterior == null || supportableInterior.isEmpty()) {
+            return List.of();
+        }
+        List<Integer> ordered = supportableInterior.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        if (ordered.isEmpty()) {
+            return List.of();
+        }
+        int anchorCount = Math.max(1, (int) Math.round((double) ordered.size() / (double) TARGET_PIER_SPACING));
+        anchorCount = Math.min(anchorCount, ordered.size());
+        if (anchorCount == 1) {
+            return List.of(ordered.get(ordered.size() / 2));
+        }
+        LinkedHashSet<Integer> anchors = new LinkedHashSet<>();
+        for (int i = 0; i < anchorCount; i++) {
+            int sampleIndex = (int) Math.round((double) i * (ordered.size() - 1) / (double) (anchorCount - 1));
+            anchors.add(ordered.get(sampleIndex));
+        }
+        return List.copyOf(anchors);
     }
 
     private static void addPierAnchorIndex(Set<Integer> supportIndexes,

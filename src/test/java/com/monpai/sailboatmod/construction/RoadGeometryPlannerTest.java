@@ -6,7 +6,6 @@ import net.minecraft.core.Holder;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.SharedConstants;
@@ -454,7 +453,7 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
-    void corridorApproachRampSlicesPromoteBridgeEntranceToStairs() {
+    void corridorApproachRampSlicesKeepBridgeEntranceAsSlabTransition() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0),
@@ -477,11 +476,11 @@ class RoadGeometryPlannerTest {
         );
 
         BlockState entranceState = stateAt(plan, new BlockPos(0, 65, 0));
-        assertTrue(entranceState.getBlock() instanceof StairBlock, String.valueOf(entranceState));
+        assertTrue(entranceState.is(Blocks.SPRUCE_SLAB), String.valueOf(entranceState));
     }
 
     @Test
-    void adjacentBridgeSlicesUseLowerSideStairInsteadOfVerticalPatchColumn() {
+    void adjacentBridgeSlicesUseLowerSideSlabInsteadOfVerticalPatchColumn() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0)
@@ -502,7 +501,7 @@ class RoadGeometryPlannerTest {
         );
 
         BlockState lowerState = stateAt(plan, new BlockPos(0, 65, 0));
-        assertTrue(lowerState.getBlock() instanceof StairBlock, String.valueOf(lowerState));
+        assertTrue(lowerState.is(Blocks.SPRUCE_SLAB), String.valueOf(lowerState));
         assertFalse(plan.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(1, 65, 0))),
                 () -> plan.ghostBlocks().toString());
     }

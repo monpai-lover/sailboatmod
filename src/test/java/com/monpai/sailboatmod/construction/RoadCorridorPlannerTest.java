@@ -45,7 +45,7 @@ class RoadCorridorPlannerTest {
         assertTrue(plan.slices().get(6).pierLightPositions().isEmpty());
         assertEquals(RoadCorridorPlan.SegmentKind.LAND_APPROACH, plan.slices().get(7).segmentKind());
         assertEquals(RoadCorridorPlan.SegmentKind.LAND_APPROACH, plan.slices().get(8).segmentKind());
-        assertTrue(plan.slices().get(5).supportPositions().size() > 0);
+        assertTrue(plan.slices().get(5).supportPositions().isEmpty());
         assertTrue(plan.slices().get(3).supportPositions().isEmpty());
         assertEquals(3, plan.navigationChannel().min().getX());
         assertEquals(4, plan.navigationChannel().max().getX());
@@ -364,7 +364,7 @@ class RoadCorridorPlannerTest {
         );
 
         assertEquals(
-                List.of(2, 4, 6),
+                List.of(4),
                 plan.slices().stream()
                         .filter(slice -> !slice.supportPositions().isEmpty())
                         .map(RoadCorridorPlan.CorridorSlice::index)

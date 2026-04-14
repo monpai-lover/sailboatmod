@@ -2,10 +2,8 @@ package com.monpai.sailboatmod.construction;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -17,7 +15,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadGeometryPlannerSlopeTest {
@@ -108,7 +105,7 @@ class RoadGeometryPlannerSlopeTest {
     }
 
     @Test
-    void keepsFirstClimbingNodeAsSlabBeforeContinuousRiseTurnsIntoStairs() {
+    void keepsFirstClimbingNodeAsSlabBeforeContinuousRiseTurnsIntoFullBlock() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0),
@@ -126,11 +123,11 @@ class RoadGeometryPlannerSlopeTest {
         BlockPos secondRise = toPlacement(new BlockPos(centerPath.get(2).getX(), 0, centerPath.get(2).getZ()), centerPath, placementHeights);
 
         assertTrue(statesByPos.get(firstRise).is(Blocks.STONE_BRICK_SLAB));
-        assertTrue(statesByPos.get(secondRise).is(Blocks.STONE_BRICK_STAIRS));
+        assertTrue(statesByPos.get(secondRise).is(Blocks.STONE_BRICKS));
     }
 
     @Test
-    void keepsOuterRibbonColumnsAsSlabsWhileClimbingCoreUsesStairs() {
+    void keepsOuterRibbonColumnsAsSlabsWhileClimbingCoreUsesFullBlocks() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0),
@@ -155,12 +152,12 @@ class RoadGeometryPlannerSlopeTest {
                 .map(column -> toPlacement(column, centerPath, placementHeights))
                 .orElseThrow();
 
-        assertTrue(statesByPos.get(nearPlacement).is(Blocks.STONE_BRICK_STAIRS));
+        assertTrue(statesByPos.get(nearPlacement).is(Blocks.STONE_BRICKS));
         assertTrue(statesByPos.get(outerPlacement).is(Blocks.STONE_BRICK_SLAB));
     }
 
     @Test
-    void overlappingSlopedTurnBlockPrefersStairStateOverEarlierSlabCandidate() {
+    void overlappingSlopedTurnBlockKeepsSlabAndFullBlockPaletteWithoutStairs() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 64, 0),
@@ -175,14 +172,14 @@ class RoadGeometryPlannerSlopeTest {
         );
         Map<BlockPos, BlockState> statesByPos = statesByPos(plan);
 
-        BlockPos overlapPos = findMixedOverlapWithEarlierSlab(centerPath);
-        assertNotNull(overlapPos, "Expected a mixed slab/stair overlap candidate");
-        assertTrue(statesByPos.containsKey(overlapPos));
-        assertTrue(statesByPos.get(overlapPos).is(Blocks.STONE_BRICK_STAIRS));
+        assertFalse(statesByPos.isEmpty());
+        assertTrue(statesByPos.values().stream().noneMatch(state -> state.is(Blocks.STONE_BRICK_STAIRS)));
+        assertTrue(statesByPos.values().stream().allMatch(state ->
+                state.is(Blocks.STONE_BRICK_SLAB) || state.is(Blocks.STONE_BRICKS)));
     }
 
     @Test
-    void uphillSegmentsFaceBackTowardLowerGround() {
+    void uphillSegmentsUseFullBlocksWithoutDirectionalState() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0),
@@ -201,12 +198,11 @@ class RoadGeometryPlannerSlopeTest {
                 .orElseThrow()
                 .state();
 
-        assertTrue(state.is(Blocks.STONE_BRICK_STAIRS));
-        assertEquals(Direction.WEST, state.getValue(StairBlock.FACING));
+        assertTrue(state.is(Blocks.STONE_BRICKS));
     }
 
     @Test
-    void bridgeheadRampKeepsSameFacingAsApproachDirection() {
+    void bridgeheadRampUsesSlabAndFullBlockTransitionsWithoutStairs() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0),
@@ -225,9 +221,8 @@ class RoadGeometryPlannerSlopeTest {
                 pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
         );
 
-        assertTrue(plan.ghostBlocks().stream().anyMatch(block ->
-                block.state().is(Blocks.STONE_BRICK_STAIRS)
-                        && block.state().getValue(StairBlock.FACING) == Direction.WEST));
+        assertTrue(plan.ghostBlocks().stream().noneMatch(block -> block.state().is(Blocks.STONE_BRICK_STAIRS)));
+        assertTrue(plan.ghostBlocks().stream().anyMatch(block -> block.state().is(Blocks.STONE_BRICK_SLAB)));
     }
 
     @Test
@@ -272,49 +267,6 @@ class RoadGeometryPlannerSlopeTest {
         return new BlockPos(column.getX(), y, column.getZ());
     }
 
-    private static BlockPos findMixedOverlapWithEarlierSlab(List<BlockPos> centerPath) {
-        int[] sampledHeights = centerPath.stream().mapToInt(pos -> pos.getY() + 1).toArray();
-        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
-        Map<BlockPos, List<CandidateState>> candidatesByPos = new LinkedHashMap<>();
-
-        for (int i = 0; i < centerPath.size(); i++) {
-            boolean stairSegment = isStairSegment(sampledHeights, i);
-            for (BlockPos pos : RoadGeometryPlanner.slicePositions(centerPath, i)) {
-                boolean stairState = stairSegment
-                        && !RoadGeometryPlanner.shouldUseSlabTransition(pos.getX(), pos.getZ(), pos.getY(), centerPath, placementHeights)
-                        && RoadGeometryPlanner.isWithinStairTravelBand(pos.getX(), pos.getZ(), centerPath);
-                candidatesByPos.computeIfAbsent(pos, key -> new java.util.ArrayList<>())
-                        .add(new CandidateState(i, stairState));
-            }
-        }
-
-        for (Map.Entry<BlockPos, List<CandidateState>> entry : candidatesByPos.entrySet()) {
-            List<CandidateState> candidates = entry.getValue();
-            if (candidates.size() < 2) {
-                continue;
-            }
-            boolean hasStair = false;
-            boolean hasSlab = false;
-            int earliestIndex = Integer.MAX_VALUE;
-            boolean earliestIsStair = false;
-            for (CandidateState candidate : candidates) {
-                if (candidate.stairState()) {
-                    hasStair = true;
-                } else {
-                    hasSlab = true;
-                }
-                if (candidate.index() < earliestIndex) {
-                    earliestIndex = candidate.index();
-                    earliestIsStair = candidate.stairState();
-                }
-            }
-            if (hasStair && hasSlab && !earliestIsStair) {
-                return entry.getKey();
-            }
-        }
-        return null;
-    }
-
     private static boolean isStairSegment(int[] placementHeights, int index) {
         if (placementHeights.length < 3) {
             return false;
@@ -327,6 +279,4 @@ class RoadGeometryPlannerSlopeTest {
         return riseIn != 0 && riseOut != 0 && Integer.signum(riseIn) == Integer.signum(riseOut);
     }
 
-    private record CandidateState(int index, boolean stairState) {
-    }
 }

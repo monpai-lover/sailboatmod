@@ -55,6 +55,9 @@ public final class RoadPathfinder {
                                           Set<Long> blockedColumns,
                                           Set<Long> excludedColumns,
                                           boolean allowWaterFallback) {
+        if (from != null && from.equals(to)) {
+            return List.of(from.immutable());
+        }
         Set<Long> combinedBlocked = unblockColumns(
                 mergeBlockedColumns(blockedColumns, excludedColumns),
                 from,
@@ -174,7 +177,13 @@ public final class RoadPathfinder {
     }
 
     private static List<BlockPos> normalizeReturnedPath(BlockPos from, BlockPos to, List<BlockPos> path) {
-        if (from == null || to == null || path == null || path.isEmpty()) {
+        if (from == null || to == null || path == null) {
+            return List.of();
+        }
+        if (from.equals(to)) {
+            return List.of(from.immutable());
+        }
+        if (path.isEmpty()) {
             return List.of();
         }
         List<BlockPos> normalized = new ArrayList<>();

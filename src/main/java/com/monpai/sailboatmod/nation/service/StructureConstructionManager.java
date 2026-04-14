@@ -2402,9 +2402,6 @@ public final class StructureConstructionManager {
             return;
         }
         if (style.bridge()) {
-            if (isBridgePierState(style.surface())) {
-                fillRoadFoundation(level, pos, style.support(), WATER_BRIDGE_PIER_DEPTH);
-            }
             return;
         }
         fillRoadFoundation(level, pos, style.support(), ROAD_FOUNDATION_DEPTH);
@@ -2689,7 +2686,10 @@ public final class StructureConstructionManager {
             corridorTerrainOwnership.addAll(slice.excavationPositions());
             corridorTerrainOwnership.addAll(slice.clearancePositions());
         }
-        List<RoadGeometryPlanner.GhostRoadBlock> resolvedGhostBlocks = List.copyOf(ghostBlocks.values());
+        List<RoadGeometryPlanner.GhostRoadBlock> resolvedGhostBlocks = filterAlreadyPlacedRoadGhostBlocks(
+                level,
+                List.copyOf(ghostBlocks.values())
+        );
         if (terrainOwnershipResolver != null) {
             List<BlockPos> terrainOwnedBlocks = terrainOwnershipResolver.apply(resolvedGhostBlocks);
             if (terrainOwnedBlocks != null) {
@@ -2701,6 +2701,24 @@ public final class StructureConstructionManager {
                 toBuildSteps(resolvedGhostBlocks),
                 collectOwnedRoadBlocks(resolvedGhostBlocks, List.copyOf(corridorTerrainOwnership))
         );
+    }
+
+    private static List<RoadGeometryPlanner.GhostRoadBlock> filterAlreadyPlacedRoadGhostBlocks(ServerLevel level,
+                                                                                                List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        if (level == null || ghostBlocks == null || ghostBlocks.isEmpty()) {
+            return ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
+        }
+        ArrayList<RoadGeometryPlanner.GhostRoadBlock> filtered = new ArrayList<>(ghostBlocks.size());
+        for (RoadGeometryPlanner.GhostRoadBlock block : ghostBlocks) {
+            if (block == null || block.pos() == null || block.state() == null) {
+                continue;
+            }
+            RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(0, block.pos(), block.state());
+            if (!isRoadBuildStepPlaced(level.getBlockState(block.pos()), step)) {
+                filtered.add(block);
+            }
+        }
+        return List.copyOf(filtered);
     }
 
     private static RoadPlacementArtifacts buildRoadPlacementArtifacts(RoadCorridorPlan corridorPlan,
@@ -2761,14 +2779,18 @@ public final class StructureConstructionManager {
         }
         LinkedHashSet<BlockPos> expanded = new LinkedHashSet<>();
         for (BlockPos topAnchor : topAnchors.values()) {
+            ArrayList<BlockPos> column = new ArrayList<>();
             BlockPos cursor = topAnchor;
             while (cursor.getY() >= safeMinBuildHeight(level)) {
                 BlockState state = level.getBlockState(cursor);
                 if (!cursor.equals(topAnchor) && !isRoadPlacementReplaceable(state)) {
                     break;
                 }
-                expanded.add(cursor.immutable());
+                column.add(cursor.immutable());
                 cursor = cursor.below();
+            }
+            for (int i = column.size() - 1; i >= 0; i--) {
+                expanded.add(column.get(i));
             }
         }
         return expanded.isEmpty() ? supportPositions : List.copyOf(expanded);
