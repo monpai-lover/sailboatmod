@@ -3,9 +3,11 @@ package com.monpai.sailboatmod.construction;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.IntPredicate;
@@ -135,6 +137,52 @@ public final class RoadCorridorPlanner {
             ));
         }
         return new RoadCorridorPlan(centerPath, slices, buildNavigationChannel(deckCenters, navigableIndexes), valid);
+    }
+
+    public static RoadCorridorPlan plan(List<BlockPos> centerPath,
+                                        List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans,
+                                        int[] placementHeights) {
+        Objects.requireNonNull(centerPath, "centerPath");
+        Objects.requireNonNull(bridgePlans, "bridgePlans");
+        Objects.requireNonNull(placementHeights, "placementHeights");
+        int size = centerPath.size();
+        if (placementHeights.length != size) {
+            throw new IllegalArgumentException("placementHeights size must match centerPath size");
+        }
+
+        Map<Integer, RoadBridgePlanner.BridgeSpanPlan> planByIndex = expandBridgePlans(bridgePlans, size);
+        Map<Integer, RoadBridgePlanner.BridgePierNode> supportNodeByIndex = supportNodesByIndex(bridgePlans);
+        List<BlockPos> deckCenters = new ArrayList<>(size);
+        List<RoadCorridorPlan.CorridorSlice> slices = new ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            BlockPos center = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
+            BlockPos deckCenter = new BlockPos(center.getX(), placementHeights[i], center.getZ()).immutable();
+            deckCenters.add(deckCenter);
+            RoadBridgePlanner.BridgeSpanPlan bridgePlan = planByIndex.get(i);
+            RoadBridgePlanner.BridgeMode bridgeMode = bridgePlan == null ? RoadBridgePlanner.BridgeMode.NONE : bridgePlan.mode();
+            RoadCorridorPlan.SegmentKind segmentKind = classify(i, bridgePlan, supportNodeByIndex, size);
+            List<BlockPos> surfacePositions = buildSurfacePositions(centerPath, i, placementHeights);
+            List<BlockPos> supportPositions = List.of();
+            List<BlockPos> pierLightPositions = List.of();
+            RoadBridgePlanner.BridgePierNode supportNode = supportNodeByIndex.get(i);
+            if (bridgeMode == RoadBridgePlanner.BridgeMode.PIER_BRIDGE && supportNode != null) {
+                supportPositions = buildSupportPositions(supportNode.foundationPos(), deckCenter.getY());
+                pierLightPositions = buildBridgeEdgeMarkerPositions(centerPath, i, deckCenter);
+            }
+            slices.add(new RoadCorridorPlan.CorridorSlice(
+                    i,
+                    deckCenter,
+                    segmentKind,
+                    bridgeMode,
+                    surfacePositions,
+                    buildExcavationPositions(surfacePositions, segmentKind),
+                    buildClearancePositions(surfacePositions, segmentKind),
+                    buildRailingLightPositions(centerPath, i, deckCenter, segmentKind),
+                    supportPositions,
+                    pierLightPositions
+            ));
+        }
+        return new RoadCorridorPlan(centerPath, slices, buildNavigationChannelFromPlans(deckCenters, bridgePlans), true);
     }
 
     public static List<RoadPlacementPlan.BridgeRange> detectContiguousSubranges(List<BlockPos> centerPath,
@@ -379,6 +427,17 @@ public final class RoadCorridorPlanner {
         List<BlockPos> supportPositions = new ArrayList<>(SUPPORT_DEPTH);
         for (int depth = 1; depth <= SUPPORT_DEPTH; depth++) {
             supportPositions.add(deckCenter.below(depth));
+        }
+        return List.copyOf(supportPositions);
+    }
+
+    private static List<BlockPos> buildSupportPositions(BlockPos foundationPos, int deckY) {
+        if (foundationPos == null || deckY <= foundationPos.getY() + 1) {
+            return List.of();
+        }
+        List<BlockPos> supportPositions = new ArrayList<>(Math.max(0, deckY - foundationPos.getY() - 1));
+        for (int y = foundationPos.getY() + 1; y < deckY; y++) {
+            supportPositions.add(new BlockPos(foundationPos.getX(), y, foundationPos.getZ()));
         }
         return List.copyOf(supportPositions);
     }
@@ -664,5 +723,86 @@ public final class RoadCorridorPlanner {
                 new BlockPos(minX, minY, minZ),
                 new BlockPos(maxX, maxY, maxZ)
         );
+    }
+
+    private static Map<Integer, RoadBridgePlanner.BridgeSpanPlan> expandBridgePlans(List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans, int pathSize) {
+        Map<Integer, RoadBridgePlanner.BridgeSpanPlan> planByIndex = new HashMap<>();
+        if (bridgePlans == null || bridgePlans.isEmpty() || pathSize <= 0) {
+            return planByIndex;
+        }
+        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
+            if (plan == null || !plan.valid()) {
+                continue;
+            }
+            int start = Math.max(0, Math.min(pathSize - 1, plan.startIndex()));
+            int end = Math.max(0, Math.min(pathSize - 1, plan.endIndex()));
+            for (int i = start; i <= end; i++) {
+                planByIndex.put(i, plan);
+            }
+        }
+        return planByIndex;
+    }
+
+    private static Map<Integer, RoadBridgePlanner.BridgePierNode> supportNodesByIndex(List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
+        Map<Integer, RoadBridgePlanner.BridgePierNode> supportNodes = new HashMap<>();
+        if (bridgePlans == null || bridgePlans.isEmpty()) {
+            return supportNodes;
+        }
+        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
+            if (plan == null || !plan.valid()) {
+                continue;
+            }
+            for (RoadBridgePlanner.BridgePierNode node : plan.nodes()) {
+                if (node == null) {
+                    continue;
+                }
+                if (node.role() == RoadBridgePlanner.BridgeNodeRole.PIER || node.role() == RoadBridgePlanner.BridgeNodeRole.CHANNEL_PIER) {
+                    supportNodes.put(node.pathIndex(), node);
+                }
+            }
+        }
+        return supportNodes;
+    }
+
+    private static RoadCorridorPlan.SegmentKind classify(int index,
+                                                         RoadBridgePlanner.BridgeSpanPlan bridgePlan,
+                                                         Map<Integer, RoadBridgePlanner.BridgePierNode> supportNodeByIndex,
+                                                         int pathSize) {
+        if (bridgePlan == null) {
+            return RoadCorridorPlan.SegmentKind.LAND_APPROACH;
+        }
+        int start = Math.max(0, Math.min(pathSize - 1, bridgePlan.startIndex()));
+        int end = Math.max(0, Math.min(pathSize - 1, bridgePlan.endIndex()));
+        if (index == start || index == end) {
+            return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
+        }
+        if (supportNodeByIndex.containsKey(index)) {
+            return RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
+        }
+        if (bridgePlan.mode() == RoadBridgePlanner.BridgeMode.ARCH_SPAN) {
+            return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
+        }
+        return bridgePlan.navigableWaterBridge()
+                ? RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
+                : RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH;
+    }
+
+    private static RoadCorridorPlan.NavigationChannel buildNavigationChannelFromPlans(List<BlockPos> deckCenters,
+                                                                                      List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
+        if (deckCenters == null || deckCenters.isEmpty() || bridgePlans == null || bridgePlans.isEmpty()) {
+            return null;
+        }
+        Set<Integer> navigableIndexes = new HashSet<>();
+        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
+            if (plan == null || !plan.valid() || !plan.navigableWaterBridge()) {
+                continue;
+            }
+            int start = Math.max(0, Math.min(deckCenters.size() - 1, plan.startIndex() + 1));
+            int end = Math.max(0, Math.min(deckCenters.size() - 1, plan.endIndex() - 1));
+            for (int i = start; i <= end; i++) {
+                navigableIndexes.add(i);
+            }
+        }
+        return buildNavigationChannel(deckCenters, navigableIndexes);
     }
 }
