@@ -291,6 +291,77 @@ class RoadGeometryPlannerTest {
     }
 
     @Test
+    void placementProfileUsesSingleCrestForArchSpanPlans() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0)
+        );
+        List<RoadBridgePlanner.BridgeSpanPlan> plans = List.of(
+                new RoadBridgePlanner.BridgeSpanPlan(
+                        1,
+                        3,
+                        RoadBridgePlanner.BridgeMode.ARCH_SPAN,
+                        List.of(
+                                new RoadBridgePlanner.BridgePierNode(1, new BlockPos(1, 65, 0), new BlockPos(1, 62, 0), 65, RoadBridgePlanner.BridgeNodeRole.ABUTMENT),
+                                new RoadBridgePlanner.BridgePierNode(3, new BlockPos(3, 65, 0), new BlockPos(3, 62, 0), 65, RoadBridgePlanner.BridgeNodeRole.ABUTMENT)
+                        ),
+                        List.of(new RoadBridgePlanner.BridgeDeckSegment(1, 3, RoadBridgePlanner.BridgeDeckSegmentType.ARCHED_SPAN, 65, 65)),
+                        65,
+                        false,
+                        true
+                )
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(centerPath, plans);
+
+        assertEquals(65, heights[0]);
+        assertEquals(65, heights[1]);
+        assertTrue(heights[2] > heights[1]);
+        assertEquals(65, heights[3]);
+        assertEquals(65, heights[4]);
+    }
+
+    @Test
+    void placementProfileUsesLevelMainSpanForPierBridgePlans() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0)
+        );
+        List<RoadBridgePlanner.BridgeSpanPlan> plans = List.of(
+                new RoadBridgePlanner.BridgeSpanPlan(
+                        1,
+                        5,
+                        RoadBridgePlanner.BridgeMode.PIER_BRIDGE,
+                        List.of(),
+                        List.of(
+                                new RoadBridgePlanner.BridgeDeckSegment(1, 2, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP, 66, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(2, 4, RoadBridgePlanner.BridgeDeckSegmentType.MAIN_LEVEL, 68, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(4, 5, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN, 68, 66)
+                        ),
+                        68,
+                        true,
+                        true
+                )
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(centerPath, plans);
+
+        assertEquals(66, heights[1]);
+        assertEquals(68, heights[2]);
+        assertEquals(68, heights[3]);
+        assertEquals(68, heights[4]);
+        assertEquals(66, heights[5]);
+    }
+
+    @Test
     void placementHeightProfileDoesNotSinkBelowSteepCenterPathDeck() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

@@ -206,6 +206,19 @@ public final class RoadGeometryPlanner {
         return constrainToTerrainEnvelope(transitioned, sampledHeights, bridgeProfiles);
     }
 
+    public static int[] buildPlacementHeightProfileFromSpanPlans(List<BlockPos> centerPath,
+                                                                 List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
+        Objects.requireNonNull(centerPath, "centerPath");
+        Objects.requireNonNull(bridgePlans, "bridgePlans");
+        if (centerPath.isEmpty()) {
+            return new int[0];
+        }
+        int[] sampledHeights = samplePlacementHeights(centerPath);
+        int[] smoothed = smoothPlacementHeights(sampledHeights);
+        int[] adjusted = applyBridgeSpanPlans(smoothed, bridgePlans);
+        return constrainToTerrainEnvelopeFromSpanPlans(adjusted, sampledHeights, bridgePlans);
+    }
+
     public static int interpolatePlacementHeight(int x, int z, List<BlockPos> centerPath, int[] placementHeights) {
         Objects.requireNonNull(centerPath, "centerPath");
         Objects.requireNonNull(placementHeights, "placementHeights");
@@ -794,6 +807,53 @@ public final class RoadGeometryPlanner {
         return adjusted;
     }
 
+    private static int[] applyBridgeSpanPlans(int[] baseHeights,
+                                              List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
+        int[] adjusted = baseHeights.clone();
+        if (bridgePlans == null || bridgePlans.isEmpty() || adjusted.length == 0) {
+            return adjusted;
+        }
+        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
+            if (plan == null || !plan.valid()) {
+                continue;
+            }
+            applyBridgeSpanPlan(adjusted, plan);
+        }
+        return adjusted;
+    }
+
+    private static void applyBridgeSpanPlan(int[] placementHeights,
+                                            RoadBridgePlanner.BridgeSpanPlan plan) {
+        if (placementHeights.length == 0 || plan == null) {
+            return;
+        }
+        if (plan.mode() == RoadBridgePlanner.BridgeMode.ARCH_SPAN) {
+            int start = clampIndex(plan.startIndex(), placementHeights.length);
+            int end = clampIndex(plan.endIndex(), placementHeights.length);
+            if (end < start) {
+                return;
+            }
+            int startDeckY = bridgeSegmentBoundaryDeckY(plan, start, placementHeights[start], true);
+            int endDeckY = bridgeSegmentBoundaryDeckY(plan, end, placementHeights[end], false);
+            applyExplicitArchSpan(placementHeights, start, end, startDeckY, endDeckY);
+            return;
+        }
+        for (RoadBridgePlanner.BridgeDeckSegment segment : plan.deckSegments()) {
+            if (segment == null) {
+                continue;
+            }
+            switch (segment.type()) {
+                case ARCHED_SPAN -> {
+                    int start = clampIndex(segment.startIndex(), placementHeights.length);
+                    int end = clampIndex(segment.endIndex(), placementHeights.length);
+                    applyExplicitArchSpan(placementHeights, start, end, segment.startDeckY(), segment.endDeckY());
+                }
+                case APPROACH_UP, APPROACH_DOWN -> applyLinearBridgeSegment(placementHeights, segment);
+                case MAIN_LEVEL -> applyLevelBridgeSegment(placementHeights, segment, plan.mainDeckY());
+            }
+        }
+    }
+
     private static int[] propagateBridgeApproachHeights(int[] baseHeights,
                                                         List<RoadBridgePlanner.BridgeProfile> bridgeProfiles) {
         int[] adjusted = baseHeights.clone();
@@ -838,6 +898,33 @@ public final class RoadGeometryPlanner {
             }
             int start = Math.max(0, Math.min(profile.startIndex(), bridgeColumns.length - 1));
             int end = Math.max(0, Math.min(profile.endIndex(), bridgeColumns.length - 1));
+            for (int i = start; i <= end; i++) {
+                bridgeColumns[i] = true;
+            }
+        }
+        for (int i = 0; i < constrained.length; i++) {
+            if (bridgeColumns[i] || !terrainLockedColumns[i]) {
+                continue;
+            }
+            int minDeckHeight = sampledHeights[i];
+            int maxDeckHeight = sampledHeights[i] + 1;
+            constrained[i] = Math.max(minDeckHeight, Math.min(maxDeckHeight, constrained[i]));
+        }
+        return constrained;
+    }
+
+    private static int[] constrainToTerrainEnvelopeFromSpanPlans(int[] placementHeights,
+                                                                 int[] sampledHeights,
+                                                                 List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
+        int[] constrained = placementHeights.clone();
+        boolean[] bridgeColumns = new boolean[constrained.length];
+        boolean[] terrainLockedColumns = steepTerrainLockMask(sampledHeights);
+        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
+            if (plan == null || !plan.valid()) {
+                continue;
+            }
+            int start = clampIndex(plan.startIndex(), bridgeColumns.length);
+            int end = clampIndex(plan.endIndex(), bridgeColumns.length);
             for (int i = start; i <= end; i++) {
                 bridgeColumns[i] = true;
             }
@@ -1002,6 +1089,87 @@ public final class RoadGeometryPlanner {
                     : (int) Math.round((double) crownHeight * (double) distanceFromNearestEdge / (double) maxDistanceFromEdge);
             placementHeights[i] = baselineDeckHeight + slopeOffset + lift;
         }
+    }
+
+    private static void applyLinearBridgeSegment(int[] placementHeights,
+                                                 RoadBridgePlanner.BridgeDeckSegment segment) {
+        int start = clampIndex(segment.startIndex(), placementHeights.length);
+        int end = clampIndex(segment.endIndex(), placementHeights.length);
+        if (end < start) {
+            return;
+        }
+        if (start == end) {
+            placementHeights[start] = Math.max(placementHeights[start], Math.max(segment.startDeckY(), segment.endDeckY()));
+            return;
+        }
+        for (int i = start; i <= end; i++) {
+            double t = (double) (i - start) / (double) (end - start);
+            int target = (int) Math.round(segment.startDeckY() + t * (segment.endDeckY() - segment.startDeckY()));
+            placementHeights[i] = Math.max(placementHeights[i], target);
+        }
+    }
+
+    private static void applyExplicitArchSpan(int[] placementHeights,
+                                              int start,
+                                              int end,
+                                              int startDeckY,
+                                              int endDeckY) {
+        if (end < start || placementHeights.length == 0) {
+            return;
+        }
+        placementHeights[start] = Math.max(placementHeights[start], startDeckY);
+        placementHeights[end] = Math.max(placementHeights[end], endDeckY);
+        int spanLength = end - start + 1;
+        if (spanLength == 3) {
+            int midpoint = start + 1;
+            int crestY = Math.max(startDeckY, endDeckY) + 1;
+            placementHeights[midpoint] = Math.max(placementHeights[midpoint], crestY);
+            return;
+        }
+        applyArchedProfile(placementHeights, start, end);
+    }
+
+    private static void applyLevelBridgeSegment(int[] placementHeights,
+                                                RoadBridgePlanner.BridgeDeckSegment segment,
+                                                int mainDeckY) {
+        int start = clampIndex(segment.startIndex(), placementHeights.length);
+        int end = clampIndex(segment.endIndex(), placementHeights.length);
+        if (end < start) {
+            return;
+        }
+        int target = Math.max(mainDeckY, Math.max(segment.startDeckY(), segment.endDeckY()));
+        for (int i = start; i <= end; i++) {
+            placementHeights[i] = Math.max(placementHeights[i], target);
+        }
+    }
+
+    private static int bridgeSegmentBoundaryDeckY(RoadBridgePlanner.BridgeSpanPlan plan,
+                                                  int index,
+                                                  int fallback,
+                                                  boolean startBoundary) {
+        if (plan == null || plan.deckSegments().isEmpty()) {
+            return fallback;
+        }
+        RoadBridgePlanner.BridgeDeckSegment segment = startBoundary
+                ? plan.deckSegments().get(0)
+                : plan.deckSegments().get(plan.deckSegments().size() - 1);
+        if (segment == null) {
+            return fallback;
+        }
+        int deckY = startBoundary ? segment.startDeckY() : segment.endDeckY();
+        if (deckY > 0) {
+            return deckY;
+        }
+        for (RoadBridgePlanner.BridgePierNode node : plan.nodes()) {
+            if (node != null && node.pathIndex() == index) {
+                return node.deckY();
+            }
+        }
+        return fallback;
+    }
+
+    private static int clampIndex(int index, int length) {
+        return Math.max(0, Math.min(length - 1, index));
     }
 
     private static int resolveArchedCrownHeight(int spanLength) {
