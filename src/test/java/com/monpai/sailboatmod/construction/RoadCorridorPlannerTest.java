@@ -208,6 +208,78 @@ class RoadCorridorPlannerTest {
     }
 
     @Test
+    void archSpanSlicesCarryArchModeAndNeverEmitSupportColumns() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(2, 67, 0),
+                new BlockPos(3, 65, 0),
+                new BlockPos(4, 64, 0)
+        );
+        List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans = List.of(
+                new RoadBridgePlanner.BridgeSpanPlan(
+                        1,
+                        3,
+                        RoadBridgePlanner.BridgeMode.ARCH_SPAN,
+                        List.of(
+                                new RoadBridgePlanner.BridgePierNode(1, new BlockPos(1, 65, 0), new BlockPos(1, 62, 0), 65, RoadBridgePlanner.BridgeNodeRole.ABUTMENT),
+                                new RoadBridgePlanner.BridgePierNode(3, new BlockPos(3, 65, 0), new BlockPos(3, 62, 0), 65, RoadBridgePlanner.BridgeNodeRole.ABUTMENT)
+                        ),
+                        List.of(new RoadBridgePlanner.BridgeDeckSegment(1, 3, RoadBridgePlanner.BridgeDeckSegmentType.ARCHED_SPAN, 65, 65)),
+                        65,
+                        false,
+                        true
+                )
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, bridgePlans, new int[] {65, 65, 67, 65, 65});
+
+        assertEquals(RoadBridgePlanner.BridgeMode.ARCH_SPAN, plan.slices().get(2).bridgeMode());
+        assertTrue(plan.slices().stream().allMatch(slice -> slice.supportPositions().isEmpty()));
+    }
+
+    @Test
+    void pierBridgeSlicesEmitSupportOnlyAtExplicitPierNodeIndexes() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 66, 0),
+                new BlockPos(2, 68, 0),
+                new BlockPos(3, 68, 0),
+                new BlockPos(4, 68, 0),
+                new BlockPos(5, 66, 0),
+                new BlockPos(6, 64, 0)
+        );
+        List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans = List.of(
+                new RoadBridgePlanner.BridgeSpanPlan(
+                        1,
+                        5,
+                        RoadBridgePlanner.BridgeMode.PIER_BRIDGE,
+                        List.of(
+                                new RoadBridgePlanner.BridgePierNode(1, new BlockPos(1, 66, 0), new BlockPos(1, 63, 0), 66, RoadBridgePlanner.BridgeNodeRole.ABUTMENT),
+                                new RoadBridgePlanner.BridgePierNode(2, new BlockPos(2, 68, 0), new BlockPos(2, 40, 0), 68, RoadBridgePlanner.BridgeNodeRole.PIER),
+                                new RoadBridgePlanner.BridgePierNode(4, new BlockPos(4, 68, 0), new BlockPos(4, 40, 0), 68, RoadBridgePlanner.BridgeNodeRole.PIER),
+                                new RoadBridgePlanner.BridgePierNode(5, new BlockPos(5, 66, 0), new BlockPos(5, 63, 0), 66, RoadBridgePlanner.BridgeNodeRole.ABUTMENT)
+                        ),
+                        List.of(
+                                new RoadBridgePlanner.BridgeDeckSegment(1, 2, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP, 66, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(2, 4, RoadBridgePlanner.BridgeDeckSegmentType.MAIN_LEVEL, 68, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(4, 5, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN, 68, 66)
+                        ),
+                        68,
+                        true,
+                        true
+                )
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, bridgePlans, new int[] {65, 66, 68, 68, 68, 66, 65});
+
+        assertFalse(plan.slices().get(2).supportPositions().isEmpty());
+        assertTrue(plan.slices().get(3).supportPositions().isEmpty());
+        assertFalse(plan.slices().get(4).supportPositions().isEmpty());
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, plan.slices().get(3).bridgeMode());
+    }
+
+    @Test
     void plannerBuildsBridgeDeckAtWaterSurfacePlusFiveAndPopulatesRailingLights() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

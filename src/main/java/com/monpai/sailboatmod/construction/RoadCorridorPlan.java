@@ -28,6 +28,7 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
     public record CorridorSlice(int index,
                                 BlockPos deckCenter,
                                 SegmentKind segmentKind,
+                                RoadBridgePlanner.BridgeMode bridgeMode,
                                 List<BlockPos> surfacePositions,
                                 List<BlockPos> excavationPositions,
                                 List<BlockPos> clearancePositions,
@@ -39,12 +40,34 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
                              SegmentKind segmentKind,
                              List<BlockPos> surfacePositions,
                              List<BlockPos> excavationPositions,
+                             List<BlockPos> clearancePositions,
                              List<BlockPos> railingLightPositions,
                              List<BlockPos> supportPositions,
                              List<BlockPos> pierLightPositions) {
             this(index,
                     deckCenter,
                     segmentKind,
+                    RoadBridgePlanner.BridgeMode.NONE,
+                    surfacePositions,
+                    excavationPositions,
+                    clearancePositions,
+                    railingLightPositions,
+                    supportPositions,
+                    pierLightPositions);
+        }
+
+        public CorridorSlice(int index,
+                             BlockPos deckCenter,
+                             SegmentKind segmentKind,
+                             List<BlockPos> surfacePositions,
+                             List<BlockPos> excavationPositions,
+                             List<BlockPos> railingLightPositions,
+                             List<BlockPos> supportPositions,
+                             List<BlockPos> pierLightPositions) {
+            this(index,
+                    deckCenter,
+                    segmentKind,
+                    RoadBridgePlanner.BridgeMode.NONE,
                     surfacePositions,
                     excavationPositions,
                     null,
@@ -59,6 +82,7 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
             }
             deckCenter = immutable(Objects.requireNonNull(deckCenter, "deckCenter"));
             segmentKind = Objects.requireNonNull(segmentKind, "segmentKind");
+            bridgeMode = bridgeMode == null ? RoadBridgePlanner.BridgeMode.NONE : bridgeMode;
             surfacePositions = copyOptionalPositions(surfacePositions, "surfacePositions");
             excavationPositions = copyOptionalPositions(excavationPositions, "excavationPositions");
             clearancePositions = copyOptionalPositions(clearancePositions, "clearancePositions");

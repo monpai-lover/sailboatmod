@@ -1534,10 +1534,10 @@ public final class StructureConstructionManager {
         if (centerPath == null) {
             return RoadCorridorPlanner.plan(List.of());
         }
-        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = classifyBridgeProfiles(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
-        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath, bridgeProfiles);
+        List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans = planBridgeSpans(level, centerPath, bridgeRanges, navigableWaterBridgeRanges);
+        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(centerPath, bridgePlans);
         placementHeights = surfaceReplacementPlacementHeights(centerPath, placementHeights, bridgeRanges);
-        return RoadCorridorPlanner.plan(centerPath, bridgeRanges, navigableWaterBridgeRanges, placementHeights);
+        return RoadCorridorPlanner.plan(centerPath, bridgePlans, placementHeights);
     }
 
     private static int[] surfaceReplacementPlacementHeights(List<BlockPos> centerPath,
@@ -1897,6 +1897,34 @@ public final class StructureConstructionManager {
         return List.copyOf(profiles);
     }
 
+    private static List<RoadBridgePlanner.BridgeSpanPlan> planBridgeSpans(ServerLevel level,
+                                                                          List<BlockPos> centerPath,
+                                                                          List<RoadPlacementPlan.BridgeRange> bridgeRanges,
+                                                                          List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges) {
+        if (level == null || centerPath == null || centerPath.isEmpty() || bridgeRanges == null || bridgeRanges.isEmpty()) {
+            return List.of();
+        }
+        List<RoadBridgePlanner.BridgeSpanPlan> plans = new ArrayList<>(bridgeRanges.size());
+        for (RoadPlacementPlan.BridgeRange range : bridgeRanges) {
+            if (range == null) {
+                continue;
+            }
+            plans.add(RoadBridgePlanner.planBridgeSpan(
+                    centerPath,
+                    range,
+                    index -> selectRoadPlacementStyle(level, centerPath.get(index).above()).bridge(),
+                    index -> isNavigableIndex(index, navigableWaterBridgeRanges),
+                    index -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, centerPath.get(index)).below().getY(),
+                    index -> {
+                        int waterSurfaceY = findColumnWaterSurfaceY(level, centerPath.get(index).getX(), centerPath.get(index).getZ());
+                        return waterSurfaceY == Integer.MIN_VALUE ? 0 : waterSurfaceY;
+                    },
+                    index -> hasStableFoundationBelow(level, centerPath.get(index))
+            ));
+        }
+        return List.copyOf(plans);
+    }
+
     private static boolean rangesOverlap(int startIndex, int endIndex, RoadPlacementPlan.BridgeRange range) {
         if (range == null) {
             return false;
@@ -1940,6 +1968,18 @@ public final class StructureConstructionManager {
         return findColumnWaterSurfaceY(level, pos.getX(), pos.getZ()) != Integer.MIN_VALUE;
     }
 
+    private static boolean isNavigableIndex(int index, List<RoadPlacementPlan.BridgeRange> navigableRanges) {
+        if (navigableRanges == null || navigableRanges.isEmpty()) {
+            return false;
+        }
+        for (RoadPlacementPlan.BridgeRange range : navigableRanges) {
+            if (range != null && index >= range.startIndex() && index <= range.endIndex()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static int findWaterSurfaceY(ServerLevel level, List<BlockPos> centerPath, RoadPlacementPlan.BridgeRange range) {
         int maxWaterSurfaceY = Integer.MIN_VALUE;
         for (int i = Math.max(0, range.startIndex()); i <= Math.min(centerPath.size() - 1, range.endIndex()); i++) {
@@ -1966,6 +2006,21 @@ public final class StructureConstructionManager {
             cursor = cursor.below();
         }
         return Integer.MIN_VALUE;
+    }
+
+    private static boolean hasStableFoundationBelow(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        BlockPos terrainSurface = level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, pos).below();
+        while (terrainSurface.getY() >= safeMinBuildHeight(level)) {
+            BlockState state = level.getBlockState(terrainSurface);
+            if (!state.isAir() && !state.liquid() && state.isFaceSturdy(level, terrainSurface, Direction.UP)) {
+                return true;
+            }
+            terrainSurface = terrainSurface.below();
+        }
+        return false;
     }
 
     private static int safeMinBuildHeight(ServerLevel level) {
@@ -3305,21 +3360,29 @@ public final class StructureConstructionManager {
         List<BlockPos> safePath = centerPath == null ? List.of() : List.copyOf(centerPath);
         List<RoadPlacementPlan.BridgeRange> safeBridgeRanges = bridgeRanges == null ? List.of() : bridgeRanges;
         List<RoadPlacementPlan.BridgeRange> safeNavigableRanges = navigableWaterBridgeRanges == null ? List.of() : navigableWaterBridgeRanges;
-        List<RoadBridgePlanner.BridgeProfile> bridgeProfiles = RoadBridgePlanner.classifyRanges(
-                safePath,
-                safeBridgeRanges,
-                index -> rangeContains(safeBridgeRanges, index),
-                index -> safePath.get(index).getY()
-        );
+        List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans = new ArrayList<>(safeBridgeRanges.size());
+        for (RoadPlacementPlan.BridgeRange range : safeBridgeRanges) {
+            if (range == null) {
+                continue;
+            }
+            bridgePlans.add(RoadBridgePlanner.planBridgeSpan(
+                    safePath,
+                    range,
+                    index -> rangeContains(safeBridgeRanges, index),
+                    index -> rangeContains(safeNavigableRanges, index),
+                    index -> Math.max(0, safePath.get(index).getY() - 3),
+                    index -> Math.max(0, safePath.get(index).getY() - 4),
+                    index -> true
+            ));
+        }
         int[] placementHeights = surfaceReplacementPlacementHeights(
                 safePath,
-                RoadGeometryPlanner.buildPlacementHeightProfile(safePath, bridgeProfiles),
+                RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(safePath, bridgePlans),
                 safeBridgeRanges
         );
         RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(
                 safePath,
-                safeBridgeRanges,
-                safeNavigableRanges,
+                bridgePlans,
                 placementHeights
         );
         LinkedHashMap<Long, RoadPlacementStyle> testStyleByPos = new LinkedHashMap<>();

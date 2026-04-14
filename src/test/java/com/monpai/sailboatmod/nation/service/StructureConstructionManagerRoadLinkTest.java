@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
+import com.monpai.sailboatmod.construction.RoadBridgePlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -72,6 +73,25 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void shortWaterCrossingProducesArchModeWithoutSupportColumns() {
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 65, 0),
+                        new BlockPos(2, 67, 0),
+                        new BlockPos(3, 65, 0),
+                        new BlockPos(4, 64, 0)
+                ),
+                List.of(new RoadPlacementPlan.BridgeRange(1, 3)),
+                List.of()
+        );
+
+        assertTrue(plan.corridorPlan().slices().stream()
+                .filter(slice -> slice.bridgeMode() == RoadBridgePlanner.BridgeMode.ARCH_SPAN)
+                .allMatch(slice -> slice.supportPositions().isEmpty()));
+    }
+
+    @Test
     void longWaterBridgeUsesStoneDeckSlabsAndStonePierMaterials() {
         RoadPlacementPlan plan = longBridgePlanFixture();
 
@@ -115,6 +135,40 @@ class StructureConstructionManagerRoadLinkTest {
 
         assertTrue(plan.ghostBlocks().stream().anyMatch(block -> block.pos().getY() == 41 && block.state().is(Blocks.STONE_BRICKS)),
                 () -> plan.ghostBlocks().toString());
+    }
+
+    @Test
+    void longWaterCrossingProducesPierModeAndFoundationToDeckSupportGhosts() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 9, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 1; x <= 8; x++) {
+            setSurfaceColumn(level, x, 0, 40, Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 39, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        RoadPlacementPlan plan = invokeCreateRoadPlacementPlan(
+                level,
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        new BlockPos(4, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(6, 68, 0),
+                        new BlockPos(7, 68, 0),
+                        new BlockPos(8, 66, 0),
+                        new BlockPos(9, 64, 0)
+                )
+        );
+
+        assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> slice.bridgeMode() == RoadBridgePlanner.BridgeMode.PIER_BRIDGE));
+        assertTrue(plan.ghostBlocks().stream().anyMatch(block -> block.state().is(Blocks.STONE_BRICKS) && block.pos().getY() == 41));
     }
 
     @Test
@@ -259,7 +313,8 @@ class StructureConstructionManagerRoadLinkTest {
         );
 
         assertTrue(plan.bridgeRanges().contains(new RoadPlacementPlan.BridgeRange(1, 3)), String.valueOf(plan.bridgeRanges()));
-        assertEquals(RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN, plan.corridorPlan().slices().get(2).segmentKind());
+        assertEquals(RoadBridgePlanner.BridgeMode.ARCH_SPAN, plan.corridorPlan().slices().get(2).bridgeMode());
+        assertTrue(plan.corridorPlan().slices().get(2).supportPositions().isEmpty());
     }
 
     @Test
