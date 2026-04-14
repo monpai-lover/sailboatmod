@@ -60,6 +60,21 @@ class RoadTerrainSamplingCacheTest {
         assertFalse(analysis.requiresBridge(new BlockPos(0, 64, 0)));
     }
 
+    @Test
+    void planningPassContextReusesColumnSamplingWithinSinglePlan() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        level.setSurface(0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+
+        RoadPlanningPassContext context = new RoadPlanningPassContext(level);
+        context.sampleColumn(0, 0);
+        context.sampleColumn(0, 0);
+
+        assertEquals(1, level.surfaceQueries());
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> type) {
         try {

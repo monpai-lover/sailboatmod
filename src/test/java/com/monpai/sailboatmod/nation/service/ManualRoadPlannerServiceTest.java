@@ -229,6 +229,16 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void manualPlannerMapsStructuredSearchExhaustedFailureToLocalizedMessage() {
+        assertEquals(
+                "message.sailboatmod.road_planner.failure.search_exhausted",
+                ManualRoadPlannerService.manualFailureMessageKeyForTest(
+                        RoadPlanningFailureReason.SEARCH_EXHAUSTED
+                )
+        );
+    }
+
+    @Test
     void nearestBoundaryAnchorPrefersAccessibleCandidateOverCloserSteepBoundary() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();

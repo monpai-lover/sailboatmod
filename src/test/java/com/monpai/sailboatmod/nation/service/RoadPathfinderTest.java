@@ -58,6 +58,16 @@ class RoadPathfinderTest {
     }
 
     @Test
+    void emptyGroundRouteExposesSearchExhaustedFailureReasonWhenPlannerReportsIt() {
+        RoadPathfinder.PlannedPathResult result = new RoadPathfinder.PlannedPathResult(
+                List.of(),
+                RoadPlanningFailureReason.SEARCH_EXHAUSTED
+        );
+
+        assertEquals(RoadPlanningFailureReason.SEARCH_EXHAUSTED, result.failureReason());
+    }
+
+    @Test
     void findPathAllowsRequestedEndpointsEvenWhenTheirColumnsAreBlocked() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
