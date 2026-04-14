@@ -218,6 +218,42 @@ class RoadHybridRouteResolverTest {
     }
 
     @Test
+    void directCandidateRepairsMissingRequestedEndpointsWhenDetailedPathRemainsContinuous() {
+        BlockPos source = new BlockPos(0, 64, 0);
+        BlockPos target = new BlockPos(4, 64, 0);
+
+        RoadHybridRouteResolver.HybridRoute candidate = RoadHybridRouteResolver.resolveForTest(
+                List.of(source),
+                List.of(target),
+                Set.of(),
+                Map.of(),
+                (from, to, allowWaterFallback) -> new RoadHybridRouteResolver.ConnectorResult(
+                        List.of(
+                                new BlockPos(1, 64, 0),
+                                new BlockPos(2, 64, 0),
+                                new BlockPos(3, 64, 0)
+                        ),
+                        2,
+                        2,
+                        1,
+                        true
+                )
+        );
+
+        assertEquals(RoadHybridRouteResolver.ResolutionKind.DIRECT, candidate.kind());
+        assertEquals(
+                List.of(
+                        source,
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(3, 64, 0),
+                        target
+                ),
+                candidate.fullPath()
+        );
+    }
+
+    @Test
     void selectsNearestRoadNodesWithinCandidateLimit() {
         List<BlockPos> chosen = RoadHybridRouteResolver.selectNearestNodesForTest(
                 new BlockPos(0, 64, 0),

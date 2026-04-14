@@ -326,24 +326,19 @@ public final class RoadHybridRouteResolver {
                                            int bridgeColumns,
                                            int longestBridgeRun,
                                            int adjacentWaterColumns) {
-        if (path == null
-                || path.size() < 2
-                || expectedStart == null
-                || expectedEnd == null
-                || !expectedStart.equals(path.get(0))
-                || !expectedEnd.equals(path.get(path.size() - 1))
-                || !isContinuousPath(path)) {
+        List<BlockPos> normalizedPath = normalizePath(expectedStart, path, expectedEnd);
+        if (normalizedPath.size() < 2 || !isContinuousPath(normalizedPath)) {
             return HybridRoute.none();
         }
         return new HybridRoute(
                 kind,
-                List.copyOf(path),
+                normalizedPath,
                 usedExistingNetwork,
                 connectorCount,
                 bridgeColumns,
                 longestBridgeRun,
                 adjacentWaterColumns,
-                score(path, usedExistingNetwork, connectorCount, bridgeColumns, longestBridgeRun, adjacentWaterColumns)
+                score(normalizedPath, usedExistingNetwork, connectorCount, bridgeColumns, longestBridgeRun, adjacentWaterColumns)
         );
     }
 
@@ -464,6 +459,19 @@ public final class RoadHybridRouteResolver {
             }
         }
         return List.copyOf(merged);
+    }
+
+    private static List<BlockPos> normalizePath(BlockPos expectedStart, List<BlockPos> path, BlockPos expectedEnd) {
+        if (expectedStart == null || expectedEnd == null || path == null || path.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<BlockPos> normalized = new ArrayList<>();
+        appendPathNode(normalized, expectedStart);
+        for (BlockPos pos : path) {
+            appendPathNode(normalized, pos);
+        }
+        appendPathNode(normalized, expectedEnd);
+        return List.copyOf(normalized);
     }
 
     private static void appendPathNode(List<BlockPos> ordered, BlockPos pos) {
