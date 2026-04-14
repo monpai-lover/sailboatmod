@@ -510,7 +510,8 @@ public final class RoadCorridorPlanner {
         if (hasSurfaceOverlap(current, next)) {
             return false;
         }
-        return Math.abs(currentDeckHeight - nextDeckHeight) >= 1;
+        return hasSurfaceAdjacency(current, next)
+                || Math.abs(currentDeckHeight - nextDeckHeight) >= 1;
     }
 
     private static List<BlockPos> ensureTransitionOverlap(List<BlockPos> source, List<BlockPos> target) {
@@ -535,6 +536,15 @@ public final class RoadCorridorPlanner {
     private static boolean hasSurfaceOverlap(List<BlockPos> current, List<BlockPos> next) {
         for (BlockPos pos : current) {
             if (next.contains(pos)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasSurfaceAdjacency(List<BlockPos> current, List<BlockPos> next) {
+        for (BlockPos pos : current) {
+            if (isAdjacentToAny(pos, next)) {
                 return true;
             }
         }

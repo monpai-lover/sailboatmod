@@ -372,6 +372,30 @@ class RoadCorridorPlannerTest {
         );
     }
 
+    @Test
+    void plannerClosesSurfaceGapsAcrossFlatCurvedAdjacentSlices() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 1),
+                new BlockPos(3, 64, 2),
+                new BlockPos(4, 64, 2),
+                new BlockPos(5, 64, 2)
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, List.of(), List.of());
+
+        for (int i = 0; i < plan.slices().size() - 1; i++) {
+            int sliceIndex = i;
+            assertTrue(
+                    hasSurfaceClosure(plan.slices().get(sliceIndex).surfacePositions(), plan.slices().get(sliceIndex + 1).surfacePositions()),
+                    () -> "surface gap between slices " + sliceIndex + " and " + (sliceIndex + 1)
+                            + " current=" + plan.slices().get(sliceIndex).surfacePositions()
+                            + " next=" + plan.slices().get(sliceIndex + 1).surfacePositions()
+            );
+        }
+    }
+
     private static boolean hasSurfaceClosure(List<BlockPos> current, List<BlockPos> next) {
         return !Collections.disjoint(current, next);
     }
