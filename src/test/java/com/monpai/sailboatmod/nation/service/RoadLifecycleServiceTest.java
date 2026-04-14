@@ -25,6 +25,7 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadLifecycleServiceTest {
@@ -340,9 +341,156 @@ class RoadLifecycleServiceTest {
         );
 
         assertFalse(invokeIsRoadBuildStepPlaced(
-                Blocks.SPRUCE_STAIRS.defaultBlockState(),
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState(),
                 step
         ));
+    }
+
+    @Test
+    void placedRoadStepAcceptsEquivalentRoadFamilyVariantToPreventRetryLoops() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 64, 0),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        assertTrue(invokeIsRoadBuildStepPlaced(
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState(),
+                step
+        ));
+    }
+
+    @Test
+    void placedRoadStepAcceptsEquivalentStairWithDifferentFacingToPreventRetryLoops() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 64, 0),
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, net.minecraft.core.Direction.WEST)
+        );
+
+        assertTrue(invokeIsRoadBuildStepPlaced(
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState().setValue(BlockStateProperties.HORIZONTAL_FACING, net.minecraft.core.Direction.NORTH),
+                step
+        ));
+    }
+
+    @Test
+    void cancelSwitchesActiveRoadJobIntoRollbackModeInsteadOfDeletingImmediately() {
+        ServerLevel level = allocate(ServerLevel.class);
+        String roadId = "manual|town:cancel_a|town:cancel_b";
+        RoadPlacementPlan plan = new RoadPlacementPlan(List.of(), null, null, null, null, List.of(), List.of(), List.of(), List.of(), null, null, null);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
+        Object previous = activeRoads.put(roadId, newRoadConstructionJob(level, roadId, plan, List.of(), 0, 0.0D, false, 0, false));
+        try {
+            assertTrue(invokeCancelActiveRoadConstruction(level, roadId));
+            Object updated = activeRoads.get(roadId);
+            assertNotNull(updated);
+            assertTrue((boolean) readRecordComponent(updated, "rollbackActive"));
+            assertTrue((boolean) readRecordComponent(updated, "removeRoadNetworkOnComplete"));
+        } finally {
+            restoreMapEntry(activeRoads, roadId, previous);
+        }
+    }
+
+    @Test
+    void incrementalRollbackRestoresTrackedStatesAcrossMultipleBatches() {
+        BlockPos firstRoad = new BlockPos(0, 64, 0);
+        BlockPos secondRoad = new BlockPos(1, 64, 0);
+        BlockPos foundation = new BlockPos(0, 63, 0);
+        BlockPos headspace = new BlockPos(1, 65, 0);
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(firstRoad, secondRoad),
+                null,
+                null,
+                null,
+                null,
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(firstRoad, Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(secondRoad, Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, firstRoad, Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(1, secondRoad, Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(),
+                List.of(firstRoad, secondRoad, foundation),
+                null,
+                null,
+                null
+        );
+        List<Object> snapshots = invokeCaptureRoadRollbackSnapshots(
+                List.of(firstRoad, secondRoad, foundation, headspace),
+                pos -> {
+                    if (pos.equals(firstRoad)) {
+                        return Blocks.GRASS_BLOCK.defaultBlockState();
+                    }
+                    if (pos.equals(secondRoad)) {
+                        return Blocks.WATER.defaultBlockState();
+                    }
+                    if (pos.equals(foundation)) {
+                        return Blocks.DIRT.defaultBlockState();
+                    }
+                    if (pos.equals(headspace)) {
+                        return Blocks.POPPY.defaultBlockState();
+                    }
+                    return Blocks.AIR.defaultBlockState();
+                }
+        );
+        Map<BlockPos, net.minecraft.world.level.block.state.BlockState> states = new HashMap<>();
+
+        int rollbackIndex = invokeApplyRoadRollbackBatch(plan, snapshots, 0, 2, states::put);
+
+        assertEquals(2, rollbackIndex);
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), states.get(firstRoad));
+        assertEquals(Blocks.WATER.defaultBlockState(), states.get(secondRoad));
+        assertFalse(states.containsKey(foundation));
+        assertFalse(states.containsKey(headspace));
+
+        rollbackIndex = invokeApplyRoadRollbackBatch(plan, snapshots, rollbackIndex, 8, states::put);
+
+        assertEquals(4, rollbackIndex);
+        assertEquals(Blocks.DIRT.defaultBlockState(), states.get(foundation));
+        assertEquals(Blocks.POPPY.defaultBlockState(), states.get(headspace));
+    }
+
+    @Test
+    void incrementalRollbackRemovesOwnedBlocksThatHaveNoSnapshot() {
+        BlockPos road = new BlockPos(0, 64, 0);
+        BlockPos support = new BlockPos(0, 63, 0);
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(road, road.east()),
+                null,
+                null,
+                null,
+                null,
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(road, Blocks.SPRUCE_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, road, Blocks.SPRUCE_SLAB.defaultBlockState())),
+                List.of(),
+                List.of(road, support),
+                null,
+                null,
+                null
+        );
+        List<Object> snapshots = invokeCaptureRoadRollbackSnapshots(
+                List.of(road),
+                pos -> Blocks.GRASS_BLOCK.defaultBlockState()
+        );
+        Map<BlockPos, net.minecraft.world.level.block.state.BlockState> states = new HashMap<>();
+
+        int rollbackIndex = invokeApplyRoadRollbackBatch(plan, snapshots, 0, 8, states::put);
+
+        assertEquals(2, rollbackIndex);
+        assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), states.get(road));
+        assertEquals(Blocks.AIR.defaultBlockState(), states.get(support));
+    }
+
+    @Test
+    void rollbackProgressRunsFasterThanForwardBuildProgress() {
+        double buildProgress = invokeRoadBuildProgressPerTick(120, 1.0D);
+        double rollbackProgress = invokeRoadRollbackProgressPerTick(120, 1.0D);
+
+        assertTrue(rollbackProgress > buildProgress);
     }
 
     private static RoadPlacementPlan widenedPlanWithPartialOwnedBlocks() {
@@ -526,6 +674,18 @@ class RoadLifecycleServiceTest {
     }
 
     private static Object newRoadConstructionJob(ServerLevel level, String roadId, RoadPlacementPlan plan) {
+        return newRoadConstructionJob(level, roadId, plan, List.of(), 0, 0.0D, false, 0, false);
+    }
+
+    private static Object newRoadConstructionJob(ServerLevel level,
+                                                 String roadId,
+                                                 RoadPlacementPlan plan,
+                                                 List<?> rollbackStates,
+                                                 int placedStepCount,
+                                                 double progressSteps,
+                                                 boolean rollbackActive,
+                                                 int rollbackActionIndex,
+                                                 boolean removeRoadNetworkOnComplete) {
         try {
             Class<?> jobClass = Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadConstructionJob");
             Constructor<?> constructor = jobClass.getDeclaredConstructors()[0];
@@ -539,12 +699,63 @@ class RoadLifecycleServiceTest {
                     "Town A",
                     "Town B",
                     plan,
-                    List.of(),
-                    0,
-                    0.0D
+                    rollbackStates,
+                    placedStepCount,
+                    progressSteps,
+                    rollbackActive,
+                    rollbackActionIndex,
+                    removeRoadNetworkOnComplete
             );
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to construct test road job", ex);
+        }
+    }
+
+    private static int invokeApplyRoadRollbackBatch(RoadPlacementPlan plan,
+                                                    List<Object> rollbackStates,
+                                                    int rollbackIndex,
+                                                    int actionCount,
+                                                    java.util.function.BiConsumer<BlockPos, net.minecraft.world.level.block.state.BlockState> setter) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("applyRoadRollbackBatchWithSetter", ServerLevel.class, RoadPlacementPlan.class, List.class, int.class, int.class, java.util.function.BiConsumer.class);
+            method.setAccessible(true);
+            return (int) method.invoke(null, null, plan, rollbackStates, rollbackIndex, actionCount, setter);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect incremental road rollback batching", ex);
+        }
+    }
+
+    private static double invokeRoadBuildProgressPerTick(int totalSteps, double speedMultiplier) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("roadBuildProgressPerTick", int.class, double.class);
+            method.setAccessible(true);
+            return (double) method.invoke(null, totalSteps, speedMultiplier);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect forward road build speed", ex);
+        }
+    }
+
+    private static double invokeRoadRollbackProgressPerTick(int totalActions, double speedMultiplier) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("roadRollbackProgressPerTick", int.class, double.class);
+            method.setAccessible(true);
+            return (double) method.invoke(null, totalActions, speedMultiplier);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect rollback road speed", ex);
+        }
+    }
+
+    private static Object readRecordComponent(Object instance, String accessor) {
+        try {
+            return instance.getClass().getDeclaredMethod(accessor).invoke(instance);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to read record component " + accessor, ex);
         }
     }
 

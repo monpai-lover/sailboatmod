@@ -795,7 +795,7 @@ public final class ManualRoadPlannerService {
             if (anchor == null) {
                 continue;
             }
-            if (isExcludedColumn(anchor, excludedColumns)) {
+            if (isExcludedColumn(anchor, excludedColumns) && !isReusableExistingRoadAnchor(level, anchor)) {
                 continue;
             }
             RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForAnchorSelection(
@@ -1209,7 +1209,7 @@ public final class ManualRoadPlannerService {
         if (level == null || pos == null) {
             return Double.MAX_VALUE;
         }
-        if (isExcludedColumn(pos, excludedColumns)) {
+        if (isExcludedColumn(pos, excludedColumns) && !isReusableExistingRoadAnchor(level, pos)) {
             return Double.MAX_VALUE;
         }
         RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForAnchorSelection(level, pos);
@@ -1225,11 +1225,19 @@ public final class ManualRoadPlannerService {
     }
 
     private static boolean isUsableAnchor(ServerLevel level, BlockPos pos, Set<Long> excludedColumns) {
-        return isValidRoadAnchor(level, pos) && !isExcludedColumn(pos, excludedColumns);
+        return isValidRoadAnchor(level, pos)
+                && (!isExcludedColumn(pos, excludedColumns) || isReusableExistingRoadAnchor(level, pos));
     }
 
     private static boolean isExcludedColumn(BlockPos pos, Set<Long> excludedColumns) {
         return pos != null && excludedColumns != null && !excludedColumns.isEmpty() && RoadCoreExclusion.isExcluded(pos, excludedColumns);
+    }
+
+    private static boolean isReusableExistingRoadAnchor(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        return isExistingRoadSurface(level.getBlockState(pos.above()));
     }
 
     private static int targetEdgeCoordinate(int target, int min, int max) {

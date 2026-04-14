@@ -4,17 +4,20 @@ import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
 import sun.misc.Unsafe;
@@ -295,6 +298,7 @@ class ManualRoadPlannerServiceTest {
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
         level.biome = Holder.direct(allocate(Biome.class));
+        level.dimensionKey = Level.OVERWORLD;
 
         NationClaimRecord claim = new NationClaimRecord(
                 "minecraft:overworld", 0, 0, "nation", "town2",
@@ -322,6 +326,76 @@ class ManualRoadPlannerServiceTest {
         );
 
         assertEquals(new BlockPos(-2, 64, 8), anchor);
+    }
+
+    @Test
+    void nearestRoadNodeInClaimsCanReuseExistingRoadNodeInsideCoreExcludedColumn() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        level.dimensionKey = Level.OVERWORLD;
+
+        for (int x = 0; x <= 10; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.DIRT.defaultBlockState());
+        }
+        level.blockStates.put(new BlockPos(5, 65, 0).asLong(), Blocks.STONE_BRICK_SLAB.defaultBlockState());
+
+        NationSavedData data = new NationSavedData();
+        data.putRoadNetwork(new RoadNetworkRecord(
+                "manual|town:a|town:b",
+                "nation",
+                "town",
+                "minecraft:overworld",
+                "town:a",
+                "town:b",
+                List.of(
+                        new BlockPos(4, 64, 0),
+                        new BlockPos(5, 64, 0),
+                        new BlockPos(6, 64, 0)
+                ),
+                1L,
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+        ));
+        List<NationClaimRecord> claims = List.of(new NationClaimRecord(
+                "minecraft:overworld", 0, 0, "nation", "town",
+                "member", "member", "member", "member", "member", "member", "member", 0L
+        ));
+
+        BlockPos roadNode = invokeNearestRoadNodeInClaims(
+                level,
+                data,
+                claims,
+                new BlockPos(5, 64, 0),
+                Set.of(BlockPos.asLong(5, 0, 0))
+        );
+
+        assertEquals(new BlockPos(5, 64, 0), roadNode);
+    }
+
+    @Test
+    void collectSegmentAnchorsKeepsExistingRoadNodesEvenWhenTheyCrossCoreExcludedColumns() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        level.dimensionKey = Level.OVERWORLD;
+
+        for (int x = 0; x <= 12; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.DIRT.defaultBlockState());
+        }
+        level.blockStates.put(new BlockPos(6, 65, 0).asLong(), Blocks.STONE_BRICK_SLAB.defaultBlockState());
+
+        List<BlockPos> anchors = invokeCollectSegmentAnchors(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(12, 64, 0),
+                Set.of(),
+                Set.of(BlockPos.asLong(6, 0, 0)),
+                Set.of(new BlockPos(6, 64, 0))
+        );
+
+        assertTrue(anchors.contains(new BlockPos(6, 64, 0)));
     }
 
     @Test
@@ -890,6 +964,27 @@ class ManualRoadPlannerServiceTest {
         }
     }
 
+    private static BlockPos invokeNearestRoadNodeInClaims(ServerLevel level,
+                                                          NationSavedData data,
+                                                          List<NationClaimRecord> claims,
+                                                          BlockPos towardPos,
+                                                          Set<Long> excludedColumns) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "nearestRoadNodeInClaims",
+                    ServerLevel.class,
+                    NationSavedData.class,
+                    List.class,
+                    BlockPos.class,
+                    Set.class
+            );
+            method.setAccessible(true);
+            return (BlockPos) method.invoke(null, level, data, claims, towardPos, excludedColumns);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static List<BlockPos> invokeCollectSegmentAnchors(ServerLevel level,
                                                               BlockPos sourceAnchor,
@@ -1074,6 +1169,7 @@ class ManualRoadPlannerServiceTest {
         private Map<Long, BlockState> blockStates;
         private Map<Long, Integer> surfaceHeights;
         private Holder<Biome> biome;
+        private ResourceKey<Level> dimensionKey;
 
         private TestServerLevel() {
             super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
@@ -1098,6 +1194,11 @@ class ManualRoadPlannerServiceTest {
         @Override
         public Holder<Biome> getBiome(BlockPos pos) {
             return biome;
+        }
+
+        @Override
+        public ResourceKey<Level> dimension() {
+            return dimensionKey == null ? Level.OVERWORLD : dimensionKey;
         }
     }
 }

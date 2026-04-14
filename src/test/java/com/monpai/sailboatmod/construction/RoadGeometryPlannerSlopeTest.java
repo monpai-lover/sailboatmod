@@ -77,7 +77,7 @@ class RoadGeometryPlannerSlopeTest {
     }
 
     @Test
-    void keepsLowerRibbonColumnAsSlabWhileContinuousDiagonalRiseUsesStairsInCenter() {
+    void keepsLowerRibbonColumnAsSlabWhileContinuousDiagonalRiseKeepsCenterAsSlab() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 1),
@@ -103,7 +103,7 @@ class RoadGeometryPlannerSlopeTest {
 
         assertTrue(statesByPos.containsKey(centerPlacement));
         assertTrue(statesByPos.containsKey(outerPlacement));
-        assertTrue(statesByPos.get(centerPlacement).is(Blocks.STONE_BRICK_STAIRS));
+        assertTrue(statesByPos.get(centerPlacement).is(Blocks.STONE_BRICK_SLAB));
         assertTrue(statesByPos.get(outerPlacement).is(Blocks.STONE_BRICK_SLAB));
     }
 
@@ -228,6 +228,29 @@ class RoadGeometryPlannerSlopeTest {
         assertTrue(plan.ghostBlocks().stream().anyMatch(block ->
                 block.state().is(Blocks.STONE_BRICK_STAIRS)
                         && block.state().getValue(StairBlock.FACING) == Direction.WEST));
+    }
+
+    @Test
+    void diagonalContinuousRisePrefersSlabToAvoidAmbiguousStairFacing() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 1),
+                new BlockPos(2, 66, 2),
+                new BlockPos(3, 67, 3)
+        );
+
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        BlockState state = plan.ghostBlocks().stream()
+                .filter(block -> block.pos().equals(new BlockPos(2, 66, 2)))
+                .findFirst()
+                .orElseThrow()
+                .state();
+
+        assertTrue(state.is(Blocks.STONE_BRICK_SLAB));
     }
 
     private static Map<BlockPos, BlockState> statesByPos(RoadGeometryPlanner.RoadGeometryPlan plan) {

@@ -148,7 +148,10 @@ public final class StructureConstructionManager {
                                        RoadPlacementPlan plan,
                                        List<ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState> rollbackStates,
                                        int placedStepCount,
-                                       double progressSteps) {}
+                                       double progressSteps,
+                                       boolean rollbackActive,
+                                       int rollbackActionIndex,
+                                       boolean removeRoadNetworkOnComplete) {}
     private record ActiveWorker(BlockPos position, long lastSeenTick, boolean specialist) {}
     private record RoadCandidate(com.monpai.sailboatmod.nation.model.PlacedStructureRecord left,
                                  com.monpai.sailboatmod.nation.model.PlacedStructureRecord right,
@@ -197,6 +200,7 @@ public final class StructureConstructionManager {
     private static final Set<String> RESTORED_DIMENSIONS = ConcurrentHashMap.newKeySet();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
     private static final int ROAD_BUILD_DURATION_TICKS = 2400; // ~120 seconds baseline for roads
+    private static final int ROAD_ROLLBACK_DURATION_TICKS = 600; // ~30 seconds baseline for teardown/rollback
     private static final long ACTIVE_WORKER_TIMEOUT_TICKS = 40L;
     private static final double ROAD_CONNECT_RANGE_SQR = 128.0D * 128.0D;
     private static final double ROAD_EXTRA_EDGE_RANGE_SQR = 56.0D * 56.0D;
@@ -559,7 +563,8 @@ public final class StructureConstructionManager {
     }
 
     public static void tickRoadConstructions(ServerLevel level) {
-        List<String> completed = new ArrayList<>();
+        List<String> completedBuilds = new ArrayList<>();
+        List<String> completedRollbacks = new ArrayList<>();
         Set<ServerPlayer> playersToSync = Collections.newSetFromMap(new IdentityHashMap<>());
 
         for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
@@ -573,51 +578,98 @@ public final class StructureConstructionManager {
 
             int activeWorkers = getActiveRoadWorkerCount(level, entry.getKey());
             job = consumeRoadHammerCredit(level, entry.getKey(), job);
-            double speedMultiplier = activeWorkers > 0 ? (activeWorkers + 2.0D) / 3.0D : 1.0D;
-            int totalSteps = job.plan.buildSteps().size();
-            if (totalSteps <= 0) {
-                completed.add(entry.getKey());
+            int totalUnits = job.rollbackActive
+                    ? roadRollbackActionOrder(level, job.plan, job.rollbackStates).size()
+                    : job.plan.buildSteps().size();
+            if (totalUnits <= 0) {
+                if (job.rollbackActive) {
+                    completedRollbacks.add(entry.getKey());
+                } else {
+                    completedBuilds.add(entry.getKey());
+                }
                 continue;
             }
 
-            double progressPerTick = (totalSteps / (double) ROAD_BUILD_DURATION_TICKS) * speedMultiplier;
+            double speedMultiplier = activeWorkers > 0 ? (activeWorkers + 2.0D) / 3.0D : 1.0D;
+            double progressPerTick = job.rollbackActive
+                    ? roadRollbackProgressPerTick(totalUnits, speedMultiplier)
+                    : roadBuildProgressPerTick(totalUnits, speedMultiplier);
             double targetProgress = job.progressSteps + progressPerTick;
-            int actualPlacedStepCount = findRoadPlacedStepCount(level, job.plan);
-            int targetPlacedStepCount = Math.min(totalSteps, Math.max(actualPlacedStepCount, (int) targetProgress));
-            RoadConstructionJob advancedJob = placeRoadBuildSteps(level, job, targetPlacedStepCount - actualPlacedStepCount);
-            int newPlacedStepCount = advancedJob.placedStepCount;
-
-            if (newPlacedStepCount >= totalSteps) {
-                if (owner != null) {
-                    owner.sendSystemMessage(Component.translatable(
-                            "message.sailboatmod.road_planner.completed",
-                            advancedJob.sourceTownName,
-                            advancedJob.targetTownName
-                    ));
+            if (job.rollbackActive) {
+                int startIndex = Math.max(0, Math.min(totalUnits, job.rollbackActionIndex));
+                int targetActionIndex = Math.min(totalUnits, Math.max(startIndex, (int) targetProgress));
+                RoadConstructionJob rolledBackJob = rollbackRoadBuildSteps(level, job, targetActionIndex - startIndex);
+                if (rolledBackJob.rollbackActionIndex >= totalUnits) {
+                    completedRollbacks.add(entry.getKey());
+                } else {
+                    RoadConstructionJob updatedJob = new RoadConstructionJob(
+                            rolledBackJob.level,
+                            rolledBackJob.roadId,
+                            rolledBackJob.ownerUuid,
+                            rolledBackJob.townId,
+                            rolledBackJob.nationId,
+                            rolledBackJob.sourceTownName,
+                            rolledBackJob.targetTownName,
+                            rolledBackJob.plan,
+                            rolledBackJob.rollbackStates,
+                            rolledBackJob.placedStepCount,
+                            Math.max(targetProgress, rolledBackJob.rollbackActionIndex),
+                            true,
+                            rolledBackJob.rollbackActionIndex,
+                            rolledBackJob.removeRoadNetworkOnComplete
+                    );
+                    ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), updatedJob);
+                    persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount, true, updatedJob.rollbackActionIndex, updatedJob.removeRoadNetworkOnComplete);
                 }
-                completed.add(entry.getKey());
             } else {
-                RoadConstructionJob updatedJob = new RoadConstructionJob(
-                        advancedJob.level,
-                        advancedJob.roadId,
-                        advancedJob.ownerUuid,
-                        advancedJob.townId,
-                        advancedJob.nationId,
-                        advancedJob.sourceTownName,
-                        advancedJob.targetTownName,
-                        advancedJob.plan,
-                        advancedJob.rollbackStates,
-                        newPlacedStepCount,
-                        Math.max(targetProgress, newPlacedStepCount)
-                );
-                ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), updatedJob);
-                persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount);
+                int actualPlacedStepCount = findRoadPlacedStepCount(level, job.plan);
+                int targetPlacedStepCount = Math.min(totalUnits, Math.max(actualPlacedStepCount, (int) targetProgress));
+                RoadConstructionJob advancedJob = placeRoadBuildSteps(level, job, targetPlacedStepCount - actualPlacedStepCount);
+                int newPlacedStepCount = advancedJob.placedStepCount;
+
+                if (newPlacedStepCount >= totalUnits) {
+                    persistRoadConstruction(level, advancedJob.roadId, advancedJob.ownerUuid, advancedJob.plan, advancedJob.rollbackStates, totalUnits, false, 0, false);
+                    if (owner != null) {
+                        owner.sendSystemMessage(Component.translatable(
+                                "message.sailboatmod.road_planner.completed",
+                                advancedJob.sourceTownName,
+                                advancedJob.targetTownName
+                        ));
+                    }
+                    completedBuilds.add(entry.getKey());
+                } else {
+                    RoadConstructionJob updatedJob = new RoadConstructionJob(
+                            advancedJob.level,
+                            advancedJob.roadId,
+                            advancedJob.ownerUuid,
+                            advancedJob.townId,
+                            advancedJob.nationId,
+                            advancedJob.sourceTownName,
+                            advancedJob.targetTownName,
+                            advancedJob.plan,
+                            advancedJob.rollbackStates,
+                            newPlacedStepCount,
+                            Math.max(targetProgress, newPlacedStepCount),
+                            false,
+                            0,
+                            false
+                    );
+                    ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), updatedJob);
+                    persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount, false, 0, false);
+                }
             }
         }
 
-        completed.forEach(jobId -> {
+        completedBuilds.forEach(jobId -> {
+            clearActiveRoadRuntimeState(jobId);
+        });
+        completedRollbacks.forEach(jobId -> {
+            RoadConstructionJob completedJob = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
             clearActiveRoadRuntimeState(jobId);
             removePersistedRoadJob(level, jobId);
+            if (completedJob != null && completedJob.removeRoadNetworkOnComplete) {
+                NationSavedData.get(level).removeRoadNetwork(jobId);
+            }
         });
         syncRoadConstructionProgress(level, playersToSync);
     }
@@ -674,7 +726,7 @@ public final class StructureConstructionManager {
 
     private static RoadConstructionJob consumeRoadHammerCredit(ServerLevel level, String jobId, RoadConstructionJob job) {
         Integer queuedCredits = ACTIVE_ROAD_HAMMER_CREDITS.get(jobId);
-        if (queuedCredits == null || queuedCredits <= 0 || job == null) {
+        if (queuedCredits == null || queuedCredits <= 0 || job == null || job.rollbackActive) {
             return job;
         }
         job = refreshRoadConstructionState(level, job);
@@ -700,7 +752,10 @@ public final class StructureConstructionManager {
                 updatedJob.plan,
                 updatedJob.rollbackStates,
                 updatedJob.placedStepCount,
-                Math.max(updatedJob.progressSteps, updatedJob.placedStepCount)
+                Math.max(updatedJob.progressSteps, updatedJob.placedStepCount),
+                false,
+                0,
+                false
         );
     }
 
@@ -802,6 +857,20 @@ public final class StructureConstructionManager {
 
     private static int roadProgressPercent(ServerLevel level, RoadConstructionJob job) {
         return roadProgressPercent(job == null ? null : job.plan, job == null ? Set.of() : completedRoadBuildStepKeys(level, job.plan));
+    }
+
+    private static double roadBuildProgressPerTick(int totalSteps, double speedMultiplier) {
+        if (totalSteps <= 0) {
+            return 0.0D;
+        }
+        return (totalSteps / (double) ROAD_BUILD_DURATION_TICKS) * Math.max(0.0D, speedMultiplier);
+    }
+
+    private static double roadRollbackProgressPerTick(int totalActions, double speedMultiplier) {
+        if (totalActions <= 0) {
+            return 0.0D;
+        }
+        return (totalActions / (double) ROAD_ROLLBACK_DURATION_TICKS) * Math.max(0.0D, speedMultiplier);
     }
 
     private static int roadProgressPercent(RoadPlacementPlan plan, int placedStepCount) {
@@ -1356,9 +1425,12 @@ public final class StructureConstructionManager {
                 runtimePlan,
                 rollbackStates,
                 placedStepCount,
-                placedStepCount
+                placedStepCount,
+                false,
+                0,
+                false
         ));
-        persistRoadConstruction(level, road.roadId(), ownerUuid, runtimePlan, rollbackStates, placedStepCount);
+        persistRoadConstruction(level, road.roadId(), ownerUuid, runtimePlan, rollbackStates, placedStepCount, false, 0, false);
     }
 
     public static void scheduleManualRoad(ServerLevel level, RoadNetworkRecord road) {
@@ -1532,7 +1604,12 @@ public final class StructureConstructionManager {
                 job.plan,
                 job.rollbackStates,
                 placedStepCount,
-                Math.max(job.progressSteps, placedStepCount)
+                job.rollbackActive
+                        ? Math.max(job.progressSteps, job.rollbackActionIndex)
+                        : Math.max(job.progressSteps, placedStepCount),
+                job.rollbackActive,
+                job.rollbackActionIndex,
+                job.removeRoadNetworkOnComplete
         );
     }
 
@@ -1583,8 +1660,143 @@ public final class StructureConstructionManager {
                 job.plan,
                 job.rollbackStates,
                 completedCount,
-                Math.max(job.progressSteps, completedCount)
+                Math.max(job.progressSteps, completedCount),
+                false,
+                0,
+                false
         );
+    }
+
+    private static RoadConstructionJob rollbackRoadBuildSteps(ServerLevel level, RoadConstructionJob job, int actionCount) {
+        if (job == null || actionCount <= 0) {
+            return job;
+        }
+        job = refreshRoadConstructionState(level, job);
+        int nextRollbackActionIndex = applyRoadRollbackBatchWithSetter(
+                level,
+                job.plan,
+                job.rollbackStates,
+                job.rollbackActionIndex,
+                actionCount,
+                (pos, state) -> {
+                    if (pos == null || state == null || level == null) {
+                        return;
+                    }
+                    level.setBlock(pos, state, Block.UPDATE_ALL);
+                }
+        );
+        int placedStepCount = findRoadPlacedStepCount(level, job.plan);
+        List<BlockPos> actionOrder = roadRollbackActionOrder(level, job.plan, job.rollbackStates);
+        if (nextRollbackActionIndex > job.rollbackActionIndex && !actionOrder.isEmpty()) {
+            BlockPos center = actionOrder.get(Math.max(0, Math.min(actionOrder.size() - 1, nextRollbackActionIndex - 1)));
+            level.sendParticles(ParticleTypes.CLOUD,
+                    center.getX() + 0.5D,
+                    center.getY() + 0.25D,
+                    center.getZ() + 0.5D,
+                    3, 0.15D, 0.1D, 0.15D, 0.01D);
+            level.playSound(null, center, Blocks.STONE.defaultBlockState().getSoundType().getBreakSound(), SoundSource.BLOCKS, 0.3F, 0.9F);
+        }
+        return new RoadConstructionJob(
+                job.level,
+                job.roadId,
+                job.ownerUuid,
+                job.townId,
+                job.nationId,
+                job.sourceTownName,
+                job.targetTownName,
+                job.plan,
+                job.rollbackStates,
+                placedStepCount,
+                Math.max(job.progressSteps, nextRollbackActionIndex),
+                true,
+                nextRollbackActionIndex,
+                job.removeRoadNetworkOnComplete
+        );
+    }
+
+    private static int applyRoadRollbackBatchWithSetter(ServerLevel level,
+                                                        RoadPlacementPlan plan,
+                                                        List<ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState> rollbackStates,
+                                                        int rollbackActionIndex,
+                                                        int actionCount,
+                                                        java.util.function.BiConsumer<BlockPos, BlockState> stateSetter) {
+        if (plan == null || actionCount <= 0 || stateSetter == null) {
+            return Math.max(0, rollbackActionIndex);
+        }
+        List<BlockPos> actionOrder = roadRollbackActionOrder(level, plan, rollbackStates);
+        if (actionOrder.isEmpty()) {
+            return 0;
+        }
+        Map<Long, ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState> snapshotIndex = new LinkedHashMap<>();
+        if (rollbackStates != null) {
+            for (ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState rollbackState : rollbackStates) {
+                if (rollbackState != null) {
+                    snapshotIndex.put(rollbackState.pos(), rollbackState);
+                }
+            }
+        }
+        int start = Math.max(0, Math.min(actionOrder.size(), rollbackActionIndex));
+        int end = Math.max(start, Math.min(actionOrder.size(), start + actionCount));
+        for (int i = start; i < end; i++) {
+            BlockPos pos = actionOrder.get(i);
+            ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState snapshot = snapshotIndex.get(pos.asLong());
+            BlockState restoredState = snapshot == null
+                    ? Blocks.AIR.defaultBlockState()
+                    : (level == null ? deserializeBlockStatePayload(snapshot.statePayload()) : deserializeBlockState(level, snapshot.statePayload()));
+            if (restoredState != null) {
+                stateSetter.accept(pos, restoredState);
+            }
+        }
+        return end;
+    }
+
+    private static List<BlockPos> roadRollbackActionOrder(ServerLevel level,
+                                                          RoadPlacementPlan plan,
+                                                          List<ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState> rollbackStates) {
+        if (plan == null) {
+            return List.of();
+        }
+        ArrayList<BlockPos> ordered = new ArrayList<>();
+        LinkedHashSet<Long> seen = new LinkedHashSet<>();
+        LinkedHashSet<Long> headspaceKeys = new LinkedHashSet<>();
+        for (int i = plan.buildSteps().size() - 1; i >= 0; i--) {
+            RoadGeometryPlanner.RoadBuildStep step = plan.buildSteps().get(i);
+            if (step == null || step.pos() == null) {
+                continue;
+            }
+            if (seen.add(step.pos().asLong())) {
+                ordered.add(step.pos());
+            }
+            headspaceKeys.add(step.pos().above().asLong());
+        }
+        for (BlockPos pos : RoadLifecycleService.removalOrder(roadOwnedBlocks(level, plan))) {
+            if (pos != null && seen.add(pos.asLong())) {
+                ordered.add(pos);
+            }
+        }
+        if (rollbackStates != null && !rollbackStates.isEmpty()) {
+            for (ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState rollbackState : rollbackStates) {
+                if (rollbackState == null) {
+                    continue;
+                }
+                long posKey = rollbackState.pos();
+                if (headspaceKeys.contains(posKey) || !seen.add(posKey)) {
+                    continue;
+                }
+                ordered.add(BlockPos.of(posKey));
+            }
+            for (ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState rollbackState : rollbackStates) {
+                if (rollbackState == null) {
+                    continue;
+                }
+                long posKey = rollbackState.pos();
+                if (!headspaceKeys.contains(posKey) || !seen.add(posKey)) {
+                    continue;
+                }
+                ordered.add(BlockPos.of(posKey));
+            }
+        }
+        return ordered.isEmpty() ? List.of() : List.copyOf(ordered);
     }
 
     private static Set<BlockPos> collectRoadCoverage(Collection<RoadNetworkRecord> roads) {
@@ -1801,6 +2013,9 @@ public final class StructureConstructionManager {
             return false;
         }
         BlockState plannedState = step.state();
+        if (isEquivalentRoadSurfaceFamily(currentState, plannedState)) {
+            return true;
+        }
         if (!currentState.is(plannedState.getBlock())) {
             return false;
         }
@@ -1824,6 +2039,33 @@ public final class StructureConstructionManager {
         return currentState.getValue(property).equals(plannedState.getValue(property));
     }
 
+    private static boolean isEquivalentRoadSurfaceFamily(BlockState currentState, BlockState plannedState) {
+        if (currentState == null || plannedState == null) {
+            return false;
+        }
+        int currentFamily = roadSurfaceFamily(currentState);
+        return currentFamily != -1 && currentFamily == roadSurfaceFamily(plannedState);
+    }
+
+    private static int roadSurfaceFamily(BlockState state) {
+        if (state == null) {
+            return -1;
+        }
+        if (state.is(Blocks.STONE_BRICKS) || state.is(Blocks.STONE_BRICK_SLAB) || state.is(Blocks.STONE_BRICK_STAIRS)) {
+            return 1;
+        }
+        if (state.is(Blocks.SMOOTH_SANDSTONE) || state.is(Blocks.SMOOTH_SANDSTONE_SLAB) || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS)) {
+            return 2;
+        }
+        if (state.is(Blocks.MUD_BRICKS) || state.is(Blocks.MUD_BRICK_SLAB) || state.is(Blocks.MUD_BRICK_STAIRS)) {
+            return 3;
+        }
+        if (state.is(Blocks.SPRUCE_PLANKS) || state.is(Blocks.SPRUCE_SLAB) || state.is(Blocks.SPRUCE_STAIRS)) {
+            return 4;
+        }
+        return -1;
+    }
+
     private static List<RoadGeometryPlanner.GhostRoadBlock> remainingRoadGhostBlocks(RoadPlacementPlan plan, int placedStepCount) {
         if (plan == null || plan.buildSteps().isEmpty()) {
             return List.of();
@@ -1841,7 +2083,7 @@ public final class StructureConstructionManager {
     }
 
     private static List<RoadGeometryPlanner.GhostRoadBlock> remainingRoadGhostBlocks(ServerLevel level, RoadConstructionJob job) {
-        if (level == null || job == null) {
+        if (level == null || job == null || job.rollbackActive) {
             return List.of();
         }
         return remainingRoadGhostBlocks(job.plan, completedRoadBuildStepKeys(level, job.plan));
@@ -3144,28 +3386,121 @@ public final class StructureConstructionManager {
         if (job == null || job.level != level) {
             return false;
         }
-        clearActiveRoadRuntimeState(roadId);
-        restoreRoadRollbackStates(level, job.rollbackStates);
-        if (job.rollbackStates == null || job.rollbackStates.isEmpty()) {
-            removeOwnedRoadBlocks(level, job.plan);
-        }
-        removePersistedRoadJob(level, roadId);
-        NationSavedData.get(level).removeRoadNetwork(roadId);
-        return true;
+        return startRoadRollback(level, new RoadConstructionJob(
+                job.level,
+                job.roadId,
+                job.ownerUuid,
+                job.townId,
+                job.nationId,
+                job.sourceTownName,
+                job.targetTownName,
+                job.plan,
+                job.rollbackStates,
+                findRoadPlacedStepCount(level, job.plan),
+                job.rollbackActionIndex,
+                true,
+                Math.max(0, job.rollbackActionIndex),
+                true
+        ));
     }
 
     static boolean demolishRoadById(ServerLevel level, String roadId) {
         if (level == null || roadId == null || roadId.isBlank()) {
             return false;
         }
-        RoadPlacementPlan plan = findRoadPlacementPlan(level, roadId);
-        if (plan == null) {
+        RoadConstructionJob activeJob = ACTIVE_ROAD_CONSTRUCTIONS.get(roadId);
+        if (activeJob != null && activeJob.level == level) {
+            return startRoadRollback(level, new RoadConstructionJob(
+                    activeJob.level,
+                    activeJob.roadId,
+                    activeJob.ownerUuid,
+                    activeJob.townId,
+                    activeJob.nationId,
+                    activeJob.sourceTownName,
+                    activeJob.targetTownName,
+                    activeJob.plan,
+                    activeJob.rollbackStates,
+                    findRoadPlacedStepCount(level, activeJob.plan),
+                    activeJob.rollbackActionIndex,
+                    true,
+                    Math.max(0, activeJob.rollbackActionIndex),
+                    true
+            ));
+        }
+
+        ConstructionRuntimeSavedData.RoadJobState persistedState = findPersistedRoadJob(level, roadId);
+        RoadPlacementPlan plan;
+        List<ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState> rollbackStates;
+        UUID ownerUuid = null;
+        String townId = "";
+        String nationId = "";
+        String sourceTownName = "-";
+        String targetTownName = "-";
+        RoadNetworkRecord road = NationSavedData.get(level).getRoadNetwork(roadId);
+        if (persistedState != null) {
+            RestoredRoadRuntime restoredRoad = restorePersistedRoadRuntime(level, persistedState);
+            if (!restoredRoad.success()) {
+                return false;
+            }
+            plan = restoredRoad.plan();
+            rollbackStates = persistedState.rollbackStates();
+            ownerUuid = parseUuid(persistedState.ownerUuid());
+            if (road != null) {
+                townId = road.townId();
+                nationId = road.nationId();
+                String[] resolvedNames = resolveRoadTownNames(level, road);
+                sourceTownName = resolvedNames[0];
+                targetTownName = resolvedNames[1];
+            }
+        } else {
+            plan = findRoadPlacementPlan(level, roadId);
+            if (plan == null) {
+                return false;
+            }
+            rollbackStates = captureRoadRollbackStates(level, plan);
+        }
+        return startRoadRollback(level, new RoadConstructionJob(
+                level,
+                roadId,
+                ownerUuid,
+                townId,
+                nationId,
+                sourceTownName,
+                targetTownName,
+                plan,
+                rollbackStates,
+                findRoadPlacedStepCount(level, plan),
+                0.0D,
+                true,
+                0,
+                true
+        ));
+    }
+
+    private static boolean startRoadRollback(ServerLevel level, RoadConstructionJob job) {
+        if (level == null || job == null || job.roadId == null || job.roadId.isBlank() || job.plan == null) {
             return false;
         }
-        clearActiveRoadRuntimeState(roadId);
-        removeOwnedRoadBlocks(level, plan);
-        removePersistedRoadJob(level, roadId);
-        NationSavedData.get(level).removeRoadNetwork(roadId);
+        RoadConstructionJob rollbackJob = refreshRoadConstructionState(level, job);
+        rollbackJob = new RoadConstructionJob(
+                rollbackJob.level,
+                rollbackJob.roadId,
+                rollbackJob.ownerUuid,
+                rollbackJob.townId,
+                rollbackJob.nationId,
+                rollbackJob.sourceTownName,
+                rollbackJob.targetTownName,
+                rollbackJob.plan,
+                rollbackJob.rollbackStates,
+                rollbackJob.placedStepCount,
+                Math.max(rollbackJob.rollbackActionIndex, 0),
+                true,
+                Math.max(rollbackJob.rollbackActionIndex, 0),
+                job.removeRoadNetworkOnComplete
+        );
+        ACTIVE_ROAD_HAMMER_CREDITS.remove(rollbackJob.roadId);
+        ACTIVE_ROAD_CONSTRUCTIONS.put(rollbackJob.roadId, rollbackJob);
+        persistRoadConstruction(level, rollbackJob.roadId, rollbackJob.ownerUuid, rollbackJob.plan, rollbackJob.rollbackStates, rollbackJob.placedStepCount, true, rollbackJob.rollbackActionIndex, rollbackJob.removeRoadNetworkOnComplete);
         return true;
     }
 
@@ -4128,8 +4463,7 @@ public final class StructureConstructionManager {
                 continue;
             }
 
-            if (restoredRoad.placedStepCount() >= restoredRoad.plan().buildSteps().size()) {
-                staleRoadJobs.add(state.roadId());
+            if (!state.rollbackActive() && restoredRoad.placedStepCount() >= restoredRoad.plan().buildSteps().size()) {
                 continue;
             }
 
@@ -4148,9 +4482,12 @@ public final class StructureConstructionManager {
                     restoredRoad.plan(),
                     state.rollbackStates(),
                     restoredRoad.placedStepCount(),
-                    restoredRoad.placedStepCount()
+                    state.rollbackActive() ? Math.max(state.rollbackActionIndex(), 0) : restoredRoad.placedStepCount(),
+                    state.rollbackActive(),
+                    Math.max(state.rollbackActionIndex(), 0),
+                    state.removeRoadNetworkOnComplete()
             ));
-            persistRoadConstruction(level, state.roadId(), ownerUuid, restoredRoad.plan(), state.rollbackStates(), restoredRoad.placedStepCount());
+            persistRoadConstruction(level, state.roadId(), ownerUuid, restoredRoad.plan(), state.rollbackStates(), restoredRoad.placedStepCount(), state.rollbackActive(), state.rollbackActionIndex(), state.removeRoadNetworkOnComplete());
         }
         staleRoadJobs.forEach(runtimeData::removeRoadJob);
     }
@@ -4182,14 +4519,17 @@ public final class StructureConstructionManager {
                                                 UUID ownerUuid,
                                                 RoadPlacementPlan plan,
                                                 List<ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState> rollbackStates,
-                                                int placedStepCount) {
+                                                int placedStepCount,
+                                                boolean rollbackActive,
+                                                int rollbackActionIndex,
+                                                boolean removeRoadNetworkOnComplete) {
         if (level == null || roadId == null || roadId.isBlank() || plan == null) {
             return;
         }
         ConstructionRuntimeSavedData.get(level).putRoadJob(
                 new ConstructionRuntimeSavedData.RoadJobState(
                         roadId,
-                        level.dimension().location().toString(),
+                        safeDimensionId(level),
                         ownerUuid == null ? "" : ownerUuid.toString(),
                         toLongList(plan.centerPath()),
                         serializeRoadGhostBlocks(plan.ghostBlocks()),
@@ -4197,13 +4537,28 @@ public final class StructureConstructionManager {
                         rollbackStates == null ? List.of() : List.copyOf(rollbackStates),
                         toLongList(plan.ownedBlocks()),
                         placedStepCount,
-                        false
+                        false,
+                        rollbackActive,
+                        rollbackActionIndex,
+                        removeRoadNetworkOnComplete
                 )
         );
     }
 
     private static void removePersistedRoadJob(ServerLevel level, String roadId) {
         ConstructionRuntimeSavedData.get(level).removeRoadJob(roadId);
+    }
+
+    private static ConstructionRuntimeSavedData.RoadJobState findPersistedRoadJob(ServerLevel level, String roadId) {
+        if (level == null || roadId == null || roadId.isBlank()) {
+            return null;
+        }
+        for (ConstructionRuntimeSavedData.RoadJobState state : ConstructionRuntimeSavedData.get(level).getRoadJobs()) {
+            if (state != null && roadId.equals(state.roadId())) {
+                return state;
+            }
+        }
+        return null;
     }
 
     private static RestoredRoadRuntime restorePersistedRoadRuntime(ServerLevel level,
@@ -4286,6 +4641,9 @@ public final class StructureConstructionManager {
         }
         if (state.placedStepCount() < 0 || state.placedStepCount() > state.buildSteps().size()) {
             return "placedStepCount is out of range";
+        }
+        if (state.rollbackActionIndex() < 0) {
+            return "rollbackActionIndex is out of range";
         }
 
         LinkedHashSet<Long> ghostPositions = new LinkedHashSet<>();

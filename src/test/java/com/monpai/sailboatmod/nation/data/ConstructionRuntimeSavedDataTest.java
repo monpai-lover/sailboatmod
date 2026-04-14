@@ -82,6 +82,46 @@ class ConstructionRuntimeSavedDataTest {
     }
 
     @Test
+    void savesAndLoadsRollbackMetadataForPlanCentricRoadJobs() {
+        ConstructionRuntimeSavedData data = new ConstructionRuntimeSavedData();
+        BlockPos center = new BlockPos(24, 70, 12);
+        ConstructionRuntimeSavedData.RoadJobState state = new ConstructionRuntimeSavedData.RoadJobState(
+                "road:rollback",
+                "minecraft:overworld",
+                UUID.fromString("00000000-0000-0000-0000-000000000112").toString(),
+                List.of(center.asLong(), center.east().asLong()),
+                List.of(new ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState(
+                        center.asLong(),
+                        blockStatePayload("minecraft:stone_brick_slab")
+                )),
+                List.of(new ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState(
+                        0,
+                        center.asLong(),
+                        blockStatePayload("minecraft:stone_brick_slab")
+                )),
+                List.of(new ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState(
+                        center.asLong(),
+                        blockStatePayload("minecraft:grass_block")
+                )),
+                List.of(center.asLong()),
+                1,
+                false,
+                2,
+                true
+        );
+
+        data.putRoadJob(state);
+
+        ConstructionRuntimeSavedData loaded = ConstructionRuntimeSavedData.load(data.save(new CompoundTag()));
+        ConstructionRuntimeSavedData.RoadJobState restored = loaded.getRoadJobs().iterator().next();
+
+        assertTrue(restored.rollbackActive());
+        assertEquals(2, restored.rollbackActionIndex());
+        assertTrue(restored.removeRoadNetworkOnComplete());
+        assertEquals(1, restored.rollbackStates().size());
+    }
+
+    @Test
     void loadsLegacyPathOnlyRoadJobsWithoutDroppingThePath() {
         CompoundTag root = new CompoundTag();
         CompoundTag road = new CompoundTag();

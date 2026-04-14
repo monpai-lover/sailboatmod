@@ -645,12 +645,34 @@ public final class RoadGeometryPlanner {
         if (!stairSegment || !isWithinStairTravelBand(currentPos.getX(), currentPos.getZ(), path)) {
             return state;
         }
+        if (isAmbiguousDiagonalClimb(path, index)) {
+            return state;
+        }
         boolean fullBlockBridgeDeck = state.is(net.minecraft.world.level.block.Blocks.STONE_BRICKS);
         if (!fullBlockBridgeDeck
                 && shouldUseSlabTransition(currentPos.getX(), currentPos.getZ(), currentPos.getY(), path, placementHeights)) {
             return state;
         }
         return staircaseState(state, stairFacing(path, placementHeights, index));
+    }
+
+    private static boolean isAmbiguousDiagonalClimb(List<BlockPos> path, int index) {
+        if (path == null || path.isEmpty() || index < 0 || index >= path.size()) {
+            return false;
+        }
+        BlockPos current = path.get(index);
+        BlockPos previous = index > 0 ? path.get(index - 1) : current;
+        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : current;
+        return isDiagonalHorizontalStep(previous, current) || isDiagonalHorizontalStep(current, next);
+    }
+
+    private static boolean isDiagonalHorizontalStep(BlockPos from, BlockPos to) {
+        if (from == null || to == null) {
+            return false;
+        }
+        int dx = Math.abs(to.getX() - from.getX());
+        int dz = Math.abs(to.getZ() - from.getZ());
+        return dx > 0 && dz > 0;
     }
 
     private static Direction stairFacing(List<BlockPos> path, int[] placementHeights, int index) {
