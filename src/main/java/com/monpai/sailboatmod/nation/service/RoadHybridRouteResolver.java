@@ -8,7 +8,6 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -214,6 +213,8 @@ public final class RoadHybridRouteResolver {
         }
         return createRoute(
                 ResolutionKind.DIRECT,
+                source,
+                target,
                 result.path(),
                 false,
                 0,
@@ -240,6 +241,8 @@ public final class RoadHybridRouteResolver {
 
         return createRoute(
                 ResolutionKind.SOURCE_CONNECTOR,
+                source,
+                target,
                 stitch(connector.path(), networkPath),
                 true,
                 1,
@@ -266,6 +269,8 @@ public final class RoadHybridRouteResolver {
 
         return createRoute(
                 ResolutionKind.TARGET_CONNECTOR,
+                source,
+                target,
                 stitch(networkPath, connector.path()),
                 true,
                 1,
@@ -301,6 +306,8 @@ public final class RoadHybridRouteResolver {
         int adjacentWaterColumns = left.adjacentWaterColumns() + right.adjacentWaterColumns();
         return createRoute(
                 ResolutionKind.DUAL_CONNECTOR,
+                source,
+                target,
                 merged,
                 true,
                 2,
@@ -311,13 +318,21 @@ public final class RoadHybridRouteResolver {
     }
 
     private static HybridRoute createRoute(ResolutionKind kind,
+                                           BlockPos expectedStart,
+                                           BlockPos expectedEnd,
                                            List<BlockPos> path,
                                            boolean usedExistingNetwork,
                                            int connectorCount,
                                            int bridgeColumns,
                                            int longestBridgeRun,
                                            int adjacentWaterColumns) {
-        if (path == null || path.size() < 2 || !isContinuousPath(path)) {
+        if (path == null
+                || path.size() < 2
+                || expectedStart == null
+                || expectedEnd == null
+                || !expectedStart.equals(path.get(0))
+                || !expectedEnd.equals(path.get(path.size() - 1))
+                || !isContinuousPath(path)) {
             return HybridRoute.none();
         }
         return new HybridRoute(
@@ -439,17 +454,26 @@ public final class RoadHybridRouteResolver {
 
     @SafeVarargs
     private static List<BlockPos> stitch(List<BlockPos>... segments) {
-        LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
+        ArrayList<BlockPos> merged = new ArrayList<>();
         for (List<BlockPos> segment : segments) {
             if (segment == null) {
                 continue;
             }
             for (BlockPos pos : segment) {
-                if (pos != null) {
-                    merged.add(pos.immutable());
-                }
+                appendPathNode(merged, pos);
             }
         }
         return List.copyOf(merged);
+    }
+
+    private static void appendPathNode(List<BlockPos> ordered, BlockPos pos) {
+        if (ordered == null || pos == null) {
+            return;
+        }
+        BlockPos immutable = pos.immutable();
+        if (!ordered.isEmpty() && ordered.get(ordered.size() - 1).equals(immutable)) {
+            return;
+        }
+        ordered.add(immutable);
     }
 }

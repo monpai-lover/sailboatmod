@@ -24,7 +24,7 @@ class RoadHybridRouteResolverTest {
                 List.of(source),
                 List.of(target),
                 Set.of(leftNode, rightNode),
-                Map.of(leftNode, Set.of(rightNode), rightNode, Set.of(leftNode)),
+                continuousAdjacency(leftNode.getX(), rightNode.getX()),
                 (from, to, allowWaterFallback) -> {
                     if (from.equals(source) && to.equals(target)) {
                         return new RoadHybridRouteResolver.ConnectorResult(
@@ -54,7 +54,7 @@ class RoadHybridRouteResolverTest {
                 List.of(source),
                 List.of(target),
                 Set.of(leftNode, rightNode),
-                Map.of(leftNode, Set.of(rightNode), rightNode, Set.of(leftNode)),
+                continuousAdjacency(leftNode.getX(), rightNode.getX()),
                 (from, to, allowWaterFallback) -> {
                     if ((from.equals(source) && to.equals(leftNode)) || (from.equals(rightNode) && to.equals(target))) {
                         return new RoadHybridRouteResolver.ConnectorResult(
@@ -165,6 +165,59 @@ class RoadHybridRouteResolverTest {
     }
 
     @Test
+    void sourceConnectorStitchPreservesRequestedTargetWhenConnectorOvershootsIntoNetwork() {
+        BlockPos source = new BlockPos(0, 64, 0);
+        BlockPos target = new BlockPos(4, 64, 0);
+        BlockPos node = new BlockPos(5, 64, 0);
+
+        RoadHybridRouteResolver.HybridRoute candidate = RoadHybridRouteResolver.resolveForTest(
+                List.of(source),
+                List.of(target),
+                Set.of(node, target),
+                Map.of(
+                        node, Set.of(target),
+                        target, Set.of(node)
+                ),
+                (from, to, allowWaterFallback) -> {
+                    if (from.equals(source) && to.equals(target)) {
+                        return new RoadHybridRouteResolver.ConnectorResult(List.of(), 0, 0, 0, false);
+                    }
+                    if (from.equals(source) && to.equals(node)) {
+                        return new RoadHybridRouteResolver.ConnectorResult(
+                                List.of(
+                                        source,
+                                        new BlockPos(1, 64, 0),
+                                        new BlockPos(2, 64, 0),
+                                        new BlockPos(3, 64, 0),
+                                        target,
+                                        node
+                                ),
+                                0,
+                                0,
+                                0,
+                                false
+                        );
+                    }
+                    return new RoadHybridRouteResolver.ConnectorResult(List.of(), 0, 0, 0, false);
+                }
+        );
+
+        assertEquals(RoadHybridRouteResolver.ResolutionKind.SOURCE_CONNECTOR, candidate.kind());
+        assertEquals(
+                List.of(
+                        source,
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(3, 64, 0),
+                        target,
+                        node,
+                        target
+                ),
+                candidate.fullPath()
+        );
+    }
+
+    @Test
     void selectsNearestRoadNodesWithinCandidateLimit() {
         List<BlockPos> chosen = RoadHybridRouteResolver.selectNearestNodesForTest(
                 new BlockPos(0, 64, 0),
@@ -218,5 +271,20 @@ class RoadHybridRouteResolverTest {
             path.add(new BlockPos(x, 64, 0));
         }
         return List.copyOf(path);
+    }
+
+    private static Map<BlockPos, Set<BlockPos>> continuousAdjacency(int fromX, int toX) {
+        java.util.Map<BlockPos, java.util.Set<BlockPos>> adjacency = new java.util.HashMap<>();
+        int step = Integer.compare(toX, fromX);
+        int x = fromX;
+        while (x != toX) {
+            BlockPos current = new BlockPos(x, 64, 0);
+            BlockPos next = new BlockPos(x + step, 64, 0);
+            adjacency.computeIfAbsent(current, ignored -> new java.util.HashSet<>()).add(next);
+            adjacency.computeIfAbsent(next, ignored -> new java.util.HashSet<>()).add(current);
+            x += step;
+        }
+        return Map.copyOf(adjacency.entrySet().stream()
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, entry -> Set.copyOf(entry.getValue()))));
     }
 }
