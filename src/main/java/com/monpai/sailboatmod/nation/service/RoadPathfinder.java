@@ -55,8 +55,11 @@ public final class RoadPathfinder {
                                           Set<Long> blockedColumns,
                                           Set<Long> excludedColumns,
                                           boolean allowWaterFallback) {
-        Set<Long> adjustedBlocked = unblockColumns(blockedColumns, from, to);
-        Set<Long> combinedBlocked = mergeBlockedColumns(adjustedBlocked, excludedColumns);
+        Set<Long> combinedBlocked = unblockColumns(
+                mergeBlockedColumns(blockedColumns, excludedColumns),
+                from,
+                to
+        );
         ColumnDiagnostics startDiagnostics = describeColumn(level, from, combinedBlocked, allowWaterFallback);
         ColumnDiagnostics endDiagnostics = describeColumn(level, to, combinedBlocked, allowWaterFallback);
         if (startDiagnostics.surface() == null

@@ -84,6 +84,32 @@ class RoadPathfinderTest {
     }
 
     @Test
+    void findPathAllowsRequestedEndpointsEvenWhenTheirColumnsAreExcluded() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = 0; x <= 4; x++) {
+            level.surfaceHeights.put(columnKey(x, 1), 64);
+            level.blockStates.put(new BlockPos(x, 64, 1).asLong(), Blocks.DIRT.defaultBlockState());
+        }
+
+        List<BlockPos> path = RoadPathfinder.findPath(
+                level,
+                new BlockPos(0, 64, 1),
+                new BlockPos(4, 64, 1),
+                java.util.Set.of(),
+                java.util.Set.of(columnKey(0, 1), columnKey(4, 1)),
+                false
+        );
+
+        assertFalse(path.isEmpty());
+        assertEquals(new BlockPos(0, 64, 1), path.get(0));
+        assertEquals(new BlockPos(4, 64, 1), path.get(path.size() - 1));
+    }
+
+    @Test
     void findSurfaceCanReachRiverbedBelowFiveBlocksOfWater() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
