@@ -78,24 +78,25 @@ public final class RoadHybridRouteResolver {
         Objects.requireNonNull(networkNodes, "networkNodes");
         Objects.requireNonNull(adjacency, "adjacency");
         Objects.requireNonNull(planner, "planner");
+        ConnectorPlanner memoizedPlanner = memoize(planner);
 
         HybridRoute best = HybridRoute.none();
         for (BlockPos source : sourceAnchors) {
             for (BlockPos target : targetAnchors) {
-                best = chooseBetter(best, directCandidate(source, target, planner));
+                best = chooseBetter(best, directCandidate(source, target, memoizedPlanner));
 
                 List<BlockPos> sourceNodes = selectNearestNodes(source, networkNodes, MAX_ENDPOINT_NODE_CANDIDATES);
                 List<BlockPos> targetNodes = selectNearestNodes(target, networkNodes, MAX_ENDPOINT_NODE_CANDIDATES);
 
                 for (BlockPos node : sourceNodes) {
-                    best = chooseBetter(best, sourceConnectorCandidate(source, target, node, adjacency, planner));
+                    best = chooseBetter(best, sourceConnectorCandidate(source, target, node, adjacency, memoizedPlanner));
                 }
                 for (BlockPos node : targetNodes) {
-                    best = chooseBetter(best, targetConnectorCandidate(source, target, node, adjacency, planner));
+                    best = chooseBetter(best, targetConnectorCandidate(source, target, node, adjacency, memoizedPlanner));
                 }
                 for (BlockPos leftNode : sourceNodes) {
                     for (BlockPos rightNode : targetNodes) {
-                        best = chooseBetter(best, dualConnectorCandidate(source, target, leftNode, rightNode, adjacency, planner));
+                        best = chooseBetter(best, dualConnectorCandidate(source, target, leftNode, rightNode, adjacency, memoizedPlanner));
                     }
                 }
             }
@@ -473,6 +474,17 @@ public final class RoadHybridRouteResolver {
         return List.copyOf(normalized);
     }
 
+    private static ConnectorPlanner memoize(ConnectorPlanner planner) {
+        Map<ConnectorPlanKey, ConnectorResult> cache = new HashMap<>();
+        return (from, to, allowWaterFallback) -> {
+            if (from == null || to == null) {
+                return planner.plan(from, to, allowWaterFallback);
+            }
+            ConnectorPlanKey key = new ConnectorPlanKey(from.immutable(), to.immutable(), allowWaterFallback);
+            return cache.computeIfAbsent(key, ignored -> planner.plan(from, to, allowWaterFallback));
+        };
+    }
+
     private static ConnectorResult planConnector(BlockPos from, BlockPos to, ConnectorPlanner planner) {
         if (from == null || to == null || planner == null) {
             return null;
@@ -492,6 +504,9 @@ public final class RoadHybridRouteResolver {
 
     private static int connectorCount(BlockPos from, BlockPos to) {
         return from != null && from.equals(to) ? 0 : 1;
+    }
+
+    private record ConnectorPlanKey(BlockPos from, BlockPos to, boolean allowWaterFallback) {
     }
 
     private static void appendPathNode(List<BlockPos> ordered, BlockPos pos) {

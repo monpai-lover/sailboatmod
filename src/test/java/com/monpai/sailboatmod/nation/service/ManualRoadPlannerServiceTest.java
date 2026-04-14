@@ -482,7 +482,7 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
-    void collectSegmentAnchorsDoesNotForceBridgeDeckCandidatesIntoSegmentChain() {
+    void collectSegmentAnchorsIncludesBridgeDeckCandidatesWhenWaterFallbackAllowed() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
@@ -505,10 +505,12 @@ class ManualRoadPlannerServiceTest {
                 new BlockPos(12, 64, 0),
                 Set.of(),
                 Set.of(),
-                Set.of()
+                Set.of(),
+                true
         );
 
-        assertEquals(List.of(), anchors);
+        assertTrue(anchors.contains(new BlockPos(4, 71, 0)));
+        assertTrue(anchors.contains(new BlockPos(8, 71, 0)));
     }
 
     @Test
@@ -1056,6 +1058,41 @@ class ManualRoadPlannerServiceTest {
             );
             method.setAccessible(true);
             return (List<BlockPos>) method.invoke(null, level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, networkNodes);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeCollectSegmentAnchors(ServerLevel level,
+                                                              BlockPos sourceAnchor,
+                                                              BlockPos targetAnchor,
+                                                              Set<Long> blockedColumns,
+                                                              Set<Long> excludedColumns,
+                                                              Set<BlockPos> networkNodes,
+                                                              boolean allowWaterFallback) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "collectSegmentAnchors",
+                    ServerLevel.class,
+                    BlockPos.class,
+                    BlockPos.class,
+                    Set.class,
+                    Set.class,
+                    Set.class,
+                    boolean.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(
+                    null,
+                    level,
+                    sourceAnchor,
+                    targetAnchor,
+                    blockedColumns,
+                    excludedColumns,
+                    networkNodes,
+                    allowWaterFallback
+            );
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
             throw new AssertionError(e);
         }

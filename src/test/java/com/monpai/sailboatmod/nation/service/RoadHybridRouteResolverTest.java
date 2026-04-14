@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -289,6 +290,44 @@ class RoadHybridRouteResolverTest {
     }
 
     @Test
+    void cachesRepeatedConnectorPlansAcrossHybridCandidateEnumeration() {
+        BlockPos source = new BlockPos(0, 64, 0);
+        BlockPos target = new BlockPos(10, 64, 0);
+        BlockPos leftA = new BlockPos(2, 64, 0);
+        BlockPos leftB = new BlockPos(3, 64, 0);
+        BlockPos rightA = new BlockPos(7, 64, 0);
+        BlockPos rightB = new BlockPos(8, 64, 0);
+
+        Map<String, AtomicInteger> calls = new java.util.HashMap<>();
+        RoadHybridRouteResolver.HybridRoute candidate = RoadHybridRouteResolver.resolveForTest(
+                List.of(source),
+                List.of(target),
+                Set.of(leftA, leftB, rightA, rightB),
+                Map.of(
+                        leftA, Set.of(leftB),
+                        leftB, Set.of(leftA, rightA),
+                        rightA, Set.of(leftB, rightB),
+                        rightB, Set.of(rightA)
+                ),
+                (from, to, allowWaterFallback) -> {
+                    String key = keyFor(from, to, allowWaterFallback);
+                    calls.computeIfAbsent(key, ignored -> new AtomicInteger()).incrementAndGet();
+                    return new RoadHybridRouteResolver.ConnectorResult(
+                            straightPath(from.getX(), to.getX()),
+                            0,
+                            0,
+                            0,
+                            allowWaterFallback
+                    );
+                }
+        );
+
+        assertTrue(candidate.kind() != RoadHybridRouteResolver.ResolutionKind.NONE);
+        assertEquals(1, calls.get(keyFor(source, leftA, true)).get());
+        assertEquals(1, calls.get(keyFor(rightA, target, true)).get());
+    }
+
+    @Test
     void selectsNearestRoadNodesWithinCandidateLimit() {
         List<BlockPos> chosen = RoadHybridRouteResolver.selectNearestNodesForTest(
                 new BlockPos(0, 64, 0),
@@ -357,5 +396,12 @@ class RoadHybridRouteResolverTest {
         }
         return Map.copyOf(adjacency.entrySet().stream()
                 .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, entry -> Set.copyOf(entry.getValue()))));
+    }
+
+    private static String keyFor(BlockPos from, BlockPos to, boolean allowWaterFallback) {
+        return from.getX() + "," + from.getY() + "," + from.getZ()
+                + "->"
+                + to.getX() + "," + to.getY() + "," + to.getZ()
+                + "|" + allowWaterFallback;
     }
 }

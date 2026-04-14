@@ -678,7 +678,15 @@ public final class ManualRoadPlannerService {
         List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(level).getRoadNetworks());
         Set<BlockPos> networkNodes = RoadHybridRouteResolver.collectNetworkNodes(roads);
         java.util.Map<BlockPos, Set<BlockPos>> adjacency = RoadHybridRouteResolver.collectNetworkAdjacency(roads);
-        List<BlockPos> anchors = collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, networkNodes);
+        List<BlockPos> anchors = collectSegmentAnchors(
+                level,
+                sourceAnchor,
+                targetAnchor,
+                blockedColumns,
+                excludedColumns,
+                networkNodes,
+                allowWaterFallback
+        );
         SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
                 sourceAnchor,
                 targetAnchor,
@@ -738,7 +746,7 @@ public final class ManualRoadPlannerService {
                                                         BlockPos targetAnchor,
                                                         Set<Long> blockedColumns,
                                                         Set<BlockPos> networkNodes) {
-        return collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, Set.of(), networkNodes);
+        return collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, Set.of(), networkNodes, false);
     }
 
     private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
@@ -747,6 +755,16 @@ public final class ManualRoadPlannerService {
                                                         Set<Long> blockedColumns,
                                                         Set<Long> excludedColumns,
                                                         Set<BlockPos> networkNodes) {
+        return collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, networkNodes, false);
+    }
+
+    private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
+                                                        BlockPos sourceAnchor,
+                                                        BlockPos targetAnchor,
+                                                        Set<Long> blockedColumns,
+                                                        Set<Long> excludedColumns,
+                                                        Set<BlockPos> networkNodes,
+                                                        boolean allowWaterFallback) {
         LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
         merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
                 sourceAnchor,
@@ -755,13 +773,59 @@ public final class ManualRoadPlannerService {
                 MAX_SEGMENT_INTERMEDIATE_ANCHORS,
                 NETWORK_ANCHOR_CORRIDOR_DISTANCE
         ));
-        // Bridge decks are derived after a route is found; forcing them here turns optional bridge references into hard failures.
+        if (allowWaterFallback) {
+            merged.addAll(collectBridgeSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns));
+        }
         return filterTraversableIntermediateAnchors(
                 level,
                 sortAnchorsAlongRoute(sourceAnchor, targetAnchor, merged),
                 blockedColumns,
                 excludedColumns
         );
+    }
+
+    private static List<BlockPos> collectBridgeSegmentAnchors(ServerLevel level,
+                                                              BlockPos sourceAnchor,
+                                                              BlockPos targetAnchor,
+                                                              Set<Long> blockedColumns) {
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        List<BlockPos> bridgeDeckAnchors = RoadPathfinder.collectBridgeDeckAnchors(
+                level,
+                sourceAnchor,
+                targetAnchor,
+                unblockPathEndpoints(blockedColumns, sourceAnchor, targetAnchor)
+        );
+        if (bridgeDeckAnchors.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> corridorAnchors = SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
+                sourceAnchor,
+                targetAnchor,
+                bridgeDeckAnchors,
+                bridgeDeckAnchors.size(),
+                BRIDGE_ANCHOR_CORRIDOR_DISTANCE
+        );
+        return sampleAnchorsEvenly(corridorAnchors, MAX_SEGMENT_INTERMEDIATE_ANCHORS);
+    }
+
+    private static List<BlockPos> sampleAnchorsEvenly(List<BlockPos> anchors, int limit) {
+        if (anchors == null || anchors.isEmpty() || limit <= 0) {
+            return List.of();
+        }
+        if (anchors.size() <= limit) {
+            return List.copyOf(anchors);
+        }
+        ArrayList<BlockPos> sampled = new ArrayList<>(limit);
+        for (int index = 0; index < limit; index++) {
+            int sourceIndex = (int) Math.round(index * (anchors.size() - 1) / (double) (limit - 1));
+            BlockPos anchor = anchors.get(sourceIndex);
+            if (anchor != null && (sampled.isEmpty() || !sampled.get(sampled.size() - 1).equals(anchor))) {
+                sampled.add(anchor);
+            }
+        }
+        return List.copyOf(sampled);
     }
 
     private static List<BlockPos> filterTraversableIntermediateAnchors(ServerLevel level,
