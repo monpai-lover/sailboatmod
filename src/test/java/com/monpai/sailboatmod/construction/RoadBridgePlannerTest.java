@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadBridgePlannerTest {
     @Test
@@ -153,7 +154,7 @@ class RoadBridgePlannerTest {
     }
 
     @Test
-    void upgradesWideNavigableCrossingToPierBridgeWithChannelPiers() {
+    void keepsMediumNonNavigableWaterCrossingAsArchSpanWithoutInteriorPiers() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 64, 0),
@@ -170,7 +171,41 @@ class RoadBridgePlannerTest {
                 centerPath,
                 new RoadPlacementPlan.BridgeRange(1, 7),
                 index -> index >= 1 && index <= 7,
-                index -> index >= 3 && index <= 5,
+                index -> false,
+                index -> 61,
+                index -> 63,
+                index -> true
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.ARCH_SPAN, plan.mode());
+        assertTrue(plan.nodes().stream().allMatch(node -> node.role() == RoadBridgePlanner.BridgeNodeRole.ABUTMENT));
+        assertEquals(
+                List.of(RoadBridgePlanner.BridgeDeckSegmentType.ARCHED_SPAN),
+                plan.deckSegments().stream().map(RoadBridgePlanner.BridgeDeckSegment::type).toList()
+        );
+    }
+
+    @Test
+    void upgradesWideNavigableCrossingToPierBridgeWithChannelPiers() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0)
+        );
+
+        RoadBridgePlanner.BridgeSpanPlan plan = RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(1, 9),
+                index -> index >= 1 && index <= 9,
+                index -> index >= 4 && index <= 6,
                 index -> 40,
                 index -> 63,
                 index -> true
@@ -178,7 +213,7 @@ class RoadBridgePlannerTest {
 
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, plan.mode());
         org.junit.jupiter.api.Assertions.assertTrue(
-                plan.nodes().stream().anyMatch(node -> node.role() == RoadBridgePlanner.BridgeNodeRole.PIER)
+                plan.nodes().stream().anyMatch(node -> node.role() != RoadBridgePlanner.BridgeNodeRole.ABUTMENT)
         );
         assertEquals(
                 2,
@@ -200,17 +235,19 @@ class RoadBridgePlannerTest {
                 new BlockPos(5, 64, 0),
                 new BlockPos(6, 64, 0),
                 new BlockPos(7, 64, 0),
-                new BlockPos(8, 64, 0)
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0)
         );
 
         RoadBridgePlanner.BridgeSpanPlan plan = RoadBridgePlanner.planBridgeSpanForTest(
                 centerPath,
-                new RoadPlacementPlan.BridgeRange(1, 7),
-                index -> index >= 1 && index <= 7,
+                new RoadPlacementPlan.BridgeRange(1, 9),
+                index -> index >= 1 && index <= 9,
                 index -> false,
                 index -> 40,
                 index -> 63,
-                index -> index == 1 || index == 7
+                index -> index == 1 || index == 9
         );
 
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, plan.mode());
