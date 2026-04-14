@@ -28,14 +28,14 @@ class RoadHybridRouteResolverTest {
                 (from, to, allowWaterFallback) -> {
                     if (from.equals(source) && to.equals(target)) {
                         return new RoadHybridRouteResolver.ConnectorResult(
-                                List.of(source, new BlockPos(10, 64, 0), target),
+                                straightPath(source.getX(), target.getX()),
                                 0,
                                 0,
                                 0,
                                 true
                         );
                     }
-                    return new RoadHybridRouteResolver.ConnectorResult(List.of(from, to), 0, 0, 0, true);
+                    return new RoadHybridRouteResolver.ConnectorResult(straightPath(from.getX(), to.getX()), 0, 0, 0, true);
                 }
         );
 
@@ -58,7 +58,7 @@ class RoadHybridRouteResolverTest {
                 (from, to, allowWaterFallback) -> {
                     if ((from.equals(source) && to.equals(leftNode)) || (from.equals(rightNode) && to.equals(target))) {
                         return new RoadHybridRouteResolver.ConnectorResult(
-                                List.of(from, new BlockPos((from.getX() + to.getX()) / 2, 64, 0), to),
+                                straightPath(from.getX(), to.getX()),
                                 12,
                                 7,
                                 8,
@@ -67,14 +67,14 @@ class RoadHybridRouteResolverTest {
                     }
                     if (from.equals(source) && to.equals(target)) {
                         return new RoadHybridRouteResolver.ConnectorResult(
-                                List.of(source, target),
+                                straightPath(source.getX(), target.getX()),
                                 30,
                                 14,
                                 20,
                                 true
                         );
                     }
-                    return new RoadHybridRouteResolver.ConnectorResult(List.of(from, to), 0, 0, 0, true);
+                    return new RoadHybridRouteResolver.ConnectorResult(straightPath(from.getX(), to.getX()), 0, 0, 0, true);
                 }
         );
 
@@ -92,13 +92,72 @@ class RoadHybridRouteResolverTest {
                 List.of(target),
                 Set.of(new BlockPos(4, 64, 0)),
                 Map.of(),
-                (from, to, allowWaterFallback) -> new RoadHybridRouteResolver.ConnectorResult(
-                        List.of(from, to),
-                        0,
-                        0,
-                        0,
-                        true
-                )
+                (from, to, allowWaterFallback) -> new RoadHybridRouteResolver.ConnectorResult(straightPath(from.getX(), to.getX()), 0, 0, 0, true)
+        );
+
+        assertEquals(RoadHybridRouteResolver.ResolutionKind.DIRECT, candidate.kind());
+        assertFalse(candidate.usedExistingNetwork());
+    }
+
+    @Test
+    void ignoresNetworkBackedCandidateWhenItsFullPathIsNotContinuous() {
+        BlockPos source = new BlockPos(0, 64, 0);
+        BlockPos target = new BlockPos(12, 64, 0);
+        BlockPos leftNode = new BlockPos(4, 64, 0);
+        BlockPos rightNode = new BlockPos(8, 64, 0);
+
+        RoadHybridRouteResolver.HybridRoute candidate = RoadHybridRouteResolver.resolveForTest(
+                List.of(source),
+                List.of(target),
+                Set.of(leftNode, rightNode),
+                Map.of(
+                        leftNode, Set.of(rightNode),
+                        rightNode, Set.of(leftNode)
+                ),
+                (from, to, allowWaterFallback) -> {
+                    if (from.equals(source) && to.equals(target)) {
+                        return new RoadHybridRouteResolver.ConnectorResult(
+                                List.of(
+                                        source,
+                                        new BlockPos(1, 64, 0),
+                                        new BlockPos(2, 64, 0),
+                                        new BlockPos(3, 64, 0),
+                                        new BlockPos(4, 64, 0),
+                                        new BlockPos(5, 64, 0),
+                                        new BlockPos(6, 64, 0),
+                                        new BlockPos(7, 64, 0),
+                                        new BlockPos(8, 64, 0),
+                                        new BlockPos(9, 64, 0),
+                                        new BlockPos(10, 64, 0),
+                                        new BlockPos(11, 64, 0),
+                                        target
+                                ),
+                                18,
+                                9,
+                                4,
+                                true
+                        );
+                    }
+                    if (from.equals(source) && to.equals(leftNode)) {
+                        return new RoadHybridRouteResolver.ConnectorResult(
+                                List.of(source, new BlockPos(1, 64, 0), new BlockPos(2, 64, 0), new BlockPos(3, 64, 0), leftNode),
+                                4,
+                                4,
+                                1,
+                                true
+                        );
+                    }
+                    if (from.equals(rightNode) && to.equals(target)) {
+                        return new RoadHybridRouteResolver.ConnectorResult(
+                                List.of(rightNode, new BlockPos(9, 64, 0), new BlockPos(10, 64, 0), new BlockPos(11, 64, 0), target),
+                                0,
+                                0,
+                                0,
+                                false
+                        );
+                    }
+                    return new RoadHybridRouteResolver.ConnectorResult(List.of(), 0, 0, 0, false);
+                }
         );
 
         assertEquals(RoadHybridRouteResolver.ResolutionKind.DIRECT, candidate.kind());
@@ -147,5 +206,17 @@ class RoadHybridRouteResolverTest {
         );
 
         assertEquals(Set.of(new BlockPos(1, 64, 0)), adjacency.get(new BlockPos(0, 64, 0)));
+    }
+
+    private static List<BlockPos> straightPath(int fromX, int toX) {
+        List<BlockPos> path = new java.util.ArrayList<>();
+        int step = Integer.compare(toX, fromX);
+        int x = fromX;
+        path.add(new BlockPos(x, 64, 0));
+        while (x != toX) {
+            x += step;
+            path.add(new BlockPos(x, 64, 0));
+        }
+        return List.copyOf(path);
     }
 }

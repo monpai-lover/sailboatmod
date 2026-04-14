@@ -317,7 +317,7 @@ public final class RoadHybridRouteResolver {
                                            int bridgeColumns,
                                            int longestBridgeRun,
                                            int adjacentWaterColumns) {
-        if (path == null || path.size() < 2) {
+        if (path == null || path.size() < 2 || !isContinuousPath(path)) {
             return HybridRoute.none();
         }
         return new HybridRoute(
@@ -330,6 +330,26 @@ public final class RoadHybridRouteResolver {
                 adjacentWaterColumns,
                 score(path, usedExistingNetwork, connectorCount, bridgeColumns, longestBridgeRun, adjacentWaterColumns)
         );
+    }
+
+    private static boolean isContinuousPath(List<BlockPos> path) {
+        if (path == null || path.size() < 2) {
+            return false;
+        }
+        for (int i = 1; i < path.size(); i++) {
+            BlockPos previous = path.get(i - 1);
+            BlockPos current = path.get(i);
+            if (previous == null || current == null) {
+                return false;
+            }
+            int dx = Math.abs(current.getX() - previous.getX());
+            int dy = Math.abs(current.getY() - previous.getY());
+            int dz = Math.abs(current.getZ() - previous.getZ());
+            if (Math.max(dx, Math.max(dy, dz)) > 1) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static HybridRoute chooseBetter(HybridRoute current, HybridRoute candidate) {
