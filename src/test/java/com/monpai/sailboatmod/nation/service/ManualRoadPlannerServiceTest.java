@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
+import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -438,6 +439,52 @@ class ManualRoadPlannerServiceTest {
         );
 
         assertTrue(normalized.isEmpty());
+    }
+
+    @Test
+    void finalizePlannedPathUsesContinuousSnappedRoadSubpath() {
+        List<BlockPos> finalized = invokeFinalizePlannedPath(
+                List.of(
+                        new BlockPos(0, 64, 2),
+                        new BlockPos(3, 64, 2),
+                        new BlockPos(6, 64, 2)
+                ),
+                new boolean[] {false, false, false},
+                List.of(
+                        new RoadNetworkRecord(
+                                "manual|town:a|town:b",
+                                "nation",
+                                "town",
+                                "minecraft:overworld",
+                                "town:a",
+                                "town:b",
+                                List.of(
+                                        new BlockPos(0, 64, 0),
+                                        new BlockPos(1, 64, 0),
+                                        new BlockPos(2, 64, 0),
+                                        new BlockPos(3, 64, 0),
+                                        new BlockPos(4, 64, 0),
+                                        new BlockPos(5, 64, 0),
+                                        new BlockPos(6, 64, 0)
+                                ),
+                                1L,
+                                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+                        )
+                )
+        );
+
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0),
+                        new BlockPos(3, 64, 0),
+                        new BlockPos(4, 64, 0),
+                        new BlockPos(5, 64, 0),
+                        new BlockPos(6, 64, 0)
+                ),
+                finalized
+        );
     }
 
     @Test
@@ -988,6 +1035,24 @@ class ManualRoadPlannerServiceTest {
             Method method = ManualRoadPlannerService.class.getDeclaredMethod("normalizePath", BlockPos.class, List.class, BlockPos.class);
             method.setAccessible(true);
             return (List<BlockPos>) method.invoke(null, start, path, end);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeFinalizePlannedPath(List<BlockPos> path,
+                                                            boolean[] bridgeMask,
+                                                            List<RoadNetworkRecord> roads) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "finalizePlannedPath",
+                    List.class,
+                    boolean[].class,
+                    List.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, path, bridgeMask, roads);
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
             throw new AssertionError(e);
         }

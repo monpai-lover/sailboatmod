@@ -445,6 +445,16 @@ public final class ManualRoadPlannerService {
         BlockPos targetInternalAnchor = waitingAreaRoute.targetStationPos();
         List<BlockPos> rawPath = waitingAreaRoute.path();
         List<BlockPos> path = normalizePath(sourceAnchor, rawPath, targetAnchor);
+        boolean[] bridgeMask = bridgeMaskForPlannedPath(level, path, blockedColumns, excludedColumns);
+        path = finalizePlannedPath(
+                path,
+                bridgeMask,
+                data.getRoadNetworks().stream()
+                        .filter(roadRecord -> roadRecord != null)
+                        .filter(roadRecord -> level.dimension().location().toString().equals(roadRecord.dimensionId()))
+                        .filter(roadRecord -> !manualRoadId.equalsIgnoreCase(roadRecord.roadId()))
+                        .toList()
+        );
         if (path.size() < 2) {
             LOGGER.warn(
                     "Manual road {} option for {} -> {} resolved anchors but normalized path was too short (rawPathSize={}, sourceAnchor={}, targetAnchor={})",
@@ -1614,6 +1624,59 @@ public final class ManualRoadPlannerService {
             return List.of();
         }
         return List.copyOf(ordered);
+    }
+
+    private static List<BlockPos> finalizePlannedPath(List<BlockPos> path,
+                                                      boolean[] bridgeMask,
+                                                      List<RoadNetworkRecord> roads) {
+        List<BlockPos> processed = RoadPathPostProcessor.process(path, bridgeMask);
+        if (processed.size() < 2) {
+            return List.of();
+        }
+        List<BlockPos> snapped = RoadNetworkSnapService.snapPath(processed, roads);
+        if (snapped.size() >= 2
+                && SegmentedRoadPathOrchestrator.isContinuousResolvedPath(
+                snapped.get(0),
+                snapped.get(snapped.size() - 1),
+                snapped
+        )) {
+            return snapped;
+        }
+        return processed;
+    }
+
+    private static boolean[] bridgeMaskForPlannedPath(ServerLevel level,
+                                                      List<BlockPos> path,
+                                                      Set<Long> blockedColumns,
+                                                      Set<Long> excludedColumns) {
+        if (level == null || path == null || path.isEmpty()) {
+            return new boolean[0];
+        }
+        Set<Long> combinedBlocked = mergePlannedPathBlockedColumns(blockedColumns, excludedColumns);
+        boolean[] bridgeMask = new boolean[path.size()];
+        for (int i = 0; i < path.size(); i++) {
+            RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForAnchorSelection(
+                    level,
+                    path.get(i),
+                    combinedBlocked
+            );
+            bridgeMask[i] = diagnostics != null && diagnostics.bridgeRequired();
+        }
+        return bridgeMask;
+    }
+
+    private static Set<Long> mergePlannedPathBlockedColumns(Set<Long> blockedColumns, Set<Long> excludedColumns) {
+        if ((blockedColumns == null || blockedColumns.isEmpty()) && (excludedColumns == null || excludedColumns.isEmpty())) {
+            return Set.of();
+        }
+        LinkedHashSet<Long> merged = new LinkedHashSet<>();
+        if (blockedColumns != null) {
+            merged.addAll(blockedColumns);
+        }
+        if (excludedColumns != null) {
+            merged.addAll(excludedColumns);
+        }
+        return Set.copyOf(merged);
     }
 
     private static void appendPathPreservingOrder(List<BlockPos> ordered, List<BlockPos> segment) {

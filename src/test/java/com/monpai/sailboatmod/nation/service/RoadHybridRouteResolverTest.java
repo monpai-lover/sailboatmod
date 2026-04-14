@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
@@ -121,5 +122,30 @@ class RoadHybridRouteResolverTest {
                 List.of(new BlockPos(2, 64, 0), new BlockPos(4, 64, 0), new BlockPos(6, 64, 0)),
                 chosen
         );
+    }
+
+    @Test
+    void collectsAdjacencyAcrossExistingRoadRecordPath() {
+        Map<BlockPos, Set<BlockPos>> adjacency = RoadHybridRouteResolver.collectNetworkAdjacency(
+                List.of(
+                        new RoadNetworkRecord(
+                                "manual|town:a|town:b",
+                                "nation",
+                                "town",
+                                "minecraft:overworld",
+                                "town:a",
+                                "town:b",
+                                List.of(
+                                        new BlockPos(0, 64, 0),
+                                        new BlockPos(1, 64, 0),
+                                        new BlockPos(2, 64, 0)
+                                ),
+                                1L,
+                                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+                        )
+                )
+        );
+
+        assertEquals(Set.of(new BlockPos(1, 64, 0)), adjacency.get(new BlockPos(0, 64, 0)));
     }
 }
