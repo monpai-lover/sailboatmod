@@ -3827,13 +3827,7 @@ public final class StructureConstructionManager {
                 MAX_SEGMENT_INTERMEDIATE_ANCHORS,
                 NETWORK_ANCHOR_CORRIDOR_DISTANCE
         ));
-        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
-                start,
-                end,
-                RoadPathfinder.collectBridgeDeckAnchors(level, start, end, Set.of()),
-                Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
-                BRIDGE_ANCHOR_CORRIDOR_DISTANCE
-        ));
+        // Keep bridge structure decisions downstream of routing so preview segmentation does not force bridge-deck anchors.
         return List.copyOf(merged);
     }
 

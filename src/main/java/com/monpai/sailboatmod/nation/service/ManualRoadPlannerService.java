@@ -755,13 +755,7 @@ public final class ManualRoadPlannerService {
                 MAX_SEGMENT_INTERMEDIATE_ANCHORS,
                 NETWORK_ANCHOR_CORRIDOR_DISTANCE
         ));
-        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
-                sourceAnchor,
-                targetAnchor,
-                RoadPathfinder.collectBridgeDeckAnchors(level, sourceAnchor, targetAnchor, blockedColumns),
-                Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
-                BRIDGE_ANCHOR_CORRIDOR_DISTANCE
-        ));
+        // Bridge decks are derived after a route is found; forcing them here turns optional bridge references into hard failures.
         return filterTraversableIntermediateAnchors(
                 level,
                 sortAnchorsAlongRoute(sourceAnchor, targetAnchor, merged),

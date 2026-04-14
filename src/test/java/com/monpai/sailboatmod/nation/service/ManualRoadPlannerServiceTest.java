@@ -482,6 +482,36 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void collectSegmentAnchorsDoesNotForceBridgeDeckCandidatesIntoSegmentChain() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = 0; x <= 12; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.DIRT.defaultBlockState());
+        }
+        for (int x = 4; x <= 8; x++) {
+            level.surfaceHeights.put(columnKey(x, 0), 66);
+            level.blockStates.put(new BlockPos(x, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+            for (int y = 63; y <= 66; y++) {
+                level.blockStates.put(new BlockPos(x, y, 0).asLong(), Blocks.WATER.defaultBlockState());
+            }
+        }
+
+        List<BlockPos> anchors = invokeCollectSegmentAnchors(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(12, 64, 0),
+                Set.of(),
+                Set.of(),
+                Set.of()
+        );
+
+        assertEquals(List.of(), anchors);
+    }
+
+    @Test
     void mergedIntermediateAnchorsAreSortedAlongRouteProgress() {
         List<BlockPos> ordered = invokeSortAnchorsAlongRoute(
                 new BlockPos(0, 64, 0),
