@@ -2673,12 +2673,57 @@ public final class StructureConstructionManager {
         if (ghostBlocks == null || ghostBlocks.isEmpty()) {
             return List.of();
         }
-        ArrayList<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>(ghostBlocks.size());
-        for (int i = 0; i < ghostBlocks.size(); i++) {
-            RoadGeometryPlanner.GhostRoadBlock block = ghostBlocks.get(i);
-            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(i, block.pos(), block.state()));
+        Map<Long, Integer> topRoadYByColumn = new HashMap<>();
+        ArrayList<RoadGeometryPlanner.RoadBuildStep> phased = new ArrayList<>(ghostBlocks.size());
+        for (RoadGeometryPlanner.GhostRoadBlock block : ghostBlocks) {
+            if (block == null || block.pos() == null || block.state() == null || isDecorRoadBuildState(block.state())) {
+                continue;
+            }
+            long key = BlockPos.asLong(block.pos().getX(), 0, block.pos().getZ());
+            topRoadYByColumn.merge(key, block.pos().getY(), Math::max);
+        }
+        for (RoadGeometryPlanner.GhostRoadBlock block : ghostBlocks) {
+            if (block == null || block.pos() == null || block.state() == null) {
+                continue;
+            }
+            phased.add(new RoadGeometryPlanner.RoadBuildStep(
+                    0,
+                    block.pos(),
+                    block.state(),
+                    classifyRoadBuildPhase(block, topRoadYByColumn)
+            ));
+        }
+        phased.sort(Comparator
+                .comparing(RoadGeometryPlanner.RoadBuildStep::phase)
+                .thenComparingInt(step -> step.pos().getY())
+                .thenComparingInt(step -> step.pos().getX())
+                .thenComparingInt(step -> step.pos().getZ()));
+
+        ArrayList<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>(phased.size());
+        for (int i = 0; i < phased.size(); i++) {
+            RoadGeometryPlanner.RoadBuildStep step = phased.get(i);
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(i, step.pos(), step.state(), step.phase()));
         }
         return List.copyOf(buildSteps);
+    }
+
+    private static RoadGeometryPlanner.RoadBuildPhase classifyRoadBuildPhase(RoadGeometryPlanner.GhostRoadBlock block,
+                                                                             Map<Long, Integer> topRoadYByColumn) {
+        if (block == null || block.pos() == null || block.state() == null) {
+            return RoadGeometryPlanner.RoadBuildPhase.DECK;
+        }
+        if (isDecorRoadBuildState(block.state())) {
+            return RoadGeometryPlanner.RoadBuildPhase.DECOR;
+        }
+        long key = BlockPos.asLong(block.pos().getX(), 0, block.pos().getZ());
+        int topRoadY = topRoadYByColumn.getOrDefault(key, block.pos().getY());
+        return block.pos().getY() < topRoadY
+                ? RoadGeometryPlanner.RoadBuildPhase.SUPPORT
+                : RoadGeometryPlanner.RoadBuildPhase.DECK;
+    }
+
+    private static boolean isDecorRoadBuildState(BlockState state) {
+        return state != null && (state.is(Blocks.COBBLESTONE_WALL) || state.is(Blocks.LANTERN));
     }
 
     private static RoadPlacementArtifacts buildRoadPlacementArtifacts(ServerLevel level, RoadCorridorPlan corridorPlan) {

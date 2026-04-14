@@ -185,6 +185,34 @@ class BuilderHammerSupportTest {
     }
 
     @Test
+    void buildStepsSortSupportsBeforeDeckBeforeDecor() {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 66, 0), Blocks.LANTERN.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICKS.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 65, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = invokeToBuildSteps(ghostBlocks);
+
+        assertEquals(
+                List.of(
+                        RoadGeometryPlanner.RoadBuildPhase.SUPPORT,
+                        RoadGeometryPlanner.RoadBuildPhase.DECK,
+                        RoadGeometryPlanner.RoadBuildPhase.DECOR
+                ),
+                buildSteps.stream().map(RoadGeometryPlanner.RoadBuildStep::phase).toList()
+        );
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(0, 65, 0),
+                        new BlockPos(0, 66, 0)
+                ),
+                buildSteps.stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList()
+        );
+    }
+
+    @Test
     void placementArtifactsAreDerivedFromCorridorSlices() {
         List<BlockPos> sliceSurface = List.of(
                 new BlockPos(0, 65, 0),
@@ -540,6 +568,19 @@ class BuilderHammerSupportTest {
             return method.invoke(null, corridorPlan, styleResolver, terrainOwnershipResolver);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect corridor-derived road placement artifacts", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<RoadGeometryPlanner.RoadBuildStep> invokeToBuildSteps(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("toBuildSteps", List.class);
+            method.setAccessible(true);
+            return (List<RoadGeometryPlanner.RoadBuildStep>) method.invoke(null, ghostBlocks);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect phase-sorted road build steps", ex);
         }
     }
 
