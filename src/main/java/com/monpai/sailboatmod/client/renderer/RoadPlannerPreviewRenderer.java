@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.client.renderer;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.registry.ModItems;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -94,19 +95,29 @@ public final class RoadPlannerPreviewRenderer {
     public static void onRenderOverlay(RenderGuiOverlayEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
         Player player = minecraft.player;
-        if (player == null || !isHoldingPlanner(player)) {
+        if (player == null) {
             return;
         }
-        RoadPlannerClientHooks.PreviewState preview = RoadPlannerClientHooks.previewState();
-        List<RoadPlannerClientHooks.ProgressState> progressStates = RoadPlannerClientHooks.activeProgress();
-        if (preview == null && progressStates.isEmpty()) {
+        boolean holdingPlanner = isHoldingPlanner(player);
+        RoadPlannerClientHooks.PlanningProgressState planning = RoadPlannerClientHooks.activePlanningProgress();
+        if (!holdingPlanner && planning == null) {
             return;
         }
+
+        RoadPlannerClientHooks.PreviewState preview = holdingPlanner ? RoadPlannerClientHooks.previewState() : null;
+        List<RoadPlannerClientHooks.ProgressState> progressStates = holdingPlanner ? RoadPlannerClientHooks.activeProgress() : List.of();
+        if (preview == null && progressStates.isEmpty() && planning == null) {
+            return;
+        }
+
         GuiGraphics guiGraphics = event.getGuiGraphics();
         int x = 12;
         int y = 16;
         int width = 212;
         int height = preview != null ? 74 : 42;
+        if (planning != null) {
+            height += 30;
+        }
         if (!progressStates.isEmpty()) {
             height += 22;
         }
@@ -161,6 +172,19 @@ public final class RoadPlannerPreviewRenderer {
             );
             textY += 18;
         }
+        if (planning != null) {
+            guiGraphics.drawString(
+                    minecraft.font,
+                    planningHeadline(planning),
+                    x + 10,
+                    textY,
+                    planningStatusColor(planning.status()),
+                    false
+            );
+            textY += 12;
+            drawProgressBar(guiGraphics, x + 10, textY, width - 20, 8, planning.displayPercent());
+            textY += 18;
+        }
         if (!progressStates.isEmpty()) {
             RoadPlannerClientHooks.ProgressState progress = progressStates.get(0);
             guiGraphics.drawString(
@@ -202,13 +226,20 @@ public final class RoadPlannerPreviewRenderer {
                                        float lineB,
                                        float lineA) {
         PreviewBox box = previewBox(pos, cameraPos);
-        float minX = (float) box.minX();
-        float minY = (float) box.minY();
-        float minZ = (float) box.minZ();
-        float maxX = (float) box.maxX();
-        float maxY = (float) box.maxY();
-        float maxZ = (float) box.maxZ();
-        LevelRenderer.renderLineBox(poseStack, lineConsumer, minX, minY, minZ, maxX, maxY, maxZ, lineR, lineG, lineB, lineA);
+        LevelRenderer.renderLineBox(
+                poseStack,
+                lineConsumer,
+                (float) box.minX(),
+                (float) box.minY(),
+                (float) box.minZ(),
+                (float) box.maxX(),
+                (float) box.maxY(),
+                (float) box.maxZ(),
+                lineR,
+                lineG,
+                lineB,
+                lineA
+        );
     }
 
     private static void renderHighlightBox(PoseStack poseStack,
@@ -224,13 +255,20 @@ public final class RoadPlannerPreviewRenderer {
             return;
         }
         PreviewBox box = highlightBox(pos, cameraPos, inset);
-        float minX = (float) box.minX();
-        float minY = (float) box.minY();
-        float minZ = (float) box.minZ();
-        float maxX = (float) box.maxX();
-        float maxY = (float) box.maxY();
-        float maxZ = (float) box.maxZ();
-        LevelRenderer.renderLineBox(poseStack, lineConsumer, minX, minY, minZ, maxX, maxY, maxZ, lineR, lineG, lineB, lineA);
+        LevelRenderer.renderLineBox(
+                poseStack,
+                lineConsumer,
+                (float) box.minX(),
+                (float) box.minY(),
+                (float) box.minZ(),
+                (float) box.maxX(),
+                (float) box.maxY(),
+                (float) box.maxZ(),
+                lineR,
+                lineG,
+                lineB,
+                lineA
+        );
     }
 
     private static void renderPathSegmentBox(PoseStack poseStack,
@@ -310,6 +348,40 @@ public final class RoadPlannerPreviewRenderer {
 
     static boolean rendersFilledBoxesForTest() {
         return false;
+    }
+
+    static Component planningHeadlineForTest(RoadPlannerClientHooks.PlanningProgressState state) {
+        return planningHeadline(state);
+    }
+
+    static int planningStatusColorForTest(SyncManualRoadPlanningProgressPacket.Status status) {
+        return planningStatusColor(status);
+    }
+
+    private static Component planningHeadline(RoadPlannerClientHooks.PlanningProgressState state) {
+        if (state == null) {
+            return Component.empty();
+        }
+        return Component.literal("道路规划中: " + state.stageLabel() + " " + state.displayPercent() + "%");
+    }
+
+    private static int planningStatusColor(SyncManualRoadPlanningProgressPacket.Status status) {
+        if (status == null) {
+            return 0xFFE6EEF5;
+        }
+        return switch (status) {
+            case SUCCESS -> 0xFF98D8AA;
+            case FAILED, CANCELLED -> 0xFFF08A8A;
+            case RUNNING -> 0xFFE6EEF5;
+        };
+    }
+
+    private static void drawProgressBar(GuiGraphics guiGraphics, int x, int y, int width, int height, int percent) {
+        int clamped = Math.max(0, Math.min(100, percent));
+        int fillWidth = Math.max(0, Math.min(width, (int) Math.floor(width * (clamped / 100.0D))));
+        guiGraphics.fill(x, y, x + width, y + height, 0xAA12181F);
+        guiGraphics.fill(x, y, x + fillWidth, y + height, 0xFF6CB6FF);
+        guiGraphics.fill(x, y, x + width, y + 1, 0x55FFFFFF);
     }
 
     record PreviewBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {

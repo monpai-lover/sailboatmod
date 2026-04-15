@@ -17,6 +17,7 @@ import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
+import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -47,6 +48,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class ManualRoadPlannerService {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -68,6 +70,7 @@ public final class ManualRoadPlannerService {
     private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
     private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
     private static final Map<UUID, PlannedPreviewState> READY_PREVIEWS = new ConcurrentHashMap<>();
+    private static final AtomicLong MANUAL_PLANNING_REQUEST_IDS = new AtomicLong();
 
     private ManualRoadPlannerService() {
     }
@@ -325,6 +328,13 @@ public final class ManualRoadPlannerService {
     }
 
     private static List<PlanCandidate> buildPlanCandidates(ServerPlayer player, ItemStack stack) {
+        return buildPlanCandidates(player, stack, (stage, stagePercent) -> {
+        });
+    }
+
+    private static List<PlanCandidate> buildPlanCandidates(ServerPlayer player,
+                                                           ItemStack stack,
+                                                           PlanningProgressReporter progress) {
         ServerLevel level = player.serverLevel();
         NationSavedData data = NationSavedData.get(level);
         TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
@@ -364,19 +374,28 @@ public final class ManualRoadPlannerService {
                 townCorePos(level, targetTown)
         );
 
+        progress.update(PlanningStage.SAMPLING_TERRAIN, 0);
         Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
         Set<Long> excludedColumns = collectCoreExclusionColumns(level, data);
+        progress.update(PlanningStage.SAMPLING_TERRAIN, 70);
         RoadPlanningPassContext planningContext = new RoadPlanningPassContext(level);
+        progress.update(PlanningStage.SAMPLING_TERRAIN, 100);
         List<PlanCandidate> candidates = new ArrayList<>();
         long startedAt = System.nanoTime();
+        progress.update(PlanningStage.ANALYZING_ISLAND, 100);
+        progress.update(PlanningStage.TRYING_LAND, 0);
         PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false, planningContext);
+        progress.update(PlanningStage.TRYING_LAND, 100);
         if (detour != null) {
             candidates.add(detour);
         }
+        progress.update(PlanningStage.TRYING_BRIDGE, 0);
         PlanCandidate bridge = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.BRIDGE, true, planningContext);
+        progress.update(PlanningStage.TRYING_BRIDGE, 100);
         if (bridge != null && candidates.stream().noneMatch(existing -> previewHash(existing.plan()).equals(previewHash(bridge.plan())))) {
             candidates.add(bridge);
         }
+        progress.update(PlanningStage.BUILDING_PREVIEW, candidates.isEmpty() ? 0 : 100);
         if (candidates.isEmpty()) {
             RoadPlanningFailureReason failureReason = planningContext.preferredFailureReason();
             if (failureReason == null || failureReason == RoadPlanningFailureReason.NONE) {
@@ -1665,6 +1684,19 @@ public final class ManualRoadPlannerService {
         return PENDING_PREVIEW_MESSAGE_KEY;
     }
 
+    static int planningOverallPercentForTest(PlanningStage stage, int stagePercent) {
+        return planningOverallPercent(stage, stagePercent);
+    }
+
+    static SyncManualRoadPlanningProgressPacket planningPacketForTest(long requestId,
+                                                                      String sourceTownName,
+                                                                      String targetTownName,
+                                                                      PlanningStage stage,
+                                                                      int stagePercent,
+                                                                      SyncManualRoadPlanningProgressPacket.Status status) {
+        return planningProgressPacket(requestId, sourceTownName, targetTownName, stage, stagePercent, status);
+    }
+
     static Set<Long> collectCoreExclusionColumnsForTest(List<BlockPos> townCores, List<BlockPos> nationCores) {
         LinkedHashSet<BlockPos> cores = new LinkedHashSet<>();
         if (townCores != null) {
@@ -2072,23 +2104,59 @@ public final class ManualRoadPlannerService {
 
         ItemStack planningStack = stack.copy();
         String targetTownId = planningStack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
+        PlanningRouteNames routeNames = resolvePlanningRouteNames(player, planningStack);
+        long requestId = MANUAL_PLANNING_REQUEST_IDS.incrementAndGet();
+        sendPlanningProgress(
+                player,
+                requestId,
+                routeNames.sourceTownName(),
+                routeNames.targetTownName(),
+                PlanningStage.PREPARING,
+                100,
+                SyncManualRoadPlanningProgressPacket.Status.RUNNING
+        );
         taskService.submitLatest(
                 new RoadPlanningTaskService.TaskKey("manual-preview", player.getUUID().toString()),
                 () -> new PlannedPreviewState(
                         targetTownId,
-                        buildPlanCandidates(player, planningStack),
+                        buildPlanCandidates(
+                                player,
+                                planningStack,
+                                (stage, stagePercent) -> sendPlanningProgress(
+                                        player,
+                                        requestId,
+                                        routeNames.sourceTownName(),
+                                        routeNames.targetTownName(),
+                                        stage,
+                                        stagePercent,
+                                        SyncManualRoadPlanningProgressPacket.Status.RUNNING
+                                )
+                        ),
                         failureMessageKey(planningStack)
                 ),
-                preview -> applyPlannedPreview(player, stack, preview)
+                preview -> applyPlannedPreview(player, stack, preview, requestId, routeNames)
         );
     }
 
-    private static void applyPlannedPreview(ServerPlayer player, ItemStack stack, PlannedPreviewState preview) {
+    private static void applyPlannedPreview(ServerPlayer player,
+                                           ItemStack stack,
+                                           PlannedPreviewState preview,
+                                           long requestId,
+                                           PlanningRouteNames routeNames) {
         if (player == null || stack == null) {
             return;
         }
         markPlanningPending(stack, false);
         if (preview == null || !matchesSelectedTarget(stack, preview.targetTownId())) {
+            sendPlanningProgress(
+                    player,
+                    requestId,
+                    routeNames == null ? "" : routeNames.sourceTownName(),
+                    routeNames == null ? "" : routeNames.targetTownName(),
+                    PlanningStage.BUILDING_PREVIEW,
+                    0,
+                    SyncManualRoadPlanningProgressPacket.Status.CANCELLED
+            );
             return;
         }
         READY_PREVIEWS.put(player.getUUID(), preview);
@@ -2098,6 +2166,15 @@ public final class ManualRoadPlannerService {
             clearFailureMessage(stack);
         }
         if (preview.candidates().isEmpty()) {
+            sendPlanningProgress(
+                    player,
+                    requestId,
+                    routeNames == null ? "" : routeNames.sourceTownName(),
+                    routeNames == null ? "" : routeNames.targetTownName(),
+                    PlanningStage.BUILDING_PREVIEW,
+                    0,
+                    SyncManualRoadPlanningProgressPacket.Status.FAILED
+            );
             clearPreviewState(stack);
             sendPreviewClear(player);
             player.sendSystemMessage(Component.translatable(
@@ -2107,6 +2184,15 @@ public final class ManualRoadPlannerService {
             ));
             return;
         }
+        sendPlanningProgress(
+                player,
+                requestId,
+                routeNames == null ? "" : routeNames.sourceTownName(),
+                routeNames == null ? "" : routeNames.targetTownName(),
+                PlanningStage.BUILDING_PREVIEW,
+                100,
+                SyncManualRoadPlanningProgressPacket.Status.SUCCESS
+        );
         applyReadyPreview(player, stack, preview);
         PlanCandidate candidate = selectPlanCandidate(stack, preview.candidates());
         if (candidate != null) {
@@ -2116,6 +2202,32 @@ public final class ManualRoadPlannerService {
                     displayTownName(candidate.targetTown())
             ));
         }
+    }
+
+    enum PlanningStage {
+        PREPARING("preparing", "准备请求", 0, 8),
+        SAMPLING_TERRAIN("sampling_terrain", "采样地形", 8, 28),
+        ANALYZING_ISLAND("analyzing_island", "分析岛屿/桥头", 28, 40),
+        TRYING_LAND("trying_land", "陆路尝试", 40, 62),
+        TRYING_BRIDGE("trying_bridge", "桥路尝试", 62, 86),
+        BUILDING_PREVIEW("building_preview", "生成预览", 86, 100);
+
+        private final String stageKey;
+        private final String stageLabel;
+        private final int startPercent;
+        private final int endPercent;
+
+        PlanningStage(String stageKey, String stageLabel, int startPercent, int endPercent) {
+            this.stageKey = stageKey;
+            this.stageLabel = stageLabel;
+            this.startPercent = startPercent;
+            this.endPercent = endPercent;
+        }
+    }
+
+    @FunctionalInterface
+    private interface PlanningProgressReporter {
+        void update(PlanningStage stage, int stagePercent);
     }
 
     private static Component applyReadyPreview(ServerPlayer player, ItemStack stack, PlannedPreviewState preview) {
@@ -2472,6 +2584,63 @@ public final class ManualRoadPlannerService {
         return state == null ? 0 : state.toString().hashCode();
     }
 
+    private static PlanningRouteNames resolvePlanningRouteNames(ServerPlayer player, ItemStack stack) {
+        if (player == null) {
+            return new PlanningRouteNames("-", "-");
+        }
+        ServerLevel level = player.serverLevel();
+        TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
+        List<TownRecord> targets = sourceTown == null ? List.of() : eligibleTargets(level, sourceTown);
+        TownRecord targetTown = resolveSelectedTarget(stack, targets);
+        return new PlanningRouteNames(displayTownName(sourceTown), displayTownName(targetTown));
+    }
+
+    private static void sendPlanningProgress(ServerPlayer player,
+                                             long requestId,
+                                             String sourceTownName,
+                                             String targetTownName,
+                                             PlanningStage stage,
+                                             int stagePercent,
+                                             SyncManualRoadPlanningProgressPacket.Status status) {
+        if (player == null || stage == null) {
+            return;
+        }
+        ModNetwork.CHANNEL.send(
+                PacketDistributor.PLAYER.with(() -> player),
+                planningProgressPacket(requestId, sourceTownName, targetTownName, stage, stagePercent, status)
+        );
+    }
+
+    private static SyncManualRoadPlanningProgressPacket planningProgressPacket(long requestId,
+                                                                               String sourceTownName,
+                                                                               String targetTownName,
+                                                                               PlanningStage stage,
+                                                                               int stagePercent,
+                                                                               SyncManualRoadPlanningProgressPacket.Status status) {
+        PlanningStage safeStage = stage == null ? PlanningStage.PREPARING : stage;
+        int safeStagePercent = Math.max(0, Math.min(100, stagePercent));
+        return new SyncManualRoadPlanningProgressPacket(
+                requestId,
+                sourceTownName == null ? "-" : sourceTownName,
+                targetTownName == null ? "-" : targetTownName,
+                safeStage.stageKey,
+                safeStage.stageLabel,
+                planningOverallPercent(safeStage, safeStagePercent),
+                safeStagePercent,
+                status
+        );
+    }
+
+    private static int planningOverallPercent(PlanningStage stage, int stagePercent) {
+        PlanningStage safeStage = stage == null ? PlanningStage.PREPARING : stage;
+        int safeStagePercent = Math.max(0, Math.min(100, stagePercent));
+        if (safeStagePercent >= 100) {
+            return safeStage.endPercent;
+        }
+        int range = Math.max(0, safeStage.endPercent - safeStage.startPercent);
+        return safeStage.startPercent + (int) Math.floor(range * (safeStagePercent / 100.0D));
+    }
+
     private static String displayTownName(TownRecord town) {
         if (town == null) {
             return "-";
@@ -2520,6 +2689,9 @@ public final class ManualRoadPlannerService {
     }
 
     private record StationZoneCandidate(BlockPos stationPos, PostStationRoadAnchorHelper.Zone zone) {
+    }
+
+    private record PlanningRouteNames(String sourceTownName, String targetTownName) {
     }
 
     private record WaitingAreaRoute(BlockPos sourceStationPos,

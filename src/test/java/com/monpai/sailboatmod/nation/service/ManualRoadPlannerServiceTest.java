@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.nation.service;
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
@@ -57,6 +58,52 @@ class ManualRoadPlannerServiceTest {
                 "message.sailboatmod.road_planner.planning",
                 ManualRoadPlannerService.pendingPreviewMessageKeyForTest()
         );
+    }
+
+    @Test
+    void planningStagePercentBandsFollowApprovedRanges() {
+        assertEquals(8, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.PREPARING,
+                100
+        ));
+        assertEquals(18, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.SAMPLING_TERRAIN,
+                50
+        ));
+        assertEquals(34, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.ANALYZING_ISLAND,
+                50
+        ));
+        assertEquals(51, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.TRYING_LAND,
+                50
+        ));
+        assertEquals(74, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE,
+                50
+        ));
+        assertEquals(93, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.BUILDING_PREVIEW,
+                50
+        ));
+    }
+
+    @Test
+    void planningProgressPacketCarriesStageAndStatus() {
+        SyncManualRoadPlanningProgressPacket packet = ManualRoadPlannerService.planningPacketForTest(
+                12L,
+                "Alpha",
+                "Beta",
+                ManualRoadPlannerService.PlanningStage.BUILDING_PREVIEW,
+                50,
+                SyncManualRoadPlanningProgressPacket.Status.SUCCESS
+        );
+
+        assertEquals(12L, packet.requestId());
+        assertEquals("building_preview", packet.stageKey());
+        assertEquals("生成预览", packet.stageLabel());
+        assertEquals(93, packet.overallPercent());
+        assertEquals(SyncManualRoadPlanningProgressPacket.Status.SUCCESS, packet.status());
     }
 
     @Test
