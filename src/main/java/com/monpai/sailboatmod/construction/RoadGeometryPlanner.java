@@ -1270,6 +1270,12 @@ public final class RoadGeometryPlanner {
                                   boolean stairState) {
     }
 
+    public enum RoadBuildPhase {
+        SUPPORT,
+        DECK,
+        DECOR
+    }
+
     public record GhostRoadBlock(BlockPos pos, BlockState state) {
         public GhostRoadBlock {
             pos = Objects.requireNonNull(pos, "pos").immutable();
@@ -1277,13 +1283,18 @@ public final class RoadGeometryPlanner {
         }
     }
 
-    public record RoadBuildStep(int order, BlockPos pos, BlockState state) {
+    public record RoadBuildStep(int order, BlockPos pos, BlockState state, RoadBuildPhase phase) {
+        public RoadBuildStep(int order, BlockPos pos, BlockState state) {
+            this(order, pos, state, RoadBuildPhase.DECK);
+        }
+
         public RoadBuildStep {
             if (order < 0) {
                 throw new IllegalArgumentException("order must be non-negative");
             }
             pos = Objects.requireNonNull(pos, "pos").immutable();
             state = Objects.requireNonNull(state, "state");
+            phase = phase == null ? RoadBuildPhase.DECK : phase;
         }
     }
 

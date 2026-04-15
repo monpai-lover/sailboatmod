@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.client.renderer;
 
+import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -59,5 +61,33 @@ class RoadPlannerPreviewRendererTest {
         assertEquals(1.08D, box.maxY(), 1.0E-6D);
         assertEquals(1.17D, box.minZ(), 1.0E-6D);
         assertEquals(1.33D, box.maxZ(), 1.0E-6D);
+    }
+
+    @Test
+    void planningHudLabelIncludesStageAndPercent() {
+        RoadPlannerClientHooks.PlanningProgressState state = new RoadPlannerClientHooks.PlanningProgressState(
+                21L,
+                "Alpha",
+                "Beta",
+                "sampling_terrain",
+                "采样地形",
+                18,
+                18,
+                45,
+                SyncManualRoadPlanningProgressPacket.Status.RUNNING,
+                0L,
+                250L,
+                Long.MAX_VALUE
+        );
+
+        assertEquals("道路规划中: 采样地形 18%", RoadPlannerPreviewRenderer.planningHeadlineForTest(state).getString());
+    }
+
+    @Test
+    void planningHudUsesTerminalColorForFailedState() {
+        assertEquals(
+                0xFFF08A8A,
+                RoadPlannerPreviewRenderer.planningStatusColorForTest(SyncManualRoadPlanningProgressPacket.Status.FAILED)
+        );
     }
 }

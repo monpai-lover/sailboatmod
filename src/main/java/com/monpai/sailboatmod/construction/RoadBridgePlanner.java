@@ -14,7 +14,7 @@ public final class RoadBridgePlanner {
 
     private static final int BRIDGE_RANGE_MERGE_GAP = 4;
     private static final int MIN_BRIDGE_RANGE_LENGTH = 3;
-    private static final int MAX_ARCH_SPAN_COLUMNS = 6;
+    private static final int MAX_ARCH_SPAN_COLUMNS = 7;
     private static final int MIN_UNSUPPORTED_FOR_ARCH = 4;
     private static final int MIN_DROP_FOR_ARCH = 6;
     private static final int MAX_PIER_ANCHOR_GAP = 3;
@@ -357,6 +357,16 @@ public final class RoadBridgePlanner {
                                                   IntUnaryOperator terrainYAt,
                                                   IntUnaryOperator waterSurfaceYAt,
                                                   IntPredicate foundationSupportedAt) {
+        BlockPos startPos = Objects.requireNonNull(centerPath.get(start), "centerPath contains null at start");
+        int startDeckY = Math.max(startPos.getY() + 1, terrainYAt.applyAsInt(start) + 1);
+        BlockPos endPos = Objects.requireNonNull(centerPath.get(end), "centerPath contains null at end");
+        int endDeckY = Math.max(endPos.getY() + 1, terrainYAt.applyAsInt(end) + 1);
+        int maxWaterSurface = 0;
+        for (int i = start; i <= end; i++) {
+            maxWaterSurface = Math.max(maxWaterSurface, waterSurfaceYAt.applyAsInt(i));
+        }
+        int mainDeckY = Math.max(maxWaterSurface + NAVIGABLE_WATER_CLEARANCE, Math.max(startDeckY, endDeckY));
+
         int navigableStart = -1;
         int navigableEnd = -1;
         for (int i = start; i <= end; i++) {
@@ -376,12 +386,24 @@ public final class RoadBridgePlanner {
             }
         }
 
-        List<Integer> interiorAnchors = distributePierAnchors(start, end, supportableInterior);
+        List<Integer> preferredInterior = preferGentleApproachAnchorColumns(
+                start,
+                end,
+                startDeckY,
+                endDeckY,
+                mainDeckY,
+                supportableInterior
+        );
+        List<Integer> interiorAnchors = distributePierAnchors(
+                start,
+                end,
+                preferredInterior.isEmpty() ? supportableInterior : preferredInterior
+        );
 
         LinkedHashSet<Integer> channelAnchors = new LinkedHashSet<>();
         if (navigableStart >= 0) {
-            int leftChannel = findNearestAnchorAtOrBefore(interiorAnchors, navigableStart - 1);
-            int rightChannel = findNearestAnchorAtOrAfter(interiorAnchors, navigableEnd + 1);
+            int leftChannel = findNearestAnchorAtOrBefore(interiorAnchors, navigableStart);
+            int rightChannel = findNearestAnchorAtOrAfter(interiorAnchors, navigableEnd);
             if (leftChannel >= 0) {
                 channelAnchors.add(leftChannel);
             }
@@ -391,10 +413,14 @@ public final class RoadBridgePlanner {
         }
 
         boolean valid = !interiorAnchors.isEmpty();
+        if (valid) {
+            int firstAnchor = interiorAnchors.get(0);
+            int lastAnchor = interiorAnchors.get(interiorAnchors.size() - 1);
+            valid = hasStraightRampRun(centerPath, start, firstAnchor)
+                    && hasStraightRampRun(centerPath, lastAnchor, end);
+        }
         List<BridgePierNode> nodes = new ArrayList<>();
 
-        BlockPos startPos = Objects.requireNonNull(centerPath.get(start), "centerPath contains null at start");
-        int startDeckY = Math.max(startPos.getY() + 1, terrainYAt.applyAsInt(start) + 1);
         nodes.add(new BridgePierNode(
                 start,
                 new BlockPos(startPos.getX(), startDeckY, startPos.getZ()),
@@ -402,12 +428,6 @@ public final class RoadBridgePlanner {
                 startDeckY,
                 BridgeNodeRole.ABUTMENT
         ));
-
-        int maxWaterSurface = 0;
-        for (int i = start; i <= end; i++) {
-            maxWaterSurface = Math.max(maxWaterSurface, waterSurfaceYAt.applyAsInt(i));
-        }
-        int mainDeckY = Math.max(maxWaterSurface + NAVIGABLE_WATER_CLEARANCE, Math.max(startDeckY, Math.max(centerPath.get(end).getY() + 1, terrainYAt.applyAsInt(end) + 1)));
 
         for (int anchor : interiorAnchors) {
             BlockPos anchorPos = Objects.requireNonNull(centerPath.get(anchor), "centerPath contains null at anchor " + anchor);
@@ -421,8 +441,6 @@ public final class RoadBridgePlanner {
             ));
         }
 
-        BlockPos endPos = Objects.requireNonNull(centerPath.get(end), "centerPath contains null at end");
-        int endDeckY = Math.max(endPos.getY() + 1, terrainYAt.applyAsInt(end) + 1);
         nodes.add(new BridgePierNode(
                 end,
                 new BlockPos(endPos.getX(), endDeckY, endPos.getZ()),
@@ -453,6 +471,31 @@ public final class RoadBridgePlanner {
         );
     }
 
+    private static List<Integer> preferGentleApproachAnchorColumns(int start,
+                                                                   int end,
+                                                                   int startDeckY,
+                                                                   int endDeckY,
+                                                                   int mainDeckY,
+                                                                   List<Integer> supportableInterior) {
+        if (supportableInterior == null || supportableInterior.isEmpty()) {
+            return List.of();
+        }
+        int spanLength = end - start;
+        int leftBuffer = Math.max(0, Math.min(mainDeckY - startDeckY, Math.max(0, spanLength / 2)));
+        int rightBuffer = Math.max(0, Math.min(mainDeckY - endDeckY, Math.max(0, spanLength / 2)));
+        if (leftBuffer == 0 && rightBuffer == 0) {
+            return List.copyOf(supportableInterior);
+        }
+        int preferredStart = start + leftBuffer;
+        int preferredEnd = end - rightBuffer;
+        if (preferredEnd < preferredStart) {
+            return List.of();
+        }
+        return supportableInterior.stream()
+                .filter(index -> index >= preferredStart && index <= preferredEnd)
+                .toList();
+    }
+
     private static int findNearestAnchorAtOrBefore(List<Integer> anchors, int upperBound) {
         int match = -1;
         for (int anchor : anchors) {
@@ -470,5 +513,31 @@ public final class RoadBridgePlanner {
             }
         }
         return -1;
+    }
+
+    private static boolean hasStraightRampRun(List<BlockPos> centerPath, int startIndex, int endIndex) {
+        if (centerPath == null || centerPath.isEmpty() || endIndex <= startIndex) {
+            return true;
+        }
+        int expectedDx = 0;
+        int expectedDz = 0;
+        for (int i = startIndex + 1; i <= endIndex; i++) {
+            BlockPos previous = Objects.requireNonNull(centerPath.get(i - 1), "centerPath contains null at index " + (i - 1));
+            BlockPos current = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
+            int dx = Integer.compare(current.getX() - previous.getX(), 0);
+            int dz = Integer.compare(current.getZ() - previous.getZ(), 0);
+            if (dx == 0 && dz == 0) {
+                continue;
+            }
+            if (expectedDx == 0 && expectedDz == 0) {
+                expectedDx = dx;
+                expectedDz = dz;
+                continue;
+            }
+            if (dx != expectedDx || dz != expectedDz) {
+                return false;
+            }
+        }
+        return true;
     }
 }

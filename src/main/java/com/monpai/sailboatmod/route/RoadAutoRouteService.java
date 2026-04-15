@@ -9,6 +9,8 @@ import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.service.RoadHybridRouteResolver;
 import com.monpai.sailboatmod.nation.service.RoadPathfinder;
+import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshot;
+import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshotBuilder;
 import com.monpai.sailboatmod.nation.service.SegmentedRoadPathOrchestrator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -220,7 +222,7 @@ public final class RoadAutoRouteService {
                 networkNodes,
                 adjacency,
                 (from, to, allowWaterFallback) -> {
-                    List<BlockPos> path = combineRouteEndpoints(from, RoadPathfinder.findPath(level, from, to, Set.of(), allowWaterFallback), to);
+                    List<BlockPos> path = combineRouteEndpoints(from, findPathWithSnapshot(level, from, to, allowWaterFallback), to);
                     return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
                 }
         );
@@ -244,7 +246,7 @@ public final class RoadAutoRouteService {
         merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
                 start,
                 end,
-                RoadPathfinder.collectBridgeDeckAnchors(level, start, end, Set.of()),
+                collectBridgeDeckAnchorsWithSnapshot(level, start, end),
                 Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
                 BRIDGE_ANCHOR_CORRIDOR_DISTANCE
         ));
@@ -387,7 +389,28 @@ public final class RoadAutoRouteService {
         if (level == null || start == null || end == null) {
             return List.of();
         }
-        return combineRouteEndpoints(start, RoadPathfinder.findPath(level, start, end), end);
+        return combineRouteEndpoints(start, findPathWithSnapshot(level, start, end, false), end);
+    }
+
+    private static List<BlockPos> findPathWithSnapshot(ServerLevel level,
+                                                       BlockPos start,
+                                                       BlockPos end,
+                                                       boolean allowWaterFallback) {
+        if (level == null || start == null || end == null) {
+            return List.of();
+        }
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, start, end, Set.of(), Set.of());
+        return RoadPathfinder.findPath(level, start, end, Set.of(), Set.of(), allowWaterFallback, snapshot);
+    }
+
+    private static List<BlockPos> collectBridgeDeckAnchorsWithSnapshot(ServerLevel level,
+                                                                       BlockPos start,
+                                                                       BlockPos end) {
+        if (level == null || start == null || end == null) {
+            return List.of();
+        }
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, start, end, Set.of(), Set.of());
+        return RoadPathfinder.collectBridgeDeckAnchors(level, start, end, Set.of(), snapshot);
     }
 
     private static RouteResolution preferResolution(RouteResolution direct, RouteResolution hybrid) {

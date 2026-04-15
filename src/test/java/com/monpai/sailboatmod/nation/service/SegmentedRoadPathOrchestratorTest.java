@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -126,6 +127,28 @@ class SegmentedRoadPathOrchestratorTest {
         );
 
         assertTrue(result.success());
+    }
+
+    @Test
+    void failedSegmentIsOnlyPlannedOncePerEquivalentRequestKey() {
+        AtomicInteger attempts = new AtomicInteger();
+
+        SegmentedRoadPathOrchestrator.OrchestratedPath result = SegmentedRoadPathOrchestrator.plan(
+                new BlockPos(0, 64, 0),
+                new BlockPos(64, 64, 0),
+                List.of(),
+                request -> {
+                    attempts.incrementAndGet();
+                    return new SegmentedRoadPathOrchestrator.SegmentPlan(
+                            List.of(),
+                            SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED
+                    );
+                },
+                request -> true
+        );
+
+        assertFalse(result.success());
+        assertTrue(attempts.get() < 5, () -> "expected bounded retries, got " + attempts.get());
     }
 
     @Test

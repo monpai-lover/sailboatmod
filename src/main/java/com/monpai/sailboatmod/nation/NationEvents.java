@@ -14,6 +14,7 @@ import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationFlagBlockTracker;
 import com.monpai.sailboatmod.nation.service.NationFlagSyncService;
 import com.monpai.sailboatmod.nation.service.NationFlagUploadService;
+import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.NationWarService;
 import com.monpai.sailboatmod.nation.service.TerrainCacheInvalidator;
@@ -319,6 +320,7 @@ public final class NationEvents {
         LAST_TERRITORY.clear();
         LAST_TAB_LIST_KEYS.clear();
         PENDING_CONTAINER_ACCESS.clear();
+        RoadPlanningTaskService.onServerStopping();
         NationWarService.clearRuntimeState();
         BankConstructionManager.clearAll();
         NationFlagUploadService.clearSessions();

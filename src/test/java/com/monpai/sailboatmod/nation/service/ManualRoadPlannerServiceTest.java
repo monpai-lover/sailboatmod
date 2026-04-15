@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.nation.service;
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
@@ -49,6 +50,108 @@ class ManualRoadPlannerServiceTest {
                 "manual|town:alpha|town:beta",
                 Set.of("manual|town:alpha|town:beta")
         ));
+    }
+
+    @Test
+    void previewRequestReturnsPlanningMessageBeforeAsyncResultArrives() {
+        assertEquals(
+                "message.sailboatmod.road_planner.planning",
+                ManualRoadPlannerService.pendingPreviewMessageKeyForTest()
+        );
+    }
+
+    @Test
+    void planningStagePercentBandsFollowApprovedRanges() {
+        assertEquals(8, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.PREPARING,
+                100
+        ));
+        assertEquals(18, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.SAMPLING_TERRAIN,
+                50
+        ));
+        assertEquals(34, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.ANALYZING_ISLAND,
+                50
+        ));
+        assertEquals(51, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.TRYING_LAND,
+                50
+        ));
+        assertEquals(74, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE,
+                50
+        ));
+        assertEquals(93, ManualRoadPlannerService.planningOverallPercentForTest(
+                ManualRoadPlannerService.PlanningStage.BUILDING_PREVIEW,
+                50
+        ));
+    }
+
+    @Test
+    void planningProgressPacketCarriesStageAndStatus() {
+        SyncManualRoadPlanningProgressPacket packet = ManualRoadPlannerService.planningPacketForTest(
+                12L,
+                "Alpha",
+                "Beta",
+                ManualRoadPlannerService.PlanningStage.BUILDING_PREVIEW,
+                50,
+                SyncManualRoadPlanningProgressPacket.Status.SUCCESS
+        );
+
+        assertEquals(12L, packet.requestId());
+        assertEquals("building_preview", packet.stageKey());
+        assertEquals("生成预览", packet.stageLabel());
+        assertEquals(93, packet.overallPercent());
+        assertEquals(SyncManualRoadPlanningProgressPacket.Status.SUCCESS, packet.status());
+    }
+
+    @Test
+    void islandTargetsAttemptOneShortLandProbeBeforeBridgeAttempt() {
+        assertEquals(
+                List.of(
+                        ManualRoadPlannerService.PlanningStage.TRYING_LAND,
+                        ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE
+                ),
+                ManualRoadPlannerService.planningAttemptStagesForTest(true)
+        );
+    }
+
+    @Test
+    void islandProbePolicyAllowsExactlyOneLandProbeAndThenForcesBridge() {
+        assertEquals(
+                new ManualRoadPlannerService.IslandProbePolicy(true, 1, 10, true),
+                ManualRoadPlannerService.islandProbePolicyForTest(true)
+        );
+    }
+
+    @Test
+    void islandProbeStopsWhenDistanceBudgetIsConsumed() {
+        assertTrue(ManualRoadPlannerService.shouldAbortIslandLandProbeForTest(
+                new ManualRoadPlannerService.IslandProbePolicy(true, 1, 10, true),
+                10,
+                false
+        ));
+    }
+
+    @Test
+    void islandProbeStopsWhenWaterSignalReturns() {
+        assertTrue(ManualRoadPlannerService.shouldAbortIslandLandProbeForTest(
+                new ManualRoadPlannerService.IslandProbePolicy(true, 1, 10, true),
+                3,
+                true
+        ));
+    }
+
+    @Test
+    void mainlandTargetsStillTryLandBeforeBridge() {
+        assertEquals(
+                List.of(
+                        ManualRoadPlannerService.PlanningStage.TRYING_LAND,
+                        ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE
+                ),
+                ManualRoadPlannerService.planningAttemptStagesForTest(false)
+        );
     }
 
     @Test
@@ -224,6 +327,16 @@ class ManualRoadPlannerServiceTest {
                 "message.sailboatmod.road_planner.failure.no_continuous_ground_route",
                 ManualRoadPlannerService.manualFailureMessageKeyForTest(
                         RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE
+                )
+        );
+    }
+
+    @Test
+    void manualPlannerMapsStructuredSearchExhaustedFailureToLocalizedMessage() {
+        assertEquals(
+                "message.sailboatmod.road_planner.failure.search_exhausted",
+                ManualRoadPlannerService.manualFailureMessageKeyForTest(
+                        RoadPlanningFailureReason.SEARCH_EXHAUSTED
                 )
         );
     }

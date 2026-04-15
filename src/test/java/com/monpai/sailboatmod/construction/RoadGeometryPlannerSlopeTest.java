@@ -226,6 +226,45 @@ class RoadGeometryPlannerSlopeTest {
     }
 
     @Test
+    void pierBridgeApproachProfileExtendsRampLengthBeforeIncreasingSlope() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0)
+        );
+
+        RoadBridgePlanner.BridgeSpanPlan spanPlan = RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(1, 9),
+                index -> index >= 1 && index <= 9,
+                index -> index >= 4 && index <= 6,
+                index -> 61,
+                index -> 63,
+                index -> true
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(
+                centerPath,
+                List.of(spanPlan)
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
+        assertEquals(65, heights[1]);
+        assertTrue(heights[2] <= 67, () -> "expected shallower rise before main deck: " + java.util.Arrays.toString(heights));
+        assertEquals(67, heights[3]);
+        assertEquals(68, heights[4]);
+        assertTrue(heights[8] >= 66, () -> "expected shallower descent from main deck: " + java.util.Arrays.toString(heights));
+    }
+
+    @Test
     void diagonalContinuousRisePrefersSlabToAvoidAmbiguousStairFacing() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

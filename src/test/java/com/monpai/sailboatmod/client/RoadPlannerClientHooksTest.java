@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,5 +68,117 @@ class RoadPlannerClientHooksTest {
         assertTrue(preview != null && preview.pathNodes().size() == 2);
         assertTrue(preview.options().get(1).bridgeBacked());
         assertTrue("bridge".equals(preview.selectedOptionId()));
+    }
+
+    @Test
+    void newerPlanningRequestReplacesOlderRequest() {
+        RoadPlannerClientHooks.resetStateForTest();
+        RoadPlannerClientHooks.updatePlanningProgressForTest(
+                new com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket(
+                        4L,
+                        "alpha",
+                        "beta",
+                        "sampling_terrain",
+                        "采样地形",
+                        18,
+                        30,
+                        com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket.Status.RUNNING
+                ),
+                1_000L
+        );
+        RoadPlannerClientHooks.updatePlanningProgressForTest(
+                new com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket(
+                        5L,
+                        "alpha",
+                        "gamma",
+                        "trying_bridge",
+                        "桥路尝试",
+                        80,
+                        60,
+                        com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket.Status.RUNNING
+                ),
+                1_050L
+        );
+
+        RoadPlannerClientHooks.PlanningProgressState state = RoadPlannerClientHooks.activePlanningProgressForTest(1_200L);
+        assertEquals(5L, state.requestId());
+        assertEquals("gamma", state.targetTownName());
+    }
+
+    @Test
+    void stalePlanningRequestIsIgnored() {
+        RoadPlannerClientHooks.resetStateForTest();
+        RoadPlannerClientHooks.updatePlanningProgressForTest(
+                new com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket(
+                        6L,
+                        "alpha",
+                        "gamma",
+                        "trying_bridge",
+                        "桥路尝试",
+                        80,
+                        60,
+                        com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket.Status.RUNNING
+                ),
+                1_000L
+        );
+        RoadPlannerClientHooks.updatePlanningProgressForTest(
+                new com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket(
+                        5L,
+                        "alpha",
+                        "beta",
+                        "sampling_terrain",
+                        "采样地形",
+                        18,
+                        30,
+                        com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket.Status.RUNNING
+                ),
+                1_050L
+        );
+
+        RoadPlannerClientHooks.PlanningProgressState state = RoadPlannerClientHooks.activePlanningProgressForTest(1_200L);
+        assertEquals(6L, state.requestId());
+        assertEquals("trying_bridge", state.stageKey());
+    }
+
+    @Test
+    void terminalPlanningStateClearsAfterHoldWindow() {
+        RoadPlannerClientHooks.resetStateForTest();
+        RoadPlannerClientHooks.updatePlanningProgressForTest(
+                new com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket(
+                        7L,
+                        "alpha",
+                        "beta",
+                        "building_preview",
+                        "生成预览",
+                        100,
+                        100,
+                        com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket.Status.FAILED
+                ),
+                2_000L
+        );
+
+        assertTrue(RoadPlannerClientHooks.activePlanningProgressForTest(2_500L) != null);
+        assertNull(RoadPlannerClientHooks.activePlanningProgressForTest(5_500L));
+    }
+
+    @Test
+    void smoothingNeverExceedsLatestAuthoritativeServerPercent() {
+        RoadPlannerClientHooks.resetStateForTest();
+        RoadPlannerClientHooks.updatePlanningProgressForTest(
+                new com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket(
+                        8L,
+                        "alpha",
+                        "beta",
+                        "sampling_terrain",
+                        "采样地形",
+                        20,
+                        40,
+                        com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket.Status.RUNNING
+                ),
+                3_000L
+        );
+
+        RoadPlannerClientHooks.PlanningProgressState state = RoadPlannerClientHooks.activePlanningProgressForTest(3_100L);
+        assertTrue(state != null && state.displayPercent() <= 20);
     }
 }

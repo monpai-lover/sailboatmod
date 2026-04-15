@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import com.monpai.sailboatmod.nation.service.BankLoanService;
+import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
@@ -34,6 +35,7 @@ public final class ServerEvents {
         runStartupTaskSafely("market SQLite database", () -> MarketDatabase.initialize(event.getServer()));
         BlueMapIntegration.onServerStarted(event.getServer());
         ClaimPreviewTerrainService.clearAllPersistedColors(event.getServer().overworld());
+        RoadPlanningTaskService.onServerStarted(event.getServer());
     }
 
     private static int cleanupTickCounter;
@@ -94,6 +96,7 @@ public final class ServerEvents {
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
+        RoadPlanningTaskService.onServerStopping();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
     }

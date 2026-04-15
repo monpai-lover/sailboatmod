@@ -716,9 +716,30 @@ class RoadLifecycleServiceTest {
                                                  boolean removeRoadNetworkOnComplete) {
         try {
             Class<?> jobClass = Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadConstructionJob");
-            Constructor<?> constructor = jobClass.getDeclaredConstructors()[0];
+            Constructor<?> constructor = java.util.Arrays.stream(jobClass.getDeclaredConstructors())
+                    .filter(candidate -> candidate.getParameterCount() == 14 || candidate.getParameterCount() == 15)
+                    .findFirst()
+                    .orElseThrow();
             constructor.setAccessible(true);
-            return constructor.newInstance(
+            Object[] arguments = constructor.getParameterCount() == 15
+                    ? new Object[] {
+                    level,
+                    roadId,
+                    UUID.randomUUID(),
+                    "town_a",
+                    "nation_a",
+                    "Town A",
+                    "Town B",
+                    plan,
+                    rollbackStates,
+                    placedStepCount,
+                    progressSteps,
+                    rollbackActive,
+                    rollbackActionIndex,
+                    removeRoadNetworkOnComplete,
+                    java.util.Set.of()
+            }
+                    : new Object[] {
                     level,
                     roadId,
                     UUID.randomUUID(),
@@ -733,7 +754,8 @@ class RoadLifecycleServiceTest {
                     rollbackActive,
                     rollbackActionIndex,
                     removeRoadNetworkOnComplete
-            );
+            };
+            return constructor.newInstance(arguments);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to construct test road job", ex);
         }

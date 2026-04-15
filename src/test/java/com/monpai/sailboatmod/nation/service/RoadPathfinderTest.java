@@ -58,6 +58,76 @@ class RoadPathfinderTest {
     }
 
     @Test
+    void emptyGroundRouteExposesSearchExhaustedFailureReasonWhenPlannerReportsIt() {
+        RoadPathfinder.PlannedPathResult result = new RoadPathfinder.PlannedPathResult(
+                List.of(),
+                RoadPlanningFailureReason.SEARCH_EXHAUSTED
+        );
+
+        assertEquals(RoadPlanningFailureReason.SEARCH_EXHAUSTED, result.failureReason());
+    }
+
+    @Test
+    void snapshotBackedGroundPathAvoidsNewHeightmapQueriesForSeededColumns() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        TestServerLevel baselineLevel = allocate(TestServerLevel.class);
+        baselineLevel.blockStates = new HashMap<>();
+        baselineLevel.surfaceHeights = new HashMap<>();
+        baselineLevel.biome = level.biome;
+
+        Map<Long, RoadPlanningSnapshot.ColumnSample> columns = new HashMap<>();
+        for (int x = 0; x <= 4; x++) {
+            for (int z = -1; z <= 1; z++) {
+                setSurfaceColumn(level, x, z, 64, Blocks.DIRT.defaultBlockState());
+                setSurfaceColumn(baselineLevel, x, z, 64, Blocks.DIRT.defaultBlockState());
+                columns.put(
+                        columnKey(x, z),
+                        new RoadPlanningSnapshot.ColumnSample(
+                                new BlockPos(x, 64, z),
+                                Blocks.DIRT.defaultBlockState(),
+                                0,
+                                false,
+                                64
+                        )
+                );
+            }
+        }
+
+        RoadPlanningSnapshot snapshot = new RoadPlanningSnapshot(
+                columns,
+                false,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0)),
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 64, 0)
+        );
+
+        RoadPathfinder.PlannedPathResult result = RoadPathfinder.findGroundPathForPlan(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 64, 0),
+                java.util.Set.of(),
+                java.util.Set.of(),
+                snapshot
+        );
+        RoadPathfinder.PlannedPathResult baseline = RoadPathfinder.findGroundPathForPlan(
+                baselineLevel,
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 64, 0),
+                java.util.Set.of(),
+                java.util.Set.of()
+        );
+
+        assertFalse(result.path().isEmpty(), "snapshot-backed path should not be empty");
+        assertFalse(baseline.path().isEmpty(), "baseline path should not be empty");
+        assertTrue(level.surfaceQueries() < baselineLevel.surfaceQueries(),
+                () -> "snapshotQueries=" + level.surfaceQueries() + " baselineQueries=" + baselineLevel.surfaceQueries());
+    }
+
+    @Test
     void findPathAllowsRequestedEndpointsEvenWhenTheirColumnsAreBlocked() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
@@ -404,6 +474,7 @@ class RoadPathfinderTest {
         private Map<Long, BlockState> blockStates;
         private Map<Long, Integer> surfaceHeights;
         private Holder<Biome> biome;
+        private int surfaceQueries;
 
         private TestServerLevel() {
             super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
@@ -416,6 +487,7 @@ class RoadPathfinderTest {
 
         @Override
         public BlockPos getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types heightmapType, BlockPos pos) {
+            surfaceQueries++;
             int surfaceY = surfaceHeights.getOrDefault(columnKey(pos.getX(), pos.getZ()), 63);
             return new BlockPos(pos.getX(), surfaceY + 1, pos.getZ());
         }
@@ -428,6 +500,10 @@ class RoadPathfinderTest {
         @Override
         public Holder<Biome> getBiome(BlockPos pos) {
             return biome;
+        }
+
+        int surfaceQueries() {
+            return surfaceQueries;
         }
     }
 }

@@ -168,8 +168,9 @@ public class ConstructionRuntimeSavedData extends SavedData {
                                boolean legacyPathOnly,
                                boolean rollbackActive,
                                int rollbackActionIndex,
-                               boolean removeRoadNetworkOnComplete) {
-        private static final int FORMAT_VERSION = 5;
+                               boolean removeRoadNetworkOnComplete,
+                               List<Long> attemptedStepPositions) {
+        private static final int FORMAT_VERSION = 6;
 
         public RoadJobState {
             roadId = roadId == null ? "" : roadId;
@@ -180,6 +181,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
             buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
             rollbackStates = rollbackStates == null ? List.of() : List.copyOf(rollbackStates);
             ownedBlocks = ownedBlocks == null ? List.of() : List.copyOf(ownedBlocks);
+            attemptedStepPositions = attemptedStepPositions == null ? List.of() : List.copyOf(attemptedStepPositions);
             placedStepCount = Math.max(0, placedStepCount);
             rollbackActionIndex = Math.max(0, rollbackActionIndex);
         }
@@ -193,7 +195,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
                             List<Long> ownedBlocks,
                             int placedStepCount,
                             boolean legacyPathOnly) {
-            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), ownedBlocks, placedStepCount, legacyPathOnly, false, 0, false);
+            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), ownedBlocks, placedStepCount, legacyPathOnly, false, 0, false, List.of());
         }
 
         public RoadJobState(String roadId,
@@ -204,7 +206,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
                             List<RoadBuildStepState> buildSteps,
                             int placedStepCount,
                             boolean legacyPathOnly) {
-            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), List.of(), placedStepCount, legacyPathOnly, false, 0, false);
+            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, List.of(), List.of(), placedStepCount, legacyPathOnly, false, 0, false, List.of());
         }
 
         public RoadJobState(String roadId,
@@ -219,7 +221,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
                             boolean legacyPathOnly,
                             int rollbackActionIndex,
                             boolean removeRoadNetworkOnComplete) {
-            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, rollbackStates, ownedBlocks, placedStepCount, legacyPathOnly, true, rollbackActionIndex, removeRoadNetworkOnComplete);
+            this(roadId, dimensionId, ownerUuid, centerPath, ghostBlocks, buildSteps, rollbackStates, ownedBlocks, placedStepCount, legacyPathOnly, true, rollbackActionIndex, removeRoadNetworkOnComplete, List.of());
         }
 
         public List<Long> path() {
@@ -245,6 +247,8 @@ public class ConstructionRuntimeSavedData extends SavedData {
             tag.putBoolean("RollbackActive", rollbackActive);
             tag.putInt("RollbackActionIndex", rollbackActionIndex);
             tag.putBoolean("RemoveRoadNetworkOnComplete", removeRoadNetworkOnComplete);
+            long[] attemptedArray = attemptedStepPositions == null ? new long[0] : attemptedStepPositions.stream().mapToLong(Long::longValue).toArray();
+            tag.putLongArray("AttemptedStepPositions", attemptedArray);
 
             ListTag ghostBlockTags = new ListTag();
             for (RoadGhostBlockState ghostBlock : ghostBlocks) {
@@ -289,7 +293,8 @@ public class ConstructionRuntimeSavedData extends SavedData {
                     legacyPathOnly,
                     tag.contains("RollbackActive", Tag.TAG_BYTE) && tag.getBoolean("RollbackActive"),
                     tag.contains("RollbackActionIndex", Tag.TAG_INT) ? tag.getInt("RollbackActionIndex") : 0,
-                    tag.contains("RemoveRoadNetworkOnComplete", Tag.TAG_BYTE) && tag.getBoolean("RemoveRoadNetworkOnComplete")
+                    tag.contains("RemoveRoadNetworkOnComplete", Tag.TAG_BYTE) && tag.getBoolean("RemoveRoadNetworkOnComplete"),
+                    toLongList(tag.getLongArray("AttemptedStepPositions"))
             );
         }
 

@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.construction;
 
+import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
@@ -182,6 +184,79 @@ class BuilderHammerSupportTest {
         );
 
         assertEquals(4, invokeNextRoadBuildBatchSize(plan, 0));
+    }
+
+    @Test
+    void buildStepsSortSupportsBeforeDeckBeforeDecor() {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = List.of(
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 66, 0), Blocks.LANTERN.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICKS.defaultBlockState()),
+                new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 65, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+        );
+
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = invokeToBuildSteps(ghostBlocks);
+
+        assertEquals(
+                List.of(
+                        RoadGeometryPlanner.RoadBuildPhase.SUPPORT,
+                        RoadGeometryPlanner.RoadBuildPhase.DECK,
+                        RoadGeometryPlanner.RoadBuildPhase.DECOR
+                ),
+                buildSteps.stream().map(RoadGeometryPlanner.RoadBuildStep::phase).toList()
+        );
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(0, 65, 0),
+                        new BlockPos(0, 66, 0)
+                ),
+                buildSteps.stream().map(RoadGeometryPlanner.RoadBuildStep::pos).toList()
+        );
+    }
+
+    @Test
+    void attemptedRoadBuildStepIsConsumedEvenWhenWorldStateStillDiffers() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 65, 0),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(),
+                RoadGeometryPlanner.RoadBuildPhase.DECK
+        );
+
+        Set<Long> attempted = new LinkedHashSet<>();
+        attempted.add(step.pos().asLong());
+
+        List<RoadGeometryPlanner.RoadBuildStep> remaining = invokeRemainingRoadBuildSteps(
+                List.of(step),
+                Set.of(),
+                attempted
+        );
+
+        assertTrue(remaining.isEmpty());
+    }
+
+    @Test
+    void roadJobStateRoundTripsAttemptedStepPositions() {
+        ConstructionRuntimeSavedData.RoadJobState state = new ConstructionRuntimeSavedData.RoadJobState(
+                "road-a",
+                "minecraft:overworld",
+                "owner",
+                List.of(new BlockPos(0, 64, 0).asLong(), new BlockPos(1, 64, 0).asLong()),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                0,
+                false,
+                false,
+                0,
+                false,
+                List.of(new BlockPos(3, 65, 3).asLong())
+        );
+
+        ConstructionRuntimeSavedData.RoadJobState loaded = ConstructionRuntimeSavedData.RoadJobState.load(state.save());
+
+        assertEquals(List.of(new BlockPos(3, 65, 3).asLong()), loaded.attemptedStepPositions());
     }
 
     @Test
@@ -481,6 +556,21 @@ class BuilderHammerSupportTest {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    private static List<RoadGeometryPlanner.RoadBuildStep> invokeRemainingRoadBuildSteps(List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
+                                                                                         Set<Long> completedStepKeys,
+                                                                                         Set<Long> attemptedStepKeys) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("remainingRoadBuildSteps", List.class, Set.class, Set.class);
+            method.setAccessible(true);
+            return (List<RoadGeometryPlanner.RoadBuildStep>) method.invoke(null, buildSteps, completedStepKeys, attemptedStepKeys);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect attempted road build-step filtering", ex);
+        }
+    }
+
     private static int invokeRoadProgressPercent(RoadPlacementPlan plan, int placedStepCount) {
         try {
             Method method = Class
@@ -540,6 +630,19 @@ class BuilderHammerSupportTest {
             return method.invoke(null, corridorPlan, styleResolver, terrainOwnershipResolver);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect corridor-derived road placement artifacts", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<RoadGeometryPlanner.RoadBuildStep> invokeToBuildSteps(List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("toBuildSteps", List.class);
+            method.setAccessible(true);
+            return (List<RoadGeometryPlanner.RoadBuildStep>) method.invoke(null, ghostBlocks);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect phase-sorted road build steps", ex);
         }
     }
 

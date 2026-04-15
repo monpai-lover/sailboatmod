@@ -153,7 +153,7 @@ public record RoadPlacementPlan(List<BlockPos> centerPath,
         List<RoadGeometryPlanner.RoadBuildStep> copied = new ArrayList<>(buildSteps.size());
         for (int i = 0; i < buildSteps.size(); i++) {
             RoadGeometryPlanner.RoadBuildStep step = Objects.requireNonNull(buildSteps.get(i), "buildSteps contains null at index " + i);
-            copied.add(new RoadGeometryPlanner.RoadBuildStep(step.order(), step.pos(), step.state()));
+            copied.add(new RoadGeometryPlanner.RoadBuildStep(step.order(), step.pos(), step.state(), step.phase()));
         }
         return List.copyOf(copied);
     }
