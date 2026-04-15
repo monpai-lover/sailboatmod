@@ -107,11 +107,40 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
-    void islandTargetsSkipLandAttemptAndGoStraightToBridgeAttempt() {
+    void islandTargetsAttemptOneShortLandProbeBeforeBridgeAttempt() {
         assertEquals(
-                List.of(ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE),
+                List.of(
+                        ManualRoadPlannerService.PlanningStage.TRYING_LAND,
+                        ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE
+                ),
                 ManualRoadPlannerService.planningAttemptStagesForTest(true)
         );
+    }
+
+    @Test
+    void islandProbePolicyAllowsExactlyOneLandProbeAndThenForcesBridge() {
+        assertEquals(
+                new ManualRoadPlannerService.IslandProbePolicy(true, 1, 10, true),
+                ManualRoadPlannerService.islandProbePolicyForTest(true)
+        );
+    }
+
+    @Test
+    void islandProbeStopsWhenDistanceBudgetIsConsumed() {
+        assertTrue(ManualRoadPlannerService.shouldAbortIslandLandProbeForTest(
+                new ManualRoadPlannerService.IslandProbePolicy(true, 1, 10, true),
+                10,
+                false
+        ));
+    }
+
+    @Test
+    void islandProbeStopsWhenWaterSignalReturns() {
+        assertTrue(ManualRoadPlannerService.shouldAbortIslandLandProbeForTest(
+                new ManualRoadPlannerService.IslandProbePolicy(true, 1, 10, true),
+                3,
+                true
+        ));
     }
 
     @Test

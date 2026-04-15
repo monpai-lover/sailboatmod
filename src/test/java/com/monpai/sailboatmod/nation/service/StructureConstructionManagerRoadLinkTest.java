@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadBridgePlanner;
+import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -21,6 +22,7 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Comparator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -64,6 +66,20 @@ class StructureConstructionManagerRoadLinkTest {
         assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.supportPositions().isEmpty()));
         assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.pierLightPositions().isEmpty()));
         assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.railingLightPositions().isEmpty()));
+    }
+
+    @Test
+    void bridgeBuildStepsStayPhaseOrderedSupportDeckDecor() {
+        RoadPlacementPlan plan = longBridgePlanFixture();
+
+        List<RoadGeometryPlanner.RoadBuildPhase> phases = plan.buildSteps().stream()
+                .map(RoadGeometryPlanner.RoadBuildStep::phase)
+                .toList();
+
+        assertEquals(
+                phases.stream().sorted(Comparator.naturalOrder()).toList(),
+                phases
+        );
     }
 
     @Test

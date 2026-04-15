@@ -67,6 +67,8 @@ public final class ManualRoadPlannerService {
     private static final int SEGMENT_SUBDIVIDE_MANHATTAN = 96;
     private static final int MAX_SEGMENT_INTERMEDIATE_ANCHORS = 24;
     private static final int EXTENDED_BOUNDARY_SEARCH_RADIUS = 6;
+    static final int DEFAULT_ISLAND_LAND_PROBE_DISTANCE = 10;
+    private static final int DEFAULT_ISLAND_WATER_SIGNAL_RUN = 3;
     private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
     private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
     private static final Map<UUID, PlannedPreviewState> READY_PREVIEWS = new ConcurrentHashMap<>();
@@ -392,16 +394,16 @@ public final class ManualRoadPlannerService {
         List<PlanCandidate> candidates = new ArrayList<>();
         long startedAt = System.nanoTime();
         progress.update(PlanningStage.ANALYZING_ISLAND, 100);
-        boolean skipLandAttempt = shouldSkipLandAttempt(snapshot);
-        if (!skipLandAttempt) {
-            RoadPlanningTaskService.throwIfCancelled();
-            progress.update(PlanningStage.TRYING_LAND, 0);
+        IslandProbePolicy islandProbePolicy = islandProbePolicy(snapshot);
+        RoadPlanningTaskService.throwIfCancelled();
+        progress.update(PlanningStage.TRYING_LAND, 0);
+        if (shouldAttemptLandProbe(snapshot, islandProbePolicy)) {
             PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false, planningContext);
-            progress.update(PlanningStage.TRYING_LAND, 100);
             if (detour != null) {
                 candidates.add(detour);
             }
         }
+        progress.update(PlanningStage.TRYING_LAND, 100);
         RoadPlanningTaskService.throwIfCancelled();
         progress.update(PlanningStage.TRYING_BRIDGE, 0);
         PlanCandidate bridge = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.BRIDGE, true, planningContext);
@@ -1161,6 +1163,16 @@ public final class ManualRoadPlannerService {
 
     static RouteAttemptDecision routeAttemptDecisionForTest(boolean landPathFound, boolean waterFallbackAllowed) {
         return new RouteAttemptDecision(shouldUseWaterFallback(landPathFound, waterFallbackAllowed));
+    }
+
+    static IslandProbePolicy islandProbePolicyForTest(boolean targetIslandLike) {
+        return islandProbePolicy(new RoadPlanningSnapshot(Map.of(), targetIslandLike, List.of(), BlockPos.ZERO, BlockPos.ZERO));
+    }
+
+    static boolean shouldAbortIslandLandProbeForTest(IslandProbePolicy policy,
+                                                     int traversedColumns,
+                                                     boolean encounteredIslandSignal) {
+        return shouldAbortIslandLandProbe(policy, traversedColumns, encounteredIslandSignal);
     }
 
     static List<BlockPos> normalizePathForTest(BlockPos start, List<BlockPos> path, BlockPos end) {
@@ -2661,14 +2673,77 @@ public final class ManualRoadPlannerService {
         return safeStage.startPercent + (int) Math.floor(range * (safeStagePercent / 100.0D));
     }
 
-    private static boolean shouldSkipLandAttempt(RoadPlanningSnapshot snapshot) {
-        return snapshot != null && snapshot.targetIslandLike();
+    private static IslandProbePolicy islandProbePolicy(RoadPlanningSnapshot snapshot) {
+        if (snapshot == null || !snapshot.targetIslandLike()) {
+            return new IslandProbePolicy(false, 1, DEFAULT_ISLAND_LAND_PROBE_DISTANCE, false);
+        }
+        return new IslandProbePolicy(true, 1, DEFAULT_ISLAND_LAND_PROBE_DISTANCE, true);
+    }
+
+    private static boolean shouldAttemptLandProbe(RoadPlanningSnapshot snapshot, IslandProbePolicy policy) {
+        if (policy == null) {
+            return true;
+        }
+        if (!policy.islandMode()) {
+            return true;
+        }
+        if (policy.maxLandProbeAttempts() <= 0) {
+            return false;
+        }
+        int traversedColumns = estimateIslandProbeDistance(snapshot);
+        boolean encounteredIslandSignal = hasContinuousWaterSignal(snapshot);
+        return !shouldAbortIslandLandProbe(policy, traversedColumns, encounteredIslandSignal);
+    }
+
+    private static boolean shouldAbortIslandLandProbe(IslandProbePolicy policy,
+                                                      int traversedColumns,
+                                                      boolean encounteredIslandSignal) {
+        if (policy == null || !policy.islandMode()) {
+            return false;
+        }
+        return traversedColumns >= policy.maxProbeDistance() || encounteredIslandSignal;
+    }
+
+    private static int estimateIslandProbeDistance(RoadPlanningSnapshot snapshot) {
+        if (snapshot == null || snapshot.start() == null || snapshot.end() == null) {
+            return 0;
+        }
+        return Math.max(
+                Math.abs(snapshot.start().getX() - snapshot.end().getX()),
+                Math.abs(snapshot.start().getZ() - snapshot.end().getZ())
+        );
+    }
+
+    private static boolean hasContinuousWaterSignal(RoadPlanningSnapshot snapshot) {
+        if (snapshot == null || snapshot.start() == null || snapshot.end() == null || snapshot.columns().isEmpty()) {
+            return false;
+        }
+        int dx = snapshot.end().getX() - snapshot.start().getX();
+        int dz = snapshot.end().getZ() - snapshot.start().getZ();
+        int steps = Math.max(Math.abs(dx), Math.abs(dz));
+        if (steps <= 0) {
+            return false;
+        }
+        int continuousWater = 0;
+        for (int i = 0; i <= steps; i += 2) {
+            double t = steps == 0 ? 0.0D : (double) i / (double) steps;
+            int sampleX = (int) Math.round(snapshot.start().getX() + (dx * t));
+            int sampleZ = (int) Math.round(snapshot.start().getZ() + (dz * t));
+            RoadPlanningSnapshot.ColumnSample sample = snapshot.column(sampleX, sampleZ);
+            if (sample != null && sample.water()) {
+                continuousWater++;
+                if (continuousWater >= DEFAULT_ISLAND_WATER_SIGNAL_RUN) {
+                    return true;
+                }
+            } else {
+                continuousWater = 0;
+            }
+        }
+        return false;
     }
 
     private static List<PlanningStage> planningAttemptStages(boolean targetIslandLike) {
-        return targetIslandLike
-                ? List.of(PlanningStage.TRYING_BRIDGE)
-                : List.of(PlanningStage.TRYING_LAND, PlanningStage.TRYING_BRIDGE);
+        return List.of(PlanningStage.TRYING_LAND, PlanningStage.TRYING_BRIDGE);
     }
 
     private static String displayTownName(TownRecord town) {
@@ -2716,6 +2791,16 @@ public final class ManualRoadPlannerService {
     }
 
     record RouteAttemptDecision(boolean usedWaterFallback) {
+    }
+
+    record IslandProbePolicy(boolean islandMode,
+                             int maxLandProbeAttempts,
+                             int maxProbeDistance,
+                             boolean forceBridgeAfterProbe) {
+        IslandProbePolicy {
+            maxLandProbeAttempts = Math.max(0, maxLandProbeAttempts);
+            maxProbeDistance = Math.max(0, maxProbeDistance);
+        }
     }
 
     private record StationZoneCandidate(BlockPos stationPos, PostStationRoadAnchorHelper.Zone zone) {

@@ -413,6 +413,12 @@ public final class RoadBridgePlanner {
         }
 
         boolean valid = !interiorAnchors.isEmpty();
+        if (valid) {
+            int firstAnchor = interiorAnchors.get(0);
+            int lastAnchor = interiorAnchors.get(interiorAnchors.size() - 1);
+            valid = hasStraightRampRun(centerPath, start, firstAnchor)
+                    && hasStraightRampRun(centerPath, lastAnchor, end);
+        }
         List<BridgePierNode> nodes = new ArrayList<>();
 
         nodes.add(new BridgePierNode(
@@ -507,5 +513,31 @@ public final class RoadBridgePlanner {
             }
         }
         return -1;
+    }
+
+    private static boolean hasStraightRampRun(List<BlockPos> centerPath, int startIndex, int endIndex) {
+        if (centerPath == null || centerPath.isEmpty() || endIndex <= startIndex) {
+            return true;
+        }
+        int expectedDx = 0;
+        int expectedDz = 0;
+        for (int i = startIndex + 1; i <= endIndex; i++) {
+            BlockPos previous = Objects.requireNonNull(centerPath.get(i - 1), "centerPath contains null at index " + (i - 1));
+            BlockPos current = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
+            int dx = Integer.compare(current.getX() - previous.getX(), 0);
+            int dz = Integer.compare(current.getZ() - previous.getZ(), 0);
+            if (dx == 0 && dz == 0) {
+                continue;
+            }
+            if (expectedDx == 0 && expectedDz == 0) {
+                expectedDx = dx;
+                expectedDz = dz;
+                continue;
+            }
+            if (dx != expectedDx || dz != expectedDz) {
+                return false;
+            }
+        }
+        return true;
     }
 }

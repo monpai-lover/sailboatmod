@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadBridgePlannerTest {
@@ -281,5 +282,34 @@ class RoadBridgePlannerTest {
 
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, plan.mode());
         org.junit.jupiter.api.Assertions.assertFalse(plan.valid());
+    }
+
+    @Test
+    void marksPierBridgeInvalidWhenApproachRampTurnsBeforeReachingDeckHeight() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 1),
+                new BlockPos(4, 64, 2),
+                new BlockPos(5, 64, 3),
+                new BlockPos(6, 64, 4),
+                new BlockPos(7, 64, 5),
+                new BlockPos(8, 64, 6),
+                new BlockPos(9, 64, 7)
+        );
+
+        RoadBridgePlanner.BridgeSpanPlan plan = RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(1, 8),
+                index -> index >= 1 && index <= 8,
+                index -> false,
+                index -> 40,
+                index -> 63,
+                index -> true
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, plan.mode());
+        assertFalse(plan.valid());
     }
 }
