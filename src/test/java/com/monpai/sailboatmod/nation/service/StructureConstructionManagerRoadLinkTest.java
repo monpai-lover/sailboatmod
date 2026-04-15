@@ -53,6 +53,11 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void structureRoadLinkUsesAsyncPlannerSubmissionHook() {
+        assertTrue(StructureConstructionManager.usesAsyncRoadPlanningForTest());
+    }
+
+    @Test
     void manualBridgeLinkProducesOwnedSupportAndLightingArtifacts() {
         RoadPlacementPlan plan = longBridgePlanFixture();
 

@@ -55,7 +55,17 @@ public final class RoadPathfinder {
                                           Set<Long> blockedColumns,
                                           Set<Long> excludedColumns,
                                           boolean allowWaterFallback) {
-        return findPath(level, from, to, blockedColumns, excludedColumns, allowWaterFallback, null);
+        return findPath(level, from, to, blockedColumns, excludedColumns, allowWaterFallback, (RoadPlanningPassContext) null);
+    }
+
+    public static List<BlockPos> findPath(Level level,
+                                          BlockPos from,
+                                          BlockPos to,
+                                          Set<Long> blockedColumns,
+                                          Set<Long> excludedColumns,
+                                          boolean allowWaterFallback,
+                                          RoadPlanningSnapshot snapshot) {
+        return findPath(level, from, to, blockedColumns, excludedColumns, allowWaterFallback, passContext(level, snapshot));
     }
 
     static List<BlockPos> findPath(Level level,
@@ -134,7 +144,16 @@ public final class RoadPathfinder {
                                                    BlockPos to,
                                                    Set<Long> blockedColumns,
                                                    Set<Long> excludedColumns) {
-        return findGroundPathForPlan(level, from, to, blockedColumns, excludedColumns, null);
+        return findGroundPathForPlan(level, from, to, blockedColumns, excludedColumns, (RoadPlanningPassContext) null);
+    }
+
+    static PlannedPathResult findGroundPathForPlan(Level level,
+                                                   BlockPos from,
+                                                   BlockPos to,
+                                                   Set<Long> blockedColumns,
+                                                   Set<Long> excludedColumns,
+                                                   RoadPlanningSnapshot snapshot) {
+        return findGroundPathForPlan(level, from, to, blockedColumns, excludedColumns, passContext(level, snapshot));
     }
 
     static PlannedPathResult findGroundPathForPlan(Level level,
@@ -508,6 +527,13 @@ public final class RoadPathfinder {
         return updated.isEmpty() ? Set.of() : Set.copyOf(updated.keySet());
     }
 
+    private static RoadPlanningPassContext passContext(Level level, RoadPlanningSnapshot snapshot) {
+        if (level == null || snapshot == null) {
+            return null;
+        }
+        return new RoadPlanningPassContext(level, snapshot);
+    }
+
     private static List<RoadBridgePierPlanner.PierNode> buildBridgePierNodes(Level level,
                                                                               BlockPos start,
                                                                               BlockPos end,
@@ -553,7 +579,15 @@ public final class RoadPathfinder {
                                                           BlockPos start,
                                                           BlockPos end,
                                                           Set<Long> blockedColumns) {
-        return collectBridgeDeckAnchors(level, start, end, blockedColumns, null);
+        return collectBridgeDeckAnchors(level, start, end, blockedColumns, (RoadPlanningPassContext) null);
+    }
+
+    public static List<BlockPos> collectBridgeDeckAnchors(Level level,
+                                                          BlockPos start,
+                                                          BlockPos end,
+                                                          Set<Long> blockedColumns,
+                                                          RoadPlanningSnapshot snapshot) {
+        return collectBridgeDeckAnchors(level, start, end, blockedColumns, passContext(level, snapshot));
     }
 
     static List<BlockPos> collectBridgeDeckAnchors(Level level,

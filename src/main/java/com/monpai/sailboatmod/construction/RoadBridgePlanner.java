@@ -14,7 +14,7 @@ public final class RoadBridgePlanner {
 
     private static final int BRIDGE_RANGE_MERGE_GAP = 4;
     private static final int MIN_BRIDGE_RANGE_LENGTH = 3;
-    private static final int MAX_ARCH_SPAN_COLUMNS = 8;
+    private static final int MAX_ARCH_SPAN_COLUMNS = 7;
     private static final int MIN_UNSUPPORTED_FOR_ARCH = 4;
     private static final int MIN_DROP_FOR_ARCH = 6;
     private static final int MAX_PIER_ANCHOR_GAP = 3;

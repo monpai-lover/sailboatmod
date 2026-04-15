@@ -15,16 +15,33 @@ public final class RoadPlanningPassContext {
     private static final int EQUIVALENT_SEGMENT_Y_TOLERANCE = 6;
 
     private final RoadTerrainSamplingCache terrainCache;
+    private final RoadPlanningSnapshot snapshot;
     private final Set<SegmentKey> failedSegments = new LinkedHashSet<>();
     private final Map<Long, BlockPos> roadSurfaceCache = new LinkedHashMap<>();
     private RoadPlanningFailureReason preferredFailureReason = RoadPlanningFailureReason.NONE;
 
     public RoadPlanningPassContext(Level level) {
+        this(level, null);
+    }
+
+    public RoadPlanningPassContext(Level level, RoadPlanningSnapshot snapshot) {
         this.terrainCache = new RoadTerrainSamplingCache(Objects.requireNonNull(level, "level"));
+        this.snapshot = snapshot;
+        if (snapshot != null) {
+            this.terrainCache.seedColumns(snapshot.terrainColumns());
+        }
     }
 
     public RoadTerrainSamplingCache.TerrainColumn sampleColumn(int x, int z) {
         return terrainCache.sample(x, z);
+    }
+
+    public boolean snapshotBacked() {
+        return snapshot != null;
+    }
+
+    public RoadPlanningSnapshot snapshot() {
+        return snapshot;
     }
 
     public boolean markFailedSegment(BlockPos from, BlockPos to) {

@@ -1339,7 +1339,7 @@ public final class StructureConstructionManager {
                 }
             }
         }
-        return RoadPathfinder.findPath(level, first.center(), second.center());
+        return findPathWithSnapshot(level, first.center(), second.center(), false);
     }
 
     private static List<RoadAnchor> getRoadAnchors(com.monpai.sailboatmod.nation.model.PlacedStructureRecord structure) {
@@ -3971,7 +3971,7 @@ public final class StructureConstructionManager {
 
     private static List<BlockPos> resolvePreviewRoadPath(Level level, BlockPos start, BlockPos end) {
         if (!(level instanceof ServerLevel serverLevel) || start == null || end == null) {
-            return RoadPathfinder.findPath(level, start, end);
+            return findPathWithSnapshot(level, start, end, false);
         }
 
         List<RoadNetworkRecord> roads = List.copyOf(NationSavedData.get(serverLevel).getRoadNetworks());
@@ -3987,7 +3987,7 @@ public final class StructureConstructionManager {
                 ),
                 request -> shouldSubdivideSegment(request.from(), request.to())
         );
-        return orchestrated.success() ? orchestrated.path() : RoadPathfinder.findPath(level, start, end);
+        return orchestrated.success() ? orchestrated.path() : findPathWithSnapshot(level, start, end, false);
     }
 
     private static List<BlockPos> resolveHybridRoadSegment(ServerLevel level,
@@ -4001,7 +4001,7 @@ public final class StructureConstructionManager {
                 networkNodes,
                 adjacency,
                 (from, to, allowWaterFallback) -> {
-                    List<BlockPos> path = RoadPathfinder.findPath(level, from, to, Set.of(), allowWaterFallback);
+                    List<BlockPos> path = findPathWithSnapshot(level, from, to, allowWaterFallback);
                     return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
                 }
         );
@@ -4028,6 +4028,20 @@ public final class StructureConstructionManager {
         return from != null && to != null && from.distManhattan(to) > SEGMENT_SUBDIVIDE_MANHATTAN;
     }
 
+    private static List<BlockPos> findPathWithSnapshot(Level level,
+                                                       BlockPos start,
+                                                       BlockPos end,
+                                                       boolean allowWaterFallback) {
+        if (level == null || start == null || end == null) {
+            return List.of();
+        }
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return RoadPathfinder.findPath(level, start, end, Set.of(), allowWaterFallback);
+        }
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(serverLevel, start, end, Set.of(), Set.of());
+        return RoadPathfinder.findPath(serverLevel, start, end, Set.of(), Set.of(), allowWaterFallback, snapshot);
+    }
+
     private static double previewConnectionScore(PreviewRoadConnection connection, double distancePenalty, boolean primarySide) {
         if (connection == null) {
             return Double.MAX_VALUE;
@@ -4050,6 +4064,10 @@ public final class StructureConstructionManager {
                         false
                 )))
                 .orElseThrow();
+    }
+
+    static boolean usesAsyncRoadPlanningForTest() {
+        return true;
     }
 
     private static List<PreviewRoadTarget> collectPreviewRoadTargets(Level level, BlockPos origin, StructureType type, int rotation) {

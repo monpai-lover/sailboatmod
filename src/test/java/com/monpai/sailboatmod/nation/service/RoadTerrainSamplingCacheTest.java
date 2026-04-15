@@ -75,6 +75,57 @@ class RoadTerrainSamplingCacheTest {
         assertEquals(1, level.surfaceQueries());
     }
 
+    @Test
+    void planningPassContextUsesSnapshotSeededColumnsWithoutNewHeightmapQuery() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        RoadPlanningSnapshot snapshot = new RoadPlanningSnapshot(
+                Map.of(
+                        columnKey(4, 6),
+                        new RoadPlanningSnapshot.ColumnSample(
+                                new BlockPos(4, 71, 6),
+                                Blocks.GRASS_BLOCK.defaultBlockState(),
+                                0,
+                                false,
+                                71
+                        )
+                ),
+                false,
+                java.util.List.of(),
+                new BlockPos(4, 71, 6),
+                new BlockPos(4, 71, 6)
+        );
+
+        RoadPlanningPassContext context = new RoadPlanningPassContext(level, snapshot);
+        RoadTerrainSamplingCache.TerrainColumn sample = context.sampleColumn(4, 6);
+
+        assertEquals(new BlockPos(4, 71, 6), sample.surfacePos());
+        assertEquals(0, level.surfaceQueries());
+    }
+
+    @Test
+    void seededColumnCanBeReadWithoutNewHeightmapQuery() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        RoadTerrainSamplingCache cache = new RoadTerrainSamplingCache(level);
+        cache.seedColumn(2, 3, new RoadTerrainSamplingCache.TerrainColumn(
+                new BlockPos(2, 70, 3),
+                Blocks.GRASS_BLOCK.defaultBlockState(),
+                false
+        ));
+
+        RoadTerrainSamplingCache.TerrainColumn sample = cache.sample(2, 3);
+
+        assertEquals(new BlockPos(2, 70, 3), sample.surfacePos());
+        assertEquals(0, level.surfaceQueries());
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> type) {
         try {

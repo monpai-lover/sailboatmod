@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.resident.army;
 
 import com.monpai.sailboatmod.nation.service.RoadPathfinder;
+import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshot;
+import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshotBuilder;
 import com.monpai.sailboatmod.resident.entity.SoldierEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -250,7 +252,8 @@ public final class ArmyCommandManager {
         if (from == null || from.distManhattan(target) <= 4) {
             return List.of();
         }
-        List<BlockPos> route = RoadPathfinder.findPath(level, from, target);
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, from, target, java.util.Set.of(), java.util.Set.of());
+        List<BlockPos> route = RoadPathfinder.findPath(level, from, target, java.util.Set.of(), java.util.Set.of(), false, snapshot);
         if (route.size() <= 1) {
             return List.of();
         }

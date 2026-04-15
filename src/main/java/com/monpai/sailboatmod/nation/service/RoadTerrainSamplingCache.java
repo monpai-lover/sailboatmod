@@ -6,6 +6,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public final class RoadTerrainSamplingCache {
@@ -24,6 +25,28 @@ public final class RoadTerrainSamplingCache {
             boolean water = surfaceState.liquid() || !surfaceState.getFluidState().isEmpty();
             return new TerrainColumn(surfacePos, surfaceState, water);
         });
+    }
+
+    public void seedColumn(int x, int z, TerrainColumn column) {
+        if (column == null) {
+            return;
+        }
+        columns.put(BlockPos.asLong(x, 0, z), column);
+    }
+
+    public void seedColumns(Map<Long, TerrainColumn> seededColumns) {
+        if (seededColumns == null || seededColumns.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<Long, TerrainColumn> entry : seededColumns.entrySet()) {
+            if (entry.getKey() != null && entry.getValue() != null) {
+                columns.put(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
+    public Map<Long, TerrainColumn> snapshotColumns() {
+        return columns.isEmpty() ? Map.of() : Map.copyOf(new LinkedHashMap<>(columns));
     }
 
     public record TerrainColumn(BlockPos surfacePos, BlockState surfaceState, boolean water) {

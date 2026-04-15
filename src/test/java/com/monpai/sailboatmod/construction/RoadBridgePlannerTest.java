@@ -225,6 +225,35 @@ class RoadBridgePlannerTest {
     }
 
     @Test
+    void upgradesEightColumnCrossingToPierBridgeToAvoidArchingFullLongSpan() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0)
+        );
+
+        RoadBridgePlanner.BridgeSpanPlan plan = RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(1, 8),
+                index -> index >= 1 && index <= 8,
+                index -> false,
+                index -> 40,
+                index -> 63,
+                index -> true
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, plan.mode());
+        assertTrue(plan.nodes().stream().anyMatch(node -> node.role() == RoadBridgePlanner.BridgeNodeRole.PIER));
+    }
+
+    @Test
     void marksPierBridgeInvalidWhenInteriorFoundationSlotsCannotSustainTheCrossing() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

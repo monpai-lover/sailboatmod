@@ -52,6 +52,14 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void previewRequestReturnsPlanningMessageBeforeAsyncResultArrives() {
+        assertEquals(
+                "message.sailboatmod.road_planner.planning",
+                ManualRoadPlannerService.pendingPreviewMessageKeyForTest()
+        );
+    }
+
+    @Test
     void plannerModeCyclesBuildCancelDemolish() {
         ItemStack stack = new ItemStack(net.minecraft.world.item.Items.STICK);
 
