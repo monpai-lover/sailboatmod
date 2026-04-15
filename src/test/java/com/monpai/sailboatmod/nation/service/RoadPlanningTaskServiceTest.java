@@ -4,8 +4,11 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlanningTaskServiceTest {
@@ -45,6 +48,24 @@ class RoadPlanningTaskServiceTest {
         service.invalidateAllForTest();
         handle.completeForTest();
 
+        assertTrue(applied.isEmpty());
+    }
+
+    @Test
+    void cancelledSupplierCompletesQuietlyWithoutApplyingResult() {
+        RoadPlanningTaskService service = new RoadPlanningTaskService(Runnable::run, Runnable::run);
+        List<String> applied = new ArrayList<>();
+
+        CompletableFuture<String> future = service.submitLatest(
+                new RoadPlanningTaskService.TaskKey("manual-preview", "player-c"),
+                () -> {
+                    throw new RoadPlanningTaskService.PlanningCancelledException();
+                },
+                applied::add
+        );
+
+        String result = assertDoesNotThrow(future::join);
+        assertNull(result);
         assertTrue(applied.isEmpty());
     }
 }

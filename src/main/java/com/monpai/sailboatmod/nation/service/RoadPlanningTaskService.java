@@ -4,6 +4,7 @@ import net.minecraft.server.MinecraftServer;
 
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -63,6 +64,17 @@ public class RoadPlanningTaskService {
         activeRequests.put(key, requestId);
 
         return CompletableFuture.supplyAsync(supplier, computeExecutor)
+                .handle((result, throwable) -> {
+                    if (throwable == null) {
+                        return result;
+                    }
+                    if (isPlanningCancelled(throwable)) {
+                        return null;
+                    }
+                    throw throwable instanceof RuntimeException runtime
+                            ? runtime
+                            : new CompletionException(throwable);
+                })
                 .thenApply(result -> {
                     if (!isCurrent(key, requestId, submittedEpoch)) {
                         return null;
@@ -97,14 +109,37 @@ public class RoadPlanningTaskService {
         activeRequests.clear();
     }
 
+    public static void throwIfCancelled() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new PlanningCancelledException();
+        }
+    }
+
     private boolean isCurrent(TaskKey key, long requestId, long submittedEpoch) {
         return epoch.get() == submittedEpoch && Objects.equals(activeRequests.get(key), requestId);
+    }
+
+    private static boolean isPlanningCancelled(Throwable throwable) {
+        Throwable cursor = throwable;
+        while (cursor != null) {
+            if (cursor instanceof PlanningCancelledException) {
+                return true;
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
     }
 
     public record TaskKey(String kind, String ownerKey) {
         public TaskKey {
             kind = kind == null ? "" : kind;
             ownerKey = ownerKey == null ? "" : ownerKey;
+        }
+    }
+
+    public static final class PlanningCancelledException extends RuntimeException {
+        public PlanningCancelledException() {
+            super("Road planning task cancelled");
         }
     }
 

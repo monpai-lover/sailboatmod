@@ -18,8 +18,10 @@ public final class RoadTerrainSamplingCache {
     }
 
     public TerrainColumn sample(int x, int z) {
+        RoadPlanningTaskService.throwIfCancelled();
         long key = BlockPos.asLong(x, 0, z);
         return columns.computeIfAbsent(key, ignored -> {
+            RoadPlanningTaskService.throwIfCancelled();
             BlockPos surfacePos = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, new BlockPos(x, 0, z)).below();
             BlockState surfaceState = level.getBlockState(surfacePos);
             boolean water = surfaceState.liquid() || !surfaceState.getFluidState().isEmpty();

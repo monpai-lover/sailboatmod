@@ -335,6 +335,7 @@ public final class ManualRoadPlannerService {
     private static List<PlanCandidate> buildPlanCandidates(ServerPlayer player,
                                                            ItemStack stack,
                                                            PlanningProgressReporter progress) {
+        RoadPlanningTaskService.throwIfCancelled();
         ServerLevel level = player.serverLevel();
         NationSavedData data = NationSavedData.get(level);
         TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
@@ -378,6 +379,7 @@ public final class ManualRoadPlannerService {
         Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
         Set<Long> excludedColumns = collectCoreExclusionColumns(level, data);
         progress.update(PlanningStage.SAMPLING_TERRAIN, 70);
+        RoadPlanningTaskService.throwIfCancelled();
         BlockPos sourceCore = townCorePos(level, sourceTown);
         BlockPos targetCore = townCorePos(level, targetTown);
         RoadPlanningSnapshot snapshot = sourceCore == null || targetCore == null
@@ -392,6 +394,7 @@ public final class ManualRoadPlannerService {
         progress.update(PlanningStage.ANALYZING_ISLAND, 100);
         boolean skipLandAttempt = shouldSkipLandAttempt(snapshot);
         if (!skipLandAttempt) {
+            RoadPlanningTaskService.throwIfCancelled();
             progress.update(PlanningStage.TRYING_LAND, 0);
             PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false, planningContext);
             progress.update(PlanningStage.TRYING_LAND, 100);
@@ -399,6 +402,7 @@ public final class ManualRoadPlannerService {
                 candidates.add(detour);
             }
         }
+        RoadPlanningTaskService.throwIfCancelled();
         progress.update(PlanningStage.TRYING_BRIDGE, 0);
         PlanCandidate bridge = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.BRIDGE, true, planningContext);
         progress.update(PlanningStage.TRYING_BRIDGE, 100);
@@ -448,9 +452,11 @@ public final class ManualRoadPlannerService {
                                                     PreviewOptionKind optionKind,
                                                     boolean allowWaterFallback,
                                                     RoadPlanningPassContext planningContext) {
+        RoadPlanningTaskService.throwIfCancelled();
         long startedAt = System.nanoTime();
         WaitingAreaRoute waitingAreaRoute = resolveWaitingAreaRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, allowWaterFallback, planningContext);
         if (waitingAreaRoute == null) {
+            RoadPlanningTaskService.throwIfCancelled();
             waitingAreaRoute = resolveTownAnchorFallbackRoute(level, data, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, allowWaterFallback, planningContext);
         }
         if (waitingAreaRoute == null) {

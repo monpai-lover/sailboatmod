@@ -37,7 +37,9 @@ public final class RoadPlanningSnapshotBuilder {
         boolean sawWater = false;
 
         for (int x = minX; x <= maxX; x += SAMPLE_STEP) {
+            RoadPlanningTaskService.throwIfCancelled();
             for (int z = minZ; z <= maxZ; z += SAMPLE_STEP) {
+                RoadPlanningTaskService.throwIfCancelled();
                 RoadTerrainSamplingCache.TerrainColumn terrain = cache.sample(x, z);
                 boolean blocked = blockedColumns != null && blockedColumns.contains(BlockPos.asLong(x, 0, z));
                 boolean excluded = excludedColumns != null && excludedColumns.contains(BlockPos.asLong(x, 0, z));
