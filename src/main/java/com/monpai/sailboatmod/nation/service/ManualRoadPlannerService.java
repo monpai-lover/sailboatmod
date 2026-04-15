@@ -378,16 +378,26 @@ public final class ManualRoadPlannerService {
         Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
         Set<Long> excludedColumns = collectCoreExclusionColumns(level, data);
         progress.update(PlanningStage.SAMPLING_TERRAIN, 70);
-        RoadPlanningPassContext planningContext = new RoadPlanningPassContext(level);
+        BlockPos sourceCore = townCorePos(level, sourceTown);
+        BlockPos targetCore = townCorePos(level, targetTown);
+        RoadPlanningSnapshot snapshot = sourceCore == null || targetCore == null
+                ? null
+                : RoadPlanningSnapshotBuilder.build(level, sourceCore, targetCore, blockedColumns, excludedColumns);
+        RoadPlanningPassContext planningContext = snapshot == null
+                ? new RoadPlanningPassContext(level)
+                : new RoadPlanningPassContext(level, snapshot);
         progress.update(PlanningStage.SAMPLING_TERRAIN, 100);
         List<PlanCandidate> candidates = new ArrayList<>();
         long startedAt = System.nanoTime();
         progress.update(PlanningStage.ANALYZING_ISLAND, 100);
-        progress.update(PlanningStage.TRYING_LAND, 0);
-        PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false, planningContext);
-        progress.update(PlanningStage.TRYING_LAND, 100);
-        if (detour != null) {
-            candidates.add(detour);
+        boolean skipLandAttempt = shouldSkipLandAttempt(snapshot);
+        if (!skipLandAttempt) {
+            progress.update(PlanningStage.TRYING_LAND, 0);
+            PlanCandidate detour = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.DETOUR, false, planningContext);
+            progress.update(PlanningStage.TRYING_LAND, 100);
+            if (detour != null) {
+                candidates.add(detour);
+            }
         }
         progress.update(PlanningStage.TRYING_BRIDGE, 0);
         PlanCandidate bridge = buildPlanCandidate(level, sourceTown, targetTown, sourceClaims, targetClaims, blockedColumns, excludedColumns, data, manualRoadId, PreviewOptionKind.BRIDGE, true, planningContext);
@@ -1688,6 +1698,10 @@ public final class ManualRoadPlannerService {
         return planningOverallPercent(stage, stagePercent);
     }
 
+    static List<PlanningStage> planningAttemptStagesForTest(boolean targetIslandLike) {
+        return planningAttemptStages(targetIslandLike);
+    }
+
     static SyncManualRoadPlanningProgressPacket planningPacketForTest(long requestId,
                                                                       String sourceTownName,
                                                                       String targetTownName,
@@ -2639,6 +2653,16 @@ public final class ManualRoadPlannerService {
         }
         int range = Math.max(0, safeStage.endPercent - safeStage.startPercent);
         return safeStage.startPercent + (int) Math.floor(range * (safeStagePercent / 100.0D));
+    }
+
+    private static boolean shouldSkipLandAttempt(RoadPlanningSnapshot snapshot) {
+        return snapshot != null && snapshot.targetIslandLike();
+    }
+
+    private static List<PlanningStage> planningAttemptStages(boolean targetIslandLike) {
+        return targetIslandLike
+                ? List.of(PlanningStage.TRYING_BRIDGE)
+                : List.of(PlanningStage.TRYING_LAND, PlanningStage.TRYING_BRIDGE);
     }
 
     private static String displayTownName(TownRecord town) {

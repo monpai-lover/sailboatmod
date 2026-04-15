@@ -107,6 +107,25 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void islandTargetsSkipLandAttemptAndGoStraightToBridgeAttempt() {
+        assertEquals(
+                List.of(ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE),
+                ManualRoadPlannerService.planningAttemptStagesForTest(true)
+        );
+    }
+
+    @Test
+    void mainlandTargetsStillTryLandBeforeBridge() {
+        assertEquals(
+                List.of(
+                        ManualRoadPlannerService.PlanningStage.TRYING_LAND,
+                        ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE
+                ),
+                ManualRoadPlannerService.planningAttemptStagesForTest(false)
+        );
+    }
+
+    @Test
     void plannerModeCyclesBuildCancelDemolish() {
         ItemStack stack = new ItemStack(net.minecraft.world.item.Items.STICK);
 
