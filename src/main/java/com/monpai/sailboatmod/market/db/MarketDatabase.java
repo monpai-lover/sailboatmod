@@ -16,7 +16,6 @@ import java.sql.Statement;
 
 public final class MarketDatabase {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final String RELOCATED_SQLITE_DRIVER = "com.monpai.sailboatmod.shadow.sqlite.JDBC";
     private static final String STANDARD_SQLITE_DRIVER = "org.sqlite.JDBC";
 
     private static Connection activeConnection;
@@ -102,10 +101,6 @@ public final class MarketDatabase {
     }
 
     private static void ensureSqliteDriverLoaded() throws ClassNotFoundException {
-        try {
-            Class.forName(RELOCATED_SQLITE_DRIVER);
-        } catch (ClassNotFoundException ignored) {
-            Class.forName(STANDARD_SQLITE_DRIVER);
-        }
+        Class.forName(STANDARD_SQLITE_DRIVER);
     }
 }

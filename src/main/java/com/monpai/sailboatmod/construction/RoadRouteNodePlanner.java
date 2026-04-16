@@ -574,6 +574,9 @@ public final class RoadRouteNodePlanner {
             int dominantSpan = Math.max(dx, dz);
             int expandedLongitudinalMargin = Math.max(24, (dominantSpan / 2) + 16);
             int expandedLateralMargin = Math.max(48, dominantSpan + 48);
+            if (Math.min(dx, dz) <= 8) {
+                expandedLateralMargin = Math.max(expandedLateralMargin, dominantSpan * 4);
+            }
             int expandedXMargin = dx > dz ? expandedLongitudinalMargin : expandedLateralMargin;
             int expandedZMargin = dz > dx ? expandedLongitudinalMargin : expandedLateralMargin;
             return new SearchBounds(

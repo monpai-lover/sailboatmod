@@ -224,8 +224,8 @@ tasks.named('jar', Jar).configure {
     exclude 'com/monpai/sailboatmod/market/web/MarketPlayerIdentity.class'
     exclude 'marketweb/**'
 
-    // Merge the relocated sqlite-jdbc classes into the runtime jar so the mod does not
-    // expose org.sqlite.* on the module path and collide with BlueMap's sqlite module.
+    // Merge sqlite-jdbc into the runtime jar under its original package name.
+    // sqlite-jdbc's JNI bindings expect org.sqlite.* and break if the package is relocated.
     from({
         zipTree(tasks.named('shadowSqliteJar').get().archiveFile.get().asFile)
     }) {
@@ -298,8 +298,6 @@ tasks.register('shadowSqliteJar', com.github.jengelman.gradle.plugins.shadow.tas
     archiveClassifier.set('shadow')
     configurations = [project.configurations.embeddedLibrary]
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-
-    relocate('org.sqlite', "${mod_group_id}.shadow.sqlite")
 
     mergeServiceFiles()
 

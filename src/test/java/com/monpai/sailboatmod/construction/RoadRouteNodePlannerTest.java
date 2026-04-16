@@ -758,6 +758,37 @@ class RoadRouteNodePlannerTest {
         assertEquals(new BlockPos(40, 64, 0), plan.path().get(plan.path().size() - 1));
     }
 
+    @Test
+    void searchBoundsAllowMediumSpanRouteToDetourFarOffAxisWhenObstacleForcesWideLoop() {
+        RoadRouteNodePlanner.RouteMap map = RoadRouteNodePlanner.RouteMap.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(48, 64, 0),
+                pos -> {
+                    boolean onWestLeg = pos.getX() == 0 && pos.getZ() >= 0 && pos.getZ() <= 190;
+                    boolean onTopLeg = pos.getZ() == 190 && pos.getX() >= 0 && pos.getX() <= 48;
+                    boolean onEastLeg = pos.getX() == 48 && pos.getZ() >= 0 && pos.getZ() <= 190;
+                    boolean startOrEnd = pos.getZ() == 0 && (pos.getX() == 0 || pos.getX() == 48);
+                    boolean traversable = onWestLeg || onTopLeg || onEastLeg || startOrEnd;
+                    return new RoadRouteNodePlanner.RouteColumn(
+                            traversable ? new BlockPos(pos.getX(), 64, pos.getZ()) : null,
+                            !traversable,
+                            false,
+                            0,
+                            0,
+                            pos.getZ() == 190
+                    );
+                }
+        );
+
+        RoadRouteNodePlanner.RoutePlan plan = RoadRouteNodePlanner.plan(map);
+
+        assertFalse(plan.path().isEmpty());
+        assertFalse(plan.usedBridge());
+        assertTrue(plan.path().contains(new BlockPos(24, 64, 190)));
+        assertEquals(new BlockPos(0, 64, 0), plan.path().get(0));
+        assertEquals(new BlockPos(48, 64, 0), plan.path().get(plan.path().size() - 1));
+    }
+
     private static long columnKey(int x, int z) {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
