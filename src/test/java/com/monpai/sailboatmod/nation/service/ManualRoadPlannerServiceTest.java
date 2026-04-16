@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
+import com.monpai.sailboatmod.nation.model.TownRecord;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -30,6 +31,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -107,21 +109,22 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
-    void islandTargetsAttemptOneShortLandProbeBeforeBridgeAttempt() {
+    void islandTargetsGoStraightToBridgeAttemptStage() {
         assertEquals(
-                List.of(
-                        ManualRoadPlannerService.PlanningStage.TRYING_LAND,
-                        ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE
-                ),
-                ManualRoadPlannerService.planningAttemptStagesForTest(true)
+                List.of(ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE),
+                ManualRoadPlannerService.planningAttemptStagesForTest(false, true)
         );
     }
 
     @Test
-    void islandProbePolicyAllowsExactlyOneLandProbeAndThenForcesBridge() {
+    void islandProbePolicySkipsLandProbeWhenEitherEndpointIsIslandLike() {
         assertEquals(
-                new ManualRoadPlannerService.IslandProbePolicy(true, 1, 10, true),
-                ManualRoadPlannerService.islandProbePolicyForTest(true)
+                new ManualRoadPlannerService.IslandProbePolicy(true, 0, 10, true),
+                ManualRoadPlannerService.islandProbePolicyForTest(true, false)
+        );
+        assertEquals(
+                new ManualRoadPlannerService.IslandProbePolicy(true, 0, 10, true),
+                ManualRoadPlannerService.islandProbePolicyForTest(false, true)
         );
     }
 
@@ -150,7 +153,19 @@ class ManualRoadPlannerServiceTest {
                         ManualRoadPlannerService.PlanningStage.TRYING_LAND,
                         ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE
                 ),
-                ManualRoadPlannerService.planningAttemptStagesForTest(false)
+                ManualRoadPlannerService.planningAttemptStagesForTest(false, false)
+        );
+    }
+
+    @Test
+    void islandEndpointsSkipLandAttemptStagesAndGoStraightToBridge() {
+        assertEquals(
+                List.of(ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE),
+                ManualRoadPlannerService.planningAttemptStagesForTest(true, false)
+        );
+        assertEquals(
+                List.of(ManualRoadPlannerService.PlanningStage.TRYING_BRIDGE),
+                ManualRoadPlannerService.planningAttemptStagesForTest(false, true)
         );
     }
 
@@ -401,8 +416,39 @@ class ManualRoadPlannerServiceTest {
         BlockPos anchor = invokeNearestBoundaryAnchor(level, List.of(claim), toward, 64, excludedColumns);
 
         assertNotNull(anchor);
-        assertEquals(new BlockPos(1, 64, 1), anchor);
+        assertEquals(1, anchor.getX());
+        assertEquals(64, anchor.getY());
+        assertTrue(anchor.getZ() >= 5, anchor.toString());
         assertFalse(excludedCandidate.equals(anchor));
+    }
+
+    @Test
+    void islandBridgeBoundaryAnchorPrefersShorelineCandidateFacingTarget() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        NationClaimRecord claim = new NationClaimRecord(
+                "minecraft:overworld", 0, 0, "nation", "town2",
+                "member", "member", "member", "member", "member", "member", "member", 0L
+        );
+        BlockPos toward = new BlockPos(-20, 64, 8);
+
+        for (int x = -2; x <= 18; x++) {
+            for (int z = -2; z <= 18; z++) {
+                setSurfaceColumn(level, x, z, 64, Blocks.DIRT.defaultBlockState());
+            }
+        }
+        for (int z = 6; z <= 10; z++) {
+            setSurfaceColumn(level, 0, z, 64, Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(0, 63, z).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        BlockPos anchor = invokeNearestBoundaryAnchor(level, List.of(claim), toward, 64, Set.of(), true);
+
+        assertNotNull(anchor);
+        assertEquals(new BlockPos(1, 64, 8), anchor);
     }
 
     @Test
@@ -439,6 +485,58 @@ class ManualRoadPlannerServiceTest {
         );
 
         assertEquals(new BlockPos(-2, 64, 8), anchor);
+    }
+
+    @Test
+    void resolveTownAnchorPrefersOutsideClaimWhenBridgeFootprintWouldClipCoreExclusion() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        level.dimensionKey = Level.OVERWORLD;
+
+        NationClaimRecord claim = new NationClaimRecord(
+                "minecraft:overworld", 0, 0, "nation", "town2",
+                "member", "member", "member", "member", "member", "member", "member", 0L
+        );
+        for (int x = -2; x <= 18; x++) {
+            for (int z = -2; z <= 18; z++) {
+                setSurfaceColumn(level, x, z, 64, Blocks.DIRT.defaultBlockState());
+            }
+        }
+
+        Set<Long> excludedColumns = new java.util.LinkedHashSet<>();
+        for (int z = 5; z <= 11; z++) {
+            excludedColumns.add(BlockPos.asLong(2, 0, z));
+        }
+
+        TownRecord town = new TownRecord(
+                "town2",
+                "nation",
+                "Town 2",
+                new UUID(0L, 0L),
+                0L,
+                "",
+                TownRecord.noCorePos(),
+                "",
+                "european"
+        );
+
+        BlockPos anchor = invokeResolveTownAnchor(
+                level,
+                new NationSavedData(),
+                town,
+                List.of(claim),
+                new BlockPos(8, 64, 8),
+                new BlockPos(-20, 64, 8),
+                excludedColumns,
+                false
+        );
+
+        assertNotNull(anchor);
+        assertTrue(anchor.getX() < 0, anchor.toString());
+        assertEquals(64, anchor.getY());
+        assertEquals(8, anchor.getZ());
     }
 
     @Test
@@ -517,6 +615,37 @@ class ManualRoadPlannerServiceTest {
                 ManualRoadPlannerService.routeAttemptDecisionForTest(false, true);
 
         assertTrue(decision.usedWaterFallback());
+    }
+
+    @Test
+    void bridgeFirstRoutingIsPreferredWhenSourceEndpointIsIslandLike() {
+        assertTrue(ManualRoadPlannerService.shouldPreferBridgeFirstForTest(true, false, true));
+        assertTrue(ManualRoadPlannerService.shouldPreferBridgeFirstForTest(false, true, true));
+        assertFalse(ManualRoadPlannerService.shouldPreferBridgeFirstForTest(false, false, true));
+        assertFalse(ManualRoadPlannerService.shouldPreferBridgeFirstForTest(true, false, false));
+    }
+
+    @Test
+    void limitExitCandidatesCollapsesNearbyEquivalentShorelineExits() {
+        List<BlockPos> limited = invokeLimitExitCandidates(
+                List.of(
+                        new BlockPos(200, 64, 100),
+                        new BlockPos(200, 64, 101),
+                        new BlockPos(200, 64, 102),
+                        new BlockPos(200, 64, 105),
+                        new BlockPos(200, 64, 106),
+                        new BlockPos(200, 64, 110)
+                )
+        );
+
+        assertEquals(
+                List.of(
+                        new BlockPos(200, 64, 100),
+                        new BlockPos(200, 64, 105),
+                        new BlockPos(200, 64, 110)
+                ),
+                limited
+        );
     }
 
     @Test
@@ -649,6 +778,32 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void shorelineToShorelineWaterCrossingAlsoBypassesHybridNetworkResolver() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 9, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 10, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 2; x <= 8; x++) {
+            level.surfaceHeights.put(columnKey(x, 0), 64);
+            level.blockStates.put(new BlockPos(x, 64, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        assertFalse(invokeShouldUseHybridNetworkForSegment(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(10, 64, 0),
+                true
+        ));
+    }
+
+    @Test
     void mergedIntermediateAnchorsAreSortedAlongRouteProgress() {
         List<BlockPos> ordered = invokeSortAnchorsAlongRoute(
                 new BlockPos(0, 64, 0),
@@ -711,7 +866,8 @@ class ManualRoadPlannerServiceTest {
                                 1L,
                                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
                         )
-                )
+                ),
+                Set.of()
         );
 
         assertEquals(
@@ -729,6 +885,95 @@ class ManualRoadPlannerServiceTest {
     }
 
     @Test
+    void finalizePlannedPathRejectsSnappedFallbackThatReentersExcludedColumns() {
+        List<BlockPos> finalized = invokeFinalizePlannedPath(
+                List.of(
+                        new BlockPos(0, 64, 4),
+                        new BlockPos(3, 64, 4),
+                        new BlockPos(6, 64, 4)
+                ),
+                new boolean[] {false, false, false},
+                List.of(
+                        new RoadNetworkRecord(
+                                "manual|town:a|town:b",
+                                "nation",
+                                "town",
+                                "minecraft:overworld",
+                                "town:a",
+                                "town:b",
+                                List.of(
+                                        new BlockPos(0, 64, 0),
+                                        new BlockPos(1, 64, 0),
+                                        new BlockPos(2, 64, 0),
+                                        new BlockPos(3, 64, 0),
+                                        new BlockPos(4, 64, 0),
+                                        new BlockPos(5, 64, 0),
+                                        new BlockPos(6, 64, 0)
+                                ),
+                                1L,
+                                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+                        )
+                ),
+                Set.of(BlockPos.asLong(3, 0, 0))
+        );
+
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 64, 4),
+                        new BlockPos(1, 64, 4),
+                        new BlockPos(2, 64, 4),
+                        new BlockPos(3, 64, 4),
+                        new BlockPos(4, 64, 4),
+                        new BlockPos(5, 64, 4),
+                        new BlockPos(6, 64, 4)
+                ),
+                finalized
+        );
+    }
+
+    @Test
+    void finalizePlannedPathReturnsEmptyWhenRoadFootprintTouchesExcludedColumns() {
+        List<BlockPos> finalized = invokeFinalizePlannedPath(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 1),
+                        new BlockPos(2, 64, 2)
+                ),
+                new boolean[] {false, false, false},
+                List.of(),
+                Set.of(
+                        BlockPos.asLong(1, 0, 0)
+                )
+        );
+
+        assertTrue(finalized.isEmpty(), () -> finalized.toString());
+    }
+
+    @Test
+    void finalizePlannedPathReturnsEmptyWhenEveryCandidateReentersExcludedColumns() {
+        List<BlockPos> finalized = invokeFinalizePlannedPath(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(3, 64, 0),
+                        new BlockPos(6, 64, 0)
+                ),
+                new boolean[] {false, false, false},
+                List.of(),
+                Set.of(
+                        BlockPos.asLong(0, 0, 0),
+                        BlockPos.asLong(1, 0, 0),
+                        BlockPos.asLong(2, 0, 0),
+                        BlockPos.asLong(3, 0, 0),
+                        BlockPos.asLong(4, 0, 0),
+                        BlockPos.asLong(5, 0, 0),
+                        BlockPos.asLong(6, 0, 0)
+                )
+        );
+
+        assertTrue(finalized.isEmpty(), () -> finalized.toString());
+    }
+
+    @Test
     void manualRoadPreviewIncludesFullBridgeApproachSupportsAndLights() {
         RoadPlacementPlan plan = bridgePreviewPlanFixture(validCorridorPlanFixture(true));
 
@@ -742,6 +987,26 @@ class ManualRoadPlannerServiceTest {
         assertNotNull(packet);
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(2, 70, 0))));
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(1, 61, 0))));
+    }
+
+    @Test
+    void manualRoadPreviewPathNodesUseStructuredCorridorDeckCenters() {
+        SyncRoadPlannerPreviewPacket packet = ManualRoadPlannerService.previewPacketForTest(
+                "SourceTown",
+                "TargetTown",
+                bridgePreviewPlanFixture(validCorridorPlanFixture(true)),
+                true
+        );
+
+        assertNotNull(packet);
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 65, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 70, 0)
+                ),
+                packet.pathNodes()
+        );
     }
 
     @Test
@@ -1327,8 +1592,26 @@ class ManualRoadPlannerServiceTest {
             RoadCorridorPlan.CorridorSlice current = corridorPlan.slices().get(i);
             if ((previous.segmentKind() != RoadCorridorPlan.SegmentKind.LAND_APPROACH
                     || current.segmentKind() != RoadCorridorPlan.SegmentKind.LAND_APPROACH)
-                    && !java.util.Collections.disjoint(previous.surfacePositions(), current.surfacePositions())) {
+                    && slicesTouchOrShareColumns(previous.surfacePositions(), current.surfacePositions())) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean slicesTouchOrShareColumns(List<BlockPos> previous, List<BlockPos> current) {
+        if (previous == null || current == null) {
+            return false;
+        }
+        for (BlockPos left : previous) {
+            for (BlockPos right : current) {
+                if (Math.abs(left.getY() - right.getY()) > 2) {
+                    continue;
+                }
+                int horizontalDistance = Math.abs(left.getX() - right.getX()) + Math.abs(left.getZ() - right.getZ());
+                if (horizontalDistance <= 1) {
+                    return true;
+                }
             }
         }
         return false;
@@ -1356,19 +1639,69 @@ class ManualRoadPlannerServiceTest {
         }
     }
 
+    private static BlockPos invokeResolveTownAnchor(ServerLevel level,
+                                                    NationSavedData data,
+                                                    TownRecord town,
+                                                    List<NationClaimRecord> claims,
+                                                    BlockPos preferredFallback,
+                                                    BlockPos towardPos,
+                                                    Set<Long> excludedColumns,
+                                                    boolean preferShoreline) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "resolveTownAnchor",
+                    ServerLevel.class,
+                    NationSavedData.class,
+                    TownRecord.class,
+                    List.class,
+                    BlockPos.class,
+                    BlockPos.class,
+                    Set.class,
+                    boolean.class
+            );
+            method.setAccessible(true);
+            return (BlockPos) method.invoke(
+                    null,
+                    level,
+                    data,
+                    town,
+                    claims,
+                    preferredFallback,
+                    towardPos,
+                    excludedColumns,
+                    preferShoreline
+            );
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeLimitExitCandidates(List<BlockPos> exits) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod("limitExitCandidates", List.class);
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, exits);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static List<BlockPos> invokeFinalizePlannedPath(List<BlockPos> path,
                                                             boolean[] bridgeMask,
-                                                            List<RoadNetworkRecord> roads) {
+                                                            List<RoadNetworkRecord> roads,
+                                                            Set<Long> excludedColumns) {
         try {
             Method method = ManualRoadPlannerService.class.getDeclaredMethod(
                     "finalizePlannedPath",
                     List.class,
                     boolean[].class,
-                    List.class
+                    List.class,
+                    Set.class
             );
             method.setAccessible(true);
-            return (List<BlockPos>) method.invoke(null, path, bridgeMask, roads);
+            return (List<BlockPos>) method.invoke(null, path, bridgeMask, roads, excludedColumns);
         } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
             throw new AssertionError(e);
         }
@@ -1381,6 +1714,29 @@ class ManualRoadPlannerServiceTest {
             field.setAccessible(true);
             Unsafe unsafe = (Unsafe) field.get(null);
             return (T) unsafe.allocateInstance(type);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static BlockPos invokeNearestBoundaryAnchor(ServerLevel level,
+                                                        List<NationClaimRecord> claims,
+                                                        BlockPos towardPos,
+                                                        int fallbackY,
+                                                        Set<Long> excludedColumns,
+                                                        boolean preferShoreline) {
+        try {
+            Method method = ManualRoadPlannerService.class.getDeclaredMethod(
+                    "nearestBoundaryAnchor",
+                    ServerLevel.class,
+                    List.class,
+                    BlockPos.class,
+                    int.class,
+                    Set.class,
+                    boolean.class
+            );
+            method.setAccessible(true);
+            return (BlockPos) method.invoke(null, level, claims, towardPos, fallbackY, excludedColumns, preferShoreline);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }

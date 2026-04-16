@@ -16,7 +16,7 @@ public final class RoadCorridorPlanner {
     private static final int SUPPORT_DEPTH = 3;
     private static final int RAILING_LIGHT_OFFSET = 3;
     private static final int LAND_STREETLIGHT_INTERVAL = 24;
-    private static final int BRIDGE_LIGHT_INTERVAL = 5;
+    private static final int BRIDGE_LIGHT_INTERVAL = 8;
     private static final int MIN_BRIDGE_SPAN_FOR_PIERS = 7;
     private static final int TARGET_PIER_SPACING = 4;
 
@@ -86,7 +86,6 @@ public final class RoadCorridorPlanner {
             List<BlockPos> pierLightPositions = List.of();
             if (supportRequired) {
                 supportPositions = buildSupportPositions(deckCenter);
-                pierLightPositions = buildBridgeEdgeMarkerPositions(centerPath, i, deckCenter);
             }
             deckCenters.add(deckCenter);
             segmentKinds.add(segmentKind);
@@ -173,7 +172,7 @@ public final class RoadCorridorPlanner {
             RoadBridgePlanner.BridgePierNode supportNode = supportNodeByIndex.get(i);
             if (bridgeMode == RoadBridgePlanner.BridgeMode.PIER_BRIDGE && supportNode != null) {
                 supportPositions = buildSupportPositions(supportNode.foundationPos(), deckCenter.getY());
-                pierLightPositions = buildBridgeEdgeMarkerPositions(centerPath, i, deckCenter);
+                pierLightPositions = buildPierLightPositions(centerPath, i, deckCenter, bridgePlan, supportNode);
             }
             segmentKinds.add(segmentKind);
             bridgeModes.add(bridgeMode);
@@ -536,6 +535,47 @@ public final class RoadCorridorPlanner {
         );
     }
 
+    private static List<BlockPos> buildPierLightPositions(List<BlockPos> centerPath,
+                                                          int index,
+                                                          BlockPos deckCenter,
+                                                          RoadBridgePlanner.BridgeSpanPlan bridgePlan,
+                                                          RoadBridgePlanner.BridgePierNode supportNode) {
+        if (centerPath == null
+                || deckCenter == null
+                || bridgePlan == null
+                || bridgePlan.mode() != RoadBridgePlanner.BridgeMode.PIER_BRIDGE
+                || supportNode == null
+                || (supportNode.role() != RoadBridgePlanner.BridgeNodeRole.PIER
+                && supportNode.role() != RoadBridgePlanner.BridgeNodeRole.CHANNEL_PIER)) {
+            return List.of();
+        }
+
+        int[] sideOffsets = resolveSideOffsets(centerPath, index);
+        int sideX = sideOffsets[0];
+        int sideZ = sideOffsets[1];
+        int sideSign = pierLightSideSign(bridgePlan, supportNode.pathIndex());
+        return List.of(new BlockPos(
+                deckCenter.getX() + (sideX * RAILING_LIGHT_OFFSET * sideSign),
+                deckCenter.getY(),
+                deckCenter.getZ() + (sideZ * RAILING_LIGHT_OFFSET * sideSign)
+        ));
+    }
+
+    private static int pierLightSideSign(RoadBridgePlanner.BridgeSpanPlan bridgePlan, int pathIndex) {
+        int pierOrdinal = 0;
+        for (RoadBridgePlanner.BridgePierNode node : bridgePlan.nodes()) {
+            if (node == null || (node.role() != RoadBridgePlanner.BridgeNodeRole.PIER
+                    && node.role() != RoadBridgePlanner.BridgeNodeRole.CHANNEL_PIER)) {
+                continue;
+            }
+            if (node.pathIndex() == pathIndex) {
+                return (pierOrdinal % 2 == 0) ? 1 : -1;
+            }
+            pierOrdinal++;
+        }
+        return 1;
+    }
+
     private static int[] resolveSideOffsets(List<BlockPos> centerPath, int index) {
         BlockPos current = centerPath.get(index);
         BlockPos previous = index > 0 ? centerPath.get(index - 1) : current;
@@ -645,9 +685,6 @@ public final class RoadCorridorPlanner {
 
     private static List<BlockPos> ensureTransitionOverlap(List<BlockPos> source, List<BlockPos> target) {
         LinkedHashSet<BlockPos> overlapped = new LinkedHashSet<>(target);
-        if (hasSurfaceOverlap(source, target)) {
-            return List.copyOf(overlapped);
-        }
         overlapped.addAll(transitionOverlapPositions(source, target));
         return List.copyOf(overlapped);
     }
@@ -655,11 +692,50 @@ public final class RoadCorridorPlanner {
     private static List<BlockPos> transitionOverlapPositions(List<BlockPos> source, List<BlockPos> target) {
         LinkedHashSet<BlockPos> overlap = new LinkedHashSet<>();
         for (BlockPos sourcePos : source) {
-            if (isAdjacentToAny(sourcePos, target)) {
-                overlap.add(sourcePos.immutable());
+            int projectedY = projectedTargetYForClosure(sourcePos, target);
+            if (projectedY != Integer.MIN_VALUE) {
+                overlap.add(new BlockPos(sourcePos.getX(), projectedY, sourcePos.getZ()).immutable());
             }
         }
         return List.copyOf(overlap);
+    }
+
+    private static boolean touchesOrOverlapsAny(BlockPos candidate, List<BlockPos> positions) {
+        if (candidate == null || positions == null || positions.isEmpty()) {
+            return false;
+        }
+        for (BlockPos pos : positions) {
+            if (pos == null || Math.abs(candidate.getY() - pos.getY()) > 2) {
+                continue;
+            }
+            int horizontalDistance = Math.abs(candidate.getX() - pos.getX()) + Math.abs(candidate.getZ() - pos.getZ());
+            if (horizontalDistance <= 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int projectedTargetYForClosure(BlockPos sourcePos, List<BlockPos> target) {
+        if (sourcePos == null || target == null || target.isEmpty()) {
+            return Integer.MIN_VALUE;
+        }
+        int bestDistance = Integer.MAX_VALUE;
+        int bestY = Integer.MIN_VALUE;
+        for (BlockPos targetPos : target) {
+            if (targetPos == null || Math.abs(sourcePos.getY() - targetPos.getY()) > 2) {
+                continue;
+            }
+            int horizontalDistance = Math.abs(sourcePos.getX() - targetPos.getX()) + Math.abs(sourcePos.getZ() - targetPos.getZ());
+            if (horizontalDistance > 1) {
+                continue;
+            }
+            if (horizontalDistance < bestDistance || (horizontalDistance == bestDistance && targetPos.getY() > bestY)) {
+                bestDistance = horizontalDistance;
+                bestY = targetPos.getY();
+            }
+        }
+        return bestY;
     }
 
     private static boolean hasSurfaceOverlap(List<BlockPos> current, List<BlockPos> next) {

@@ -94,6 +94,7 @@ class RoadTerrainSamplingCacheTest {
                         )
                 ),
                 false,
+                false,
                 java.util.List.of(),
                 new BlockPos(4, 71, 6),
                 new BlockPos(4, 71, 6)

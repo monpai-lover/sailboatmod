@@ -7,9 +7,11 @@ import com.monpai.sailboatmod.construction.RoadCoreExclusion;
 import com.monpai.sailboatmod.construction.RoadRouteNodePlanner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import org.slf4j.Logger;
@@ -443,7 +445,7 @@ public final class RoadPathfinder {
                     (sampleX, sampleZ) -> computeSurface(level, context.sampleColumn(sampleX, sampleZ).surfacePos())
             );
         }
-        return computeSurface(level, level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below());
+        return computeSurface(level, level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, new BlockPos(x, 0, z)).below());
     }
 
     private static BlockPos computeSurface(Level level, BlockPos startPos) {
@@ -453,12 +455,57 @@ public final class RoadPathfinder {
         }
         while (pos.getY() >= level.getMinBuildHeight()) {
             BlockState state = level.getBlockState(pos);
-            if (!state.isAir() && !state.liquid() && state.isFaceSturdy(level, pos, Direction.UP)) {
+            if (isTerrainSurface(level, pos, state)) {
                 return pos;
             }
             pos = pos.below();
         }
         return null;
+    }
+
+    static BlockPos findSurfaceForPlanning(Level level, int x, int z) {
+        return findSurface(level, x, z, null);
+    }
+
+    private static boolean isTerrainSurface(Level level, BlockPos pos, BlockState state) {
+        return state != null
+                && !state.isAir()
+                && !state.liquid()
+                && state.isFaceSturdy(level, pos, Direction.UP)
+                && !isSurfaceObstacle(state);
+    }
+
+    private static boolean isSurfaceObstacle(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        return state.is(BlockTags.LOGS)
+                || state.is(BlockTags.LEAVES)
+                || state.is(BlockTags.SAPLINGS)
+                || state.is(BlockTags.FLOWERS)
+                || state.is(BlockTags.CROPS)
+                || state.getBlock() instanceof LeavesBlock
+                || path.endsWith("_log")
+                || path.endsWith("_wood")
+                || path.endsWith("_stem")
+                || path.endsWith("_hyphae")
+                || path.endsWith("_leaves")
+                || state.is(Blocks.VINE)
+                || state.is(Blocks.WEEPING_VINES)
+                || state.is(Blocks.WEEPING_VINES_PLANT)
+                || state.is(Blocks.TWISTING_VINES)
+                || state.is(Blocks.TWISTING_VINES_PLANT)
+                || state.is(Blocks.GRASS)
+                || state.is(Blocks.TALL_GRASS)
+                || state.is(Blocks.FERN)
+                || state.is(Blocks.LARGE_FERN)
+                || state.is(Blocks.BAMBOO)
+                || state.is(Blocks.BAMBOO_SAPLING)
+                || state.is(Blocks.SUGAR_CANE)
+                || state.is(Blocks.SNOW)
+                || state.is(Blocks.SNOW_BLOCK)
+                || state.is(Blocks.LILY_PAD);
     }
 
     private static boolean requiresBridge(Level level, BlockPos pos) {
@@ -628,7 +675,10 @@ public final class RoadPathfinder {
 
     private static int findWaterSurfaceY(Level level, int x, int z, RoadPlanningPassContext context) {
         BlockPos seed = context == null ? null : context.sampleColumn(x, z).surfacePos();
-        BlockPos cursor = (seed == null ? level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below() : seed.immutable());
+        BlockPos heightmapSurface = level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(x, 0, z)).below();
+        BlockPos cursor = seed == null
+                ? heightmapSurface
+                : new BlockPos(x, Math.max(seed.getY(), heightmapSurface.getY()), z);
         while (cursor.getY() >= level.getMinBuildHeight()) {
             if (isFluidColumn(level.getBlockState(cursor))) {
                 return cursor.getY();

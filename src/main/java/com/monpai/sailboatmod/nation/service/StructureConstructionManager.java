@@ -164,9 +164,13 @@ public final class StructureConstructionManager {
     private record RoadPlan(RoadNetworkRecord road) {}
     private record RoadAnchor(BlockPos pos, Direction side) {}
     private record PreviewRoadTarget(BlockPos pos, PreviewRoadTargetKind kind) {}
-    private record RoadPlacementStyle(BlockState surface, BlockState support, BlockState lightSupport, boolean bridge) {
+    private record RoadPlacementStyle(BlockState surface,
+                                      BlockState support,
+                                      BlockState lightSupport,
+                                      BlockState lightArm,
+                                      boolean bridge) {
         private RoadPlacementStyle(BlockState surface, BlockState support, boolean bridge) {
-            this(surface, support, support, bridge);
+            this(surface, support, support, Blocks.OAK_FENCE.defaultBlockState(), bridge);
         }
     }
     static record TestRoadPlacementResult(BlockState surfaceState, int foundationTopY) {}
@@ -628,7 +632,7 @@ public final class StructureConstructionManager {
                     persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount, true, updatedJob.rollbackActionIndex, updatedJob.removeRoadNetworkOnComplete, updatedJob.attemptedStepKeys);
                 }
             } else {
-                int consumedStepCount = Math.max(job.placedStepCount, job.attemptedStepKeys.size());
+                int consumedStepCount = job.placedStepCount;
                 int targetPlacedStepCount = Math.min(totalUnits, Math.max(consumedStepCount, (int) targetProgress));
                 RoadConstructionJob advancedJob = placeRoadBuildSteps(level, job, targetPlacedStepCount - consumedStepCount);
                 int newPlacedStepCount = advancedJob.placedStepCount;
@@ -1602,8 +1606,8 @@ public final class StructureConstructionManager {
         if (level == null || job == null) {
             return job;
         }
-        int placedStepCount = findRoadPlacedStepCount(level, job.plan);
-        int progressedStepCount = Math.max(placedStepCount, job.attemptedStepKeys.size());
+        Set<Long> completedStepKeys = completedRoadBuildStepKeys(level, job.plan);
+        int placedStepCount = countCompletedRoadBuildSteps(job.plan, completedStepKeys);
         return new RoadConstructionJob(
                 job.level,
                 job.roadId,
@@ -1614,14 +1618,14 @@ public final class StructureConstructionManager {
                 job.targetTownName,
                 job.plan,
                 job.rollbackStates,
-                progressedStepCount,
+                placedStepCount,
                 job.rollbackActive
                         ? Math.max(job.progressSteps, job.rollbackActionIndex)
-                        : Math.max(job.progressSteps, progressedStepCount),
+                        : placedStepCount,
                 job.rollbackActive,
                 job.rollbackActionIndex,
                 job.removeRoadNetworkOnComplete,
-                job.attemptedStepKeys
+                completedStepKeys
         );
     }
 
@@ -1632,19 +1636,33 @@ public final class StructureConstructionManager {
         job = refreshRoadConstructionState(level, job);
         int totalSteps = job.plan.buildSteps().size();
         Set<Long> attemptedStepKeys = new LinkedHashSet<>(job.attemptedStepKeys);
-        int startCount = attemptedStepKeys.size();
+        int startCount = countCompletedRoadBuildSteps(job.plan, attemptedStepKeys);
         int targetCount = Math.max(startCount, Math.min(totalSteps, startCount + stepCount));
         boolean placedAny = false;
         int completedCount = startCount;
         BlockPos effectPos = null;
+        RoadGeometryPlanner.RoadBuildPhase highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECOR;
         for (RoadGeometryPlanner.RoadBuildStep step : job.plan.buildSteps()) {
             if (attemptedStepKeys.contains(step.pos().asLong())) {
                 continue;
             }
-            placedAny |= tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
-            attemptedStepKeys.add(step.pos().asLong());
-            completedCount++;
-            effectPos = step.pos();
+            boolean skippedForPhaseLock = step.phase().compareTo(highestPlaceablePhase) > 0;
+            boolean placed = false;
+            if (!skippedForPhaseLock) {
+                placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
+                placedAny |= placed;
+                if (placed) {
+                    attemptedStepKeys.add(step.pos().asLong());
+                    completedCount++;
+                    effectPos = step.pos();
+                } else {
+                    if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
+                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
+                    } else if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.DECK) {
+                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECK;
+                    }
+                }
+            }
             if (completedCount >= targetCount) {
                 break;
             }
@@ -1669,11 +1687,11 @@ public final class StructureConstructionManager {
                 job.plan,
                 job.rollbackStates,
                 completedCount,
-                Math.max(job.progressSteps, completedCount),
+                completedCount,
                 false,
                 0,
                 false,
-                attemptedStepKeys
+                Set.copyOf(attemptedStepKeys)
         );
     }
 
@@ -1920,7 +1938,7 @@ public final class StructureConstructionManager {
             if (range == null) {
                 continue;
             }
-            plans.add(RoadBridgePlanner.planBridgeSpan(
+            RoadBridgePlanner.BridgeSpanPlan plan = RoadBridgePlanner.planBridgeSpan(
                     centerPath,
                     range,
                     index -> selectRoadPlacementStyle(level, centerPath.get(index).above()).bridge(),
@@ -1931,9 +1949,41 @@ public final class StructureConstructionManager {
                         return waterSurfaceY == Integer.MIN_VALUE ? 0 : waterSurfaceY;
                     },
                     index -> hasStableFoundationBelow(level, centerPath.get(index))
-            ));
+            );
+            plans.add(repairFoundationlessPierPlan(level, centerPath, range, navigableWaterBridgeRanges, plan));
         }
         return List.copyOf(plans);
+    }
+
+    private static RoadBridgePlanner.BridgeSpanPlan repairFoundationlessPierPlan(ServerLevel level,
+                                                                                  List<BlockPos> centerPath,
+                                                                                  RoadPlacementPlan.BridgeRange range,
+                                                                                  List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges,
+                                                                                  RoadBridgePlanner.BridgeSpanPlan originalPlan) {
+        if (level == null
+                || centerPath == null
+                || range == null
+                || originalPlan == null
+                || originalPlan.mode() != RoadBridgePlanner.BridgeMode.PIER_BRIDGE
+                || originalPlan.valid()) {
+            return originalPlan;
+        }
+
+        RoadBridgePlanner.BridgeSpanPlan repairedPlan = RoadBridgePlanner.planBridgeSpan(
+                centerPath,
+                range,
+                index -> selectRoadPlacementStyle(level, centerPath.get(index).above()).bridge(),
+                index -> isNavigableIndex(index, navigableWaterBridgeRanges),
+                index -> level.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, centerPath.get(index)).below().getY(),
+                index -> {
+                    int waterSurfaceY = findColumnWaterSurfaceY(level, centerPath.get(index).getX(), centerPath.get(index).getZ());
+                    return waterSurfaceY == Integer.MIN_VALUE ? 0 : waterSurfaceY;
+                },
+                index -> true
+        );
+        return repairedPlan.mode() == RoadBridgePlanner.BridgeMode.PIER_BRIDGE && repairedPlan.valid()
+                ? repairedPlan
+                : originalPlan;
     }
 
     private static boolean rangesOverlap(int startIndex, int endIndex, RoadPlacementPlan.BridgeRange range) {
@@ -1957,19 +2007,48 @@ public final class StructureConstructionManager {
         if (rawRanges.isEmpty()) {
             return List.of();
         }
-        List<RoadPlacementPlan.BridgeRange> contracted = new ArrayList<>(rawRanges.size());
-        for (RoadPlacementPlan.BridgeRange range : rawRanges) {
-            if (range == null) {
+        List<RoadPlacementPlan.BridgeRange> protectedChannels = new ArrayList<>(bridgeRanges.size());
+        for (RoadPlacementPlan.BridgeRange bridgeRange : bridgeRanges) {
+            if (bridgeRange == null) {
                 continue;
             }
-            int start = Math.max(0, range.startIndex());
-            int end = Math.min(centerPath.size() - 1, range.endIndex());
-            if ((end - start + 1) < 3) {
-                continue;
+            RoadPlacementPlan.BridgeRange widestWaterRange = null;
+            int widestWidth = 0;
+            for (RoadPlacementPlan.BridgeRange rawRange : rawRanges) {
+                if (rawRange == null || !rangesOverlap(bridgeRange.startIndex(), bridgeRange.endIndex(), rawRange)) {
+                    continue;
+                }
+                int width = rawRange.endIndex() - rawRange.startIndex() + 1;
+                if (width > widestWidth) {
+                    widestWidth = width;
+                    widestWaterRange = rawRange;
+                }
             }
-            contracted.add(new RoadPlacementPlan.BridgeRange(start + 1, end - 1));
+            RoadPlacementPlan.BridgeRange narrowedChannel = narrowProtectedMainChannel(widestWaterRange, centerPath.size());
+            if (narrowedChannel != null) {
+                protectedChannels.add(narrowedChannel);
+            }
         }
-        return contracted.isEmpty() ? List.of() : List.copyOf(contracted);
+        return protectedChannels.isEmpty() ? List.of() : List.copyOf(protectedChannels);
+    }
+
+    private static RoadPlacementPlan.BridgeRange narrowProtectedMainChannel(RoadPlacementPlan.BridgeRange range, int pathSize) {
+        if (range == null || pathSize <= 0) {
+            return null;
+        }
+        int start = Math.max(0, range.startIndex());
+        int end = Math.min(pathSize - 1, range.endIndex());
+        if (end < start) {
+            return null;
+        }
+        int width = end - start + 1;
+        int targetWidth = Math.min(3, width);
+        if (targetWidth <= 0) {
+            return null;
+        }
+        int narrowedStart = start + Math.max(0, (width - targetWidth) / 2);
+        int narrowedEnd = narrowedStart + targetWidth - 1;
+        return new RoadPlacementPlan.BridgeRange(narrowedStart, narrowedEnd);
     }
 
     private static boolean isNavigableWaterBridgeColumn(ServerLevel level, BlockPos pos) {
@@ -2079,9 +2158,6 @@ public final class StructureConstructionManager {
             return false;
         }
         BlockState plannedState = step.state();
-        if (isEquivalentRoadSurfaceFamily(currentState, plannedState)) {
-            return true;
-        }
         if (!currentState.is(plannedState.getBlock())) {
             return false;
         }
@@ -2103,33 +2179,6 @@ public final class StructureConstructionManager {
                                                                        BlockState plannedState,
                                                                        Property<T> property) {
         return currentState.getValue(property).equals(plannedState.getValue(property));
-    }
-
-    private static boolean isEquivalentRoadSurfaceFamily(BlockState currentState, BlockState plannedState) {
-        if (currentState == null || plannedState == null) {
-            return false;
-        }
-        int currentFamily = roadSurfaceFamily(currentState);
-        return currentFamily != -1 && currentFamily == roadSurfaceFamily(plannedState);
-    }
-
-    private static int roadSurfaceFamily(BlockState state) {
-        if (state == null) {
-            return -1;
-        }
-        if (state.is(Blocks.STONE_BRICKS) || state.is(Blocks.STONE_BRICK_SLAB) || state.is(Blocks.STONE_BRICK_STAIRS)) {
-            return 1;
-        }
-        if (state.is(Blocks.SMOOTH_SANDSTONE) || state.is(Blocks.SMOOTH_SANDSTONE_SLAB) || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS)) {
-            return 2;
-        }
-        if (state.is(Blocks.MUD_BRICKS) || state.is(Blocks.MUD_BRICK_SLAB) || state.is(Blocks.MUD_BRICK_STAIRS)) {
-            return 3;
-        }
-        if (state.is(Blocks.SPRUCE_PLANKS) || state.is(Blocks.SPRUCE_SLAB) || state.is(Blocks.SPRUCE_STAIRS)) {
-            return 4;
-        }
-        return -1;
     }
 
     private static List<RoadGeometryPlanner.GhostRoadBlock> remainingRoadGhostBlocks(RoadPlacementPlan plan, int placedStepCount) {
@@ -2318,13 +2367,6 @@ public final class StructureConstructionManager {
                 }
             }
         }
-        if (attemptedStepKeys != null) {
-            for (Long key : attemptedStepKeys) {
-                if (key != null && validStepKeys.contains(key)) {
-                    consumed.add(key);
-                }
-            }
-        }
         return Set.copyOf(consumed);
     }
 
@@ -2358,10 +2400,8 @@ public final class StructureConstructionManager {
             return List.of();
         }
         Set<Long> completed = completedStepKeys == null ? Set.of() : completedStepKeys;
-        Set<Long> attempted = attemptedStepKeys == null ? Set.of() : attemptedStepKeys;
         return buildSteps.stream()
                 .filter(step -> !completed.contains(step.pos().asLong()))
-                .filter(step -> !attempted.contains(step.pos().asLong()))
                 .toList();
     }
 
@@ -2370,7 +2410,6 @@ public final class StructureConstructionManager {
     }
 
     private static boolean tryPlaceRoad(ServerLevel level, BlockPos pos, RoadPlacementStyle style) {
-        stabilizeRoadFoundation(level, pos, style);
         if (!clearRoadDeckSpace(level, pos)) {
             return false;
         }
@@ -2385,6 +2424,7 @@ public final class StructureConstructionManager {
         if (!replacingRoadSurface && !isRoadPlacementReplaceable(at)) {
             return false;
         }
+        stabilizeRoadFoundation(level, pos, style);
         BlockState below = level.getBlockState(pos.below());
         if (requiresSupportedRoadPlacement(style, below)) {
             return false;
@@ -2454,10 +2494,22 @@ public final class StructureConstructionManager {
                     : landRoadPlacementStyle(surfaceState, Blocks.COBBLESTONE.defaultBlockState());
         }
         if (surfaceState.is(Blocks.SPRUCE_SLAB)) {
-            return new RoadPlacementStyle(surfaceState, Blocks.SPRUCE_FENCE.defaultBlockState(), Blocks.SPRUCE_FENCE.defaultBlockState(), true);
+            return new RoadPlacementStyle(
+                    surfaceState,
+                    Blocks.SPRUCE_FENCE.defaultBlockState(),
+                    Blocks.SPRUCE_FENCE.defaultBlockState(),
+                    Blocks.SPRUCE_FENCE.defaultBlockState(),
+                    true
+            );
         }
         if (surfaceState.is(Blocks.SPRUCE_STAIRS)) {
-            return new RoadPlacementStyle(surfaceState, Blocks.SPRUCE_FENCE.defaultBlockState(), Blocks.SPRUCE_FENCE.defaultBlockState(), true);
+            return new RoadPlacementStyle(
+                    surfaceState,
+                    Blocks.SPRUCE_FENCE.defaultBlockState(),
+                    Blocks.SPRUCE_FENCE.defaultBlockState(),
+                    Blocks.SPRUCE_FENCE.defaultBlockState(),
+                    true
+            );
         }
         if (surfaceState.is(Blocks.SMOOTH_SANDSTONE_SLAB)) {
             return landRoadPlacementStyle(surfaceState, Blocks.SANDSTONE.defaultBlockState());
@@ -2479,12 +2531,19 @@ public final class StructureConstructionManager {
                 surfaceState,
                 Blocks.STONE_BRICKS.defaultBlockState(),
                 Blocks.COBBLESTONE_WALL.defaultBlockState(),
+                Blocks.SPRUCE_FENCE.defaultBlockState(),
                 true
         );
     }
 
     private static RoadPlacementStyle landRoadPlacementStyle(BlockState surfaceState, BlockState supportState) {
-        return new RoadPlacementStyle(surfaceState, supportState, supportState, false);
+        return new RoadPlacementStyle(
+                surfaceState,
+                supportState,
+                supportState,
+                Blocks.OAK_FENCE.defaultBlockState(),
+                false
+        );
     }
 
     private static boolean isBridgePlacementContext(ServerLevel level, BlockPos pos) {
@@ -2834,11 +2893,11 @@ public final class StructureConstructionManager {
             );
             if (sliceStyle.bridge() && sliceStyle.lightSupport().is(Blocks.COBBLESTONE_WALL)) {
                 appendBridgeRailingGhosts(ghostBlocks, corridorPlan.centerPath(), slice);
-                appendBridgeLightGhosts(ghostBlocks, slice.railingLightPositions(), sliceStyle.lightSupport());
-                appendBridgeLightGhosts(ghostBlocks, slice.pierLightPositions(), sliceStyle.lightSupport());
+                appendVillageLampGhosts(ghostBlocks, slice.railingLightPositions(), sliceStyle, slice.deckCenter(), true);
+                appendVillageLampGhosts(ghostBlocks, slice.pierLightPositions(), sliceStyle, slice.deckCenter(), true);
             } else {
-                appendCorridorLightGhosts(ghostBlocks, slice.railingLightPositions(), sliceStyle.lightSupport());
-                appendCorridorLightGhosts(ghostBlocks, slice.pierLightPositions(), sliceStyle.lightSupport());
+                appendVillageLampGhosts(ghostBlocks, slice.railingLightPositions(), sliceStyle, slice.deckCenter(), false);
+                appendVillageLampGhosts(ghostBlocks, slice.pierLightPositions(), sliceStyle, slice.deckCenter(), false);
             }
             corridorTerrainOwnership.addAll(slice.excavationPositions());
             corridorTerrainOwnership.addAll(slice.clearancePositions());
@@ -3189,22 +3248,52 @@ public final class StructureConstructionManager {
         }
     }
 
-    private static void appendCorridorLightGhosts(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
-                                                  List<BlockPos> positions,
-                                                  BlockState supportState) {
-        if (ghostBlocks == null || positions == null || positions.isEmpty()) {
+    private static void appendVillageLampGhosts(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                List<BlockPos> positions,
+                                                RoadPlacementStyle style,
+                                                BlockPos deckCenter,
+                                                boolean bridgeLamp) {
+        if (ghostBlocks == null || positions == null || positions.isEmpty() || style == null || deckCenter == null) {
             return;
         }
         for (BlockPos lightPos : positions) {
             if (lightPos == null) {
                 continue;
             }
-            if (supportState != null) {
-                appendGhost(ghostBlocks, lightPos.above(), supportState);
-                appendGhost(ghostBlocks, lightPos.above(2), supportState);
+
+            int armX = Integer.compare(lightPos.getX() - deckCenter.getX(), 0);
+            int armZ = Integer.compare(lightPos.getZ() - deckCenter.getZ(), 0);
+            BlockPos postBase = resolveLampPostBase(ghostBlocks, lightPos, style, bridgeLamp);
+
+            if (style.lightSupport() != null) {
+                appendGhost(ghostBlocks, postBase, style.lightSupport());
+                appendGhost(ghostBlocks, postBase.above(), style.lightSupport());
             }
-            appendGhost(ghostBlocks, lightPos.above(3), Blocks.LANTERN.defaultBlockState());
+
+            if (armX == 0 && armZ == 0) {
+                appendGhost(ghostBlocks, postBase.above(2), Blocks.LANTERN.defaultBlockState());
+                continue;
+            }
+
+            BlockPos armPos = postBase.above().offset(armX, 0, armZ);
+            if (style.lightArm() != null) {
+                appendGhost(ghostBlocks, armPos, style.lightArm());
+            }
+            appendGhost(ghostBlocks, armPos.below(), Blocks.LANTERN.defaultBlockState());
         }
+    }
+
+    private static BlockPos resolveLampPostBase(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                BlockPos lightPos,
+                                                RoadPlacementStyle style,
+                                                boolean bridgeLamp) {
+        if (!bridgeLamp || style.lightSupport() == null || !style.lightSupport().is(Blocks.COBBLESTONE_WALL)) {
+            return lightPos.above();
+        }
+        int railingY = highestGhostYInColumn(ghostBlocks, lightPos.getX(), lightPos.getZ());
+        return railingY == Integer.MIN_VALUE
+                ? lightPos.above()
+                : new BlockPos(lightPos.getX(), railingY, lightPos.getZ());
     }
 
     private static void appendBridgeRailingGhosts(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
@@ -3215,39 +3304,6 @@ public final class StructureConstructionManager {
         }
         for (BlockPos edgePos : bridgeEdgePositions(centerPath, slice)) {
             appendGhost(ghostBlocks, edgePos.above(), Blocks.COBBLESTONE_WALL.defaultBlockState());
-        }
-    }
-
-    private static void appendBridgeLightGhosts(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
-                                                List<BlockPos> positions,
-                                                BlockState supportState) {
-        if (ghostBlocks == null || positions == null || positions.isEmpty()) {
-            return;
-        }
-        for (BlockPos lightPos : positions) {
-            if (lightPos == null) {
-                continue;
-            }
-            boolean stackedBridgeLamp = supportState != null && supportState.is(Blocks.COBBLESTONE_WALL);
-            int baseY = stackedBridgeLamp
-                    ? Math.max(lightPos.getY(), highestGhostYInColumn(ghostBlocks, lightPos.getX(), lightPos.getZ()))
-                    : lightPos.getY();
-            if (supportState != null) {
-                if (stackedBridgeLamp) {
-                    appendGhost(ghostBlocks, new BlockPos(lightPos.getX(), baseY + 1, lightPos.getZ()), supportState);
-                    appendGhost(ghostBlocks, new BlockPos(lightPos.getX(), baseY + 2, lightPos.getZ()), supportState);
-                } else {
-                    appendGhost(ghostBlocks, lightPos, supportState);
-                    appendGhost(ghostBlocks, lightPos.above(), supportState);
-                }
-            }
-            appendGhost(
-                    ghostBlocks,
-                    stackedBridgeLamp
-                            ? new BlockPos(lightPos.getX(), baseY + 3, lightPos.getZ())
-                            : lightPos.above(2),
-                    Blocks.LANTERN.defaultBlockState()
-            );
         }
     }
 
@@ -3268,6 +3324,35 @@ public final class StructureConstructionManager {
             }
         }
         return highest;
+    }
+
+    private static int highestGhostYInColumnMatching(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> ghostBlocks,
+                                                     int x,
+                                                     int z,
+                                                     java.util.function.Predicate<BlockState> matcher) {
+        if (ghostBlocks == null || ghostBlocks.isEmpty() || matcher == null) {
+            return Integer.MIN_VALUE;
+        }
+        int highest = Integer.MIN_VALUE;
+        for (RoadGeometryPlanner.GhostRoadBlock ghostBlock : ghostBlocks.values()) {
+            if (ghostBlock == null || ghostBlock.pos() == null || !matcher.test(ghostBlock.state())) {
+                continue;
+            }
+            BlockPos pos = ghostBlock.pos();
+            if (pos.getX() == x && pos.getZ() == z && pos.getY() > highest) {
+                highest = pos.getY();
+            }
+        }
+        return highest;
+    }
+
+    private static void replaceGhost(LinkedHashMap<Long, RoadGeometryPlanner.GhostRoadBlock> merged,
+                                     BlockPos pos,
+                                     BlockState state) {
+        if (merged == null || pos == null || state == null) {
+            return;
+        }
+        merged.put(pos.asLong(), new RoadGeometryPlanner.GhostRoadBlock(pos, state));
     }
 
     private static void appendLightBatchPositions(Set<BlockPos> positions, List<BlockPos> lightPositions) {
@@ -3495,9 +3580,9 @@ public final class StructureConstructionManager {
             RoadPlacementStyle sliceStyle = slice.segmentKind() == RoadCorridorPlan.SegmentKind.LAND_APPROACH
                     ? landRoadPlacementStyle(Blocks.STONE_BRICKS.defaultBlockState(), Blocks.COBBLESTONE.defaultBlockState())
                     : waterBridgePlacementStyle(Blocks.STONE_BRICKS.defaultBlockState());
-            testStyleByPos.put(slice.deckCenter().asLong(), sliceStyle);
+            mergeTestPlacementStyle(testStyleByPos, slice.deckCenter(), sliceStyle);
             for (BlockPos surfacePos : slice.surfacePositions()) {
-                testStyleByPos.put(surfacePos.asLong(), sliceStyle);
+                mergeTestPlacementStyle(testStyleByPos, surfacePos, sliceStyle);
             }
         }
         RoadPlacementArtifacts artifacts = buildRoadPlacementArtifacts(
@@ -3539,6 +3624,19 @@ public final class StructureConstructionManager {
             }
         }
         return false;
+    }
+
+    private static void mergeTestPlacementStyle(Map<Long, RoadPlacementStyle> styleByPos,
+                                                BlockPos pos,
+                                                RoadPlacementStyle candidate) {
+        if (styleByPos == null || pos == null || candidate == null) {
+            return;
+        }
+        long key = pos.asLong();
+        RoadPlacementStyle existing = styleByPos.get(key);
+        if (existing == null || (candidate.bridge() && !existing.bridge())) {
+            styleByPos.put(key, candidate);
+        }
     }
 
     static Map<String, List<BlockPos>> snapshotRoadOwnedBlocks(ServerLevel level) {

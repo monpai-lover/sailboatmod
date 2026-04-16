@@ -4,8 +4,10 @@ import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
@@ -380,8 +382,7 @@ public final class RoadBridgePlanner {
 
         List<Integer> supportableInterior = new ArrayList<>();
         for (int i = start + 1; i < end; i++) {
-            boolean channelBoundary = i == navigableStart || i == navigableEnd;
-            if (foundationSupportedAt.test(i) && (!navigableAt.test(i) || channelBoundary)) {
+            if (foundationSupportedAt.test(i) && !navigableAt.test(i)) {
                 supportableInterior.add(i);
             }
         }
@@ -399,6 +400,17 @@ public final class RoadBridgePlanner {
                 end,
                 preferredInterior.isEmpty() ? supportableInterior : preferredInterior
         );
+        interiorAnchors = mergeStructuredApproachAnchors(
+                start,
+                end,
+                navigableStart,
+                navigableEnd,
+                startDeckY,
+                endDeckY,
+                mainDeckY,
+                supportableInterior,
+                interiorAnchors
+        );
 
         LinkedHashSet<Integer> channelAnchors = new LinkedHashSet<>();
         if (navigableStart >= 0) {
@@ -413,13 +425,17 @@ public final class RoadBridgePlanner {
         }
 
         boolean valid = !interiorAnchors.isEmpty();
-        if (valid) {
-            int firstAnchor = interiorAnchors.get(0);
-            int lastAnchor = interiorAnchors.get(interiorAnchors.size() - 1);
-            valid = hasStraightRampRun(centerPath, start, firstAnchor)
-                    && hasStraightRampRun(centerPath, lastAnchor, end);
-        }
         List<BridgePierNode> nodes = new ArrayList<>();
+        int leftMainAnchor = navigableStart >= 0 ? findNearestAnchorAtOrBefore(interiorAnchors, navigableStart) : -1;
+        int rightMainAnchor = navigableEnd >= 0 ? findNearestAnchorAtOrAfter(interiorAnchors, navigableEnd) : -1;
+        Map<Integer, Integer> anchorDeckY = buildStructuredAnchorDeckHeights(
+                interiorAnchors,
+                leftMainAnchor,
+                rightMainAnchor,
+                startDeckY,
+                endDeckY,
+                mainDeckY
+        );
 
         nodes.add(new BridgePierNode(
                 start,
@@ -432,11 +448,12 @@ public final class RoadBridgePlanner {
         for (int anchor : interiorAnchors) {
             BlockPos anchorPos = Objects.requireNonNull(centerPath.get(anchor), "centerPath contains null at anchor " + anchor);
             BridgeNodeRole role = channelAnchors.contains(anchor) ? BridgeNodeRole.CHANNEL_PIER : BridgeNodeRole.PIER;
+            int anchorDeck = anchorDeckY.getOrDefault(anchor, mainDeckY);
             nodes.add(new BridgePierNode(
                     anchor,
-                    new BlockPos(anchorPos.getX(), mainDeckY, anchorPos.getZ()),
+                    new BlockPos(anchorPos.getX(), anchorDeck, anchorPos.getZ()),
                     new BlockPos(anchorPos.getX(), terrainYAt.applyAsInt(anchor), anchorPos.getZ()),
-                    mainDeckY,
+                    anchorDeck,
                     role
             ));
         }
@@ -451,10 +468,17 @@ public final class RoadBridgePlanner {
 
         List<BridgeDeckSegment> deckSegments = new ArrayList<>();
         if (!interiorAnchors.isEmpty()) {
-            int firstAnchor = interiorAnchors.get(0);
-            deckSegments.add(new BridgeDeckSegment(start, firstAnchor, BridgeDeckSegmentType.APPROACH_UP, startDeckY, mainDeckY));
-            deckSegments.add(new BridgeDeckSegment(firstAnchor, interiorAnchors.get(interiorAnchors.size() - 1), BridgeDeckSegmentType.MAIN_LEVEL, mainDeckY, mainDeckY));
-            deckSegments.add(new BridgeDeckSegment(interiorAnchors.get(interiorAnchors.size() - 1), end, BridgeDeckSegmentType.APPROACH_DOWN, mainDeckY, endDeckY));
+            deckSegments.addAll(buildStructuredPierDeckSegments(
+                    start,
+                    end,
+                    startDeckY,
+                    endDeckY,
+                    mainDeckY,
+                    interiorAnchors,
+                    anchorDeckY,
+                    leftMainAnchor,
+                    rightMainAnchor
+            ));
         } else {
             deckSegments.add(new BridgeDeckSegment(start, end, BridgeDeckSegmentType.MAIN_LEVEL, mainDeckY, mainDeckY));
         }
@@ -469,6 +493,220 @@ public final class RoadBridgePlanner {
                 navigableStart >= 0,
                 valid
         );
+    }
+
+    private static List<Integer> mergeStructuredApproachAnchors(int start,
+                                                                int end,
+                                                                int navigableStart,
+                                                                int navigableEnd,
+                                                                int startDeckY,
+                                                                int endDeckY,
+                                                                int mainDeckY,
+                                                                List<Integer> supportableInterior,
+                                                                List<Integer> interiorAnchors) {
+        if (supportableInterior == null || supportableInterior.isEmpty() || interiorAnchors == null || interiorAnchors.isEmpty() || navigableStart < 0 || navigableEnd < 0) {
+            return interiorAnchors == null ? List.of() : interiorAnchors;
+        }
+        LinkedHashSet<Integer> anchors = new LinkedHashSet<>(interiorAnchors);
+        if (supportableInterior.contains(navigableStart)) {
+            anchors.add(navigableStart);
+        }
+        if (supportableInterior.contains(navigableEnd)) {
+            anchors.add(navigableEnd);
+        }
+        addStructuredRampAnchors(anchors, supportableInterior, start, navigableStart, Math.max(0, mainDeckY - startDeckY), true);
+        addStructuredRampAnchors(anchors, supportableInterior, end, navigableEnd, Math.max(0, mainDeckY - endDeckY), false);
+        return anchors.stream()
+                .filter(index -> index > start && index < end)
+                .distinct()
+                .sorted()
+                .toList();
+    }
+
+    private static void addStructuredRampAnchors(LinkedHashSet<Integer> anchors,
+                                                 List<Integer> supportableInterior,
+                                                 int edgeIndex,
+                                                 int plateauBoundary,
+                                                 int deckDelta,
+                                                 boolean ascending) {
+        if (anchors == null || supportableInterior == null || supportableInterior.isEmpty() || deckDelta <= 0 || plateauBoundary < 0) {
+            return;
+        }
+        int min = ascending ? edgeIndex + 1 : plateauBoundary + 1;
+        int max = ascending ? plateauBoundary - 1 : edgeIndex - 1;
+        for (int step = 1; step < deckDelta; step++) {
+            int target = ascending ? edgeIndex + (step * 2) : edgeIndex - (step * 2);
+            int anchor = nearestSupportableInRange(supportableInterior, target, min, max, ascending);
+            if (anchor >= 0) {
+                anchors.add(anchor);
+            }
+        }
+        if (supportableInterior.contains(plateauBoundary)) {
+            anchors.add(plateauBoundary);
+        }
+    }
+
+    private static int nearestSupportableInRange(List<Integer> supportableInterior,
+                                                 int target,
+                                                 int min,
+                                                 int max,
+                                                 boolean ascending) {
+        int match = -1;
+        int bestDistance = Integer.MAX_VALUE;
+        for (int index : supportableInterior) {
+            if (index < min || index > max) {
+                continue;
+            }
+            int distance = Math.abs(index - target);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                match = index;
+                continue;
+            }
+            if (distance == bestDistance && match >= 0) {
+                if (ascending && index > match) {
+                    match = index;
+                } else if (!ascending && index < match) {
+                    match = index;
+                }
+            }
+        }
+        return match;
+    }
+
+    private static Map<Integer, Integer> buildStructuredAnchorDeckHeights(List<Integer> interiorAnchors,
+                                                                          int leftMainAnchor,
+                                                                          int rightMainAnchor,
+                                                                          int startDeckY,
+                                                                          int endDeckY,
+                                                                          int mainDeckY) {
+        Map<Integer, Integer> anchorDeckY = new HashMap<>();
+        if (interiorAnchors == null || interiorAnchors.isEmpty()) {
+            return anchorDeckY;
+        }
+        if (leftMainAnchor < 0 || rightMainAnchor < 0) {
+            for (int anchor : interiorAnchors) {
+                anchorDeckY.put(anchor, mainDeckY);
+            }
+            return anchorDeckY;
+        }
+
+        List<Integer> leftRampAnchors = interiorAnchors.stream()
+                .filter(index -> index <= leftMainAnchor)
+                .toList();
+        int leftSteps = leftRampAnchors.size();
+        int leftDelta = Math.max(0, mainDeckY - startDeckY);
+        for (int i = 0; i < leftRampAnchors.size(); i++) {
+            int rise = scaledRampRise(i + 1, leftSteps, leftDelta);
+            if (leftDelta > 0 && i < leftRampAnchors.size() - 1) {
+                rise = Math.max(1, rise);
+            }
+            int target = startDeckY + rise;
+            anchorDeckY.put(leftRampAnchors.get(i), Math.min(mainDeckY, target));
+        }
+
+        for (int anchor : interiorAnchors) {
+            if (anchor >= leftMainAnchor && anchor <= rightMainAnchor) {
+                anchorDeckY.put(anchor, mainDeckY);
+            }
+        }
+
+        List<Integer> rightRampAnchors = interiorAnchors.stream()
+                .filter(index -> index >= rightMainAnchor)
+                .toList();
+        int rightSteps = rightRampAnchors.size();
+        int rightDelta = Math.max(0, mainDeckY - endDeckY);
+        for (int i = 0; i < rightRampAnchors.size(); i++) {
+            int drop = scaledRampRise(i, rightSteps, rightDelta);
+            if (rightDelta > 0 && i > 0) {
+                drop = Math.max(1, drop);
+            }
+            int target = mainDeckY - drop;
+            anchorDeckY.put(rightRampAnchors.get(i), Math.max(endDeckY, target));
+        }
+        return anchorDeckY;
+    }
+
+    private static int scaledRampRise(int completedSteps, int totalSteps, int deckDelta) {
+        if (completedSteps <= 0 || totalSteps <= 0 || deckDelta <= 0) {
+            return 0;
+        }
+        return (int) Math.floor((double) completedSteps * (double) deckDelta / (double) totalSteps);
+    }
+
+    private static List<BridgeDeckSegment> buildStructuredPierDeckSegments(int start,
+                                                                           int end,
+                                                                           int startDeckY,
+                                                                           int endDeckY,
+                                                                           int mainDeckY,
+                                                                           List<Integer> interiorAnchors,
+                                                                           Map<Integer, Integer> anchorDeckY,
+                                                                           int leftMainAnchor,
+                                                                           int rightMainAnchor) {
+        if (interiorAnchors == null || interiorAnchors.isEmpty()) {
+            return List.of(new BridgeDeckSegment(start, end, BridgeDeckSegmentType.MAIN_LEVEL, mainDeckY, mainDeckY));
+        }
+        ArrayList<Integer> orderedIndexes = new ArrayList<>(interiorAnchors.size() + 2);
+        orderedIndexes.add(start);
+        orderedIndexes.addAll(interiorAnchors);
+        orderedIndexes.add(end);
+
+        ArrayList<BridgeDeckSegment> segments = new ArrayList<>(orderedIndexes.size() - 1);
+        for (int i = 0; i < orderedIndexes.size() - 1; i++) {
+            int from = orderedIndexes.get(i);
+            int to = orderedIndexes.get(i + 1);
+            int fromDeckY = bridgeNodeDeckY(from, start, end, startDeckY, endDeckY, mainDeckY, anchorDeckY);
+            int toDeckY = bridgeNodeDeckY(to, start, end, startDeckY, endDeckY, mainDeckY, anchorDeckY);
+            BridgeDeckSegmentType type = resolvePierDeckSegmentType(from, to, fromDeckY, toDeckY, mainDeckY, leftMainAnchor, rightMainAnchor);
+            segments.add(new BridgeDeckSegment(from, to, type, fromDeckY, toDeckY));
+        }
+        return List.copyOf(segments);
+    }
+
+    private static int bridgeNodeDeckY(int index,
+                                       int start,
+                                       int end,
+                                       int startDeckY,
+                                       int endDeckY,
+                                       int mainDeckY,
+                                       Map<Integer, Integer> anchorDeckY) {
+        if (index == start) {
+            return startDeckY;
+        }
+        if (index == end) {
+            return endDeckY;
+        }
+        return anchorDeckY.getOrDefault(index, mainDeckY);
+    }
+
+    private static BridgeDeckSegmentType resolvePierDeckSegmentType(int from,
+                                                                    int to,
+                                                                    int fromDeckY,
+                                                                    int toDeckY,
+                                                                    int mainDeckY,
+                                                                    int leftMainAnchor,
+                                                                    int rightMainAnchor) {
+        if (leftMainAnchor >= 0
+                && rightMainAnchor >= 0
+                && from >= leftMainAnchor
+                && to <= rightMainAnchor
+                && fromDeckY == mainDeckY
+                && toDeckY == mainDeckY) {
+            return BridgeDeckSegmentType.MAIN_LEVEL;
+        }
+        if (leftMainAnchor >= 0 && to <= leftMainAnchor) {
+            return BridgeDeckSegmentType.APPROACH_UP;
+        }
+        if (rightMainAnchor >= 0 && from >= rightMainAnchor) {
+            return BridgeDeckSegmentType.APPROACH_DOWN;
+        }
+        if (toDeckY > fromDeckY) {
+            return BridgeDeckSegmentType.APPROACH_UP;
+        }
+        if (toDeckY < fromDeckY) {
+            return BridgeDeckSegmentType.APPROACH_DOWN;
+        }
+        return fromDeckY >= mainDeckY ? BridgeDeckSegmentType.MAIN_LEVEL : BridgeDeckSegmentType.APPROACH_UP;
     }
 
     private static List<Integer> preferGentleApproachAnchorColumns(int start,
@@ -513,31 +751,5 @@ public final class RoadBridgePlanner {
             }
         }
         return -1;
-    }
-
-    private static boolean hasStraightRampRun(List<BlockPos> centerPath, int startIndex, int endIndex) {
-        if (centerPath == null || centerPath.isEmpty() || endIndex <= startIndex) {
-            return true;
-        }
-        int expectedDx = 0;
-        int expectedDz = 0;
-        for (int i = startIndex + 1; i <= endIndex; i++) {
-            BlockPos previous = Objects.requireNonNull(centerPath.get(i - 1), "centerPath contains null at index " + (i - 1));
-            BlockPos current = Objects.requireNonNull(centerPath.get(i), "centerPath contains null at index " + i);
-            int dx = Integer.compare(current.getX() - previous.getX(), 0);
-            int dz = Integer.compare(current.getZ() - previous.getZ(), 0);
-            if (dx == 0 && dz == 0) {
-                continue;
-            }
-            if (expectedDx == 0 && expectedDz == 0) {
-                expectedDx = dx;
-                expectedDz = dz;
-                continue;
-            }
-            if (dx != expectedDx || dz != expectedDz) {
-                return false;
-            }
-        }
-        return true;
     }
 }

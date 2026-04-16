@@ -64,8 +64,8 @@ class StructureConstructionManagerRoadLinkTest {
         RoadPlacementPlan plan = longBridgePlanFixture();
 
         assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.supportPositions().isEmpty()));
-        assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.pierLightPositions().isEmpty()));
         assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.railingLightPositions().isEmpty()));
+        assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.pierLightPositions().isEmpty()));
     }
 
     @Test
@@ -80,6 +80,82 @@ class StructureConstructionManagerRoadLinkTest {
                 phases.stream().sorted(Comparator.naturalOrder()).toList(),
                 phases
         );
+    }
+
+    @Test
+    void longBridgeBuildStepsIncludeHeadsSupportsAndLights() {
+        RoadPlacementPlan plan = longBridgePlanFixture();
+
+        List<BlockPos> buildStepPositions = plan.buildSteps().stream()
+                .map(RoadGeometryPlanner.RoadBuildStep::pos)
+                .toList();
+        List<BlockPos> expectedSupportPositions = plan.corridorPlan().slices().stream()
+                .flatMap(slice -> slice.supportPositions().stream())
+                .toList();
+        List<BlockPos> expectedLightPositions = plan.corridorPlan().slices().stream()
+                .flatMap(slice -> java.util.stream.Stream.concat(
+                        slice.railingLightPositions().stream(),
+                        slice.pierLightPositions().stream()
+                ))
+                .toList();
+
+        assertFalse(expectedSupportPositions.isEmpty(), () -> plan.corridorPlan().slices().toString());
+        assertFalse(expectedLightPositions.isEmpty(), () -> plan.corridorPlan().slices().toString());
+        assertTrue(buildStepPositions.containsAll(expectedSupportPositions), buildStepPositions.toString());
+        assertTrue(buildStepPositions.containsAll(expectedLightPositions), buildStepPositions.toString());
+    }
+
+    @Test
+    void longBridgePlacementArtifactsOwnBridgeSupportAndFoundationCoverage() {
+        RoadPlacementPlan plan = longBridgePlanFixture();
+
+        List<BlockPos> owned = invokeRoadOwnedBlocks(null, plan);
+        List<BlockPos> supports = plan.corridorPlan().slices().stream()
+                .flatMap(slice -> slice.supportPositions().stream())
+                .toList();
+
+        assertFalse(supports.isEmpty(), () -> plan.corridorPlan().slices().toString());
+        assertTrue(owned.containsAll(supports), owned.toString());
+    }
+
+    @Test
+    void failedStructuralRoadStepsPreventLaterDecorPlacement() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.blockStates.put(new BlockPos(0, 65, 0).asLong(), Blocks.CHEST.defaultBlockState());
+
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICKS.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 65, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 66, 0), Blocks.COBBLESTONE_WALL.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICKS.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.SUPPORT),
+                        new RoadGeometryPlanner.RoadBuildStep(1, new BlockPos(0, 65, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK),
+                        new RoadGeometryPlanner.RoadBuildStep(2, new BlockPos(0, 66, 0), Blocks.COBBLESTONE_WALL.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECOR)
+                ),
+                List.of(),
+                List.of(),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0)
+        );
+
+        Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|a|b", plan), 3);
+
+        assertEquals(Blocks.AIR.defaultBlockState(), level.getBlockState(new BlockPos(0, 64, 0)));
+        assertEquals(Blocks.CHEST.defaultBlockState(), level.getBlockState(new BlockPos(0, 65, 0)));
+        assertEquals(Blocks.AIR.defaultBlockState(), level.getBlockState(new BlockPos(0, 66, 0)));
+        assertEquals(0, readRecordComponentAsInt(advanced, "placedStepCount"));
     }
 
     @Test
@@ -121,7 +197,7 @@ class StructureConstructionManagerRoadLinkTest {
         assertTrue(plan.ghostBlocks().stream().anyMatch(block -> block.state().is(Blocks.COBBLESTONE_WALL)));
         assertTrue(plan.ghostBlocks().stream().noneMatch(block -> block.state().is(Blocks.STONE_BRICK_STAIRS)));
         assertTrue(plan.ghostBlocks().stream().noneMatch(block -> block.state().is(Blocks.SPRUCE_SLAB)));
-        assertTrue(plan.ghostBlocks().stream().noneMatch(block -> block.state().is(Blocks.SPRUCE_FENCE)));
+        assertTrue(plan.ghostBlocks().stream().anyMatch(block -> block.state().is(Blocks.SPRUCE_FENCE)));
     }
 
     @Test
@@ -193,6 +269,100 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void longWaterCrossingStillSynthesizesMidSpanPierPreviewWhenFoundationProbeFindsOnlyWater() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 9, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 1; x <= 8; x++) {
+            level.surfaceHeights.put(columnKey(x, 0), 40);
+            for (int y = 40; y >= 0; y--) {
+                level.blockStates.put(new BlockPos(x, y, 0).asLong(), Blocks.WATER.defaultBlockState());
+            }
+        }
+
+        RoadPlacementPlan plan = invokeCreateRoadPlacementPlan(
+                level,
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        new BlockPos(4, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(6, 68, 0),
+                        new BlockPos(7, 68, 0),
+                        new BlockPos(8, 66, 0),
+                        new BlockPos(9, 64, 0)
+                )
+        );
+
+        assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> slice.bridgeMode() == RoadBridgePlanner.BridgeMode.PIER_BRIDGE));
+        assertTrue(
+                plan.corridorPlan().slices().stream()
+                        .filter(slice -> slice.index() > 1 && slice.index() < 8)
+                        .anyMatch(slice -> !slice.supportPositions().isEmpty()),
+                () -> plan.corridorPlan().slices().toString()
+        );
+    }
+
+    @Test
+    void wideWaterCrossingProtectsOnlyNarrowMainChannelAndKeepsMidSpanPiersOutsideIt() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 12, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 1; x <= 11; x++) {
+            setSurfaceColumn(level, x, 0, 40, Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 39, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        RoadPlacementPlan plan = invokeCreateRoadPlacementPlan(
+                level,
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        new BlockPos(4, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(6, 68, 0),
+                        new BlockPos(7, 68, 0),
+                        new BlockPos(8, 68, 0),
+                        new BlockPos(9, 68, 0),
+                        new BlockPos(10, 68, 0),
+                        new BlockPos(11, 66, 0),
+                        new BlockPos(12, 64, 0)
+                )
+        );
+
+        assertEquals(1, plan.navigableWaterBridgeRanges().size(), () -> String.valueOf(plan.navigableWaterBridgeRanges()));
+        RoadPlacementPlan.BridgeRange mainChannel = plan.navigableWaterBridgeRanges().get(0);
+        int protectedWidth = mainChannel.endIndex() - mainChannel.startIndex() + 1;
+        assertTrue(protectedWidth <= 3,
+                () -> "expected a narrow protected main channel, got " + plan.navigableWaterBridgeRanges());
+
+        List<Integer> supportIndexes = plan.corridorPlan().slices().stream()
+                .filter(slice -> !slice.supportPositions().isEmpty())
+                .map(RoadCorridorPlan.CorridorSlice::index)
+                .toList();
+
+        assertTrue(supportIndexes.size() >= 3, () -> "expected restored mid-span piers, got " + supportIndexes);
+        assertTrue(supportIndexes.stream().anyMatch(index -> index < mainChannel.startIndex()), () -> supportIndexes.toString());
+        assertTrue(supportIndexes.stream().anyMatch(index -> index > mainChannel.endIndex()), () -> supportIndexes.toString());
+        assertTrue(
+                supportIndexes.stream().noneMatch(index -> index >= mainChannel.startIndex() && index <= mainChannel.endIndex()),
+                () -> "protected main channel should stay pier-free: channel=" + mainChannel + " supports=" + supportIndexes
+        );
+    }
+
+    @Test
     void bridgeRailingAndLightsStayWithinBridgeSurfaceFootprint() {
         RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
                 List.of(
@@ -214,10 +384,40 @@ class StructureConstructionManagerRoadLinkTest {
                 .map(pos -> BlockPos.asLong(pos.getX(), 0, pos.getZ()))
                 .collect(java.util.stream.Collectors.toSet());
 
+        java.util.Set<Long> lampColumns = plan.corridorPlan().slices().stream()
+                .filter(slice -> slice.segmentKind() != RoadCorridorPlan.SegmentKind.LAND_APPROACH)
+                .flatMap(slice -> java.util.stream.Stream.concat(slice.railingLightPositions().stream(), slice.pierLightPositions().stream())
+                        .flatMap(lightPos -> {
+                            int armX = Integer.compare(lightPos.getX() - slice.deckCenter().getX(), 0);
+                            int armZ = Integer.compare(lightPos.getZ() - slice.deckCenter().getZ(), 0);
+                            return java.util.stream.Stream.of(
+                                    BlockPos.asLong(lightPos.getX(), 0, lightPos.getZ()),
+                                    BlockPos.asLong(lightPos.getX() + armX, 0, lightPos.getZ() + armZ)
+                            );
+                        }))
+                .collect(java.util.stream.Collectors.toSet());
+
         assertTrue(plan.ghostBlocks().stream()
-                .filter(block -> block.state().is(Blocks.COBBLESTONE_WALL) || block.state().is(Blocks.LANTERN))
+                .filter(block -> block.state().is(Blocks.COBBLESTONE_WALL))
                 .allMatch(block -> bridgeSurfaceColumns.contains(BlockPos.asLong(block.pos().getX(), 0, block.pos().getZ()))),
                 () -> plan.ghostBlocks().toString());
+        assertTrue(plan.ghostBlocks().stream()
+                .filter(block -> block.state().is(Blocks.LANTERN) || block.state().is(Blocks.SPRUCE_FENCE))
+                .allMatch(block -> lampColumns.contains(BlockPos.asLong(block.pos().getX(), 0, block.pos().getZ()))),
+                () -> plan.ghostBlocks().toString());
+    }
+
+    @Test
+    void bridgeLanternsHangFromOutboardFenceArms() {
+        RoadPlacementPlan plan = longBridgePlanFixture();
+
+        List<RoadGeometryPlanner.GhostRoadBlock> lanterns = plan.ghostBlocks().stream()
+                .filter(block -> block.state().is(Blocks.LANTERN))
+                .toList();
+
+        assertFalse(lanterns.isEmpty(), "expected bridge lanterns");
+        assertTrue(lanterns.stream().allMatch(block -> hasGhost(plan, block.pos().above(), Blocks.SPRUCE_FENCE)),
+                () -> lanterns.toString() + " / " + plan.ghostBlocks());
     }
 
     @Test
@@ -339,13 +539,69 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
-    void bridgeLightsBuildAsWallPillarsWithLanternsOnTop() {
+    void bridgeLightsHangFromFenceArmsOutsideRailingWalls() {
         RoadPlacementPlan plan = longBridgePlanFixture();
 
         assertTrue(plan.ghostBlocks().stream().anyMatch(block ->
                         block.state().is(Blocks.LANTERN)
-                                && hasGhost(plan, block.pos().below(), Blocks.COBBLESTONE_WALL)
-                                && hasGhost(plan, block.pos().below(2), Blocks.COBBLESTONE_WALL)),
+                                && hasGhost(plan, block.pos().above(), Blocks.SPRUCE_FENCE)
+                                && (hasGhost(plan, block.pos().above().north(), Blocks.COBBLESTONE_WALL)
+                                || hasGhost(plan, block.pos().above().south(), Blocks.COBBLESTONE_WALL)
+                                || hasGhost(plan, block.pos().above().east(), Blocks.COBBLESTONE_WALL)
+                                || hasGhost(plan, block.pos().above().west(), Blocks.COBBLESTONE_WALL))),
+                () -> plan.ghostBlocks().toString());
+    }
+
+    @Test
+    void longLandRouteUsesOutboardHangingLanternStreetlights() {
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
+                java.util.stream.IntStream.rangeClosed(0, 48)
+                        .mapToObj(x -> new BlockPos(x, 64, 0))
+                        .toList(),
+                List.of(),
+                List.of()
+        );
+
+        assertTrue(hasGhost(plan, new BlockPos(24, 67, -4), Blocks.OAK_FENCE), () -> plan.ghostBlocks().toString());
+        assertTrue(hasGhost(plan, new BlockPos(24, 66, -4), Blocks.LANTERN), () -> plan.ghostBlocks().toString());
+        assertFalse(hasGhost(plan, new BlockPos(24, 67, -3), Blocks.LANTERN), () -> plan.ghostBlocks().toString());
+    }
+
+    @Test
+    void pierBridgePlanProducesVillageStyleBridgeAndPierLamps() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 9, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 1; x <= 8; x++) {
+            setSurfaceColumn(level, x, 0, 40, Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 39, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        RoadPlacementPlan plan = invokeCreateRoadPlacementPlan(
+                level,
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        new BlockPos(4, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(6, 68, 0),
+                        new BlockPos(7, 68, 0),
+                        new BlockPos(8, 66, 0),
+                        new BlockPos(9, 64, 0)
+                )
+        );
+
+        assertTrue(plan.corridorPlan().slices().stream().anyMatch(slice -> !slice.pierLightPositions().isEmpty()),
+                () -> plan.corridorPlan().slices().toString());
+        assertTrue(plan.ghostBlocks().stream().anyMatch(block -> block.state().is(Blocks.SPRUCE_FENCE)),
+                () -> plan.ghostBlocks().toString());
+        assertTrue(plan.ghostBlocks().stream().anyMatch(block -> block.state().is(Blocks.LANTERN) && Math.abs(block.pos().getZ()) >= 4),
                 () -> plan.ghostBlocks().toString());
     }
 
@@ -579,6 +835,73 @@ class StructureConstructionManagerRoadLinkTest {
         }
     }
 
+    private static Object invokeAdvanceRoadBuildSteps(ServerLevel level, Object job, int stepCount) {
+        try {
+            Method method = java.util.Arrays.stream(StructureConstructionManager.class.getDeclaredMethods())
+                    .filter(candidate -> candidate.getName().equals("placeRoadBuildSteps"))
+                    .filter(candidate -> candidate.getParameterCount() == 3)
+                    .findFirst()
+                    .orElseThrow();
+            method.setAccessible(true);
+            return method.invoke(null, level, job, stepCount);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeRoadOwnedBlocks(ServerLevel level, RoadPlacementPlan plan) {
+        try {
+            Method method = StructureConstructionManager.class.getDeclaredMethod(
+                    "roadOwnedBlocks",
+                    ServerLevel.class,
+                    RoadPlacementPlan.class
+            );
+            method.setAccessible(true);
+            return (List<BlockPos>) method.invoke(null, level, plan);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static Object newRoadConstructionJob(ServerLevel level, String roadId, RoadPlacementPlan plan) {
+        try {
+            Class<?> jobClass = Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadConstructionJob");
+            java.lang.reflect.Constructor<?> constructor = java.util.Arrays.stream(jobClass.getDeclaredConstructors())
+                    .filter(candidate -> candidate.getParameterCount() == 15)
+                    .findFirst()
+                    .orElseThrow();
+            constructor.setAccessible(true);
+            return constructor.newInstance(
+                    level,
+                    roadId,
+                    java.util.UUID.randomUUID(),
+                    "town_a",
+                    "nation_a",
+                    "Town A",
+                    "Town B",
+                    plan,
+                    List.of(),
+                    0,
+                    0.0D,
+                    false,
+                    0,
+                    false,
+                    java.util.Set.of()
+            );
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static int readRecordComponentAsInt(Object instance, String accessor) {
+        try {
+            return (int) instance.getClass().getDeclaredMethod(accessor).invoke(instance);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> type) {
         try {
@@ -603,6 +926,12 @@ class StructureConstructionManagerRoadLinkTest {
         @Override
         public BlockState getBlockState(BlockPos pos) {
             return blockStates.getOrDefault(pos.asLong(), Blocks.AIR.defaultBlockState());
+        }
+
+        @Override
+        public boolean setBlock(BlockPos pos, BlockState newState, int flags) {
+            blockStates.put(pos.asLong(), newState);
+            return true;
         }
 
         @Override

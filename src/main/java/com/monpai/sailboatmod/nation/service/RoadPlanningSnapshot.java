@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 public record RoadPlanningSnapshot(Map<Long, ColumnSample> columns,
+                                   boolean sourceIslandLike,
                                    boolean targetIslandLike,
                                    List<BlockPos> bridgeHeadCandidates,
                                    BlockPos start,
@@ -21,6 +22,10 @@ public record RoadPlanningSnapshot(Map<Long, ColumnSample> columns,
 
     public ColumnSample column(int x, int z) {
         return columns.get(BlockPos.asLong(x, 0, z));
+    }
+
+    public boolean islandLikeAtEitherEndpoint() {
+        return sourceIslandLike || targetIslandLike;
     }
 
     public Map<Long, RoadTerrainSamplingCache.TerrainColumn> terrainColumns() {

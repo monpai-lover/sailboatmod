@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlanningSnapshotBuilderTest {
@@ -71,6 +72,75 @@ class RoadPlanningSnapshotBuilderTest {
         );
 
         assertTrue(summary.isIslandLike());
+    }
+
+    @Test
+    void snapshotBuilderMarksSourceIslandLikeForIslandToMainlandRoute() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = -8; x <= 12; x++) {
+            for (int z = -8; z <= 8; z++) {
+                if (x <= 1 && Math.abs(z) <= 1) {
+                    level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+                } else if (x >= 5) {
+                    level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+                } else {
+                    level.setSurface(x, z, 64, Blocks.WATER.defaultBlockState(), Blocks.AIR.defaultBlockState());
+                }
+            }
+        }
+
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.buildForTest(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(6, 64, 0),
+                Set.of(),
+                Set.of()
+        );
+
+        assertTrue(snapshot.sourceIslandLike());
+        assertFalse(snapshot.targetIslandLike());
+    }
+
+    @Test
+    void snapshotBuilderDoesNotMarkConnectedPeninsulaAsIsland() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = -8; x <= 32; x++) {
+            for (int z = -8; z <= 8; z++) {
+                level.setSurface(x, z, 64, Blocks.WATER.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+        for (int x = -2; x <= 20; x++) {
+            level.setSurface(x, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        }
+        for (int x = -2; x <= 2; x++) {
+            for (int z = -2; z <= 2; z++) {
+                level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+        for (int x = 20; x <= 32; x++) {
+            for (int z = -6; z <= 6; z++) {
+                level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.buildForTest(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(24, 64, 0),
+                Set.of(),
+                Set.of()
+        );
+
+        assertFalse(snapshot.sourceIslandLike(), "connected peninsula should not be classified as island");
+        assertFalse(snapshot.targetIslandLike(), "same connected mainland should not be classified as island");
     }
 
     @SuppressWarnings("unchecked")

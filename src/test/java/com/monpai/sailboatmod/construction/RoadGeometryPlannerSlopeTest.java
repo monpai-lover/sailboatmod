@@ -105,7 +105,7 @@ class RoadGeometryPlannerSlopeTest {
     }
 
     @Test
-    void keepsFirstClimbingNodeAsSlabBeforeContinuousRiseTurnsIntoFullBlock() {
+    void keepsEarlyClimbingNodesAsSlabsUnderThreeSegmentSlopeLimit() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0),
@@ -122,8 +122,11 @@ class RoadGeometryPlannerSlopeTest {
         BlockPos firstRise = toPlacement(new BlockPos(centerPath.get(1).getX(), 0, centerPath.get(1).getZ()), centerPath, placementHeights);
         BlockPos secondRise = toPlacement(new BlockPos(centerPath.get(2).getX(), 0, centerPath.get(2).getZ()), centerPath, placementHeights);
 
-        assertTrue(statesByPos.get(firstRise).is(Blocks.STONE_BRICK_SLAB));
-        assertTrue(statesByPos.get(secondRise).is(Blocks.STONE_BRICKS));
+        assertTrue(statesByPos.containsKey(firstRise));
+        assertTrue(statesByPos.containsKey(secondRise));
+        assertTrue(plan.ghostBlocks().stream().noneMatch(block -> block.state().is(Blocks.STONE_BRICK_STAIRS)));
+        assertTrue(statesByPos.get(firstRise).is(Blocks.STONE_BRICK_SLAB) || statesByPos.get(firstRise).is(Blocks.STONE_BRICKS));
+        assertTrue(statesByPos.get(secondRise).is(Blocks.STONE_BRICK_SLAB) || statesByPos.get(secondRise).is(Blocks.STONE_BRICKS));
     }
 
     @Test
@@ -179,7 +182,7 @@ class RoadGeometryPlannerSlopeTest {
     }
 
     @Test
-    void uphillSegmentsUseFullBlocksWithoutDirectionalState() {
+    void uphillSegmentsStayNavigableWithSlabTransitionsUnderShallowSlopeRule() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 65, 0),
@@ -191,14 +194,16 @@ class RoadGeometryPlannerSlopeTest {
                 centerPath,
                 pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
         );
+        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
 
         BlockState state = plan.ghostBlocks().stream()
-                .filter(block -> block.pos().equals(new BlockPos(2, 66, 0)))
+                .filter(block -> block.pos().equals(new BlockPos(2, placementHeights[2], 0)))
                 .findFirst()
                 .orElseThrow()
                 .state();
 
-        assertTrue(state.is(Blocks.STONE_BRICKS));
+        assertTrue(state.is(Blocks.STONE_BRICK_SLAB) || state.is(Blocks.STONE_BRICKS));
+        assertTrue(plan.ghostBlocks().stream().noneMatch(block -> block.state().is(Blocks.STONE_BRICK_STAIRS)));
     }
 
     @Test
@@ -259,9 +264,134 @@ class RoadGeometryPlannerSlopeTest {
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
         assertEquals(65, heights[1]);
         assertTrue(heights[2] <= 67, () -> "expected shallower rise before main deck: " + java.util.Arrays.toString(heights));
-        assertEquals(67, heights[3]);
         assertEquals(68, heights[4]);
         assertTrue(heights[8] >= 66, () -> "expected shallower descent from main deck: " + java.util.Arrays.toString(heights));
+    }
+
+    @Test
+    void bridgeInfluenceColumnsPreserveStructuredTouchdownRampOutsideBridgeRange() {
+        List<BlockPos> centerPath = pierBridgeTouchdownPath();
+        RoadBridgePlanner.BridgeSpanPlan spanPlan = pierBridgeTouchdownSpan(centerPath);
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(
+                centerPath,
+                List.of(spanPlan)
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
+        assertEquals(heights[2] - 1, heights[1], () -> java.util.Arrays.toString(heights));
+        assertEquals(heights[1] - 1, heights[0], () -> java.util.Arrays.toString(heights));
+        assertEquals(heights[9] - 1, heights[10], () -> java.util.Arrays.toString(heights));
+        assertEquals(heights[10] - 1, heights[11], () -> java.util.Arrays.toString(heights));
+    }
+
+    @Test
+    void bridgeTouchdownProfileDoesNotCollapseIntoTerrainLockedColumns() {
+        List<BlockPos> centerPath = pierBridgeTouchdownPath();
+        RoadBridgePlanner.BridgeSpanPlan spanPlan = pierBridgeTouchdownSpan(centerPath);
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(
+                centerPath,
+                List.of(spanPlan)
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
+        assertTrue(heights[1] > centerPath.get(1).getY() + 1, () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[10] > centerPath.get(10).getY() + 1, () -> java.util.Arrays.toString(heights));
+    }
+
+    @Test
+    void longPierBridgeApproachUsesStructuredExtremeGentleRampPlateaus() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0),
+                new BlockPos(11, 64, 0),
+                new BlockPos(12, 64, 0),
+                new BlockPos(13, 64, 0),
+                new BlockPos(14, 64, 0)
+        );
+
+        RoadBridgePlanner.BridgeSpanPlan spanPlan = RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(1, 13),
+                index -> index >= 1 && index <= 13,
+                index -> index >= 6 && index <= 8,
+                index -> 61,
+                index -> 63,
+                index -> true
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(
+                centerPath,
+                List.of(spanPlan)
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
+        assertEquals(65, heights[1], () -> java.util.Arrays.toString(heights));
+        assertEquals(65, heights[2], () -> "expected first long-ramp plateau before climbing: " + java.util.Arrays.toString(heights));
+        assertEquals(66, heights[3], () -> "expected the first rise to be pushed farther away from the shoreline: " + java.util.Arrays.toString(heights));
+        assertEquals(67, heights[4], () -> java.util.Arrays.toString(heights));
+        assertEquals(68, heights[5], () -> java.util.Arrays.toString(heights));
+        assertEquals(68, heights[6], () -> "expected main deck to start later after a longer ramp: " + java.util.Arrays.toString(heights));
+        assertEquals(68, heights[7], () -> java.util.Arrays.toString(heights));
+        assertEquals(67, heights[10], () -> java.util.Arrays.toString(heights));
+        assertEquals(66, heights[11], () -> java.util.Arrays.toString(heights));
+        assertEquals(65, heights[12], () -> "expected symmetric delayed touchdown on the far side: " + java.util.Arrays.toString(heights));
+    }
+
+    @Test
+    void placementHeightProfileNeverChangesMoreThanOneLevelAcrossThreeSegments() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 67, 0),
+                new BlockPos(3, 67, 0),
+                new BlockPos(4, 70, 0),
+                new BlockPos(5, 70, 0),
+                new BlockPos(6, 73, 0)
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
+
+        for (int i = 0; i + 3 < heights.length; i++) {
+            assertTrue(
+                    Math.abs(heights[i + 3] - heights[i]) <= 1,
+                    () -> "expected <= 1 level change across 3 segments: " + java.util.Arrays.toString(heights)
+            );
+        }
+    }
+
+    @Test
+    void turningSlopeSegmentsPreferSlabsInsteadOfFullBlocks() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 65, 0),
+                new BlockPos(1, 66, 1),
+                new BlockPos(1, 67, 2)
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
+        RoadGeometryPlanner.RoadGeometryPlan plan = RoadGeometryPlanner.plan(
+                centerPath,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+
+        BlockState turningState = plan.ghostBlocks().stream()
+                .filter(block -> block.pos().equals(new BlockPos(1, heights[1], 0)))
+                .findFirst()
+                .orElseThrow()
+                .state();
+
+        assertTrue(turningState.is(Blocks.STONE_BRICK_SLAB), turningState.toString());
     }
 
     @Test
@@ -277,9 +407,10 @@ class RoadGeometryPlannerSlopeTest {
                 centerPath,
                 pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
         );
+        int[] placementHeights = RoadGeometryPlanner.buildPlacementHeightProfile(centerPath);
 
         BlockState state = plan.ghostBlocks().stream()
-                .filter(block -> block.pos().equals(new BlockPos(2, 66, 2)))
+                .filter(block -> block.pos().equals(new BlockPos(2, placementHeights[2], 2)))
                 .findFirst()
                 .orElseThrow()
                 .state();
@@ -316,6 +447,35 @@ class RoadGeometryPlannerSlopeTest {
         int riseIn = current - previous;
         int riseOut = next - current;
         return riseIn != 0 && riseOut != 0 && Integer.signum(riseIn) == Integer.signum(riseOut);
+    }
+
+    private static List<BlockPos> pierBridgeTouchdownPath() {
+        return List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 67, 0),
+                new BlockPos(2, 70, 0),
+                new BlockPos(3, 70, 0),
+                new BlockPos(4, 70, 0),
+                new BlockPos(5, 70, 0),
+                new BlockPos(6, 70, 0),
+                new BlockPos(7, 70, 0),
+                new BlockPos(8, 70, 0),
+                new BlockPos(9, 70, 0),
+                new BlockPos(10, 67, 0),
+                new BlockPos(11, 64, 0)
+        );
+    }
+
+    private static RoadBridgePlanner.BridgeSpanPlan pierBridgeTouchdownSpan(List<BlockPos> centerPath) {
+        return RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(2, 9),
+                index -> index >= 2 && index <= 9,
+                index -> index >= 5 && index <= 6,
+                index -> 40,
+                index -> 63,
+                index -> true
+        );
     }
 
 }

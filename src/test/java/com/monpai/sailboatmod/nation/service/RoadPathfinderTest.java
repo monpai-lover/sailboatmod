@@ -100,6 +100,7 @@ class RoadPathfinderTest {
         RoadPlanningSnapshot snapshot = new RoadPlanningSnapshot(
                 columns,
                 false,
+                false,
                 List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0)),
                 new BlockPos(0, 64, 0),
                 new BlockPos(4, 64, 0)
@@ -196,6 +197,25 @@ class RoadPathfinderTest {
 
         assertNotNull(surface);
         assertTrue(surface.getY() <= 57);
+    }
+
+    @Test
+    void findSurfaceSkipsTreeTrunkAndFindsActualGround() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.surfaceHeights.put(columnKey(0, 0), 70);
+        level.blockStates.put(new BlockPos(0, 70, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.blockStates.put(new BlockPos(0, 69, 0).asLong(), Blocks.OAK_LEAVES.defaultBlockState());
+        level.blockStates.put(new BlockPos(0, 68, 0).asLong(), Blocks.AIR.defaultBlockState());
+        level.blockStates.put(new BlockPos(0, 64, 0).asLong(), Blocks.DIRT.defaultBlockState());
+
+        BlockPos surface = RoadPathfinder.findSurfaceForTest(level, 0, 0);
+
+        assertNotNull(surface);
+        assertEquals(new BlockPos(0, 64, 0), surface);
     }
 
     @Test
@@ -351,6 +371,116 @@ class RoadPathfinderTest {
 
         assertFalse(path.isEmpty(), "path should not be empty");
         assertTrue(path.stream().anyMatch(pos -> pos.getX() >= 2 && pos.getX() <= 6 && pos.getY() >= 68), path.toString());
+    }
+
+    @Test
+    void snapshotBackedBridgeDeckAnchorsStillGenerateAcrossWaterSpan() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        Map<Long, RoadPlanningSnapshot.ColumnSample> columns = new HashMap<>();
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 7, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 8, 0, 64, Blocks.DIRT.defaultBlockState());
+        columns.put(columnKey(0, 0), new RoadPlanningSnapshot.ColumnSample(new BlockPos(0, 64, 0), Blocks.DIRT.defaultBlockState(), 0, false, 64));
+        columns.put(columnKey(1, 0), new RoadPlanningSnapshot.ColumnSample(new BlockPos(1, 64, 0), Blocks.DIRT.defaultBlockState(), 0, false, 64));
+        columns.put(columnKey(7, 0), new RoadPlanningSnapshot.ColumnSample(new BlockPos(7, 64, 0), Blocks.DIRT.defaultBlockState(), 0, false, 64));
+        columns.put(columnKey(8, 0), new RoadPlanningSnapshot.ColumnSample(new BlockPos(8, 64, 0), Blocks.DIRT.defaultBlockState(), 0, false, 64));
+        for (int x = 2; x <= 6; x++) {
+            level.surfaceHeights.put(columnKey(x, 0), 64);
+            level.blockStates.put(new BlockPos(x, 64, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 62, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 61, 0).asLong(), Blocks.STONE.defaultBlockState());
+            columns.put(columnKey(x, 0), new RoadPlanningSnapshot.ColumnSample(
+                    new BlockPos(x, 61, 0),
+                    Blocks.STONE.defaultBlockState(),
+                    2,
+                    true,
+                    61
+            ));
+        }
+
+        RoadPlanningSnapshot snapshot = new RoadPlanningSnapshot(
+                columns,
+                false,
+                false,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                new BlockPos(0, 64, 0),
+                new BlockPos(8, 64, 0)
+        );
+
+        List<BlockPos> anchors = RoadPathfinder.collectBridgeDeckAnchors(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(8, 64, 0),
+                java.util.Set.of(),
+                snapshot
+        );
+
+        assertFalse(anchors.isEmpty(), "snapshot-backed bridge deck anchors should not be empty");
+        assertTrue(anchors.stream().anyMatch(pos -> pos.getX() >= 2 && pos.getX() <= 6 && pos.getY() >= 69), anchors.toString());
+    }
+
+    @Test
+    void islandToMainlandFortyFiveBlockGapBuildsBridgePathWhenWaterFallbackIsAllowed() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = -8; x <= 56; x++) {
+            for (int z = -8; z <= 8; z++) {
+                level.surfaceHeights.put(columnKey(x, z), 64);
+                level.blockStates.put(new BlockPos(x, 64, z).asLong(), Blocks.WATER.defaultBlockState());
+                level.blockStates.put(new BlockPos(x, 63, z).asLong(), Blocks.WATER.defaultBlockState());
+                level.blockStates.put(new BlockPos(x, 62, z).asLong(), Blocks.WATER.defaultBlockState());
+                level.blockStates.put(new BlockPos(x, 61, z).asLong(), Blocks.STONE.defaultBlockState());
+            }
+        }
+        for (int x = -2; x <= 2; x++) {
+            for (int z = -2; z <= 2; z++) {
+                setSurfaceColumn(level, x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+            }
+        }
+        for (int x = 47; x <= 64; x++) {
+            for (int z = -8; z <= 8; z++) {
+                setSurfaceColumn(level, x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+            }
+        }
+
+        BlockPos start = new BlockPos(0, 64, 0);
+        BlockPos end = new BlockPos(48, 64, 0);
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.buildForTest(
+                level,
+                start,
+                end,
+                java.util.Set.of(),
+                java.util.Set.of()
+        );
+
+        List<BlockPos> path = RoadPathfinder.findPath(
+                level,
+                start,
+                end,
+                java.util.Set.of(),
+                java.util.Set.of(),
+                true,
+                snapshot
+        );
+
+        assertTrue(snapshot.sourceIslandLike(), "source should be classified as island-like");
+        assertFalse(snapshot.targetIslandLike(), "mainland target should not be island-like");
+        assertFalse(path.isEmpty(), "45-block island-to-mainland path should not be empty");
+        assertEquals(start, path.get(0));
+        assertEquals(end, path.get(path.size() - 1));
+        assertTrue(
+                path.stream().anyMatch(pos -> pos.getX() >= 3 && pos.getX() <= 46),
+                path.toString()
+        );
     }
 
     @Test

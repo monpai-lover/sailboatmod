@@ -12,7 +12,7 @@ import java.util.Objects;
 import java.util.function.Function;
 
 public final class RoadGeometryPlanner {
-    private static final int MAX_SLOPE_STEP_PER_TWO_SEGMENTS = 1;
+    private static final int MAX_SLOPE_STEP_PER_THREE_SEGMENTS = 1;
     private static final int DEFAULT_NAVIGABLE_BRIDGE_RAMP_SEGMENTS = 4;
     private static final double STAIR_TRAVEL_BAND_MAX_DIST_SQ = 2.25D;
     private static final int ARCHED_CROWN_HEIGHT_SHORT = 2;
@@ -52,6 +52,7 @@ public final class RoadGeometryPlanner {
         for (GhostCandidate candidate : ghostByPos.values()) {
             ghostBlocks.add(new GhostRoadBlock(candidate.pos(), candidate.state()));
         }
+        ghostBlocks = enforceTurningSlopeSlabStates(corridorPlan.centerPath(), corridorDeckHeights(corridorPlan), ghostBlocks);
         ghostBlocks = List.copyOf(ghostBlocks);
         List<RoadBuildStep> buildSteps = new ArrayList<>(ghostBlocks.size());
         for (int i = 0; i < ghostBlocks.size(); i++) {
@@ -93,6 +94,7 @@ public final class RoadGeometryPlanner {
         for (GhostCandidate candidate : ghostByPos.values()) {
             ghostBlocks.add(new GhostRoadBlock(candidate.pos(), candidate.state()));
         }
+        ghostBlocks = enforceTurningSlopeSlabStates(path, placementHeights, ghostBlocks);
         ghostBlocks = List.copyOf(ghostBlocks);
         List<RoadBuildStep> buildSteps = new ArrayList<>(ghostBlocks.size());
         for (int i = 0; i < ghostBlocks.size(); i++) {
@@ -118,10 +120,14 @@ public final class RoadGeometryPlanner {
         if (slice.index() != index) {
             return List.of();
         }
-        if (!slice.surfacePositions().isEmpty()) {
+        if (!slice.surfacePositions().isEmpty() && !usesSlopeSemantics(slice.segmentKind())) {
             return slice.surfacePositions();
         }
-        return slicePositions(corridorPlan.centerPath(), corridorDeckHeights(corridorPlan), index);
+        int[] deckHeights = corridorDeckHeights(corridorPlan);
+        if (usesSlopeSemantics(slice.segmentKind())) {
+            return slicePositionsAtFixedHeight(sliceFootprint(corridorPlan, index), deckHeights[index]);
+        }
+        return slicePositions(corridorPlan.centerPath(), deckHeights, index);
     }
 
     public static List<GhostRoadBlock> sliceGhostBlocks(RoadCorridorPlan corridorPlan,
@@ -201,6 +207,7 @@ public final class RoadGeometryPlanner {
         }
         int[] sampledHeights = samplePlacementHeights(centerPath);
         int[] smoothed = smoothPlacementHeights(sampledHeights);
+        smoothed = smoothPlacementHeights(flattenTurningSlopeHeights(centerPath, smoothed));
         int[] bridged = applyBridgeProfiles(smoothed, bridgeProfiles);
         int[] transitioned = propagateBridgeApproachHeights(bridged, bridgeProfiles);
         return constrainToTerrainEnvelope(transitioned, sampledHeights, bridgeProfiles);
@@ -215,6 +222,7 @@ public final class RoadGeometryPlanner {
         }
         int[] sampledHeights = samplePlacementHeights(centerPath);
         int[] smoothed = smoothPlacementHeights(sampledHeights);
+        smoothed = smoothPlacementHeights(flattenTurningSlopeHeights(centerPath, smoothed));
         int[] adjusted = applyBridgeSpanPlans(smoothed, bridgePlans);
         adjusted = propagateBridgeApproachHeightsFromSpanPlans(adjusted, bridgePlans);
         return constrainToTerrainEnvelopeFromSpanPlans(adjusted, sampledHeights, bridgePlans);
@@ -338,6 +346,39 @@ public final class RoadGeometryPlanner {
         List<BlockPos> resolved = new ArrayList<>(columns.size());
         for (BlockPos column : columns) {
             int y = interpolatePlacementHeight(column.getX(), column.getZ(), centerPath, placementHeights);
+            resolved.add(new BlockPos(column.getX(), y, column.getZ()));
+        }
+        return List.copyOf(resolved);
+    }
+
+    private static List<BlockPos> sliceFootprint(RoadCorridorPlan corridorPlan, int index) {
+        if (corridorPlan == null || index < 0 || index >= corridorPlan.slices().size()) {
+            return List.of();
+        }
+        RoadCorridorPlan.CorridorSlice slice = corridorPlan.slices().get(index);
+        if (slice != null && slice.surfacePositions() != null && !slice.surfacePositions().isEmpty()) {
+            LinkedHashSet<BlockPos> footprint = new LinkedHashSet<>();
+            for (BlockPos pos : slice.surfacePositions()) {
+                if (pos != null) {
+                    footprint.add(new BlockPos(pos.getX(), 0, pos.getZ()));
+                }
+            }
+            if (!footprint.isEmpty()) {
+                return List.copyOf(footprint);
+            }
+        }
+        return buildRibbonSlice(corridorPlan.centerPath(), index).columns();
+    }
+
+    private static List<BlockPos> slicePositionsAtFixedHeight(List<BlockPos> footprint, int y) {
+        if (footprint == null || footprint.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<BlockPos> resolved = new ArrayList<>(footprint.size());
+        for (BlockPos column : footprint) {
+            if (column == null) {
+                continue;
+            }
             resolved.add(new BlockPos(column.getX(), y, column.getZ()));
         }
         return List.copyOf(resolved);
@@ -474,7 +515,43 @@ public final class RoadGeometryPlanner {
         for (int i = 0; i < corridorPlan.slices().size(); i++) {
             placementHeights[i] = corridorPlan.slices().get(i).deckCenter().getY();
         }
+        for (int i = 1; i < placementHeights.length; i++) {
+            if (!usesSlopeTransition(corridorPlan, i - 1, i)) {
+                continue;
+            }
+            int previous = placementHeights[i - 1];
+            placementHeights[i] = clampHeightStep(placementHeights[i], previous);
+        }
+        for (int i = placementHeights.length - 2; i >= 0; i--) {
+            if (!usesSlopeTransition(corridorPlan, i, i + 1)) {
+                continue;
+            }
+            int next = placementHeights[i + 1];
+            placementHeights[i] = clampHeightStep(placementHeights[i], next);
+        }
         return placementHeights;
+    }
+
+    private static boolean usesSlopeTransition(RoadCorridorPlan corridorPlan, int leftIndex, int rightIndex) {
+        if (corridorPlan == null
+                || leftIndex < 0
+                || rightIndex < 0
+                || leftIndex >= corridorPlan.slices().size()
+                || rightIndex >= corridorPlan.slices().size()) {
+            return false;
+        }
+        return usesSlopeSemantics(corridorPlan.slices().get(leftIndex).segmentKind())
+                || usesSlopeSemantics(corridorPlan.slices().get(rightIndex).segmentKind());
+    }
+
+    private static int clampHeightStep(int current, int neighbor) {
+        if (current > neighbor + 1) {
+            return neighbor + 1;
+        }
+        if (current < neighbor - 1) {
+            return neighbor - 1;
+        }
+        return current;
     }
 
     private static boolean usesSlopeSemantics(RoadCorridorPlan.SegmentKind segmentKind) {
@@ -653,6 +730,9 @@ public final class RoadGeometryPlanner {
                                            boolean stairSegment,
                                            Function<BlockPos, BlockState> blockStateSupplier) {
         BlockState state = Objects.requireNonNull(blockStateSupplier.apply(currentPos), "blockStateSupplier returned null for pos " + currentPos);
+        if (isTurningSlopeSegment(path, index, placementHeights)) {
+            return slabStateForFamily(state);
+        }
         if (!stairSegment || !isWithinStairTravelBand(currentPos.getX(), currentPos.getZ(), path)) {
             return state;
         }
@@ -682,6 +762,27 @@ public final class RoadGeometryPlanner {
         int dx = Math.abs(to.getX() - from.getX());
         int dz = Math.abs(to.getZ() - from.getZ());
         return dx > 0 && dz > 0;
+    }
+
+    private static boolean isTurningSlopeSegment(List<BlockPos> path, int index, int[] placementHeights) {
+        if (path == null || placementHeights == null || index <= 0 || index >= path.size() - 1 || placementHeights.length != path.size()) {
+            return false;
+        }
+        BlockPos previous = path.get(index - 1);
+        BlockPos current = path.get(index);
+        BlockPos next = path.get(index + 1);
+        int incomingX = Integer.compare(current.getX() - previous.getX(), 0);
+        int incomingZ = Integer.compare(current.getZ() - previous.getZ(), 0);
+        int outgoingX = Integer.compare(next.getX() - current.getX(), 0);
+        int outgoingZ = Integer.compare(next.getZ() - current.getZ(), 0);
+        if ((incomingX == outgoingX && incomingZ == outgoingZ)
+                || (incomingX == 0 && incomingZ == 0)
+                || (outgoingX == 0 && outgoingZ == 0)) {
+            return false;
+        }
+        int riseIn = placementHeights[index] - placementHeights[index - 1];
+        int riseOut = placementHeights[index + 1] - placementHeights[index];
+        return riseIn != 0 || riseOut != 0;
     }
 
     private static BlockState slabStateForFamily(BlockState state) {
@@ -732,60 +833,97 @@ public final class RoadGeometryPlanner {
 
     private static int[] smoothPlacementHeights(int[] baseHeights) {
         int[] smoothed = baseHeights.clone();
-        int step2 = Math.max(0, Math.min(8, MAX_SLOPE_STEP_PER_TWO_SEGMENTS));
-        int halfLow = Math.max(0, step2 / 2);
-        int halfHigh = Math.max(0, (step2 + 1) / 2);
-
         for (int i = 1; i < smoothed.length; i++) {
             int y = smoothed[i];
-            if (i == 1) {
-                int previous = smoothed[i - 1];
-                if (y > previous + halfLow) {
-                    y = previous + halfLow;
-                }
-                if (y < previous - halfLow) {
-                    y = previous - halfLow;
-                }
-            } else {
-                int previous = smoothed[i - 1];
-                if (y > previous + halfHigh) {
-                    y = previous + halfHigh;
-                }
-                if (y < previous - halfHigh) {
-                    y = previous - halfHigh;
-                }
-                int twoBack = smoothed[i - 2];
-                y = Math.min(y, twoBack + step2);
-                y = Math.max(y, twoBack - step2);
+            int previous = smoothed[i - 1];
+            y = clampHeightStep(y, previous);
+            if (i >= 3) {
+                int threeBack = smoothed[i - 3];
+                y = Math.min(y, threeBack + MAX_SLOPE_STEP_PER_THREE_SEGMENTS);
+                y = Math.max(y, threeBack - MAX_SLOPE_STEP_PER_THREE_SEGMENTS);
             }
             smoothed[i] = y;
         }
 
         for (int i = smoothed.length - 2; i >= 0; i--) {
             int y = smoothed[i];
-            if (i == smoothed.length - 2) {
-                int next = smoothed[i + 1];
-                if (y > next + halfLow) {
-                    y = next + halfLow;
-                }
-                if (y < next - halfLow) {
-                    y = next - halfLow;
-                }
-            } else {
-                int next = smoothed[i + 1];
-                if (y > next + halfHigh) {
-                    y = next + halfHigh;
-                }
-                if (y < next - halfHigh) {
-                    y = next - halfHigh;
-                }
-                int twoAhead = smoothed[i + 2];
-                y = Math.min(y, twoAhead + step2);
-                y = Math.max(y, twoAhead - step2);
+            int next = smoothed[i + 1];
+            y = clampHeightStep(y, next);
+            if (i + 3 < smoothed.length) {
+                int threeAhead = smoothed[i + 3];
+                y = Math.min(y, threeAhead + MAX_SLOPE_STEP_PER_THREE_SEGMENTS);
+                y = Math.max(y, threeAhead - MAX_SLOPE_STEP_PER_THREE_SEGMENTS);
             }
             smoothed[i] = y;
         }
         return smoothed;
+    }
+
+    private static int[] flattenTurningSlopeHeights(List<BlockPos> centerPath, int[] placementHeights) {
+        if (centerPath == null || placementHeights == null || centerPath.size() != placementHeights.length || placementHeights.length < 3) {
+            return placementHeights == null ? new int[0] : placementHeights.clone();
+        }
+        int[] adjusted = placementHeights.clone();
+        for (int i = 1; i < adjusted.length - 1; i++) {
+            if (!isHorizontalTurn(centerPath, i)) {
+                continue;
+            }
+            int previous = adjusted[i - 1];
+            int current = adjusted[i];
+            int next = adjusted[i + 1];
+            if (current != previous || next != current) {
+                adjusted[i] = previous;
+            }
+        }
+        return adjusted;
+    }
+
+    private static List<GhostRoadBlock> enforceTurningSlopeSlabStates(List<BlockPos> centerPath,
+                                                                      int[] placementHeights,
+                                                                      List<GhostRoadBlock> ghostBlocks) {
+        if (centerPath == null || placementHeights == null || ghostBlocks == null || centerPath.size() != placementHeights.length || ghostBlocks.isEmpty()) {
+            return ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
+        }
+        LinkedHashMap<Long, Integer> turningColumns = new LinkedHashMap<>();
+        for (int i = 1; i < centerPath.size() - 1; i++) {
+            if (!isTurningSlopeSegment(centerPath, i, placementHeights)) {
+                continue;
+            }
+            BlockPos pos = centerPath.get(i);
+            turningColumns.put(RoadCoreExclusion.columnKey(pos.getX(), pos.getZ()), placementHeights[i]);
+        }
+        if (turningColumns.isEmpty()) {
+            return List.copyOf(ghostBlocks);
+        }
+        ArrayList<GhostRoadBlock> adjusted = new ArrayList<>(ghostBlocks.size());
+        for (GhostRoadBlock block : ghostBlocks) {
+            if (block == null || block.pos() == null || block.state() == null) {
+                continue;
+            }
+            Integer targetY = turningColumns.get(RoadCoreExclusion.columnKey(block.pos().getX(), block.pos().getZ()));
+            if (targetY != null && Math.abs(block.pos().getY() - targetY) <= 1) {
+                adjusted.add(new GhostRoadBlock(block.pos(), slabStateForFamily(block.state())));
+                continue;
+            }
+            adjusted.add(block);
+        }
+        return List.copyOf(adjusted);
+    }
+
+    private static boolean isHorizontalTurn(List<BlockPos> path, int index) {
+        if (path == null || index <= 0 || index >= path.size() - 1) {
+            return false;
+        }
+        BlockPos previous = path.get(index - 1);
+        BlockPos current = path.get(index);
+        BlockPos next = path.get(index + 1);
+        int incomingX = Integer.compare(current.getX() - previous.getX(), 0);
+        int incomingZ = Integer.compare(current.getZ() - previous.getZ(), 0);
+        int outgoingX = Integer.compare(next.getX() - current.getX(), 0);
+        int outgoingZ = Integer.compare(next.getZ() - current.getZ(), 0);
+        return !((incomingX == outgoingX && incomingZ == outgoingZ)
+                || (incomingX == 0 && incomingZ == 0)
+                || (outgoingX == 0 && outgoingZ == 0));
     }
 
     private static int[] applyBridgeProfiles(int[] baseHeights, List<RoadBridgePlanner.BridgeProfile> bridgeProfiles) {
@@ -918,18 +1056,8 @@ public final class RoadGeometryPlanner {
                                                                  int[] sampledHeights,
                                                                  List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
         int[] constrained = placementHeights.clone();
-        boolean[] bridgeColumns = new boolean[constrained.length];
+        boolean[] bridgeColumns = bridgeInfluenceColumnsFromSpanPlans(placementHeights, sampledHeights, bridgePlans);
         boolean[] terrainLockedColumns = steepTerrainLockMask(sampledHeights);
-        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
-            if (plan == null || !plan.valid()) {
-                continue;
-            }
-            int start = clampIndex(plan.startIndex(), bridgeColumns.length);
-            int end = clampIndex(plan.endIndex(), bridgeColumns.length);
-            for (int i = start; i <= end; i++) {
-                bridgeColumns[i] = true;
-            }
-        }
         for (int i = 0; i < constrained.length; i++) {
             if (bridgeColumns[i] || !terrainLockedColumns[i]) {
                 continue;
@@ -939,6 +1067,40 @@ public final class RoadGeometryPlanner {
             constrained[i] = Math.max(minDeckHeight, Math.min(maxDeckHeight, constrained[i]));
         }
         return constrained;
+    }
+
+    private static boolean[] bridgeInfluenceColumnsFromSpanPlans(int[] placementHeights,
+                                                                 int[] sampledHeights,
+                                                                 List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans) {
+        boolean[] influenced = new boolean[placementHeights.length];
+        if (placementHeights.length == 0 || sampledHeights.length != placementHeights.length || bridgePlans == null || bridgePlans.isEmpty()) {
+            return influenced;
+        }
+        for (RoadBridgePlanner.BridgeSpanPlan plan : bridgePlans) {
+            if (plan == null || !plan.valid()) {
+                continue;
+            }
+            int start = clampIndex(plan.startIndex(), placementHeights.length);
+            int end = clampIndex(plan.endIndex(), placementHeights.length);
+            for (int i = start; i <= end; i++) {
+                influenced[i] = true;
+            }
+            int left = start - 1;
+            while (left >= 0
+                    && placementHeights[left] > sampledHeights[left]
+                    && placementHeights[left] >= placementHeights[left + 1] - 1) {
+                influenced[left] = true;
+                left--;
+            }
+            int right = end + 1;
+            while (right < placementHeights.length
+                    && placementHeights[right] > sampledHeights[right]
+                    && placementHeights[right] >= placementHeights[right - 1] - 1) {
+                influenced[right] = true;
+                right++;
+            }
+        }
+        return influenced;
     }
 
     private static int[] propagateBridgeApproachHeightsFromSpanPlans(int[] baseHeights,
@@ -1135,9 +1297,19 @@ public final class RoadGeometryPlanner {
             placementHeights[start] = Math.max(placementHeights[start], Math.max(segment.startDeckY(), segment.endDeckY()));
             return;
         }
+        int run = end - start;
+        int startDeckY = segment.startDeckY();
+        int endDeckY = segment.endDeckY();
         for (int i = start; i <= end; i++) {
-            double t = (double) (i - start) / (double) (end - start);
-            int target = (int) Math.round(segment.startDeckY() + t * (segment.endDeckY() - segment.startDeckY()));
+            int offset = i - start;
+            int target;
+            if (endDeckY >= startDeckY) {
+                int rise = endDeckY - startDeckY;
+                target = startDeckY + (int) Math.floor((double) offset * (double) rise / (double) run);
+            } else {
+                int drop = startDeckY - endDeckY;
+                target = endDeckY + (int) Math.floor((double) (run - offset) * (double) drop / (double) run);
+            }
             placementHeights[i] = Math.max(placementHeights[i], target);
         }
     }

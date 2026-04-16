@@ -162,8 +162,15 @@ class SyncRoadPlannerPreviewPacketTest {
         );
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(2, 70, 0))));
         assertTrue(packet.ghostBlocks().stream().anyMatch(block -> block.pos().equals(new BlockPos(1, 61, 0))));
-        assertEquals(plan.centerPath(), packet.pathNodes());
-        assertEquals(plan.centerPath().size(), packet.pathNodeCount());
+        assertEquals(
+                List.of(
+                        new BlockPos(0, 65, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 70, 0)
+                ),
+                packet.pathNodes()
+        );
+        assertEquals(3, packet.pathNodeCount());
     }
 
     @Test

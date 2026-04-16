@@ -285,7 +285,7 @@ class RoadBridgePlannerTest {
     }
 
     @Test
-    void marksPierBridgeInvalidWhenApproachRampTurnsBeforeReachingDeckHeight() {
+    void keepsPierBridgeValidWhenApproachRampTurnsButStillHasStructuredAnchors() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 64, 0),
@@ -310,6 +310,10 @@ class RoadBridgePlannerTest {
         );
 
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, plan.mode());
-        assertFalse(plan.valid());
+        assertTrue(plan.valid());
+        assertTrue(
+                plan.nodes().stream().anyMatch(node -> node.role() == RoadBridgePlanner.BridgeNodeRole.PIER),
+                () -> plan.nodes().toString()
+        );
     }
 }

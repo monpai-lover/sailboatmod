@@ -32,10 +32,6 @@ public final class RoadPlanningSnapshotBuilder {
         int minZ = Math.min(start.getZ(), end.getZ()) - CORRIDOR_PADDING;
         int maxZ = Math.max(start.getZ(), end.getZ()) + CORRIDOR_PADDING;
 
-        LinkedHashSet<BlockPos> targetLandmass = new LinkedHashSet<>();
-        LinkedHashSet<BlockPos> sourceLandmass = new LinkedHashSet<>();
-        boolean sawWater = false;
-
         for (int x = minX; x <= maxX; x += SAMPLE_STEP) {
             RoadPlanningTaskService.throwIfCancelled();
             for (int z = minZ; z <= maxZ; z += SAMPLE_STEP) {
@@ -51,30 +47,26 @@ public final class RoadPlanningSnapshotBuilder {
                         terrain.water(),
                         terrain.surfacePos() == null ? Integer.MIN_VALUE : terrain.surfacePos().getY()
                 ));
-
-                if (terrain.water()) {
-                    sawWater = true;
-                } else if (terrain.surfacePos() != null) {
-                    BlockPos columnPos = terrain.surfacePos();
-                    if (Math.abs(columnPos.getX() - start.getX()) <= CORRIDOR_PADDING) {
-                        sourceLandmass.add(columnPos);
-                    }
-                    if (Math.abs(columnPos.getX() - end.getX()) <= CORRIDOR_PADDING) {
-                        targetLandmass.add(columnPos);
-                    }
-                }
             }
         }
 
-        RoadPlanningIslandClassifier.IslandSummary islandSummary = RoadPlanningIslandClassifier.classify(
-                targetLandmass,
-                sourceLandmass,
-                sawWater && !sourceLandmass.isEmpty() && !targetLandmass.isEmpty()
+        RoadPlanningIslandClassifier.IslandSummary targetIslandSummary = RoadPlanningIslandClassifier.classify(
+                columns,
+                end,
+                start,
+                SAMPLE_STEP
+        );
+        RoadPlanningIslandClassifier.IslandSummary sourceIslandSummary = RoadPlanningIslandClassifier.classify(
+                columns,
+                start,
+                end,
+                SAMPLE_STEP
         );
 
         return new RoadPlanningSnapshot(
                 Map.copyOf(columns),
-                islandSummary.isIslandLike(),
+                sourceIslandSummary.isIslandLike(),
+                targetIslandSummary.isIslandLike(),
                 java.util.List.of(start.immutable(), end.immutable()),
                 start,
                 end

@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -71,14 +72,17 @@ public class SyncRoadPlannerPreviewPacket {
                                                         String targetTownName,
                                                         RoadPlacementPlan plan,
                                                         boolean awaitingConfirmation) {
+        List<BlockPos> pathNodes = plan == null
+                ? List.of()
+                : structuredPreviewPathNodes(plan);
         return new SyncRoadPlannerPreviewPacket(
                 sourceTownName,
                 targetTownName,
                 plan == null ? List.of() : plan.ghostBlocks().stream()
                         .map(block -> new GhostBlock(block.pos(), block.state()))
                         .toList(),
-                plan == null ? List.of() : plan.centerPath(),
-                plan == null ? 0 : plan.centerPath().size(),
+                pathNodes,
+                pathNodes.size(),
                 plan == null ? null : plan.startHighlightPos(),
                 plan == null ? null : plan.endHighlightPos(),
                 plan == null ? null : plan.focusPos(),
@@ -86,6 +90,25 @@ public class SyncRoadPlannerPreviewPacket {
                 List.of(),
                 ""
         );
+    }
+
+    private static List<BlockPos> structuredPreviewPathNodes(RoadPlacementPlan plan) {
+        if (plan == null) {
+            return List.of();
+        }
+        if (plan.corridorPlan() != null
+                && plan.corridorPlan().valid()
+                && plan.corridorPlan().slices() != null
+                && !plan.corridorPlan().slices().isEmpty()) {
+            List<BlockPos> deckCenters = plan.corridorPlan().slices().stream()
+                    .map(RoadCorridorPlan.CorridorSlice::deckCenter)
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+            if (!deckCenters.isEmpty()) {
+                return deckCenters;
+            }
+        }
+        return plan.centerPath();
     }
 
     public SyncRoadPlannerPreviewPacket withOptions(List<PreviewOption> options, String selectedOptionId) {

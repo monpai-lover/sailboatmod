@@ -215,7 +215,7 @@ class BuilderHammerSupportTest {
     }
 
     @Test
-    void attemptedRoadBuildStepIsConsumedEvenWhenWorldStateStillDiffers() {
+    void attemptedRoadBuildStepRemainsVisibleUntilWorldStateMatchesPlan() {
         RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
                 0,
                 new BlockPos(0, 65, 0),
@@ -232,7 +232,38 @@ class BuilderHammerSupportTest {
                 attempted
         );
 
-        assertTrue(remaining.isEmpty());
+        assertEquals(List.of(step), remaining);
+    }
+
+    @Test
+    void attemptedRoadBuildStepDoesNotCountAsConsumedWithoutConfirmedCompletion() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 65, 0),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(),
+                RoadGeometryPlanner.RoadBuildPhase.DECK
+        );
+
+        Set<Long> consumed = invokeConsumedRoadBuildStepKeys(
+                new RoadPlacementPlan(
+                        List.of(new BlockPos(0, 64, 0)),
+                        null,
+                        null,
+                        null,
+                        null,
+                        List.of(new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state())),
+                        List.of(step),
+                        List.of(),
+                        List.of(step.pos()),
+                        step.pos(),
+                        step.pos(),
+                        step.pos()
+                ),
+                Set.of(),
+                Set.of(step.pos().asLong())
+        );
+
+        assertTrue(consumed.isEmpty());
     }
 
     @Test
@@ -306,11 +337,16 @@ class BuilderHammerSupportTest {
         assertTrue(ghostPositions.contains(new BlockPos(0, 65, 0)));
         assertTrue(ghostPositions.contains(new BlockPos(0, 65, 1)));
         assertTrue(ghostPositions.contains(new BlockPos(0, 64, 0)));
-        assertTrue(ghostPositions.contains(new BlockPos(0, 66, 1)));
         assertTrue(ghostBlocks.stream().anyMatch(block ->
-                block.pos().getX() == 0
-                        && block.pos().getZ() == 1
-                        && block.state().is(Blocks.LANTERN)));
+                        block.pos().getX() == 0
+                                && block.pos().getZ() == 2
+                                && block.state().is(Blocks.OAK_FENCE)),
+                () -> ghostBlocks.toString());
+        assertTrue(ghostBlocks.stream().anyMatch(block ->
+                        block.pos().getX() == 0
+                                && block.pos().getZ() == 2
+                                && block.state().is(Blocks.LANTERN)),
+                () -> ghostBlocks.toString());
         assertEquals(ghostPositions, buildStepPositions);
         assertTrue(ownedBlocks.contains(new BlockPos(0, 63, 0)));
         assertTrue(ownedBlocks.contains(new BlockPos(0, 62, 0)));
@@ -399,6 +435,24 @@ class BuilderHammerSupportTest {
 
         assertTrue(invokeRoadBuildStepPlaced(step.state(), step));
         assertFalse(invokeRoadBuildStepPlaced(Blocks.SPRUCE_SLAB.defaultBlockState(), step));
+    }
+
+    @Test
+    void roadBuildStepCompletionDoesNotTreatSameFamilyVariantsAsPlaced() {
+        RoadGeometryPlanner.RoadBuildStep slabStep = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 65, 0),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+        RoadGeometryPlanner.RoadBuildStep stairStep = new RoadGeometryPlanner.RoadBuildStep(
+                1,
+                new BlockPos(1, 65, 0),
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState()
+        );
+
+        assertFalse(invokeRoadBuildStepPlaced(Blocks.STONE_BRICK_STAIRS.defaultBlockState(), slabStep));
+        assertFalse(invokeRoadBuildStepPlaced(Blocks.STONE_BRICKS.defaultBlockState(), slabStep));
+        assertFalse(invokeRoadBuildStepPlaced(Blocks.STONE_BRICK_SLAB.defaultBlockState(), stairStep));
     }
 
     @Test
@@ -616,6 +670,21 @@ class BuilderHammerSupportTest {
             return (int) method.invoke(null, plan, completedStepKeys);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect live-world road hammer batch sizing", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Set<Long> invokeConsumedRoadBuildStepKeys(RoadPlacementPlan plan,
+                                                             Set<Long> completedStepKeys,
+                                                             Set<Long> attemptedStepKeys) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("consumedRoadBuildStepKeys", RoadPlacementPlan.class, Set.class, Set.class);
+            method.setAccessible(true);
+            return (Set<Long>) method.invoke(null, plan, completedStepKeys, attemptedStepKeys);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect consumed road build-step filtering", ex);
         }
     }
 
