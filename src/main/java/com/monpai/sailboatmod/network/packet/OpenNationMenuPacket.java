@@ -12,25 +12,12 @@ import net.minecraftforge.network.PacketDistributor;
 import java.util.function.Supplier;
 
 public class OpenNationMenuPacket {
-    private final int previewCenterChunkX;
-    private final int previewCenterChunkZ;
+    public OpenNationMenuPacket() {}
 
-    public OpenNationMenuPacket() {
-        this(Integer.MIN_VALUE, Integer.MIN_VALUE);
-    }
-
-    public OpenNationMenuPacket(int previewCenterChunkX, int previewCenterChunkZ) {
-        this.previewCenterChunkX = previewCenterChunkX;
-        this.previewCenterChunkZ = previewCenterChunkZ;
-    }
-
-    public static void encode(OpenNationMenuPacket packet, FriendlyByteBuf buffer) {
-        buffer.writeInt(packet.previewCenterChunkX);
-        buffer.writeInt(packet.previewCenterChunkZ);
-    }
+    public static void encode(OpenNationMenuPacket packet, FriendlyByteBuf buffer) {}
 
     public static OpenNationMenuPacket decode(FriendlyByteBuf buffer) {
-        return new OpenNationMenuPacket(buffer.readInt(), buffer.readInt());
+        return new OpenNationMenuPacket();
     }
 
     public static void handle(OpenNationMenuPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -40,17 +27,10 @@ public class OpenNationMenuPacket {
             if (player == null) {
                 return;
             }
-            ChunkPos previewCenter = resolvePreviewCenter(packet, player);
+            ChunkPos previewCenter = NationOverviewService.getCoreCenterOrPlayer(player);
             NationOverviewData data = NationOverviewService.buildFor(player, previewCenter);
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
         });
         context.setPacketHandled(true);
-    }
-
-    private static ChunkPos resolvePreviewCenter(OpenNationMenuPacket packet, ServerPlayer player) {
-        if (packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE) {
-            return NationOverviewService.getCoreCenterOrPlayer(player);
-        }
-        return new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
     }
 }

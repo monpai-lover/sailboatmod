@@ -13,27 +13,17 @@ import java.util.function.Supplier;
 
 public class OpenTownMenuPacket {
     private final String townId;
-    private final int previewCenterChunkX;
-    private final int previewCenterChunkZ;
 
     public OpenTownMenuPacket(String townId) {
-        this(townId, Integer.MIN_VALUE, Integer.MIN_VALUE);
-    }
-
-    public OpenTownMenuPacket(String townId, int previewCenterChunkX, int previewCenterChunkZ) {
         this.townId = townId == null ? "" : townId.trim();
-        this.previewCenterChunkX = previewCenterChunkX;
-        this.previewCenterChunkZ = previewCenterChunkZ;
     }
 
     public static void encode(OpenTownMenuPacket packet, FriendlyByteBuf buffer) {
         PacketStringCodec.writeUtfSafe(buffer, packet.townId, 40);
-        buffer.writeInt(packet.previewCenterChunkX);
-        buffer.writeInt(packet.previewCenterChunkZ);
     }
 
     public static OpenTownMenuPacket decode(FriendlyByteBuf buffer) {
-        return new OpenTownMenuPacket(buffer.readUtf(40), buffer.readInt(), buffer.readInt());
+        return new OpenTownMenuPacket(buffer.readUtf(40));
     }
 
     public static void handle(OpenTownMenuPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -43,17 +33,10 @@ public class OpenTownMenuPacket {
             if (player == null) {
                 return;
             }
-            ChunkPos previewCenter = resolvePreviewCenter(packet, player);
+            ChunkPos previewCenter = TownOverviewService.getCoreCenterOrPlayer(player, packet.townId);
             TownOverviewData data = TownOverviewService.buildFor(player, packet.townId, previewCenter);
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTownScreenPacket(data));
         });
         context.setPacketHandled(true);
-    }
-
-    private static ChunkPos resolvePreviewCenter(OpenTownMenuPacket packet, ServerPlayer player) {
-        if (packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE) {
-            return TownOverviewService.getCoreCenterOrPlayer(player, packet.townId);
-        }
-        return new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
     }
 }

@@ -19,8 +19,9 @@ import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.NationGuiActionPacket;
-import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownMenuPacket;
+import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
+import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -60,6 +61,7 @@ public class NationHomeScreen extends Screen {
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
     private static final int PREVIEW_DEFAULT_TERRAIN_COLOR = 0xFF33414A;
+    private static final int VIEWPORT_PREFETCH_RADIUS = 2;
     private int claimRadius() {
         int stateRadius = this.data.claimMapState().radius();
         if (stateRadius > 0) {
@@ -323,8 +325,7 @@ public class NationHomeScreen extends Screen {
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
         this.resetMapButton.visible = false;
         this.clearTerrainCacheButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
-            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket());
-            maybeRequestPreviewRefresh();
+            requestRefresh();
         }).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 44, top + BODY_Y + 10, 24, 14).build());
         this.clearTerrainCacheButton.visible = false;
 
@@ -1436,8 +1437,11 @@ public class NationHomeScreen extends Screen {
             case FLAG -> 230;
         };
     }
-    private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ()); }
+    private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ(), true); }
     private void requestRefresh(int centerChunkX, int centerChunkZ) {
+        requestRefresh(centerChunkX, centerChunkZ, false);
+    }
+    private void requestRefresh(int centerChunkX, int centerChunkZ, boolean explicitRefresh) {
         if (this.refreshPending) {
             traceClaim("requestRefresh queued center=" + centerChunkX + "," + centerChunkZ);
             this.queuedPreviewCenterX = centerChunkX;
@@ -1451,8 +1455,45 @@ public class NationHomeScreen extends Screen {
         this.refreshPending = true;
         this.pendingPreviewCenterX = centerChunkX;
         this.pendingPreviewCenterZ = centerChunkZ;
-        ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket(centerChunkX, centerChunkZ));
+        if (explicitRefresh) {
+            ModNetwork.CHANNEL.sendToServer(new RefreshClaimMapViewportPacket(
+                    RequestClaimMapViewportPacket.ScreenKind.NATION,
+                    this.data.nationId(),
+                    currentDimensionId(),
+                    System.nanoTime(),
+                    viewportRadius(),
+                    centerChunkX,
+                    centerChunkZ
+            ));
+        } else {
+            ModNetwork.CHANNEL.sendToServer(new RequestClaimMapViewportPacket(
+                    RequestClaimMapViewportPacket.ScreenKind.NATION,
+                    this.data.nationId(),
+                    currentDimensionId(),
+                    System.nanoTime(),
+                    viewportRadius(),
+                    centerChunkX,
+                    centerChunkZ,
+                    VIEWPORT_PREFETCH_RADIUS
+            ));
+        }
         this.statusLine = Component.translatable("screen.sailboatmod.nation.status.refreshing");
+    }
+
+    private int viewportRadius() {
+        int configured = this.data.claimMapState().radius();
+        return configured > 0 ? configured : claimRadius();
+    }
+
+    private String currentDimensionId() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level != null) {
+            return minecraft.level.dimension().location().toString();
+        }
+        if (this.data.hasCore() && this.data.coreDimension() != null && !this.data.coreDimension().isBlank()) {
+            return this.data.coreDimension();
+        }
+        return "minecraft:overworld";
     }
 
     private void flushQueuedPreviewRefresh() {

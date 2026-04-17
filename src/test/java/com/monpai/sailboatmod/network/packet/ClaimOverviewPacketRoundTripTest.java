@@ -77,6 +77,30 @@ class ClaimOverviewPacketRoundTripTest {
         assertTrue(decodedData.nearbyTerrainColors().isEmpty());
     }
 
+    @Test
+    void openTownMenuPacketCarriesOnlyTownMetadata() {
+        OpenTownMenuPacket packet = new OpenTownMenuPacket("town-a");
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        OpenTownMenuPacket.encode(packet, buffer);
+
+        FriendlyByteBuf expected = new FriendlyByteBuf(Unpooled.buffer());
+        expected.writeUtf("town-a", 40);
+        assertEquals(expected.writerIndex(), buffer.writerIndex());
+
+        OpenTownMenuPacket decoded = OpenTownMenuPacket.decode(buffer);
+        assertEquals("town-a", extractTownId(decoded));
+    }
+
+    @Test
+    void openNationMenuPacketCarriesNoViewportPayload() {
+        OpenNationMenuPacket packet = new OpenNationMenuPacket();
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        OpenNationMenuPacket.encode(packet, buffer);
+
+        assertEquals(0, buffer.writerIndex());
+        OpenNationMenuPacket.decode(buffer);
+    }
+
     private static TownOverviewData extractTownData(OpenTownScreenPacket packet) {
         try {
             var field = OpenTownScreenPacket.class.getDeclaredField("data");
@@ -92,6 +116,16 @@ class ClaimOverviewPacketRoundTripTest {
             var field = OpenNationScreenPacket.class.getDeclaredField("data");
             field.setAccessible(true);
             return (NationOverviewData) field.get(packet);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    private static String extractTownId(OpenTownMenuPacket packet) {
+        try {
+            var field = OpenTownMenuPacket.class.getDeclaredField("townId");
+            field.setAccessible(true);
+            return (String) field.get(packet);
         } catch (ReflectiveOperationException exception) {
             throw new AssertionError(exception);
         }
