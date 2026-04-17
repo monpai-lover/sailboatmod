@@ -7,6 +7,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.saveddata.SavedData;
 
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -85,7 +86,13 @@ public class TerrainPreviewSavedData extends SavedData {
         if (dimensionId == null || dimensionId.isBlank()) {
             return;
         }
-        tiles.put(key(dimensionId, chunkX, chunkZ), normalizeTile(colors));
+        String tileKey = key(dimensionId, chunkX, chunkZ);
+        int[] normalized = normalizeTile(colors);
+        int[] previous = tiles.get(tileKey);
+        if (previous != null && Arrays.equals(previous, normalized)) {
+            return;
+        }
+        tiles.put(tileKey, normalized);
         trimToSize();
         setDirty();
     }
