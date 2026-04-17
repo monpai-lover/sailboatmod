@@ -51,7 +51,9 @@ public final class TownClientHooks {
                                                                        long latestRequestedPreviewRevision) {
         TownOverviewData safeCurrent = current == null ? TownOverviewData.empty() : current;
         TownOverviewData safeIncoming = incoming == null ? TownOverviewData.empty() : incoming;
-        if (!isMetadataOnlyClaimPreview(safeIncoming) || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
+        if (!sameOwner(safeCurrent, safeIncoming)
+                || !isMetadataOnlyClaimPreview(safeIncoming)
+                || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
             return safeIncoming;
         }
         return safeIncoming.withClaimPreviewContext(
@@ -60,6 +62,18 @@ public final class TownClientHooks {
                 safeCurrent.previewCenterChunkX(),
                 safeCurrent.previewCenterChunkZ()
         );
+    }
+
+    private static boolean sameOwner(TownOverviewData current, TownOverviewData incoming) {
+        if (current == null || incoming == null) {
+            return false;
+        }
+        String currentOwnerId = current.townId();
+        String incomingOwnerId = incoming.townId();
+        return currentOwnerId != null
+                && incomingOwnerId != null
+                && !currentOwnerId.isBlank()
+                && currentOwnerId.equals(incomingOwnerId);
     }
 
     private static boolean isMetadataOnlyClaimPreview(TownOverviewData data) {

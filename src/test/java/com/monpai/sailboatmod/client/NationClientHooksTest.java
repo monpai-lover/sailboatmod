@@ -24,6 +24,7 @@ class NationClientHooksTest {
     @Test
     void metadataOnlyOverviewPreservesLocalPendingClaimPreviewContext() {
         NationOverviewData local = nationData(
+                "nation-a",
                 "local-nation",
                 false,
                 "idle",
@@ -33,6 +34,7 @@ class NationClientHooksTest {
                 ClaimPreviewMapState.loading(7L, 8, 40, -12)
         );
         NationOverviewData incomingMetadataOnly = nationData(
+                "nation-a",
                 "incoming-nation",
                 true,
                 "active",
@@ -57,7 +59,43 @@ class NationClientHooksTest {
         assertEquals(-12, merged.claimMapState().centerChunkZ());
     }
 
-    private static NationOverviewData nationData(String nationName,
+    @Test
+    void metadataOnlyOverviewFromDifferentOwnerDoesNotPreservePreviewContext() {
+        NationOverviewData local = nationData(
+                "nation-a",
+                "local-nation",
+                false,
+                "idle",
+                10,
+                20,
+                List.of(0xFF010203, 0xFF0A0B0C),
+                ClaimPreviewMapState.loading(7L, 8, 40, -12)
+        );
+        NationOverviewData incomingMetadataOnly = nationData(
+                "nation-b",
+                "incoming-nation",
+                true,
+                "active",
+                -1,
+                -2,
+                List.of(),
+                ClaimPreviewMapState.loading(0L, 8, 0, 0)
+        );
+
+        NationOverviewData merged = NationClientHooks.mergeOverviewPreservingPendingClaimPreview(local, incomingMetadataOnly, 7L);
+
+        assertEquals("nation-b", merged.nationId());
+        assertEquals(-1, merged.previewCenterChunkX());
+        assertEquals(-2, merged.previewCenterChunkZ());
+        assertTrue(merged.nearbyTerrainColors().isEmpty());
+        assertTrue(merged.claimMapState().loading());
+        assertEquals(0L, merged.claimMapState().revision());
+        assertEquals(0, merged.claimMapState().centerChunkX());
+        assertEquals(0, merged.claimMapState().centerChunkZ());
+    }
+
+    private static NationOverviewData nationData(String nationId,
+                                                 String nationName,
                                                  boolean hasActiveWar,
                                                  String warStatus,
                                                  int previewCenterChunkX,
@@ -66,7 +104,7 @@ class NationClientHooksTest {
                                                  ClaimPreviewMapState claimMapState) {
         return new NationOverviewData(
                 true,
-                "nation-a",
+                nationId,
                 nationName,
                 "na",
                 0x123456,

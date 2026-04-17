@@ -63,7 +63,9 @@ public final class NationClientHooks {
                                                                          long latestRequestedPreviewRevision) {
         NationOverviewData safeCurrent = current == null ? NationOverviewData.empty() : current;
         NationOverviewData safeIncoming = incoming == null ? NationOverviewData.empty() : incoming;
-        if (!isMetadataOnlyClaimPreview(safeIncoming) || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
+        if (!sameOwner(safeCurrent, safeIncoming)
+                || !isMetadataOnlyClaimPreview(safeIncoming)
+                || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
             return safeIncoming;
         }
         return safeIncoming.withClaimPreviewContext(
@@ -72,6 +74,18 @@ public final class NationClientHooks {
                 safeCurrent.previewCenterChunkX(),
                 safeCurrent.previewCenterChunkZ()
         );
+    }
+
+    private static boolean sameOwner(NationOverviewData current, NationOverviewData incoming) {
+        if (current == null || incoming == null) {
+            return false;
+        }
+        String currentOwnerId = current.nationId();
+        String incomingOwnerId = incoming.nationId();
+        return currentOwnerId != null
+                && incomingOwnerId != null
+                && !currentOwnerId.isBlank()
+                && currentOwnerId.equals(incomingOwnerId);
     }
 
     private static boolean isMetadataOnlyClaimPreview(NationOverviewData data) {
