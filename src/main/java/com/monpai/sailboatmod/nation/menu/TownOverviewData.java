@@ -468,8 +468,24 @@ public record TownOverviewData(
 
     public TownOverviewData withClaimPreview(ClaimPreviewMapState mapState, List<Integer> terrainColors) {
         ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
-        int nextPreviewCenterChunkX = mapState == null ? previewCenterChunkX : mapState.centerChunkX();
-        int nextPreviewCenterChunkZ = mapState == null ? previewCenterChunkZ : mapState.centerChunkZ();
+        return withClaimPreviewContext(
+                nextMapState,
+                terrainColors,
+                mapState == null ? previewCenterChunkX : mapState.centerChunkX(),
+                mapState == null ? previewCenterChunkZ : mapState.centerChunkZ()
+        );
+    }
+
+    public TownOverviewData withClaimPreviewState(ClaimPreviewMapState mapState) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return withClaimPreviewContext(nextMapState, nearbyTerrainColors, previewCenterChunkX, previewCenterChunkZ);
+    }
+
+    public TownOverviewData withClaimPreviewContext(ClaimPreviewMapState mapState,
+                                                    List<Integer> terrainColors,
+                                                    int nextPreviewCenterChunkX,
+                                                    int nextPreviewCenterChunkZ) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
         return new TownOverviewData(
                 hasTown,
                 townId,
@@ -513,74 +529,6 @@ public record TownOverviewData(
                 isMayor,
                 members,
                 terrainColors,
-                nearbyClaims,
-                cultureId,
-                cultureDistribution,
-                averageLiteracy,
-                educationLevelDistribution,
-                employmentRate,
-                stockpileCommodityTypes,
-                stockpileTotalUnits,
-                openDemandCount,
-                openDemandUnits,
-                activeProcurementCount,
-                totalIncome,
-                totalExpense,
-                netBalance,
-                stockpilePreviewLines,
-                demandPreviewLines,
-                procurementPreviewLines,
-                financePreviewLines,
-                joinableNationTargets,
-                nextMapState
-        );
-    }
-
-    public TownOverviewData withClaimPreviewState(ClaimPreviewMapState mapState) {
-        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
-        return new TownOverviewData(
-                hasTown,
-                townId,
-                townName,
-                nationId,
-                nationName,
-                mayorUuid,
-                mayorName,
-                capitalTown,
-                primaryColorRgb,
-                secondaryColorRgb,
-                hasCore,
-                coreDimension,
-                corePos,
-                totalClaims,
-                residentCount,
-                currentChunkX,
-                currentChunkZ,
-                previewCenterChunkX,
-                previewCenterChunkZ,
-                currentChunkClaimed,
-                currentChunkOwnedByTown,
-                currentChunkOwnerName,
-                breakAccessLevel,
-                placeAccessLevel,
-                useAccessLevel,
-                containerAccessLevel,
-                redstoneAccessLevel,
-                entityUseAccessLevel,
-                entityDamageAccessLevel,
-                flagId,
-                flagWidth,
-                flagHeight,
-                flagByteSize,
-                flagHash,
-                flagMirrored,
-                canManageTown,
-                canManageClaims,
-                canUploadFlag,
-                canAssignMayor,
-                isMayor,
-                members,
-                nearbyTerrainColors,
                 nearbyClaims,
                 cultureId,
                 cultureDistribution,

@@ -29,7 +29,11 @@ public final class TownClientHooks {
     }
 
     public static void openOrUpdate(TownOverviewData data) {
-        lastSyncedData = data == null ? TownOverviewData.empty() : data;
+        lastSyncedData = mergeOverviewPreservingPendingClaimPreview(
+                lastSyncedData,
+                data,
+                latestRequestedClaimPreviewRevision
+        );
         queueClaimPreviewRaster(lastSyncedData);
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
@@ -40,6 +44,37 @@ public final class TownClientHooks {
             return;
         }
         minecraft.setScreen(new TownHomeScreen(lastSyncedData));
+    }
+
+    static TownOverviewData mergeOverviewPreservingPendingClaimPreview(TownOverviewData current,
+                                                                       TownOverviewData incoming,
+                                                                       long latestRequestedPreviewRevision) {
+        TownOverviewData safeCurrent = current == null ? TownOverviewData.empty() : current;
+        TownOverviewData safeIncoming = incoming == null ? TownOverviewData.empty() : incoming;
+        if (!isMetadataOnlyClaimPreview(safeIncoming) || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
+            return safeIncoming;
+        }
+        return safeIncoming.withClaimPreviewContext(
+                safeCurrent.claimMapState(),
+                safeCurrent.nearbyTerrainColors(),
+                safeCurrent.previewCenterChunkX(),
+                safeCurrent.previewCenterChunkZ()
+        );
+    }
+
+    private static boolean isMetadataOnlyClaimPreview(TownOverviewData data) {
+        ClaimPreviewMapState state = data == null ? ClaimPreviewMapState.empty() : data.claimMapState();
+        return state.loading() && state.revision() == 0L && data != null && data.nearbyTerrainColors().isEmpty();
+    }
+
+    private static boolean shouldPreserveLocalClaimPreview(TownOverviewData data, long latestRequestedPreviewRevision) {
+        if (data == null) {
+            return false;
+        }
+        ClaimPreviewMapState localState = data.claimMapState();
+        return localState.revision() > 0L
+                || !data.nearbyTerrainColors().isEmpty()
+                || latestRequestedPreviewRevision > 0L;
     }
 
     public static void applyClaimPreview(ClaimPreviewMapState state) {

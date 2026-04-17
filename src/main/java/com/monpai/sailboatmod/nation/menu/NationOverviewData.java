@@ -424,8 +424,24 @@ public record NationOverviewData(
 
     public NationOverviewData withClaimPreview(ClaimPreviewMapState mapState, List<Integer> terrainColors) {
         ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
-        int nextPreviewCenterChunkX = mapState == null ? previewCenterChunkX : mapState.centerChunkX();
-        int nextPreviewCenterChunkZ = mapState == null ? previewCenterChunkZ : mapState.centerChunkZ();
+        return withClaimPreviewContext(
+                nextMapState,
+                terrainColors,
+                mapState == null ? previewCenterChunkX : mapState.centerChunkX(),
+                mapState == null ? previewCenterChunkZ : mapState.centerChunkZ()
+        );
+    }
+
+    public NationOverviewData withClaimPreviewState(ClaimPreviewMapState mapState) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return withClaimPreviewContext(nextMapState, nearbyTerrainColors, previewCenterChunkX, previewCenterChunkZ);
+    }
+
+    public NationOverviewData withClaimPreviewContext(ClaimPreviewMapState mapState,
+                                                      List<Integer> terrainColors,
+                                                      int nextPreviewCenterChunkX,
+                                                      int nextPreviewCenterChunkZ) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
         return new NationOverviewData(
                 hasNation,
                 nationId,
@@ -500,88 +516,6 @@ public record NationOverviewData(
                 members,
                 towns,
                 terrainColors,
-                nearbyClaims,
-                allNations,
-                nextMapState
-        );
-    }
-
-    public NationOverviewData withClaimPreviewState(ClaimPreviewMapState mapState) {
-        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
-        return new NationOverviewData(
-                hasNation,
-                nationId,
-                nationName,
-                shortName,
-                primaryColorRgb,
-                secondaryColorRgb,
-                leaderName,
-                officeName,
-                capitalTownId,
-                capitalTownName,
-                memberCount,
-                hasCore,
-                coreDimension,
-                corePos,
-                totalClaims,
-                currentChunkX,
-                currentChunkZ,
-                previewCenterChunkX,
-                previewCenterChunkZ,
-                currentChunkClaimed,
-                currentChunkOwnedByNation,
-                currentChunkOwnerName,
-                breakAccessLevel,
-                placeAccessLevel,
-                useAccessLevel,
-                containerAccessLevel,
-                redstoneAccessLevel,
-                entityUseAccessLevel,
-                entityDamageAccessLevel,
-                hasActiveWar,
-                warOpponentName,
-                warScoreSelf,
-                warScoreOpponent,
-                warCaptureProgress,
-                warScoreLimit,
-                warStatus,
-                warTimeRemainingSeconds,
-                warCooldownRemainingSeconds,
-                hasPeaceProposal,
-                peaceProposalType,
-                peaceProposalCede,
-                peaceProposalAmount,
-                peaceProposalIncoming,
-                peaceProposalRemainingSeconds,
-                hasTradeProposal,
-                tradeProposerNationName,
-                tradeOfferCurrency,
-                tradeRequestCurrency,
-                tradeProposalIncoming,
-                flagId,
-                flagWidth,
-                flagHeight,
-                flagByteSize,
-                flagHash,
-                flagMirrored,
-                isLeader,
-                canManageInfo,
-                canManageOffices,
-                canManageClaims,
-                canUploadFlag,
-                canDeclareWar,
-                canManageTreasury,
-                treasuryBalance,
-                salesTaxBasisPoints,
-                importTariffBasisPoints,
-                recentTradeCount,
-                treasuryItems,
-                officerTitle,
-                diplomacyRelations,
-                incomingDiplomacyRequests,
-                members,
-                towns,
-                nearbyTerrainColors,
                 nearbyClaims,
                 allNations,
                 nextMapState

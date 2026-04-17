@@ -28,7 +28,11 @@ public final class NationClientHooks {
     }
 
     public static void openOrUpdate(NationOverviewData data) {
-        lastSyncedData = data == null ? NationOverviewData.empty() : data;
+        lastSyncedData = mergeOverviewPreservingPendingClaimPreview(
+                lastSyncedData,
+                data,
+                latestRequestedClaimPreviewRevision
+        );
         queueClaimPreviewRaster(lastSyncedData);
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
@@ -42,12 +46,47 @@ public final class NationClientHooks {
     }
 
     public static void updateIfOpen(NationOverviewData data) {
-        lastSyncedData = data == null ? NationOverviewData.empty() : data;
+        lastSyncedData = mergeOverviewPreservingPendingClaimPreview(
+                lastSyncedData,
+                data,
+                latestRequestedClaimPreviewRevision
+        );
         queueClaimPreviewRaster(lastSyncedData);
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
             nationHomeScreen.updateData(lastSyncedData);
         }
+    }
+
+    static NationOverviewData mergeOverviewPreservingPendingClaimPreview(NationOverviewData current,
+                                                                         NationOverviewData incoming,
+                                                                         long latestRequestedPreviewRevision) {
+        NationOverviewData safeCurrent = current == null ? NationOverviewData.empty() : current;
+        NationOverviewData safeIncoming = incoming == null ? NationOverviewData.empty() : incoming;
+        if (!isMetadataOnlyClaimPreview(safeIncoming) || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
+            return safeIncoming;
+        }
+        return safeIncoming.withClaimPreviewContext(
+                safeCurrent.claimMapState(),
+                safeCurrent.nearbyTerrainColors(),
+                safeCurrent.previewCenterChunkX(),
+                safeCurrent.previewCenterChunkZ()
+        );
+    }
+
+    private static boolean isMetadataOnlyClaimPreview(NationOverviewData data) {
+        ClaimPreviewMapState state = data == null ? ClaimPreviewMapState.empty() : data.claimMapState();
+        return state.loading() && state.revision() == 0L && data != null && data.nearbyTerrainColors().isEmpty();
+    }
+
+    private static boolean shouldPreserveLocalClaimPreview(NationOverviewData data, long latestRequestedPreviewRevision) {
+        if (data == null) {
+            return false;
+        }
+        ClaimPreviewMapState localState = data.claimMapState();
+        return localState.revision() > 0L
+                || !data.nearbyTerrainColors().isEmpty()
+                || latestRequestedPreviewRevision > 0L;
     }
 
     public static void applyClaimPreview(ClaimPreviewMapState state) {
