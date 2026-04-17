@@ -182,6 +182,29 @@ class RoadPlanningSnapshotBuilderTest {
     }
 
     @Test
+    void snapshotBuilderExposesDenseRibbonColumnsNeededByHybridFallback() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        for (int x = -8; x <= 40; x++) {
+            for (int z = -2; z <= 2; z++) {
+                level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.buildForTest(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(32, 64, 0),
+                Set.of(),
+                Set.of()
+        );
+
+        assertNotNull(snapshot.column(1, 0));
+    }
+
+    @Test
     void snapshotBuilderDoesNotMarkOffsetTownCoresAsIslandsWhenLandConnectionRunsOneBlockAside() {
         TestTerrainLevel level = allocate(TestTerrainLevel.class);
         level.blockStates = new HashMap<>();

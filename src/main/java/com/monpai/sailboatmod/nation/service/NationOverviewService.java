@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
@@ -142,7 +143,8 @@ public final class NationOverviewService {
             ));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), previewChunk, claimPreviewRadius());
+        ClaimPreviewMapState claimMapState = initialClaimMapState(claimPreviewRadius(), previewChunk);
+        List<Integer> nearbyTerrainColors = List.of();
 
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>();
         for (NationDiplomacyRecord relation : data.getDiplomacyForNation(nation.nationId())) {
@@ -263,7 +265,8 @@ public final class NationOverviewService {
                 towns,
                 nearbyTerrainColors,
                 nearbyClaims,
-                allNations
+                allNations,
+                claimMapState
         );
     }
 
@@ -303,6 +306,11 @@ public final class NationOverviewService {
             return nation.name();
         }
         return fallbackId == null || fallbackId.isBlank() ? "-" : fallbackId;
+    }
+
+    private static ClaimPreviewMapState initialClaimMapState(int radius, ChunkPos previewChunk) {
+        ChunkPos safePreviewChunk = previewChunk == null ? new ChunkPos(0, 0) : previewChunk;
+        return ClaimPreviewMapState.loading(0L, Math.max(0, radius), safePreviewChunk.x, safePreviewChunk.z);
     }
 
     public static ChunkPos getCoreCenterOrPlayer(ServerPlayer player) {

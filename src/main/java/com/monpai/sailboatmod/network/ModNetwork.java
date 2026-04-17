@@ -3,8 +3,8 @@ package com.monpai.sailboatmod.network;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
-import com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.CloseClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
 import com.monpai.sailboatmod.network.packet.BuildingUpgradePacket;
@@ -32,10 +32,12 @@ import com.monpai.sailboatmod.network.packet.OpenNationScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
+import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.RenameDockPacket;
 import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
+import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerTargetPacket;
@@ -44,6 +46,7 @@ import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionGhostPreviewPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket;
+import com.monpai.sailboatmod.network.packet.SyncClaimPreviewMapPacket;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
@@ -263,6 +266,35 @@ public final class ModNetwork {
         );
         CHANNEL.registerMessage(
                 packetId++,
+                SyncClaimPreviewMapPacket.class,
+                SyncClaimPreviewMapPacket::encode,
+                SyncClaimPreviewMapPacket::decode,
+                SyncClaimPreviewMapPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RequestClaimMapViewportPacket.class,
+                RequestClaimMapViewportPacket::encode,
+                RequestClaimMapViewportPacket::decode,
+                RequestClaimMapViewportPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RefreshClaimMapViewportPacket.class,
+                RefreshClaimMapViewportPacket::encode,
+                RefreshClaimMapViewportPacket::decode,
+                RefreshClaimMapViewportPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CloseClaimMapViewportPacket.class,
+                CloseClaimMapViewportPacket::encode,
+                CloseClaimMapViewportPacket::decode,
+                CloseClaimMapViewportPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
                 SetClaimPermissionPacket.class,
                 SetClaimPermissionPacket::encode,
                 SetClaimPermissionPacket::decode,
@@ -423,13 +455,6 @@ public final class ModNetwork {
                 CancelBuyOrderPacket::encode,
                 CancelBuyOrderPacket::decode,
                 CancelBuyOrderPacket::handle
-        );
-        CHANNEL.registerMessage(
-                packetId++,
-                ClearTerrainCachePacket.class,
-                ClearTerrainCachePacket::encode,
-                ClearTerrainCachePacket::decode,
-                ClearTerrainCachePacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,

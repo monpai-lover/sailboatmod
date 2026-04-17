@@ -164,7 +164,36 @@ public final class RoadPathfinder {
                                                    Set<Long> blockedColumns,
                                                    Set<Long> excludedColumns,
                                                    RoadPlanningPassContext context) {
-        return findPathForPlan(level, from, to, blockedColumns, excludedColumns, false, context);
+        PlannedPathResult legacy = findPathForPlan(level, from, to, blockedColumns, excludedColumns, false, context);
+        LandRoadRouteSelector.Selection selection = LandRoadRouteSelector.select(
+                from,
+                to,
+                legacy.path(),
+                legacy.failureReason(),
+                LandPathQualityEvaluator.elevationVariance(legacy.path()),
+                estimateNearWaterColumns(level, legacy.path(), context),
+                LandPathQualityEvaluator.fragmentedColumns(legacy.path())
+        );
+        if (selection.backEnd() == LandRoadRouteSelector.BackEnd.LEGACY) {
+            return legacy;
+        }
+        PlannedPathResult hybrid = LandRoadHybridPathfinder.find(level, from, to, blockedColumns, excludedColumns, context);
+        return hybrid.success() ? hybrid : legacy;
+    }
+
+    private static int estimateNearWaterColumns(Level level, List<BlockPos> path, RoadPlanningPassContext context) {
+        if (level == null || path == null || path.isEmpty()) {
+            return 0;
+        }
+        LandTerrainSamplingCache cache = new LandTerrainSamplingCache(level, context);
+        int count = 0;
+        for (BlockPos pos : path) {
+            if (pos == null) {
+                continue;
+            }
+            count += Math.max(0, cache.nearWater(pos));
+        }
+        return count;
     }
 
     private static RoadRouteNodePlanner.RouteColumn sampleRouteColumn(Level level,

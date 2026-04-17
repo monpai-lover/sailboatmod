@@ -222,6 +222,34 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void alreadySatisfiedRoadDeckStepAdvancesWithoutWritingDuplicateBlock() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        level.blockStates.put(new BlockPos(0, 64, 0).asLong(), Blocks.STONE_BRICKS.defaultBlockState());
+
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK)),
+                List.of(),
+                List.of(),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0)
+        );
+
+        Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|satisfied", plan), 1);
+
+        assertEquals(1, readRecordComponentAsInt(advanced, "placedStepCount"));
+    }
+
+    @Test
     void shortWaterBridgeDoesNotCreatePierSupportColumns() {
         RoadPlacementPlan plan = shortBridgePlanFixture();
 

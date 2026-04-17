@@ -64,7 +64,8 @@ public record TownOverviewData(
         List<String> demandPreviewLines,
         List<String> procurementPreviewLines,
         List<String> financePreviewLines,
-        List<JoinableNationTarget> joinableNationTargets
+        List<JoinableNationTarget> joinableNationTargets,
+        ClaimPreviewMapState claimMapState
 ) {
     public TownOverviewData(
             boolean hasTown,
@@ -189,7 +190,137 @@ public record TownOverviewData(
                 demandPreviewLines,
                 procurementPreviewLines,
                 financePreviewLines,
-                List.of()
+                List.of(),
+                ClaimPreviewMapState.empty()
+        );
+    }
+
+    public TownOverviewData(
+            boolean hasTown,
+            String townId,
+            String townName,
+            String nationId,
+            String nationName,
+            String mayorUuid,
+            String mayorName,
+            boolean capitalTown,
+            int primaryColorRgb,
+            int secondaryColorRgb,
+            boolean hasCore,
+            String coreDimension,
+            long corePos,
+            int totalClaims,
+            int residentCount,
+            int currentChunkX,
+            int currentChunkZ,
+            int previewCenterChunkX,
+            int previewCenterChunkZ,
+            boolean currentChunkClaimed,
+            boolean currentChunkOwnedByTown,
+            String currentChunkOwnerName,
+            String breakAccessLevel,
+            String placeAccessLevel,
+            String useAccessLevel,
+            String containerAccessLevel,
+            String redstoneAccessLevel,
+            String entityUseAccessLevel,
+            String entityDamageAccessLevel,
+            String flagId,
+            int flagWidth,
+            int flagHeight,
+            long flagByteSize,
+            String flagHash,
+            boolean flagMirrored,
+            boolean canManageTown,
+            boolean canManageClaims,
+            boolean canUploadFlag,
+            boolean canAssignMayor,
+            boolean isMayor,
+            List<NationOverviewMember> members,
+            List<Integer> nearbyTerrainColors,
+            List<NationOverviewClaim> nearbyClaims,
+            String cultureId,
+            Map<String, Integer> cultureDistribution,
+            float averageLiteracy,
+            Map<String, Integer> educationLevelDistribution,
+            float employmentRate,
+            int stockpileCommodityTypes,
+            int stockpileTotalUnits,
+            int openDemandCount,
+            int openDemandUnits,
+            int activeProcurementCount,
+            long totalIncome,
+            long totalExpense,
+            long netBalance,
+            List<String> stockpilePreviewLines,
+            List<String> demandPreviewLines,
+            List<String> procurementPreviewLines,
+            List<String> financePreviewLines,
+            List<JoinableNationTarget> joinableNationTargets
+    ) {
+        this(
+                hasTown,
+                townId,
+                townName,
+                nationId,
+                nationName,
+                mayorUuid,
+                mayorName,
+                capitalTown,
+                primaryColorRgb,
+                secondaryColorRgb,
+                hasCore,
+                coreDimension,
+                corePos,
+                totalClaims,
+                residentCount,
+                currentChunkX,
+                currentChunkZ,
+                previewCenterChunkX,
+                previewCenterChunkZ,
+                currentChunkClaimed,
+                currentChunkOwnedByTown,
+                currentChunkOwnerName,
+                breakAccessLevel,
+                placeAccessLevel,
+                useAccessLevel,
+                containerAccessLevel,
+                redstoneAccessLevel,
+                entityUseAccessLevel,
+                entityDamageAccessLevel,
+                flagId,
+                flagWidth,
+                flagHeight,
+                flagByteSize,
+                flagHash,
+                flagMirrored,
+                canManageTown,
+                canManageClaims,
+                canUploadFlag,
+                canAssignMayor,
+                isMayor,
+                members,
+                nearbyTerrainColors,
+                nearbyClaims,
+                cultureId,
+                cultureDistribution,
+                averageLiteracy,
+                educationLevelDistribution,
+                employmentRate,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines,
+                joinableNationTargets,
+                ClaimPreviewMapState.empty()
         );
     }
 
@@ -237,6 +368,7 @@ public record TownOverviewData(
         joinableNationTargets = joinableNationTargets == null ? List.of() : joinableNationTargets.stream()
                 .map(target -> new JoinableNationTarget(target.nationId(), target.nationName()))
                 .toList();
+        claimMapState = claimMapState == null ? ClaimPreviewMapState.empty() : claimMapState;
         members = members == null ? List.of() : members.stream()
                 .map(member -> new NationOverviewMember(
                         sanitize(member.playerUuid(), 40),
@@ -330,7 +462,94 @@ public record TownOverviewData(
                 List.of(),
                 List.of(),
                 List.of(),
-                List.of());
+                List.of(),
+                ClaimPreviewMapState.empty());
+    }
+
+    public TownOverviewData withClaimPreview(ClaimPreviewMapState mapState, List<Integer> terrainColors) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return withClaimPreviewContext(
+                nextMapState,
+                terrainColors,
+                mapState == null ? previewCenterChunkX : mapState.centerChunkX(),
+                mapState == null ? previewCenterChunkZ : mapState.centerChunkZ()
+        );
+    }
+
+    public TownOverviewData withClaimPreviewState(ClaimPreviewMapState mapState) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return withClaimPreviewContext(nextMapState, nearbyTerrainColors, previewCenterChunkX, previewCenterChunkZ);
+    }
+
+    public TownOverviewData withClaimPreviewContext(ClaimPreviewMapState mapState,
+                                                    List<Integer> terrainColors,
+                                                    int nextPreviewCenterChunkX,
+                                                    int nextPreviewCenterChunkZ) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return new TownOverviewData(
+                hasTown,
+                townId,
+                townName,
+                nationId,
+                nationName,
+                mayorUuid,
+                mayorName,
+                capitalTown,
+                primaryColorRgb,
+                secondaryColorRgb,
+                hasCore,
+                coreDimension,
+                corePos,
+                totalClaims,
+                residentCount,
+                currentChunkX,
+                currentChunkZ,
+                nextPreviewCenterChunkX,
+                nextPreviewCenterChunkZ,
+                currentChunkClaimed,
+                currentChunkOwnedByTown,
+                currentChunkOwnerName,
+                breakAccessLevel,
+                placeAccessLevel,
+                useAccessLevel,
+                containerAccessLevel,
+                redstoneAccessLevel,
+                entityUseAccessLevel,
+                entityDamageAccessLevel,
+                flagId,
+                flagWidth,
+                flagHeight,
+                flagByteSize,
+                flagHash,
+                flagMirrored,
+                canManageTown,
+                canManageClaims,
+                canUploadFlag,
+                canAssignMayor,
+                isMayor,
+                members,
+                terrainColors,
+                nearbyClaims,
+                cultureId,
+                cultureDistribution,
+                averageLiteracy,
+                educationLevelDistribution,
+                employmentRate,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines,
+                joinableNationTargets,
+                nextMapState
+        );
     }
 
     public record JoinableNationTarget(String nationId, String nationName) {

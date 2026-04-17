@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
+import com.monpai.sailboatmod.nation.service.ClaimMapTaskService;
 import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.mojang.logging.LogUtils;
@@ -34,7 +35,8 @@ public final class ServerEvents {
         com.monpai.sailboatmod.market.commodity.CommodityConfigLoader.load();
         runStartupTaskSafely("market SQLite database", () -> MarketDatabase.initialize(event.getServer()));
         BlueMapIntegration.onServerStarted(event.getServer());
-        ClaimPreviewTerrainService.clearAllPersistedColors(event.getServer().overworld());
+        ClaimPreviewTerrainService.onServerStarted(event.getServer());
+        ClaimMapTaskService.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
     }
 
@@ -56,6 +58,7 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
             });
+            com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
             if (++loanTickCounter >= 1200) {
                 loanTickCounter = 0;
@@ -96,6 +99,9 @@ public final class ServerEvents {
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
+        ClaimPreviewTerrainService.onServerStopping();
+        com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerStopping();
+        ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();

@@ -11,7 +11,10 @@ public final class TerrainCacheInvalidator {
     public static void onBlockBreak(BlockEvent.BreakEvent event) {
         if (event.getLevel() instanceof ServerLevel level) {
             BlockPos pos = event.getPos();
-            ClaimPreviewTerrainService.invalidateChunk(level, pos.getX() >> 4, pos.getZ() >> 4);
+            ClaimPreviewTerrainService service = ClaimPreviewTerrainService.get(level.getServer());
+            if (service != null) {
+                service.invalidateChunkNow(level, pos.getX() >> 4, pos.getZ() >> 4);
+            }
         }
     }
 
@@ -19,7 +22,10 @@ public final class TerrainCacheInvalidator {
     public static void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
         if (event.getLevel() instanceof ServerLevel level) {
             BlockPos pos = event.getPos();
-            ClaimPreviewTerrainService.invalidateChunk(level, pos.getX() >> 4, pos.getZ() >> 4);
+            ClaimPreviewTerrainService service = ClaimPreviewTerrainService.get(level.getServer());
+            if (service != null) {
+                service.invalidateChunkNow(level, pos.getX() >> 4, pos.getZ() >> 4);
+            }
         }
     }
 

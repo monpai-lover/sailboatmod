@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.construction.ConstructionStepExecutor;
+import com.monpai.sailboatmod.construction.ConstructionStepSatisfactionService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
@@ -225,7 +227,12 @@ final class StructureConstructionSite {
     private void refreshPlacedBlocks() {
         placedBlockPosSet.clear();
         for (BlueprintService.BlueprintBlock block : blocks) {
-            if (matchesExpectedState(block)) {
+            if (ConstructionStepSatisfactionService.decide(
+                    level.getBlockState(block.relativePos()),
+                    block.state(),
+                    block.relativePos(),
+                    ConstructionStepSatisfactionService.StepKind.BUILDING_BLOCK
+            ) == ConstructionStepSatisfactionService.StepDecision.SATISFIED) {
                 placedBlockPosSet.add(block.relativePos());
             }
         }
@@ -247,7 +254,21 @@ final class StructureConstructionSite {
             }
             BlockPos pos = block.relativePos();
             BlockState currentState = level.getBlockState(pos);
-            if (!currentState.equals(block.state()) && !canReplace(currentState)) {
+            ConstructionStepSatisfactionService.StepDecision decision = ConstructionStepSatisfactionService.decide(
+                    currentState,
+                    block.state(),
+                    pos,
+                    ConstructionStepSatisfactionService.StepKind.BUILDING_BLOCK
+            );
+            if (decision == ConstructionStepSatisfactionService.StepDecision.SATISFIED) {
+                placedBlockPosSet.add(pos);
+                continue;
+            }
+            if (decision == ConstructionStepSatisfactionService.StepDecision.RETRYABLE) {
+                ConstructionStepExecutor.clearNaturalObstacles(level, pos);
+                continue;
+            }
+            if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
                 continue;
             }
             if (hasPlacementSupport(block)) {
@@ -287,7 +308,12 @@ final class StructureConstructionSite {
     }
 
     private boolean matchesExpectedState(BlueprintService.BlueprintBlock block) {
-        return level.getBlockState(block.relativePos()).equals(block.state());
+        return ConstructionStepSatisfactionService.decide(
+                level.getBlockState(block.relativePos()),
+                block.state(),
+                block.relativePos(),
+                ConstructionStepSatisfactionService.StepKind.BUILDING_BLOCK
+        ) == ConstructionStepSatisfactionService.StepDecision.SATISFIED;
     }
 
     private boolean canReplace(BlockState state) {
@@ -296,6 +322,23 @@ final class StructureConstructionSite {
 
     private void placeBlock(BlueprintService.BlueprintBlock block) {
         BlockPos pos = block.relativePos();
+        ConstructionStepSatisfactionService.StepDecision decision = ConstructionStepSatisfactionService.decide(
+                level.getBlockState(pos),
+                block.state(),
+                pos,
+                ConstructionStepSatisfactionService.StepKind.BUILDING_BLOCK
+        );
+        if (decision == ConstructionStepSatisfactionService.StepDecision.SATISFIED) {
+            placedBlockPosSet.add(pos);
+            return;
+        }
+        if (decision == ConstructionStepSatisfactionService.StepDecision.RETRYABLE) {
+            ConstructionStepExecutor.clearNaturalObstacles(level, pos);
+            return;
+        }
+        if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
+            return;
+        }
         level.setBlock(pos, block.state(), Block.UPDATE_ALL);
         applyBlockEntityData(pos, block.state(), block.nbt());
         placedBlockPosSet.add(pos);

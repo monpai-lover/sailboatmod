@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.TownClientHooks;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
@@ -15,7 +16,6 @@ import java.util.function.Supplier;
 
 public class OpenTownScreenPacket {
     private static final int MAX_MEMBER_COUNT = 1024;
-    private static final int MAX_TERRAIN_COLOR_COUNT = 20000;
     private static final int MAX_CLAIM_COUNT = 20000;
     private static final int MAX_PREVIEW_LINE_COUNT = 256;
     private static final int MAX_JOINABLE_NATION_TARGET_COUNT = 2048;
@@ -46,6 +46,12 @@ public class OpenTownScreenPacket {
         buffer.writeInt(data.currentChunkZ());
         buffer.writeInt(data.previewCenterChunkX());
         buffer.writeInt(data.previewCenterChunkZ());
+        buffer.writeLong(data.claimMapState().revision());
+        buffer.writeVarInt(data.claimMapState().radius());
+        buffer.writeInt(data.claimMapState().centerChunkX());
+        buffer.writeInt(data.claimMapState().centerChunkZ());
+        buffer.writeBoolean(data.claimMapState().loading());
+        buffer.writeBoolean(data.claimMapState().ready());
         buffer.writeBoolean(data.currentChunkClaimed());
         buffer.writeBoolean(data.currentChunkOwnedByTown());
         PacketStringCodec.writeUtfSafe(buffer, data.currentChunkOwnerName(), 64);
@@ -74,10 +80,6 @@ public class OpenTownScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, member.officeId(), 40);
             PacketStringCodec.writeUtfSafe(buffer, member.officeName(), 64);
             buffer.writeBoolean(member.online());
-        }
-        buffer.writeVarInt(data.nearbyTerrainColors().size());
-        for (Integer color : data.nearbyTerrainColors()) {
-            buffer.writeInt(color == null ? 0xFF33414A : color);
         }
         buffer.writeVarInt(data.nearbyClaims().size());
         for (NationOverviewClaim claim : data.nearbyClaims()) {
@@ -149,6 +151,12 @@ public class OpenTownScreenPacket {
         int currentChunkZ = buffer.readInt();
         int previewCenterChunkX = buffer.readInt();
         int previewCenterChunkZ = buffer.readInt();
+        long claimMapRevision = buffer.readLong();
+        int claimMapRadius = buffer.readVarInt();
+        int claimMapCenterChunkX = buffer.readInt();
+        int claimMapCenterChunkZ = buffer.readInt();
+        boolean claimMapLoading = buffer.readBoolean();
+        boolean claimMapReady = buffer.readBoolean();
         boolean currentChunkClaimed = buffer.readBoolean();
         boolean currentChunkOwnedByTown = buffer.readBoolean();
         String currentChunkOwnerName = buffer.readUtf(64);
@@ -180,11 +188,6 @@ public class OpenTownScreenPacket {
                     buffer.readUtf(64),
                     buffer.readBoolean()
             ));
-        }
-        int terrainColorCount = readBoundedCount(buffer, MAX_TERRAIN_COLOR_COUNT, "terrainColorCount");
-        List<Integer> nearbyTerrainColors = new ArrayList<>(terrainColorCount);
-        for (int i = 0; i < terrainColorCount; i++) {
-            nearbyTerrainColors.add(buffer.readInt());
         }
         int claimCount = readBoundedCount(buffer, MAX_CLAIM_COUNT, "claimCount");
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>(claimCount);
@@ -240,6 +243,15 @@ public class OpenTownScreenPacket {
                     buffer.readUtf(64)
             ));
         }
+        ClaimPreviewMapState claimMapState = new ClaimPreviewMapState(
+                claimMapRevision,
+                claimMapRadius,
+                claimMapCenterChunkX,
+                claimMapCenterChunkZ,
+                claimMapLoading,
+                claimMapReady,
+                List.of()
+        );
         return new OpenTownScreenPacket(new TownOverviewData(
                 hasTown,
                 townId,
@@ -282,7 +294,7 @@ public class OpenTownScreenPacket {
                 canAssignMayor,
                 isMayor,
                 members,
-                nearbyTerrainColors,
+                List.of(),
                 nearbyClaims,
                 cultureId,
                 cultureDistribution,
@@ -301,7 +313,8 @@ public class OpenTownScreenPacket {
                 demandPreviewLines,
                 procurementPreviewLines,
                 financePreviewLines,
-                joinableNationTargets
+                joinableNationTargets,
+                claimMapState
         ));
     }
 

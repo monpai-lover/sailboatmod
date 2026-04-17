@@ -1,12 +1,14 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
 import com.mojang.logging.LogUtils;
+import com.monpai.sailboatmod.client.NationClientHooks;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.NationFlagUploadClient;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyRequest;
@@ -19,8 +21,9 @@ import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.NationGuiActionPacket;
-import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownMenuPacket;
+import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
+import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -31,11 +34,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.tags.FluidTags;
 import net.minecraft.util.FormattedCharSequence;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.material.MapColor;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -48,6 +47,7 @@ public class NationHomeScreen extends Screen {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final boolean CLAIM_TRACE_ENABLED = true;
     private static final int AUTO_REFRESH_INTERVAL_TICKS = 40;
+    private static final int PENDING_RETRY_INTERVAL_TICKS = 8;
     private static final int ACTIVE_WAR_REFRESH_INTERVAL_TICKS = 20;
     private static final int SCREEN_W = 468;
     private static final int SCREEN_H = 330;
@@ -64,13 +64,24 @@ public class NationHomeScreen extends Screen {
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
     private static final int PREVIEW_DEFAULT_TERRAIN_COLOR = 0xFF33414A;
+    private static final int VIEWPORT_PREFETCH_RADIUS = 2;
     private int claimRadius() {
-        int size = this.data.nearbyTerrainColors().size();
-        if (size <= 0) return com.monpai.sailboatmod.ModConfig.claimPreviewRadius();
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        int chunkCount = size / (sub * sub);
-        int diameter = (int) Math.round(Math.sqrt(chunkCount));
-        return (diameter - 1) / 2;
+        int stateRadius = this.data.claimMapState().radius();
+        if (stateRadius > 0) {
+            this.lastKnownClaimRadius = stateRadius;
+            return stateRadius;
+        }
+        Integer inferredRadius = inferClaimRadiusFromTerrainColors(this.data.nearbyTerrainColors().size());
+        if (inferredRadius != null) {
+            this.lastKnownClaimRadius = inferredRadius;
+            return inferredRadius;
+        }
+        if (this.lastKnownClaimRadius >= 0) {
+            return this.lastKnownClaimRadius;
+        }
+        int configuredRadius = configuredClaimRadiusOrZero();
+        this.lastKnownClaimRadius = configuredRadius;
+        return configuredRadius;
     }
 
     private NationOverviewData data;
@@ -162,8 +173,10 @@ public class NationHomeScreen extends Screen {
     private boolean isDraggingMap = false;
     private double dragStartX = 0;
     private double dragStartY = 0;
+    private int lastKnownClaimRadius = -1;
     private int pendingPreviewCenterX = Integer.MIN_VALUE;
     private int pendingPreviewCenterZ = Integer.MIN_VALUE;
+    private long pendingPreviewRevision = Long.MIN_VALUE;
     private int queuedPreviewCenterX = Integer.MIN_VALUE;
     private int queuedPreviewCenterZ = Integer.MIN_VALUE;
     private boolean resetPending = false;
@@ -175,16 +188,20 @@ public class NationHomeScreen extends Screen {
     public NationHomeScreen(NationOverviewData data) {
         super(Component.translatable("screen.sailboatmod.nation.home.title"));
         this.data = data == null ? NationOverviewData.empty() : data;
+        rememberClaimRadius(this.data);
         syncSelections();
         syncTownSelection();
     }
 
     public void updateData(NationOverviewData updated) {
         NationOverviewData previousData = this.data;
+        rememberClaimRadius(previousData);
+        cacheTerrainColors(previousData);
         boolean preserveVisibleCenter = previousData != null && !previousData.nearbyTerrainColors().isEmpty();
         int visibleCenterX = preserveVisibleCenter ? mapCenterX() : Integer.MIN_VALUE;
         int visibleCenterZ = preserveVisibleCenter ? mapCenterZ() : Integer.MIN_VALUE;
         this.data = updated == null ? NationOverviewData.empty() : updated;
+        rememberClaimRadius(this.data);
         traceClaim("updateData previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
                 + " visibleCenterBefore=" + visibleCenterX + "," + visibleCenterZ
                 + " terrainCount=" + this.data.nearbyTerrainColors().size()
@@ -192,13 +209,18 @@ public class NationHomeScreen extends Screen {
                 + " pending=" + this.pendingPreviewCenterX + "," + this.pendingPreviewCenterZ
                 + " queued=" + this.queuedPreviewCenterX + "," + this.queuedPreviewCenterZ
                 + " resetPending=" + this.resetPending);
-        this.refreshPending = false;
-        this.autoRefreshTicks = 0;
-        cacheNearbyClaims();
-        if (this.data.previewCenterChunkX() == this.pendingPreviewCenterX && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ) {
+        boolean pendingResolved = this.refreshPending
+                && this.pendingPreviewRevision != Long.MIN_VALUE
+                && this.data.claimMapState().revision() >= this.pendingPreviewRevision
+                && !this.data.claimMapState().loading();
+        if (pendingResolved) {
+            this.refreshPending = false;
             this.pendingPreviewCenterX = Integer.MIN_VALUE;
             this.pendingPreviewCenterZ = Integer.MIN_VALUE;
+            this.pendingPreviewRevision = Long.MIN_VALUE;
         }
+        this.autoRefreshTicks = 0;
+        cacheNearbyClaims();
         if (this.resetPending) {
             this.mapOffsetX = 0;
             this.mapOffsetZ = 0;
@@ -216,14 +238,18 @@ public class NationHomeScreen extends Screen {
         syncNationInfoInputs();
         syncColorInputs();
         syncOfficerTitleInput();
-        int diameter = claimRadius() * 2 + 1;
+        int radius = claimRadius();
+        int diameter = radius * 2 + 1;
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        List<Integer> colors = this.data.nearbyTerrainColors();
         for (int gz = 0; gz < diameter; gz++) {
             for (int gx = 0; gx < diameter; gx++) {
-                int idx = gz * diameter + gx;
-                if (idx < this.data.nearbyTerrainColors().size()) {
-                    int cx = this.data.previewCenterChunkX() + gx - claimRadius();
-                    int cz = this.data.previewCenterChunkZ() + gz - claimRadius();
-                    TerrainColorClientCache.put(cx, cz, this.data.nearbyTerrainColors().get(idx));
+                int chunkIndex = gz * diameter + gx;
+                int colorIndex = chunkIndex * sub * sub;
+                if (colorIndex < colors.size()) {
+                    int cx = this.data.previewCenterChunkX() + gx - radius;
+                    int cz = this.data.previewCenterChunkZ() + gz - radius;
+                    TerrainColorClientCache.put(cx, cz, colors.get(colorIndex));
                 }
             }
         }
@@ -318,8 +344,7 @@ public class NationHomeScreen extends Screen {
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
         this.resetMapButton.visible = false;
         this.clearTerrainCacheButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
-            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.ClearTerrainCachePacket());
-            maybeRequestPreviewRefresh();
+            requestRefresh();
         }).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 44, top + BODY_Y + 10, 24, 14).build());
         this.clearTerrainCacheButton.visible = false;
 
@@ -353,7 +378,7 @@ public class NationHomeScreen extends Screen {
     @Override
     public void removed() {
         super.removed();
-        com.monpai.sailboatmod.client.NationClientHooks.onScreenClosed();
+        com.monpai.sailboatmod.client.NationClientHooks.onScreenClosed(this.data.nationId());
     }
 
     @Override
@@ -371,7 +396,20 @@ public class NationHomeScreen extends Screen {
     }
 
     private void tickAutoRefresh() {
-        if (!this.data.hasNation() || this.refreshPending) {
+        if (!this.data.hasNation()) {
+            this.autoRefreshTicks = 0;
+            return;
+        }
+        if (shouldRetryPendingPreviewRequest()) {
+            this.autoRefreshTicks++;
+            if (this.autoRefreshTicks < PENDING_RETRY_INTERVAL_TICKS) {
+                return;
+            }
+            this.autoRefreshTicks = 0;
+            retryPendingPreviewRequest();
+            return;
+        }
+        if (this.refreshPending) {
             this.autoRefreshTicks = 0;
             return;
         }
@@ -1100,8 +1138,6 @@ public class NationHomeScreen extends Screen {
             for (int gx = 0; gx < totalCells; gx++) {
                 int chunkX = centerX + gx - claimRadius();
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
-                double overlayStrength = claim == null ? 0 : (this.data.nationId().equals(claim.nationId()) ? 0.38D : 0.30D);
-                int claimOverlay = claim == null ? 0 : (0xFF000000 | claim.primaryColorRgb());
                 for (int sz = 0; sz < sub; sz++) {
                     int subCellZ = gz * sub + sz;
                     int y1 = mapY + subCellZ * CLAIM_MAP_H / totalSubCells;
@@ -1111,7 +1147,6 @@ public class NationHomeScreen extends Screen {
                         int x1 = mapX + subCellX * CLAIM_MAP_W / totalSubCells;
                         int x2 = mapX + (subCellX + 1) * CLAIM_MAP_W / totalSubCells;
                         int color = sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
-                        if (claim != null) color = blendColor(color, claimOverlay, overlayStrength);
                         g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
                     }
                 }
@@ -1197,25 +1232,11 @@ public class NationHomeScreen extends Screen {
             }
         }
         Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
-        if (cached != null) return cached;
-        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
-        if (local != null) return local;
-        return PREVIEW_DEFAULT_TERRAIN_COLOR;
+        return cached != null ? cached : PREVIEW_DEFAULT_TERRAIN_COLOR;
     }
 
-
-    private int blendColor(int base, int overlay, double factor) {
-        double clamped = Math.max(0.0D, Math.min(1.0D, factor));
-        int br = (base >> 16) & 0xFF;
-        int bg = (base >> 8) & 0xFF;
-        int bb = base & 0xFF;
-        int or = (overlay >> 16) & 0xFF;
-        int og = (overlay >> 8) & 0xFF;
-        int ob = overlay & 0xFF;
-        int rr = (int) Math.round(br * (1.0D - clamped) + or * clamped);
-        int rg = (int) Math.round(bg * (1.0D - clamped) + og * clamped);
-        int rb = (int) Math.round(bb * (1.0D - clamped) + ob * clamped);
-        return 0xFF000000 | (rr << 16) | (rg << 8) | rb;
+    int sampleClaimTerrainColorForTest(int chunkX, int chunkZ, int sx, int sz) {
+        return sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
     }
 
     private void drawClaimMarker(GuiGraphics g, int mapX, int mapY, int chunkX, int chunkZ, int color) {
@@ -1452,8 +1473,11 @@ public class NationHomeScreen extends Screen {
             case FLAG -> 230;
         };
     }
-    private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ()); }
+    private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ(), true); }
     private void requestRefresh(int centerChunkX, int centerChunkZ) {
+        requestRefresh(centerChunkX, centerChunkZ, false);
+    }
+    private void requestRefresh(int centerChunkX, int centerChunkZ, boolean explicitRefresh) {
         if (this.refreshPending) {
             traceClaim("requestRefresh queued center=" + centerChunkX + "," + centerChunkZ);
             this.queuedPreviewCenterX = centerChunkX;
@@ -1467,8 +1491,87 @@ public class NationHomeScreen extends Screen {
         this.refreshPending = true;
         this.pendingPreviewCenterX = centerChunkX;
         this.pendingPreviewCenterZ = centerChunkZ;
-        ModNetwork.CHANNEL.sendToServer(new OpenNationMenuPacket(centerChunkX, centerChunkZ));
+        long revision = NationClientHooks.beginClaimPreviewRequest(centerChunkX, centerChunkZ, viewportRadius());
+        this.pendingPreviewRevision = revision;
+        sendViewportRequest(centerChunkX, centerChunkZ, revision, explicitRefresh);
         this.statusLine = Component.translatable("screen.sailboatmod.nation.status.refreshing");
+    }
+
+    private void retryPendingPreviewRequest() {
+        if (this.pendingPreviewRevision == Long.MIN_VALUE
+                || this.pendingPreviewCenterX == Integer.MIN_VALUE
+                || this.pendingPreviewCenterZ == Integer.MIN_VALUE) {
+            return;
+        }
+        traceClaim("retryPendingPreviewRequest center=" + this.pendingPreviewCenterX + "," + this.pendingPreviewCenterZ
+                + " revision=" + this.pendingPreviewRevision);
+        sendViewportRequest(this.pendingPreviewCenterX, this.pendingPreviewCenterZ, this.pendingPreviewRevision, false);
+    }
+
+    private void sendViewportRequest(int centerChunkX, int centerChunkZ, long revision, boolean explicitRefresh) {
+        if (explicitRefresh) {
+            ModNetwork.CHANNEL.sendToServer(new RefreshClaimMapViewportPacket(
+                    RequestClaimMapViewportPacket.ScreenKind.NATION,
+                    this.data.nationId(),
+                    currentDimensionId(),
+                    revision,
+                    viewportRadius(),
+                    centerChunkX,
+                    centerChunkZ
+            ));
+        } else {
+            ModNetwork.CHANNEL.sendToServer(new RequestClaimMapViewportPacket(
+                    RequestClaimMapViewportPacket.ScreenKind.NATION,
+                    this.data.nationId(),
+                    currentDimensionId(),
+                    revision,
+                    viewportRadius(),
+                    centerChunkX,
+                    centerChunkZ,
+                    VIEWPORT_PREFETCH_RADIUS
+            ));
+        }
+    }
+
+    private boolean shouldRetryPendingPreviewRequest() {
+        return shouldRetryPendingPreviewRequest(
+                this.refreshPending,
+                this.pendingPreviewRevision,
+                this.pendingPreviewCenterX,
+                this.pendingPreviewCenterZ,
+                this.data.claimMapState()
+        );
+    }
+
+    static boolean shouldRetryPendingPreviewRequest(boolean refreshPending,
+                                                    long pendingPreviewRevision,
+                                                    int pendingPreviewCenterX,
+                                                    int pendingPreviewCenterZ,
+                                                    ClaimPreviewMapState mapState) {
+        if (!refreshPending
+                || pendingPreviewRevision == Long.MIN_VALUE
+                || pendingPreviewCenterX == Integer.MIN_VALUE
+                || pendingPreviewCenterZ == Integer.MIN_VALUE) {
+            return false;
+        }
+        ClaimPreviewMapState safeMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return safeMapState.loading() && safeMapState.revision() == pendingPreviewRevision;
+    }
+
+    private int viewportRadius() {
+        int configured = this.data.claimMapState().radius();
+        return configured > 0 ? configured : claimRadius();
+    }
+
+    private String currentDimensionId() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level != null) {
+            return minecraft.level.dimension().location().toString();
+        }
+        if (this.data.hasCore() && this.data.coreDimension() != null && !this.data.coreDimension().isBlank()) {
+            return this.data.coreDimension();
+        }
+        return "minecraft:overworld";
     }
 
     private void flushQueuedPreviewRefresh() {
@@ -1520,7 +1623,8 @@ public class NationHomeScreen extends Screen {
 
     private boolean hasIncompletePreviewTerrain() {
         int diameter = claimRadius() * 2 + 1;
-        if (this.data.nearbyTerrainColors().size() < diameter * diameter) {
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        if (this.data.nearbyTerrainColors().size() < diameter * diameter * sub * sub) {
             return true;
         }
         for (Integer color : this.data.nearbyTerrainColors()) {
@@ -1529,6 +1633,80 @@ public class NationHomeScreen extends Screen {
             }
         }
         return false;
+    }
+
+    private void cacheTerrainColors(NationOverviewData snapshot) {
+        if (snapshot == null) {
+            return;
+        }
+        List<Integer> colors = snapshot.nearbyTerrainColors();
+        if (colors.isEmpty()) {
+            return;
+        }
+        int radius = resolvedRadiusForSnapshot(snapshot);
+        if (radius < 0) {
+            return;
+        }
+        int diameter = radius * 2 + 1;
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        for (int gz = 0; gz < diameter; gz++) {
+            for (int gx = 0; gx < diameter; gx++) {
+                int chunkIndex = gz * diameter + gx;
+                int colorIndex = chunkIndex * sub * sub;
+                if (colorIndex < colors.size()) {
+                    int cx = snapshot.previewCenterChunkX() + gx - radius;
+                    int cz = snapshot.previewCenterChunkZ() + gz - radius;
+                    TerrainColorClientCache.put(cx, cz, colors.get(colorIndex));
+                }
+            }
+        }
+    }
+
+    private void rememberClaimRadius(NationOverviewData snapshot) {
+        int radius = resolvedRadiusForSnapshot(snapshot);
+        if (radius >= 0) {
+            this.lastKnownClaimRadius = radius;
+        }
+    }
+
+    private int resolvedRadiusForSnapshot(NationOverviewData snapshot) {
+        if (snapshot == null) {
+            return -1;
+        }
+        int stateRadius = snapshot.claimMapState().radius();
+        if (stateRadius > 0) {
+            return stateRadius;
+        }
+        Integer inferredRadius = inferClaimRadiusFromTerrainColors(snapshot.nearbyTerrainColors().size());
+        return inferredRadius == null ? -1 : inferredRadius;
+    }
+
+    private Integer inferClaimRadiusFromTerrainColors(int colorCount) {
+        if (colorCount <= 0) {
+            return null;
+        }
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        int colorsPerChunk = sub * sub;
+        if (colorsPerChunk <= 0 || colorCount % colorsPerChunk != 0) {
+            return null;
+        }
+        int chunkCount = colorCount / colorsPerChunk;
+        if (chunkCount <= 0) {
+            return null;
+        }
+        int diameter = (int) Math.round(Math.sqrt(chunkCount));
+        if (diameter <= 0 || diameter * diameter != chunkCount || (diameter & 1) == 0) {
+            return null;
+        }
+        return (diameter - 1) / 2;
+    }
+
+    private int configuredClaimRadiusOrZero() {
+        try {
+            return Math.max(0, com.monpai.sailboatmod.ModConfig.claimPreviewRadius());
+        } catch (RuntimeException ignored) {
+            return 0;
+        }
     }
 
     private void traceClaim(String message) {
@@ -1775,81 +1953,6 @@ public class NationHomeScreen extends Screen {
     private void syncTownSelection() { if (this.data.towns().isEmpty()) { this.selectedTownId = ""; return; } if (!this.selectedTownId.isBlank()) { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return; } if (!this.data.capitalTownId().isBlank()) { for (NationOverviewTown town : this.data.towns()) { if (town.townId().equals(this.data.capitalTownId())) { this.selectedTownId = town.townId(); return; } } } this.selectedTownId = this.data.towns().get(0).townId(); }
     private NationOverviewTown selectedTown() { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return town; return this.data.towns().isEmpty() ? null : this.data.towns().get(0); }
     private void cycleTownSelection(int delta) { if (this.data.towns().isEmpty()) return; int index = 0; for (int i = 0; i < this.data.towns().size(); i++) { if (this.data.towns().get(i).townId().equals(this.selectedTownId)) { index = i; break; } } int size = this.data.towns().size(); int next = Math.floorMod(index + delta, size); this.selectedTownId = this.data.towns().get(next).townId(); updateButtonState(); }
-
-    private int sampleLocalTerrainColor(int chunkX, int chunkZ) {
-        Integer local = sampleLoadedTerrainColor(chunkX, chunkZ);
-        if (local != null) {
-            return local;
-        }
-        Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
-        if (cached != null) return cached;
-        return 0xFF33414A;
-    }
-
-    private static final int PREVIEW_WATER_COLOR = 0xFF4466B0;
-    private static final int PREVIEW_FALLBACK_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
-
-    private Integer sampleLoadedTerrainColor(int chunkX, int chunkZ) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || !minecraft.level.hasChunk(chunkX, chunkZ)) return null;
-
-        int[] sampleOffsets = {2, 6, 10, 14};
-        int[] colors = new int[16];
-        int[] heights = new int[16];
-        int count = 0;
-        try {
-            for (int lxi = 0; lxi < 4; lxi++) {
-                for (int lzi = 0; lzi < 4; lzi++) {
-                    int[] result = sampleBlockColorAndHeight(chunkX, chunkZ, sampleOffsets[lxi], sampleOffsets[lzi]);
-                    colors[count] = result[0];
-                    heights[count] = result[1];
-                    count++;
-                }
-            }
-        } catch (Exception ignored) {
-            int color = PREVIEW_FALLBACK_COLOR;
-            TerrainColorClientCache.put(chunkX, chunkZ, color);
-            return color;
-        }
-        long rSum = 0, gSum = 0, bSum = 0;
-        for (int lxi = 0; lxi < 4; lxi++) {
-            for (int lzi = 0; lzi < 4; lzi++) {
-                int idx = lxi * 4 + lzi;
-                int c = colors[idx];
-                int shade = 180;
-                if (lzi > 0) {
-                    int northIdx = lxi * 4 + (lzi - 1);
-                    if (heights[idx] > heights[northIdx]) shade = 220;
-                    else if (heights[idx] < heights[northIdx]) shade = 135;
-                }
-                rSum += ((c >> 16) & 0xFF) * shade / 180;
-                gSum += ((c >> 8) & 0xFF) * shade / 180;
-                bSum += (c & 0xFF) * shade / 180;
-            }
-        }
-        int color = 0xFF000000 | (Math.min(255, (int)(rSum / 16)) << 16) | (Math.min(255, (int)(gSum / 16)) << 8) | Math.min(255, (int)(bSum / 16));
-        TerrainColorClientCache.put(chunkX, chunkZ, color);
-        return color;
-    }
-
-    private int[] sampleBlockColorAndHeight(int chunkX, int chunkZ, int localX, int localZ) {
-        Minecraft minecraft = Minecraft.getInstance();
-        int worldX = (chunkX << 4) + localX;
-        int worldZ = (chunkZ << 4) + localZ;
-        int worldY = minecraft.level.getHeight(Heightmap.Types.WORLD_SURFACE, worldX, worldZ) - 1;
-        if (worldY < minecraft.level.getMinBuildHeight()) return new int[]{PREVIEW_FALLBACK_COLOR, worldY};
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(worldX, worldY, worldZ);
-        BlockState state = minecraft.level.getBlockState(pos);
-        while (state.isAir() && worldY > minecraft.level.getMinBuildHeight()) {
-            worldY--;
-            pos.set(worldX, worldY, worldZ);
-            state = minecraft.level.getBlockState(pos);
-        }
-        if (state.getFluidState().is(FluidTags.WATER)) return new int[]{PREVIEW_WATER_COLOR, worldY};
-        MapColor mapColor = state.getMapColor(minecraft.level, pos);
-        if (mapColor == null || mapColor == MapColor.NONE || mapColor.col == 0) return new int[]{PREVIEW_FALLBACK_COLOR, worldY};
-        return new int[]{0xFF000000 | (mapColor.col & 0x00FFFFFF), worldY};
-    }
 
     private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }
     private void drawMetricCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {

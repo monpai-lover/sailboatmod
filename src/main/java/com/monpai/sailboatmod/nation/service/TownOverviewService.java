@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
@@ -92,7 +93,8 @@ public final class TownOverviewService {
                     claim.entityDamageAccessLevel()));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), previewChunk, claimPreviewRadius());
+        ClaimPreviewMapState claimMapState = initialClaimMapState(claimPreviewRadius(), previewChunk);
+        List<Integer> nearbyTerrainColors = List.of();
 
         boolean canManageTown = TownService.canManageTown(player, data, town);
         boolean canAssignMayor = nation != null && player.getUUID().equals(nation.leaderUuid());
@@ -166,7 +168,8 @@ public final class TownOverviewService {
                 economy.demandPreviewLines(),
                 economy.procurementPreviewLines(),
                 economy.financePreviewLines(),
-                joinableNationTargets);
+                joinableNationTargets,
+                claimMapState);
     }
 
     static List<TownOverviewData.JoinableNationTarget> joinableNationTargetsForTest(
@@ -307,6 +310,11 @@ public final class TownOverviewService {
             return nation.name();
         }
         return fallbackId == null || fallbackId.isBlank() ? "-" : fallbackId;
+    }
+
+    static ClaimPreviewMapState initialClaimMapState(int radius, ChunkPos previewChunk) {
+        ChunkPos safePreviewChunk = previewChunk == null ? new ChunkPos(0, 0) : previewChunk;
+        return ClaimPreviewMapState.loading(0L, Math.max(0, radius), safePreviewChunk.x, safePreviewChunk.z);
     }
 
     private static float calculateAverageLiteracy(net.minecraft.world.level.Level level, String townId) {

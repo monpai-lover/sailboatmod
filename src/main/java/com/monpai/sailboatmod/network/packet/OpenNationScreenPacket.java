@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.NationClientHooks;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
@@ -52,6 +53,12 @@ public class OpenNationScreenPacket {
         buffer.writeInt(data.currentChunkZ());
         buffer.writeInt(data.previewCenterChunkX());
         buffer.writeInt(data.previewCenterChunkZ());
+        buffer.writeLong(data.claimMapState().revision());
+        buffer.writeVarInt(data.claimMapState().radius());
+        buffer.writeInt(data.claimMapState().centerChunkX());
+        buffer.writeInt(data.claimMapState().centerChunkZ());
+        buffer.writeBoolean(data.claimMapState().loading());
+        buffer.writeBoolean(data.claimMapState().ready());
         buffer.writeBoolean(data.currentChunkClaimed());
         buffer.writeBoolean(data.currentChunkOwnedByNation());
         writeUtfSafe(buffer, data.currentChunkOwnerName(), 64);
@@ -139,10 +146,6 @@ public class OpenNationScreenPacket {
             buffer.writeVarInt(town.claimCount());
             buffer.writeBoolean(town.capital());
         }
-        buffer.writeVarInt(data.nearbyTerrainColors().size());
-        for (Integer color : data.nearbyTerrainColors()) {
-            buffer.writeInt(color == null ? 0xFF33414A : color);
-        }
         buffer.writeVarInt(data.nearbyClaims().size());
         for (NationOverviewClaim claim : data.nearbyClaims()) {
             buffer.writeInt(claim.chunkX());
@@ -196,6 +199,12 @@ public class OpenNationScreenPacket {
         int currentChunkZ = buffer.readInt();
         int previewCenterChunkX = buffer.readInt();
         int previewCenterChunkZ = buffer.readInt();
+        long claimMapRevision = buffer.readLong();
+        int claimMapRadius = buffer.readVarInt();
+        int claimMapCenterChunkX = buffer.readInt();
+        int claimMapCenterChunkZ = buffer.readInt();
+        boolean claimMapLoading = buffer.readBoolean();
+        boolean claimMapReady = buffer.readBoolean();
         boolean currentChunkClaimed = buffer.readBoolean();
         boolean currentChunkOwnedByNation = buffer.readBoolean();
         String currentChunkOwnerName = buffer.readUtf(64);
@@ -293,11 +302,6 @@ public class OpenNationScreenPacket {
                     buffer.readBoolean()
             ));
         }
-        int terrainColorCount = buffer.readVarInt();
-        List<Integer> nearbyTerrainColors = new ArrayList<>(terrainColorCount);
-        for (int i = 0; i < terrainColorCount; i++) {
-            nearbyTerrainColors.add(buffer.readInt());
-        }
         int claimListSize = buffer.readVarInt();
         List<NationOverviewClaim> nearbyClaims = new ArrayList<>(claimListSize);
         for (int i = 0; i < claimListSize; i++) {
@@ -334,6 +338,15 @@ public class OpenNationScreenPacket {
                     buffer.readUtf(24)
             ));
         }
+        ClaimPreviewMapState claimMapState = new ClaimPreviewMapState(
+                claimMapRevision,
+                claimMapRadius,
+                claimMapCenterChunkX,
+                claimMapCenterChunkZ,
+                claimMapLoading,
+                claimMapReady,
+                List.of()
+        );
         return new OpenNationScreenPacket(new NationOverviewData(
                 hasNation,
                 nationId,
@@ -407,9 +420,10 @@ public class OpenNationScreenPacket {
                 incomingDiplomacyRequests,
                 members,
                 towns,
-                nearbyTerrainColors,
+                List.of(),
                 nearbyClaims,
-                allNations
+                allNations,
+                claimMapState
         ), warSyncOnly);
     }
 
