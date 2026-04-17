@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
 import com.mojang.logging.LogUtils;
+import com.monpai.sailboatmod.client.NationClientHooks;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
@@ -199,7 +200,11 @@ public class NationHomeScreen extends Screen {
         this.refreshPending = false;
         this.autoRefreshTicks = 0;
         cacheNearbyClaims();
-        if (this.data.previewCenterChunkX() == this.pendingPreviewCenterX && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ) {
+        boolean pendingMatchedByOverviewCenter = this.data.previewCenterChunkX() == this.pendingPreviewCenterX
+                && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ;
+        boolean pendingMatchedByMapStateCenter = this.data.claimMapState().centerChunkX() == this.pendingPreviewCenterX
+                && this.data.claimMapState().centerChunkZ() == this.pendingPreviewCenterZ;
+        if (pendingMatchedByOverviewCenter || pendingMatchedByMapStateCenter) {
             this.pendingPreviewCenterX = Integer.MIN_VALUE;
             this.pendingPreviewCenterZ = Integer.MIN_VALUE;
         }
@@ -1455,12 +1460,13 @@ public class NationHomeScreen extends Screen {
         this.refreshPending = true;
         this.pendingPreviewCenterX = centerChunkX;
         this.pendingPreviewCenterZ = centerChunkZ;
+        long revision = NationClientHooks.beginClaimPreviewRequest(centerChunkX, centerChunkZ, viewportRadius());
         if (explicitRefresh) {
             ModNetwork.CHANNEL.sendToServer(new RefreshClaimMapViewportPacket(
                     RequestClaimMapViewportPacket.ScreenKind.NATION,
                     this.data.nationId(),
                     currentDimensionId(),
-                    System.nanoTime(),
+                    revision,
                     viewportRadius(),
                     centerChunkX,
                     centerChunkZ
@@ -1470,7 +1476,7 @@ public class NationHomeScreen extends Screen {
                     RequestClaimMapViewportPacket.ScreenKind.NATION,
                     this.data.nationId(),
                     currentDimensionId(),
-                    System.nanoTime(),
+                    revision,
                     viewportRadius(),
                     centerChunkX,
                     centerChunkZ,

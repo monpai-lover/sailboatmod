@@ -11,6 +11,7 @@ public final class TownClientHooks {
     private static final String CLAIM_RENDER_KIND = "town-claims";
     private static TownOverviewData lastSyncedData = TownOverviewData.empty();
     private static boolean suppressReopen = false;
+    private static long claimPreviewRevisionCounter = 0L;
 
     public static void requestOpen() {
         suppressReopen = false;
@@ -42,6 +43,7 @@ public final class TownClientHooks {
 
     public static void applyClaimPreview(ClaimPreviewMapState state) {
         ClaimPreviewMapState safeState = state == null ? ClaimPreviewMapState.empty() : state;
+        claimPreviewRevisionCounter = Math.max(claimPreviewRevisionCounter, safeState.revision());
         if (safeState.revision() < lastSyncedData.claimMapState().revision()) {
             return;
         }
@@ -59,11 +61,33 @@ public final class TownClientHooks {
 
     public static void clearCache() {
         lastSyncedData = TownOverviewData.empty();
+        claimPreviewRevisionCounter = 0L;
         ClaimMapRenderTaskService.shutdownShared();
     }
 
     public static TownOverviewData lastSyncedData() {
         return lastSyncedData;
+    }
+
+    public static long beginClaimPreviewRequest(int centerChunkX, int centerChunkZ, int radius) {
+        long revision = nextClaimPreviewRevision();
+        ClaimPreviewMapState loading = ClaimPreviewMapState.loading(
+                revision,
+                Math.max(0, radius),
+                centerChunkX,
+                centerChunkZ
+        );
+        lastSyncedData = lastSyncedData.withClaimPreview(loading, lastSyncedData.nearbyTerrainColors());
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
+            townHomeScreen.updateData(lastSyncedData);
+        }
+        return revision;
+    }
+
+    private static long nextClaimPreviewRevision() {
+        claimPreviewRevisionCounter = Math.max(1L, claimPreviewRevisionCounter + 1L);
+        return claimPreviewRevisionCounter;
     }
 
     private static void queueClaimPreviewRaster(TownOverviewData snapshot) {

@@ -143,7 +143,7 @@ public final class NationOverviewService {
             ));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        ClaimPreviewMapState claimMapState = ClaimPreviewMapState.loading(System.nanoTime(), claimPreviewRadius(), previewChunk.x, previewChunk.z);
+        ClaimPreviewMapState claimMapState = initialClaimMapState(claimPreviewRadius(), previewChunk);
         List<Integer> nearbyTerrainColors = List.of();
 
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>();
@@ -306,6 +306,11 @@ public final class NationOverviewService {
             return nation.name();
         }
         return fallbackId == null || fallbackId.isBlank() ? "-" : fallbackId;
+    }
+
+    private static ClaimPreviewMapState initialClaimMapState(int radius, ChunkPos previewChunk) {
+        ChunkPos safePreviewChunk = previewChunk == null ? new ChunkPos(0, 0) : previewChunk;
+        return ClaimPreviewMapState.loading(0L, Math.max(0, radius), safePreviewChunk.x, safePreviewChunk.z);
     }
 
     public static ChunkPos getCoreCenterOrPlayer(ServerPlayer player) {

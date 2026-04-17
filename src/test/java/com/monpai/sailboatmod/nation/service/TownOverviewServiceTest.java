@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
+import net.minecraft.world.level.ChunkPos;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -50,5 +51,16 @@ class TownOverviewServiceTest {
                 false,
                 null
         ).isEmpty());
+    }
+
+    @Test
+    void initialClaimMapStateUsesStableRevisionSentinel() {
+        var state = TownOverviewService.initialClaimMapState(8, new ChunkPos(12, -7));
+
+        assertEquals(0L, state.revision());
+        assertEquals(8, state.radius());
+        assertEquals(12, state.centerChunkX());
+        assertEquals(-7, state.centerChunkZ());
+        assertTrue(state.loading());
     }
 }

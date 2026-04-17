@@ -93,7 +93,7 @@ public final class TownOverviewService {
                     claim.entityDamageAccessLevel()));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        ClaimPreviewMapState claimMapState = ClaimPreviewMapState.loading(System.nanoTime(), claimPreviewRadius(), previewChunk.x, previewChunk.z);
+        ClaimPreviewMapState claimMapState = initialClaimMapState(claimPreviewRadius(), previewChunk);
         List<Integer> nearbyTerrainColors = List.of();
 
         boolean canManageTown = TownService.canManageTown(player, data, town);
@@ -310,6 +310,11 @@ public final class TownOverviewService {
             return nation.name();
         }
         return fallbackId == null || fallbackId.isBlank() ? "-" : fallbackId;
+    }
+
+    static ClaimPreviewMapState initialClaimMapState(int radius, ChunkPos previewChunk) {
+        ChunkPos safePreviewChunk = previewChunk == null ? new ChunkPos(0, 0) : previewChunk;
+        return ClaimPreviewMapState.loading(0L, Math.max(0, radius), safePreviewChunk.x, safePreviewChunk.z);
     }
 
     private static float calculateAverageLiteracy(net.minecraft.world.level.Level level, String townId) {

@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen.town;
 
 import com.mojang.logging.LogUtils;
+import com.monpai.sailboatmod.client.TownClientHooks;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
@@ -149,7 +150,11 @@ public class TownHomeScreen extends Screen {
         this.refreshPending = false;
         this.autoRefreshTicks = 0;
         cacheNearbyClaims();
-        if (this.data.previewCenterChunkX() == this.pendingPreviewCenterX && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ) {
+        boolean pendingMatchedByOverviewCenter = this.data.previewCenterChunkX() == this.pendingPreviewCenterX
+                && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ;
+        boolean pendingMatchedByMapStateCenter = this.data.claimMapState().centerChunkX() == this.pendingPreviewCenterX
+                && this.data.claimMapState().centerChunkZ() == this.pendingPreviewCenterZ;
+        if (pendingMatchedByOverviewCenter || pendingMatchedByMapStateCenter) {
             this.pendingPreviewCenterX = Integer.MIN_VALUE;
             this.pendingPreviewCenterZ = Integer.MIN_VALUE;
         }
@@ -1039,12 +1044,13 @@ public class TownHomeScreen extends Screen {
         this.refreshPending = true;
         this.pendingPreviewCenterX = centerChunkX;
         this.pendingPreviewCenterZ = centerChunkZ;
+        long revision = TownClientHooks.beginClaimPreviewRequest(centerChunkX, centerChunkZ, viewportRadius());
         if (explicitRefresh) {
             ModNetwork.CHANNEL.sendToServer(new RefreshClaimMapViewportPacket(
                     RequestClaimMapViewportPacket.ScreenKind.TOWN,
                     this.data.townId(),
                     currentDimensionId(),
-                    System.nanoTime(),
+                    revision,
                     viewportRadius(),
                     centerChunkX,
                     centerChunkZ
@@ -1054,7 +1060,7 @@ public class TownHomeScreen extends Screen {
                     RequestClaimMapViewportPacket.ScreenKind.TOWN,
                     this.data.townId(),
                     currentDimensionId(),
-                    System.nanoTime(),
+                    revision,
                     viewportRadius(),
                     centerChunkX,
                     centerChunkZ,

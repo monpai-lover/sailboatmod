@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.monpai.sailboatmod.nation.data.TerrainPreviewSavedData;
 import com.monpai.sailboatmod.nation.service.ClaimMapTaskService;
+import com.monpai.sailboatmod.nation.service.ClaimMapViewportService;
 import com.monpai.sailboatmod.nation.service.ClaimMapViewportSnapshot;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -15,6 +17,7 @@ import net.minecraft.world.level.Level;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.PacketDistributor;
 
+import java.util.List;
 import java.util.function.Supplier;
 
 public record RequestClaimMapViewportPacket(ScreenKind screenKind,
@@ -25,6 +28,9 @@ public record RequestClaimMapViewportPacket(ScreenKind screenKind,
                                             int centerChunkX,
                                             int centerChunkZ,
                                             int prefetchRadius) {
+    private static final int DEFAULT_SERVER_RADIUS_LIMIT = 8;
+    static final int MAX_SERVER_PREFETCH_RADIUS = 2;
+
     public enum ScreenKind {
         TOWN,
         NATION
@@ -83,40 +89,40 @@ public record RequestClaimMapViewportPacket(ScreenKind screenKind,
             return;
         }
 
-        ChunkPos center = new ChunkPos(packet.centerChunkX(), packet.centerChunkZ());
-        int radius = Math.max(0, packet.radius());
-        ClaimPreviewTerrainService.queueAround(level, center, radius + Math.max(0, packet.prefetchRadius()));
+        int radius = clampRadiusForServer(packet.radius());
+        int prefetchRadius = clampPrefetchRadiusForServer(packet.prefetchRadius());
+        RequestClaimMapViewportPacket normalized = new RequestClaimMapViewportPacket(
+                packet.screenKind(),
+                packet.ownerId(),
+                packet.dimensionId(),
+                packet.revision(),
+                radius,
+                packet.centerChunkX(),
+                packet.centerChunkZ(),
+                prefetchRadius
+        );
+        ChunkPos center = new ChunkPos(normalized.centerChunkX(), normalized.centerChunkZ());
+        ClaimPreviewTerrainService.queueAround(level, center, radius + prefetchRadius);
 
         String resolvedDimensionId = level.dimension().location().toString();
         ClaimMapTaskService taskService = ClaimMapTaskService.get();
         if (taskService != null && player.getServer() != null) {
             taskService.submitLatest(
-                    new ClaimMapTaskService.TaskKey(taskKind(packet.screenKind()), player.getUUID() + "|" + packet.ownerId()),
-                    () -> new ClaimMapViewportSnapshot(
-                            resolvedDimensionId,
-                            packet.revision(),
-                            radius,
-                            packet.centerChunkX(),
-                            packet.centerChunkZ(),
-                            ClaimPreviewTerrainService.sample(level, center, radius)
-                    ),
-                    snapshot -> sendSnapshot(player, packet.screenKind(), snapshot)
+                    new ClaimMapTaskService.TaskKey(taskKind(normalized.screenKind()), player.getUUID() + "|" + normalized.ownerId()),
+                    () -> buildCompleteSnapshot(level, normalized, resolvedDimensionId, radius, prefetchRadius),
+                    snapshot -> {
+                        if (snapshot != null) {
+                            sendSnapshot(player, normalized.screenKind(), snapshot);
+                        }
+                    }
             );
             return;
         }
 
-        sendSnapshot(
-                player,
-                packet.screenKind(),
-                new ClaimMapViewportSnapshot(
-                        resolvedDimensionId,
-                        packet.revision(),
-                        radius,
-                        packet.centerChunkX(),
-                        packet.centerChunkZ(),
-                        ClaimPreviewTerrainService.sample(level, center, radius)
-                )
-        );
+        ClaimMapViewportSnapshot snapshot = buildCompleteSnapshot(level, normalized, resolvedDimensionId, radius, prefetchRadius);
+        if (snapshot != null) {
+            sendSnapshot(player, normalized.screenKind(), snapshot);
+        }
     }
 
     private static void sendSnapshot(ServerPlayer player, ScreenKind screenKind, ClaimMapViewportSnapshot snapshot) {
@@ -136,7 +142,44 @@ public record RequestClaimMapViewportPacket(ScreenKind screenKind,
         return screenKind == ScreenKind.NATION ? "nation-viewport" : "town-viewport";
     }
 
-    private static ServerLevel resolveLevel(ServerPlayer player, String dimensionId) {
+    static int clampRadiusForServer(int requestedRadius) {
+        int configuredMax;
+        try {
+            configuredMax = Math.max(0, com.monpai.sailboatmod.ModConfig.claimPreviewRadius());
+        } catch (IllegalStateException ignored) {
+            configuredMax = DEFAULT_SERVER_RADIUS_LIMIT;
+        }
+        return Math.max(0, Math.min(requestedRadius, configuredMax));
+    }
+
+    static int clampPrefetchRadiusForServer(int requestedPrefetchRadius) {
+        return Math.max(0, Math.min(requestedPrefetchRadius, MAX_SERVER_PREFETCH_RADIUS));
+    }
+
+    static ClaimMapViewportSnapshot tryBuildCompleteSnapshot(RequestClaimMapViewportPacket packet,
+                                                             String resolvedDimensionId,
+                                                             ClaimMapViewportService.TileLookup tileLookup,
+                                                             int radius,
+                                                             int prefetchRadius) {
+        if (packet == null || tileLookup == null || resolvedDimensionId == null || resolvedDimensionId.isBlank()) {
+            return null;
+        }
+        ClaimMapViewportService service = new ClaimMapViewportService(tileLookup);
+        return service.tryBuildSnapshot(
+                new ClaimMapViewportService.ViewportRequest(
+                        packet.screenKind().name(),
+                        resolvedDimensionId,
+                        packet.revision(),
+                        radius,
+                        packet.centerChunkX(),
+                        packet.centerChunkZ(),
+                        prefetchRadius
+                ),
+                List.of()
+        );
+    }
+
+    static ServerLevel resolveLevel(ServerPlayer player, String dimensionId) {
         if (player == null || player.getServer() == null) {
             return null;
         }
@@ -149,5 +192,19 @@ public record RequestClaimMapViewportPacket(ScreenKind screenKind,
             }
         }
         return player.serverLevel();
+    }
+
+    private static ClaimMapViewportSnapshot buildCompleteSnapshot(ServerLevel level,
+                                                                  RequestClaimMapViewportPacket packet,
+                                                                  String resolvedDimensionId,
+                                                                  int radius,
+                                                                  int prefetchRadius) {
+        if (level == null || packet == null) {
+            return null;
+        }
+        ChunkPos center = new ChunkPos(packet.centerChunkX(), packet.centerChunkZ());
+        ClaimPreviewTerrainService.sample(level, center, radius);
+        TerrainPreviewSavedData savedData = TerrainPreviewSavedData.get(level);
+        return tryBuildCompleteSnapshot(packet, resolvedDimensionId, savedData::getTile, radius, prefetchRadius);
     }
 }

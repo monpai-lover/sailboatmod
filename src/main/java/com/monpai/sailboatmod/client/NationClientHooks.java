@@ -14,6 +14,7 @@ public final class NationClientHooks {
     private static final String CLAIM_RENDER_KIND = "nation-claims";
     private static NationOverviewData lastSyncedData = NationOverviewData.empty();
     private static boolean suppressReopen = false;
+    private static long claimPreviewRevisionCounter = 0L;
 
     public static void openCachedOrEmpty() {
         suppressReopen = false;
@@ -50,6 +51,7 @@ public final class NationClientHooks {
 
     public static void applyClaimPreview(ClaimPreviewMapState state) {
         ClaimPreviewMapState safeState = state == null ? ClaimPreviewMapState.empty() : state;
+        claimPreviewRevisionCounter = Math.max(claimPreviewRevisionCounter, safeState.revision());
         if (safeState.revision() < lastSyncedData.claimMapState().revision()) {
             return;
         }
@@ -85,7 +87,29 @@ public final class NationClientHooks {
 
     public static void clearCache() {
         lastSyncedData = NationOverviewData.empty();
+        claimPreviewRevisionCounter = 0L;
         ClaimMapRenderTaskService.shutdownShared();
+    }
+
+    public static long beginClaimPreviewRequest(int centerChunkX, int centerChunkZ, int radius) {
+        long revision = nextClaimPreviewRevision();
+        ClaimPreviewMapState loading = ClaimPreviewMapState.loading(
+                revision,
+                Math.max(0, radius),
+                centerChunkX,
+                centerChunkZ
+        );
+        lastSyncedData = lastSyncedData.withClaimPreview(loading, lastSyncedData.nearbyTerrainColors());
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
+            nationHomeScreen.updateData(lastSyncedData);
+        }
+        return revision;
+    }
+
+    private static long nextClaimPreviewRevision() {
+        claimPreviewRevisionCounter = Math.max(1L, claimPreviewRevisionCounter + 1L);
+        return claimPreviewRevisionCounter;
     }
 
     private static void queueClaimPreviewRaster(NationOverviewData snapshot) {

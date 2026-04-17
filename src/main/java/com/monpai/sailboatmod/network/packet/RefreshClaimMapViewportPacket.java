@@ -1,9 +1,12 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 public record RefreshClaimMapViewportPacket(RequestClaimMapViewportPacket.ScreenKind screenKind,
@@ -49,6 +52,12 @@ public record RefreshClaimMapViewportPacket(RequestClaimMapViewportPacket.Screen
             if (player == null) {
                 return;
             }
+            ServerLevel level = RequestClaimMapViewportPacket.resolveLevel(player, packet.dimensionId());
+            int radius = RequestClaimMapViewportPacket.clampRadiusForServer(packet.radius());
+            if (level != null) {
+                forEachVisibleChunk(packet.centerChunkX(), packet.centerChunkZ(), radius,
+                        (chunkX, chunkZ) -> ClaimPreviewTerrainService.invalidateChunk(level, chunkX, chunkZ));
+            }
             RequestClaimMapViewportPacket.dispatch(
                     player,
                     new RequestClaimMapViewportPacket(
@@ -56,7 +65,7 @@ public record RefreshClaimMapViewportPacket(RequestClaimMapViewportPacket.Screen
                             packet.ownerId(),
                             packet.dimensionId(),
                             packet.revision(),
-                            packet.radius(),
+                            radius,
                             packet.centerChunkX(),
                             packet.centerChunkZ(),
                             0
@@ -64,5 +73,17 @@ public record RefreshClaimMapViewportPacket(RequestClaimMapViewportPacket.Screen
             );
         });
         context.setPacketHandled(true);
+    }
+
+    static void forEachVisibleChunk(int centerChunkX, int centerChunkZ, int radius, BiConsumer<Integer, Integer> consumer) {
+        if (consumer == null) {
+            return;
+        }
+        int clampedRadius = Math.max(0, radius);
+        for (int dz = -clampedRadius; dz <= clampedRadius; dz++) {
+            for (int dx = -clampedRadius; dx <= clampedRadius; dx++) {
+                consumer.accept(centerChunkX + dx, centerChunkZ + dz);
+            }
+        }
     }
 }
