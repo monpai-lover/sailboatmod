@@ -891,6 +891,8 @@ If `ClaimMapRasterizer` or `ClaimMapRenderTaskService` survived as compatibility
 Otherwise leave both documents unchanged.
 ```
 
+Recorded note (2026-04-18): `ClaimMapRasterizer` and `ClaimMapRenderTaskService` were intentionally retained as compatibility wrappers/tests only; active town/nation claim-map rendering now uses server viewport snapshots directly.
+
 - [ ] **Step 4: Commit docs/verification touch-up**
 
 ```bash

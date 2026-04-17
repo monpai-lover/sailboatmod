@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.CloseClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
 import com.monpai.sailboatmod.network.packet.BuildingUpgradePacket;
@@ -284,6 +285,13 @@ public final class ModNetwork {
                 RefreshClaimMapViewportPacket::encode,
                 RefreshClaimMapViewportPacket::decode,
                 RefreshClaimMapViewportPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CloseClaimMapViewportPacket.class,
+                CloseClaimMapViewportPacket::encode,
+                CloseClaimMapViewportPacket::decode,
+                CloseClaimMapViewportPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,

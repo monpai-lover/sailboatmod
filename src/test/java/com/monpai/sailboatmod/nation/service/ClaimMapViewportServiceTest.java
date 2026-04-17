@@ -75,6 +75,37 @@ class ClaimMapViewportServiceTest {
     }
 
     @Test
+    void viewportMissReturnsNullUntilTileWorkerProducesVisibleTiles() {
+        ClaimPreviewTerrainService terrainService = new ClaimPreviewTerrainService();
+        ClaimPreviewTerrainService.setActiveForTest(terrainService);
+        try {
+            ClaimMapViewportService service = new ClaimMapViewportService(terrainService::getTileForTest);
+            ClaimMapViewportService.ViewportRequest request = new ClaimMapViewportService.ViewportRequest(
+                    "town|owner-a",
+                    "minecraft:overworld",
+                    21L,
+                    1,
+                    0,
+                    0,
+                    1
+            );
+
+            ClaimMapViewportSnapshot first = service.tryBuildSnapshot(request, List.of());
+            assertNull(first);
+            assertEquals(9, service.pendingVisibleChunkCountForTest());
+
+            terrainService.processBudgetedWorkForTest(9, 0, (dimensionId, chunkX, chunkZ) -> new int[] {chunkX * 100 + chunkZ});
+
+            ClaimMapViewportSnapshot second = service.tryBuildSnapshot(request, List.of());
+            assertNotNull(second);
+            assertEquals(0, service.pendingVisibleChunkCountForTest());
+            assertEquals(9, second.pixels().size());
+        } finally {
+            ClaimPreviewTerrainService.clearActiveForTest();
+        }
+    }
+
+    @Test
     void snapshotNormalizesNullDimensionAndPixels() {
         ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(null, 7L, 6, 12, 24, null);
 

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NationClientHooksTest {
@@ -92,6 +93,13 @@ class NationClientHooksTest {
         assertEquals(0L, merged.claimMapState().revision());
         assertEquals(0, merged.claimMapState().centerChunkX());
         assertEquals(0, merged.claimMapState().centerChunkZ());
+    }
+
+    @Test
+    void claimPreviewOwnerFilterRejectsMismatchedOwner() {
+        assertTrue(NationClientHooks.shouldApplyClaimPreviewOwner("nation-a", "nation-a"));
+        assertFalse(NationClientHooks.shouldApplyClaimPreviewOwner("nation-a", "nation-b"));
+        assertFalse(NationClientHooks.shouldApplyClaimPreviewOwner("", "nation-a"));
     }
 
     private static NationOverviewData nationData(String nationId,

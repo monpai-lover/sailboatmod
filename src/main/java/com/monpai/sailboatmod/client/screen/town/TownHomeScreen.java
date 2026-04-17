@@ -53,16 +53,20 @@ public class TownHomeScreen extends Screen {
     private int claimRadius() {
         int stateRadius = this.data.claimMapState().radius();
         if (stateRadius > 0) {
+            this.lastKnownClaimRadius = stateRadius;
             return stateRadius;
         }
-        int size = this.data.nearbyTerrainColors().size();
-        if (size <= 0) {
-            return com.monpai.sailboatmod.ModConfig.claimPreviewRadius();
+        Integer inferredRadius = inferClaimRadiusFromTerrainColors(this.data.nearbyTerrainColors().size());
+        if (inferredRadius != null) {
+            this.lastKnownClaimRadius = inferredRadius;
+            return inferredRadius;
         }
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        int chunkCount = size / (sub * sub);
-        int diameter = (int) Math.round(Math.sqrt(chunkCount));
-        return (diameter - 1) / 2;
+        if (this.lastKnownClaimRadius >= 0) {
+            return this.lastKnownClaimRadius;
+        }
+        int configuredRadius = configuredClaimRadiusOrZero();
+        this.lastKnownClaimRadius = configuredRadius;
+        return configuredRadius;
     }
     private static final int AUTO_REFRESH_INTERVAL_TICKS = 40;
     private static final int PENDING_RETRY_INTERVAL_TICKS = 8;
@@ -122,6 +126,7 @@ public class TownHomeScreen extends Screen {
     private boolean isDraggingMap = false;
     private double dragStartX = 0;
     private double dragStartY = 0;
+    private int lastKnownClaimRadius = -1;
     private int pendingPreviewCenterX = Integer.MIN_VALUE;
     private int pendingPreviewCenterZ = Integer.MIN_VALUE;
     private long pendingPreviewRevision = Long.MIN_VALUE;
@@ -134,15 +139,19 @@ public class TownHomeScreen extends Screen {
     public TownHomeScreen(TownOverviewData data) {
         super(Component.translatable("screen.sailboatmod.town.home.title"));
         this.data = data == null ? TownOverviewData.empty() : data;
+        rememberClaimRadius(this.data);
         syncSelections();
     }
 
     public void updateData(TownOverviewData updated) {
         TownOverviewData previousData = this.data;
+        rememberClaimRadius(previousData);
+        cacheTerrainColors(previousData);
         boolean preserveVisibleCenter = previousData != null && !previousData.nearbyTerrainColors().isEmpty();
         int visibleCenterX = preserveVisibleCenter ? mapCenterX() : Integer.MIN_VALUE;
         int visibleCenterZ = preserveVisibleCenter ? mapCenterZ() : Integer.MIN_VALUE;
         this.data = updated == null ? TownOverviewData.empty() : updated;
+        rememberClaimRadius(this.data);
         traceClaim("updateData previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
                 + " visibleCenterBefore=" + visibleCenterX + "," + visibleCenterZ
                 + " terrainCount=" + this.data.nearbyTerrainColors().size()
@@ -176,7 +185,8 @@ public class TownHomeScreen extends Screen {
         this.memberScroll = clampMemberScroll(this.memberScroll);
         syncSelections();
         syncTownNameInput();
-        int diameter = claimRadius() * 2 + 1;
+        int radius = claimRadius();
+        int diameter = radius * 2 + 1;
         int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
         List<Integer> colors = this.data.nearbyTerrainColors();
         for (int gz = 0; gz < diameter; gz++) {
@@ -184,8 +194,8 @@ public class TownHomeScreen extends Screen {
                 int chunkIndex = gz * diameter + gx;
                 int colorIndex = chunkIndex * sub * sub;
                 if (colorIndex < colors.size()) {
-                    int cx = this.data.previewCenterChunkX() + gx - claimRadius();
-                    int cz = this.data.previewCenterChunkZ() + gz - claimRadius();
+                    int cx = this.data.previewCenterChunkX() + gx - radius;
+                    int cz = this.data.previewCenterChunkZ() + gz - radius;
                     TerrainColorClientCache.put(cx, cz, colors.get(colorIndex));
                 }
             }
@@ -255,7 +265,7 @@ public class TownHomeScreen extends Screen {
     @Override
     public void removed() {
         super.removed();
-        com.monpai.sailboatmod.client.TownClientHooks.onScreenClosed();
+        com.monpai.sailboatmod.client.TownClientHooks.onScreenClosed(this.data.townId());
     }
 
     @Override
@@ -927,6 +937,10 @@ public class TownHomeScreen extends Screen {
         return cached != null ? cached : PREVIEW_DEFAULT_TERRAIN_COLOR;
     }
 
+    int sampleClaimTerrainColorForTest(int chunkX, int chunkZ, int sx, int sz) {
+        return sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
+    }
+
     private void drawClaimMarker(GuiGraphics g, int mapX, int mapY, int chunkX, int chunkZ, int color) {
         int lx = chunkX - mapCenterX() + claimRadius();
         int lz = chunkZ - mapCenterZ() + claimRadius();
@@ -1217,6 +1231,80 @@ public class TownHomeScreen extends Screen {
             }
         }
         return false;
+    }
+
+    private void cacheTerrainColors(TownOverviewData snapshot) {
+        if (snapshot == null) {
+            return;
+        }
+        List<Integer> colors = snapshot.nearbyTerrainColors();
+        if (colors.isEmpty()) {
+            return;
+        }
+        int radius = resolvedRadiusForSnapshot(snapshot);
+        if (radius < 0) {
+            return;
+        }
+        int diameter = radius * 2 + 1;
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        for (int gz = 0; gz < diameter; gz++) {
+            for (int gx = 0; gx < diameter; gx++) {
+                int chunkIndex = gz * diameter + gx;
+                int colorIndex = chunkIndex * sub * sub;
+                if (colorIndex < colors.size()) {
+                    int cx = snapshot.previewCenterChunkX() + gx - radius;
+                    int cz = snapshot.previewCenterChunkZ() + gz - radius;
+                    TerrainColorClientCache.put(cx, cz, colors.get(colorIndex));
+                }
+            }
+        }
+    }
+
+    private void rememberClaimRadius(TownOverviewData snapshot) {
+        int radius = resolvedRadiusForSnapshot(snapshot);
+        if (radius >= 0) {
+            this.lastKnownClaimRadius = radius;
+        }
+    }
+
+    private int resolvedRadiusForSnapshot(TownOverviewData snapshot) {
+        if (snapshot == null) {
+            return -1;
+        }
+        int stateRadius = snapshot.claimMapState().radius();
+        if (stateRadius > 0) {
+            return stateRadius;
+        }
+        Integer inferredRadius = inferClaimRadiusFromTerrainColors(snapshot.nearbyTerrainColors().size());
+        return inferredRadius == null ? -1 : inferredRadius;
+    }
+
+    private Integer inferClaimRadiusFromTerrainColors(int colorCount) {
+        if (colorCount <= 0) {
+            return null;
+        }
+        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
+        int colorsPerChunk = sub * sub;
+        if (colorsPerChunk <= 0 || colorCount % colorsPerChunk != 0) {
+            return null;
+        }
+        int chunkCount = colorCount / colorsPerChunk;
+        if (chunkCount <= 0) {
+            return null;
+        }
+        int diameter = (int) Math.round(Math.sqrt(chunkCount));
+        if (diameter <= 0 || diameter * diameter != chunkCount || (diameter & 1) == 0) {
+            return null;
+        }
+        return (diameter - 1) / 2;
+    }
+
+    private int configuredClaimRadiusOrZero() {
+        try {
+            return Math.max(0, com.monpai.sailboatmod.ModConfig.claimPreviewRadius());
+        } catch (RuntimeException ignored) {
+            return 0;
+        }
     }
 
     private void traceClaim(String message) {

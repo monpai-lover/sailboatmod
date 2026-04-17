@@ -16,16 +16,26 @@ import net.minecraft.world.level.material.MapColor;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class ClaimPreviewTerrainService {
+    @FunctionalInterface
+    interface TileSampler {
+        int[] sample(String dimensionId, int chunkX, int chunkZ);
+    }
+
+    @FunctionalInterface
+    interface ChunkResolver {
+        ChunkAccess resolve(int chunkX, int chunkZ, boolean load);
+    }
+
     private static final int DEFAULT_COLOR = 0xFF33414A;
     private static final int WATER_COLOR = 0xFF4466B0;
     private static final int FALLBACK_GRASS_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
@@ -53,8 +63,8 @@ public final class ClaimPreviewTerrainService {
     private final Queue<TileRequest> prefetchQueue = new ConcurrentLinkedQueue<>();
     private final ConcurrentMap<String, int[]> hotTiles = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Set<String>> chunkToViewportDependencies = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, ClaimMapViewportSnapshot> viewportSnapshotCache = new ConcurrentHashMap<>();
-    private final List<String> invalidatedViewportKeys = new CopyOnWriteArrayList<>();
+    private final Queue<String> invalidatedViewportKeys = new ConcurrentLinkedQueue<>();
+    private final Set<String> invalidatedViewportKeySet = ConcurrentHashMap.newKeySet();
     private final ConcurrentMap<String, ViewportRequestState> viewportRequests = new ConcurrentHashMap<>();
     private final Set<String> visibleQueuedKeys = ConcurrentHashMap.newKeySet();
     private final Set<String> prefetchQueuedKeys = ConcurrentHashMap.newKeySet();
@@ -70,6 +80,14 @@ public final class ClaimPreviewTerrainService {
     }
 
     public static void onServerStopping() {
+        ACTIVE.set(null);
+    }
+
+    static void setActiveForTest(ClaimPreviewTerrainService service) {
+        ACTIVE.set(service);
+    }
+
+    static void clearActiveForTest() {
         ACTIVE.set(null);
     }
 
@@ -94,20 +112,20 @@ public final class ClaimPreviewTerrainService {
         service.enqueueViewport(dimensionId, centerChunkX, centerChunkZ, radius, prefetchRadius, revision, screenKey);
     }
 
-    static void trackViewportDependency(String dimensionId, int chunkX, int chunkZ, String viewportKey) {
+    static void trackViewportDependency(String dimensionId, int chunkX, int chunkZ, String screenKey) {
         ClaimPreviewTerrainService service = ACTIVE.get();
         if (service == null) {
             return;
         }
-        service.addViewportDependency(dimensionId, chunkX, chunkZ, viewportKey);
+        service.addViewportDependency(dimensionId, chunkX, chunkZ, screenKey);
     }
 
-    static void putViewportSnapshot(String viewportKey, ClaimMapViewportSnapshot snapshot) {
+    public static List<String> consumeInvalidatedViewportKeys() {
         ClaimPreviewTerrainService service = ACTIVE.get();
-        if (service == null || viewportKey == null || viewportKey.isBlank() || snapshot == null) {
-            return;
+        if (service == null) {
+            return List.of();
         }
-        service.viewportSnapshotCache.put(viewportKey, snapshot);
+        return service.consumeInvalidatedViewportKeysInternal();
     }
 
     public static List<Integer> sample(ServerLevel level, ChunkPos centerChunk, int radius) {
@@ -178,6 +196,41 @@ public final class ClaimPreviewTerrainService {
         service.clearRuntimeCache();
     }
 
+    public static void unregisterViewport(String logicalScreenKey) {
+        if (logicalScreenKey == null || logicalScreenKey.isBlank()) {
+            return;
+        }
+        ClaimPreviewTerrainService service = ACTIVE.get();
+        if (service == null) {
+            return;
+        }
+        service.unregisterViewportInternal(logicalScreenKey);
+    }
+
+    public static int[] getCachedTileForViewport(String dimensionId, int chunkX, int chunkZ) {
+        ClaimPreviewTerrainService service = ACTIVE.get();
+        if (service == null || dimensionId == null || dimensionId.isBlank()) {
+            return null;
+        }
+        return service.getHotTile(dimensionId, chunkX, chunkZ);
+    }
+
+    public static void warmViewportFromPersisted(ServerLevel level,
+                                                 String dimensionId,
+                                                 int centerChunkX,
+                                                 int centerChunkZ,
+                                                 int radius,
+                                                 int prefetchRadius) {
+        if (level == null || dimensionId == null || dimensionId.isBlank()) {
+            return;
+        }
+        ClaimPreviewTerrainService service = get(level.getServer());
+        if (service == null) {
+            return;
+        }
+        service.warmViewportFromPersistedInternal(level, dimensionId, centerChunkX, centerChunkZ, radius, prefetchRadius);
+    }
+
     public static void queueAround(ServerLevel level, ChunkPos centerChunk, int radius) {
         if (level == null || centerChunk == null || radius < 0) {
             return;
@@ -217,20 +270,23 @@ public final class ClaimPreviewTerrainService {
         }
         int clampedRadius = Math.max(0, radius);
         int clampedPrefetchRadius = Math.max(0, prefetchRadius);
-        String viewportKey = viewportKey(screenKey, revision);
-        viewportRequests.put(viewportKey, new ViewportRequestState(
+        String normalizedScreenKey = screenKey == null ? "" : screenKey;
+        String requestKey = normalizedScreenKey.isBlank()
+                ? ClaimMapViewportService.viewportKey(normalizedScreenKey, dimensionId, centerChunkX, centerChunkZ, revision)
+                : normalizedScreenKey;
+        viewportRequests.put(requestKey, new ViewportRequestState(
                 dimensionId,
                 centerChunkX,
                 centerChunkZ,
                 clampedRadius,
                 clampedPrefetchRadius,
                 revision,
-                screenKey == null ? "" : screenKey
+                normalizedScreenKey
         ));
-        enqueueArea(visibleQueue, visibleQueuedKeys, dimensionId, centerChunkX, centerChunkZ, clampedRadius, -1, viewportKey);
+        enqueueArea(visibleQueue, visibleQueuedKeys, dimensionId, centerChunkX, centerChunkZ, clampedRadius, -1, requestKey);
         int outerRadius = clampedRadius + clampedPrefetchRadius;
         if (outerRadius > clampedRadius) {
-            enqueueArea(prefetchQueue, prefetchQueuedKeys, dimensionId, centerChunkX, centerChunkZ, outerRadius, clampedRadius, viewportKey);
+            enqueueArea(prefetchQueue, prefetchQueuedKeys, dimensionId, centerChunkX, centerChunkZ, outerRadius, clampedRadius, requestKey);
         }
     }
 
@@ -240,6 +296,9 @@ public final class ClaimPreviewTerrainService {
         }
         String dimensionId = level.dimension().location().toString();
         drainQueue(level, visibleQueue, visibleQueuedKeys, dimensionId, Math.max(0, visibleBudget));
+        if (!visibleQueue.isEmpty()) {
+            return;
+        }
         drainQueue(level, prefetchQueue, prefetchQueuedKeys, dimensionId, Math.max(0, prefetchBudget));
     }
 
@@ -290,11 +349,38 @@ public final class ClaimPreviewTerrainService {
                 continue;
             }
             int[] tile = sampleChunkSubColors(level, request.chunkX(), request.chunkZ());
-            if (tile == null) {
+            storeTile(request.dimensionId(), request.chunkX(), request.chunkZ(), tile, savedData);
+        }
+    }
+
+    void processBudgetedWorkForTest(int visibleBudget, int prefetchBudget, TileSampler sampler) {
+        drainQueueForTest(visibleQueue, visibleQueuedKeys, Math.max(0, visibleBudget), sampler);
+        if (!visibleQueue.isEmpty()) {
+            return;
+        }
+        drainQueueForTest(prefetchQueue, prefetchQueuedKeys, Math.max(0, prefetchBudget), sampler);
+    }
+
+    private void drainQueueForTest(Queue<TileRequest> queue,
+                                   Set<String> queueKeys,
+                                   int budget,
+                                   TileSampler sampler) {
+        for (int processed = 0; processed < budget; processed++) {
+            TileRequest request = queue.poll();
+            if (request == null) {
+                return;
+            }
+            queueKeys.remove(queueKey(request.dimensionId(), request.chunkX(), request.chunkZ()));
+            if (sampler == null) {
                 continue;
             }
-            hotTiles.put(tileKey(request.dimensionId(), request.chunkX(), request.chunkZ()), tile);
-            savedData.putTile(request.dimensionId(), request.chunkX(), request.chunkZ(), tile);
+            storeTile(
+                    request.dimensionId(),
+                    request.chunkX(),
+                    request.chunkZ(),
+                    sampler.sample(request.dimensionId(), request.chunkX(), request.chunkZ()),
+                    null
+            );
         }
     }
 
@@ -303,11 +389,77 @@ public final class ClaimPreviewTerrainService {
         prefetchQueue.clear();
         hotTiles.clear();
         chunkToViewportDependencies.clear();
-        viewportSnapshotCache.clear();
         invalidatedViewportKeys.clear();
+        invalidatedViewportKeySet.clear();
         viewportRequests.clear();
         visibleQueuedKeys.clear();
         prefetchQueuedKeys.clear();
+    }
+
+    private void unregisterViewportInternal(String logicalScreenKey) {
+        viewportRequests.remove(logicalScreenKey);
+        removeInvalidatedViewportKey(logicalScreenKey);
+        removeViewportDependencies(logicalScreenKey);
+        removeQueuedViewportWork(logicalScreenKey);
+    }
+
+    private void removeInvalidatedViewportKey(String logicalScreenKey) {
+        if (!invalidatedViewportKeySet.remove(logicalScreenKey)) {
+            return;
+        }
+        List<String> retained = new ArrayList<>();
+        for (String key = invalidatedViewportKeys.poll(); key != null; key = invalidatedViewportKeys.poll()) {
+            if (!logicalScreenKey.equals(key)) {
+                retained.add(key);
+            }
+        }
+        invalidatedViewportKeys.addAll(retained);
+    }
+
+    private void removeViewportDependencies(String logicalScreenKey) {
+        chunkToViewportDependencies.forEach((chunkKey, dependentViewports) -> {
+            if (dependentViewports == null) {
+                return;
+            }
+            dependentViewports.remove(logicalScreenKey);
+            if (dependentViewports.isEmpty()) {
+                chunkToViewportDependencies.remove(chunkKey, dependentViewports);
+            }
+        });
+    }
+
+    private void removeQueuedViewportWork(String logicalScreenKey) {
+        removeQueuedViewportWork(visibleQueue, visibleQueuedKeys, logicalScreenKey);
+        removeQueuedViewportWork(prefetchQueue, prefetchQueuedKeys, logicalScreenKey);
+    }
+
+    private void removeQueuedViewportWork(Queue<TileRequest> queue,
+                                          Set<String> queueKeys,
+                                          String logicalScreenKey) {
+        if (queue.isEmpty()) {
+            return;
+        }
+        List<TileRequest> retained = new ArrayList<>();
+        for (TileRequest request = queue.poll(); request != null; request = queue.poll()) {
+            if (!logicalScreenKey.equals(request.viewportKey())) {
+                retained.add(request);
+            }
+        }
+        queueKeys.clear();
+        for (TileRequest request : retained) {
+            queue.offer(request);
+            queueKeys.add(queueKey(request.dimensionId(), request.chunkX(), request.chunkZ()));
+        }
+    }
+
+    private void storeTile(String dimensionId, int chunkX, int chunkZ, int[] tile, TerrainPreviewSavedData savedData) {
+        if (tile == null) {
+            return;
+        }
+        hotTiles.put(tileKey(dimensionId, chunkX, chunkZ), tile);
+        if (savedData != null) {
+            savedData.putTile(dimensionId, chunkX, chunkZ, tile);
+        }
     }
 
     private int[] getTile(ServerLevel level, String dimensionId, int chunkX, int chunkZ) {
@@ -333,13 +485,42 @@ public final class ClaimPreviewTerrainService {
         return null;
     }
 
-    private void addViewportDependency(String dimensionId, int chunkX, int chunkZ, String viewportKey) {
-        if (dimensionId == null || dimensionId.isBlank() || viewportKey == null || viewportKey.isBlank()) {
+    private int[] getHotTile(String dimensionId, int chunkX, int chunkZ) {
+        int[] hot = hotTiles.get(tileKey(dimensionId, chunkX, chunkZ));
+        return hot == null ? null : hot.clone();
+    }
+
+    private void warmViewportFromPersistedInternal(ServerLevel level,
+                                                   String dimensionId,
+                                                   int centerChunkX,
+                                                   int centerChunkZ,
+                                                   int radius,
+                                                   int prefetchRadius) {
+        TerrainPreviewSavedData savedData = TerrainPreviewSavedData.get(level);
+        int outerRadius = Math.max(0, radius) + Math.max(0, prefetchRadius);
+        for (int dz = -outerRadius; dz <= outerRadius; dz++) {
+            for (int dx = -outerRadius; dx <= outerRadius; dx++) {
+                int chunkX = centerChunkX + dx;
+                int chunkZ = centerChunkZ + dz;
+                String key = tileKey(dimensionId, chunkX, chunkZ);
+                if (hotTiles.containsKey(key)) {
+                    continue;
+                }
+                int[] persisted = savedData.getTile(dimensionId, chunkX, chunkZ);
+                if (persisted != null) {
+                    hotTiles.putIfAbsent(key, persisted.clone());
+                }
+            }
+        }
+    }
+
+    private void addViewportDependency(String dimensionId, int chunkX, int chunkZ, String screenKey) {
+        if (dimensionId == null || dimensionId.isBlank() || screenKey == null || screenKey.isBlank()) {
             return;
         }
         chunkToViewportDependencies
                 .computeIfAbsent(tileKey(dimensionId, chunkX, chunkZ), ignored -> ConcurrentHashMap.newKeySet())
-                .add(viewportKey);
+                .add(screenKey);
     }
 
     private void invalidateChunkInternal(String dimensionId, int chunkX, int chunkZ, ServerLevel level) {
@@ -350,21 +531,34 @@ public final class ClaimPreviewTerrainService {
         if (level != null) {
             TerrainPreviewSavedData.get(level).removeTile(dimensionId, chunkX, chunkZ);
         }
-        Set<String> dependentViewportKeys = chunkToViewportDependencies.remove(key);
-        if (dependentViewportKeys != null) {
-            for (String viewportKey : dependentViewportKeys) {
-                viewportSnapshotCache.remove(viewportKey);
-                requeueViewport(viewportKey);
+        queueChangedChunkForResample(dimensionId, chunkX, chunkZ);
+        Set<String> dependentScreenKeys = chunkToViewportDependencies.remove(key);
+        if (dependentScreenKeys != null) {
+            for (String screenKey : dependentScreenKeys) {
+                requeueViewport(screenKey);
             }
         }
     }
 
-    private void requeueViewport(String viewportKey) {
-        if (viewportKey == null || viewportKey.isBlank()) {
+    private void queueChangedChunkForResample(String dimensionId, int chunkX, int chunkZ) {
+        if (dimensionId == null || dimensionId.isBlank()) {
             return;
         }
-        invalidatedViewportKeys.add(viewportKey);
-        ViewportRequestState requestState = viewportRequests.get(viewportKey);
+        String queueKey = queueKey(dimensionId, chunkX, chunkZ);
+        if (!visibleQueuedKeys.add(queueKey)) {
+            return;
+        }
+        visibleQueue.offer(new TileRequest(dimensionId, chunkX, chunkZ, ""));
+    }
+
+    private void requeueViewport(String screenKey) {
+        if (screenKey == null || screenKey.isBlank()) {
+            return;
+        }
+        if (invalidatedViewportKeySet.add(screenKey)) {
+            invalidatedViewportKeys.offer(screenKey);
+        }
+        ViewportRequestState requestState = viewportRequests.get(screenKey);
         if (requestState == null) {
             return;
         }
@@ -375,13 +569,21 @@ public final class ClaimPreviewTerrainService {
                 requestState.radius(),
                 requestState.prefetchRadius(),
                 requestState.revision(),
-                requestState.screenKey()
+                screenKey
         );
     }
 
     private int[] sampleChunkSubColors(ServerLevel level, int chunkX, int chunkZ) {
+        return sampleChunkSubColors(chunkX, chunkZ,
+                (x, z, load) -> level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, load));
+    }
+
+    private int[] sampleChunkSubColors(int chunkX, int chunkZ, ChunkResolver chunkResolver) {
+        if (chunkResolver == null) {
+            return null;
+        }
         try {
-            ChunkAccess chunk = level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+            ChunkAccess chunk = chunkResolver.resolve(chunkX, chunkZ, true);
             if (chunk == null) {
                 return null;
             }
@@ -452,17 +654,24 @@ public final class ClaimPreviewTerrainService {
         return tile;
     }
 
-    private static String viewportKey(String screenKey, long revision) {
-        String normalizedScreenKey = screenKey == null ? "" : screenKey;
-        return normalizedScreenKey + "|" + revision;
-    }
-
     private static String tileKey(String dimensionId, int chunkX, int chunkZ) {
         return dimensionId + "|" + chunkX + "|" + chunkZ;
     }
 
     private static String queueKey(String dimensionId, int chunkX, int chunkZ) {
         return dimensionId + ":" + chunkX + ":" + chunkZ;
+    }
+
+    private List<String> consumeInvalidatedViewportKeysInternal() {
+        if (invalidatedViewportKeys.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> drained = new LinkedHashSet<>();
+        for (String key = invalidatedViewportKeys.poll(); key != null; key = invalidatedViewportKeys.poll()) {
+            invalidatedViewportKeySet.remove(key);
+            drained.add(key);
+        }
+        return drained.isEmpty() ? List.of() : List.copyOf(drained);
     }
 
     void enqueueViewportForTest(String dimensionId,
@@ -489,12 +698,19 @@ public final class ClaimPreviewTerrainService {
                 .add(viewportKey);
     }
 
+    int[] sampleChunkSubColorsForTest(int chunkX, int chunkZ, ChunkResolver resolver) {
+        return sampleChunkSubColors(chunkX, chunkZ, resolver);
+    }
+
+    void clearQueuedWorkForTest() {
+        visibleQueue.clear();
+        prefetchQueue.clear();
+        visibleQueuedKeys.clear();
+        prefetchQueuedKeys.clear();
+    }
+
     void invalidateChunkForTest(String dimensionId, int chunkX, int chunkZ) {
-        hotTiles.remove(tileKey(dimensionId, chunkX, chunkZ));
-        Set<String> dependentViewportKeys = chunkToViewportDependencies.remove(tileKey(dimensionId, chunkX, chunkZ));
-        if (dependentViewportKeys != null) {
-            invalidatedViewportKeys.addAll(dependentViewportKeys);
-        }
+        invalidateChunkInternal(dimensionId, chunkX, chunkZ, null);
     }
 
     int visibleQueueSizeForTest() {
@@ -506,6 +722,15 @@ public final class ClaimPreviewTerrainService {
     }
 
     List<String> invalidatedViewportKeysForTest() {
-        return List.copyOf(invalidatedViewportKeys);
+        return List.copyOf(invalidatedViewportKeySet);
+    }
+
+    boolean hasViewportRequestForTest(String viewportKey) {
+        return viewportRequests.containsKey(viewportKey);
+    }
+
+    boolean hasViewportDependencyForTest(String dimensionId, int chunkX, int chunkZ, String viewportKey) {
+        Set<String> dependentKeys = chunkToViewportDependencies.get(tileKey(dimensionId, chunkX, chunkZ));
+        return dependentKeys != null && dependentKeys.contains(viewportKey);
     }
 }

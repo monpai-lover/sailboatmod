@@ -36,7 +36,6 @@ public final class ServerEvents {
         runStartupTaskSafely("market SQLite database", () -> MarketDatabase.initialize(event.getServer()));
         BlueMapIntegration.onServerStarted(event.getServer());
         ClaimPreviewTerrainService.onServerStarted(event.getServer());
-        ClaimPreviewTerrainService.clearAllPersistedColors(event.getServer().overworld());
         ClaimMapTaskService.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
     }
@@ -59,6 +58,7 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
             });
+            com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
             if (++loanTickCounter >= 1200) {
                 loanTickCounter = 0;
@@ -100,6 +100,7 @@ public final class ServerEvents {
     public static void onServerStopped(ServerStoppedEvent event) {
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
         ClaimPreviewTerrainService.onServerStopping();
+        com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerStopping();
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         MarketDatabase.shutdown();

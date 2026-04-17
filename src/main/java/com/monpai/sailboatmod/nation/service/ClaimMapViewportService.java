@@ -27,7 +27,6 @@ public class ClaimMapViewportService {
     }
 
     public ClaimMapViewportSnapshot tryBuildSnapshot(ViewportRequest request, List<Integer> claimOverlayColors) {
-        String viewportKey = viewportKey(request);
         ClaimPreviewTerrainService.enqueueViewportWork(
                 request.dimensionId(),
                 request.centerChunkX(),
@@ -48,7 +47,7 @@ public class ClaimMapViewportService {
                     pendingVisibleChunkCount++;
                     continue;
                 }
-                ClaimPreviewTerrainService.trackViewportDependency(request.dimensionId(), chunkX, chunkZ, viewportKey);
+                ClaimPreviewTerrainService.trackViewportDependency(request.dimensionId(), chunkX, chunkZ, request.screenKind());
                 for (int color : tile) {
                     pixels.add(color);
                 }
@@ -66,7 +65,6 @@ public class ClaimMapViewportService {
                 request.centerChunkZ(),
                 pixels
         );
-        ClaimPreviewTerrainService.putViewportSnapshot(viewportKey, snapshot);
         return snapshot;
     }
 
@@ -98,15 +96,29 @@ public class ClaimMapViewportService {
         return pendingPrefetchChunkCount;
     }
 
-    private static String viewportKey(ViewportRequest request) {
-        return request.screenKind()
+    static String viewportKeyForTest(String screenKey, String dimensionId, int centerChunkX, int centerChunkZ, long revision) {
+        return viewportKey(screenKey, dimensionId, centerChunkX, centerChunkZ, revision);
+    }
+
+    static String viewportKey(ViewportRequest request) {
+        return viewportKey(
+                request.screenKind(),
+                request.dimensionId(),
+                request.centerChunkX(),
+                request.centerChunkZ(),
+                request.revision()
+        );
+    }
+
+    static String viewportKey(String screenKey, String dimensionId, int centerChunkX, int centerChunkZ, long revision) {
+        return (screenKey == null ? "" : screenKey)
                 + "|"
-                + request.dimensionId()
+                + (dimensionId == null ? "" : dimensionId)
                 + "|"
-                + request.centerChunkX()
+                + centerChunkX
                 + "|"
-                + request.centerChunkZ()
+                + centerChunkZ
                 + "|"
-                + request.revision();
+                + revision;
     }
 }

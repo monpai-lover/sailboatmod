@@ -274,3 +274,5 @@ The following are intentionally out of scope for this design:
 The main design decision is to treat chunk terrain tiles as the persistent reusable asset and whole viewport images as ephemeral assembled products.
 
 That is the key property that makes this design compatible with frequent dragging without wasting work.
+
+Compatibility note (2026-04-18): `ClaimMapRasterizer` and `ClaimMapRenderTaskService` remain in the codebase as non-active compatibility wrappers/tests, while town/nation claim-map runtime flow now consumes server viewport snapshots directly.
