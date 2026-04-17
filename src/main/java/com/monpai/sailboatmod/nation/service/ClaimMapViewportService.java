@@ -28,7 +28,6 @@ public class ClaimMapViewportService {
 
     public ClaimMapViewportSnapshot tryBuildSnapshot(ViewportRequest request, List<Integer> claimOverlayColors) {
         pendingVisibleChunkCount = 0;
-        pendingPrefetchChunkCount = 0;
         ArrayList<Integer> pixels = new ArrayList<>();
         for (int dz = -request.radius(); dz <= request.radius(); dz++) {
             for (int dx = -request.radius(); dx <= request.radius(); dx++) {
@@ -42,8 +41,8 @@ public class ClaimMapViewportService {
                 }
             }
         }
+        pendingPrefetchChunkCount = countMissingPrefetchChunks(request);
         if (pendingVisibleChunkCount > 0) {
-            pendingPrefetchChunkCount = countPrefetchChunks(request);
             return null;
         }
         return new ClaimMapViewportSnapshot(
@@ -56,11 +55,24 @@ public class ClaimMapViewportService {
         );
     }
 
-    private int countPrefetchChunks(ViewportRequest request) {
+    private int countMissingPrefetchChunks(ViewportRequest request) {
         int outer = request.radius() + Math.max(0, request.prefetchRadius());
-        int diameter = outer * 2 + 1;
-        int visibleDiameter = request.radius() * 2 + 1;
-        return diameter * diameter - visibleDiameter * visibleDiameter;
+        if (outer <= request.radius()) {
+            return 0;
+        }
+        int missingCount = 0;
+        for (int dz = -outer; dz <= outer; dz++) {
+            for (int dx = -outer; dx <= outer; dx++) {
+                if (Math.abs(dx) <= request.radius() && Math.abs(dz) <= request.radius()) {
+                    continue;
+                }
+                int[] tile = tileLookup.get(request.dimensionId(), request.centerChunkX() + dx, request.centerChunkZ() + dz);
+                if (tile == null) {
+                    missingCount++;
+                }
+            }
+        }
+        return missingCount;
     }
 
     int pendingVisibleChunkCountForTest() {
