@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.nation.service.RoadHybridRouteResolver;
 import com.monpai.sailboatmod.nation.service.RoadPathfinder;
 import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshot;
 import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshotBuilder;
+import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.monpai.sailboatmod.nation.service.SegmentedRoadPathOrchestrator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -26,6 +27,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 public final class RoadAutoRouteService {
     private static final double STATION_CONNECT_RADIUS = 16.0D;
@@ -97,6 +100,36 @@ public final class RoadAutoRouteService {
 
     public static RouteResolution resolveAutoRoutePreview(ServerLevel level, BlockPos start, BlockPos end) {
         return resolveAutoRoute(level, start, end);
+    }
+
+    public static CompletableFuture<RouteResolution> resolveAutoRouteAsync(ServerLevel level,
+                                                                           BlockPos start,
+                                                                           BlockPos end,
+                                                                           Consumer<RouteResolution> apply) {
+        if (level == null || start == null || end == null) {
+            RouteResolution resolution = RouteResolution.none();
+            if (apply != null) {
+                apply.accept(resolution);
+            }
+            return CompletableFuture.completedFuture(resolution);
+        }
+        RoadPlanningTaskService taskService = RoadPlanningTaskService.get();
+        if (taskService == null) {
+            RouteResolution resolution = resolveAutoRoute(level, start, end);
+            if (apply != null) {
+                apply.accept(resolution);
+            }
+            return CompletableFuture.completedFuture(resolution);
+        }
+        return taskService.submitLatest(
+                new RoadPlanningTaskService.TaskKey("auto-route", start.asLong() + "|" + end.asLong()),
+                () -> resolveAutoRoute(level, start, end),
+                resolution -> {
+                    if (apply != null) {
+                        apply.accept(resolution);
+                    }
+                }
+        );
     }
 
     public static boolean canResolveAutoRoute(ServerLevel level, DockBlockEntity startDock, DockBlockEntity endDock) {

@@ -68,4 +68,26 @@ class RoadPlanningTaskServiceTest {
         assertNull(result);
         assertTrue(applied.isEmpty());
     }
+
+    @Test
+    void taskServiceKeepsAutoRouteRequestsIsolatedFromManualPreviewRequests() {
+        RoadPlanningTaskService service = new RoadPlanningTaskService(Runnable::run, Runnable::run);
+        List<String> applied = new ArrayList<>();
+
+        RoadPlanningTaskService.TaskHandle<String> manual = service.submitForTest(
+                new RoadPlanningTaskService.TaskKey("manual-preview", "player-a"),
+                () -> "manual",
+                applied::add
+        );
+        RoadPlanningTaskService.TaskHandle<String> auto = service.submitForTest(
+                new RoadPlanningTaskService.TaskKey("auto-route", "station-a|station-b"),
+                () -> "auto",
+                applied::add
+        );
+
+        manual.completeForTest();
+        auto.completeForTest();
+
+        assertEquals(List.of("manual", "auto"), applied);
+    }
 }
