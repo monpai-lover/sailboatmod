@@ -11,11 +11,8 @@ import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationOfficeRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
-import com.monpai.sailboatmod.network.ModNetwork;
-import com.monpai.sailboatmod.network.packet.SyncClaimPreviewMapPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -98,24 +95,6 @@ public final class TownOverviewService {
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
         ClaimPreviewMapState claimMapState = ClaimPreviewMapState.loading(System.nanoTime(), claimPreviewRadius(), previewChunk.x, previewChunk.z);
         List<Integer> nearbyTerrainColors = List.of();
-        ClaimMapTaskService taskService = ClaimMapTaskService.get();
-        if (taskService != null && player.getServer() != null) {
-            long revision = claimMapState.revision();
-            taskService.submitLatest(
-                    new ClaimMapTaskService.TaskKey("town-claims", player.getUUID() + "|" + town.townId()),
-                    () -> ClaimPreviewMapState.ready(
-                            revision,
-                            claimPreviewRadius(),
-                            previewChunk.x,
-                            previewChunk.z,
-                            ClaimPreviewTerrainService.sample(player.serverLevel(), previewChunk, claimPreviewRadius())
-                    ),
-                    readyState -> ModNetwork.CHANNEL.send(
-                            PacketDistributor.PLAYER.with(() -> player),
-                            new SyncClaimPreviewMapPacket(SyncClaimPreviewMapPacket.ScreenKind.TOWN, readyState)
-                    )
-            );
-        }
 
         boolean canManageTown = TownService.canManageTown(player, data, town);
         boolean canAssignMayor = nation != null && player.getUUID().equals(nation.leaderUuid());

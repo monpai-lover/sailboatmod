@@ -2,17 +2,17 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.NationClientHooks;
 import com.monpai.sailboatmod.client.TownClientHooks;
+import com.monpai.sailboatmod.nation.service.ClaimMapViewportSnapshot;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.NetworkEvent;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
-public record SyncClaimPreviewMapPacket(ScreenKind screenKind, ClaimPreviewMapState state) {
+public record SyncClaimPreviewMapPacket(ScreenKind screenKind, ClaimMapViewportSnapshot snapshot) {
     public enum ScreenKind {
         TOWN,
         NATION
@@ -20,49 +20,54 @@ public record SyncClaimPreviewMapPacket(ScreenKind screenKind, ClaimPreviewMapSt
 
     public SyncClaimPreviewMapPacket {
         screenKind = screenKind == null ? ScreenKind.TOWN : screenKind;
-        state = state == null ? ClaimPreviewMapState.empty() : state;
+        snapshot = snapshot == null ? new ClaimMapViewportSnapshot("", 0L, 0, 0, 0, List.of()) : snapshot;
     }
 
     public static void encode(SyncClaimPreviewMapPacket packet, FriendlyByteBuf buffer) {
         buffer.writeEnum(packet.screenKind());
-        buffer.writeLong(packet.state().revision());
-        buffer.writeVarInt(packet.state().radius());
-        buffer.writeInt(packet.state().centerChunkX());
-        buffer.writeInt(packet.state().centerChunkZ());
-        buffer.writeBoolean(packet.state().loading());
-        buffer.writeBoolean(packet.state().ready());
-        buffer.writeVarInt(packet.state().colors().size());
-        for (Integer color : packet.state().colors()) {
+        buffer.writeUtf(packet.snapshot().dimensionId(), 64);
+        buffer.writeLong(packet.snapshot().revision());
+        buffer.writeVarInt(packet.snapshot().radius());
+        buffer.writeInt(packet.snapshot().centerChunkX());
+        buffer.writeInt(packet.snapshot().centerChunkZ());
+        buffer.writeVarInt(packet.snapshot().pixels().size());
+        for (Integer color : packet.snapshot().pixels()) {
             buffer.writeInt(color == null ? 0xFF33414A : color);
         }
     }
 
     public static SyncClaimPreviewMapPacket decode(FriendlyByteBuf buffer) {
         ScreenKind screenKind = buffer.readEnum(ScreenKind.class);
+        String dimensionId = buffer.readUtf(64);
         long revision = buffer.readLong();
         int radius = buffer.readVarInt();
         int centerChunkX = buffer.readInt();
         int centerChunkZ = buffer.readInt();
-        boolean loading = buffer.readBoolean();
-        boolean ready = buffer.readBoolean();
         int colorCount = buffer.readVarInt();
-        List<Integer> colors = new ArrayList<>(colorCount);
+        List<Integer> colors = new java.util.ArrayList<>(colorCount);
         for (int i = 0; i < colorCount; i++) {
             colors.add(buffer.readInt());
         }
         return new SyncClaimPreviewMapPacket(
                 screenKind,
-                new ClaimPreviewMapState(revision, radius, centerChunkX, centerChunkZ, loading, ready, colors)
+                new ClaimMapViewportSnapshot(dimensionId, revision, radius, centerChunkX, centerChunkZ, colors)
         );
     }
 
     public static void handle(SyncClaimPreviewMapPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
+            ClaimPreviewMapState legacyState = ClaimPreviewMapState.ready(
+                    packet.snapshot().revision(),
+                    packet.snapshot().radius(),
+                    packet.snapshot().centerChunkX(),
+                    packet.snapshot().centerChunkZ(),
+                    packet.snapshot().pixels()
+            );
             if (packet.screenKind() == ScreenKind.NATION) {
-                NationClientHooks.applyClaimPreview(packet.state());
+                NationClientHooks.applyClaimPreview(legacyState);
             } else {
-                TownClientHooks.applyClaimPreview(packet.state());
+                TownClientHooks.applyClaimPreview(legacyState);
             }
         }));
         context.setPacketHandled(true);

@@ -43,15 +43,17 @@ public class OpenTownMenuPacket {
             if (player == null) {
                 return;
             }
-            ChunkPos previewCenter;
-            if (packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE) {
-                previewCenter = TownOverviewService.getCoreCenterOrPlayer(player, packet.townId);
-            } else {
-                previewCenter = new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
-            }
+            ChunkPos previewCenter = resolvePreviewCenter(packet, player);
             TownOverviewData data = TownOverviewService.buildFor(player, packet.townId, previewCenter);
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTownScreenPacket(data));
         });
         context.setPacketHandled(true);
+    }
+
+    private static ChunkPos resolvePreviewCenter(OpenTownMenuPacket packet, ServerPlayer player) {
+        if (packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE) {
+            return TownOverviewService.getCoreCenterOrPlayer(player, packet.townId);
+        }
+        return new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
     }
 }

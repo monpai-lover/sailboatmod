@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaimOverviewPacketRoundTripTest {
@@ -46,6 +47,7 @@ class ClaimOverviewPacketRoundTripTest {
         assertEquals(10, decodedData.claimMapState().centerChunkX());
         assertEquals(20, decodedData.claimMapState().centerChunkZ());
         assertTrue(decodedData.claimMapState().loading());
+        assertFalse(decodedData.claimMapState().ready());
         assertTrue(decodedData.nearbyTerrainColors().isEmpty());
     }
 
@@ -71,6 +73,7 @@ class ClaimOverviewPacketRoundTripTest {
         assertEquals(10, decodedData.claimMapState().centerChunkX());
         assertEquals(20, decodedData.claimMapState().centerChunkZ());
         assertTrue(decodedData.claimMapState().loading());
+        assertFalse(decodedData.claimMapState().ready());
         assertTrue(decodedData.nearbyTerrainColors().isEmpty());
     }
 

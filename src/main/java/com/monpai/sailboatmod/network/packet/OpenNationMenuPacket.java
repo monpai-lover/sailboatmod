@@ -40,16 +40,17 @@ public class OpenNationMenuPacket {
             if (player == null) {
                 return;
             }
-            ChunkPos previewCenter;
-            if (packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE) {
-                // First open: center on nation core if available, else player position
-                previewCenter = NationOverviewService.getCoreCenterOrPlayer(player);
-            } else {
-                previewCenter = new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
-            }
+            ChunkPos previewCenter = resolvePreviewCenter(packet, player);
             NationOverviewData data = NationOverviewService.buildFor(player, previewCenter);
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
         });
         context.setPacketHandled(true);
+    }
+
+    private static ChunkPos resolvePreviewCenter(OpenNationMenuPacket packet, ServerPlayer player) {
+        if (packet.previewCenterChunkX == Integer.MIN_VALUE || packet.previewCenterChunkZ == Integer.MIN_VALUE) {
+            return NationOverviewService.getCoreCenterOrPlayer(player);
+        }
+        return new ChunkPos(packet.previewCenterChunkX, packet.previewCenterChunkZ);
     }
 }

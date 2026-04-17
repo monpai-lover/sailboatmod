@@ -32,10 +32,12 @@ import com.monpai.sailboatmod.network.packet.OpenNationScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
+import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.RenameDockPacket;
 import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
+import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerTargetPacket;
@@ -269,6 +271,20 @@ public final class ModNetwork {
                 SyncClaimPreviewMapPacket::decode,
                 SyncClaimPreviewMapPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RequestClaimMapViewportPacket.class,
+                RequestClaimMapViewportPacket::encode,
+                RequestClaimMapViewportPacket::decode,
+                RequestClaimMapViewportPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RefreshClaimMapViewportPacket.class,
+                RefreshClaimMapViewportPacket::encode,
+                RefreshClaimMapViewportPacket::decode,
+                RefreshClaimMapViewportPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,
