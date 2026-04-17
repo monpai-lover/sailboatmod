@@ -338,14 +338,63 @@ class RoadGeometryPlannerSlopeTest {
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
         assertEquals(65, heights[1], () -> java.util.Arrays.toString(heights));
         assertEquals(65, heights[2], () -> "expected first long-ramp plateau before climbing: " + java.util.Arrays.toString(heights));
-        assertEquals(66, heights[3], () -> "expected the first rise to be pushed farther away from the shoreline: " + java.util.Arrays.toString(heights));
-        assertEquals(67, heights[4], () -> java.util.Arrays.toString(heights));
-        assertEquals(68, heights[5], () -> java.util.Arrays.toString(heights));
-        assertEquals(68, heights[6], () -> "expected main deck to start later after a longer ramp: " + java.util.Arrays.toString(heights));
-        assertEquals(68, heights[7], () -> java.util.Arrays.toString(heights));
-        assertEquals(67, heights[10], () -> java.util.Arrays.toString(heights));
-        assertEquals(66, heights[11], () -> java.util.Arrays.toString(heights));
+        assertEquals(65, heights[3], () -> "expected bridgehead platform to stay flat before the slab climb starts: " + java.util.Arrays.toString(heights));
+        assertEquals(66, heights[4], () -> "expected the first rise to start after the full bridgehead platform: " + java.util.Arrays.toString(heights));
+        assertEquals(67, heights[5], () -> java.util.Arrays.toString(heights));
+        assertEquals(68, heights[6], () -> java.util.Arrays.toString(heights));
+        assertEquals(68, heights[7], () -> "expected main deck to start later after a longer ramp: " + java.util.Arrays.toString(heights));
+        assertEquals(68, heights[8], () -> java.util.Arrays.toString(heights));
+        assertEquals(67, heights[9], () -> java.util.Arrays.toString(heights));
+        assertEquals(66, heights[10], () -> java.util.Arrays.toString(heights));
+        assertEquals(65, heights[11], () -> java.util.Arrays.toString(heights));
         assertEquals(65, heights[12], () -> "expected symmetric delayed touchdown on the far side: " + java.util.Arrays.toString(heights));
+    }
+
+    @Test
+    void bridgeheadPlatformStaysFullBlockWhileWholeRampRunUsesSlabs() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0),
+                new BlockPos(11, 64, 0),
+                new BlockPos(12, 64, 0),
+                new BlockPos(13, 64, 0),
+                new BlockPos(14, 64, 0)
+        );
+
+        RoadBridgePlanner.BridgeSpanPlan spanPlan = RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(1, 13),
+                index -> index >= 1 && index <= 13,
+                index -> index >= 6 && index <= 8,
+                index -> 61,
+                index -> 63,
+                index -> true
+        );
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(centerPath, List.of(spanPlan));
+        RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(centerPath, List.of(spanPlan), heights);
+        RoadGeometryPlanner.RoadGeometryPlan geometryPlan = RoadGeometryPlanner.plan(
+                corridorPlan,
+                pos -> Blocks.STONE_BRICK_SLAB.defaultBlockState()
+        );
+        Map<BlockPos, BlockState> statesByPos = statesByPos(geometryPlan);
+
+        assertEquals(65, heights[1], () -> java.util.Arrays.toString(heights));
+        assertEquals(65, heights[2], () -> java.util.Arrays.toString(heights));
+        assertEquals(65, heights[3], () -> java.util.Arrays.toString(heights));
+        assertTrue(statesByPos.get(new BlockPos(2, 65, 0)).is(Blocks.STONE_BRICKS));
+        assertTrue(statesByPos.get(new BlockPos(4, 66, 0)).is(Blocks.STONE_BRICK_SLAB));
+        assertTrue(statesByPos.get(new BlockPos(5, 67, 0)).is(Blocks.STONE_BRICK_SLAB));
+        assertTrue(statesByPos.get(new BlockPos(10, 67, 0)).is(Blocks.STONE_BRICK_SLAB));
+        assertTrue(statesByPos.get(new BlockPos(12, 65, 0)).is(Blocks.STONE_BRICKS));
     }
 
     @Test

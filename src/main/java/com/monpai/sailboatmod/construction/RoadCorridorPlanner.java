@@ -18,7 +18,7 @@ public final class RoadCorridorPlanner {
     private static final int LAND_STREETLIGHT_INTERVAL = 24;
     private static final int BRIDGE_LIGHT_INTERVAL = 8;
     private static final int MIN_BRIDGE_SPAN_FOR_PIERS = 7;
-    private static final int TARGET_PIER_SPACING = 4;
+    private static final int EXTRA_CENTER_PIER_MIN_GAP = 18;
 
     private record SupportPlacementPlan(Set<Integer> supportIndexes, boolean valid) {
     }
@@ -433,15 +433,11 @@ public final class RoadCorridorPlanner {
         if (ordered.isEmpty()) {
             return List.of();
         }
-        int anchorCount = Math.max(1, (int) Math.round((double) ordered.size() / (double) TARGET_PIER_SPACING));
-        anchorCount = Math.min(anchorCount, ordered.size());
-        if (anchorCount == 1) {
-            return List.of(ordered.get(ordered.size() / 2));
-        }
         LinkedHashSet<Integer> anchors = new LinkedHashSet<>();
-        for (int i = 0; i < anchorCount; i++) {
-            int sampleIndex = (int) Math.round((double) i * (ordered.size() - 1) / (double) (anchorCount - 1));
-            anchors.add(ordered.get(sampleIndex));
+        anchors.add(ordered.get(ordered.size() / 2));
+        if ((ordered.get(ordered.size() - 1) - ordered.get(0)) > EXTRA_CENTER_PIER_MIN_GAP) {
+            int midpoint = (ordered.get(0) + ordered.get(ordered.size() - 1)) / 2;
+            anchors.add(nearestOrderedIndex(ordered, midpoint));
         }
         return List.copyOf(anchors);
     }
@@ -596,7 +592,8 @@ public final class RoadCorridorPlanner {
     }
 
     private static boolean shouldPlaceBridgeLight(int index, RoadCorridorPlan.SegmentKind segmentKind) {
-        if (segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD) {
+        if (segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM) {
             return true;
         }
         if (segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN) {
@@ -667,6 +664,7 @@ public final class RoadCorridorPlanner {
     private static boolean isBridgeTransitionKind(RoadCorridorPlan.SegmentKind segmentKind) {
         return segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
                 || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
                 || segmentKind == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
                 || segmentKind == RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
@@ -798,11 +796,13 @@ public final class RoadCorridorPlanner {
         return segmentKind == RoadCorridorPlan.SegmentKind.LAND_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
                 || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
     }
 
     private static boolean supportsBridgeRailings(RoadCorridorPlan.SegmentKind segmentKind) {
         return segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
                 || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
@@ -888,18 +888,55 @@ public final class RoadCorridorPlanner {
         }
         int start = Math.max(0, Math.min(pathSize - 1, bridgePlan.startIndex()));
         int end = Math.max(0, Math.min(pathSize - 1, bridgePlan.endIndex()));
-        if (index == start || index == end) {
-            return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
-        }
         if (supportNodeByIndex.containsKey(index)) {
             return RoadCorridorPlan.SegmentKind.NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN;
+        }
+        RoadBridgePlanner.BridgeDeckSegmentType segmentType = bridgeSegmentTypeAtIndex(bridgePlan, index);
+        if (segmentType == RoadBridgePlanner.BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM) {
+            return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM;
+        }
+        if (index == start || index == end) {
+            return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
         }
         if (bridgePlan.mode() == RoadBridgePlanner.BridgeMode.ARCH_SPAN) {
             return RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
         }
+        if (segmentType == RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP
+                || segmentType == RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN) {
+            return RoadCorridorPlan.SegmentKind.APPROACH_RAMP;
+        }
         return bridgePlan.navigableWaterBridge()
                 ? RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN
                 : RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH;
+    }
+
+    private static RoadBridgePlanner.BridgeDeckSegmentType bridgeSegmentTypeAtIndex(RoadBridgePlanner.BridgeSpanPlan bridgePlan,
+                                                                                     int index) {
+        if (bridgePlan == null || bridgePlan.deckSegments().isEmpty()) {
+            return null;
+        }
+        for (RoadBridgePlanner.BridgeDeckSegment segment : bridgePlan.deckSegments()) {
+            if (segment == null) {
+                continue;
+            }
+            if (index >= segment.startIndex() && index <= segment.endIndex()) {
+                return segment.type();
+            }
+        }
+        return null;
+    }
+
+    private static int nearestOrderedIndex(List<Integer> ordered, int target) {
+        int match = ordered.get(0);
+        int bestDistance = Math.abs(match - target);
+        for (int index : ordered) {
+            int distance = Math.abs(index - target);
+            if (distance < bestDistance || (distance == bestDistance && index < match)) {
+                bestDistance = distance;
+                match = index;
+            }
+        }
+        return match;
     }
 
     private static RoadCorridorPlan.NavigationChannel buildNavigationChannelFromPlans(List<BlockPos> deckCenters,

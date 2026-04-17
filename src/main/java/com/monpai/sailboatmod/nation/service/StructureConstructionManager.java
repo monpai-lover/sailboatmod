@@ -2953,7 +2953,8 @@ public final class StructureConstructionManager {
                 || sliceStyle == null
                 || !sliceStyle.bridge()
                 || !isBridgePierState(sliceStyle.support())
-                || slice.segmentKind() != RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
+                || (slice.segmentKind() != RoadCorridorPlan.SegmentKind.BRIDGE_HEAD
+                && slice.segmentKind() != RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM)
                 || hasAdjacentSupportSpan(corridorPlan, slice.index())
                 || !isBridgeDeckColumn(level, slice.deckCenter())) {
             return List.of();

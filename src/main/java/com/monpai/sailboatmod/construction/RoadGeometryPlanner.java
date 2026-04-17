@@ -149,9 +149,18 @@ public final class RoadGeometryPlanner {
         boolean stairSegment = shouldUseCorridorStairState(corridorPlan, index, placementHeights);
         List<GhostRoadBlock> ghostBlocks = new ArrayList<>();
         for (BlockPos pos : slicePositions(corridorPlan, index)) {
+            BlockState sourceState = Objects.requireNonNull(blockStateSupplier.apply(pos), "blockStateSupplier returned null for pos " + pos);
+            if (slice.segmentKind() == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM) {
+                ghostBlocks.add(new GhostRoadBlock(pos, fullBlockStateForFamily(sourceState)));
+                continue;
+            }
+            if (slice.segmentKind() == RoadCorridorPlan.SegmentKind.APPROACH_RAMP) {
+                ghostBlocks.add(new GhostRoadBlock(pos, slabStateForFamily(sourceState)));
+                continue;
+            }
             ghostBlocks.add(new GhostRoadBlock(
                     pos,
-                    resolveState(corridorPlan.centerPath(), placementHeights, index, pos, stairSegment, blockStateSupplier)
+                    resolveState(corridorPlan.centerPath(), placementHeights, index, pos, stairSegment, ignored -> sourceState)
             ));
         }
         return List.copyOf(ghostBlocks);
@@ -988,6 +997,7 @@ public final class RoadGeometryPlanner {
                     applyExplicitArchSpan(placementHeights, start, end, segment.startDeckY(), segment.endDeckY());
                 }
                 case APPROACH_UP, APPROACH_DOWN -> applyLinearBridgeSegment(placementHeights, segment);
+                case BRIDGE_HEAD_PLATFORM -> applyLevelBridgeSegment(placementHeights, segment, segment.startDeckY());
                 case MAIN_LEVEL -> applyLevelBridgeSegment(placementHeights, segment, plan.mainDeckY());
             }
         }
@@ -1294,7 +1304,7 @@ public final class RoadGeometryPlanner {
             return;
         }
         if (start == end) {
-            placementHeights[start] = Math.max(placementHeights[start], Math.max(segment.startDeckY(), segment.endDeckY()));
+            placementHeights[start] = Math.max(segment.startDeckY(), segment.endDeckY());
             return;
         }
         int run = end - start;
@@ -1310,7 +1320,7 @@ public final class RoadGeometryPlanner {
                 int drop = startDeckY - endDeckY;
                 target = endDeckY + (int) Math.floor((double) (run - offset) * (double) drop / (double) run);
             }
-            placementHeights[i] = Math.max(placementHeights[i], target);
+            placementHeights[i] = target;
         }
     }
 
@@ -1344,7 +1354,7 @@ public final class RoadGeometryPlanner {
         }
         int target = Math.max(mainDeckY, Math.max(segment.startDeckY(), segment.endDeckY()));
         for (int i = start; i <= end; i++) {
-            placementHeights[i] = Math.max(placementHeights[i], target);
+            placementHeights[i] = target;
         }
     }
 

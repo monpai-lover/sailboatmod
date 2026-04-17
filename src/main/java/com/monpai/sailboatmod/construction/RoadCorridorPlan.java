@@ -20,6 +20,7 @@ public record RoadCorridorPlan(List<BlockPos> centerPath,
         LAND_APPROACH,
         APPROACH_RAMP,
         ELEVATED_APPROACH,
+        BRIDGE_HEAD_PLATFORM,
         BRIDGE_HEAD,
         NAVIGABLE_MAIN_SPAN,
         NON_NAVIGABLE_BRIDGE_SUPPORT_SPAN

@@ -519,6 +519,57 @@ class RoadCorridorPlannerTest {
         );
     }
 
+    @Test
+    void plannerClassifiesBridgeheadPlatformSlicesFromPierBridgeDeckSegments() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 65, 0),
+                new BlockPos(4, 66, 0),
+                new BlockPos(5, 67, 0),
+                new BlockPos(6, 68, 0),
+                new BlockPos(7, 68, 0),
+                new BlockPos(8, 68, 0),
+                new BlockPos(9, 68, 0),
+                new BlockPos(10, 67, 0),
+                new BlockPos(11, 66, 0),
+                new BlockPos(12, 65, 0),
+                new BlockPos(13, 64, 0),
+                new BlockPos(14, 64, 0)
+        );
+        List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans = List.of(
+                new RoadBridgePlanner.BridgeSpanPlan(
+                        1,
+                        13,
+                        RoadBridgePlanner.BridgeMode.PIER_BRIDGE,
+                        List.of(
+                                new RoadBridgePlanner.BridgePierNode(1, new BlockPos(1, 65, 0), new BlockPos(1, 63, 0), 65, RoadBridgePlanner.BridgeNodeRole.ABUTMENT),
+                                new RoadBridgePlanner.BridgePierNode(5, new BlockPos(5, 68, 0), new BlockPos(5, 40, 0), 68, RoadBridgePlanner.BridgeNodeRole.CHANNEL_PIER),
+                                new RoadBridgePlanner.BridgePierNode(9, new BlockPos(9, 68, 0), new BlockPos(9, 40, 0), 68, RoadBridgePlanner.BridgeNodeRole.CHANNEL_PIER),
+                                new RoadBridgePlanner.BridgePierNode(13, new BlockPos(13, 65, 0), new BlockPos(13, 63, 0), 65, RoadBridgePlanner.BridgeNodeRole.ABUTMENT)
+                        ),
+                        List.of(
+                                new RoadBridgePlanner.BridgeDeckSegment(1, 3, RoadBridgePlanner.BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM, 65, 65),
+                                new RoadBridgePlanner.BridgeDeckSegment(3, 5, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP, 65, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(5, 9, RoadBridgePlanner.BridgeDeckSegmentType.MAIN_LEVEL, 68, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(9, 11, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN, 68, 65),
+                                new RoadBridgePlanner.BridgeDeckSegment(11, 13, RoadBridgePlanner.BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM, 65, 65)
+                        ),
+                        68,
+                        true,
+                        true
+                )
+        );
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, bridgePlans, new int[] {65, 65, 65, 65, 66, 67, 68, 68, 68, 68, 67, 65, 65, 65, 65});
+
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM, plan.slices().get(2).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM, plan.slices().get(12).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.APPROACH_RAMP, plan.slices().get(4).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, plan.slices().get(7).segmentKind());
+    }
+
     private static boolean hasSurfaceClosure(List<BlockPos> current, List<BlockPos> next) {
         if (!Collections.disjoint(current, next)) {
             return true;

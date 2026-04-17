@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 
@@ -21,6 +22,8 @@ public final class RoadBridgePlanner {
     private static final int MIN_DROP_FOR_ARCH = 6;
     private static final int MAX_PIER_ANCHOR_GAP = 3;
     private static final int NAVIGABLE_WATER_CLEARANCE = 5;
+    private static final int BRIDGE_HEAD_PLATFORM_COLUMNS = 3;
+    private static final int EXTRA_CENTER_PIER_MIN_GAP = 18;
 
     private RoadBridgePlanner() {
     }
@@ -243,6 +246,7 @@ public final class RoadBridgePlanner {
 
     public enum BridgeDeckSegmentType {
         ARCHED_SPAN,
+        BRIDGE_HEAD_PLATFORM,
         APPROACH_UP,
         MAIN_LEVEL,
         APPROACH_DOWN
@@ -387,54 +391,44 @@ public final class RoadBridgePlanner {
             }
         }
 
-        List<Integer> preferredInterior = preferGentleApproachAnchorColumns(
-                start,
-                end,
-                startDeckY,
-                endDeckY,
-                mainDeckY,
-                supportableInterior
-        );
-        List<Integer> interiorAnchors = distributePierAnchors(
-                start,
-                end,
-                preferredInterior.isEmpty() ? supportableInterior : preferredInterior
-        );
-        interiorAnchors = mergeStructuredApproachAnchors(
+        StructuredPierSelection selection = selectStructuredPierAnchors(
                 start,
                 end,
                 navigableStart,
                 navigableEnd,
+                supportableInterior
+        );
+
+        boolean valid = selection.leftTransitionAnchor() >= 0 || selection.rightTransitionAnchor() >= 0;
+        List<BridgePierNode> nodes = new ArrayList<>();
+        int mainStartIndex = resolveMainStartIndex(
+                start,
+                end,
+                navigableStart,
+                selection.leftTransitionAnchor()
+        );
+        int mainEndIndex = resolveMainEndIndex(
+                start,
+                end,
+                navigableEnd,
+                selection.rightTransitionAnchor()
+        );
+        List<BridgeDeckSegment> deckSegments = buildStructuredPierDeckSegments(
+                start,
+                end,
                 startDeckY,
                 endDeckY,
                 mainDeckY,
-                supportableInterior,
-                interiorAnchors
+                mainStartIndex,
+                mainEndIndex
         );
-
-        LinkedHashSet<Integer> channelAnchors = new LinkedHashSet<>();
-        if (navigableStart >= 0) {
-            int leftChannel = findNearestAnchorAtOrBefore(interiorAnchors, navigableStart);
-            int rightChannel = findNearestAnchorAtOrAfter(interiorAnchors, navigableEnd);
-            if (leftChannel >= 0) {
-                channelAnchors.add(leftChannel);
-            }
-            if (rightChannel >= 0) {
-                channelAnchors.add(rightChannel);
-            }
-        }
-
-        boolean valid = !interiorAnchors.isEmpty();
-        List<BridgePierNode> nodes = new ArrayList<>();
-        int leftMainAnchor = navigableStart >= 0 ? findNearestAnchorAtOrBefore(interiorAnchors, navigableStart) : -1;
-        int rightMainAnchor = navigableEnd >= 0 ? findNearestAnchorAtOrAfter(interiorAnchors, navigableEnd) : -1;
-        Map<Integer, Integer> anchorDeckY = buildStructuredAnchorDeckHeights(
-                interiorAnchors,
-                leftMainAnchor,
-                rightMainAnchor,
+        int[] deckProfile = materializeDeckProfile(
+                start,
+                end,
                 startDeckY,
                 endDeckY,
-                mainDeckY
+                mainDeckY,
+                deckSegments
         );
 
         nodes.add(new BridgePierNode(
@@ -445,10 +439,10 @@ public final class RoadBridgePlanner {
                 BridgeNodeRole.ABUTMENT
         ));
 
-        for (int anchor : interiorAnchors) {
+        for (int anchor : selection.orderedAnchors()) {
             BlockPos anchorPos = Objects.requireNonNull(centerPath.get(anchor), "centerPath contains null at anchor " + anchor);
-            BridgeNodeRole role = channelAnchors.contains(anchor) ? BridgeNodeRole.CHANNEL_PIER : BridgeNodeRole.PIER;
-            int anchorDeck = anchorDeckY.getOrDefault(anchor, mainDeckY);
+            BridgeNodeRole role = selection.channelAnchors().contains(anchor) ? BridgeNodeRole.CHANNEL_PIER : BridgeNodeRole.PIER;
+            int anchorDeck = deckProfile[anchor - start];
             nodes.add(new BridgePierNode(
                     anchor,
                     new BlockPos(anchorPos.getX(), anchorDeck, anchorPos.getZ()),
@@ -466,21 +460,8 @@ public final class RoadBridgePlanner {
                 BridgeNodeRole.ABUTMENT
         ));
 
-        List<BridgeDeckSegment> deckSegments = new ArrayList<>();
-        if (!interiorAnchors.isEmpty()) {
-            deckSegments.addAll(buildStructuredPierDeckSegments(
-                    start,
-                    end,
-                    startDeckY,
-                    endDeckY,
-                    mainDeckY,
-                    interiorAnchors,
-                    anchorDeckY,
-                    leftMainAnchor,
-                    rightMainAnchor
-            ));
-        } else {
-            deckSegments.add(new BridgeDeckSegment(start, end, BridgeDeckSegmentType.MAIN_LEVEL, mainDeckY, mainDeckY));
+        if (deckSegments.isEmpty()) {
+            deckSegments = List.of(new BridgeDeckSegment(start, end, BridgeDeckSegmentType.MAIN_LEVEL, mainDeckY, mainDeckY));
         }
 
         return new BridgeSpanPlan(
@@ -493,6 +474,90 @@ public final class RoadBridgePlanner {
                 navigableStart >= 0,
                 valid
         );
+    }
+
+    private static StructuredPierSelection selectStructuredPierAnchors(int start,
+                                                                       int end,
+                                                                       int navigableStart,
+                                                                       int navigableEnd,
+                                                                       List<Integer> supportableInterior) {
+        if (supportableInterior == null || supportableInterior.isEmpty()) {
+            return new StructuredPierSelection(-1, -1, List.of(), Set.of());
+        }
+        List<Integer> ordered = supportableInterior.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        if (ordered.isEmpty()) {
+            return new StructuredPierSelection(-1, -1, List.of(), Set.of());
+        }
+
+        int leftTransition = navigableStart >= 0
+                ? findNearestAnchorAtOrBefore(ordered, navigableStart - 1)
+                : ordered.get(0);
+        int rightTransition = navigableEnd >= 0
+                ? findNearestAnchorAtOrAfter(ordered, navigableEnd + 1)
+                : ordered.get(ordered.size() - 1);
+
+        LinkedHashSet<Integer> anchors = new LinkedHashSet<>();
+        LinkedHashSet<Integer> channelAnchors = new LinkedHashSet<>();
+        if (leftTransition >= 0) {
+            anchors.add(leftTransition);
+            if (navigableStart >= 0) {
+                channelAnchors.add(leftTransition);
+            }
+        }
+        if (rightTransition >= 0 && rightTransition != leftTransition) {
+            anchors.add(rightTransition);
+            if (navigableEnd >= 0) {
+                channelAnchors.add(rightTransition);
+            }
+        }
+
+        List<Integer> between = ordered.stream()
+                .filter(index -> index > leftTransition && index < rightTransition)
+                .toList();
+        if ((rightTransition - leftTransition) > EXTRA_CENTER_PIER_MIN_GAP && !between.isEmpty()) {
+            int midpoint = (leftTransition + rightTransition) / 2;
+            int centerAnchor = nearestSupportableByDistance(between, midpoint);
+            if (centerAnchor >= 0) {
+                anchors.add(centerAnchor);
+            }
+        }
+
+        return new StructuredPierSelection(
+                leftTransition,
+                rightTransition,
+                anchors.stream().sorted().toList(),
+                Set.copyOf(channelAnchors)
+        );
+    }
+
+    private static int resolveMainStartIndex(int start,
+                                             int end,
+                                             int navigableStart,
+                                             int leftTransitionAnchor) {
+        if (navigableStart >= 0) {
+            return Math.max(start, Math.min(end, navigableStart));
+        }
+        if (leftTransitionAnchor >= 0) {
+            return Math.max(start, Math.min(end, leftTransitionAnchor));
+        }
+        return start;
+    }
+
+    private static int resolveMainEndIndex(int start,
+                                           int end,
+                                           int navigableEnd,
+                                           int rightTransitionAnchor) {
+        if (navigableEnd >= 0) {
+            return Math.max(start, Math.min(end, navigableEnd));
+        }
+        if (rightTransitionAnchor >= 0) {
+            return Math.max(start, Math.min(end, rightTransitionAnchor));
+        }
+        return end;
     }
 
     private static List<Integer> mergeStructuredApproachAnchors(int start,
@@ -639,74 +704,172 @@ public final class RoadBridgePlanner {
                                                                            int startDeckY,
                                                                            int endDeckY,
                                                                            int mainDeckY,
-                                                                           List<Integer> interiorAnchors,
-                                                                           Map<Integer, Integer> anchorDeckY,
-                                                                           int leftMainAnchor,
-                                                                           int rightMainAnchor) {
-        if (interiorAnchors == null || interiorAnchors.isEmpty()) {
+                                                                           int mainStartIndex,
+                                                                           int mainEndIndex) {
+        if (mainEndIndex < mainStartIndex) {
             return List.of(new BridgeDeckSegment(start, end, BridgeDeckSegmentType.MAIN_LEVEL, mainDeckY, mainDeckY));
         }
-        ArrayList<Integer> orderedIndexes = new ArrayList<>(interiorAnchors.size() + 2);
-        orderedIndexes.add(start);
-        orderedIndexes.addAll(interiorAnchors);
-        orderedIndexes.add(end);
-
-        ArrayList<BridgeDeckSegment> segments = new ArrayList<>(orderedIndexes.size() - 1);
-        for (int i = 0; i < orderedIndexes.size() - 1; i++) {
-            int from = orderedIndexes.get(i);
-            int to = orderedIndexes.get(i + 1);
-            int fromDeckY = bridgeNodeDeckY(from, start, end, startDeckY, endDeckY, mainDeckY, anchorDeckY);
-            int toDeckY = bridgeNodeDeckY(to, start, end, startDeckY, endDeckY, mainDeckY, anchorDeckY);
-            BridgeDeckSegmentType type = resolvePierDeckSegmentType(from, to, fromDeckY, toDeckY, mainDeckY, leftMainAnchor, rightMainAnchor);
-            segments.add(new BridgeDeckSegment(from, to, type, fromDeckY, toDeckY));
+        ArrayList<BridgeDeckSegment> segments = new ArrayList<>();
+        appendStructuredApproachSegments(
+                segments,
+                start,
+                Math.min(mainStartIndex, end),
+                startDeckY,
+                mainDeckY,
+                true
+        );
+        if (mainEndIndex >= mainStartIndex) {
+            segments.add(new BridgeDeckSegment(
+                    Math.max(start, mainStartIndex),
+                    Math.min(end, mainEndIndex),
+                    BridgeDeckSegmentType.MAIN_LEVEL,
+                    mainDeckY,
+                    mainDeckY
+            ));
         }
+        appendStructuredApproachSegments(
+                segments,
+                end,
+                Math.max(start, mainEndIndex),
+                endDeckY,
+                mainDeckY,
+                false
+        );
         return List.copyOf(segments);
     }
 
-    private static int bridgeNodeDeckY(int index,
-                                       int start,
-                                       int end,
-                                       int startDeckY,
-                                       int endDeckY,
-                                       int mainDeckY,
-                                       Map<Integer, Integer> anchorDeckY) {
-        if (index == start) {
-            return startDeckY;
+    private static void appendStructuredApproachSegments(List<BridgeDeckSegment> segments,
+                                                         int edgeIndex,
+                                                         int mainBoundaryIndex,
+                                                         int edgeDeckY,
+                                                         int mainDeckY,
+                                                         boolean ascending) {
+        if (segments == null) {
+            return;
         }
-        if (index == end) {
-            return endDeckY;
+        if (ascending ? mainBoundaryIndex <= edgeIndex : mainBoundaryIndex >= edgeIndex) {
+            return;
         }
-        return anchorDeckY.getOrDefault(index, mainDeckY);
+        int platformEnd = ascending
+                ? Math.min(mainBoundaryIndex, edgeIndex + (structuredPlatformColumns(edgeIndex, mainBoundaryIndex, Math.max(0, mainDeckY - edgeDeckY)) - 1))
+                : Math.max(mainBoundaryIndex, edgeIndex - (structuredPlatformColumns(edgeIndex, mainBoundaryIndex, Math.max(0, mainDeckY - edgeDeckY)) - 1));
+        segments.add(new BridgeDeckSegment(
+                Math.min(edgeIndex, platformEnd),
+                Math.max(edgeIndex, platformEnd),
+                BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM,
+                edgeDeckY,
+                edgeDeckY
+        ));
+
+        int rampStart = platformEnd;
+        int rampEnd = mainBoundaryIndex;
+        int deckDelta = Math.max(0, mainDeckY - edgeDeckY);
+        int rampColumns = Math.abs(rampEnd - rampStart);
+        if (deckDelta <= 0 || rampColumns <= 0) {
+            return;
+        }
+        if (rampColumns < deckDelta) {
+            segments.add(new BridgeDeckSegment(
+                    Math.min(rampStart, rampEnd),
+                    Math.max(rampStart, rampEnd),
+                    ascending ? BridgeDeckSegmentType.APPROACH_UP : BridgeDeckSegmentType.APPROACH_DOWN,
+                    ascending ? edgeDeckY : mainDeckY,
+                    ascending ? mainDeckY : edgeDeckY
+            ));
+            return;
+        }
+
+        int previousIndex = rampStart;
+        int previousDeckY = edgeDeckY;
+        for (int step = 1; step <= deckDelta; step++) {
+            int calculatedBoundary = ascending
+                    ? rampStart + (int) Math.ceil((double) step * (double) rampColumns / (double) deckDelta)
+                    : rampStart - (int) Math.ceil((double) step * (double) rampColumns / (double) deckDelta);
+            int boundaryIndex = ascending
+                    ? Math.min(rampEnd, Math.max(previousIndex + 1, calculatedBoundary))
+                    : Math.max(rampEnd, Math.min(previousIndex - 1, calculatedBoundary));
+            int targetDeckY = edgeDeckY + step;
+            int segmentStartIndex = Math.min(previousIndex, boundaryIndex);
+            int segmentEndIndex = Math.max(previousIndex, boundaryIndex);
+            int segmentStartDeckY = previousIndex <= boundaryIndex ? previousDeckY : targetDeckY;
+            int segmentEndDeckY = previousIndex <= boundaryIndex ? targetDeckY : previousDeckY;
+            segments.add(new BridgeDeckSegment(
+                    segmentStartIndex,
+                    segmentEndIndex,
+                    ascending ? BridgeDeckSegmentType.APPROACH_UP : BridgeDeckSegmentType.APPROACH_DOWN,
+                    segmentStartDeckY,
+                    segmentEndDeckY
+            ));
+            previousIndex = boundaryIndex;
+            previousDeckY = targetDeckY;
+        }
     }
 
-    private static BridgeDeckSegmentType resolvePierDeckSegmentType(int from,
-                                                                    int to,
-                                                                    int fromDeckY,
-                                                                    int toDeckY,
-                                                                    int mainDeckY,
-                                                                    int leftMainAnchor,
-                                                                    int rightMainAnchor) {
-        if (leftMainAnchor >= 0
-                && rightMainAnchor >= 0
-                && from >= leftMainAnchor
-                && to <= rightMainAnchor
-                && fromDeckY == mainDeckY
-                && toDeckY == mainDeckY) {
-            return BridgeDeckSegmentType.MAIN_LEVEL;
+    private static int structuredPlatformColumns(int edgeIndex,
+                                                 int mainBoundaryIndex,
+                                                 int deckDelta) {
+        int availableColumns = Math.abs(mainBoundaryIndex - edgeIndex) + 1;
+        if (availableColumns <= 0) {
+            return 0;
         }
-        if (leftMainAnchor >= 0 && to <= leftMainAnchor) {
-            return BridgeDeckSegmentType.APPROACH_UP;
+        int maxPlatformColumns = deckDelta <= 0
+                ? availableColumns
+                : Math.max(1, availableColumns - deckDelta);
+        return Math.max(1, Math.min(BRIDGE_HEAD_PLATFORM_COLUMNS, maxPlatformColumns));
+    }
+
+    private static int[] materializeDeckProfile(int start,
+                                                int end,
+                                                int startDeckY,
+                                                int endDeckY,
+                                                int mainDeckY,
+                                                List<BridgeDeckSegment> deckSegments) {
+        int[] profile = new int[end - start + 1];
+        java.util.Arrays.fill(profile, Integer.MIN_VALUE);
+        profile[0] = startDeckY;
+        profile[profile.length - 1] = endDeckY;
+        if (deckSegments == null || deckSegments.isEmpty()) {
+            for (int i = 0; i < profile.length; i++) {
+                if (profile[i] == Integer.MIN_VALUE) {
+                    profile[i] = mainDeckY;
+                }
+            }
+            return profile;
         }
-        if (rightMainAnchor >= 0 && from >= rightMainAnchor) {
-            return BridgeDeckSegmentType.APPROACH_DOWN;
+        for (BridgeDeckSegment segment : deckSegments) {
+            if (segment == null) {
+                continue;
+            }
+            applySegmentToProfile(profile, start, segment);
         }
-        if (toDeckY > fromDeckY) {
-            return BridgeDeckSegmentType.APPROACH_UP;
+        for (int i = 0; i < profile.length; i++) {
+            if (profile[i] == Integer.MIN_VALUE) {
+                profile[i] = mainDeckY;
+            }
         }
-        if (toDeckY < fromDeckY) {
-            return BridgeDeckSegmentType.APPROACH_DOWN;
+        return profile;
+    }
+
+    private static void applySegmentToProfile(int[] profile,
+                                              int profileStart,
+                                              BridgeDeckSegment segment) {
+        int start = Math.max(profileStart, segment.startIndex());
+        int end = Math.min(profileStart + profile.length - 1, segment.endIndex());
+        if (end < start) {
+            return;
         }
-        return fromDeckY >= mainDeckY ? BridgeDeckSegmentType.MAIN_LEVEL : BridgeDeckSegmentType.APPROACH_UP;
+        int localStart = start - profileStart;
+        int localEnd = end - profileStart;
+        if (start == end) {
+            profile[localStart] = Math.max(segment.startDeckY(), segment.endDeckY());
+            return;
+        }
+        int run = end - start;
+        for (int absolute = start; absolute <= end; absolute++) {
+            int offset = absolute - start;
+            int target = segment.startDeckY() + (int) Math.floor((double) offset * (double) (segment.endDeckY() - segment.startDeckY()) / (double) run);
+            profile[absolute - profileStart] = target;
+        }
     }
 
     private static List<Integer> preferGentleApproachAnchorColumns(int start,
@@ -751,5 +914,24 @@ public final class RoadBridgePlanner {
             }
         }
         return -1;
+    }
+
+    private static int nearestSupportableByDistance(List<Integer> supportableInterior, int target) {
+        int match = -1;
+        int bestDistance = Integer.MAX_VALUE;
+        for (int index : supportableInterior) {
+            int distance = Math.abs(index - target);
+            if (distance < bestDistance || (distance == bestDistance && index < match)) {
+                bestDistance = distance;
+                match = index;
+            }
+        }
+        return match;
+    }
+
+    private record StructuredPierSelection(int leftTransitionAnchor,
+                                           int rightTransitionAnchor,
+                                           List<Integer> orderedAnchors,
+                                           Set<Integer> channelAnchors) {
     }
 }

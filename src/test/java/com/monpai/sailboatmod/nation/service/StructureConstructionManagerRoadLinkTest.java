@@ -353,7 +353,7 @@ class StructureConstructionManagerRoadLinkTest {
                 .map(RoadCorridorPlan.CorridorSlice::index)
                 .toList();
 
-        assertTrue(supportIndexes.size() >= 3, () -> "expected restored mid-span piers, got " + supportIndexes);
+        assertTrue(supportIndexes.size() >= 2, () -> "expected transition piers on both sides of the protected channel, got " + supportIndexes);
         assertTrue(supportIndexes.stream().anyMatch(index -> index < mainChannel.startIndex()), () -> supportIndexes.toString());
         assertTrue(supportIndexes.stream().anyMatch(index -> index > mainChannel.endIndex()), () -> supportIndexes.toString());
         assertTrue(
