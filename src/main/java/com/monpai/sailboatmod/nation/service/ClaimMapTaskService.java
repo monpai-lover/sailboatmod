@@ -59,9 +59,8 @@ public class ClaimMapTaskService {
         Objects.requireNonNull(supplier, "supplier");
         Objects.requireNonNull(apply, "apply");
 
-        long requestId = requestIds.incrementAndGet();
+        long requestId = registerLatestRequest(key);
         long submittedEpoch = epoch.get();
-        activeRequests.put(key, requestId);
 
         return CompletableFuture.supplyAsync(supplier, computeExecutor)
                 .handle((result, throwable) -> {
@@ -89,9 +88,8 @@ public class ClaimMapTaskService {
         Objects.requireNonNull(supplier, "supplier");
         Objects.requireNonNull(apply, "apply");
 
-        long requestId = requestIds.incrementAndGet();
+        long requestId = registerLatestRequest(key);
         long submittedEpoch = epoch.get();
-        activeRequests.put(key, requestId);
         return new TaskHandle<>(supplier, apply, key, requestId, submittedEpoch);
     }
 
@@ -102,6 +100,12 @@ public class ClaimMapTaskService {
 
     boolean isCurrent(TaskKey key, long requestId, long submittedEpoch) {
         return epoch.get() == submittedEpoch && Objects.equals(activeRequests.get(key), requestId);
+    }
+
+    private long registerLatestRequest(TaskKey key) {
+        long requestId = requestIds.incrementAndGet();
+        activeRequests.put(key, requestId);
+        return requestId;
     }
 
     private static boolean isCancelled(Throwable throwable) {

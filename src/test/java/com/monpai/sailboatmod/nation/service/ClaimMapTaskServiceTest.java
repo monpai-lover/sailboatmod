@@ -16,12 +16,12 @@ class ClaimMapTaskServiceTest {
         List<ClaimPreviewMapState> applied = new ArrayList<>();
 
         ClaimMapTaskService.TaskHandle<ClaimPreviewMapState> first = service.submitForTest(
-                new ClaimMapTaskService.TaskKey("town-claims", "player-a"),
+                new ClaimMapTaskService.TaskKey("town-viewport", "player-a|town-a"),
                 () -> ClaimPreviewMapState.loading(1L, 8, 100, 200),
                 applied::add
         );
         ClaimMapTaskService.TaskHandle<ClaimPreviewMapState> second = service.submitForTest(
-                new ClaimMapTaskService.TaskKey("town-claims", "player-a"),
+                new ClaimMapTaskService.TaskKey("town-viewport", "player-a|town-a"),
                 () -> ClaimPreviewMapState.ready(2L, 8, 100, 200, List.of(0xFF112233)),
                 applied::add
         );
