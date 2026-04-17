@@ -7,7 +7,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaimMapViewportServiceTest {
     @Test
@@ -21,7 +20,7 @@ class ClaimMapViewportServiceTest {
 
         assertNull(snapshot);
         assertEquals(289, service.pendingVisibleChunkCountForTest());
-        assertTrue(service.pendingPrefetchChunkCountForTest() > 289);
+        assertEquals(240, service.pendingPrefetchChunkCountForTest());
     }
 
     @Test

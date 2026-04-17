@@ -59,7 +59,8 @@ public class ClaimMapViewportService {
     private int countPrefetchChunks(ViewportRequest request) {
         int outer = request.radius() + Math.max(0, request.prefetchRadius());
         int diameter = outer * 2 + 1;
-        return diameter * diameter;
+        int visibleDiameter = request.radius() * 2 + 1;
+        return diameter * diameter - visibleDiameter * visibleDiameter;
     }
 
     int pendingVisibleChunkCountForTest() {
