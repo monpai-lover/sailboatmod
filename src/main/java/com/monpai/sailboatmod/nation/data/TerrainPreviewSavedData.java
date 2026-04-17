@@ -107,7 +107,10 @@ public class TerrainPreviewSavedData extends SavedData {
     }
 
     public Integer getColor(String dimensionId, int chunkX, int chunkZ) {
-        int[] tile = getTile(dimensionId, chunkX, chunkZ);
+        if (dimensionId == null || dimensionId.isBlank()) {
+            return null;
+        }
+        int[] tile = tiles.get(key(dimensionId, chunkX, chunkZ));
         return tile == null ? null : tile[0];
     }
 

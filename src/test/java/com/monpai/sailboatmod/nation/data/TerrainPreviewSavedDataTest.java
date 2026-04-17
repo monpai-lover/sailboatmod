@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -98,5 +99,18 @@ class TerrainPreviewSavedDataTest {
                 new int[] {0xFFAAAAAA, 0xFFBBBBBB, 0xFFCCCCCC, 0xFFDDDDDD},
                 data.getTile("minecraft:overworld", 12, 13)
         );
+    }
+
+    @Test
+    void legacyColorApiStillWorksWithColorsStorageFormat() {
+        TerrainPreviewSavedData data = new TerrainPreviewSavedData();
+        data.putColor("minecraft:overworld", 20, 21, 0x7F123456);
+
+        CompoundTag saved = data.save(new CompoundTag());
+        TerrainPreviewSavedData reloaded = TerrainPreviewSavedData.load(saved);
+
+        assertEquals(0xFF123456, reloaded.getColor("minecraft:overworld", 20, 21));
+        reloaded.removeColor("minecraft:overworld", 20, 21);
+        assertNull(reloaded.getColor("minecraft:overworld", 20, 21));
     }
 }
