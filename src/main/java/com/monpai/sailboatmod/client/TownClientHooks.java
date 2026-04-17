@@ -5,7 +5,10 @@ import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
 import net.minecraft.client.Minecraft;
 
+import java.util.List;
+
 public final class TownClientHooks {
+    private static final String CLAIM_RENDER_KIND = "town-claims";
     private static TownOverviewData lastSyncedData = TownOverviewData.empty();
     private static boolean suppressReopen = false;
 
@@ -25,6 +28,7 @@ public final class TownClientHooks {
 
     public static void openOrUpdate(TownOverviewData data) {
         lastSyncedData = data == null ? TownOverviewData.empty() : data;
+        queueClaimPreviewRaster(lastSyncedData);
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
             townHomeScreen.updateData(lastSyncedData);
@@ -41,7 +45,8 @@ public final class TownClientHooks {
         if (safeState.revision() < lastSyncedData.claimMapState().revision()) {
             return;
         }
-        lastSyncedData = lastSyncedData.withClaimPreview(safeState, safeState.colors());
+        lastSyncedData = lastSyncedData.withClaimPreview(safeState, List.of());
+        queueClaimPreviewRaster(lastSyncedData);
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
             townHomeScreen.updateData(lastSyncedData);
@@ -54,10 +59,48 @@ public final class TownClientHooks {
 
     public static void clearCache() {
         lastSyncedData = TownOverviewData.empty();
+        ClaimMapRenderTaskService.shutdownShared();
     }
 
     public static TownOverviewData lastSyncedData() {
         return lastSyncedData;
+    }
+
+    private static void queueClaimPreviewRaster(TownOverviewData snapshot) {
+        if (snapshot == null || !snapshot.nearbyTerrainColors().isEmpty()) {
+            return;
+        }
+        ClaimPreviewMapState state = snapshot.claimMapState();
+        if (!state.ready() || state.colors().isEmpty()) {
+            return;
+        }
+        String ownerKey = snapshot.townId().isBlank() ? "town-screen" : snapshot.townId();
+        ClaimMapRenderTaskService.getOrCreate().submitLatest(
+                new ClaimMapRenderTaskService.TaskKey(CLAIM_RENDER_KIND, ownerKey),
+                () -> ClaimMapRasterizer.rasterize(
+                        state.radius(),
+                        state.colors(),
+                        snapshot.nearbyClaims(),
+                        state.centerChunkX(),
+                        state.centerChunkZ()
+                ),
+                pixels -> applyRasterizedClaimPreview(state, pixels)
+        );
+    }
+
+    private static void applyRasterizedClaimPreview(ClaimPreviewMapState state, int[] pixels) {
+        if (state == null || pixels == null || state.revision() < lastSyncedData.claimMapState().revision()) {
+            return;
+        }
+        lastSyncedData = lastSyncedData.withClaimPreview(state, toColorList(pixels));
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
+            townHomeScreen.updateData(lastSyncedData);
+        }
+    }
+
+    private static List<Integer> toColorList(int[] pixels) {
+        return java.util.Arrays.stream(pixels).boxed().toList();
     }
 
     private TownClientHooks() {
