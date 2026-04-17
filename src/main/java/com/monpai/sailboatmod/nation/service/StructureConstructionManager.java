@@ -3,6 +3,8 @@ package com.monpai.sailboatmod.nation.service;
 import com.monpai.sailboatmod.client.ConstructionGhostClientHooks;
 import com.monpai.sailboatmod.construction.BuilderHammerChargePlan;
 import com.monpai.sailboatmod.construction.BuilderHammerCreditState;
+import com.monpai.sailboatmod.construction.ConstructionStepExecutor;
+import com.monpai.sailboatmod.construction.ConstructionStepSatisfactionService;
 import com.monpai.sailboatmod.construction.RoadBridgePlanner;
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadCorridorPlanner;
@@ -1768,17 +1770,44 @@ public final class StructureConstructionManager {
             boolean skippedForPhaseLock = step.phase().compareTo(highestPlaceablePhase) > 0;
             boolean placed = false;
             if (!skippedForPhaseLock) {
-                placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
-                placedAny |= placed;
-                if (placed) {
+                ConstructionStepExecutor.clearNaturalObstacles(level, step.pos());
+                ConstructionStepSatisfactionService.StepDecision decision =
+                        ConstructionStepSatisfactionService.decide(
+                                level.getBlockState(step.pos()),
+                                step.state(),
+                                step.pos(),
+                                toStepKind(step.phase())
+                        );
+                if (decision == ConstructionStepSatisfactionService.StepDecision.SATISFIED) {
                     attemptedStepKeys.add(step.pos().asLong());
                     completedCount++;
                     effectPos = step.pos();
-                } else {
+                } else if (decision == ConstructionStepSatisfactionService.StepDecision.RETRYABLE) {
+                    ConstructionStepExecutor.clearNaturalObstacles(level, step.pos());
                     if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
                         highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
                     } else if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.DECK) {
                         highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECK;
+                    }
+                } else if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
+                    if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
+                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
+                    } else if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.DECK) {
+                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECK;
+                    }
+                } else {
+                    placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
+                    placedAny |= placed;
+                    if (placed) {
+                        attemptedStepKeys.add(step.pos().asLong());
+                        completedCount++;
+                        effectPos = step.pos();
+                    } else {
+                        if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
+                            highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
+                        } else if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.DECK) {
+                            highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECK;
+                        }
                     }
                 }
             }
@@ -1812,6 +1841,16 @@ public final class StructureConstructionManager {
                 false,
                 Set.copyOf(attemptedStepKeys)
         );
+    }
+
+    private static ConstructionStepSatisfactionService.StepKind toStepKind(RoadGeometryPlanner.RoadBuildPhase phase) {
+        if (phase == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
+            return ConstructionStepSatisfactionService.StepKind.ROAD_SUPPORT;
+        }
+        if (phase == RoadGeometryPlanner.RoadBuildPhase.DECOR) {
+            return ConstructionStepSatisfactionService.StepKind.ROAD_DECOR;
+        }
+        return ConstructionStepSatisfactionService.StepKind.ROAD_DECK;
     }
 
     private static RoadConstructionJob rollbackRoadBuildSteps(ServerLevel level, RoadConstructionJob job, int actionCount) {
