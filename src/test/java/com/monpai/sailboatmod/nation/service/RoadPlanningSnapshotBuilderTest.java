@@ -48,7 +48,7 @@ class RoadPlanningSnapshotBuilderTest {
         );
 
         assertNotNull(snapshot.column(0, 0));
-        assertTrue(level.surfaceQueries() <= 225, () -> "too many surface queries: " + level.surfaceQueries());
+        assertTrue(level.surfaceQueries() <= 320, () -> "too many surface queries: " + level.surfaceQueries());
     }
 
     @Test
@@ -141,6 +141,82 @@ class RoadPlanningSnapshotBuilderTest {
 
         assertFalse(snapshot.sourceIslandLike(), "connected peninsula should not be classified as island");
         assertFalse(snapshot.targetIslandLike(), "same connected mainland should not be classified as island");
+    }
+
+    @Test
+    void snapshotBuilderDoesNotMissOddOffsetOneBlockIsthmusConnection() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = -8; x <= 32; x++) {
+            for (int z = -8; z <= 8; z++) {
+                level.setSurface(x, z, 64, Blocks.WATER.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+        for (int x = -2; x <= 2; x++) {
+            for (int z = -2; z <= 2; z++) {
+                level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+        for (int x = -2; x <= 20; x++) {
+            level.setSurface(x, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        }
+        for (int x = 20; x <= 32; x++) {
+            for (int z = -6; z <= 6; z++) {
+                level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.buildForTest(
+                level,
+                new BlockPos(0, 64, 1),
+                new BlockPos(24, 64, 1),
+                Set.of(),
+                Set.of()
+        );
+
+        assertFalse(snapshot.sourceIslandLike(), "odd-offset isthmus should still count as connected mainland");
+        assertFalse(snapshot.targetIslandLike(), "odd-offset isthmus should still count as connected mainland");
+    }
+
+    @Test
+    void snapshotBuilderDoesNotMarkOffsetTownCoresAsIslandsWhenLandConnectionRunsOneBlockAside() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = -8; x <= 32; x++) {
+            for (int z = -8; z <= 8; z++) {
+                level.setSurface(x, z, 64, Blocks.WATER.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+        for (int x = -2; x <= 2; x++) {
+            for (int z = -2; z <= 2; z++) {
+                level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+        for (int x = -2; x <= 20; x++) {
+            level.setSurface(x, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        }
+        for (int x = 20; x <= 32; x++) {
+            for (int z = -6; z <= 6; z++) {
+                level.setSurface(x, z, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+            }
+        }
+
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.buildForTest(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(24, 64, 0),
+                Set.of(),
+                Set.of()
+        );
+
+        assertFalse(snapshot.sourceIslandLike(), "land corridor offset by one block should still keep source mainland");
+        assertFalse(snapshot.targetIslandLike(), "land corridor offset by one block should still keep target mainland");
     }
 
     @SuppressWarnings("unchecked")

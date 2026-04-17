@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -106,6 +107,34 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void visibleBridgePierCapsAreScheduledWithinFirstTwoBuildBatches() {
+        RoadPlacementPlan plan = longBridgePlanFixture();
+
+        int earlyStepCount = invokeRoadBuildBatchSizes(plan).stream()
+                .limit(2)
+                .mapToInt(Integer::intValue)
+                .sum();
+        Map<Long, BlockPos> topSupportByColumn = new LinkedHashMap<>();
+        for (RoadCorridorPlan.CorridorSlice slice : plan.corridorPlan().slices()) {
+            for (BlockPos supportPos : slice.supportPositions()) {
+                long key = columnKey(supportPos.getX(), supportPos.getZ());
+                BlockPos existing = topSupportByColumn.get(key);
+                if (existing == null || supportPos.getY() > existing.getY()) {
+                    topSupportByColumn.put(key, supportPos);
+                }
+            }
+        }
+        List<BlockPos> earlyBuildPositions = plan.buildSteps().stream()
+                .limit(earlyStepCount)
+                .map(RoadGeometryPlanner.RoadBuildStep::pos)
+                .toList();
+
+        assertFalse(topSupportByColumn.isEmpty(), () -> plan.corridorPlan().slices().toString());
+        assertTrue(earlyBuildPositions.containsAll(topSupportByColumn.values()),
+                () -> "early=" + earlyBuildPositions + ", visibleSupports=" + topSupportByColumn.values());
+    }
+
+    @Test
     void longBridgePlacementArtifactsOwnBridgeSupportAndFoundationCoverage() {
         RoadPlacementPlan plan = longBridgePlanFixture();
 
@@ -156,6 +185,40 @@ class StructureConstructionManagerRoadLinkTest {
         assertEquals(Blocks.CHEST.defaultBlockState(), level.getBlockState(new BlockPos(0, 65, 0)));
         assertEquals(Blocks.AIR.defaultBlockState(), level.getBlockState(new BlockPos(0, 66, 0)));
         assertEquals(0, readRecordComponentAsInt(advanced, "placedStepCount"));
+    }
+
+    @Test
+    void naturalWoodObstacleDoesNotBlockAutomaticRoadPlacement() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.blockStates.put(new BlockPos(0, 63, 0).asLong(), Blocks.DIRT.defaultBlockState());
+        level.blockStates.put(new BlockPos(0, 64, 0).asLong(), Blocks.GRASS_BLOCK.defaultBlockState());
+        level.blockStates.put(new BlockPos(0, 65, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.surfaceHeights.put(columnKey(0, 0), 64);
+
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())),
+                List.of(new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK)),
+                List.of(),
+                List.of(),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0)
+        );
+
+        Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|log_clearance", plan), 1);
+
+        assertEquals(Blocks.AIR.defaultBlockState(), level.getBlockState(new BlockPos(0, 65, 0)));
+        assertEquals(Blocks.STONE_BRICK_SLAB, level.getBlockState(new BlockPos(0, 64, 0)).getBlock());
+        assertEquals(1, readRecordComponentAsInt(advanced, "placedStepCount"));
     }
 
     @Test
@@ -654,6 +717,136 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void longPierBridgeConstructionRangeExtendsOntoAdjacentLandForBridgeheads() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        initializeServerLevelPlayers(level);
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 9, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 10, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 2; x <= 8; x++) {
+            setSurfaceColumn(level, x, 0, 63, Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        List<RoadPlacementPlan.BridgeRange> expandedRanges = invokeExpandBridgeConstructionRanges(
+                level,
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        new BlockPos(4, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(6, 68, 0),
+                        new BlockPos(7, 68, 0),
+                        new BlockPos(8, 68, 0),
+                        new BlockPos(9, 66, 0),
+                        new BlockPos(10, 64, 0)
+                ),
+                List.of(new RoadPlacementPlan.BridgeRange(1, 9))
+        );
+
+        assertEquals(List.of(new RoadPlacementPlan.BridgeRange(0, 10)), expandedRanges);
+    }
+
+    @Test
+    void treeCanopyDoesNotShortenPierBridgeheadLandExtension() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        initializeServerLevelPlayers(level);
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 69, Blocks.OAK_LEAVES.defaultBlockState());
+        level.blockStates.put(new BlockPos(1, 64, 0).asLong(), Blocks.DIRT.defaultBlockState());
+        level.blockStates.put(new BlockPos(1, 65, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.blockStates.put(new BlockPos(1, 66, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.blockStates.put(new BlockPos(1, 67, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.blockStates.put(new BlockPos(1, 68, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        setSurfaceColumn(level, 9, 0, 69, Blocks.OAK_LEAVES.defaultBlockState());
+        level.blockStates.put(new BlockPos(9, 64, 0).asLong(), Blocks.DIRT.defaultBlockState());
+        level.blockStates.put(new BlockPos(9, 65, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.blockStates.put(new BlockPos(9, 66, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.blockStates.put(new BlockPos(9, 67, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        level.blockStates.put(new BlockPos(9, 68, 0).asLong(), Blocks.OAK_LOG.defaultBlockState());
+        setSurfaceColumn(level, 10, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 2; x <= 8; x++) {
+            setSurfaceColumn(level, x, 0, 63, Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 68, 0),
+                new BlockPos(3, 68, 0),
+                new BlockPos(4, 68, 0),
+                new BlockPos(5, 68, 0),
+                new BlockPos(6, 68, 0),
+                new BlockPos(7, 68, 0),
+                new BlockPos(8, 68, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0)
+        );
+        int extendedStart = invokeExtendBridgeBoundary(level, centerPath, 2, -1, 68);
+        int extendedEnd = invokeExtendBridgeBoundary(level, centerPath, 8, 1, 68);
+
+        assertEquals(0, extendedStart);
+        assertEquals(10, extendedEnd);
+    }
+
+    @Test
+    void extendedPierBridgeStillAutoPlacesAtLeastOneConstructionStep() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 9, 0, 64, Blocks.DIRT.defaultBlockState());
+        setSurfaceColumn(level, 10, 0, 64, Blocks.DIRT.defaultBlockState());
+        for (int x = 2; x <= 8; x++) {
+            setSurfaceColumn(level, x, 0, 63, Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        RoadPlacementPlan plan = invokeCreateRoadPlacementPlan(
+                level,
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 66, 0),
+                        new BlockPos(2, 68, 0),
+                        new BlockPos(3, 68, 0),
+                        new BlockPos(4, 68, 0),
+                        new BlockPos(5, 68, 0),
+                        new BlockPos(6, 68, 0),
+                        new BlockPos(7, 68, 0),
+                        new BlockPos(8, 68, 0),
+                        new BlockPos(9, 66, 0),
+                        new BlockPos(10, 64, 0)
+                )
+        );
+
+        Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|auto_bridge", plan), 8);
+
+        assertTrue(readRecordComponentAsInt(advanced, "placedStepCount") > 0, () -> plan.buildSteps().toString());
+        assertTrue(level.blockStates.keySet().stream()
+                        .map(BlockPos::of)
+                        .anyMatch(pos -> pos.getY() >= 64
+                                && !level.getBlockState(pos).is(Blocks.DIRT)
+                                && !level.getBlockState(pos).is(Blocks.STONE)
+                                && !level.getBlockState(pos).is(Blocks.WATER)),
+                () -> level.blockStates.toString());
+    }
+
+    @Test
     void alreadyBuiltRoadSegmentsAreExcludedFromNewConstructionPlan() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
@@ -803,6 +996,24 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @SuppressWarnings("unchecked")
+    private static List<RoadPlacementPlan.BridgeRange> invokeExpandBridgeConstructionRanges(ServerLevel level,
+                                                                                            List<BlockPos> centerPath,
+                                                                                            List<RoadPlacementPlan.BridgeRange> bridgeRanges) {
+        try {
+            Method method = StructureConstructionManager.class.getDeclaredMethod(
+                    "expandBridgeConstructionRangesForTest",
+                    ServerLevel.class,
+                    List.class,
+                    List.class
+            );
+            method.setAccessible(true);
+            return (List<RoadPlacementPlan.BridgeRange>) method.invoke(null, level, centerPath, bridgeRanges);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     private static List<BlockPos> invokeFilterCoreExcludedPositions(List<BlockPos> positions,
                                                                     List<BlockPos> townCores,
                                                                     List<BlockPos> nationCores) {
@@ -914,6 +1125,62 @@ class StructureConstructionManagerRoadLinkTest {
         }
     }
 
+    private static int invokeExtendBridgeBoundary(ServerLevel level,
+                                                  List<BlockPos> centerPath,
+                                                  int edgeIndex,
+                                                  int direction,
+                                                  int targetDeckY) {
+        try {
+            Method method = StructureConstructionManager.class.getDeclaredMethod(
+                    "extendBridgeBoundary",
+                    ServerLevel.class,
+                    List.class,
+                    int.class,
+                    int.class,
+                    int.class
+            );
+            method.setAccessible(true);
+            return (int) method.invoke(null, level, centerPath, edgeIndex, direction, targetDeckY);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Integer> invokeRoadBuildBatchSizes(RoadPlacementPlan plan) {
+        try {
+            Method method = StructureConstructionManager.class.getDeclaredMethod(
+                    "roadBuildBatchSizes",
+                    RoadPlacementPlan.class
+            );
+            method.setAccessible(true);
+            return (List<Integer>) method.invoke(null, plan);
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static void initializeServerLevelPlayers(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        Class<?> type = level.getClass();
+        while (type != null) {
+            try {
+                Field players = type.getDeclaredField("players");
+                players.setAccessible(true);
+                if (players.get(level) == null) {
+                    players.set(level, new java.util.ArrayList<>());
+                }
+                return;
+            } catch (NoSuchFieldException ignored) {
+                type = type.getSuperclass();
+            } catch (IllegalAccessException e) {
+                throw new AssertionError(e);
+            }
+        }
+    }
+
     private static final class TestServerLevel extends ServerLevel {
         private Map<Long, BlockState> blockStates;
         private Map<Long, Integer> surfaceHeights;
@@ -948,6 +1215,28 @@ class StructureConstructionManagerRoadLinkTest {
         @Override
         public Holder<Biome> getBiome(BlockPos pos) {
             return biome;
+        }
+
+        @Override
+        public <T extends net.minecraft.core.particles.ParticleOptions> int sendParticles(T particle,
+                                                                                           double x,
+                                                                                           double y,
+                                                                                           double z,
+                                                                                           int count,
+                                                                                           double xDist,
+                                                                                           double yDist,
+                                                                                           double zDist,
+                                                                                           double speed) {
+            return 0;
+        }
+
+        @Override
+        public void playSound(net.minecraft.world.entity.player.Player player,
+                              BlockPos pos,
+                              net.minecraft.sounds.SoundEvent sound,
+                              net.minecraft.sounds.SoundSource source,
+                              float volume,
+                              float pitch) {
         }
     }
 }

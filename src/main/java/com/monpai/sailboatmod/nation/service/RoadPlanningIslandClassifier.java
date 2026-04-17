@@ -105,18 +105,20 @@ public final class RoadPlanningIslandClassifier {
         visited.add(startKey);
         while (!open.isEmpty()) {
             BlockPos current = open.removeFirst();
-            for (int[] direction : SAMPLE_DIRECTIONS) {
-                BlockPos next = new BlockPos(
-                        current.getX() + (direction[0] * sampleStep),
-                        current.getY(),
-                        current.getZ() + (direction[1] * sampleStep)
-                );
-                long nextKey = BlockPos.asLong(next.getX(), 0, next.getZ());
-                if (visited.contains(nextKey) || !isLandSample(columns.get(nextKey))) {
-                    continue;
+            for (int step : neighborSteps(sampleStep)) {
+                for (int[] direction : SAMPLE_DIRECTIONS) {
+                    BlockPos next = new BlockPos(
+                            current.getX() + (direction[0] * step),
+                            current.getY(),
+                            current.getZ() + (direction[1] * step)
+                    );
+                    long nextKey = BlockPos.asLong(next.getX(), 0, next.getZ());
+                    if (visited.contains(nextKey) || !isLandSample(columns.get(nextKey))) {
+                        continue;
+                    }
+                    visited.add(nextKey);
+                    open.addLast(next);
                 }
-                visited.add(nextKey);
-                open.addLast(next);
             }
         }
         return Set.copyOf(visited);
@@ -130,19 +132,25 @@ public final class RoadPlanningIslandClassifier {
         }
         for (long key : landmass) {
             BlockPos pos = BlockPos.of(key);
-            for (int[] direction : SAMPLE_DIRECTIONS) {
-                long neighborKey = BlockPos.asLong(
-                        pos.getX() + (direction[0] * sampleStep),
-                        0,
-                        pos.getZ() + (direction[1] * sampleStep)
-                );
-                RoadPlanningSnapshot.ColumnSample sample = columns.get(neighborKey);
-                if (sample != null && sample.water()) {
-                    return true;
+            for (int step : neighborSteps(sampleStep)) {
+                for (int[] direction : SAMPLE_DIRECTIONS) {
+                    long neighborKey = BlockPos.asLong(
+                            pos.getX() + (direction[0] * step),
+                            0,
+                            pos.getZ() + (direction[1] * step)
+                    );
+                    RoadPlanningSnapshot.ColumnSample sample = columns.get(neighborKey);
+                    if (sample != null && sample.water()) {
+                        return true;
+                    }
                 }
             }
         }
         return false;
+    }
+
+    private static int[] neighborSteps(int sampleStep) {
+        return sampleStep <= 1 ? new int[] {1} : new int[] {1, sampleStep};
     }
 
     private static boolean isLandSample(RoadPlanningSnapshot.ColumnSample sample) {

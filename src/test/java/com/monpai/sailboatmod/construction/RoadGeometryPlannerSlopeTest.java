@@ -398,6 +398,52 @@ class RoadGeometryPlannerSlopeTest {
     }
 
     @Test
+    void pierBridgeKeepsEntireWaterRunAtLeastFiveBlocksAboveWater() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(5, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(7, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(9, 64, 0),
+                new BlockPos(10, 64, 0),
+                new BlockPos(11, 64, 0),
+                new BlockPos(12, 64, 0),
+                new BlockPos(13, 64, 0),
+                new BlockPos(14, 64, 0)
+        );
+
+        RoadBridgePlanner.BridgeSpanPlan spanPlan = RoadBridgePlanner.planBridgeSpanForTest(
+                centerPath,
+                new RoadPlacementPlan.BridgeRange(1, 13),
+                index -> index >= 1 && index <= 13,
+                index -> index >= 6 && index <= 8,
+                index -> index >= 2 && index <= 12 ? 61 : 63,
+                index -> index >= 2 && index <= 12 ? 63 : 0,
+                index -> true
+        );
+
+        int[] heights = RoadGeometryPlanner.buildPlacementHeightProfileFromSpanPlans(
+                centerPath,
+                List.of(spanPlan)
+        );
+
+        assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
+        for (int i = 2; i <= 12; i++) {
+            int index = i;
+            assertTrue(
+                    heights[i] >= 68,
+                    () -> "expected full water run to stay at water + 5, index=" + index + " heights="
+                            + java.util.Arrays.toString(heights)
+            );
+        }
+    }
+
+    @Test
     void placementHeightProfileNeverChangesMoreThanOneLevelAcrossThreeSegments() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),

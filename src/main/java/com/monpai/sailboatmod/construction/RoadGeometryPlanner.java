@@ -120,7 +120,7 @@ public final class RoadGeometryPlanner {
         if (slice.index() != index) {
             return List.of();
         }
-        if (!slice.surfacePositions().isEmpty() && !usesSlopeSemantics(slice.segmentKind())) {
+        if (!slice.surfacePositions().isEmpty() && preservesExplicitSurfacePositions(slice.segmentKind())) {
             return slice.surfacePositions();
         }
         int[] deckHeights = corridorDeckHeights(corridorPlan);
@@ -567,6 +567,15 @@ public final class RoadGeometryPlanner {
         return segmentKind == RoadCorridorPlan.SegmentKind.TOWN_CONNECTION
                 || segmentKind == RoadCorridorPlan.SegmentKind.LAND_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
+                || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
+                || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
+    }
+
+    private static boolean preservesExplicitSurfacePositions(RoadCorridorPlan.SegmentKind segmentKind) {
+        if (!usesSlopeSemantics(segmentKind)) {
+            return true;
+        }
+        return segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
                 || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
     }

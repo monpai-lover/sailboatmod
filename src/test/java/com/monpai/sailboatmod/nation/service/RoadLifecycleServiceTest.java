@@ -373,8 +373,158 @@ class RoadLifecycleServiceTest {
     @Test
     void clearanceEnvelopeRemovesNaturalBlocksAboveRoadButNotPlacedStructures() {
         assertTrue(StructureConstructionManager.clearanceStateIsSafeToRemoveForTest(Blocks.OAK_LEAVES.defaultBlockState()));
+        assertTrue(StructureConstructionManager.clearanceStateIsSafeToRemoveForTest(Blocks.OAK_LOG.defaultBlockState()));
         assertTrue(StructureConstructionManager.clearanceStateIsSafeToRemoveForTest(Blocks.GRASS.defaultBlockState()));
         assertFalse(StructureConstructionManager.clearanceStateIsSafeToRemoveForTest(Blocks.CHEST.defaultBlockState()));
+    }
+
+    @Test
+    void landRoadPlacementAllowsNaturalWoodInHeadspaceButStillRejectsPlacedStorage() {
+        StructureConstructionManager.TestRoadPlacementResult naturalWoodResult =
+                StructureConstructionManager.placeRoadColumnForTest(
+                        Blocks.GRASS_BLOCK.defaultBlockState(),
+                        Blocks.DIRT.defaultBlockState(),
+                        Blocks.OAK_LOG.defaultBlockState(),
+                        Blocks.STONE_BRICK_SLAB.defaultBlockState()
+                );
+        StructureConstructionManager.TestRoadPlacementResult storageResult =
+                StructureConstructionManager.placeRoadColumnForTest(
+                        Blocks.GRASS_BLOCK.defaultBlockState(),
+                        Blocks.DIRT.defaultBlockState(),
+                        Blocks.CHEST.defaultBlockState(),
+                        Blocks.STONE_BRICK_SLAB.defaultBlockState()
+                );
+
+        assertEquals(Blocks.STONE_BRICK_SLAB, naturalWoodResult.surfaceState().getBlock());
+        assertEquals(63, naturalWoodResult.foundationTopY());
+        assertEquals(Blocks.GRASS_BLOCK, storageResult.surfaceState().getBlock());
+        assertEquals(Integer.MIN_VALUE, storageResult.foundationTopY());
+    }
+
+    @Test
+    void roadProgressPercentShowsMinimumOnePercentAfterFirstCompletedStep() {
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                null,
+                null,
+                null,
+                null,
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(2, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(1, new BlockPos(1, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(2, new BlockPos(2, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(3, new BlockPos(3, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(4, new BlockPos(4, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(5, new BlockPos(5, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(6, new BlockPos(6, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(7, new BlockPos(7, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(8, new BlockPos(8, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(9, new BlockPos(9, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(10, new BlockPos(10, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(11, new BlockPos(11, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(12, new BlockPos(12, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(13, new BlockPos(13, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(14, new BlockPos(14, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(15, new BlockPos(15, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(16, new BlockPos(16, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(17, new BlockPos(17, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(18, new BlockPos(18, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(19, new BlockPos(19, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(20, new BlockPos(20, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(21, new BlockPos(21, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(22, new BlockPos(22, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(23, new BlockPos(23, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(24, new BlockPos(24, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(25, new BlockPos(25, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(26, new BlockPos(26, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(27, new BlockPos(27, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(28, new BlockPos(28, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(29, new BlockPos(29, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(30, new BlockPos(30, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(31, new BlockPos(31, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(32, new BlockPos(32, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(33, new BlockPos(33, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(34, new BlockPos(34, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(35, new BlockPos(35, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(36, new BlockPos(36, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(37, new BlockPos(37, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(38, new BlockPos(38, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(39, new BlockPos(39, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(40, new BlockPos(40, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(41, new BlockPos(41, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(42, new BlockPos(42, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(43, new BlockPos(43, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(44, new BlockPos(44, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(45, new BlockPos(45, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(46, new BlockPos(46, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(47, new BlockPos(47, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(48, new BlockPos(48, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(49, new BlockPos(49, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(50, new BlockPos(50, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(51, new BlockPos(51, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(52, new BlockPos(52, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(53, new BlockPos(53, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(54, new BlockPos(54, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(55, new BlockPos(55, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(56, new BlockPos(56, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(57, new BlockPos(57, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(58, new BlockPos(58, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(59, new BlockPos(59, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(60, new BlockPos(60, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(61, new BlockPos(61, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(62, new BlockPos(62, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(63, new BlockPos(63, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(64, new BlockPos(64, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(65, new BlockPos(65, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(66, new BlockPos(66, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(67, new BlockPos(67, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(68, new BlockPos(68, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(69, new BlockPos(69, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(70, new BlockPos(70, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(71, new BlockPos(71, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(72, new BlockPos(72, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(73, new BlockPos(73, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(74, new BlockPos(74, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(75, new BlockPos(75, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(76, new BlockPos(76, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(77, new BlockPos(77, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(78, new BlockPos(78, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(79, new BlockPos(79, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(80, new BlockPos(80, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(81, new BlockPos(81, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(82, new BlockPos(82, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(83, new BlockPos(83, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(84, new BlockPos(84, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(85, new BlockPos(85, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(86, new BlockPos(86, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(87, new BlockPos(87, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(88, new BlockPos(88, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(89, new BlockPos(89, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(90, new BlockPos(90, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(91, new BlockPos(91, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(92, new BlockPos(92, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(93, new BlockPos(93, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(94, new BlockPos(94, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(95, new BlockPos(95, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(96, new BlockPos(96, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(97, new BlockPos(97, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(98, new BlockPos(98, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(99, new BlockPos(99, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.RoadBuildStep(100, new BlockPos(100, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(),
+                List.of(),
+                null,
+                null,
+                null
+        );
+
+        assertEquals(1, invokeRoadProgressPercent(plan, 1));
     }
 
     @Test
@@ -829,6 +979,18 @@ class RoadLifecycleServiceTest {
             return (double) method.invoke(null, totalActions, speedMultiplier);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect rollback road speed", ex);
+        }
+    }
+
+    private static int invokeRoadProgressPercent(RoadPlacementPlan plan, int placedStepCount) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("roadProgressPercent", RoadPlacementPlan.class, int.class);
+            method.setAccessible(true);
+            return (int) method.invoke(null, plan, placedStepCount);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect road progress percent", ex);
         }
     }
 

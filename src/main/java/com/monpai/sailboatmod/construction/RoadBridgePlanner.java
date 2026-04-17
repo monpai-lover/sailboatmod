@@ -367,11 +367,23 @@ public final class RoadBridgePlanner {
         int startDeckY = Math.max(startPos.getY() + 1, terrainYAt.applyAsInt(start) + 1);
         BlockPos endPos = Objects.requireNonNull(centerPath.get(end), "centerPath contains null at end");
         int endDeckY = Math.max(endPos.getY() + 1, terrainYAt.applyAsInt(end) + 1);
-        int maxWaterSurface = 0;
+        int maxWaterSurface = Integer.MIN_VALUE;
+        int waterborneStart = -1;
+        int waterborneEnd = -1;
         for (int i = start; i <= end; i++) {
+            if (!isWaterborneColumn(i, terrainYAt, waterSurfaceYAt)) {
+                continue;
+            }
+            if (waterborneStart < 0) {
+                waterborneStart = i;
+            }
+            waterborneEnd = i;
             maxWaterSurface = Math.max(maxWaterSurface, waterSurfaceYAt.applyAsInt(i));
         }
-        int mainDeckY = Math.max(maxWaterSurface + NAVIGABLE_WATER_CLEARANCE, Math.max(startDeckY, endDeckY));
+        int navigableClearanceDeckY = maxWaterSurface == Integer.MIN_VALUE
+                ? Math.max(startDeckY, endDeckY)
+                : maxWaterSurface + NAVIGABLE_WATER_CLEARANCE;
+        int mainDeckY = Math.max(navigableClearanceDeckY, Math.max(startDeckY, endDeckY));
 
         int navigableStart = -1;
         int navigableEnd = -1;
@@ -413,6 +425,10 @@ public final class RoadBridgePlanner {
                 navigableEnd,
                 selection.rightTransitionAnchor()
         );
+        if (waterborneStart > start && waterborneEnd < end) {
+            mainStartIndex = Math.min(mainStartIndex, waterborneStart);
+            mainEndIndex = Math.max(mainEndIndex, waterborneEnd);
+        }
         List<BridgeDeckSegment> deckSegments = buildStructuredPierDeckSegments(
                 start,
                 end,
@@ -474,6 +490,12 @@ public final class RoadBridgePlanner {
                 navigableStart >= 0,
                 valid
         );
+    }
+
+    private static boolean isWaterborneColumn(int index,
+                                              IntUnaryOperator terrainYAt,
+                                              IntUnaryOperator waterSurfaceYAt) {
+        return waterSurfaceYAt.applyAsInt(index) > terrainYAt.applyAsInt(index);
     }
 
     private static StructuredPierSelection selectStructuredPierAnchors(int start,
