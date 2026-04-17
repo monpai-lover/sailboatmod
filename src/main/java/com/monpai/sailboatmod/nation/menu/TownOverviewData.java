@@ -467,6 +467,9 @@ public record TownOverviewData(
     }
 
     public TownOverviewData withClaimPreview(ClaimPreviewMapState mapState, List<Integer> terrainColors) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        int nextPreviewCenterChunkX = mapState == null ? previewCenterChunkX : mapState.centerChunkX();
+        int nextPreviewCenterChunkZ = mapState == null ? previewCenterChunkZ : mapState.centerChunkZ();
         return new TownOverviewData(
                 hasTown,
                 townId,
@@ -485,8 +488,8 @@ public record TownOverviewData(
                 residentCount,
                 currentChunkX,
                 currentChunkZ,
-                previewCenterChunkX,
-                previewCenterChunkZ,
+                nextPreviewCenterChunkX,
+                nextPreviewCenterChunkZ,
                 currentChunkClaimed,
                 currentChunkOwnedByTown,
                 currentChunkOwnerName,
@@ -529,7 +532,7 @@ public record TownOverviewData(
                 procurementPreviewLines,
                 financePreviewLines,
                 joinableNationTargets,
-                mapState
+                nextMapState
         );
     }
 

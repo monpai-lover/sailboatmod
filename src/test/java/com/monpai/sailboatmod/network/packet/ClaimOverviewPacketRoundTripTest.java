@@ -101,6 +101,28 @@ class ClaimOverviewPacketRoundTripTest {
         OpenNationMenuPacket.decode(buffer);
     }
 
+    @Test
+    void townOverviewWithClaimPreviewUsesMapStateCenter() {
+        TownOverviewData updated = TownOverviewData.empty().withClaimPreview(
+                ClaimPreviewMapState.loading(9L, 8, 33, -14),
+                List.of()
+        );
+
+        assertEquals(33, updated.previewCenterChunkX());
+        assertEquals(-14, updated.previewCenterChunkZ());
+    }
+
+    @Test
+    void nationOverviewWithClaimPreviewUsesMapStateCenter() {
+        NationOverviewData updated = NationOverviewData.empty().withClaimPreview(
+                ClaimPreviewMapState.loading(12L, 6, -9, 27),
+                List.of()
+        );
+
+        assertEquals(-9, updated.previewCenterChunkX());
+        assertEquals(27, updated.previewCenterChunkZ());
+    }
+
     private static TownOverviewData extractTownData(OpenTownScreenPacket packet) {
         try {
             var field = OpenTownScreenPacket.class.getDeclaredField("data");

@@ -12,6 +12,7 @@ public final class TownClientHooks {
     private static TownOverviewData lastSyncedData = TownOverviewData.empty();
     private static boolean suppressReopen = false;
     private static long claimPreviewRevisionCounter = 0L;
+    private static long latestRequestedClaimPreviewRevision = 0L;
 
     public static void requestOpen() {
         suppressReopen = false;
@@ -44,7 +45,7 @@ public final class TownClientHooks {
     public static void applyClaimPreview(ClaimPreviewMapState state) {
         ClaimPreviewMapState safeState = state == null ? ClaimPreviewMapState.empty() : state;
         claimPreviewRevisionCounter = Math.max(claimPreviewRevisionCounter, safeState.revision());
-        if (safeState.revision() < lastSyncedData.claimMapState().revision()) {
+        if (safeState.revision() < latestRequestedClaimPreviewRevision) {
             return;
         }
         lastSyncedData = lastSyncedData.withClaimPreview(safeState, List.of());
@@ -62,6 +63,7 @@ public final class TownClientHooks {
     public static void clearCache() {
         lastSyncedData = TownOverviewData.empty();
         claimPreviewRevisionCounter = 0L;
+        latestRequestedClaimPreviewRevision = 0L;
         ClaimMapRenderTaskService.shutdownShared();
     }
 
@@ -71,6 +73,7 @@ public final class TownClientHooks {
 
     public static long beginClaimPreviewRequest(int centerChunkX, int centerChunkZ, int radius) {
         long revision = nextClaimPreviewRevision();
+        latestRequestedClaimPreviewRevision = Math.max(latestRequestedClaimPreviewRevision, revision);
         ClaimPreviewMapState loading = ClaimPreviewMapState.loading(
                 revision,
                 Math.max(0, radius),
@@ -113,7 +116,7 @@ public final class TownClientHooks {
     }
 
     private static void applyRasterizedClaimPreview(ClaimPreviewMapState state, int[] pixels) {
-        if (state == null || pixels == null || state.revision() < lastSyncedData.claimMapState().revision()) {
+        if (state == null || pixels == null || state.revision() < latestRequestedClaimPreviewRevision) {
             return;
         }
         lastSyncedData = lastSyncedData.withClaimPreview(state, toColorList(pixels));

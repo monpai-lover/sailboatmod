@@ -122,6 +122,7 @@ public class TownHomeScreen extends Screen {
     private double dragStartY = 0;
     private int pendingPreviewCenterX = Integer.MIN_VALUE;
     private int pendingPreviewCenterZ = Integer.MIN_VALUE;
+    private long pendingPreviewRevision = Long.MIN_VALUE;
     private int queuedPreviewCenterX = Integer.MIN_VALUE;
     private int queuedPreviewCenterZ = Integer.MIN_VALUE;
     private boolean resetPending = false;
@@ -147,17 +148,18 @@ public class TownHomeScreen extends Screen {
                 + " pending=" + this.pendingPreviewCenterX + "," + this.pendingPreviewCenterZ
                 + " queued=" + this.queuedPreviewCenterX + "," + this.queuedPreviewCenterZ
                 + " resetPending=" + this.resetPending);
-        this.refreshPending = false;
-        this.autoRefreshTicks = 0;
-        cacheNearbyClaims();
-        boolean pendingMatchedByOverviewCenter = this.data.previewCenterChunkX() == this.pendingPreviewCenterX
-                && this.data.previewCenterChunkZ() == this.pendingPreviewCenterZ;
-        boolean pendingMatchedByMapStateCenter = this.data.claimMapState().centerChunkX() == this.pendingPreviewCenterX
-                && this.data.claimMapState().centerChunkZ() == this.pendingPreviewCenterZ;
-        if (pendingMatchedByOverviewCenter || pendingMatchedByMapStateCenter) {
+        boolean pendingResolved = this.refreshPending
+                && this.pendingPreviewRevision != Long.MIN_VALUE
+                && this.data.claimMapState().revision() >= this.pendingPreviewRevision
+                && !this.data.claimMapState().loading();
+        if (pendingResolved) {
+            this.refreshPending = false;
             this.pendingPreviewCenterX = Integer.MIN_VALUE;
             this.pendingPreviewCenterZ = Integer.MIN_VALUE;
+            this.pendingPreviewRevision = Long.MIN_VALUE;
         }
+        this.autoRefreshTicks = 0;
+        cacheNearbyClaims();
         if (this.resetPending) {
             this.mapOffsetX = 0;
             this.mapOffsetZ = 0;
@@ -1045,6 +1047,7 @@ public class TownHomeScreen extends Screen {
         this.pendingPreviewCenterX = centerChunkX;
         this.pendingPreviewCenterZ = centerChunkZ;
         long revision = TownClientHooks.beginClaimPreviewRequest(centerChunkX, centerChunkZ, viewportRadius());
+        this.pendingPreviewRevision = revision;
         if (explicitRefresh) {
             ModNetwork.CHANNEL.sendToServer(new RefreshClaimMapViewportPacket(
                     RequestClaimMapViewportPacket.ScreenKind.TOWN,

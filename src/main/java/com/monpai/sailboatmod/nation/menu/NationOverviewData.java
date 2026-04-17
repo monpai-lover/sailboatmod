@@ -423,6 +423,9 @@ public record NationOverviewData(
     }
 
     public NationOverviewData withClaimPreview(ClaimPreviewMapState mapState, List<Integer> terrainColors) {
+        ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        int nextPreviewCenterChunkX = mapState == null ? previewCenterChunkX : mapState.centerChunkX();
+        int nextPreviewCenterChunkZ = mapState == null ? previewCenterChunkZ : mapState.centerChunkZ();
         return new NationOverviewData(
                 hasNation,
                 nationId,
@@ -441,8 +444,8 @@ public record NationOverviewData(
                 totalClaims,
                 currentChunkX,
                 currentChunkZ,
-                previewCenterChunkX,
-                previewCenterChunkZ,
+                nextPreviewCenterChunkX,
+                nextPreviewCenterChunkZ,
                 currentChunkClaimed,
                 currentChunkOwnedByNation,
                 currentChunkOwnerName,
@@ -499,7 +502,7 @@ public record NationOverviewData(
                 terrainColors,
                 nearbyClaims,
                 allNations,
-                mapState
+                nextMapState
         );
     }
 
