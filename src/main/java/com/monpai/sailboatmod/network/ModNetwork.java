@@ -44,6 +44,7 @@ import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructionGhostPreviewPacket;
 import com.monpai.sailboatmod.network.packet.SyncConstructorSettingsPacket;
+import com.monpai.sailboatmod.network.packet.SyncClaimPreviewMapPacket;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
@@ -260,6 +261,14 @@ public final class ModNetwork {
                 OpenTownScreenPacket::encode,
                 OpenTownScreenPacket::decode,
                 OpenTownScreenPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncClaimPreviewMapPacket.class,
+                SyncClaimPreviewMapPacket::encode,
+                SyncClaimPreviewMapPacket::decode,
+                SyncClaimPreviewMapPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,

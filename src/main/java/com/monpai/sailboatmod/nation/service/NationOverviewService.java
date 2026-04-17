@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
@@ -20,8 +21,11 @@ import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.NationWarRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.SyncClaimPreviewMapPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -142,7 +146,26 @@ public final class NationOverviewService {
             ));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));
-        List<Integer> nearbyTerrainColors = ClaimPreviewTerrainService.sample(player.serverLevel(), previewChunk, claimPreviewRadius());
+        ClaimPreviewMapState claimMapState = ClaimPreviewMapState.loading(System.nanoTime(), claimPreviewRadius(), previewChunk.x, previewChunk.z);
+        List<Integer> nearbyTerrainColors = List.of();
+        ClaimMapTaskService taskService = ClaimMapTaskService.get();
+        if (taskService != null && player.getServer() != null) {
+            long revision = claimMapState.revision();
+            taskService.submitLatest(
+                    new ClaimMapTaskService.TaskKey("nation-claims", player.getUUID() + "|" + nation.nationId()),
+                    () -> ClaimPreviewMapState.ready(
+                            revision,
+                            claimPreviewRadius(),
+                            previewChunk.x,
+                            previewChunk.z,
+                            ClaimPreviewTerrainService.sample(player.serverLevel(), previewChunk, claimPreviewRadius())
+                    ),
+                    readyState -> ModNetwork.CHANNEL.send(
+                            PacketDistributor.PLAYER.with(() -> player),
+                            new SyncClaimPreviewMapPacket(SyncClaimPreviewMapPacket.ScreenKind.NATION, readyState)
+                    )
+            );
+        }
 
         List<NationOverviewDiplomacyEntry> diplomacyRelations = new ArrayList<>();
         for (NationDiplomacyRecord relation : data.getDiplomacyForNation(nation.nationId())) {
@@ -263,7 +286,8 @@ public final class NationOverviewService {
                 towns,
                 nearbyTerrainColors,
                 nearbyClaims,
-                allNations
+                allNations,
+                claimMapState
         );
     }
 

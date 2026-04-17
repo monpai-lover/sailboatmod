@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.screen.town.TownHomeScreen;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
 import net.minecraft.client.Minecraft;
 
@@ -33,6 +34,18 @@ public final class TownClientHooks {
             return;
         }
         minecraft.setScreen(new TownHomeScreen(lastSyncedData));
+    }
+
+    public static void applyClaimPreview(ClaimPreviewMapState state) {
+        ClaimPreviewMapState safeState = state == null ? ClaimPreviewMapState.empty() : state;
+        if (safeState.revision() < lastSyncedData.claimMapState().revision()) {
+            return;
+        }
+        lastSyncedData = lastSyncedData.withClaimPreview(safeState, safeState.colors());
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
+            townHomeScreen.updateData(lastSyncedData);
+        }
     }
 
     public static void onScreenClosed() {

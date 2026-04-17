@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
+import com.monpai.sailboatmod.nation.service.ClaimMapTaskService;
 import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.mojang.logging.LogUtils;
@@ -35,6 +36,7 @@ public final class ServerEvents {
         runStartupTaskSafely("market SQLite database", () -> MarketDatabase.initialize(event.getServer()));
         BlueMapIntegration.onServerStarted(event.getServer());
         ClaimPreviewTerrainService.clearAllPersistedColors(event.getServer().overworld());
+        ClaimMapTaskService.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
     }
 
@@ -96,6 +98,7 @@ public final class ServerEvents {
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
+        ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();

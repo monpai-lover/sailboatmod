@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.screen.nation.NationHomeScreen;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.toasts.SystemToast;
@@ -36,6 +37,18 @@ public final class NationClientHooks {
 
     public static void updateIfOpen(NationOverviewData data) {
         lastSyncedData = data == null ? NationOverviewData.empty() : data;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
+            nationHomeScreen.updateData(lastSyncedData);
+        }
+    }
+
+    public static void applyClaimPreview(ClaimPreviewMapState state) {
+        ClaimPreviewMapState safeState = state == null ? ClaimPreviewMapState.empty() : state;
+        if (safeState.revision() < lastSyncedData.claimMapState().revision()) {
+            return;
+        }
+        lastSyncedData = lastSyncedData.withClaimPreview(safeState, safeState.colors());
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
             nationHomeScreen.updateData(lastSyncedData);
