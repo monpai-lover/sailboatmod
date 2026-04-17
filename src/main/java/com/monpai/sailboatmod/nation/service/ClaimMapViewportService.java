@@ -27,15 +27,28 @@ public class ClaimMapViewportService {
     }
 
     public ClaimMapViewportSnapshot tryBuildSnapshot(ViewportRequest request, List<Integer> claimOverlayColors) {
+        String viewportKey = viewportKey(request);
+        ClaimPreviewTerrainService.enqueueViewportWork(
+                request.dimensionId(),
+                request.centerChunkX(),
+                request.centerChunkZ(),
+                request.radius(),
+                request.prefetchRadius(),
+                request.revision(),
+                request.screenKind()
+        );
         pendingVisibleChunkCount = 0;
         ArrayList<Integer> pixels = new ArrayList<>();
         for (int dz = -request.radius(); dz <= request.radius(); dz++) {
             for (int dx = -request.radius(); dx <= request.radius(); dx++) {
-                int[] tile = tileLookup.get(request.dimensionId(), request.centerChunkX() + dx, request.centerChunkZ() + dz);
+                int chunkX = request.centerChunkX() + dx;
+                int chunkZ = request.centerChunkZ() + dz;
+                int[] tile = tileLookup.get(request.dimensionId(), chunkX, chunkZ);
                 if (tile == null) {
                     pendingVisibleChunkCount++;
                     continue;
                 }
+                ClaimPreviewTerrainService.trackViewportDependency(request.dimensionId(), chunkX, chunkZ, viewportKey);
                 for (int color : tile) {
                     pixels.add(color);
                 }
@@ -45,7 +58,7 @@ public class ClaimMapViewportService {
         if (pendingVisibleChunkCount > 0) {
             return null;
         }
-        return new ClaimMapViewportSnapshot(
+        ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(
                 request.dimensionId(),
                 request.revision(),
                 request.radius(),
@@ -53,6 +66,8 @@ public class ClaimMapViewportService {
                 request.centerChunkZ(),
                 pixels
         );
+        ClaimPreviewTerrainService.putViewportSnapshot(viewportKey, snapshot);
+        return snapshot;
     }
 
     private int countMissingPrefetchChunks(ViewportRequest request) {
@@ -81,5 +96,17 @@ public class ClaimMapViewportService {
 
     int pendingPrefetchChunkCountForTest() {
         return pendingPrefetchChunkCount;
+    }
+
+    private static String viewportKey(ViewportRequest request) {
+        return request.screenKind()
+                + "|"
+                + request.dimensionId()
+                + "|"
+                + request.centerChunkX()
+                + "|"
+                + request.centerChunkZ()
+                + "|"
+                + request.revision();
     }
 }

@@ -35,6 +35,7 @@ public final class ServerEvents {
         com.monpai.sailboatmod.market.commodity.CommodityConfigLoader.load();
         runStartupTaskSafely("market SQLite database", () -> MarketDatabase.initialize(event.getServer()));
         BlueMapIntegration.onServerStarted(event.getServer());
+        ClaimPreviewTerrainService.onServerStarted(event.getServer());
         ClaimPreviewTerrainService.clearAllPersistedColors(event.getServer().overworld());
         ClaimMapTaskService.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
@@ -98,6 +99,7 @@ public final class ServerEvents {
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
+        ClaimPreviewTerrainService.onServerStopping();
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         MarketDatabase.shutdown();
