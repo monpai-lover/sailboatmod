@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.TownFlagUploadClient;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
@@ -64,6 +65,7 @@ public class TownHomeScreen extends Screen {
         return (diameter - 1) / 2;
     }
     private static final int AUTO_REFRESH_INTERVAL_TICKS = 40;
+    private static final int PENDING_RETRY_INTERVAL_TICKS = 8;
     private static final int MEMBER_LIST_W = 180;
     private static final int MEMBER_ROW_H = 14;
     private static final int MEMBER_VISIBLE_ROWS = 8;
@@ -266,7 +268,20 @@ public class TownHomeScreen extends Screen {
     }
 
     private void tickAutoRefresh() {
-        if (!this.data.hasTown() || this.refreshPending) {
+        if (!this.data.hasTown()) {
+            this.autoRefreshTicks = 0;
+            return;
+        }
+        if (shouldRetryPendingPreviewRequest()) {
+            this.autoRefreshTicks++;
+            if (this.autoRefreshTicks < PENDING_RETRY_INTERVAL_TICKS) {
+                return;
+            }
+            this.autoRefreshTicks = 0;
+            retryPendingPreviewRequest();
+            return;
+        }
+        if (this.refreshPending) {
             this.autoRefreshTicks = 0;
             return;
         }
@@ -1048,6 +1063,22 @@ public class TownHomeScreen extends Screen {
         this.pendingPreviewCenterZ = centerChunkZ;
         long revision = TownClientHooks.beginClaimPreviewRequest(centerChunkX, centerChunkZ, viewportRadius());
         this.pendingPreviewRevision = revision;
+        sendViewportRequest(centerChunkX, centerChunkZ, revision, explicitRefresh);
+        this.statusLine = Component.translatable("screen.sailboatmod.town.status.refreshing");
+    }
+
+    private void retryPendingPreviewRequest() {
+        if (this.pendingPreviewRevision == Long.MIN_VALUE
+                || this.pendingPreviewCenterX == Integer.MIN_VALUE
+                || this.pendingPreviewCenterZ == Integer.MIN_VALUE) {
+            return;
+        }
+        traceClaim("retryPendingPreviewRequest center=" + this.pendingPreviewCenterX + "," + this.pendingPreviewCenterZ
+                + " revision=" + this.pendingPreviewRevision);
+        sendViewportRequest(this.pendingPreviewCenterX, this.pendingPreviewCenterZ, this.pendingPreviewRevision, false);
+    }
+
+    private void sendViewportRequest(int centerChunkX, int centerChunkZ, long revision, boolean explicitRefresh) {
         if (explicitRefresh) {
             ModNetwork.CHANNEL.sendToServer(new RefreshClaimMapViewportPacket(
                     RequestClaimMapViewportPacket.ScreenKind.TOWN,
@@ -1070,7 +1101,31 @@ public class TownHomeScreen extends Screen {
                     VIEWPORT_PREFETCH_RADIUS
             ));
         }
-        this.statusLine = Component.translatable("screen.sailboatmod.town.status.refreshing");
+    }
+
+    private boolean shouldRetryPendingPreviewRequest() {
+        return shouldRetryPendingPreviewRequest(
+                this.refreshPending,
+                this.pendingPreviewRevision,
+                this.pendingPreviewCenterX,
+                this.pendingPreviewCenterZ,
+                this.data.claimMapState()
+        );
+    }
+
+    static boolean shouldRetryPendingPreviewRequest(boolean refreshPending,
+                                                    long pendingPreviewRevision,
+                                                    int pendingPreviewCenterX,
+                                                    int pendingPreviewCenterZ,
+                                                    ClaimPreviewMapState mapState) {
+        if (!refreshPending
+                || pendingPreviewRevision == Long.MIN_VALUE
+                || pendingPreviewCenterX == Integer.MIN_VALUE
+                || pendingPreviewCenterZ == Integer.MIN_VALUE) {
+            return false;
+        }
+        ClaimPreviewMapState safeMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return safeMapState.loading() && safeMapState.revision() == pendingPreviewRevision;
     }
 
     private int viewportRadius() {

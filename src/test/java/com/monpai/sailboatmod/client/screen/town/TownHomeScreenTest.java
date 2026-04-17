@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen.town;
 
+import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
 import org.junit.jupiter.api.Test;
 
@@ -34,6 +35,28 @@ class TownHomeScreenTest {
         screen.submitJoinNationSelectionForTest();
 
         assertFalse(screen.joinNationOverlayOpenForTest());
+    }
+
+    @Test
+    void pendingLoadingStateRequestsRetryForSameRevision() {
+        assertTrue(TownHomeScreen.shouldRetryPendingPreviewRequest(
+                true,
+                7L,
+                10,
+                20,
+                ClaimPreviewMapState.loading(7L, 8, 10, 20)
+        ));
+    }
+
+    @Test
+    void pendingRetryDisabledWhenRevisionNoLongerLoading() {
+        assertFalse(TownHomeScreen.shouldRetryPendingPreviewRequest(
+                true,
+                7L,
+                10,
+                20,
+                ClaimPreviewMapState.ready(8L, 8, 10, 20, List.of(0xFF010203))
+        ));
     }
 
     private static TownOverviewData dataWithJoinTargets() {

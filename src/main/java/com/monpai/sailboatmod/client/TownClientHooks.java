@@ -80,7 +80,7 @@ public final class TownClientHooks {
                 centerChunkX,
                 centerChunkZ
         );
-        lastSyncedData = lastSyncedData.withClaimPreview(loading, lastSyncedData.nearbyTerrainColors());
+        lastSyncedData = lastSyncedData.withClaimPreviewState(loading);
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
             townHomeScreen.updateData(lastSyncedData);

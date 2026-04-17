@@ -1,7 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.nation.data.TerrainPreviewSavedData;
-import com.monpai.sailboatmod.nation.service.ClaimMapTaskService;
 import com.monpai.sailboatmod.nation.service.ClaimMapViewportService;
 import com.monpai.sailboatmod.nation.service.ClaimMapViewportSnapshot;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
@@ -105,20 +104,6 @@ public record RequestClaimMapViewportPacket(ScreenKind screenKind,
         ClaimPreviewTerrainService.queueAround(level, center, radius + prefetchRadius);
 
         String resolvedDimensionId = level.dimension().location().toString();
-        ClaimMapTaskService taskService = ClaimMapTaskService.get();
-        if (taskService != null && player.getServer() != null) {
-            taskService.submitLatest(
-                    new ClaimMapTaskService.TaskKey(taskKind(normalized.screenKind()), player.getUUID() + "|" + normalized.ownerId()),
-                    () -> buildCompleteSnapshot(level, normalized, resolvedDimensionId, radius, prefetchRadius),
-                    snapshot -> {
-                        if (snapshot != null) {
-                            sendSnapshot(player, normalized.screenKind(), snapshot);
-                        }
-                    }
-            );
-            return;
-        }
-
         ClaimMapViewportSnapshot snapshot = buildCompleteSnapshot(level, normalized, resolvedDimensionId, radius, prefetchRadius);
         if (snapshot != null) {
             sendSnapshot(player, normalized.screenKind(), snapshot);
@@ -136,10 +121,6 @@ public record RequestClaimMapViewportPacket(ScreenKind screenKind,
         return screenKind == ScreenKind.NATION
                 ? SyncClaimPreviewMapPacket.ScreenKind.NATION
                 : SyncClaimPreviewMapPacket.ScreenKind.TOWN;
-    }
-
-    private static String taskKind(ScreenKind screenKind) {
-        return screenKind == ScreenKind.NATION ? "nation-viewport" : "town-viewport";
     }
 
     static int clampRadiusForServer(int requestedRadius) {

@@ -123,6 +123,28 @@ class ClaimOverviewPacketRoundTripTest {
         assertEquals(27, updated.previewCenterChunkZ());
     }
 
+    @Test
+    void loadingClaimPreviewStatePreservesCurrentPreviewCenterAndTerrain() {
+        TownOverviewData current = new TownOverviewData(
+                true, "town-a", "Town A", "", "", "", "", false, 0x123456, 0x654321,
+                false, "", 0L, 0, 0, 0, 0, 10, 20, false, false, "", "", "", "", "", "", "", "",
+                "", 0, 0, 0L, "", false, false, false, false, false, false,
+                List.of(), List.of(0xFF010203, 0xFF0A0B0C), List.of(), "european", Map.of(), 0.0f, Map.of(), 0.0f,
+                0, 0, 0, 0, 0, 0L, 0L, 0L, List.of(), List.of(), List.of(), List.of(), List.of(),
+                ClaimPreviewMapState.ready(1L, 8, 10, 20, List.of(0xFF010203, 0xFF0A0B0C))
+        );
+
+        TownOverviewData updated = current.withClaimPreviewState(ClaimPreviewMapState.loading(22L, 8, 40, -12));
+
+        assertEquals(10, updated.previewCenterChunkX());
+        assertEquals(20, updated.previewCenterChunkZ());
+        assertEquals(List.of(0xFF010203, 0xFF0A0B0C), updated.nearbyTerrainColors());
+        assertEquals(40, updated.claimMapState().centerChunkX());
+        assertEquals(-12, updated.claimMapState().centerChunkZ());
+        assertEquals(22L, updated.claimMapState().revision());
+        assertTrue(updated.claimMapState().loading());
+    }
+
     private static TownOverviewData extractTownData(OpenTownScreenPacket packet) {
         try {
             var field = OpenTownScreenPacket.class.getDeclaredField("data");
