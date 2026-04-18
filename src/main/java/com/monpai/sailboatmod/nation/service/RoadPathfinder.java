@@ -314,6 +314,13 @@ public final class RoadPathfinder {
         return describeColumn(level, pos, blockedColumns == null ? Set.of() : blockedColumns, true, context);
     }
 
+    static ColumnDiagnostics describeColumnForGroundPath(Level level,
+                                                         BlockPos pos,
+                                                         Set<Long> blockedColumns,
+                                                         RoadPlanningPassContext context) {
+        return describeColumn(level, pos, blockedColumns == null ? Set.of() : blockedColumns, false, context);
+    }
+
     static List<BlockPos> normalizeReturnedPathForTest(BlockPos from, BlockPos to, List<BlockPos> path) {
         return normalizeReturnedPath(from, to, path);
     }

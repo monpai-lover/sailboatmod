@@ -36,6 +36,10 @@ public final class LandRoadHybridPathfinder {
             return new RoadPathfinder.PlannedPathResult(List.of(), RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE);
         }
         Set<Long> blockedForTraversal = mergeBlockedColumns(blockedColumns, excludedColumns);
+        Set<Long> unblockedEndpointColumns = unblockEndpoints(start, goal, blockedForTraversal);
+        if (!isTraversable(level, start, unblockedEndpointColumns, context)) {
+            return new RoadPathfinder.PlannedPathResult(List.of(), RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE);
+        }
 
         PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(Node::score));
         Map<Long, Node> best = new HashMap<>();
@@ -94,7 +98,7 @@ public final class LandRoadHybridPathfinder {
             return false;
         }
         Set<Long> unblockedGoalColumns = unblockEndpoints(current, goal, blockedColumns);
-        RoadPathfinder.ColumnDiagnostics goalDiagnostics = RoadPathfinder.describeColumnForAnchorSelection(
+        RoadPathfinder.ColumnDiagnostics goalDiagnostics = RoadPathfinder.describeColumnForGroundPath(
                 level,
                 goal,
                 unblockedGoalColumns,
@@ -186,7 +190,7 @@ public final class LandRoadHybridPathfinder {
                                          BlockPos candidate,
                                          Set<Long> blockedColumns,
                                          RoadPlanningPassContext context) {
-        RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForAnchorSelection(
+        RoadPathfinder.ColumnDiagnostics diagnostics = RoadPathfinder.describeColumnForGroundPath(
                 level,
                 candidate,
                 blockedColumns == null ? Set.of() : blockedColumns,

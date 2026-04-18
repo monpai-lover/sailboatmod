@@ -84,6 +84,64 @@ class LandRoadHybridPathfinderTest {
         assertFalse(result.success(), "blocked goal column should not be accepted as a short-step completion");
     }
 
+    @Test
+    void hybridPathfinderRejectsBlockedStartAnchor() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.setSurface(0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.STONE.defaultBlockState());
+        level.setSurface(1, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(2, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(3, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+
+        RoadPathfinder.PlannedPathResult result = LandRoadHybridPathfinder.find(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(3, 64, 0),
+                Set.of(),
+                Set.of(),
+                new RoadPlanningPassContext(level)
+        );
+
+        assertFalse(result.success(), "blocked start anchor should not seed a successful hybrid land path");
+    }
+
+    @Test
+    void hybridPathfinderAvoidsBridgeRequiredIntermediateColumnWhenDryDetourExists() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = 0; x <= 6; x++) {
+            level.setSurface(x, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        }
+        level.setSurface(2, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(3, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(4, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.surfaceHeights.put(columnKey(3, 0), 64);
+        level.blockStates.put(new BlockPos(3, 64, 0).asLong(), Blocks.WATER.defaultBlockState());
+        level.blockStates.put(new BlockPos(3, 63, 0).asLong(), Blocks.WATER.defaultBlockState());
+        level.blockStates.put(new BlockPos(3, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+
+        RoadPathfinder.PlannedPathResult result = LandRoadHybridPathfinder.find(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(6, 64, 0),
+                Set.of(),
+                Set.of(),
+                new RoadPlanningPassContext(level)
+        );
+
+        assertTrue(result.success(), "hybrid path should recover through the dry detour");
+        assertFalse(
+                result.path().stream().anyMatch(pos -> pos.getX() == 3 && pos.getZ() == 0),
+                "hybrid land path should not traverse the bridge-required water column"
+        );
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> type) {
         try {
