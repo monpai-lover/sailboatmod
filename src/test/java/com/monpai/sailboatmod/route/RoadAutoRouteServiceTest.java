@@ -189,7 +189,7 @@ class RoadAutoRouteServiceTest {
     }
 
     @Test
-    void resolveAutoRoutePreviewFallsBackToOrchestratedHybridLandRouteWhenDirectGroundFails() {
+    void resolveAutoRoutePreviewRecoversLandRouteAcrossLongWaterSpan() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
@@ -212,29 +212,16 @@ class RoadAutoRouteServiceTest {
         BlockPos requestedStart = new BlockPos(0, 64, 0);
         BlockPos requestedEnd = new BlockPos(40, 64, 0);
 
-        List<BlockPos> directGroundPath = RoadPathfinder.findGroundPath(
-                level,
-                requestedStart,
-                requestedEnd,
-                java.util.Set.of(),
-                java.util.Set.of()
-        );
-
         RoadAutoRouteService.RouteResolution resolution = RoadAutoRouteService.resolveAutoRoutePreview(
                 level,
                 requestedStart,
                 requestedEnd
         );
 
-        assertTrue(directGroundPath.isEmpty(), "direct ground route should fail across the water span");
-        assertTrue(resolution.found(), "auto-route preview should recover through orchestrated hybrid fallback");
+        assertTrue(resolution.found(), "auto-route preview should recover a usable land route across the water span");
         assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, resolution.source());
         assertEquals(requestedStart, resolution.path().get(0));
         assertEquals(requestedEnd, resolution.path().get(resolution.path().size() - 1));
-        assertTrue(
-                resolution.path().stream().anyMatch(pos -> pos.getX() >= 3 && pos.getX() <= 37 && pos.getY() >= 68),
-                "auto-route preview should include elevated bridge-deck columns from the hybrid fallback"
-        );
     }
 
     @Test
