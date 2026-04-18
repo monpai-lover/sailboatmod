@@ -236,6 +236,24 @@ class BuilderHammerSupportTest {
     }
 
     @Test
+    void attemptedRoadStepRemainsHammerTargetableWhileWorldStateStillDiffersFromPlan() {
+        RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                new BlockPos(0, 65, 0),
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(),
+                RoadGeometryPlanner.RoadBuildPhase.DECK
+        );
+
+        List<RoadGeometryPlanner.RoadBuildStep> remaining = invokeRemainingRoadBuildSteps(
+                List.of(step),
+                Set.of(),
+                Set.of(step.pos().asLong())
+        );
+
+        assertEquals(List.of(step), remaining);
+    }
+
+    @Test
     void attemptedRoadBuildStepDoesNotCountAsConsumedWithoutConfirmedCompletion() {
         RoadGeometryPlanner.RoadBuildStep step = new RoadGeometryPlanner.RoadBuildStep(
                 0,
