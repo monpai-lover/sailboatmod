@@ -606,7 +606,7 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
-    void scheduledRoadJobWithRemainingBuildStepsAdvancesDuringTick() {
+    void scheduledRoadJobPreservesPersistedFractionalProgressAcrossRefreshBeforeNextTick() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
@@ -621,17 +621,20 @@ class RoadLifecycleServiceTest {
                 List.of()
         );
         seedSupportedRoadbed(level, plan);
-        String roadId = "manual|tick|town_a|town_b";
+        RoadGeometryPlanner.RoadBuildStep firstStep = plan.buildSteps().get(0);
+        level.blockStates.put(firstStep.pos().asLong(), firstStep.state());
+        String roadId = "manual|fractional|town_a|town_b";
         @SuppressWarnings("unchecked")
         Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
-        Object previous = activeRoads.put(roadId, newRoadConstructionJob(level, roadId, plan, List.of(), 0, plan.buildSteps().size(), false, 0, false));
+        Object previous = activeRoads.put(roadId, newRoadConstructionJob(level, roadId, plan, List.of(), 1, 1.999D, false, 0, false));
 
         try {
             StructureConstructionManager.tickRoadConstructions(level);
 
             Object updated = activeRoads.get(roadId);
             assertNotNull(updated);
-            assertTrue((int) readRecordComponent(updated, "placedStepCount") > 0, "tick should consume at least one road build step");
+            assertEquals(2, (int) readRecordComponent(updated, "placedStepCount"),
+                    "tick should consume exactly one additional step when persisted fractional progress crosses the next integer");
         } finally {
             restoreMapEntry(activeRoads, roadId, previous);
         }
@@ -660,7 +663,18 @@ class RoadLifecycleServiceTest {
 
         try {
             StructureConstructionManager.tickRoadConstructions(level);
-            assertNotNull(activeRoads.get(roadId), "valid road runtime should remain active after first tick");
+            Object updated = activeRoads.get(roadId);
+            assertNotNull(updated, "valid road runtime should remain active after first tick");
+
+            int placedAfterFirstTick = (int) readRecordComponent(updated, "placedStepCount");
+            if (placedAfterFirstTick == 0) {
+                StructureConstructionManager.tickRoadConstructions(level);
+                updated = activeRoads.get(roadId);
+                assertNotNull(updated, "valid road runtime should remain active until work starts");
+                placedAfterFirstTick = (int) readRecordComponent(updated, "placedStepCount");
+            }
+
+            assertTrue(placedAfterFirstTick > 0, "zero-progress road runtime should consume at least one step within the first two ticks");
         } finally {
             restoreMapEntry(activeRoads, roadId, previous);
         }
