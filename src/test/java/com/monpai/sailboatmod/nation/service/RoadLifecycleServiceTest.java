@@ -766,6 +766,68 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
+    void queuedRoadHammerCreditPreservesFractionalForwardProgressForNextAutomaticTick() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(2, 64, 0),
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(2, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK),
+                        new RoadGeometryPlanner.RoadBuildStep(1, new BlockPos(1, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK),
+                        new RoadGeometryPlanner.RoadBuildStep(2, new BlockPos(2, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK)
+                ),
+                List.of(),
+                List.of(),
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(0, 64, 0)
+        );
+        seedSupportedRoadbed(level, plan);
+        RoadGeometryPlanner.RoadBuildStep firstStep = plan.buildSteps().get(0);
+        level.blockStates.put(firstStep.pos().asLong(), firstStep.state());
+
+        String roadId = "manual|hammer_fractional|town_a|town_b";
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeCredits = readStaticMap("ACTIVE_ROAD_HAMMER_CREDITS");
+        Object previousRoad = activeRoads.put(roadId, newRoadConstructionJob(level, roadId, plan, List.of(), 1, 1.999D, false, 0, false));
+        Object previousCredits = activeCredits.put(roadId, 1);
+
+        try {
+            StructureConstructionManager.tickRoadConstructions(level);
+
+            assertTrue(
+                    plan.buildSteps().stream().allMatch(step -> level.getBlockState(step.pos()).equals(step.state())),
+                    "hammer credit should not discard accumulated fractional progress before the next automatic tick"
+            );
+        } finally {
+            restoreMapEntry(activeRoads, roadId, previousRoad);
+            restoreMapEntry(activeCredits, roadId, previousCredits);
+        }
+    }
+
+    @Test
     void roadConstructionRuntimeDoesNotDiscardValidJobJustBecauseProgressStartsAtZero() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();

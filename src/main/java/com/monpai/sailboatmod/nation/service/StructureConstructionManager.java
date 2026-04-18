@@ -758,6 +758,7 @@ public final class StructureConstructionManager {
         if (queuedCredits == null || queuedCredits <= 0 || job == null || job.rollbackActive) {
             return job;
         }
+        RoadConstructionJob persistedJob = job;
         job = refreshRoadConstructionState(level, job);
         Set<Long> consumedStepKeys = consumedRoadBuildStepKeys(level, job);
         int batchSize = nextRoadBuildBatchSize(job.plan, consumedStepKeys);
@@ -770,6 +771,7 @@ public final class StructureConstructionManager {
         } else {
             ACTIVE_ROAD_HAMMER_CREDITS.put(jobId, queuedCredits - 1);
         }
+        double preservedForwardFraction = Math.max(0.0D, Math.max(persistedJob.progressSteps, persistedJob.placedStepCount) - job.placedStepCount);
         return new RoadConstructionJob(
                 updatedJob.level,
                 updatedJob.roadId,
@@ -781,7 +783,7 @@ public final class StructureConstructionManager {
                 updatedJob.plan,
                 updatedJob.rollbackStates,
                 updatedJob.placedStepCount,
-                Math.max(updatedJob.progressSteps, updatedJob.placedStepCount),
+                Math.max(updatedJob.progressSteps, updatedJob.placedStepCount + preservedForwardFraction),
                 false,
                 0,
                 false,
