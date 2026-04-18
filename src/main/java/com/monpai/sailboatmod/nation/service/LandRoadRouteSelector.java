@@ -41,6 +41,7 @@ public final class LandRoadRouteSelector {
                                    int nearWaterColumns,
                                    int fragmentedColumns) {
         if (failureReason == RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE
+                || failureReason == RoadPlanningFailureReason.SEARCH_EXHAUSTED
                 || legacyPath == null
                 || legacyPath.size() < 2) {
             return new Selection(BackEnd.HYBRID, "legacy_failed");

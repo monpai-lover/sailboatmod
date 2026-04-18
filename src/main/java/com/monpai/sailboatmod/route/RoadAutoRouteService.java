@@ -255,7 +255,9 @@ public final class RoadAutoRouteService {
                 networkNodes,
                 adjacency,
                 (from, to, allowWaterFallback) -> {
-                    List<BlockPos> path = combineRouteEndpoints(from, findPathWithSnapshot(level, from, to, allowWaterFallback), to);
+                    List<BlockPos> path = allowWaterFallback
+                            ? findPathWithSnapshot(level, from, to, true)
+                            : findGroundPathWithSnapshot(level, from, to);
                     return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
                 }
         );
@@ -422,7 +424,17 @@ public final class RoadAutoRouteService {
         if (level == null || start == null || end == null) {
             return List.of();
         }
-        return combineRouteEndpoints(start, findPathWithSnapshot(level, start, end, false), end);
+        return findGroundPathWithSnapshot(level, start, end);
+    }
+
+    private static List<BlockPos> findGroundPathWithSnapshot(ServerLevel level,
+                                                             BlockPos start,
+                                                             BlockPos end) {
+        if (level == null || start == null || end == null) {
+            return List.of();
+        }
+        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, start, end, Set.of(), Set.of());
+        return RoadPathfinder.findGroundPath(level, start, end, Set.of(), Set.of(), snapshot);
     }
 
     private static List<BlockPos> findPathWithSnapshot(ServerLevel level,
@@ -447,10 +459,18 @@ public final class RoadAutoRouteService {
     }
 
     private static RouteResolution preferResolution(RouteResolution direct, RouteResolution hybrid) {
+        if (hybrid != null
+                && hybrid.found()
+                && hybrid.source() == PathSource.ROAD_NETWORK) {
+            return hybrid;
+        }
+        if (direct != null && direct.found()) {
+            return direct;
+        }
         if (hybrid != null && hybrid.found()) {
             return hybrid;
         }
-        return direct != null && direct.found() ? direct : RouteResolution.none();
+        return RouteResolution.none();
     }
 
     private static List<BlockPos> combineRouteEndpoints(BlockPos start, List<BlockPos> path, BlockPos end) {

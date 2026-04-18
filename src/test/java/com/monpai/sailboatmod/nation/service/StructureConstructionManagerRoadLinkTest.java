@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -247,6 +248,54 @@ class StructureConstructionManagerRoadLinkTest {
         Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|satisfied", plan), 1);
 
         assertEquals(1, readRecordComponentAsInt(advanced, "placedStepCount"));
+    }
+
+    @Test
+    void advancingRoadBuildStepsKeepsUnplacedGhostsVisibleUntilStateMatchesPlan() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(2, 64, 0),
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(1, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(2, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK),
+                        new RoadGeometryPlanner.RoadBuildStep(1, new BlockPos(1, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK),
+                        new RoadGeometryPlanner.RoadBuildStep(2, new BlockPos(2, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK)
+                ),
+                List.of(),
+                List.of(),
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(0, 64, 0)
+        );
+
+        Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|ghost_consistency", plan), 1);
+        @SuppressWarnings("unchecked")
+        Set<Long> attempted = (Set<Long>) invokeRecordComponent(advanced, "attemptedStepKeys");
+
+        assertFalse(attempted.isEmpty(), "advance should mark at least one attempted step");
+        BlockPos attemptedPos = BlockPos.of(attempted.iterator().next());
+        level.blockStates.put(attemptedPos.asLong(), Blocks.AIR.defaultBlockState());
+
+        List<BlockPos> remainingGhosts = invokeRemainingRoadGhostPositions(level, advanced);
+
+        assertTrue(remainingGhosts.contains(attemptedPos),
+                () -> "attempted-but-unconfirmed step should remain ghosted: attempted=" + attemptedPos + " ghosts=" + remainingGhosts);
     }
 
     @Test
@@ -1136,6 +1185,29 @@ class StructureConstructionManagerRoadLinkTest {
     private static int readRecordComponentAsInt(Object instance, String accessor) {
         try {
             return (int) instance.getClass().getDeclaredMethod(accessor).invoke(instance);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static Object invokeRecordComponent(Object instance, String accessor) {
+        try {
+            return instance.getClass().getDeclaredMethod(accessor).invoke(instance);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeRemainingRoadGhostPositions(ServerLevel level, Object job) {
+        try {
+            Method method = StructureConstructionManager.class.getDeclaredMethod(
+                    "remainingRoadGhostPositions",
+                    ServerLevel.class,
+                    Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadConstructionJob")
+            );
+            method.setAccessible(true);
+            return List.copyOf((Set<BlockPos>) method.invoke(null, level, job));
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }
