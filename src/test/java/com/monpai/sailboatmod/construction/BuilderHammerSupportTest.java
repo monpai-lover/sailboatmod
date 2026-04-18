@@ -3,16 +3,24 @@ package com.monpai.sailboatmod.construction;
 import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import sun.misc.Unsafe;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -243,14 +251,28 @@ class BuilderHammerSupportTest {
                 Blocks.STONE_BRICK_SLAB.defaultBlockState(),
                 RoadGeometryPlanner.RoadBuildPhase.DECK
         );
-
-        List<RoadGeometryPlanner.RoadBuildStep> remaining = invokeRemainingRoadBuildSteps(
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(new BlockPos(0, 64, 0)),
+                null,
+                null,
+                null,
+                null,
+                List.of(new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state())),
                 List.of(step),
-                Set.of(),
-                Set.of(step.pos().asLong())
+                List.of(),
+                List.of(step.pos()),
+                step.pos(),
+                step.pos(),
+                step.pos()
         );
+        Object job = newRoadConstructionJob(level, "manual|test|hammer_target", plan, Set.of(step.pos().asLong()));
 
-        assertEquals(List.of(step), remaining);
+        List<BlockPos> remaining = invokeRemainingRoadGhostPositions(level, job);
+
+        assertEquals(List.of(step.pos()), remaining);
     }
 
     @Test
@@ -629,6 +651,23 @@ class BuilderHammerSupportTest {
     }
 
     @SuppressWarnings("unchecked")
+    private static List<BlockPos> invokeRemainingRoadGhostPositions(ServerLevel level, Object job) {
+        try {
+            Method method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod(
+                            "remainingRoadGhostPositions",
+                            ServerLevel.class,
+                            Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadConstructionJob")
+                    );
+            method.setAccessible(true);
+            return List.copyOf((Set<BlockPos>) method.invoke(null, level, job));
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to inspect hammer-targetable road ghost projection", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     private static List<RoadGeometryPlanner.RoadBuildStep> invokeRemainingRoadBuildSteps(List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
                                                                                          Set<Long> completedStepKeys,
                                                                                          Set<Long> attemptedStepKeys) {
@@ -688,6 +727,39 @@ class BuilderHammerSupportTest {
             return (int) method.invoke(null, plan, completedStepKeys);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect live-world road hammer batch sizing", ex);
+        }
+    }
+
+    private static Object newRoadConstructionJob(ServerLevel level,
+                                                 String roadId,
+                                                 RoadPlacementPlan plan,
+                                                 Set<Long> attemptedStepKeys) {
+        try {
+            Class<?> jobClass = Class.forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager$RoadConstructionJob");
+            java.lang.reflect.Constructor<?> constructor = java.util.Arrays.stream(jobClass.getDeclaredConstructors())
+                    .filter(candidate -> candidate.getParameterCount() == 15)
+                    .findFirst()
+                    .orElseThrow();
+            constructor.setAccessible(true);
+            return constructor.newInstance(
+                    level,
+                    roadId,
+                    UUID.randomUUID(),
+                    "town_a",
+                    "nation_a",
+                    "Town A",
+                    "Town B",
+                    plan,
+                    List.of(),
+                    0,
+                    0.0D,
+                    false,
+                    0,
+                    false,
+                    attemptedStepKeys
+            );
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to create reflected road construction job", ex);
         }
     }
 
@@ -841,6 +913,70 @@ class BuilderHammerSupportTest {
             return (List<RoadGeometryPlanner.GhostRoadBlock>) method.invoke(null, baseGhosts, centerPath, navigableRanges, List.of(), List.of());
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to inspect navigable bridge ghost decoration", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T allocate(Class<T> type) {
+        try {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            Unsafe unsafe = (Unsafe) field.get(null);
+            return (T) unsafe.allocateInstance(type);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to allocate test instance", ex);
+        }
+    }
+
+    private static final class TestServerLevel extends ServerLevel {
+        private Map<Long, BlockState> blockStates;
+        private Holder<Biome> biome;
+
+        private TestServerLevel() {
+            super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
+        }
+
+        @Override
+        public BlockState getBlockState(BlockPos pos) {
+            return blockStates.getOrDefault(pos.asLong(), Blocks.AIR.defaultBlockState());
+        }
+
+        @Override
+        public boolean setBlock(BlockPos pos, BlockState newState, int flags) {
+            blockStates.put(pos.asLong(), newState);
+            return true;
+        }
+
+        @Override
+        public int getMinBuildHeight() {
+            return 0;
+        }
+
+        @Override
+        public Holder<Biome> getBiome(BlockPos pos) {
+            return biome;
+        }
+
+        @Override
+        public <T extends net.minecraft.core.particles.ParticleOptions> int sendParticles(T particle,
+                                                                                           double x,
+                                                                                           double y,
+                                                                                           double z,
+                                                                                           int count,
+                                                                                           double xDist,
+                                                                                           double yDist,
+                                                                                           double zDist,
+                                                                                           double speed) {
+            return 0;
+        }
+
+        @Override
+        public void playSound(net.minecraft.world.entity.player.Player player,
+                              BlockPos pos,
+                              net.minecraft.sounds.SoundEvent sound,
+                              net.minecraft.sounds.SoundSource source,
+                              float volume,
+                              float pitch) {
         }
     }
 }
