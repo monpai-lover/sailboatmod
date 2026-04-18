@@ -197,6 +197,60 @@ class RoadPathfinderTest {
     }
 
     @Test
+    void findGroundPathForPlanFallsBackToSuccessfulLegacyRouteWhenPreferredHybridFails() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 2, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 3, 0, 74, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 4, 0, 74, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 5, 0, 74, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 6, 0, 74, Blocks.GRASS_BLOCK.defaultBlockState());
+
+        BlockPos requestedStart = new BlockPos(0, 64, 0);
+        BlockPos requestedEnd = new BlockPos(6, 74, 0);
+        RoadPlanningPassContext context = new RoadPlanningPassContext(level);
+
+        RoadPathfinder.PlannedPathResult legacy = RoadPathfinder.findPathForPlan(
+                level,
+                requestedStart,
+                requestedEnd,
+                java.util.Set.of(),
+                java.util.Set.of(),
+                false,
+                context
+        );
+        RoadPathfinder.PlannedPathResult hybrid = LandRoadHybridPathfinder.find(
+                level,
+                requestedStart,
+                requestedEnd,
+                java.util.Set.of(),
+                java.util.Set.of(),
+                context
+        );
+        RoadPathfinder.PlannedPathResult result = RoadPathfinder.findGroundPathForPlan(
+                level,
+                requestedStart,
+                requestedEnd,
+                java.util.Set.of(),
+                java.util.Set.of(),
+                context
+        );
+
+        assertTrue(legacy.success(), "legacy path should stay available as the alternate backend");
+        assertFalse(hybrid.success(), "hybrid path should fail on the cliff step fixture");
+        assertEquals(RoadPlanningFailureReason.SEARCH_EXHAUSTED, hybrid.failureReason());
+        assertTrue(result.success(), "shared ground path should keep the successful alternate backend");
+        assertEquals(legacy.path(), result.path());
+        assertEquals(requestedStart, result.path().get(0));
+        assertEquals(requestedEnd, result.path().get(result.path().size() - 1));
+    }
+
+    @Test
     void findPathAllowsRequestedEndpointsEvenWhenTheirColumnsAreBlocked() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();

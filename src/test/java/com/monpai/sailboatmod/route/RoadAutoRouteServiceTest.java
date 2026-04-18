@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.route;
 
+import com.monpai.sailboatmod.nation.service.RoadPathfinder;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -18,8 +19,10 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadAutoRouteServiceTest {
@@ -116,16 +119,28 @@ class RoadAutoRouteServiceTest {
         level.surfaceHeights = new HashMap<>();
         level.biome = Holder.direct(allocate(Biome.class));
 
-        setSurfaceColumn(level, 0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
-        setSurfaceColumn(level, 1, 0, 65, Blocks.GRASS_BLOCK.defaultBlockState());
-        setSurfaceColumn(level, 2, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState());
-        setSurfaceColumn(level, 3, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState());
-        setSurfaceColumn(level, 4, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState());
-        setSurfaceColumn(level, 5, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState());
-        setSurfaceColumn(level, 6, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState());
+        for (int x = 0; x <= 6; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        }
+        level.blockStates.put(new BlockPos(3, 65, 0).asLong(), Blocks.STONE.defaultBlockState());
 
-        BlockPos requestedStart = new BlockPos(0, 66, 0);
-        BlockPos requestedEnd = new BlockPos(6, 70, 0);
+        BlockPos requestedStart = new BlockPos(0, 64, 0);
+        BlockPos requestedEnd = new BlockPos(6, 64, 0);
+        List<BlockPos> legacyOnlyPath = RoadPathfinder.findPath(
+                level,
+                requestedStart,
+                requestedEnd,
+                Set.of(),
+                Set.of(),
+                false
+        );
+        List<BlockPos> sharedGroundPath = RoadPathfinder.findGroundPath(
+                level,
+                requestedStart,
+                requestedEnd,
+                Set.of(),
+                Set.of()
+        );
 
         RoadAutoRouteService.RouteResolution resolution = RoadAutoRouteService.resolveAutoRoutePreview(
                 level,
@@ -133,10 +148,12 @@ class RoadAutoRouteServiceTest {
                 requestedEnd
         );
 
+        assertTrue(legacyOnlyPath.isEmpty(), "pre-fix auto-route path should fail on the blocked legacy corridor");
+        assertTrue(sharedGroundPath.size() >= 2, "shared ground path should recover a valid route");
+        assertFalse(sharedGroundPath.contains(new BlockPos(3, 65, 0)), "shared path should not route through the blocked road space");
         assertTrue(resolution.found(), "auto-route preview should recover through the shared ground solver");
         assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, resolution.source());
-        assertEquals(requestedStart, resolution.path().get(0));
-        assertEquals(requestedEnd, resolution.path().get(resolution.path().size() - 1));
+        assertEquals(sharedGroundPath, resolution.path());
     }
 
     private static long columnKey(int x, int z) {
