@@ -287,10 +287,15 @@ class StructureConstructionManagerRoadLinkTest {
         Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|ghost_consistency", plan), 1);
         @SuppressWarnings("unchecked")
         Set<Long> attempted = (Set<Long>) invokeRecordComponent(advanced, "attemptedStepKeys");
-        List<BlockPos> remainingGhosts = invokeRemainingRoadGhostPositions(level, advanced);
 
         assertFalse(attempted.isEmpty(), "advance should mark at least one attempted step");
-        assertFalse(remainingGhosts.isEmpty(), "remaining ghosts should still exist while world state differs from plan");
+        BlockPos attemptedPos = BlockPos.of(attempted.iterator().next());
+        level.blockStates.put(attemptedPos.asLong(), Blocks.AIR.defaultBlockState());
+
+        List<BlockPos> remainingGhosts = invokeRemainingRoadGhostPositions(level, advanced);
+
+        assertTrue(remainingGhosts.contains(attemptedPos),
+                () -> "attempted-but-unconfirmed step should remain ghosted: attempted=" + attemptedPos + " ghosts=" + remainingGhosts);
     }
 
     @Test
