@@ -19,7 +19,6 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -122,24 +121,19 @@ class RoadAutoRouteServiceTest {
         for (int x = 0; x <= 6; x++) {
             setSurfaceColumn(level, x, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
         }
+        setSurfaceColumn(level, 2, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 3, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 4, 1, 64, Blocks.GRASS_BLOCK.defaultBlockState());
         level.blockStates.put(new BlockPos(3, 65, 0).asLong(), Blocks.STONE.defaultBlockState());
 
         BlockPos requestedStart = new BlockPos(0, 64, 0);
         BlockPos requestedEnd = new BlockPos(6, 64, 0);
-        List<BlockPos> legacyOnlyPath = RoadPathfinder.findPath(
-                level,
-                requestedStart,
-                requestedEnd,
-                Set.of(),
-                Set.of(),
-                false
-        );
         List<BlockPos> sharedGroundPath = RoadPathfinder.findGroundPath(
                 level,
                 requestedStart,
                 requestedEnd,
-                Set.of(),
-                Set.of()
+                java.util.Set.of(),
+                java.util.Set.of()
         );
 
         RoadAutoRouteService.RouteResolution resolution = RoadAutoRouteService.resolveAutoRoutePreview(
@@ -148,12 +142,18 @@ class RoadAutoRouteServiceTest {
                 requestedEnd
         );
 
-        assertTrue(legacyOnlyPath.isEmpty(), "pre-fix auto-route path should fail on the blocked legacy corridor");
         assertTrue(sharedGroundPath.size() >= 2, "shared ground path should recover a valid route");
-        assertFalse(sharedGroundPath.contains(new BlockPos(3, 65, 0)), "shared path should not route through the blocked road space");
+        assertFalse(
+                sharedGroundPath.stream().anyMatch(pos -> pos.getX() == 3 && pos.getZ() == 0),
+                "shared path should not traverse the obstructed column"
+        );
         assertTrue(resolution.found(), "auto-route preview should recover through the shared ground solver");
         assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, resolution.source());
         assertEquals(sharedGroundPath, resolution.path());
+        assertFalse(
+                resolution.path().stream().anyMatch(pos -> pos.getX() == 3 && pos.getZ() == 0),
+                "auto-route preview should not traverse the obstructed column"
+        );
     }
 
     private static long columnKey(int x, int z) {

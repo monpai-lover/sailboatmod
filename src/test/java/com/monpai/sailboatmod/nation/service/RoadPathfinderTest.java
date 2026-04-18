@@ -146,6 +146,9 @@ class RoadPathfinderTest {
             level.surfaceHeights.put(columnKey(x, 1), 64);
             level.blockStates.put(new BlockPos(x, 64, 1).asLong(), Blocks.WATER.defaultBlockState());
             level.blockStates.put(new BlockPos(x, 63, 1).asLong(), Blocks.STONE.defaultBlockState());
+            level.surfaceHeights.put(columnKey(x, -1), 64);
+            level.blockStates.put(new BlockPos(x, 64, -1).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, -1).asLong(), Blocks.STONE.defaultBlockState());
         }
 
         BlockPos requestedStart = new BlockPos(0, 66, 0);
@@ -210,10 +213,16 @@ class RoadPathfinderTest {
         setSurfaceColumn(level, 4, 0, 74, Blocks.GRASS_BLOCK.defaultBlockState());
         setSurfaceColumn(level, 5, 0, 74, Blocks.GRASS_BLOCK.defaultBlockState());
         setSurfaceColumn(level, 6, 0, 74, Blocks.GRASS_BLOCK.defaultBlockState());
+        for (int x = 0; x <= 6; x++) {
+            level.surfaceHeights.put(columnKey(x, 1), 64);
+            level.blockStates.put(new BlockPos(x, 64, 1).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, 1).asLong(), Blocks.STONE.defaultBlockState());
+        }
 
         BlockPos requestedStart = new BlockPos(0, 64, 0);
         BlockPos requestedEnd = new BlockPos(6, 74, 0);
         RoadPlanningPassContext context = new RoadPlanningPassContext(level);
+        LandTerrainSamplingCache cache = new LandTerrainSamplingCache(level, context);
 
         RoadPathfinder.PlannedPathResult legacy = RoadPathfinder.findPathForPlan(
                 level,
@@ -232,6 +241,16 @@ class RoadPathfinderTest {
                 java.util.Set.of(),
                 context
         );
+        int nearWaterColumns = legacy.path().stream().mapToInt(cache::nearWater).sum();
+        LandRoadRouteSelector.Selection selection = LandRoadRouteSelector.selectForTest(
+                requestedStart,
+                requestedEnd,
+                legacy.path(),
+                legacy.failureReason(),
+                LandPathQualityEvaluator.elevationVariance(legacy.path()),
+                nearWaterColumns,
+                LandPathQualityEvaluator.fragmentedColumns(legacy.path())
+        );
         RoadPathfinder.PlannedPathResult result = RoadPathfinder.findGroundPathForPlan(
                 level,
                 requestedStart,
@@ -244,6 +263,7 @@ class RoadPathfinderTest {
         assertTrue(legacy.success(), "legacy path should stay available as the alternate backend");
         assertFalse(hybrid.success(), "hybrid path should fail on the cliff step fixture");
         assertEquals(RoadPlanningFailureReason.SEARCH_EXHAUSTED, hybrid.failureReason());
+        assertEquals(LandRoadRouteSelector.BackEnd.HYBRID, selection.backEnd());
         assertTrue(result.success(), "shared ground path should keep the successful alternate backend");
         assertEquals(legacy.path(), result.path());
         assertEquals(requestedStart, result.path().get(0));
