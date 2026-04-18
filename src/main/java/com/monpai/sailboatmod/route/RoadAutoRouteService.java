@@ -32,6 +32,7 @@ import java.util.function.Consumer;
 
 public final class RoadAutoRouteService {
     private static final double STATION_CONNECT_RADIUS = 16.0D;
+    private static final int CARRIAGE_CONNECTOR_MAX_MANHATTAN = 12;
     private static final int SEGMENT_SUBDIVIDE_MANHATTAN = 96;
     private static final int MAX_SEGMENT_INTERMEDIATE_ANCHORS = 24;
     private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
@@ -224,6 +225,17 @@ public final class RoadAutoRouteService {
         }
 
         Graph graph = buildGraph(level);
+        if (!graph.nodes().isEmpty()) {
+            return resolveRoadFirstRoute(level, start, end, graph);
+        }
+
+        return resolveTerrainFallbackRoute(level, start, end, graph);
+    }
+
+    private static RouteResolution resolveTerrainFallbackRoute(ServerLevel level,
+                                                              BlockPos start,
+                                                              BlockPos end,
+                                                              Graph graph) {
         SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
                 start,
                 end,
@@ -242,6 +254,37 @@ public final class RoadAutoRouteService {
                 : RouteResolution.none();
         RouteResolution direct = new RouteResolution(PathSource.LAND_TERRAIN, findLandRoute(level, start, end));
         return preferResolution(direct, hybrid);
+    }
+
+    private static RouteResolution resolveRoadFirstRoute(ServerLevel level,
+                                                         BlockPos start,
+                                                         BlockPos end,
+                                                         Graph graph) {
+        BlockPos startRoad = nearestRoadNodeWithinConnectorBudget(start, graph.nodes());
+        BlockPos endRoad = nearestRoadNodeWithinConnectorBudget(end, graph.nodes());
+        if (startRoad == null || endRoad == null) {
+            return RouteResolution.none();
+        }
+
+        List<BlockPos> startConnector = resolveBoundedGroundConnector(level, start, startRoad);
+        if (startConnector.isEmpty()) {
+            return RouteResolution.none();
+        }
+
+        List<BlockPos> roadPath = startRoad.equals(endRoad) ? List.of(startRoad.immutable()) : dijkstra(startRoad, endRoad, graph.adjacency());
+        if (roadPath.isEmpty()) {
+            return RouteResolution.none();
+        }
+
+        List<BlockPos> endConnector = resolveBoundedGroundConnector(level, endRoad, end);
+        if (endConnector.isEmpty()) {
+            return RouteResolution.none();
+        }
+
+        List<BlockPos> combined = combineSegments(startConnector, roadPath, endConnector);
+        return combined.size() >= 2
+                ? new RouteResolution(PathSource.ROAD_NETWORK, combined)
+                : RouteResolution.none();
     }
 
     private static List<BlockPos> resolveHybridSegment(ServerLevel level,
@@ -378,6 +421,28 @@ public final class RoadAutoRouteService {
         return best;
     }
 
+    private static BlockPos nearestRoadNodeWithinConnectorBudget(BlockPos origin, Set<BlockPos> candidates) {
+        if (origin == null || candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        BlockPos best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        for (BlockPos candidate : candidates) {
+            if (candidate == null) {
+                continue;
+            }
+            int distance = origin.distManhattan(candidate);
+            if (distance > CARRIAGE_CONNECTOR_MAX_MANHATTAN) {
+                continue;
+            }
+            if (distance < bestDistance || (distance == bestDistance && (best == null || origin.distSqr(candidate) < origin.distSqr(best)))) {
+                bestDistance = distance;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
     private static List<BlockPos> dijkstra(BlockPos start, BlockPos end, Map<BlockPos, Set<BlockPos>> adjacency) {
         PriorityQueue<RouteNode> open = new PriorityQueue<>(Comparator.comparingDouble(RouteNode::score));
         Map<BlockPos, Double> dist = new HashMap<>();
@@ -471,6 +536,56 @@ public final class RoadAutoRouteService {
             return hybrid;
         }
         return RouteResolution.none();
+    }
+
+    private static List<BlockPos> resolveBoundedGroundConnector(ServerLevel level, BlockPos from, BlockPos to) {
+        if (level == null || from == null || to == null) {
+            return List.of();
+        }
+        if (from.equals(to)) {
+            return List.of(from.immutable());
+        }
+        if (from.distManhattan(to) > CARRIAGE_CONNECTOR_MAX_MANHATTAN) {
+            return List.of();
+        }
+        List<BlockPos> path = findGroundPathWithSnapshot(level, from, to);
+        if (path.size() < 2 || connectorCost(path) > CARRIAGE_CONNECTOR_MAX_MANHATTAN) {
+            return List.of();
+        }
+        return path;
+    }
+
+    private static int connectorCost(List<BlockPos> path) {
+        if (path == null || path.size() < 2) {
+            return 0;
+        }
+        int total = 0;
+        for (int i = 1; i < path.size(); i++) {
+            total += path.get(i - 1).distManhattan(path.get(i));
+        }
+        return total;
+    }
+
+    private static List<BlockPos> combineSegments(List<BlockPos> startConnector,
+                                                  List<BlockPos> roadPath,
+                                                  List<BlockPos> endConnector) {
+        LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
+        for (BlockPos pos : startConnector == null ? List.<BlockPos>of() : startConnector) {
+            if (pos != null) {
+                merged.add(pos.immutable());
+            }
+        }
+        for (BlockPos pos : roadPath == null ? List.<BlockPos>of() : roadPath) {
+            if (pos != null) {
+                merged.add(pos.immutable());
+            }
+        }
+        for (BlockPos pos : endConnector == null ? List.<BlockPos>of() : endConnector) {
+            if (pos != null) {
+                merged.add(pos.immutable());
+            }
+        }
+        return List.copyOf(merged);
     }
 
     private static List<BlockPos> combineRouteEndpoints(BlockPos start, List<BlockPos> path, BlockPos end) {

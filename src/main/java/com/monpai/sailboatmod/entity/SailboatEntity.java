@@ -419,13 +419,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             boolean wantsReverse = false;
             boolean wantsTurn = false;
             float turnInput = 0.0F;
+            boolean hasManualInput = false;
 
             if (captain instanceof Player captainPlayer) {
                 // Ignore tiny client-side input jitter so autopilot is not canceled accidentally.
                 boolean playerWantsForward = captainPlayer.zza > 0.15F;
                 boolean playerWantsReverse = captainPlayer.zza < -0.15F;
                 boolean playerWantsTurn = Math.abs(captainPlayer.xxa) > 0.15F;
-                boolean hasManualInput = playerWantsForward || playerWantsReverse || playerWantsTurn;
+                hasManualInput = playerWantsForward || playerWantsReverse || playerWantsTurn;
                 if (autopilotControl && !hasManualInput) {
                     // Keep autopilot running when rider has no steering/throttle input.
                     AutopilotCommand autopilotCommand = computeAutopilotCommand();
@@ -486,117 +487,119 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
             }
 
             EngineGear gear = getEngineGear();
-            boolean gearDriving = gear != EngineGear.STOP;
-            double drag = gearDriving ? GEAR_DRIVE_DRAG : GEAR_COASTING_DRAG;
-            double baseX = current.x;
-            double baseZ = current.z;
-            double currentPlanarSq = current.x * current.x + current.z * current.z;
-            double inertialPlanarSq = inertialPlanarVelocity.x * inertialPlanarVelocity.x + inertialPlanarVelocity.z * inertialPlanarVelocity.z;
-            if (!gearDriving) {
-                // STOP gear should coast from inertial velocity instead of being snapped by transient current speed.
-                if (inertialPlanarSq > 0.0D) {
+            if (usesCustomGroundDriveModel()) {
+                applyCustomGroundDriveModel(new GroundDriveContext(autopilotControl, hasManualInput, wantsTurn, turnInput, gear));
+            } else {
+                boolean gearDriving = gear != EngineGear.STOP;
+                double drag = gearDriving ? GEAR_DRIVE_DRAG : GEAR_COASTING_DRAG;
+                double baseX = current.x;
+                double baseZ = current.z;
+                double currentPlanarSq = current.x * current.x + current.z * current.z;
+                double inertialPlanarSq = inertialPlanarVelocity.x * inertialPlanarVelocity.x + inertialPlanarVelocity.z * inertialPlanarVelocity.z;
+                if (!gearDriving) {
+                    // STOP gear should coast from inertial velocity instead of being snapped by transient current speed.
+                    if (inertialPlanarSq > 0.0D) {
+                        baseX = inertialPlanarVelocity.x;
+                        baseZ = inertialPlanarVelocity.z;
+                    }
+                } else if (inertialPlanarSq > currentPlanarSq) {
+                    // Preserve momentum when vanilla boat update momentarily drops current speed.
                     baseX = inertialPlanarVelocity.x;
                     baseZ = inertialPlanarVelocity.z;
                 }
-            } else if (inertialPlanarSq > currentPlanarSq) {
-                // Preserve momentum when vanilla boat update momentarily drops current speed.
-                baseX = inertialPlanarVelocity.x;
-                baseZ = inertialPlanarVelocity.z;
-            }
-            double nextX = baseX * drag;
-            double nextZ = baseZ * drag;
+                double nextX = baseX * drag;
+                double nextZ = baseZ * drag;
 
-            double maxForward = maxSpeed;
-            double maxReverse = Math.min(maxForward * 0.55D, MAX_REVERSE_BLOCKS_PER_TICK);
-            double lateralX = -dirZ;
-            double lateralZ = dirX;
-            double currentForwardSpeed = nextX * dirX + nextZ * dirZ;
-            double lateralSpeed = nextX * lateralX + nextZ * lateralZ;
-            double targetAccel = gear.accelTarget(sailDeployed);
-            double accelDelta = targetAccel - commandedForwardAccel;
-            double accelResponse = accelDelta >= 0.0D ? GEAR_ACCEL_RAMP_UP : GEAR_ACCEL_RAMP_DOWN;
-            commandedForwardAccel += Mth.clamp(accelDelta, -accelResponse, accelResponse);
+                double maxForward = maxSpeed;
+                double maxReverse = Math.min(maxForward * 0.55D, MAX_REVERSE_BLOCKS_PER_TICK);
+                double lateralX = -dirZ;
+                double lateralZ = dirX;
+                double currentForwardSpeed = nextX * dirX + nextZ * dirZ;
+                double lateralSpeed = nextX * lateralX + nextZ * lateralZ;
+                double targetAccel = gear.accelTarget(sailDeployed);
+                double accelDelta = targetAccel - commandedForwardAccel;
+                double accelResponse = accelDelta >= 0.0D ? GEAR_ACCEL_RAMP_UP : GEAR_ACCEL_RAMP_DOWN;
+                commandedForwardAccel += Mth.clamp(accelDelta, -accelResponse, accelResponse);
 
-            double adjustedForwardSpeed = currentForwardSpeed + commandedForwardAccel;
-            double targetForwardSpeed = gear.targetSpeed(maxForward, maxReverse, sailDeployed);
-            double gearForwardCap = gear.maxAllowedSpeed(maxForward, maxReverse, sailDeployed);
-            double cappedForwardSpeed = adjustedForwardSpeed;
-            if (gear != EngineGear.STOP && gearForwardCap > 0.0D) {
-                // Keep acceleration-driven feel: block further acceleration above this gear cap,
-                // but do not instantly snap down when downshifting from overspeed.
-                if (targetForwardSpeed > 0.0D) {
-                    if (currentForwardSpeed >= gearForwardCap && cappedForwardSpeed > currentForwardSpeed) {
-                        cappedForwardSpeed = currentForwardSpeed;
-                    } else if (currentForwardSpeed < gearForwardCap && cappedForwardSpeed > gearForwardCap) {
-                        cappedForwardSpeed = gearForwardCap;
-                    }
-                } else if (targetForwardSpeed < 0.0D) {
-                    double reverseCap = -gearForwardCap;
-                    if (currentForwardSpeed <= reverseCap && cappedForwardSpeed < currentForwardSpeed) {
-                        cappedForwardSpeed = currentForwardSpeed;
-                    } else if (currentForwardSpeed > reverseCap && cappedForwardSpeed < reverseCap) {
-                        cappedForwardSpeed = reverseCap;
+                double adjustedForwardSpeed = currentForwardSpeed + commandedForwardAccel;
+                double targetForwardSpeed = gear.targetSpeed(maxForward, maxReverse, sailDeployed);
+                double gearForwardCap = gear.maxAllowedSpeed(maxForward, maxReverse, sailDeployed);
+                double cappedForwardSpeed = adjustedForwardSpeed;
+                if (gear != EngineGear.STOP && gearForwardCap > 0.0D) {
+                    // Keep acceleration-driven feel: block further acceleration above this gear cap,
+                    // but do not instantly snap down when downshifting from overspeed.
+                    if (targetForwardSpeed > 0.0D) {
+                        if (currentForwardSpeed >= gearForwardCap && cappedForwardSpeed > currentForwardSpeed) {
+                            cappedForwardSpeed = currentForwardSpeed;
+                        } else if (currentForwardSpeed < gearForwardCap && cappedForwardSpeed > gearForwardCap) {
+                            cappedForwardSpeed = gearForwardCap;
+                        }
+                    } else if (targetForwardSpeed < 0.0D) {
+                        double reverseCap = -gearForwardCap;
+                        if (currentForwardSpeed <= reverseCap && cappedForwardSpeed < currentForwardSpeed) {
+                            cappedForwardSpeed = currentForwardSpeed;
+                        } else if (currentForwardSpeed > reverseCap && cappedForwardSpeed < reverseCap) {
+                            cappedForwardSpeed = reverseCap;
+                        }
                     }
                 }
-            }
-            nextX = dirX * cappedForwardSpeed + lateralX * lateralSpeed;
-            nextZ = dirZ * cappedForwardSpeed + lateralZ * lateralSpeed;
+                nextX = dirX * cappedForwardSpeed + lateralX * lateralSpeed;
+                nextZ = dirZ * cappedForwardSpeed + lateralZ * lateralSpeed;
 
-            if (wantsTurn) {
-                double speedBeforeTurn = Math.sqrt(nextX * nextX + nextZ * nextZ);
-                if (speedBeforeTurn > 0.0001D) {
-                    // Rotate velocity direction instead of injecting lateral boost (prevents drift spikes).
-                    double speedRatio = Mth.clamp(speedBeforeTurn / maxSpeed, 0.0D, 1.0D);
-                    double rotateRad = TURN_VELOCITY_ROTATE_RAD * Mth.lerp(speedRatio, 0.25D, 1.0D) * turnInput;
-                    double cos = Math.cos(rotateRad);
-                    double sin = Math.sin(rotateRad);
-                    double rotatedX = nextX * cos - nextZ * sin;
-                    double rotatedZ = nextX * sin + nextZ * cos;
-                    nextX = rotatedX;
-                    nextZ = rotatedZ;
+                if (wantsTurn) {
+                    double speedBeforeTurn = Math.sqrt(nextX * nextX + nextZ * nextZ);
+                    if (speedBeforeTurn > 0.0001D) {
+                        // Rotate velocity direction instead of injecting lateral boost (prevents drift spikes).
+                        double speedRatio = Mth.clamp(speedBeforeTurn / maxSpeed, 0.0D, 1.0D);
+                        double rotateRad = TURN_VELOCITY_ROTATE_RAD * Mth.lerp(speedRatio, 0.25D, 1.0D) * turnInput;
+                        double cos = Math.cos(rotateRad);
+                        double sin = Math.sin(rotateRad);
+                        double rotatedX = nextX * cos - nextZ * sin;
+                        double rotatedZ = nextX * sin + nextZ * cos;
+                        nextX = rotatedX;
+                        nextZ = rotatedZ;
+                    }
+                    if (gearDriving) {
+                        double speedRatio = Mth.clamp(Math.sqrt(nextX * nextX + nextZ * nextZ) / maxSpeed, 0.0D, 1.0D);
+                        double turnDrag = Mth.lerp(speedRatio, 0.998D, preset.turningDrag);
+                        nextX *= turnDrag;
+                        nextZ *= turnDrag;
+                    }
                 }
-                if (gearDriving) {
-                    double speedRatio = Mth.clamp(Math.sqrt(nextX * nextX + nextZ * nextZ) / maxSpeed, 0.0D, 1.0D);
-                    double turnDrag = Mth.lerp(speedRatio, 0.998D, preset.turningDrag);
-                    nextX *= turnDrag;
-                    nextZ *= turnDrag;
+
+                double forwardComp = nextX * dirX + nextZ * dirZ;
+                double lateralComp = nextX * (-dirZ) + nextZ * dirX;
+                double lateralRetention = gearDriving ? 0.94D : 0.97D;
+                if (wantsTurn) {
+                    double turnStrength = Mth.clamp(Math.abs(turnInput), 0.0D, 1.0D);
+                    double turnRetention = gearDriving ? THROTTLE_LATERAL_DAMP : GLIDE_LATERAL_DAMP;
+                    double minRetention = gearDriving ? 0.10D : 0.14D;
+                    lateralRetention = Mth.lerp(turnStrength, turnRetention, minRetention);
                 }
-            }
-
-            double forwardComp = nextX * dirX + nextZ * dirZ;
-            double lateralComp = nextX * (-dirZ) + nextZ * dirX;
-            double lateralRetention = gearDriving ? 0.94D : 0.97D;
-            if (wantsTurn) {
-                double turnStrength = Mth.clamp(Math.abs(turnInput), 0.0D, 1.0D);
-                double turnRetention = gearDriving ? THROTTLE_LATERAL_DAMP : GLIDE_LATERAL_DAMP;
-                double minRetention = gearDriving ? 0.10D : 0.14D;
-                lateralRetention = Mth.lerp(turnStrength, turnRetention, minRetention);
-            }
-            lateralComp *= lateralRetention;
-            nextX = dirX * forwardComp + (-dirZ) * lateralComp;
-            nextZ = dirZ * forwardComp + dirX * lateralComp;
-            if (wantsTurn && gearDriving) {
-                nextX *= TURN_SPEED_LOSS;
-                nextZ *= TURN_SPEED_LOSS;
-            }
-
-
-
-            double finalDockDistance = getFinalDockApproachDistance();
-            if (!Double.isNaN(finalDockDistance)) {
-                double maxApproachSpeed = finalDockDistance <= AUTOPILOT_FINAL_STOP_RADIUS
-                        ? AUTOPILOT_FINAL_STOP_MAX_SPEED
-                        : AUTOPILOT_FINAL_APPROACH_MAX_SPEED;
-                double speed = Math.sqrt(nextX * nextX + nextZ * nextZ);
-                if (speed > maxApproachSpeed && speed > 1.0E-4D) {
-                    double scale = maxApproachSpeed / speed;
-                    nextX *= scale;
-                    nextZ *= scale;
+                lateralComp *= lateralRetention;
+                nextX = dirX * forwardComp + (-dirZ) * lateralComp;
+                nextZ = dirZ * forwardComp + dirX * lateralComp;
+                if (wantsTurn && gearDriving) {
+                    nextX *= TURN_SPEED_LOSS;
+                    nextZ *= TURN_SPEED_LOSS;
                 }
-            }
 
-            inertialPlanarVelocity = new Vec3(nextX, 0.0D, nextZ);
-            setDeltaMovement(nextX, current.y, nextZ);
+                double finalDockDistance = getFinalDockApproachDistance();
+                if (!Double.isNaN(finalDockDistance)) {
+                    double maxApproachSpeed = finalDockDistance <= AUTOPILOT_FINAL_STOP_RADIUS
+                            ? AUTOPILOT_FINAL_STOP_MAX_SPEED
+                            : AUTOPILOT_FINAL_APPROACH_MAX_SPEED;
+                    double speed = Math.sqrt(nextX * nextX + nextZ * nextZ);
+                    if (speed > maxApproachSpeed && speed > 1.0E-4D) {
+                        double scale = maxApproachSpeed / speed;
+                        nextX *= scale;
+                        nextZ *= scale;
+                    }
+                }
+
+                inertialPlanarVelocity = new Vec3(nextX, 0.0D, nextZ);
+                setDeltaMovement(nextX, current.y, nextZ);
+            }
         } else if (!level().isClientSide) {
             if (isOutsidePrimaryTravelMedium()) {
                 nonWaterTicks++;
@@ -612,6 +615,20 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         if (!level().isClientSide && (tickCount <= 1 || tickCount % BLUEMAP_BOAT_SYNC_INTERVAL_TICKS == 0)) {
             BlueMapIntegration.syncBoat(this);
         }
+    }
+
+    protected boolean usesCustomGroundDriveModel() {
+        return false;
+    }
+
+    protected void applyCustomGroundDriveModel(GroundDriveContext context) {
+    }
+
+    protected final void applyCustomGroundDriveResult(Vec3 nextDelta) {
+        Vec3 motion = nextDelta == null ? Vec3.ZERO : nextDelta;
+        inertialPlanarVelocity = new Vec3(motion.x, 0.0D, motion.z);
+        commandedForwardAccel = 0.0D;
+        setDeltaMovement(motion);
     }
 
     protected void applyTransportSupport() {
@@ -1553,20 +1570,37 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
         double slowdownRadius = computeAutopilotSlowdownRadius(finalTarget);
         double stopRadius = finalTarget ? AUTOPILOT_FINAL_STOP_RADIUS : AUTOPILOT_ARRIVAL_RADIUS * 1.2D;
-        EngineGear desiredGear;
-        if (dist < stopRadius) {
-            desiredGear = EngineGear.STOP;
-        } else if (absYawError > AUTOPILOT_TURN_IN_PLACE_DEGREES) {
-            // Large heading mismatch: pivot first, then advance.
-            desiredGear = EngineGear.STOP;
-        } else if (absYawError > AUTOPILOT_SLOW_TURN_DEGREES) {
-            desiredGear = EngineGear.ONE_THIRD_AHEAD;
-        } else if (dist < slowdownRadius) {
-            desiredGear = EngineGear.ONE_THIRD_AHEAD;
-        } else {
-            desiredGear = isSailDeployed() ? EngineGear.FULL_AHEAD : EngineGear.TWO_THIRDS_AHEAD;
-        }
+        EngineGear desiredGear = selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
+    }
+
+    protected EngineGear selectAutopilotGear(boolean finalTarget,
+                                             double dist,
+                                             double stopRadius,
+                                             float absYawError,
+                                             double slowdownRadius) {
+        if (dist < stopRadius) {
+            return EngineGear.STOP;
+        }
+        if (absYawError > AUTOPILOT_TURN_IN_PLACE_DEGREES) {
+            // Large heading mismatch: pivot first, then advance.
+            return EngineGear.STOP;
+        }
+        if (absYawError > AUTOPILOT_SLOW_TURN_DEGREES) {
+            return EngineGear.ONE_THIRD_AHEAD;
+        }
+        if (dist < slowdownRadius) {
+            return EngineGear.ONE_THIRD_AHEAD;
+        }
+        return isSailDeployed() ? EngineGear.FULL_AHEAD : EngineGear.TWO_THIRDS_AHEAD;
+    }
+
+    protected List<Vec3> getAutopilotRoutePoints() {
+        return List.copyOf(autopilotRoute);
+    }
+
+    protected int getAutopilotTargetIndexForDriveModel() {
+        return autopilotTargetIndex;
     }
 
     private double computeAutopilotSlowdownRadius(boolean finalTarget) {
@@ -2380,6 +2414,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         private static AutopilotCommand inactive() {
             return new AutopilotCommand(false, false, 0.0F, 0.0F, EngineGear.STOP);
         }
+    }
+
+    protected record GroundDriveContext(boolean autopilotControl,
+                                        boolean hasManualInput,
+                                        boolean wantsTurn,
+                                        float turnInput,
+                                        EngineGear gear) {
     }
 
     private int seatFromEntityData(int entityId) {

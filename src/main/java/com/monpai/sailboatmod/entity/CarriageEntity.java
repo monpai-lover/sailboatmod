@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.entity;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
+import com.monpai.sailboatmod.route.CarriageRoutePlan;
+import com.monpai.sailboatmod.route.CarriageRoutePlanner;
 import com.monpai.sailboatmod.registry.ModSounds;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -10,6 +12,7 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -29,14 +32,14 @@ public class CarriageEntity extends SailboatEntity {
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.STRING);
     private static final RawAnimation CARRIAGE_IDLE_ANIMATION = RawAnimation.begin().thenLoop("idle");
     private static final RawAnimation CARRIAGE_ROLL_ANIMATION = RawAnimation.begin().thenLoop("roll");
-    private static final double ROAD_DRAG = 0.96D;
-    private static final double GROUND_DRAG = 0.91D;
     private static final double AIR_DRAG = 0.88D;
-    private static final double ROAD_ACCEL_BONUS = 0.012D;
-    private static final double OFFROAD_PENALTY = 0.005D;
-    private static final double UPHILL_PENALTY = 0.01D;
+    private static final float ROAD_TURN_DEGREES_PER_TICK = 9.0F;
+    private static final float OFFROAD_TURN_DEGREES_PER_TICK = 6.0F;
     private int lastPassengerCount = 0;
     private boolean passengerSoundStateInitialized = false;
+    private VirtualHorseDriveState virtualHorseDriveState = VirtualHorseDriveState.idle();
+    private CarriageRoutePlan activeRoutePlan = CarriageRoutePlan.empty();
+    private int activeRouteWaypointCount = -1;
 
     public CarriageEntity(EntityType<? extends CarriageEntity> entityType, Level level) {
         super(entityType, level);
@@ -109,22 +112,44 @@ public class CarriageEntity extends SailboatEntity {
         }
         Vec3 motion = getDeltaMovement();
         if (isPrimaryTravelMedium()) {
-            boolean onRoad = isOnFinishedRoadSurface();
-            double drag = onRoad ? ROAD_DRAG : GROUND_DRAG;
-            double clampedY = onGround() ? Math.max(-0.05D, motion.y * 0.15D) : motion.y;
-            Vec3 adjusted = new Vec3(motion.x * drag, clampedY, motion.z * drag);
-            if (onRoad) {
-                adjusted = addForwardBonus(adjusted, ROAD_ACCEL_BONUS);
-            } else {
-                adjusted = addForwardBonus(adjusted, -OFFROAD_PENALTY);
-            }
-            if (isClimbing()) {
-                adjusted = addForwardBonus(adjusted, -UPHILL_PENALTY);
-            }
-            setDeltaMovement(adjusted);
+            setDeltaMovement(motion.x, onGround() ? Math.max(-0.05D, motion.y * 0.15D) : motion.y, motion.z);
             return;
         }
         setDeltaMovement(motion.x * AIR_DRAG, Math.max(-0.12D, motion.y - 0.05D), motion.z * AIR_DRAG);
+    }
+
+    @Override
+    protected boolean usesCustomGroundDriveModel() {
+        return true;
+    }
+
+    @Override
+    protected void applyCustomGroundDriveModel(GroundDriveContext context) {
+        GroundDriveContext effectiveContext = context == null
+                ? new GroundDriveContext(false, false, false, 0.0F, EngineGear.STOP)
+                : context;
+        EngineGear gear = effectiveContext.gear() == null ? EngineGear.STOP : effectiveContext.gear();
+        boolean onRoad = isOnFinishedRoadSurface();
+        float leadYaw = getYRot() + effectiveContext.turnInput() * (onRoad ? ROAD_TURN_DEGREES_PER_TICK : OFFROAD_TURN_DEGREES_PER_TICK);
+        boolean braking = gear == EngineGear.STOP;
+        double driveIntent = Math.signum(gear.id);
+        virtualHorseDriveState = virtualHorseDriveState.updateTowardIntent(driveIntent, leadYaw, gear, braking);
+
+        DrawnCarriagePhysics.MotionResult motion = DrawnCarriagePhysics.solveGroundMotion(new DrawnCarriagePhysics.MotionInput(
+                getDeltaMovement(),
+                getYRot(),
+                virtualHorseDriveState.currentHeading(),
+                virtualHorseDriveState.currentTraction(),
+                virtualHorseDriveState.targetSpeed(),
+                onGround(),
+                onRoad,
+                isClimbing(),
+                virtualHorseDriveState.braking()
+        ));
+        setYRot(motion.nextYaw());
+        setYHeadRot(motion.nextYaw());
+        setYBodyRot(motion.nextYaw());
+        applyCustomGroundDriveResult(motion.nextDelta());
     }
 
     @Override
@@ -270,22 +295,6 @@ public class CarriageEntity extends SailboatEntity {
         return getDeltaMovement().y > 0.02D;
     }
 
-    private Vec3 addForwardBonus(Vec3 motion, double amount) {
-        double horizontalSq = motion.x * motion.x + motion.z * motion.z;
-        if (horizontalSq <= 1.0E-6D) {
-            return motion;
-        }
-        double horizontal = Math.sqrt(horizontalSq);
-        double yawRad = getYRot() * (Math.PI / 180.0D);
-        double dirX = -Math.sin(yawRad);
-        double dirZ = Math.cos(yawRad);
-        double forward = motion.x * dirX + motion.z * dirZ;
-        double lateralX = motion.x - dirX * forward;
-        double lateralZ = motion.z - dirZ * forward;
-        double adjustedForward = Math.max(0.0D, forward + amount);
-        return new Vec3(dirX * adjustedForward + lateralX, motion.y, dirZ * adjustedForward + lateralZ);
-    }
-
     private static boolean isRoadSurfaceState(BlockState state) {
         String path = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
         return path.contains("stone_brick") || path.contains("road");
@@ -293,6 +302,75 @@ public class CarriageEntity extends SailboatEntity {
 
     public static boolean isRoadSurfaceForTest(BlockState state) {
         return isRoadSurfaceState(state);
+    }
+
+    static Vec3 solveGroundMotionForTest(Vec3 current,
+                                         float carriageYaw,
+                                         float leadYaw,
+                                         SailboatEntity.EngineGear gear,
+                                         boolean onGround,
+                                         boolean onRoad,
+                                         boolean climbing,
+                                         boolean braking) {
+        VirtualHorseDriveState driveState = VirtualHorseDriveState.idle()
+                .updateTowardIntent(Math.signum(gear.id), leadYaw, gear, braking);
+        return DrawnCarriagePhysics.solveGroundMotion(new DrawnCarriagePhysics.MotionInput(
+                current,
+                carriageYaw,
+                driveState.currentHeading(),
+                driveState.currentTraction(),
+                driveState.targetSpeed(),
+                onGround,
+                onRoad,
+                climbing,
+                braking
+        )).nextDelta();
+    }
+
+    static double targetSpeedForTest(SailboatEntity.EngineGear gear) {
+        return VirtualHorseDriveState.idle()
+                .updateTowardIntent(Math.signum(gear.id), 0.0F, gear, false)
+                .targetSpeed();
+    }
+
+    static SailboatEntity.EngineGear autopilotGearForSegmentForTest(@Nullable CarriageRoutePlan.Segment segment) {
+        return segment != null && segment.kind() == CarriageRoutePlan.SegmentKind.ROAD_CORRIDOR
+                ? SailboatEntity.EngineGear.TWO_THIRDS_AHEAD
+                : SailboatEntity.EngineGear.ONE_THIRD_AHEAD;
+    }
+
+    @Override
+    protected EngineGear selectAutopilotGear(boolean finalTarget,
+                                             double dist,
+                                             double stopRadius,
+                                             float absYawError,
+                                             double slowdownRadius) {
+        EngineGear base = super.selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
+        if (base == EngineGear.STOP || base == EngineGear.ONE_THIRD_AHEAD) {
+            return base;
+        }
+        ensureActiveRoutePlan();
+        CarriageRoutePlan.Segment segment = activeRoutePlan.segmentForWaypointIndex(getAutopilotTargetIndexForDriveModel());
+        return autopilotGearForSegmentForTest(segment);
+    }
+
+    private void ensureActiveRoutePlan() {
+        if (!(level() instanceof ServerLevel serverLevel)) {
+            activeRoutePlan = CarriageRoutePlan.empty();
+            activeRouteWaypointCount = -1;
+            return;
+        }
+        java.util.List<Vec3> routePoints = getAutopilotRoutePoints();
+        if (routePoints.size() < 2) {
+            activeRoutePlan = CarriageRoutePlan.empty();
+            activeRouteWaypointCount = routePoints.size();
+            return;
+        }
+        if (activeRoutePlan.found() && activeRouteWaypointCount == routePoints.size()) {
+            return;
+        }
+        activeRoutePlan = CarriageRoutePlanner.planFromWaypoints(serverLevel, routePoints);
+        activeRouteWaypointCount = routePoints.size();
     }
 
     private static PassengerSoundCue passengerSoundCue(int previousCount, int currentCount) {
