@@ -214,6 +214,8 @@ public final class StructureConstructionManager {
     private static final Map<String, Map<String, ActiveWorker>> ACTIVE_ROAD_WORKERS = new ConcurrentHashMap<>();
     private static final Map<String, Integer> ACTIVE_BUILDING_HAMMER_CREDITS = new ConcurrentHashMap<>();
     private static final Map<String, Integer> ACTIVE_ROAD_HAMMER_CREDITS = new ConcurrentHashMap<>();
+    private static final Map<String, Set<Long>> ACTIVE_ROAD_SKIPPED_STEP_KEYS = new ConcurrentHashMap<>();
+    private static final Map<String, String> ACTIVE_ROAD_BLOCKED_REASONS = new ConcurrentHashMap<>();
     private static final Map<UUID, Long> PLAYER_HAMMER_COOLDOWNS = new ConcurrentHashMap<>();
     private static final Set<String> RESTORED_DIMENSIONS = ConcurrentHashMap.newKeySet();
     private static final int BUILD_DURATION_TICKS = 600; // ~30 seconds for better visibility
@@ -589,6 +591,7 @@ public final class StructureConstructionManager {
             RoadConstructionJob persistedJob = entry.getValue();
             RoadConstructionJob job = refreshRoadConstructionState(level, entry.getValue());
             if (job.level != level) continue;
+            String previousBlockedReason = ACTIVE_ROAD_BLOCKED_REASONS.getOrDefault(entry.getKey(), "");
 
             ServerPlayer owner = ownerPlayer(level, job.ownerUuid);
             if (owner != null) {
@@ -654,6 +657,11 @@ public final class StructureConstructionManager {
                 int targetPlacedStepCount = Math.min(totalUnits, Math.max(consumedStepCount, (int) targetProgress));
                 RoadConstructionJob advancedJob = placeRoadBuildSteps(level, job, targetPlacedStepCount - consumedStepCount);
                 int newPlacedStepCount = advancedJob.placedStepCount;
+                String blockedReason = ACTIVE_ROAD_BLOCKED_REASONS.getOrDefault(entry.getKey(), "");
+
+                if (owner != null && !blockedReason.isBlank() && !blockedReason.equals(previousBlockedReason)) {
+                    owner.sendSystemMessage(Component.literal("Road construction blocked: " + blockedReason));
+                }
 
                 if (newPlacedStepCount >= totalUnits) {
                     persistRoadConstruction(level, advancedJob.roadId, advancedJob.ownerUuid, advancedJob.plan, advancedJob.rollbackStates, totalUnits, totalUnits, false, 0, false, advancedJob.attemptedStepKeys);
@@ -1743,7 +1751,8 @@ public final class StructureConstructionManager {
             return job;
         }
         Set<Long> completedStepKeys = completedRoadBuildStepKeys(level, job.plan);
-        int placedStepCount = countCompletedRoadBuildSteps(job.plan, completedStepKeys);
+        Set<Long> consumedStepKeys = unionRoadBuildStepKeys(completedStepKeys, skippedRoadBuildStepKeys(job.roadId, job.plan));
+        int placedStepCount = countCompletedRoadBuildSteps(job.plan, consumedStepKeys);
         return new RoadConstructionJob(
                 job.level,
                 job.roadId,
@@ -1772,57 +1781,62 @@ public final class StructureConstructionManager {
         job = refreshRoadConstructionState(level, job);
         int totalSteps = job.plan.buildSteps().size();
         Set<Long> attemptedStepKeys = new LinkedHashSet<>(job.attemptedStepKeys);
-        int startCount = countCompletedRoadBuildSteps(job.plan, attemptedStepKeys);
+        Set<Long> skippedStepKeys = new LinkedHashSet<>(skippedRoadBuildStepKeys(job.roadId, job.plan));
+        Set<Long> consumedStepKeys = new LinkedHashSet<>(unionRoadBuildStepKeys(attemptedStepKeys, skippedStepKeys));
+        int startCount = countCompletedRoadBuildSteps(job.plan, consumedStepKeys);
         int targetCount = Math.max(startCount, Math.min(totalSteps, startCount + stepCount));
         boolean placedAny = false;
         int completedCount = startCount;
         BlockPos effectPos = null;
-        RoadGeometryPlanner.RoadBuildPhase highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECOR;
+        String blockedReason = "";
         for (RoadGeometryPlanner.RoadBuildStep step : job.plan.buildSteps()) {
-            if (attemptedStepKeys.contains(step.pos().asLong())) {
+            long stepKey = step.pos().asLong();
+            if (attemptedStepKeys.contains(stepKey) || skippedStepKeys.contains(stepKey)) {
                 continue;
             }
-            boolean skippedForPhaseLock = step.phase().compareTo(highestPlaceablePhase) > 0;
+            if (!roadBuildStepDependenciesSatisfied(job.plan, consumedStepKeys, step)) {
+                if (blockedReason.isBlank()) {
+                    blockedReason = roadBuildStepDependencyReason(job.plan, consumedStepKeys, step);
+                }
+                continue;
+            }
             boolean placed = false;
-            if (!skippedForPhaseLock) {
+            ConstructionStepExecutor.clearNaturalObstacles(level, step.pos());
+            ConstructionStepSatisfactionService.StepDecision decision =
+                    ConstructionStepSatisfactionService.decide(
+                            level.getBlockState(step.pos()),
+                            step.state(),
+                            step.pos(),
+                            toStepKind(step.phase())
+                    );
+            if (decision == ConstructionStepSatisfactionService.StepDecision.SATISFIED) {
+                attemptedStepKeys.add(stepKey);
+                consumedStepKeys.add(stepKey);
+                completedCount++;
+                effectPos = step.pos();
+            } else if (decision == ConstructionStepSatisfactionService.StepDecision.RETRYABLE) {
                 ConstructionStepExecutor.clearNaturalObstacles(level, step.pos());
-                ConstructionStepSatisfactionService.StepDecision decision =
-                        ConstructionStepSatisfactionService.decide(
-                                level.getBlockState(step.pos()),
-                                step.state(),
-                                step.pos(),
-                                toStepKind(step.phase())
-                        );
-                if (decision == ConstructionStepSatisfactionService.StepDecision.SATISFIED) {
-                    attemptedStepKeys.add(step.pos().asLong());
+                if (blockedReason.isBlank()) {
+                    blockedReason = "waiting to clear " + step.pos().toShortString();
+                }
+            } else if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
+                skippedStepKeys.add(stepKey);
+                consumedStepKeys.add(stepKey);
+                completedCount++;
+                if (blockedReason.isBlank()) {
+                    blockedReason = describeBlockedRoadBuildStep(level, step);
+                }
+            } else {
+                placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
+                placedAny |= placed;
+                if (placed) {
+                    attemptedStepKeys.add(stepKey);
+                    consumedStepKeys.add(stepKey);
                     completedCount++;
                     effectPos = step.pos();
-                } else if (decision == ConstructionStepSatisfactionService.StepDecision.RETRYABLE) {
-                    ConstructionStepExecutor.clearNaturalObstacles(level, step.pos());
-                    if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
-                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
-                    } else if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.DECK) {
-                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECK;
-                    }
-                } else if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
-                    if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
-                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
-                    } else if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.DECK) {
-                        highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECK;
-                    }
                 } else {
-                    placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
-                    placedAny |= placed;
-                    if (placed) {
-                        attemptedStepKeys.add(step.pos().asLong());
-                        completedCount++;
-                        effectPos = step.pos();
-                    } else {
-                        if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT) {
-                            highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
-                        } else if (step.phase() == RoadGeometryPlanner.RoadBuildPhase.DECK) {
-                            highestPlaceablePhase = RoadGeometryPlanner.RoadBuildPhase.DECK;
-                        }
+                    if (blockedReason.isBlank()) {
+                        blockedReason = describeRoadPlacementFailure(level, step);
                     }
                 }
             }
@@ -1830,6 +1844,8 @@ public final class StructureConstructionManager {
                 break;
             }
         }
+        updateSkippedRoadBuildSteps(job.roadId, skippedStepKeys);
+        updateRoadBlockedReason(job.roadId, blockedReason);
         if (placedAny) {
             BlockPos center = effectPos == null ? job.plan.buildSteps().get(Math.min(job.plan.buildSteps().size() - 1, Math.max(0, startCount))).pos() : effectPos;
             level.sendParticles(ParticleTypes.CLOUD,
@@ -1856,6 +1872,85 @@ public final class StructureConstructionManager {
                 false,
                 Set.copyOf(attemptedStepKeys)
         );
+    }
+
+    private static boolean roadBuildStepDependenciesSatisfied(RoadPlacementPlan plan,
+                                                              Set<Long> consumedStepKeys,
+                                                              RoadGeometryPlanner.RoadBuildStep step) {
+        if (plan == null || step == null) {
+            return true;
+        }
+        for (RoadGeometryPlanner.RoadBuildStep candidate : plan.buildSteps()) {
+            if (candidate == null || candidate.order() >= step.order()) {
+                continue;
+            }
+            if (candidate.pos().getX() != step.pos().getX() || candidate.pos().getZ() != step.pos().getZ()) {
+                continue;
+            }
+            if (candidate.pos().getY() >= step.pos().getY()) {
+                continue;
+            }
+            if (consumedStepKeys == null || !consumedStepKeys.contains(candidate.pos().asLong())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String roadBuildStepDependencyReason(RoadPlacementPlan plan,
+                                                        Set<Long> consumedStepKeys,
+                                                        RoadGeometryPlanner.RoadBuildStep step) {
+        if (plan == null || step == null) {
+            return "";
+        }
+        for (RoadGeometryPlanner.RoadBuildStep candidate : plan.buildSteps()) {
+            if (candidate == null || candidate.order() >= step.order()) {
+                continue;
+            }
+            if (candidate.pos().getX() != step.pos().getX() || candidate.pos().getZ() != step.pos().getZ()) {
+                continue;
+            }
+            if (candidate.pos().getY() >= step.pos().getY()) {
+                continue;
+            }
+            if (consumedStepKeys == null || !consumedStepKeys.contains(candidate.pos().asLong())) {
+                return "waiting for support at " + candidate.pos().toShortString();
+            }
+        }
+        return "";
+    }
+
+    private static String describeRoadPlacementFailure(ServerLevel level,
+                                                       RoadGeometryPlanner.RoadBuildStep step) {
+        if (level == null || step == null) {
+            return "";
+        }
+        BlockPos pos = step.pos();
+        BlockState existing = level.getBlockState(pos);
+        if (existing != null && !existing.isAir() && !existing.canBeReplaced() && !existing.liquid()) {
+            return describeBlockedRoadBuildStep(level, step);
+        }
+        BlockState above = level.getBlockState(pos.above());
+        if (above != null && !above.isAir() && !clearanceStateIsSafeToRemove(above)) {
+            return "clearance blocked at " + pos.above().toShortString();
+        }
+        BlockState below = level.getBlockState(pos.below());
+        if (below == null || below.isAir() || below.liquid()) {
+            return "missing support at " + pos.below().toShortString();
+        }
+        return "blocked build step at " + pos.toShortString();
+    }
+
+    private static String describeBlockedRoadBuildStep(ServerLevel level,
+                                                       RoadGeometryPlanner.RoadBuildStep step) {
+        if (level == null || step == null) {
+            return "";
+        }
+        BlockState currentState = level.getBlockState(step.pos());
+        if (currentState == null || currentState.isAir()) {
+            return "blocked build step at " + step.pos().toShortString();
+        }
+        return currentState.getBlock().getName().getString() + " at " + step.pos().toShortString();
     }
 
     private static ConstructionStepSatisfactionService.StepKind toStepKind(RoadGeometryPlanner.RoadBuildPhase phase) {
@@ -2402,7 +2497,7 @@ public final class StructureConstructionManager {
         if (level == null || job == null || job.rollbackActive) {
             return List.of();
         }
-        return remainingRoadGhostBlocks(job.plan, consumedRoadBuildStepKeys(level, job));
+        return remainingRoadGhostBlocks(job.plan, completedRoadBuildStepKeys(level, job.plan));
     }
 
     private static int nextRoadBuildBatchSize(RoadPlacementPlan plan, int placedStepCount) {
@@ -2547,7 +2642,10 @@ public final class StructureConstructionManager {
         if (level == null || job == null || job.plan == null || job.plan.buildSteps().isEmpty()) {
             return Set.of();
         }
-        return consumedRoadBuildStepKeys(job.plan, completedRoadBuildStepKeys(level, job.plan), job.attemptedStepKeys);
+        return unionRoadBuildStepKeys(
+                completedRoadBuildStepKeys(level, job.plan),
+                skippedRoadBuildStepKeys(job.roadId, job.plan)
+        );
     }
 
     private static Set<Long> consumedRoadBuildStepKeys(RoadPlacementPlan plan,
@@ -2569,6 +2667,41 @@ public final class StructureConstructionManager {
             }
         }
         return Set.copyOf(consumed);
+    }
+
+    private static Set<Long> skippedRoadBuildStepKeys(String roadId, RoadPlacementPlan plan) {
+        if (roadId == null || roadId.isBlank() || plan == null || plan.buildSteps().isEmpty()) {
+            return Set.of();
+        }
+        Set<Long> validStepKeys = plan.buildSteps().stream()
+                .map(RoadGeometryPlanner.RoadBuildStep::pos)
+                .map(BlockPos::asLong)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Set<Long> raw = ACTIVE_ROAD_SKIPPED_STEP_KEYS.getOrDefault(roadId, Set.of());
+        if (raw.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<Long> filtered = new LinkedHashSet<>();
+        for (Long key : raw) {
+            if (key != null && validStepKeys.contains(key)) {
+                filtered.add(key);
+            }
+        }
+        return filtered.isEmpty() ? Set.of() : Set.copyOf(filtered);
+    }
+
+    private static Set<Long> unionRoadBuildStepKeys(Set<Long> primary, Set<Long> secondary) {
+        if ((primary == null || primary.isEmpty()) && (secondary == null || secondary.isEmpty())) {
+            return Set.of();
+        }
+        LinkedHashSet<Long> merged = new LinkedHashSet<>();
+        if (primary != null) {
+            merged.addAll(primary);
+        }
+        if (secondary != null) {
+            merged.addAll(secondary);
+        }
+        return merged.isEmpty() ? Set.of() : Set.copyOf(merged);
     }
 
     private static int countCompletedRoadBuildSteps(RoadPlacementPlan plan, Set<Long> completedStepKeys) {
@@ -3013,7 +3146,7 @@ public final class StructureConstructionManager {
         phased.sort(Comparator
                 .comparing(RoadGeometryPlanner.RoadBuildStep::phase)
                 .thenComparingInt(step -> step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT
-                        ? -step.pos().getY()
+                        ? step.pos().getY()
                         : step.pos().getY())
                 .thenComparingInt(step -> step.pos().getX())
                 .thenComparingInt(step -> step.pos().getZ()));
@@ -3203,10 +3336,10 @@ public final class StructureConstructionManager {
             BlockPos cursor = topAnchor;
             while (cursor.getY() >= safeMinBuildHeight(level)) {
                 BlockState state = level.getBlockState(cursor);
-                if (!cursor.equals(topAnchor) && !isRoadPlacementReplaceable(state)) {
+                column.add(cursor.immutable());
+                if (!cursor.equals(topAnchor) && !isBridgeSupportPassThrough(state)) {
                     break;
                 }
-                column.add(cursor.immutable());
                 cursor = cursor.below();
             }
             for (int i = column.size() - 1; i >= 0; i--) {
@@ -3214,6 +3347,28 @@ public final class StructureConstructionManager {
             }
         }
         return expanded.isEmpty() ? supportPositions : List.copyOf(expanded);
+    }
+
+    private static boolean isBridgeSupportPassThrough(BlockState state) {
+        if (state == null || state.isAir() || state.liquid()) {
+            return true;
+        }
+        Block block = state.getBlock();
+        return state.canBeReplaced()
+                || state.is(Blocks.WATER)
+                || state.is(Blocks.ICE)
+                || state.is(Blocks.PACKED_ICE)
+                || state.is(Blocks.BLUE_ICE)
+                || state.is(Blocks.FROSTED_ICE)
+                || state.is(Blocks.KELP)
+                || state.is(Blocks.KELP_PLANT)
+                || state.is(Blocks.SEAGRASS)
+                || state.is(Blocks.TALL_SEAGRASS)
+                || state.is(BlockTags.LEAVES)
+                || block instanceof LeavesBlock
+                || block instanceof VineBlock
+                || block instanceof SnowLayerBlock
+                || isNaturalWoodObstacle(state);
     }
 
     private static RoadPlacementArtifacts filterCoreExcludedArtifacts(RoadPlacementArtifacts artifacts,
@@ -4006,6 +4161,30 @@ public final class StructureConstructionManager {
         ACTIVE_ROAD_CONSTRUCTIONS.remove(roadId);
         ACTIVE_ROAD_WORKERS.remove(roadId);
         ACTIVE_ROAD_HAMMER_CREDITS.remove(roadId);
+        ACTIVE_ROAD_SKIPPED_STEP_KEYS.remove(roadId);
+        ACTIVE_ROAD_BLOCKED_REASONS.remove(roadId);
+    }
+
+    private static void updateRoadBlockedReason(String roadId, String blockedReason) {
+        if (roadId == null || roadId.isBlank()) {
+            return;
+        }
+        if (blockedReason == null || blockedReason.isBlank()) {
+            ACTIVE_ROAD_BLOCKED_REASONS.remove(roadId);
+            return;
+        }
+        ACTIVE_ROAD_BLOCKED_REASONS.put(roadId, blockedReason);
+    }
+
+    private static void updateSkippedRoadBuildSteps(String roadId, Set<Long> skippedStepKeys) {
+        if (roadId == null || roadId.isBlank()) {
+            return;
+        }
+        if (skippedStepKeys == null || skippedStepKeys.isEmpty()) {
+            ACTIVE_ROAD_SKIPPED_STEP_KEYS.remove(roadId);
+            return;
+        }
+        ACTIVE_ROAD_SKIPPED_STEP_KEYS.put(roadId, Set.copyOf(skippedStepKeys));
     }
 
     private static List<BlockPos> roadOwnedBlocks(ServerLevel level, RoadPlacementPlan plan) {
@@ -4889,6 +5068,8 @@ public final class StructureConstructionManager {
         ACTIVE_ROAD_WORKERS.clear();
         ACTIVE_BUILDING_HAMMER_CREDITS.clear();
         ACTIVE_ROAD_HAMMER_CREDITS.clear();
+        ACTIVE_ROAD_SKIPPED_STEP_KEYS.clear();
+        ACTIVE_ROAD_BLOCKED_REASONS.clear();
         PLAYER_HAMMER_COOLDOWNS.clear();
         RESTORED_DIMENSIONS.clear();
     }

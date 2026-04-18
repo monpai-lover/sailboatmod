@@ -189,6 +189,50 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void permanentlyBlockedSupportStepDoesNotPreventIndependentDeckFromAdvancing() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.blockStates.put(new BlockPos(0, 64, 0).asLong(), Blocks.CHEST.defaultBlockState());
+        level.blockStates.put(new BlockPos(2, 63, 0).asLong(), Blocks.STONE.defaultBlockState());
+
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(2, 64, 0),
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICKS.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(2, 64, 0), Blocks.STONE_BRICKS.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(2, 65, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                ),
+                List.of(
+                        new RoadGeometryPlanner.RoadBuildStep(0, new BlockPos(0, 64, 0), Blocks.STONE_BRICKS.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.SUPPORT),
+                        new RoadGeometryPlanner.RoadBuildStep(1, new BlockPos(2, 64, 0), Blocks.STONE_BRICKS.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.SUPPORT),
+                        new RoadGeometryPlanner.RoadBuildStep(2, new BlockPos(2, 65, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState(), RoadGeometryPlanner.RoadBuildPhase.DECK)
+                ),
+                List.of(),
+                List.of(),
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(0, 64, 0)
+        );
+
+        Object advanced = invokeAdvanceRoadBuildSteps(level, newRoadConstructionJob(level, "manual|test|blocked_support_skip", plan), 3);
+
+        assertEquals(Blocks.CHEST.defaultBlockState(), level.getBlockState(new BlockPos(0, 64, 0)));
+        assertEquals(Blocks.STONE_BRICKS.defaultBlockState(), level.getBlockState(new BlockPos(2, 64, 0)));
+        assertEquals(Blocks.STONE_BRICK_SLAB.defaultBlockState(), level.getBlockState(new BlockPos(2, 65, 0)));
+        assertEquals(3, readRecordComponentAsInt(advanced, "placedStepCount"));
+    }
+
+    @Test
     void naturalWoodObstacleDoesNotBlockAutomaticRoadPlacement() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
@@ -924,6 +968,53 @@ class StructureConstructionManagerRoadLinkTest {
     }
 
     @Test
+    void expandedBridgeSupportsStopAtFirstLoadBearingTerrainColumn() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int y = 63; y <= 67; y++) {
+            level.blockStates.put(new BlockPos(2, y, 0).asLong(), Blocks.WATER.defaultBlockState());
+        }
+        level.blockStates.put(new BlockPos(2, 62, 0).asLong(), Blocks.STONE.defaultBlockState());
+        level.blockStates.put(new BlockPos(2, 61, 0).asLong(), Blocks.STONE.defaultBlockState());
+        level.blockStates.put(new BlockPos(2, 60, 0).asLong(), Blocks.STONE.defaultBlockState());
+
+        @SuppressWarnings("unchecked")
+        List<BlockPos> expanded = (List<BlockPos>) invokePrivateStatic(
+                "expandBridgeSupportPositions",
+                new Class<?>[] {ServerLevel.class, List.class, BlockState.class},
+                level,
+                List.of(new BlockPos(2, 68, 0)),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+
+        assertEquals(62, expanded.stream().mapToInt(BlockPos::getY).min().orElseThrow(), expanded::toString);
+    }
+
+    @Test
+    void bridgeSupportBuildStepsAreSortedFromBottomToTop() {
+        @SuppressWarnings("unchecked")
+        List<RoadGeometryPlanner.RoadBuildStep> steps = (List<RoadGeometryPlanner.RoadBuildStep>) invokePrivateStatic(
+                "toBuildSteps",
+                new Class<?>[] {List.class},
+                List.of(
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 62, 0), Blocks.STONE_BRICKS.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 63, 0), Blocks.STONE_BRICKS.defaultBlockState()),
+                        new RoadGeometryPlanner.GhostRoadBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICK_SLAB.defaultBlockState())
+                )
+        );
+
+        List<BlockPos> supportSteps = steps.stream()
+                .filter(step -> step.phase() == RoadGeometryPlanner.RoadBuildPhase.SUPPORT)
+                .map(RoadGeometryPlanner.RoadBuildStep::pos)
+                .toList();
+
+        assertEquals(List.of(new BlockPos(0, 62, 0), new BlockPos(0, 63, 0)), supportSteps);
+    }
+
+    @Test
     void alreadyBuiltRoadSegmentsAreExcludedFromNewConstructionPlan() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
@@ -1132,6 +1223,16 @@ class StructureConstructionManagerRoadLinkTest {
                     .orElseThrow();
             method.setAccessible(true);
             return method.invoke(null, level, job, stepCount);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static Object invokePrivateStatic(String methodName, Class<?>[] parameterTypes, Object... args) {
+        try {
+            Method method = StructureConstructionManager.class.getDeclaredMethod(methodName, parameterTypes);
+            method.setAccessible(true);
+            return method.invoke(null, args);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }
