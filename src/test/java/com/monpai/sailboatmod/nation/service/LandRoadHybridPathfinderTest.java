@@ -109,6 +109,31 @@ class LandRoadHybridPathfinderTest {
     }
 
     @Test
+    void hybridPathfinderRejectsBlockedGoalAnchorBeforeSearch() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.setSurface(0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(1, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(2, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(3, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.STONE.defaultBlockState());
+
+        RoadPathfinder.PlannedPathResult result = LandRoadHybridPathfinder.find(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(3, 64, 0),
+                Set.of(),
+                Set.of(),
+                new RoadPlanningPassContext(level)
+        );
+
+        assertFalse(result.success(), "blocked goal anchor should not seed a successful hybrid land path");
+        assertEquals(RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE, result.failureReason());
+    }
+
+    @Test
     void hybridPathfinderAvoidsBridgeRequiredIntermediateColumnWhenDryDetourExists() {
         TestTerrainLevel level = allocate(TestTerrainLevel.class);
         level.blockStates = new HashMap<>();

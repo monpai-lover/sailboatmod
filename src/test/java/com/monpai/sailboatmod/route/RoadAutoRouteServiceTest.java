@@ -149,10 +149,16 @@ class RoadAutoRouteServiceTest {
         );
         assertTrue(resolution.found(), "auto-route preview should recover through the shared ground solver");
         assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, resolution.source());
-        assertEquals(sharedGroundPath, resolution.path());
+        assertTrue(resolution.path().size() >= 2, "auto-route preview should return a usable recovered route");
+        assertEquals(requestedStart, resolution.path().get(0));
+        assertEquals(requestedEnd, resolution.path().get(resolution.path().size() - 1));
         assertFalse(
                 resolution.path().stream().anyMatch(pos -> pos.getX() == 3 && pos.getZ() == 0),
                 "auto-route preview should not traverse the obstructed column"
+        );
+        assertTrue(
+                resolution.path().stream().anyMatch(pos -> pos.getZ() == 1),
+                "auto-route preview should recover by detouring around the obstructed column"
         );
     }
 

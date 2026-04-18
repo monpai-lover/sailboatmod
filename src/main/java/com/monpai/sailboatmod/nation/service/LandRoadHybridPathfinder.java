@@ -37,7 +37,8 @@ public final class LandRoadHybridPathfinder {
         }
         Set<Long> blockedForTraversal = mergeBlockedColumns(blockedColumns, excludedColumns);
         Set<Long> unblockedEndpointColumns = unblockEndpoints(start, goal, blockedForTraversal);
-        if (!isTraversable(level, start, unblockedEndpointColumns, context)) {
+        if (!isTraversable(level, start, unblockedEndpointColumns, context)
+                || !isTraversable(level, goal, unblockedEndpointColumns, context)) {
             return new RoadPathfinder.PlannedPathResult(List.of(), RoadPlanningFailureReason.NO_CONTINUOUS_GROUND_ROUTE);
         }
 
