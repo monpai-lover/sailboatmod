@@ -459,7 +459,9 @@ public final class RoadAutoRouteService {
     }
 
     private static RouteResolution preferResolution(RouteResolution direct, RouteResolution hybrid) {
-        if (hybrid != null && hybrid.found()) {
+        if (hybrid != null
+                && hybrid.found()
+                && hybrid.source() == PathSource.ROAD_NETWORK) {
             return hybrid;
         }
         return direct != null && direct.found() ? direct : RouteResolution.none();

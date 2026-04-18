@@ -112,6 +112,39 @@ class RoadAutoRouteServiceTest {
     }
 
     @Test
+    void preferResolutionReturnsDirectLandPathWhenHybridFails() {
+        RoadAutoRouteService.RouteResolution direct = new RoadAutoRouteService.RouteResolution(
+                RoadAutoRouteService.PathSource.LAND_TERRAIN,
+                List.of(new net.minecraft.core.BlockPos(0, 64, 0), new net.minecraft.core.BlockPos(4, 67, 0))
+        );
+        RoadAutoRouteService.RouteResolution hybrid = RoadAutoRouteService.RouteResolution.none();
+
+        RoadAutoRouteService.RouteResolution chosen = RoadAutoRouteService.preferResolutionForTest(direct, hybrid);
+
+        assertTrue(chosen.found());
+        assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, chosen.source());
+        assertEquals(2, chosen.path().size());
+    }
+
+    @Test
+    void preferResolutionKeepsDirectGroundContractOverHybridLandTerrain() {
+        RoadAutoRouteService.RouteResolution direct = new RoadAutoRouteService.RouteResolution(
+                RoadAutoRouteService.PathSource.LAND_TERRAIN,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(4, 67, 0))
+        );
+        RoadAutoRouteService.RouteResolution hybrid = new RoadAutoRouteService.RouteResolution(
+                RoadAutoRouteService.PathSource.LAND_TERRAIN,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(2, 65, 0), new BlockPos(4, 67, 0))
+        );
+
+        RoadAutoRouteService.RouteResolution chosen = RoadAutoRouteService.preferResolutionForTest(direct, hybrid);
+
+        assertTrue(chosen.found());
+        assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, chosen.source());
+        assertEquals(2, chosen.path().size());
+    }
+
+    @Test
     void resolveAutoRoutePreviewUsesSharedGroundRecoveryForDirectLandPath() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
