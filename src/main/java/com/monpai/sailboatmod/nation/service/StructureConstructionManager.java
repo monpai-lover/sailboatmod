@@ -582,6 +582,7 @@ public final class StructureConstructionManager {
         Set<ServerPlayer> playersToSync = Collections.newSetFromMap(new IdentityHashMap<>());
 
         for (Map.Entry<String, RoadConstructionJob> entry : ACTIVE_ROAD_CONSTRUCTIONS.entrySet()) {
+            RoadConstructionJob persistedJob = entry.getValue();
             RoadConstructionJob job = refreshRoadConstructionState(level, entry.getValue());
             if (job.level != level) continue;
 
@@ -608,7 +609,15 @@ public final class StructureConstructionManager {
             double progressPerTick = job.rollbackActive
                     ? roadRollbackProgressPerTick(totalUnits, speedMultiplier)
                     : roadBuildProgressPerTick(totalUnits, speedMultiplier);
-            double targetProgress = job.progressSteps + progressPerTick;
+            double currentProgress = job.rollbackActive
+                    ? Math.max(job.progressSteps, job.rollbackActionIndex)
+                    : Math.max(Math.max(job.progressSteps, job.placedStepCount), Math.max(persistedJob.progressSteps, persistedJob.placedStepCount));
+            double targetProgress = currentProgress + progressPerTick;
+
+            if (!job.rollbackActive && targetProgress < 1.0D && job.placedStepCount < totalUnits) {
+                targetProgress = 1.0D;
+            }
+
             if (job.rollbackActive) {
                 int startIndex = Math.max(0, Math.min(totalUnits, job.rollbackActionIndex));
                 int targetActionIndex = Math.min(totalUnits, Math.max(startIndex, (int) targetProgress));
@@ -1835,7 +1844,7 @@ public final class StructureConstructionManager {
                 job.plan,
                 job.rollbackStates,
                 completedCount,
-                completedCount,
+                Math.max(job.progressSteps, completedCount),
                 false,
                 0,
                 false,

@@ -3,12 +3,15 @@ package com.monpai.sailboatmod.nation.service;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import net.minecraft.core.Holder;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import sun.misc.Unsafe;
@@ -603,6 +606,67 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
+    void scheduledRoadJobWithRemainingBuildStepsAdvancesDuringTick() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                List.of(),
+                List.of()
+        );
+        seedSupportedRoadbed(level, plan);
+        String roadId = "manual|tick|town_a|town_b";
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
+        Object previous = activeRoads.put(roadId, newRoadConstructionJob(level, roadId, plan, List.of(), 0, plan.buildSteps().size(), false, 0, false));
+
+        try {
+            StructureConstructionManager.tickRoadConstructions(level);
+
+            Object updated = activeRoads.get(roadId);
+            assertNotNull(updated);
+            assertTrue((int) readRecordComponent(updated, "placedStepCount") > 0, "tick should consume at least one road build step");
+        } finally {
+            restoreMapEntry(activeRoads, roadId, previous);
+        }
+    }
+
+    @Test
+    void roadConstructionRuntimeDoesNotDiscardValidJobJustBecauseProgressStartsAtZero() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                List.of(),
+                List.of()
+        );
+        seedSupportedRoadbed(level, plan);
+        String roadId = "manual|runtime|town_a|town_b";
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
+        Object previous = activeRoads.put(roadId, newRoadConstructionJob(level, roadId, plan, List.of(), 0, 0.0D, false, 0, false));
+
+        try {
+            StructureConstructionManager.tickRoadConstructions(level);
+            assertNotNull(activeRoads.get(roadId), "valid road runtime should remain active after first tick");
+        } finally {
+            restoreMapEntry(activeRoads, roadId, previous);
+        }
+    }
+
+    @Test
     void incrementalRollbackRestoresTrackedStatesAcrossMultipleBatches() {
         BlockPos firstRoad = new BlockPos(0, 64, 0);
         BlockPos secondRoad = new BlockPos(1, 64, 0);
@@ -1030,6 +1094,77 @@ class RoadLifecycleServiceTest {
             return (T) unsafe.allocateInstance(type);
         } catch (ReflectiveOperationException ex) {
             throw new AssertionError("Unable to allocate test instance for " + type.getName(), ex);
+        }
+    }
+
+    private static final class TestServerLevel extends ServerLevel {
+        private Map<Long, BlockState> blockStates;
+        private Map<Long, Integer> surfaceHeights;
+        private Holder<Biome> biome;
+
+        private TestServerLevel() {
+            super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
+        }
+
+        @Override
+        public BlockState getBlockState(BlockPos pos) {
+            return blockStates.getOrDefault(pos.asLong(), Blocks.AIR.defaultBlockState());
+        }
+
+        @Override
+        public boolean setBlock(BlockPos pos, BlockState newState, int flags) {
+            blockStates.put(pos.asLong(), newState);
+            return true;
+        }
+
+        @Override
+        public BlockPos getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types heightmapType, BlockPos pos) {
+            int surfaceY = surfaceHeights.getOrDefault(columnKey(pos.getX(), pos.getZ()), 63);
+            return new BlockPos(pos.getX(), surfaceY + 1, pos.getZ());
+        }
+
+        @Override
+        public int getMinBuildHeight() {
+            return 0;
+        }
+
+        @Override
+        public Holder<Biome> getBiome(BlockPos pos) {
+            return biome;
+        }
+
+        @Override
+        public <T extends net.minecraft.core.particles.ParticleOptions> int sendParticles(T particle,
+                                                                                           double x,
+                                                                                           double y,
+                                                                                           double z,
+                                                                                           int count,
+                                                                                           double xDist,
+                                                                                           double yDist,
+                                                                                           double zDist,
+                                                                                           double speed) {
+            return 0;
+        }
+
+        @Override
+        public void playSound(net.minecraft.world.entity.player.Player player,
+                              BlockPos pos,
+                              net.minecraft.sounds.SoundEvent sound,
+                              net.minecraft.sounds.SoundSource source,
+                              float volume,
+                              float pitch) {
+        }
+    }
+
+    private static long columnKey(int x, int z) {
+        return (((long) x) << 32) ^ (z & 0xffffffffL);
+    }
+
+    private static void seedSupportedRoadbed(TestServerLevel level, RoadPlacementPlan plan) {
+        for (BlockPos pos : plan.centerPath()) {
+            level.blockStates.put(pos.below().asLong(), Blocks.DIRT.defaultBlockState());
+            level.blockStates.put(pos.asLong(), Blocks.GRASS_BLOCK.defaultBlockState());
+            level.surfaceHeights.put(columnKey(pos.getX(), pos.getZ()), pos.getY());
         }
     }
 
