@@ -3,22 +3,35 @@ package com.monpai.sailboatmod.nation.service;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.core.Holder;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.storage.DimensionDataStorage;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import sun.misc.Unsafe;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.nio.file.Files;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -641,6 +654,55 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
+    void persistedRoadRuntimeRestorePreservesFractionalProgressAcrossReload() {
+        TestServerLevel level = newPersistentLevel();
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                List.of(),
+                List.of()
+        );
+        seedSupportedRoadbed(level, plan);
+        RoadGeometryPlanner.RoadBuildStep firstStep = plan.buildSteps().get(0);
+        level.blockStates.put(firstStep.pos().asLong(), firstStep.state());
+
+        String roadId = "manual|persisted_fractional|town_a|town_b";
+        UUID ownerUuid = UUID.randomUUID();
+        NationSavedData.get(level).putRoadNetwork(new RoadNetworkRecord(
+                roadId,
+                "nation_a",
+                "town_a",
+                "minecraft:overworld",
+                "town_a",
+                "town_b",
+                plan.centerPath(),
+                1L,
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+        ));
+        invokePersistRoadConstruction(level, roadId, ownerUuid, plan, List.of(), 1, 1.999D, false, 0, false, Set.of());
+
+        reloadSavedData(level);
+        StructureConstructionManager.clearRuntimeState();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
+        invokeEnsureRuntimeRestored(level);
+
+        Object restored = activeRoads.get(roadId);
+        assertNotNull(restored, "persisted road job should be restored into active runtime");
+
+        StructureConstructionManager.tickRoadConstructions(level);
+
+        restored = activeRoads.get(roadId);
+        assertNotNull(restored, "restored road job should remain active after the next tick");
+        assertEquals(2, (int) readRecordComponent(restored, "placedStepCount"),
+                "reload should preserve fractional forward progress so the next tick advances the next road step");
+    }
+
+    @Test
     void roadConstructionRuntimeDoesNotDiscardValidJobJustBecauseProgressStartsAtZero() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
@@ -1111,10 +1173,74 @@ class RoadLifecycleServiceTest {
         }
     }
 
+    private static void invokeEnsureRuntimeRestored(ServerLevel level) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod("ensureRuntimeRestored", ServerLevel.class);
+            method.setAccessible(true);
+            method.invoke(null, level);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to restore persisted runtime", ex);
+        }
+    }
+
+    private static void invokePersistRoadConstruction(ServerLevel level,
+                                                      String roadId,
+                                                      UUID ownerUuid,
+                                                      RoadPlacementPlan plan,
+                                                      List<?> rollbackStates,
+                                                      int placedStepCount,
+                                                      double progressSteps,
+                                                      boolean rollbackActive,
+                                                      int rollbackActionIndex,
+                                                      boolean removeRoadNetworkOnComplete,
+                                                      Set<Long> attemptedStepKeys) {
+        try {
+            var method = Class
+                    .forName("com.monpai.sailboatmod.nation.service.StructureConstructionManager")
+                    .getDeclaredMethod(
+                            "persistRoadConstruction",
+                            ServerLevel.class,
+                            String.class,
+                            UUID.class,
+                            RoadPlacementPlan.class,
+                            List.class,
+                            int.class,
+                            double.class,
+                            boolean.class,
+                            int.class,
+                            boolean.class,
+                            Set.class
+                    );
+            method.setAccessible(true);
+            method.invoke(
+                    null,
+                    level,
+                    roadId,
+                    ownerUuid,
+                    plan,
+                    rollbackStates,
+                    placedStepCount,
+                    progressSteps,
+                    rollbackActive,
+                    rollbackActionIndex,
+                    removeRoadNetworkOnComplete,
+                    attemptedStepKeys
+            );
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to persist road construction runtime", ex);
+        }
+    }
+
     private static final class TestServerLevel extends ServerLevel {
         private Map<Long, BlockState> blockStates;
         private Map<Long, Integer> surfaceHeights;
         private Holder<Biome> biome;
+        private ResourceKey<Level> dimensionKey;
+        private MinecraftServer server;
+        private DimensionDataStorage dataStorage;
+        private RegistryAccess registryAccess;
 
         private TestServerLevel() {
             super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
@@ -1148,6 +1274,33 @@ class RoadLifecycleServiceTest {
         }
 
         @Override
+        public ResourceKey<Level> dimension() {
+            return dimensionKey == null ? Level.OVERWORLD : dimensionKey;
+        }
+
+        @Override
+        public MinecraftServer getServer() {
+            return server;
+        }
+
+        @Override
+        public DimensionDataStorage getDataStorage() {
+            return dataStorage;
+        }
+
+        @Override
+        public RegistryAccess registryAccess() {
+            return registryAccess == null
+                    ? RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY)
+                    : registryAccess;
+        }
+
+        @Override
+        public <T> HolderLookup<T> holderLookup(ResourceKey<? extends net.minecraft.core.Registry<? extends T>> registryKey) {
+            return registryAccess().lookupOrThrow(registryKey);
+        }
+
+        @Override
         public <T extends net.minecraft.core.particles.ParticleOptions> int sendParticles(T particle,
                                                                                            double x,
                                                                                            double y,
@@ -1170,8 +1323,133 @@ class RoadLifecycleServiceTest {
         }
     }
 
+    private static final class TestMinecraftServer extends MinecraftServer {
+        private net.minecraft.server.players.PlayerList playerList;
+
+        private TestMinecraftServer() {
+            super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        protected boolean initServer() {
+            return false;
+        }
+
+        @Override
+        public int getOperatorUserPermissionLevel() {
+            return 0;
+        }
+
+        @Override
+        public int getFunctionCompilationLevel() {
+            return 0;
+        }
+
+        @Override
+        public boolean shouldRconBroadcast() {
+            return false;
+        }
+
+        @Override
+        public net.minecraft.SystemReport fillServerSystemReport(net.minecraft.SystemReport report) {
+            return report;
+        }
+
+        @Override
+        public boolean isDedicatedServer() {
+            return false;
+        }
+
+        @Override
+        public int getRateLimitPacketsPerSecond() {
+            return 0;
+        }
+
+        @Override
+        public boolean isEpollEnabled() {
+            return false;
+        }
+
+        @Override
+        public boolean isCommandBlockEnabled() {
+            return false;
+        }
+
+        @Override
+        public boolean isPublished() {
+            return false;
+        }
+
+        @Override
+        public boolean shouldInformAdmins() {
+            return false;
+        }
+
+        @Override
+        public boolean isSingleplayerOwner(com.mojang.authlib.GameProfile profile) {
+            return false;
+        }
+
+        @Override
+        public net.minecraft.server.players.PlayerList getPlayerList() {
+            return playerList;
+        }
+    }
+
+    private static final class TestPlayerList extends net.minecraft.server.players.PlayerList {
+        private TestPlayerList() {
+            super(null, null, null, 0);
+        }
+
+        @Override
+        public net.minecraft.server.level.ServerPlayer getPlayer(UUID uuid) {
+            return null;
+        }
+    }
+
     private static long columnKey(int x, int z) {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
+    }
+
+    private static TestServerLevel newPersistentLevel() {
+        try {
+            TestServerLevel level = allocate(TestServerLevel.class);
+            level.blockStates = new HashMap<>();
+            level.surfaceHeights = new HashMap<>();
+            level.biome = Holder.direct(allocate(Biome.class));
+            level.dimensionKey = Level.OVERWORLD;
+            level.dataStorage = new DimensionDataStorage(Files.createTempDirectory("road-runtime-test").toFile(), null);
+            level.registryAccess = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
+            TestMinecraftServer server = allocate(TestMinecraftServer.class);
+            server.playerList = allocate(TestPlayerList.class);
+            setField(MinecraftServer.class, server, "levels", new LinkedHashMap<>(Map.of(Level.OVERWORLD, level)));
+            level.server = server;
+            return level;
+        } catch (Exception ex) {
+            throw new AssertionError("Unable to create persistent test level", ex);
+        }
+    }
+
+    private static void reloadSavedData(TestServerLevel level) {
+        CompoundTag runtimeTag = ConstructionRuntimeSavedData.get(level).save(new CompoundTag());
+        CompoundTag nationTag = NationSavedData.get(level).save(new CompoundTag());
+        try {
+            level.dataStorage = new DimensionDataStorage(Files.createTempDirectory("road-runtime-reload").toFile(), null);
+        } catch (Exception ex) {
+            throw new AssertionError("Unable to create reload data storage", ex);
+        }
+        level.dataStorage.set("sailboatmod_construction_runtime", ConstructionRuntimeSavedData.load(runtimeTag));
+        level.dataStorage.set("sailboatmod_nations", NationSavedData.load(nationTag));
+    }
+
+    private static void setField(Class<?> owner, Object target, String name, Object value) {
+        try {
+            Field field = owner.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(target, value);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to set field " + owner.getSimpleName() + "." + name, ex);
+        }
     }
 
     private static void seedSupportedRoadbed(TestServerLevel level, RoadPlacementPlan plan) {

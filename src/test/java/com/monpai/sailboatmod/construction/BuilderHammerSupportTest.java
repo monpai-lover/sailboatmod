@@ -318,6 +318,7 @@ class BuilderHammerSupportTest {
                 List.of(),
                 List.of(),
                 0,
+                0.0D,
                 false,
                 false,
                 0,

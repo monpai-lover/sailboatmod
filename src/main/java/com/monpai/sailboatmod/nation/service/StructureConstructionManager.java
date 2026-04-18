@@ -188,13 +188,17 @@ public final class StructureConstructionManager {
                                           List<RoadGeometryPlanner.RoadBuildStep> buildSteps,
                                           List<BlockPos> ownedBlocks) {}
     private record HammerChargeResult(boolean success, long walletSpent, long treasurySpent, Component message) {}
-    private record RestoredRoadRuntime(RoadPlacementPlan plan, int placedStepCount, Set<Long> attemptedStepKeys, String failureReason) {
+    private record RestoredRoadRuntime(RoadPlacementPlan plan,
+                                       int placedStepCount,
+                                       double progressSteps,
+                                       Set<Long> attemptedStepKeys,
+                                       String failureReason) {
         private boolean success() {
             return plan != null && failureReason != null && failureReason.isBlank();
         }
 
         private static RestoredRoadRuntime failure(String reason) {
-            return new RestoredRoadRuntime(null, 0, Set.of(), reason == null ? "" : reason);
+            return new RestoredRoadRuntime(null, 0, 0.0D, Set.of(), reason == null ? "" : reason);
         }
     }
     private record DisjointSet(Map<String, String> parent) {
@@ -643,7 +647,7 @@ public final class StructureConstructionManager {
                             rolledBackJob.attemptedStepKeys
                     );
                     ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), updatedJob);
-                    persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount, true, updatedJob.rollbackActionIndex, updatedJob.removeRoadNetworkOnComplete, updatedJob.attemptedStepKeys);
+                    persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount, updatedJob.progressSteps, true, updatedJob.rollbackActionIndex, updatedJob.removeRoadNetworkOnComplete, updatedJob.attemptedStepKeys);
                 }
             } else {
                 int consumedStepCount = job.placedStepCount;
@@ -652,7 +656,7 @@ public final class StructureConstructionManager {
                 int newPlacedStepCount = advancedJob.placedStepCount;
 
                 if (newPlacedStepCount >= totalUnits) {
-                    persistRoadConstruction(level, advancedJob.roadId, advancedJob.ownerUuid, advancedJob.plan, advancedJob.rollbackStates, totalUnits, false, 0, false, advancedJob.attemptedStepKeys);
+                    persistRoadConstruction(level, advancedJob.roadId, advancedJob.ownerUuid, advancedJob.plan, advancedJob.rollbackStates, totalUnits, totalUnits, false, 0, false, advancedJob.attemptedStepKeys);
                     if (owner != null) {
                         owner.sendSystemMessage(Component.translatable(
                                 "message.sailboatmod.road_planner.completed",
@@ -680,7 +684,7 @@ public final class StructureConstructionManager {
                             advancedJob.attemptedStepKeys
                     );
                     ACTIVE_ROAD_CONSTRUCTIONS.put(entry.getKey(), updatedJob);
-                    persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount, false, 0, false, updatedJob.attemptedStepKeys);
+                    persistRoadConstruction(level, updatedJob.roadId, updatedJob.ownerUuid, updatedJob.plan, updatedJob.rollbackStates, updatedJob.placedStepCount, updatedJob.progressSteps, false, 0, false, updatedJob.attemptedStepKeys);
                 }
             }
         }
@@ -1466,7 +1470,7 @@ public final class StructureConstructionManager {
                 false,
                 attemptedStepKeys
         ));
-        persistRoadConstruction(level, road.roadId(), ownerUuid, runtimePlan, rollbackStates, placedStepCount, false, 0, false, attemptedStepKeys);
+        persistRoadConstruction(level, road.roadId(), ownerUuid, runtimePlan, rollbackStates, placedStepCount, placedStepCount, false, 0, false, attemptedStepKeys);
     }
 
     public static void scheduleManualRoad(ServerLevel level, RoadNetworkRecord road) {
@@ -3989,7 +3993,7 @@ public final class StructureConstructionManager {
         );
         ACTIVE_ROAD_HAMMER_CREDITS.remove(rollbackJob.roadId);
         ACTIVE_ROAD_CONSTRUCTIONS.put(rollbackJob.roadId, rollbackJob);
-        persistRoadConstruction(level, rollbackJob.roadId, rollbackJob.ownerUuid, rollbackJob.plan, rollbackJob.rollbackStates, rollbackJob.placedStepCount, true, rollbackJob.rollbackActionIndex, rollbackJob.removeRoadNetworkOnComplete, rollbackJob.attemptedStepKeys);
+        persistRoadConstruction(level, rollbackJob.roadId, rollbackJob.ownerUuid, rollbackJob.plan, rollbackJob.rollbackStates, rollbackJob.placedStepCount, rollbackJob.progressSteps, true, rollbackJob.rollbackActionIndex, rollbackJob.removeRoadNetworkOnComplete, rollbackJob.attemptedStepKeys);
         return true;
     }
 
@@ -4983,13 +4987,13 @@ public final class StructureConstructionManager {
                     restoredRoad.plan(),
                     state.rollbackStates(),
                     restoredRoad.placedStepCount(),
-                    state.rollbackActive() ? Math.max(state.rollbackActionIndex(), 0) : restoredRoad.placedStepCount(),
+                    state.rollbackActive() ? Math.max(restoredRoad.progressSteps(), state.rollbackActionIndex()) : restoredRoad.progressSteps(),
                     state.rollbackActive(),
                     Math.max(state.rollbackActionIndex(), 0),
                     state.removeRoadNetworkOnComplete(),
                     restoredRoad.attemptedStepKeys()
             ));
-            persistRoadConstruction(level, state.roadId(), ownerUuid, restoredRoad.plan(), state.rollbackStates(), restoredRoad.placedStepCount(), state.rollbackActive(), state.rollbackActionIndex(), state.removeRoadNetworkOnComplete(), restoredRoad.attemptedStepKeys());
+            persistRoadConstruction(level, state.roadId(), ownerUuid, restoredRoad.plan(), state.rollbackStates(), restoredRoad.placedStepCount(), restoredRoad.progressSteps(), state.rollbackActive(), state.rollbackActionIndex(), state.removeRoadNetworkOnComplete(), restoredRoad.attemptedStepKeys());
         }
         staleRoadJobs.forEach(runtimeData::removeRoadJob);
     }
@@ -5022,6 +5026,7 @@ public final class StructureConstructionManager {
                                                 RoadPlacementPlan plan,
                                                 List<ConstructionRuntimeSavedData.RoadJobState.RoadRestorableBlockState> rollbackStates,
                                                 int placedStepCount,
+                                                double progressSteps,
                                                 boolean rollbackActive,
                                                 int rollbackActionIndex,
                                                 boolean removeRoadNetworkOnComplete,
@@ -5040,6 +5045,7 @@ public final class StructureConstructionManager {
                         rollbackStates == null ? List.of() : List.copyOf(rollbackStates),
                         toLongList(plan.ownedBlocks()),
                         placedStepCount,
+                        progressSteps,
                         false,
                         rollbackActive,
                         rollbackActionIndex,
@@ -5091,6 +5097,7 @@ public final class StructureConstructionManager {
             return new RestoredRoadRuntime(
                     rebuilt.plan(),
                     Math.min(rebuilt.plan().buildSteps().size(), Math.max(rebuilt.placedStepCount(), countCompletedRoadBuildSteps(rebuilt.plan(), completedRoadBuildStepKeys(level, rebuilt.plan())))),
+                    Math.min(rebuilt.plan().buildSteps().size(), Math.max(rebuilt.placedStepCount(), countCompletedRoadBuildSteps(rebuilt.plan(), completedRoadBuildStepKeys(level, rebuilt.plan())))),
                     completedRoadBuildStepKeys(level, rebuilt.plan()),
                     ""
             );
@@ -5108,6 +5115,7 @@ public final class StructureConstructionManager {
         return new RestoredRoadRuntime(
                 restoredPlan,
                 countCompletedRoadBuildSteps(restoredPlan, attemptedStepKeys),
+                Math.max(state.progressSteps(), countCompletedRoadBuildSteps(restoredPlan, attemptedStepKeys)),
                 attemptedStepKeys,
                 ""
         );
