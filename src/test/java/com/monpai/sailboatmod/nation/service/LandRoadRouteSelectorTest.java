@@ -52,4 +52,19 @@ class LandRoadRouteSelectorTest {
 
         assertEquals(LandRoadRouteSelector.BackEnd.HYBRID, selection.backEnd());
     }
+
+    @Test
+    void selectorSwitchesToHybridWhenSearchExhaustedDespiteLegacyPath() {
+        LandRoadRouteSelector.Selection selection = LandRoadRouteSelector.selectForTest(
+                new BlockPos(0, 64, 0),
+                new BlockPos(12, 67, 0),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(12, 67, 0)),
+                RoadPlanningFailureReason.SEARCH_EXHAUSTED,
+                0,
+                0,
+                0
+        );
+
+        assertEquals(LandRoadRouteSelector.BackEnd.HYBRID, selection.backEnd());
+    }
 }
