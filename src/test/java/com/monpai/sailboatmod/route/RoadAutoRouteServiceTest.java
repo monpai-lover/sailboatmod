@@ -97,21 +97,6 @@ class RoadAutoRouteServiceTest {
     }
 
     @Test
-    void keepsDirectGroundResolutionWhenHybridResolutionFails() {
-        RoadAutoRouteService.RouteResolution direct = new RoadAutoRouteService.RouteResolution(
-                RoadAutoRouteService.PathSource.LAND_TERRAIN,
-                List.of(new net.minecraft.core.BlockPos(0, 64, 0), new net.minecraft.core.BlockPos(6, 69, 0))
-        );
-        RoadAutoRouteService.RouteResolution hybrid = RoadAutoRouteService.RouteResolution.none();
-
-        RoadAutoRouteService.RouteResolution chosen = RoadAutoRouteService.preferResolutionForTest(direct, hybrid);
-
-        assertTrue(chosen.found());
-        assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, chosen.source());
-        assertEquals(2, chosen.path().size());
-    }
-
-    @Test
     void preferResolutionReturnsDirectLandPathWhenHybridFails() {
         RoadAutoRouteService.RouteResolution direct = new RoadAutoRouteService.RouteResolution(
                 RoadAutoRouteService.PathSource.LAND_TERRAIN,
@@ -127,11 +112,8 @@ class RoadAutoRouteServiceTest {
     }
 
     @Test
-    void preferResolutionKeepsDirectGroundContractOverHybridLandTerrain() {
-        RoadAutoRouteService.RouteResolution direct = new RoadAutoRouteService.RouteResolution(
-                RoadAutoRouteService.PathSource.LAND_TERRAIN,
-                List.of(new BlockPos(0, 64, 0), new BlockPos(4, 67, 0))
-        );
+    void preferResolutionReturnsHybridLandPathWhenDirectFails() {
+        RoadAutoRouteService.RouteResolution direct = RoadAutoRouteService.RouteResolution.none();
         RoadAutoRouteService.RouteResolution hybrid = new RoadAutoRouteService.RouteResolution(
                 RoadAutoRouteService.PathSource.LAND_TERRAIN,
                 List.of(new BlockPos(0, 64, 0), new BlockPos(2, 65, 0), new BlockPos(4, 67, 0))
@@ -141,7 +123,7 @@ class RoadAutoRouteServiceTest {
 
         assertTrue(chosen.found());
         assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, chosen.source());
-        assertEquals(2, chosen.path().size());
+        assertEquals(3, chosen.path().size());
     }
 
     @Test

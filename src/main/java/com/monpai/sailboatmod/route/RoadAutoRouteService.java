@@ -464,7 +464,13 @@ public final class RoadAutoRouteService {
                 && hybrid.source() == PathSource.ROAD_NETWORK) {
             return hybrid;
         }
-        return direct != null && direct.found() ? direct : RouteResolution.none();
+        if (direct != null && direct.found()) {
+            return direct;
+        }
+        if (hybrid != null && hybrid.found()) {
+            return hybrid;
+        }
+        return RouteResolution.none();
     }
 
     private static List<BlockPos> combineRouteEndpoints(BlockPos start, List<BlockPos> path, BlockPos end) {
