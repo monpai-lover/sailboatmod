@@ -177,6 +177,55 @@ class RoadAutoRouteServiceTest {
         );
     }
 
+    @Test
+    void resolveAutoRoutePreviewFallsBackToOrchestratedHybridLandRouteWhenDirectGroundFails() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        for (int x = 0; x <= 2; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        }
+        for (int x = 38; x <= 40; x++) {
+            setSurfaceColumn(level, x, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        }
+        for (int x = 3; x <= 37; x++) {
+            level.surfaceHeights.put(columnKey(x, 0), 64);
+            level.blockStates.put(new BlockPos(x, 64, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 62, 0).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 61, 0).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        BlockPos requestedStart = new BlockPos(0, 64, 0);
+        BlockPos requestedEnd = new BlockPos(40, 64, 0);
+
+        List<BlockPos> directGroundPath = RoadPathfinder.findGroundPath(
+                level,
+                requestedStart,
+                requestedEnd,
+                java.util.Set.of(),
+                java.util.Set.of()
+        );
+
+        RoadAutoRouteService.RouteResolution resolution = RoadAutoRouteService.resolveAutoRoutePreview(
+                level,
+                requestedStart,
+                requestedEnd
+        );
+
+        assertTrue(directGroundPath.isEmpty(), "direct ground route should fail across the water span");
+        assertTrue(resolution.found(), "auto-route preview should recover through orchestrated hybrid fallback");
+        assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, resolution.source());
+        assertEquals(requestedStart, resolution.path().get(0));
+        assertEquals(requestedEnd, resolution.path().get(resolution.path().size() - 1));
+        assertTrue(
+                resolution.path().stream().anyMatch(pos -> pos.getX() >= 3 && pos.getX() <= 37 && pos.getY() >= 68),
+                "auto-route preview should include elevated bridge-deck columns from the hybrid fallback"
+        );
+    }
+
     private static long columnKey(int x, int z) {
         return BlockPos.asLong(x, 0, z);
     }
