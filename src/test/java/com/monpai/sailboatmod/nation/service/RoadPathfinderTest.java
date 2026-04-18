@@ -129,6 +129,35 @@ class RoadPathfinderTest {
     }
 
     @Test
+    void findGroundPathForPlanReturnsHybridRecoveryWhenLegacyGroundRouteFails() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 65, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 2, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 3, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 4, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 5, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 6, 0, 69, Blocks.GRASS_BLOCK.defaultBlockState());
+
+        RoadPathfinder.PlannedPathResult result = RoadPathfinder.findGroundPathForPlan(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(6, 69, 0),
+                java.util.Set.of(),
+                java.util.Set.of(columnKey(6, 0)),
+                new RoadPlanningPassContext(level)
+        );
+
+        assertTrue(result.success(), () -> "expected shared ground-route recovery but got " + result.failureReason());
+        assertEquals(new BlockPos(0, 64, 0), result.path().get(0));
+        assertEquals(new BlockPos(6, 69, 0), result.path().get(result.path().size() - 1));
+    }
+
+    @Test
     void findPathAllowsRequestedEndpointsEvenWhenTheirColumnsAreBlocked() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();

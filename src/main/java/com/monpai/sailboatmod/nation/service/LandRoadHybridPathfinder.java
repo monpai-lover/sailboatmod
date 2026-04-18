@@ -47,7 +47,7 @@ public final class LandRoadHybridPathfinder {
             if (current == null) {
                 continue;
             }
-            if (current.pos().distManhattan(goal) <= 1) {
+            if (canFinishOnFoot(current.pos(), goal)) {
                 return new RoadPathfinder.PlannedPathResult(rebuild(current, goal), RoadPlanningFailureReason.NONE);
             }
             for (BlockPos next : neighbors(current.pos(), cache, blockedColumns, excludedColumns)) {
@@ -72,6 +72,19 @@ public final class LandRoadHybridPathfinder {
             }
         }
         return new RoadPathfinder.PlannedPathResult(List.of(), RoadPlanningFailureReason.SEARCH_EXHAUSTED);
+    }
+
+    private static boolean canFinishOnFoot(BlockPos current, BlockPos goal) {
+        if (current == null || goal == null) {
+            return false;
+        }
+        int dx = Math.abs(goal.getX() - current.getX());
+        int dz = Math.abs(goal.getZ() - current.getZ());
+        if (Math.max(dx, dz) > 1) {
+            return false;
+        }
+        int elevationDelta = Math.abs(goal.getY() - current.getY());
+        return elevationDelta <= (goal.getY() >= current.getY() ? MAX_STEP_UP : MAX_STEP_DOWN);
     }
 
     private static double heuristic(BlockPos from, BlockPos to) {

@@ -178,7 +178,21 @@ public final class RoadPathfinder {
             return legacy;
         }
         PlannedPathResult hybrid = LandRoadHybridPathfinder.find(level, from, to, blockedColumns, excludedColumns, context);
-        return hybrid.success() ? hybrid : legacy;
+        return preferSuccessfulGroundResult(selection.backEnd(), legacy, hybrid);
+    }
+
+    private static PlannedPathResult preferSuccessfulGroundResult(LandRoadRouteSelector.BackEnd preferredBackEnd,
+                                                                  PlannedPathResult legacy,
+                                                                  PlannedPathResult hybrid) {
+        PlannedPathResult preferred = preferredBackEnd == LandRoadRouteSelector.BackEnd.HYBRID ? hybrid : legacy;
+        PlannedPathResult alternate = preferredBackEnd == LandRoadRouteSelector.BackEnd.HYBRID ? legacy : hybrid;
+        if (preferred != null && preferred.success()) {
+            return preferred;
+        }
+        if (alternate != null && alternate.success()) {
+            return alternate;
+        }
+        return preferred == null ? new PlannedPathResult(List.of(), RoadPlanningFailureReason.SEARCH_EXHAUSTED) : preferred;
     }
 
     private static int estimateNearWaterColumns(Level level, List<BlockPos> path, RoadPlanningPassContext context) {

@@ -73,4 +73,19 @@ class RoadAutoRouteServiceTest {
         assertEquals(RoadAutoRouteService.PathSource.ROAD_NETWORK, chosen.source());
         assertEquals(3, chosen.path().size());
     }
+
+    @Test
+    void keepsDirectGroundResolutionWhenHybridResolutionFails() {
+        RoadAutoRouteService.RouteResolution direct = new RoadAutoRouteService.RouteResolution(
+                RoadAutoRouteService.PathSource.LAND_TERRAIN,
+                List.of(new net.minecraft.core.BlockPos(0, 64, 0), new net.minecraft.core.BlockPos(6, 69, 0))
+        );
+        RoadAutoRouteService.RouteResolution hybrid = RoadAutoRouteService.RouteResolution.none();
+
+        RoadAutoRouteService.RouteResolution chosen = RoadAutoRouteService.preferResolutionForTest(direct, hybrid);
+
+        assertTrue(chosen.found());
+        assertEquals(RoadAutoRouteService.PathSource.LAND_TERRAIN, chosen.source());
+        assertEquals(2, chosen.path().size());
+    }
 }

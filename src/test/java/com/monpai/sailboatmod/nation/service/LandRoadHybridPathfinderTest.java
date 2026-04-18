@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LandRoadHybridPathfinderTest {
@@ -53,6 +54,34 @@ class LandRoadHybridPathfinderTest {
 
         assertTrue(result.success());
         assertTrue(result.path().size() >= 2);
+    }
+
+    @Test
+    void hybridPathfinderCanFinishOnShortStepIntoExcludedGoalColumn() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.setSurface(0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(1, 0, 65, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(2, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(3, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(4, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(5, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(6, 0, 69, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+
+        RoadPathfinder.PlannedPathResult result = LandRoadHybridPathfinder.find(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(6, 69, 0),
+                Set.of(),
+                Set.of(columnKey(6, 0)),
+                new RoadPlanningPassContext(level)
+        );
+
+        assertTrue(result.success(), () -> "expected excluded endpoint short-step recovery but got " + result.failureReason());
+        assertEquals(new BlockPos(6, 69, 0), result.path().get(result.path().size() - 1));
     }
 
     @SuppressWarnings("unchecked")
