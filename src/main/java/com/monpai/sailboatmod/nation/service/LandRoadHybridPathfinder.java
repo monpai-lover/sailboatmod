@@ -6,6 +6,7 @@ import net.minecraft.world.level.Level;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
@@ -47,7 +48,7 @@ public final class LandRoadHybridPathfinder {
             if (current == null) {
                 continue;
             }
-            if (canFinishOnFoot(current.pos(), goal)) {
+            if (canFinishOnFoot(level, current.pos(), goal, blockedColumns, excludedColumns, context)) {
                 return new RoadPathfinder.PlannedPathResult(rebuild(current, goal), RoadPlanningFailureReason.NONE);
             }
             for (BlockPos next : neighbors(current.pos(), cache, blockedColumns, excludedColumns)) {
@@ -74,8 +75,13 @@ public final class LandRoadHybridPathfinder {
         return new RoadPathfinder.PlannedPathResult(List.of(), RoadPlanningFailureReason.SEARCH_EXHAUSTED);
     }
 
-    private static boolean canFinishOnFoot(BlockPos current, BlockPos goal) {
-        if (current == null || goal == null) {
+    private static boolean canFinishOnFoot(Level level,
+                                           BlockPos current,
+                                           BlockPos goal,
+                                           Set<Long> blockedColumns,
+                                           Set<Long> excludedColumns,
+                                           RoadPlanningPassContext context) {
+        if (level == null || current == null || goal == null) {
             return false;
         }
         int dx = Math.abs(goal.getX() - current.getX());
@@ -84,7 +90,40 @@ public final class LandRoadHybridPathfinder {
             return false;
         }
         int elevationDelta = Math.abs(goal.getY() - current.getY());
-        return elevationDelta <= (goal.getY() >= current.getY() ? MAX_STEP_UP : MAX_STEP_DOWN);
+        if (elevationDelta > (goal.getY() >= current.getY() ? MAX_STEP_UP : MAX_STEP_DOWN)) {
+            return false;
+        }
+        Set<Long> unblockedGoalColumns = mergeEndpointColumns(current, goal, blockedColumns, excludedColumns);
+        RoadPathfinder.ColumnDiagnostics goalDiagnostics = RoadPathfinder.describeColumnForAnchorSelection(
+                level,
+                goal,
+                unblockedGoalColumns,
+                context
+        );
+        return goalDiagnostics.surface() != null && !goalDiagnostics.blocked();
+    }
+
+    private static Set<Long> mergeEndpointColumns(BlockPos current,
+                                                  BlockPos goal,
+                                                  Set<Long> blockedColumns,
+                                                  Set<Long> excludedColumns) {
+        if ((blockedColumns == null || blockedColumns.isEmpty()) && (excludedColumns == null || excludedColumns.isEmpty())) {
+            return Set.of();
+        }
+        HashSet<Long> merged = new HashSet<>();
+        if (blockedColumns != null) {
+            merged.addAll(blockedColumns);
+        }
+        if (excludedColumns != null) {
+            merged.addAll(excludedColumns);
+        }
+        if (current != null) {
+            merged.remove(BlockPos.asLong(current.getX(), 0, current.getZ()));
+        }
+        if (goal != null) {
+            merged.remove(BlockPos.asLong(goal.getX(), 0, goal.getZ()));
+        }
+        return merged.isEmpty() ? Set.of() : Set.copyOf(merged);
     }
 
     private static double heuristic(BlockPos from, BlockPos to) {

@@ -129,7 +129,7 @@ class RoadPathfinderTest {
     }
 
     @Test
-    void findGroundPathForPlanReturnsHybridRecoveryWhenLegacyGroundRouteFails() {
+    void findGroundPathForPlanReturnsRequestedAnchorsWhenHybridBackendIsSelected() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
@@ -141,20 +141,59 @@ class RoadPathfinderTest {
         setSurfaceColumn(level, 3, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState());
         setSurfaceColumn(level, 4, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState());
         setSurfaceColumn(level, 5, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState());
-        setSurfaceColumn(level, 6, 0, 69, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 6, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState());
+        for (int x = 0; x <= 6; x++) {
+            level.surfaceHeights.put(columnKey(x, 1), 64);
+            level.blockStates.put(new BlockPos(x, 64, 1).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, 1).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        BlockPos requestedStart = new BlockPos(0, 66, 0);
+        BlockPos requestedEnd = new BlockPos(6, 70, 0);
+        RoadPlanningPassContext context = new RoadPlanningPassContext(level);
+        RoadPathfinder.PlannedPathResult legacy = RoadPathfinder.findPathForPlan(
+                level,
+                requestedStart,
+                requestedEnd,
+                java.util.Set.of(),
+                java.util.Set.of(),
+                false,
+                context
+        );
+        RoadPathfinder.PlannedPathResult hybrid = LandRoadHybridPathfinder.find(
+                level,
+                requestedStart,
+                requestedEnd,
+                java.util.Set.of(),
+                java.util.Set.of(),
+                context
+        );
+        LandRoadRouteSelector.Selection selection = LandRoadRouteSelector.selectForTest(
+                requestedStart,
+                requestedEnd,
+                legacy.path(),
+                legacy.failureReason(),
+                LandPathQualityEvaluator.elevationVariance(legacy.path()),
+                7,
+                LandPathQualityEvaluator.fragmentedColumns(legacy.path())
+        );
 
         RoadPathfinder.PlannedPathResult result = RoadPathfinder.findGroundPathForPlan(
                 level,
-                new BlockPos(0, 64, 0),
-                new BlockPos(6, 69, 0),
+                requestedStart,
+                requestedEnd,
                 java.util.Set.of(),
-                java.util.Set.of(columnKey(6, 0)),
-                new RoadPlanningPassContext(level)
+                java.util.Set.of(),
+                context
         );
 
-        assertTrue(result.success(), () -> "expected shared ground-route recovery but got " + result.failureReason());
-        assertEquals(new BlockPos(0, 64, 0), result.path().get(0));
-        assertEquals(new BlockPos(6, 69, 0), result.path().get(result.path().size() - 1));
+        assertTrue(hybrid.success(), "fixture should produce a valid hybrid path");
+        assertEquals(LandRoadRouteSelector.BackEnd.HYBRID, selection.backEnd());
+        assertEquals(new BlockPos(0, 64, 0), hybrid.path().get(0));
+        assertEquals(new BlockPos(6, 68, 0), hybrid.path().get(hybrid.path().size() - 1));
+        assertTrue(result.success(), () -> "expected shared ground-route result but got " + result.failureReason());
+        assertEquals(requestedStart, result.path().get(0));
+        assertEquals(requestedEnd, result.path().get(result.path().size() - 1));
     }
 
     @Test

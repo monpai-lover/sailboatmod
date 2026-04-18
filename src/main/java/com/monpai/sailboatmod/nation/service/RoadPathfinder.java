@@ -80,6 +80,23 @@ public final class RoadPathfinder {
         return findPathForPlan(level, from, to, blockedColumns, excludedColumns, allowWaterFallback, context).path();
     }
 
+    public static List<BlockPos> findGroundPath(Level level,
+                                                BlockPos from,
+                                                BlockPos to,
+                                                Set<Long> blockedColumns,
+                                                Set<Long> excludedColumns,
+                                                RoadPlanningSnapshot snapshot) {
+        return findGroundPathForPlan(level, from, to, blockedColumns, excludedColumns, snapshot).path();
+    }
+
+    public static List<BlockPos> findGroundPath(Level level,
+                                                BlockPos from,
+                                                BlockPos to,
+                                                Set<Long> blockedColumns,
+                                                Set<Long> excludedColumns) {
+        return findGroundPathForPlan(level, from, to, blockedColumns, excludedColumns).path();
+    }
+
     static PlannedPathResult findPathForPlan(Level level,
                                              BlockPos from,
                                              BlockPos to,
@@ -178,14 +195,24 @@ public final class RoadPathfinder {
             return legacy;
         }
         PlannedPathResult hybrid = LandRoadHybridPathfinder.find(level, from, to, blockedColumns, excludedColumns, context);
-        return preferSuccessfulGroundResult(selection.backEnd(), legacy, hybrid);
+        return preferSuccessfulGroundResult(from, to, selection.backEnd(), legacy, hybrid);
     }
 
-    private static PlannedPathResult preferSuccessfulGroundResult(LandRoadRouteSelector.BackEnd preferredBackEnd,
+    private static PlannedPathResult preferSuccessfulGroundResult(BlockPos from,
+                                                                  BlockPos to,
+                                                                  LandRoadRouteSelector.BackEnd preferredBackEnd,
                                                                   PlannedPathResult legacy,
                                                                   PlannedPathResult hybrid) {
-        PlannedPathResult preferred = preferredBackEnd == LandRoadRouteSelector.BackEnd.HYBRID ? hybrid : legacy;
-        PlannedPathResult alternate = preferredBackEnd == LandRoadRouteSelector.BackEnd.HYBRID ? legacy : hybrid;
+        PlannedPathResult preferred = normalizeGroundResult(
+                from,
+                to,
+                preferredBackEnd == LandRoadRouteSelector.BackEnd.HYBRID ? hybrid : legacy
+        );
+        PlannedPathResult alternate = normalizeGroundResult(
+                from,
+                to,
+                preferredBackEnd == LandRoadRouteSelector.BackEnd.HYBRID ? legacy : hybrid
+        );
         if (preferred != null && preferred.success()) {
             return preferred;
         }
@@ -193,6 +220,19 @@ public final class RoadPathfinder {
             return alternate;
         }
         return preferred == null ? new PlannedPathResult(List.of(), RoadPlanningFailureReason.SEARCH_EXHAUSTED) : preferred;
+    }
+
+    private static PlannedPathResult normalizeGroundResult(BlockPos from,
+                                                           BlockPos to,
+                                                           PlannedPathResult result) {
+        if (result == null || !result.success()) {
+            return result;
+        }
+        List<BlockPos> normalized = normalizeReturnedPath(from, to, result.path());
+        if (!normalized.isEmpty()) {
+            return new PlannedPathResult(normalized, RoadPlanningFailureReason.NONE);
+        }
+        return new PlannedPathResult(List.of(), RoadPlanningFailureReason.SEARCH_EXHAUSTED);
     }
 
     private static int estimateNearWaterColumns(Level level, List<BlockPos> path, RoadPlanningPassContext context) {

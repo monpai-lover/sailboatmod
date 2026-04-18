@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LandRoadHybridPathfinderTest {
@@ -57,7 +58,7 @@ class LandRoadHybridPathfinderTest {
     }
 
     @Test
-    void hybridPathfinderCanFinishOnShortStepIntoExcludedGoalColumn() {
+    void hybridPathfinderRejectsShortStepIntoBlockedGoalColumn() {
         TestTerrainLevel level = allocate(TestTerrainLevel.class);
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
@@ -69,19 +70,18 @@ class LandRoadHybridPathfinderTest {
         level.setSurface(3, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
         level.setSurface(4, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
         level.setSurface(5, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
-        level.setSurface(6, 0, 69, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(6, 0, 69, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.STONE.defaultBlockState());
 
         RoadPathfinder.PlannedPathResult result = LandRoadHybridPathfinder.find(
                 level,
                 new BlockPos(0, 64, 0),
                 new BlockPos(6, 69, 0),
                 Set.of(),
-                Set.of(columnKey(6, 0)),
+                Set.of(),
                 new RoadPlanningPassContext(level)
         );
 
-        assertTrue(result.success(), () -> "expected excluded endpoint short-step recovery but got " + result.failureReason());
-        assertEquals(new BlockPos(6, 69, 0), result.path().get(result.path().size() - 1));
+        assertFalse(result.success(), "blocked goal column should not be accepted as a short-step completion");
     }
 
     @SuppressWarnings("unchecked")
