@@ -5112,10 +5112,14 @@ public final class StructureConstructionManager {
                 completedRoadBuildStepKeys(level, restoredPlan),
                 state.attemptedStepPositions() == null ? Set.of() : new LinkedHashSet<>(state.attemptedStepPositions())
         );
+        int placedStepCount = countCompletedRoadBuildSteps(restoredPlan, attemptedStepKeys);
+        double restoredProgress = state.rollbackActive()
+                ? Math.max(state.progressSteps(), state.rollbackActionIndex())
+                : Math.max(state.progressSteps(), placedStepCount);
         return new RestoredRoadRuntime(
                 restoredPlan,
-                countCompletedRoadBuildSteps(restoredPlan, attemptedStepKeys),
-                Math.max(state.progressSteps(), countCompletedRoadBuildSteps(restoredPlan, attemptedStepKeys)),
+                placedStepCount,
+                restoredProgress,
                 attemptedStepKeys,
                 ""
         );

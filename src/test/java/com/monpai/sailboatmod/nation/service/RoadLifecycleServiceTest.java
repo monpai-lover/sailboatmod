@@ -703,6 +703,69 @@ class RoadLifecycleServiceTest {
     }
 
     @Test
+    void persistedRollbackRuntimeRestoreDoesNotFastForwardRollbackProgressAcrossReload() {
+        TestServerLevel level = newPersistentLevel();
+        RoadPlacementPlan plan = StructureConstructionManager.createRoadPlacementPlanForTest(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(1, 64, 0),
+                        new BlockPos(2, 64, 0)
+                ),
+                List.of(),
+                List.of()
+        );
+        seedSupportedRoadbed(level, plan);
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            level.blockStates.put(step.pos().asLong(), step.state());
+        }
+
+        String roadId = "manual|persisted_rollback|town_a|town_b";
+        UUID ownerUuid = UUID.randomUUID();
+        NationSavedData.get(level).putRoadNetwork(new RoadNetworkRecord(
+                roadId,
+                "nation_a",
+                "town_a",
+                "minecraft:overworld",
+                "town_a",
+                "town_b",
+                plan.centerPath(),
+                1L,
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+        ));
+        invokePersistRoadConstruction(
+                level,
+                roadId,
+                ownerUuid,
+                plan,
+                List.of(),
+                plan.buildSteps().size(),
+                0.0D,
+                true,
+                0,
+                false,
+                Set.of()
+        );
+
+        reloadSavedData(level);
+        StructureConstructionManager.clearRuntimeState();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> activeRoads = readStaticMap("ACTIVE_ROAD_CONSTRUCTIONS");
+        invokeEnsureRuntimeRestored(level);
+
+        Object restored = activeRoads.get(roadId);
+        assertNotNull(restored, "persisted rollback job should be restored into active runtime");
+        assertEquals(0, (int) readRecordComponent(restored, "rollbackActionIndex"));
+
+        StructureConstructionManager.tickRoadConstructions(level);
+
+        restored = activeRoads.get(roadId);
+        assertNotNull(restored, "rollback job should remain active after the next tick");
+        assertEquals(0, (int) readRecordComponent(restored, "rollbackActionIndex"),
+                "reload should not fast-forward rollback progress from placed-step count");
+    }
+
+    @Test
     void roadConstructionRuntimeDoesNotDiscardValidJobJustBecauseProgressStartsAtZero() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
