@@ -41,8 +41,10 @@ public class ClaimMapViewportService {
         pendingVisibleChunkCount = 0;
         ArrayList<Integer> pixels = new ArrayList<>();
         int colorsPerTile = Math.max(1, ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB);
+        int visibleChunkCount = 0;
         for (int dz = -request.radius(); dz <= request.radius(); dz++) {
             for (int dx = -request.radius(); dx <= request.radius(); dx++) {
+                visibleChunkCount++;
                 int chunkX = request.centerChunkX() + dx;
                 int chunkZ = request.centerChunkZ() + dz;
                 int[] tile = tileLookup.get(request.dimensionId(), chunkX, chunkZ);
@@ -56,6 +58,7 @@ public class ClaimMapViewportService {
             }
         }
         pendingPrefetchChunkCount = countMissingPrefetchChunks(request);
+        int prefetchChunkCount = countPrefetchChunks(request);
         ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(
                 request.dimensionId(),
                 request.revision(),
@@ -63,7 +66,11 @@ public class ClaimMapViewportService {
                 request.centerChunkX(),
                 request.centerChunkZ(),
                 pixels,
-                pendingVisibleChunkCount == 0
+                pendingVisibleChunkCount == 0,
+                Math.max(0, visibleChunkCount - pendingVisibleChunkCount),
+                visibleChunkCount,
+                Math.max(0, prefetchChunkCount - pendingPrefetchChunkCount),
+                prefetchChunkCount
         );
         return snapshot;
     }
@@ -102,6 +109,23 @@ public class ClaimMapViewportService {
             }
         }
         return missingCount;
+    }
+
+    private int countPrefetchChunks(ViewportRequest request) {
+        int outer = request.radius() + Math.max(0, request.prefetchRadius());
+        if (outer <= request.radius()) {
+            return 0;
+        }
+        int prefetchCount = 0;
+        for (int dz = -outer; dz <= outer; dz++) {
+            for (int dx = -outer; dx <= outer; dx++) {
+                if (Math.abs(dx) <= request.radius() && Math.abs(dz) <= request.radius()) {
+                    continue;
+                }
+                prefetchCount++;
+            }
+        }
+        return prefetchCount;
     }
 
     int pendingVisibleChunkCountForTest() {

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -115,6 +116,45 @@ class ClaimPreviewTerrainServiceTest {
 
         assertTrue(forceLoad.get());
         assertNull(sampled);
+    }
+
+    @Test
+    void processBudgetedWorkForTestUsesParallelVisibleSamplingBatches() {
+        ClaimPreviewTerrainService service = new ClaimPreviewTerrainService();
+        service.enqueueViewportForTest("minecraft:overworld", 0, 0, 1, 0, 19L, "town|parallel");
+        AtomicInteger started = new AtomicInteger();
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger maxRunning = new AtomicInteger();
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        Thread releaser = new Thread(() -> {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(200);
+            while (started.get() < 2 && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+            release.countDown();
+        });
+        releaser.start();
+
+        service.processBudgetedWorkForTest(4, 0, (dimensionId, chunkX, chunkZ) -> {
+            started.incrementAndGet();
+            int concurrent = running.incrementAndGet();
+            maxRunning.accumulateAndGet(concurrent, Math::max);
+            try {
+                assertTrue(release.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            } finally {
+                running.decrementAndGet();
+            }
+            return new int[] {chunkX, chunkZ, 1, 2};
+        });
+
+        try {
+            releaser.join(1000L);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        assertTrue(maxRunning.get() >= 2);
     }
 
     @Test

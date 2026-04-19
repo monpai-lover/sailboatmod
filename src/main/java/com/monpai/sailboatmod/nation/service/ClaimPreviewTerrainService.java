@@ -20,9 +20,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class ClaimPreviewTerrainService {
@@ -42,6 +46,7 @@ public final class ClaimPreviewTerrainService {
     private static final int DEFAULT_VISIBLE_BUDGET_PER_TICK = 16;
     private static final int DEFAULT_PREFETCH_BUDGET_PER_TICK = 16;
     private static final int QUEUE_AROUND_PREFETCH_RADIUS = 1;
+    private static final int MAX_PARALLEL_SAMPLERS = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors()));
     private static final AtomicReference<ClaimPreviewTerrainService> ACTIVE = new AtomicReference<>();
 
     /** Sub-samples per chunk axis (2 = 2x2 sub-chunks per chunk, each 8x8 blocks). */
@@ -59,6 +64,20 @@ public final class ClaimPreviewTerrainService {
                                         String screenKey) {
     }
 
+    private record ResolvedTileRequest(String dimensionId,
+                                       int chunkX,
+                                       int chunkZ,
+                                       String viewportKey,
+                                       ChunkAccess chunk) {
+    }
+
+    private record SampledTile(String dimensionId,
+                               int chunkX,
+                               int chunkZ,
+                               String viewportKey,
+                               int[] tile) {
+    }
+
     private final Queue<TileRequest> visibleQueue = new ConcurrentLinkedQueue<>();
     private final Queue<TileRequest> prefetchQueue = new ConcurrentLinkedQueue<>();
     private final ConcurrentMap<String, int[]> hotTiles = new ConcurrentHashMap<>();
@@ -68,8 +87,10 @@ public final class ClaimPreviewTerrainService {
     private final ConcurrentMap<String, ViewportRequestState> viewportRequests = new ConcurrentHashMap<>();
     private final Set<String> visibleQueuedKeys = ConcurrentHashMap.newKeySet();
     private final Set<String> prefetchQueuedKeys = ConcurrentHashMap.newKeySet();
+    private final ExecutorService samplingExecutor;
 
     public ClaimPreviewTerrainService() {
+        this.samplingExecutor = buildSamplingExecutor();
     }
 
     public static void onServerStarted(MinecraftServer server) {
@@ -80,15 +101,24 @@ public final class ClaimPreviewTerrainService {
     }
 
     public static void onServerStopping() {
-        ACTIVE.set(null);
+        ClaimPreviewTerrainService service = ACTIVE.getAndSet(null);
+        if (service != null) {
+            service.shutdown();
+        }
     }
 
     static void setActiveForTest(ClaimPreviewTerrainService service) {
-        ACTIVE.set(service);
+        ClaimPreviewTerrainService previous = ACTIVE.getAndSet(service);
+        if (previous != null && previous != service) {
+            previous.shutdown();
+        }
     }
 
     static void clearActiveForTest() {
-        ACTIVE.set(null);
+        ClaimPreviewTerrainService service = ACTIVE.getAndSet(null);
+        if (service != null) {
+            service.shutdown();
+        }
     }
 
     public static ClaimPreviewTerrainService get(MinecraftServer server) {
@@ -338,19 +368,37 @@ public final class ClaimPreviewTerrainService {
                             Set<String> queueKeys,
                             String levelDimensionId,
                             int budget) {
+        if (budget <= 0) {
+            return;
+        }
         TerrainPreviewSavedData savedData = TerrainPreviewSavedData.get(level);
+        List<ResolvedTileRequest> batch = new ArrayList<>(budget);
         for (int processed = 0; processed < budget; processed++) {
             TileRequest request = queue.poll();
             if (request == null) {
-                return;
+                break;
             }
             queueKeys.remove(queueKey(request.dimensionId(), request.chunkX(), request.chunkZ()));
             if (!levelDimensionId.equals(request.dimensionId())) {
                 continue;
             }
-            int[] tile = sampleChunkSubColors(level, request.chunkX(), request.chunkZ());
-            storeTile(request.dimensionId(), request.chunkX(), request.chunkZ(), tile, savedData);
-            markViewportDirty(request.viewportKey());
+            ChunkAccess chunk = null;
+            try {
+                chunk = level.getChunkSource().getChunk(request.chunkX(), request.chunkZ(), ChunkStatus.FULL, true);
+            } catch (Exception ignored) {
+                chunk = null;
+            }
+            batch.add(new ResolvedTileRequest(
+                    request.dimensionId(),
+                    request.chunkX(),
+                    request.chunkZ(),
+                    request.viewportKey(),
+                    chunk
+            ));
+        }
+        for (SampledTile sampledTile : sampleResolvedBatch(batch)) {
+            storeTile(sampledTile.dimensionId(), sampledTile.chunkX(), sampledTile.chunkZ(), sampledTile.tile(), savedData);
+            markViewportDirty(sampledTile.viewportKey());
         }
     }
 
@@ -366,23 +414,38 @@ public final class ClaimPreviewTerrainService {
                                    Set<String> queueKeys,
                                    int budget,
                                    TileSampler sampler) {
+        if (budget <= 0) {
+            return;
+        }
+        List<TileRequest> batch = new ArrayList<>(budget);
         for (int processed = 0; processed < budget; processed++) {
             TileRequest request = queue.poll();
             if (request == null) {
-                return;
+                break;
             }
             queueKeys.remove(queueKey(request.dimensionId(), request.chunkX(), request.chunkZ()));
-            if (sampler == null) {
-                continue;
-            }
-            storeTile(
-                    request.dimensionId(),
-                    request.chunkX(),
-                    request.chunkZ(),
-                    sampler.sample(request.dimensionId(), request.chunkX(), request.chunkZ()),
-                    null
-            );
-            markViewportDirty(request.viewportKey());
+            batch.add(request);
+        }
+        if (sampler == null || batch.isEmpty()) {
+            return;
+        }
+        List<CompletableFuture<SampledTile>> futures = new ArrayList<>(batch.size());
+        for (TileRequest request : batch) {
+            futures.add(CompletableFuture.supplyAsync(
+                    () -> new SampledTile(
+                            request.dimensionId(),
+                            request.chunkX(),
+                            request.chunkZ(),
+                            request.viewportKey(),
+                            sampler.sample(request.dimensionId(), request.chunkX(), request.chunkZ())
+                    ),
+                    samplingExecutor
+            ));
+        }
+        for (CompletableFuture<SampledTile> future : futures) {
+            SampledTile sampledTile = future.join();
+            storeTile(sampledTile.dimensionId(), sampledTile.chunkX(), sampledTile.chunkZ(), sampledTile.tile(), null);
+            markViewportDirty(sampledTile.viewportKey());
         }
     }
 
@@ -396,6 +459,30 @@ public final class ClaimPreviewTerrainService {
         viewportRequests.clear();
         visibleQueuedKeys.clear();
         prefetchQueuedKeys.clear();
+    }
+
+    private List<SampledTile> sampleResolvedBatch(List<ResolvedTileRequest> batch) {
+        if (batch == null || batch.isEmpty()) {
+            return List.of();
+        }
+        List<CompletableFuture<SampledTile>> futures = new ArrayList<>(batch.size());
+        for (ResolvedTileRequest request : batch) {
+            futures.add(CompletableFuture.supplyAsync(
+                    () -> new SampledTile(
+                            request.dimensionId(),
+                            request.chunkX(),
+                            request.chunkZ(),
+                            request.viewportKey(),
+                            request.chunk() == null ? null : sampleChunkSubColors(request.chunk(), request.chunkX(), request.chunkZ())
+                    ),
+                    samplingExecutor
+            ));
+        }
+        List<SampledTile> sampledTiles = new ArrayList<>(futures.size());
+        for (CompletableFuture<SampledTile> future : futures) {
+            sampledTiles.add(future.join());
+        }
+        return sampledTiles;
     }
 
     private void unregisterViewportInternal(String logicalScreenKey) {
@@ -743,5 +830,18 @@ public final class ClaimPreviewTerrainService {
     boolean hasViewportDependencyForTest(String dimensionId, int chunkX, int chunkZ, String viewportKey) {
         Set<String> dependentKeys = chunkToViewportDependencies.get(tileKey(dimensionId, chunkX, chunkZ));
         return dependentKeys != null && dependentKeys.contains(viewportKey);
+    }
+
+    private static ExecutorService buildSamplingExecutor() {
+        ThreadFactory factory = runnable -> {
+            Thread thread = new Thread(runnable, "Sailboat-ClaimPreview-" + System.nanoTime());
+            thread.setDaemon(true);
+            return thread;
+        };
+        return Executors.newFixedThreadPool(MAX_PARALLEL_SAMPLERS, factory);
+    }
+
+    private void shutdown() {
+        samplingExecutor.shutdownNow();
     }
 }

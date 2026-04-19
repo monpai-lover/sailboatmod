@@ -23,6 +23,10 @@ class ClaimMapViewportServiceTest {
 
         assertNotNull(snapshot);
         assertFalse(snapshot.complete());
+        assertEquals(0, snapshot.visibleReadyChunkCount());
+        assertEquals(289, snapshot.visibleChunkCount());
+        assertEquals(0, snapshot.prefetchReadyChunkCount());
+        assertEquals(240, snapshot.prefetchChunkCount());
         assertEquals(289, service.pendingVisibleChunkCountForTest());
         assertEquals(240, service.pendingPrefetchChunkCountForTest());
         assertEquals(289 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, snapshot.pixels().size());
@@ -41,6 +45,10 @@ class ClaimMapViewportServiceTest {
         assertTrue(snapshot.complete());
         assertEquals("minecraft:overworld", snapshot.dimensionId());
         assertEquals(12L, snapshot.revision());
+        assertEquals(9, snapshot.visibleReadyChunkCount());
+        assertEquals(9, snapshot.visibleChunkCount());
+        assertEquals(0, snapshot.prefetchReadyChunkCount());
+        assertEquals(0, snapshot.prefetchChunkCount());
         assertEquals(0, service.pendingVisibleChunkCountForTest());
         assertEquals(0, service.pendingPrefetchChunkCountForTest());
         assertEquals(List.of(
@@ -80,6 +88,10 @@ class ClaimMapViewportServiceTest {
 
         assertNotNull(snapshot);
         assertTrue(snapshot.complete());
+        assertEquals(9, snapshot.visibleReadyChunkCount());
+        assertEquals(9, snapshot.visibleChunkCount());
+        assertEquals(13, snapshot.prefetchReadyChunkCount());
+        assertEquals(16, snapshot.prefetchChunkCount());
         assertEquals(0, service.pendingVisibleChunkCountForTest());
         assertEquals(3, service.pendingPrefetchChunkCountForTest());
         assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, snapshot.pixels().size());
@@ -104,6 +116,10 @@ class ClaimMapViewportServiceTest {
             ClaimMapViewportSnapshot first = service.tryBuildSnapshot(request, List.of());
             assertNotNull(first);
             assertFalse(first.complete());
+            assertEquals(0, first.visibleReadyChunkCount());
+            assertEquals(9, first.visibleChunkCount());
+            assertEquals(0, first.prefetchReadyChunkCount());
+            assertEquals(16, first.prefetchChunkCount());
             assertEquals(9, service.pendingVisibleChunkCountForTest());
             assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, first.pixels().size());
 
@@ -112,6 +128,10 @@ class ClaimMapViewportServiceTest {
             ClaimMapViewportSnapshot second = service.tryBuildSnapshot(request, List.of());
             assertNotNull(second);
             assertTrue(second.complete());
+            assertEquals(9, second.visibleReadyChunkCount());
+            assertEquals(9, second.visibleChunkCount());
+            assertEquals(0, second.prefetchReadyChunkCount());
+            assertEquals(16, second.prefetchChunkCount());
             assertEquals(0, service.pendingVisibleChunkCountForTest());
             assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, second.pixels().size());
         } finally {
@@ -121,11 +141,15 @@ class ClaimMapViewportServiceTest {
 
     @Test
     void snapshotNormalizesNullDimensionAndPixels() {
-        ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(null, 7L, 6, 12, 24, null, false);
+        ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(null, 7L, 6, 12, 24, null, false, -2, -5, -1, -7);
 
         assertEquals("", snapshot.dimensionId());
         assertEquals(List.of(), snapshot.pixels());
         assertFalse(snapshot.complete());
+        assertEquals(0, snapshot.visibleReadyChunkCount());
+        assertEquals(0, snapshot.visibleChunkCount());
+        assertEquals(0, snapshot.prefetchReadyChunkCount());
+        assertEquals(0, snapshot.prefetchChunkCount());
     }
 
     @Test

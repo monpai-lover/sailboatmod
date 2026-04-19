@@ -108,7 +108,7 @@ public final class NationClientHooks {
             return;
         }
         ClaimMapViewportSnapshot safeSnapshot = snapshot == null
-                ? new ClaimMapViewportSnapshot("", 0L, 0, 0, 0, List.of(), false)
+                ? new ClaimMapViewportSnapshot("", 0L, 0, 0, 0, List.of(), false, 0, 0, 0, 0)
                 : snapshot;
         claimPreviewRevisionCounter = Math.max(claimPreviewRevisionCounter, safeSnapshot.revision());
         if (safeSnapshot.revision() < latestRequestedClaimPreviewRevision) {
@@ -120,13 +120,21 @@ public final class NationClientHooks {
                         safeSnapshot.radius(),
                         safeSnapshot.centerChunkX(),
                         safeSnapshot.centerChunkZ(),
-                        List.of()
+                        List.of(),
+                        safeSnapshot.visibleReadyChunkCount(),
+                        safeSnapshot.visibleChunkCount(),
+                        safeSnapshot.prefetchReadyChunkCount(),
+                        safeSnapshot.prefetchChunkCount()
                 )
                 : ClaimPreviewMapState.loading(
                         safeSnapshot.revision(),
                         safeSnapshot.radius(),
                         safeSnapshot.centerChunkX(),
-                        safeSnapshot.centerChunkZ()
+                        safeSnapshot.centerChunkZ(),
+                        safeSnapshot.visibleReadyChunkCount(),
+                        safeSnapshot.visibleChunkCount(),
+                        safeSnapshot.prefetchReadyChunkCount(),
+                        safeSnapshot.prefetchChunkCount()
                 );
         lastSyncedData = lastSyncedData.withClaimPreview(state, safeSnapshot.pixels());
         Minecraft minecraft = Minecraft.getInstance();

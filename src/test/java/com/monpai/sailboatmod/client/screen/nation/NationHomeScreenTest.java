@@ -53,4 +53,33 @@ class NationHomeScreenTest {
         assertEquals(0xFF333333, screen.sampleClaimTerrainColorForTest(0, 0, 0, 1));
         assertEquals(0xFF444444, screen.sampleClaimTerrainColorForTest(0, 0, 1, 1));
     }
+
+    @Test
+    void bottomClaimMapProgressHidesOnlyAfterVisibleAndPrefetchWorkFinish() {
+        ClaimPreviewMapState pendingPrefetch = ClaimPreviewMapState.ready(
+                12L,
+                1,
+                0,
+                0,
+                java.util.List.of(0xFF112233),
+                9,
+                9,
+                12,
+                16
+        );
+        ClaimPreviewMapState complete = ClaimPreviewMapState.ready(
+                13L,
+                1,
+                0,
+                0,
+                java.util.List.of(0xFF112233),
+                9,
+                9,
+                16,
+                16
+        );
+
+        assertTrue(NationHomeScreen.shouldShowClaimMapProgress(pendingPrefetch));
+        assertFalse(NationHomeScreen.shouldShowClaimMapProgress(complete));
+    }
 }

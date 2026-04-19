@@ -1187,7 +1187,28 @@ public class NationHomeScreen extends Screen {
         } else if (this.areaCorner1X != Integer.MIN_VALUE) {
             drawClaimMarker(g, mapX, mapY, this.areaCorner1X, this.areaCorner1Z, 0xAAFF8844);
         }
+        drawClaimMapProgress(g, mapX, mapY);
         drawTownLabels(g, mapX, mapY, mouseX, mouseY);
+    }
+
+    private void drawClaimMapProgress(GuiGraphics g, int mapX, int mapY) {
+        if (!shouldShowClaimMapProgress(this.data.claimMapState())) {
+            return;
+        }
+        int visibleWidth = claimMapProgressWidth(this.data.claimMapState(), CLAIM_MAP_W - 2, true);
+        int prefetchWidth = claimMapProgressWidth(this.data.claimMapState(), CLAIM_MAP_W - 2, false);
+        int barX = mapX + 1;
+        int barW = CLAIM_MAP_W - 2;
+        int visibleY = mapY + CLAIM_MAP_H - 5;
+        int prefetchY = mapY + CLAIM_MAP_H - 2;
+        g.fill(barX, visibleY, barX + barW, visibleY + 1, 0x55313A40);
+        g.fill(barX, prefetchY, barX + barW, prefetchY + 1, 0x55313A40);
+        if (visibleWidth > 0) {
+            g.fill(barX, visibleY, barX + Math.min(barW, visibleWidth), visibleY + 1, 0xD9D8B35A);
+        }
+        if (prefetchWidth > 0) {
+            g.fill(barX, prefetchY, barX + Math.min(barW, prefetchWidth), prefetchY + 1, 0xAA6AA8C8);
+        }
     }
 
     private void drawTownLabels(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
@@ -1237,6 +1258,26 @@ public class NationHomeScreen extends Screen {
 
     int sampleClaimTerrainColorForTest(int chunkX, int chunkZ, int sx, int sz) {
         return sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
+    }
+
+    static boolean shouldShowClaimMapProgress(ClaimPreviewMapState mapState) {
+        ClaimPreviewMapState safeMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        return safeMapState.loading() || safeMapState.hasPendingProgress();
+    }
+
+    static int claimMapProgressWidthForTest(ClaimPreviewMapState mapState, int mapWidth, boolean visibleLayer) {
+        return claimMapProgressWidth(mapState, mapWidth, visibleLayer);
+    }
+
+    private static int claimMapProgressWidth(ClaimPreviewMapState mapState, int mapWidth, boolean visibleLayer) {
+        ClaimPreviewMapState safeMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
+        int safeMapWidth = Math.max(0, mapWidth);
+        int ready = visibleLayer ? safeMapState.visibleReadyChunkCount() : safeMapState.prefetchReadyChunkCount();
+        int total = visibleLayer ? safeMapState.visibleChunkCount() : safeMapState.prefetchChunkCount();
+        if (total <= 0 || safeMapWidth <= 0) {
+            return 0;
+        }
+        return Math.max(0, Math.min(safeMapWidth, Math.round((ready / (float) total) * safeMapWidth)));
     }
 
     private void drawClaimMarker(GuiGraphics g, int mapX, int mapY, int chunkX, int chunkZ, int color) {

@@ -77,7 +77,7 @@ class ClaimMapViewportPacketRoundTripTest {
         SyncClaimPreviewMapPacket packet = new SyncClaimPreviewMapPacket(
                 SyncClaimPreviewMapPacket.ScreenKind.NATION,
                 "nation-a",
-                new ClaimMapViewportSnapshot("minecraft:overworld", 11L, 6, 2, 3, List.of(0xFF010203, 0xFF0A0B0C), false)
+                new ClaimMapViewportSnapshot("minecraft:overworld", 11L, 6, 2, 3, List.of(0xFF010203, 0xFF0A0B0C), false, 41, 64, 12, 24)
         );
 
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
@@ -93,6 +93,10 @@ class ClaimMapViewportPacketRoundTripTest {
         assertEquals(3, decoded.snapshot().centerChunkZ());
         assertEquals(List.of(0xFF010203, 0xFF0A0B0C), decoded.snapshot().pixels());
         assertFalse(decoded.snapshot().complete());
+        assertEquals(41, decoded.snapshot().visibleReadyChunkCount());
+        assertEquals(64, decoded.snapshot().visibleChunkCount());
+        assertEquals(12, decoded.snapshot().prefetchReadyChunkCount());
+        assertEquals(24, decoded.snapshot().prefetchChunkCount());
     }
 
     @Test

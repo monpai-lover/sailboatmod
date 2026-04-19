@@ -8,6 +8,8 @@
 
 **Tech Stack:** Java 17, Forge 1.20.1, existing road planning/runtime classes, JUnit tests under `src/test/java`.
 
+> **Audit note (2026-04-19):** Checkboxes below were corrected to reflect only behavior that can be supported by the current codebase plus fresh verification in this session. Historical red-phase steps were left unchecked unless they were re-executed now.
+
 ---
 
 ### Task 1: Auto-Build Stall Diagnosis And Recovery
@@ -16,9 +18,9 @@
 - Modify: `src/main/java/com/monpai/sailboatmod/nation/service/StructureConstructionManager.java`
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/StructureConstructionManagerRoadLinkTest.java`
 
-- [x] **Step 1: Write failing tests for stalled runtime progression and support rollback ownership**
+- [ ] **Step 1: Write failing tests for stalled runtime progression and support rollback ownership**
 
-- [x] **Step 2: Run targeted tests to verify they fail**
+- [ ] **Step 2: Run targeted tests to verify they fail**
 
 - [x] **Step 3: Add runtime diagnostics for the currently blocked road step and blockage reason**
 
@@ -39,9 +41,9 @@
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadGeometryPlannerSlopeTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadGeometryPlannerTest.java`
 
-- [x] **Step 1: Write failing tests for forced bridge endpoint touchdown on ice/shoreline endpoints and for curved bridge deck closure**
+- [ ] **Step 1: Write failing tests for forced bridge endpoint touchdown on ice/shoreline endpoints and for curved bridge deck closure**
 
-- [x] **Step 2: Run targeted tests to verify they fail**
+- [ ] **Step 2: Run targeted tests to verify they fail**
 
 - [x] **Step 3: Extend bridge endpoint planning so every bridge tail generates downhill + platform + terrain reconnect beyond the clipped bridge span when needed**
 
@@ -58,9 +60,9 @@
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadGeometryPlannerTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadCorridorPlannerTest.java`
 
-- [x] **Step 1: Write failing tests for ordinary land-road turns that currently split or leave outer-edge gaps**
+- [ ] **Step 1: Write failing tests for ordinary land-road turns that currently split or leave outer-edge gaps**
 
-- [x] **Step 2: Run targeted tests to verify they fail**
+- [ ] **Step 2: Run targeted tests to verify they fail**
 
 - [x] **Step 3: Upgrade centerline/frame-driven slice generation so land-road turns keep continuous lateral coverage**
 
@@ -76,13 +78,13 @@
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/RoadPathfinderTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/LandRoadHybridPathfinderTest.java`
 
-- [x] **Step 1: Write failing tests for complex terrain where natural routing should be preferred but construction-aware fallback should still find a buildable route**
+- [ ] **Step 1: Write failing tests for complex terrain where natural routing should be preferred but construction-aware fallback should still find a buildable route**
 
-- [x] **Step 2: Run targeted tests to verify they fail**
+- [ ] **Step 2: Run targeted tests to verify they fail**
 
 - [x] **Step 3: Refactor path selection into natural-detour-first and construction-aware fallback passes**
 
-- [x] **Step 4: Annotate route columns/segments with the accepted construction mode so later runtime phases can clear, cut, fill, tunnel, or bridge them**
+- [ ] **Step 4: Annotate route columns/segments with the accepted construction mode so later runtime phases can clear, cut, fill, tunnel, or bridge them**
 
 - [x] **Step 5: Run targeted tests to verify they pass**
 
@@ -94,15 +96,15 @@
 - Modify: `src/main/java/com/monpai/sailboatmod/construction/RoadTerrainShaper.java`
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/StructureConstructionManagerRoadLinkTest.java`
 
-- [x] **Step 1: Write failing tests for obstacle clearing, roadbed fill/cut ownership, and on-grade natural-surface replacement**
+- [ ] **Step 1: Write failing tests for obstacle clearing, roadbed fill/cut ownership, and on-grade natural-surface replacement**
 
-- [x] **Step 2: Run targeted tests to verify they fail**
+- [ ] **Step 2: Run targeted tests to verify they fail**
 
-- [x] **Step 3: Convert terrain modification into first-class runtime-owned road build actions**
+- [ ] **Step 3: Convert terrain modification into first-class runtime-owned road build actions**
 
-- [x] **Step 4: Replace natural surface blocks for on-grade roads instead of floating the road on top of untouched terrain**
+- [ ] **Step 4: Replace natural surface blocks for on-grade roads instead of floating the road on top of untouched terrain**
 
-- [x] **Step 5: Run targeted tests to verify they pass**
+- [ ] **Step 5: Run targeted tests to verify they pass**
 
 ### Task 6: Claim Map Cache Isolation Per World And Dimension
 
@@ -118,9 +120,9 @@
 - Test: `src/test/java/com/monpai/sailboatmod/client/screen/nation/NationHomeScreenTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/network/packet/ClaimMapViewportPacketRoundTripTest.java`
 
-- [x] **Step 1: Write failing tests for cross-world and cross-dimension cache leakage, plus cache reuse when returning to the same map context**
+- [ ] **Step 1: Write failing tests for cross-world and cross-dimension cache leakage, plus cache reuse when returning to the same map context**
 
-- [x] **Step 2: Run targeted tests to verify they fail**
+- [ ] **Step 2: Run targeted tests to verify they fail**
 
 - [x] **Step 3: Add a client map-context key and partition all claim preview caches and screen state by that key**
 
@@ -142,9 +144,9 @@
 - Test: `src/test/java/com/monpai/sailboatmod/client/screen/nation/NationHomeScreenTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/network/packet/ClaimMapViewportPacketRoundTripTest.java`
 
-- [x] **Step 1: Write failing tests for reopening the same world/dimension context with preserved cache buckets, pending preview revisions, and screen-local viewport state**
+- [ ] **Step 1: Write failing tests for reopening the same world/dimension context with preserved cache buckets, pending preview revisions, and screen-local viewport state**
 
-- [x] **Step 2: Run targeted tests to verify they fail**
+- [ ] **Step 2: Run targeted tests to verify they fail**
 
 - [x] **Step 3: Preserve reusable map-context buckets and reconnect Town/Nation screen state to the correct context when reopening or switching back**
 

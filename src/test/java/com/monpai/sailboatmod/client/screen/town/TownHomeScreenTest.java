@@ -131,6 +131,25 @@ class TownHomeScreenTest {
         assertEquals(0xFF444444, screen.sampleClaimTerrainColorForTest(0, 0, 1, 1));
     }
 
+    @Test
+    void bottomClaimMapProgressStaysVisibleUntilPrefetchFinishes() {
+        ClaimPreviewMapState state = ClaimPreviewMapState.ready(
+                9L,
+                1,
+                0,
+                0,
+                List.of(0xFF010203),
+                9,
+                9,
+                8,
+                16
+        );
+
+        assertTrue(TownHomeScreen.shouldShowClaimMapProgress(state));
+        assertEquals(164, TownHomeScreen.claimMapProgressWidthForTest(state, 164, true));
+        assertEquals(82, TownHomeScreen.claimMapProgressWidthForTest(state, 164, false));
+    }
+
     private static TownOverviewData dataWithJoinTargets() {
         return new TownOverviewData(
                 true,
