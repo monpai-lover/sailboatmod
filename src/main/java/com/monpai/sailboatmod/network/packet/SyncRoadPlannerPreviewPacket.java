@@ -1,8 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
-import com.monpai.sailboatmod.construction.RoadCorridorPlan;
-import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.block.Block;
@@ -70,45 +68,27 @@ public class SyncRoadPlannerPreviewPacket {
 
     public static SyncRoadPlannerPreviewPacket fromPlan(String sourceTownName,
                                                         String targetTownName,
-                                                        RoadPlacementPlan plan,
+                                                        Object plan,
                                                         boolean awaitingConfirmation) {
-        List<BlockPos> pathNodes = plan == null
-                ? List.of()
-                : structuredPreviewPathNodes(plan);
+        // Road system refactored - pending integration
         return new SyncRoadPlannerPreviewPacket(
                 sourceTownName,
                 targetTownName,
-                plan == null ? List.of() : plan.ghostBlocks().stream()
-                        .map(block -> new GhostBlock(block.pos(), block.state()))
-                        .toList(),
-                pathNodes,
-                pathNodes.size(),
-                plan == null ? null : plan.startHighlightPos(),
-                plan == null ? null : plan.endHighlightPos(),
-                plan == null ? null : plan.focusPos(),
+                List.of(),
+                List.of(),
+                0,
+                null,
+                null,
+                null,
                 awaitingConfirmation,
                 List.of(),
                 ""
         );
     }
 
-    private static List<BlockPos> structuredPreviewPathNodes(RoadPlacementPlan plan) {
-        if (plan == null) {
-            return List.of();
-        }
-        if (plan.corridorPlan() != null
-                && plan.corridorPlan().valid()
-                && plan.corridorPlan().slices() != null
-                && !plan.corridorPlan().slices().isEmpty()) {
-            List<BlockPos> deckCenters = plan.corridorPlan().slices().stream()
-                    .map(RoadCorridorPlan.CorridorSlice::deckCenter)
-                    .filter(java.util.Objects::nonNull)
-                    .toList();
-            if (!deckCenters.isEmpty()) {
-                return deckCenters;
-            }
-        }
-        return plan.centerPath();
+    private static List<BlockPos> structuredPreviewPathNodes(Object plan) {
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     public SyncRoadPlannerPreviewPacket withOptions(List<PreviewOption> options, String selectedOptionId) {

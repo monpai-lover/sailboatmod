@@ -1,8 +1,5 @@
 package com.monpai.sailboatmod.resident.army;
 
-import com.monpai.sailboatmod.nation.service.RoadPathfinder;
-import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshot;
-import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshotBuilder;
 import com.monpai.sailboatmod.resident.entity.SoldierEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -248,19 +245,8 @@ public final class ArmyCommandManager {
         if (target == null || target.equals(BlockPos.ZERO)) {
             return List.of();
         }
-        BlockPos from = resolveArmyCenter(level, army);
-        if (from == null || from.distManhattan(target) <= 4) {
-            return List.of();
-        }
-        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, from, target, java.util.Set.of(), java.util.Set.of());
-        List<BlockPos> route = RoadPathfinder.findPath(level, from, target, java.util.Set.of(), java.util.Set.of(), false, snapshot);
-        if (route.size() <= 1) {
-            return List.of();
-        }
-        if (route.get(0).distManhattan(from) <= 1) {
-            return List.copyOf(route.subList(1, route.size()));
-        }
-        return route;
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     private static BlockPos resolveArmyCenter(ServerLevel level, ArmyRecord army) {

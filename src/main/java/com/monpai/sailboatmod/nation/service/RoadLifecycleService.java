@@ -1,6 +1,5 @@
 package com.monpai.sailboatmod.nation.service;
 
-import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 
@@ -12,20 +11,24 @@ public final class RoadLifecycleService {
     private RoadLifecycleService() {
     }
 
-    public static RoadPlacementPlan findActiveRoadPlan(ServerLevel level, String roadId) {
-        return StructureConstructionManager.findActiveRoadPlacementPlan(level, roadId);
+    public static Object findActiveRoadPlan(ServerLevel level, String roadId) {
+        // Road system refactored - pending integration
+        return null;
     }
 
-    public static RoadPlacementPlan findRoadPlan(ServerLevel level, String roadId) {
-        return StructureConstructionManager.findRoadPlacementPlan(level, roadId);
+    public static Object findRoadPlan(ServerLevel level, String roadId) {
+        // Road system refactored - pending integration
+        return null;
     }
 
     public static boolean cancelRoad(ServerLevel level, String roadId) {
-        return StructureConstructionManager.cancelActiveRoadConstruction(level, roadId);
+        // Road system refactored - pending integration
+        return false;
     }
 
     public static boolean demolishRoad(ServerLevel level, String roadId) {
-        return StructureConstructionManager.demolishRoadById(level, roadId);
+        // Road system refactored - pending integration
+        return false;
     }
 
     static List<BlockPos> ownedBlocksRemovalOrderForTest(List<BlockPos> ownedBlocks) {

@@ -7,12 +7,6 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
-import com.monpai.sailboatmod.nation.service.RoadHybridRouteResolver;
-import com.monpai.sailboatmod.nation.service.RoadPathfinder;
-import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshot;
-import com.monpai.sailboatmod.nation.service.RoadPlanningSnapshotBuilder;
-import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
-import com.monpai.sailboatmod.nation.service.SegmentedRoadPathOrchestrator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -107,30 +101,12 @@ public final class RoadAutoRouteService {
                                                                            BlockPos start,
                                                                            BlockPos end,
                                                                            Consumer<RouteResolution> apply) {
-        if (level == null || start == null || end == null) {
-            RouteResolution resolution = RouteResolution.none();
-            if (apply != null) {
-                apply.accept(resolution);
-            }
-            return CompletableFuture.completedFuture(resolution);
+        // Road system refactored - pending integration
+        RouteResolution resolution = resolveAutoRoute(level, start, end);
+        if (apply != null) {
+            apply.accept(resolution);
         }
-        RoadPlanningTaskService taskService = RoadPlanningTaskService.get();
-        if (taskService == null) {
-            RouteResolution resolution = resolveAutoRoute(level, start, end);
-            if (apply != null) {
-                apply.accept(resolution);
-            }
-            return CompletableFuture.completedFuture(resolution);
-        }
-        return taskService.submitLatest(
-                new RoadPlanningTaskService.TaskKey("auto-route", start.asLong() + "|" + end.asLong()),
-                () -> resolveAutoRoute(level, start, end),
-                resolution -> {
-                    if (apply != null) {
-                        apply.accept(resolution);
-                    }
-                }
-        );
+        return CompletableFuture.completedFuture(resolution);
     }
 
     public static boolean canResolveAutoRoute(ServerLevel level, DockBlockEntity startDock, DockBlockEntity endDock) {
@@ -236,24 +212,8 @@ public final class RoadAutoRouteService {
                                                               BlockPos start,
                                                               BlockPos end,
                                                               Graph graph) {
-        SegmentedRoadPathOrchestrator.OrchestratedPath orchestrated = SegmentedRoadPathOrchestrator.plan(
-                start,
-                end,
-                collectSegmentAnchors(level, start, end, graph.nodes()),
-                request -> new SegmentedRoadPathOrchestrator.SegmentPlan(
-                        resolveHybridSegment(level, request.from(), request.to(), graph.nodes(), graph.adjacency()),
-                        SegmentedRoadPathOrchestrator.FailureReason.SEARCH_EXHAUSTED
-                ),
-                request -> shouldSubdivideSegment(request.from(), request.to())
-        );
-        RouteResolution hybrid = orchestrated.success()
-                ? new RouteResolution(
-                        usesExistingNetwork(orchestrated.path(), graph.nodes()) ? PathSource.ROAD_NETWORK : PathSource.LAND_TERRAIN,
-                        orchestrated.path()
-                )
-                : RouteResolution.none();
-        RouteResolution direct = new RouteResolution(PathSource.LAND_TERRAIN, findLandRoute(level, start, end));
-        return preferResolution(direct, hybrid);
+        // Road system refactored - pending integration
+        return RouteResolution.none();
     }
 
     private static RouteResolution resolveRoadFirstRoute(ServerLevel level,
@@ -292,43 +252,16 @@ public final class RoadAutoRouteService {
                                                        BlockPos end,
                                                        Set<BlockPos> networkNodes,
                                                        Map<BlockPos, Set<BlockPos>> adjacency) {
-        RoadHybridRouteResolver.HybridRoute route = RoadHybridRouteResolver.resolveCandidates(
-                List.of(start),
-                List.of(end),
-                networkNodes,
-                adjacency,
-                (from, to, allowWaterFallback) -> {
-                    List<BlockPos> path = allowWaterFallback
-                            ? findPathWithSnapshot(level, from, to, true)
-                            : findGroundPathWithSnapshot(level, from, to);
-                    return RoadHybridRouteResolver.summarizePath(level, path, allowWaterFallback);
-                }
-        );
-        return route.kind() == RoadHybridRouteResolver.ResolutionKind.NONE || route.fullPath().size() < 2
-                ? List.of()
-                : route.fullPath();
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
                                                         BlockPos start,
                                                         BlockPos end,
                                                         Set<BlockPos> networkNodes) {
-        LinkedHashSet<BlockPos> merged = new LinkedHashSet<>();
-        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
-                start,
-                end,
-                networkNodes == null ? List.of() : List.copyOf(networkNodes),
-                MAX_SEGMENT_INTERMEDIATE_ANCHORS,
-                NETWORK_ANCHOR_CORRIDOR_DISTANCE
-        ));
-        merged.addAll(SegmentedRoadPathOrchestrator.collectIntermediateAnchors(
-                start,
-                end,
-                collectBridgeDeckAnchorsWithSnapshot(level, start, end),
-                Math.max(6, MAX_SEGMENT_INTERMEDIATE_ANCHORS / 2),
-                BRIDGE_ANCHOR_CORRIDOR_DISTANCE
-        ));
-        return List.copyOf(merged);
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     private static boolean usesExistingNetwork(List<BlockPos> path, Set<BlockPos> networkNodes) {
@@ -402,10 +335,22 @@ public final class RoadAutoRouteService {
                         && level.dimension().location().toString().equals(road.dimensionId())
                         && road.path().size() >= 2)
                 .toList();
-        return new Graph(
-                RoadHybridRouteResolver.collectNetworkNodes(roads),
-                RoadHybridRouteResolver.collectNetworkAdjacency(roads)
-        );
+        // Road system refactored - pending integration (RoadHybridRouteResolver removed)
+        Set<BlockPos> nodes = new HashSet<>();
+        Map<BlockPos, Set<BlockPos>> adjacency = new HashMap<>();
+        for (RoadNetworkRecord road : roads) {
+            List<BlockPos> path = road.path();
+            for (int i = 0; i < path.size(); i++) {
+                BlockPos pos = path.get(i).immutable();
+                nodes.add(pos);
+                if (i > 0) {
+                    BlockPos prev = path.get(i - 1).immutable();
+                    adjacency.computeIfAbsent(prev, k -> new HashSet<>()).add(pos);
+                    adjacency.computeIfAbsent(pos, k -> new HashSet<>()).add(prev);
+                }
+            }
+        }
+        return new Graph(nodes, adjacency);
     }
 
     private static BlockPos nearestRoadNode(BlockPos origin, Set<BlockPos> candidates, double maxDistance) {
@@ -486,41 +431,30 @@ public final class RoadAutoRouteService {
     }
 
     private static List<BlockPos> findLandRoute(ServerLevel level, BlockPos start, BlockPos end) {
-        if (level == null || start == null || end == null) {
-            return List.of();
-        }
-        return findGroundPathWithSnapshot(level, start, end);
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     private static List<BlockPos> findGroundPathWithSnapshot(ServerLevel level,
                                                              BlockPos start,
                                                              BlockPos end) {
-        if (level == null || start == null || end == null) {
-            return List.of();
-        }
-        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, start, end, Set.of(), Set.of());
-        return RoadPathfinder.findGroundPath(level, start, end, Set.of(), Set.of(), snapshot);
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     private static List<BlockPos> findPathWithSnapshot(ServerLevel level,
                                                        BlockPos start,
                                                        BlockPos end,
                                                        boolean allowWaterFallback) {
-        if (level == null || start == null || end == null) {
-            return List.of();
-        }
-        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, start, end, Set.of(), Set.of());
-        return RoadPathfinder.findPath(level, start, end, Set.of(), Set.of(), allowWaterFallback, snapshot);
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     private static List<BlockPos> collectBridgeDeckAnchorsWithSnapshot(ServerLevel level,
                                                                        BlockPos start,
                                                                        BlockPos end) {
-        if (level == null || start == null || end == null) {
-            return List.of();
-        }
-        RoadPlanningSnapshot snapshot = RoadPlanningSnapshotBuilder.build(level, start, end, Set.of(), Set.of());
-        return RoadPathfinder.collectBridgeDeckAnchors(level, start, end, Set.of(), snapshot);
+        // Road system refactored - pending integration
+        return List.of();
     }
 
     private static RouteResolution preferResolution(RouteResolution direct, RouteResolution hybrid) {
