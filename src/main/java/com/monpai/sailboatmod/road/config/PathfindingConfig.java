@@ -5,17 +5,19 @@ public class PathfindingConfig {
     public enum SamplingPrecision { NORMAL, HIGH, ULTRA_HIGH }
 
     private Algorithm algorithm = Algorithm.POTENTIAL_FIELD;
-    private int maxSteps = 10000;
+    private int maxSteps = 20000;
     private SamplingPrecision samplingPrecision = SamplingPrecision.NORMAL;
-    private double elevationWeight = 2.0;
-    private double biomeWeight = 1.0;
-    private double stabilityWeight = 1.0;
-    private double waterDepthWeight = 1.0;
-    private double nearWaterCost = 50.0;
+    private double elevationWeight = 80.0;
+    private double biomeWeight = 2.0;
+    private double stabilityWeight = 15.0;
+    private double waterDepthWeight = 80.0;
+    private double nearWaterCost = 80.0;
     private double deviationWeight = 0.5;
-    private double heuristicWeight = 1.0;
+    private double heuristicWeight = 15.0;
     private int aStarStep = 8;
     private int threadPoolSize = 2;
+    private int segmentThreshold = 96;
+    private int maxSegments = 8;
 
     public Algorithm getAlgorithm() { return algorithm; }
     public void setAlgorithm(Algorithm algorithm) { this.algorithm = algorithm; }
@@ -41,4 +43,8 @@ public class PathfindingConfig {
     public void setAStarStep(int step) { this.aStarStep = step; }
     public int getThreadPoolSize() { return threadPoolSize; }
     public void setThreadPoolSize(int size) { this.threadPoolSize = size; }
+    public int getSegmentThreshold() { return segmentThreshold; }
+    public void setSegmentThreshold(int t) { this.segmentThreshold = t; }
+    public int getMaxSegments() { return maxSegments; }
+    public void setMaxSegments(int m) { this.maxSegments = m; }
 }

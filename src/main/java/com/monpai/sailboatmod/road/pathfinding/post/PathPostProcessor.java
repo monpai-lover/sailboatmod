@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.road.pathfinding.post;
 
 import com.monpai.sailboatmod.road.model.BridgeSpan;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
+import com.monpai.sailboatmod.road.pathfinding.post.SplineHelper.CurveMode;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
@@ -11,6 +12,7 @@ public class PathPostProcessor {
     private static final int SPLINE_SEGMENTS_PER_SPAN = 4;
     private static final double RELAXATION_WEIGHT = 0.3;
     private static final int RELAXATION_PASSES = 3;
+    private static final double SHARP_TURN_THRESHOLD = 60.0;
 
     public record ProcessedPath(List<BlockPos> path, List<BridgeSpan> bridgeSpans) {}
 
@@ -19,10 +21,40 @@ public class PathPostProcessor {
         List<BridgeSpan> bridges = detectBridges(simplified, cache, bridgeMinWaterDepth);
         List<BlockPos> straightened = straightenBridges(simplified, bridges);
         List<BlockPos> relaxed = relax(straightened, bridges);
-        List<BlockPos> splined = SplineHelper.catmullRom(relaxed, SPLINE_SEGMENTS_PER_SPAN);
+
+        HeightProfileSmoother smoother = new HeightProfileSmoother(1.0);
+        int[] smoothedHeights = smoother.smooth(relaxed, bridges);
+        List<BlockPos> heightAdjusted = applyHeights(relaxed, smoothedHeights);
+
+        List<BlockPos> splined = autoSpline(heightAdjusted, SPLINE_SEGMENTS_PER_SPAN);
         List<BlockPos> rasterized = rasterize(splined);
         List<BridgeSpan> finalBridges = detectBridges(rasterized, cache, bridgeMinWaterDepth);
         return new ProcessedPath(rasterized, finalBridges);
+    }
+
+    private List<BlockPos> applyHeights(List<BlockPos> path, int[] heights) {
+        List<BlockPos> result = new ArrayList<>(path.size());
+        for (int i = 0; i < path.size(); i++) {
+            BlockPos p = path.get(i);
+            int h = (i < heights.length) ? heights[i] : p.getY();
+            result.add(new BlockPos(p.getX(), h, p.getZ()));
+        }
+        return result;
+    }
+
+    private List<BlockPos> autoSpline(List<BlockPos> path, int segmentsPerSpan) {
+        if (path.size() < 4) return new ArrayList<>(path);
+        boolean hasSharpTurn = false;
+        for (int i = 0; i < path.size() - 3; i++) {
+            double angle = SplineHelper.angleBetween(
+                path.get(i), path.get(i + 1), path.get(i + 2), path.get(i + 3));
+            if (angle > SHARP_TURN_THRESHOLD) {
+                hasSharpTurn = true;
+                break;
+            }
+        }
+        CurveMode mode = hasSharpTurn ? CurveMode.BEZIER_CASTELJAU : CurveMode.CATMULL_ROM;
+        return SplineHelper.interpolate(path, segmentsPerSpan, mode);
     }
 
     private List<BlockPos> simplify(List<BlockPos> path) {
