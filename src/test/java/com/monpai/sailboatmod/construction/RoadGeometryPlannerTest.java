@@ -247,4 +247,64 @@ class RoadGeometryPlannerTest {
                 () -> geometryPlan.ghostBlocks().toString()
         );
     }
+
+    @Test
+    void uphillLandCorridorGeometryKeepsContinuousClosureAcrossSlopeSlices() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 1),
+                new BlockPos(0, 64, 2),
+                new BlockPos(1, 65, 3),
+                new BlockPos(2, 66, 4),
+                new BlockPos(3, 67, 5),
+                new BlockPos(4, 68, 6)
+        );
+
+        RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(centerPath, List.of(), List.of());
+        RoadGeometryPlanner.RoadGeometryPlan geometryPlan = RoadGeometryPlanner.plan(
+                corridorPlan,
+                pos -> Blocks.STONE_BRICKS.defaultBlockState()
+        );
+        List<BlockPos> geometryPositions = geometryPlan.ghostBlocks().stream()
+                .map(RoadGeometryPlanner.GhostRoadBlock::pos)
+                .toList();
+
+        for (int i = 0; i < corridorPlan.slices().size() - 1; i++) {
+            int sliceIndex = i;
+            List<BlockPos> current = corridorPlan.slices().get(sliceIndex).surfacePositions();
+            List<BlockPos> next = corridorPlan.slices().get(sliceIndex + 1).surfacePositions();
+            assertTrue(
+                    geometryPositions.containsAll(current),
+                    () -> "geometry missing current slope slice surface positions at " + sliceIndex
+                            + " current=" + current + " geometry=" + geometryPositions
+            );
+            assertTrue(
+                    geometryPositions.containsAll(next),
+                    () -> "geometry missing next slope slice surface positions at " + (sliceIndex + 1)
+                            + " next=" + next + " geometry=" + geometryPositions
+            );
+            assertTrue(
+                    hasSlopeClosure(current, next),
+                    () -> "slope corridor broke between slices " + sliceIndex + " and " + (sliceIndex + 1)
+                            + " current=" + current + " next=" + next
+            );
+        }
+    }
+
+    private static boolean hasSlopeClosure(List<BlockPos> current, List<BlockPos> next) {
+        for (BlockPos left : current) {
+            for (BlockPos right : next) {
+                if (left == null || right == null) {
+                    continue;
+                }
+                int dx = Math.abs(left.getX() - right.getX());
+                int dy = Math.abs(left.getY() - right.getY());
+                int dz = Math.abs(left.getZ() - right.getZ());
+                if (Math.max(dx, dz) <= 1 && dy <= 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 }

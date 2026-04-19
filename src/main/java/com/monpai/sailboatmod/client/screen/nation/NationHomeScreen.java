@@ -246,10 +246,10 @@ public class NationHomeScreen extends Screen {
             for (int gx = 0; gx < diameter; gx++) {
                 int chunkIndex = gz * diameter + gx;
                 int colorIndex = chunkIndex * sub * sub;
-                if (colorIndex < colors.size()) {
+                if (colorIndex + (sub * sub) <= colors.size()) {
                     int cx = this.data.previewCenterChunkX() + gx - radius;
                     int cz = this.data.previewCenterChunkZ() + gz - radius;
-                    TerrainColorClientCache.put(cx, cz, colors.get(colorIndex));
+                    TerrainColorClientCache.put(cx, cz, copyChunkSubColors(colors, colorIndex, sub));
                 }
             }
         }
@@ -509,7 +509,7 @@ public class NationHomeScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (button == 2 && this.isDraggingMap) {
+        if (shouldRequestRefreshAfterMapDragRelease(button, this.isDraggingMap)) {
             this.isDraggingMap = false;
             requestRefresh(mapCenterX(), mapCenterZ());
             return true;
@@ -1226,12 +1226,12 @@ public class NationHomeScreen extends Screen {
             if (subIndex >= 0 && subIndex < colors.size()) {
                 int color = colors.get(subIndex);
                 if (color != PREVIEW_DEFAULT_TERRAIN_COLOR) {
-                    TerrainColorClientCache.put(chunkX, chunkZ, color);
+                    TerrainColorClientCache.put(chunkX, chunkZ, sx, sz, color);
                     return color;
                 }
             }
         }
-        Integer cached = TerrainColorClientCache.get(chunkX, chunkZ);
+        Integer cached = TerrainColorClientCache.get(chunkX, chunkZ, sx, sz);
         return cached != null ? cached : PREVIEW_DEFAULT_TERRAIN_COLOR;
     }
 
@@ -1558,6 +1558,23 @@ public class NationHomeScreen extends Screen {
         return safeMapState.loading() && safeMapState.revision() == pendingPreviewRevision;
     }
 
+    static boolean shouldRequestRefreshAfterMapDragRelease(int button, boolean isDraggingMap) {
+        return button == 2 && isDraggingMap;
+    }
+
+    static boolean shouldFlushQueuedPreviewRefresh(boolean refreshPending,
+                                                   int queuedPreviewCenterX,
+                                                   int queuedPreviewCenterZ,
+                                                   int previewCenterChunkX,
+                                                   int previewCenterChunkZ) {
+        if (refreshPending
+                || queuedPreviewCenterX == Integer.MIN_VALUE
+                || queuedPreviewCenterZ == Integer.MIN_VALUE) {
+            return false;
+        }
+        return queuedPreviewCenterX != previewCenterChunkX || queuedPreviewCenterZ != previewCenterChunkZ;
+    }
+
     private int viewportRadius() {
         int configured = this.data.claimMapState().radius();
         return configured > 0 ? configured : claimRadius();
@@ -1575,17 +1592,17 @@ public class NationHomeScreen extends Screen {
     }
 
     private void flushQueuedPreviewRefresh() {
-        if (this.refreshPending) {
-            return;
-        }
-        if (this.queuedPreviewCenterX == Integer.MIN_VALUE || this.queuedPreviewCenterZ == Integer.MIN_VALUE) {
-            return;
-        }
         int queuedX = this.queuedPreviewCenterX;
         int queuedZ = this.queuedPreviewCenterZ;
         this.queuedPreviewCenterX = Integer.MIN_VALUE;
         this.queuedPreviewCenterZ = Integer.MIN_VALUE;
-        if (queuedX == this.data.previewCenterChunkX() && queuedZ == this.data.previewCenterChunkZ()) {
+        if (!shouldFlushQueuedPreviewRefresh(
+                this.refreshPending,
+                queuedX,
+                queuedZ,
+                this.data.previewCenterChunkX(),
+                this.data.previewCenterChunkZ()
+        )) {
             return;
         }
         requestRefresh(queuedX, queuedZ);
@@ -1653,13 +1670,21 @@ public class NationHomeScreen extends Screen {
             for (int gx = 0; gx < diameter; gx++) {
                 int chunkIndex = gz * diameter + gx;
                 int colorIndex = chunkIndex * sub * sub;
-                if (colorIndex < colors.size()) {
+                if (colorIndex + (sub * sub) <= colors.size()) {
                     int cx = snapshot.previewCenterChunkX() + gx - radius;
                     int cz = snapshot.previewCenterChunkZ() + gz - radius;
-                    TerrainColorClientCache.put(cx, cz, colors.get(colorIndex));
+                    TerrainColorClientCache.put(cx, cz, copyChunkSubColors(colors, colorIndex, sub));
                 }
             }
         }
+    }
+
+    private static int[] copyChunkSubColors(List<Integer> colors, int startIndex, int sub) {
+        int[] chunkColors = new int[sub * sub];
+        for (int i = 0; i < chunkColors.length; i++) {
+            chunkColors[i] = colors.get(startIndex + i);
+        }
+        return chunkColors;
     }
 
     private void rememberClaimRadius(NationOverviewData snapshot) {

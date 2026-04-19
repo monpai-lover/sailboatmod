@@ -77,7 +77,7 @@ class ClaimMapViewportPacketRoundTripTest {
         SyncClaimPreviewMapPacket packet = new SyncClaimPreviewMapPacket(
                 SyncClaimPreviewMapPacket.ScreenKind.NATION,
                 "nation-a",
-                new ClaimMapViewportSnapshot("minecraft:overworld", 11L, 6, 2, 3, List.of(0xFF010203, 0xFF0A0B0C))
+                new ClaimMapViewportSnapshot("minecraft:overworld", 11L, 6, 2, 3, List.of(0xFF010203, 0xFF0A0B0C), false)
         );
 
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
@@ -92,6 +92,7 @@ class ClaimMapViewportPacketRoundTripTest {
         assertEquals(2, decoded.snapshot().centerChunkX());
         assertEquals(3, decoded.snapshot().centerChunkZ());
         assertEquals(List.of(0xFF010203, 0xFF0A0B0C), decoded.snapshot().pixels());
+        assertFalse(decoded.snapshot().complete());
     }
 
     @Test
@@ -120,7 +121,7 @@ class ClaimMapViewportPacketRoundTripTest {
     }
 
     @Test
-    void completeOnlySnapshotReturnsNullWhenVisibleChunkIsMissing() {
+    void completeOnlySnapshotReturnsPartialPixelsWhenVisibleChunkIsMissing() {
         RequestClaimMapViewportPacket packet = new RequestClaimMapViewportPacket(
                 RequestClaimMapViewportPacket.ScreenKind.TOWN,
                 "town-a",
@@ -140,7 +141,9 @@ class ClaimMapViewportPacketRoundTripTest {
                 1
         );
 
-        assertNull(snapshot);
+        assertNotNull(snapshot);
+        assertFalse(snapshot.complete());
+        assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, snapshot.pixels().size());
     }
 
     @Test
@@ -165,11 +168,12 @@ class ClaimMapViewportPacketRoundTripTest {
         );
 
         assertNotNull(snapshot);
+        assertTrue(snapshot.complete());
         assertEquals(15L, snapshot.revision());
         assertEquals(1, snapshot.radius());
         assertEquals(10, snapshot.centerChunkX());
         assertEquals(20, snapshot.centerChunkZ());
-        assertEquals(9, snapshot.pixels().size());
+        assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, snapshot.pixels().size());
     }
 
     @Test
@@ -219,19 +223,19 @@ class ClaimMapViewportPacketRoundTripTest {
         );
         int secondFlush = RequestClaimMapViewportPacket.flushOpenViewportRequestsForTest(
                 taskService,
-                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(1, 2, 3, 4)),
+                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(1, 2, 3, 4), false),
                 (state, snapshot) -> sentRevisions.add(snapshot.revision()),
                 List.of()
         );
         int thirdFlush = RequestClaimMapViewportPacket.flushOpenViewportRequestsForTest(
                 taskService,
-                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(5, 6, 7, 8)),
+                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(5, 6, 7, 8), true),
                 (state, snapshot) -> sentRevisions.add(snapshot.revision()),
                 List.of()
         );
         int invalidatedFlush = RequestClaimMapViewportPacket.flushOpenViewportRequestsForTest(
                 taskService,
-                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(9, 10, 11, 12)),
+                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(9, 10, 11, 12), true),
                 (state, snapshot) -> sentRevisions.add(snapshot.revision()),
                 List.of(screenKey)
         );
@@ -287,7 +291,7 @@ class ClaimMapViewportPacketRoundTripTest {
         ClaimMapTaskService taskService = new ClaimMapTaskService(Runnable::run, Runnable::run);
         int sent = RequestClaimMapViewportPacket.flushOpenViewportRequestsForTest(
                 taskService,
-                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(1)),
+                state -> new ClaimMapViewportSnapshot("minecraft:overworld", state.revision(), state.radius(), state.centerChunkX(), state.centerChunkZ(), List.of(1), true),
                 (state, snapshot) -> deliveredRevision.set(snapshot.revision()),
                 List.of()
         );

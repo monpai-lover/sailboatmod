@@ -120,7 +120,9 @@ public final class RoadGeometryPlanner {
         if (slice.index() != index) {
             return List.of();
         }
-        if (!slice.surfacePositions().isEmpty() && preservesExplicitSurfacePositions(slice.segmentKind())) {
+        if (!slice.surfacePositions().isEmpty()
+                && (preservesExplicitSurfacePositions(slice.segmentKind())
+                || shouldPreserveRepairedLandSurface(slice.segmentKind(), slice.surfacePositions()))) {
             return slice.surfacePositions();
         }
         int[] deckHeights = corridorDeckHeights(corridorPlan);
@@ -151,7 +153,7 @@ public final class RoadGeometryPlanner {
         for (BlockPos pos : slicePositions(corridorPlan, index)) {
             BlockState sourceState = Objects.requireNonNull(blockStateSupplier.apply(pos), "blockStateSupplier returned null for pos " + pos);
             if (slice.segmentKind() == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM) {
-                ghostBlocks.add(new GhostRoadBlock(pos, fullBlockStateForFamily(sourceState)));
+                ghostBlocks.add(new GhostRoadBlock(pos, slabStateForFamily(sourceState)));
                 continue;
             }
             if (slice.segmentKind() == RoadCorridorPlan.SegmentKind.APPROACH_RAMP) {
@@ -578,6 +580,27 @@ public final class RoadGeometryPlanner {
         return segmentKind == RoadCorridorPlan.SegmentKind.APPROACH_RAMP
                 || segmentKind == RoadCorridorPlan.SegmentKind.ELEVATED_APPROACH
                 || segmentKind == RoadCorridorPlan.SegmentKind.BRIDGE_HEAD;
+    }
+
+    private static boolean shouldPreserveRepairedLandSurface(RoadCorridorPlan.SegmentKind segmentKind,
+                                                             List<BlockPos> surfacePositions) {
+        if (segmentKind != RoadCorridorPlan.SegmentKind.LAND_APPROACH || surfacePositions == null || surfacePositions.isEmpty()) {
+            return false;
+        }
+        Integer firstY = null;
+        for (BlockPos pos : surfacePositions) {
+            if (pos == null) {
+                continue;
+            }
+            if (firstY == null) {
+                firstY = pos.getY();
+                continue;
+            }
+            if (pos.getY() != firstY) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean shouldUseCorridorStairState(RoadCorridorPlan corridorPlan,

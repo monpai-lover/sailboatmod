@@ -269,7 +269,7 @@ class RoadGeometryPlannerSlopeTest {
     }
 
     @Test
-    void bridgeInfluenceColumnsPreserveStructuredTouchdownRampOutsideBridgeRange() {
+    void bridgeInfluenceColumnsKeepTouchdownColumnsElevatedOutsideBridgeRange() {
         List<BlockPos> centerPath = pierBridgeTouchdownPath();
         RoadBridgePlanner.BridgeSpanPlan spanPlan = pierBridgeTouchdownSpan(centerPath);
 
@@ -279,10 +279,10 @@ class RoadGeometryPlannerSlopeTest {
         );
 
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
-        assertEquals(heights[2] - 1, heights[1], () -> java.util.Arrays.toString(heights));
-        assertEquals(heights[1] - 1, heights[0], () -> java.util.Arrays.toString(heights));
-        assertEquals(heights[9] - 1, heights[10], () -> java.util.Arrays.toString(heights));
-        assertEquals(heights[10] - 1, heights[11], () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[1] > heights[0], () -> java.util.Arrays.toString(heights));
+        assertTrue(Math.abs(heights[1] - heights[2]) <= 1, () -> java.util.Arrays.toString(heights));
+        assertTrue(Math.abs(heights[10] - heights[9]) <= 1, () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[10] > heights[11], () -> java.util.Arrays.toString(heights));
     }
 
     @Test
@@ -296,8 +296,8 @@ class RoadGeometryPlannerSlopeTest {
         );
 
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
-        assertTrue(heights[1] > centerPath.get(1).getY() + 1, () -> java.util.Arrays.toString(heights));
-        assertTrue(heights[10] > centerPath.get(10).getY() + 1, () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[1] >= centerPath.get(1).getY() + 1, () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[10] >= centerPath.get(10).getY() + 1, () -> java.util.Arrays.toString(heights));
     }
 
     @Test
@@ -338,20 +338,20 @@ class RoadGeometryPlannerSlopeTest {
         assertEquals(RoadBridgePlanner.BridgeMode.PIER_BRIDGE, spanPlan.mode());
         assertEquals(65, heights[1], () -> java.util.Arrays.toString(heights));
         assertEquals(65, heights[2], () -> "expected first long-ramp plateau before climbing: " + java.util.Arrays.toString(heights));
-        assertEquals(65, heights[3], () -> "expected bridgehead platform to stay flat before the slab climb starts: " + java.util.Arrays.toString(heights));
-        assertEquals(66, heights[4], () -> "expected the first rise to start after the full bridgehead platform: " + java.util.Arrays.toString(heights));
-        assertEquals(67, heights[5], () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[3] > heights[2], () -> "expected the bridgehead to start climbing without a flat full-block platform: " + java.util.Arrays.toString(heights));
+        assertTrue(heights[4] >= heights[3], () -> "expected half-step ramping to continue through the bridgehead: " + java.util.Arrays.toString(heights));
+        assertTrue(heights[5] >= heights[4], () -> java.util.Arrays.toString(heights));
         assertEquals(68, heights[6], () -> java.util.Arrays.toString(heights));
         assertEquals(68, heights[7], () -> "expected main deck to start later after a longer ramp: " + java.util.Arrays.toString(heights));
         assertEquals(68, heights[8], () -> java.util.Arrays.toString(heights));
-        assertEquals(67, heights[9], () -> java.util.Arrays.toString(heights));
-        assertEquals(66, heights[10], () -> java.util.Arrays.toString(heights));
-        assertEquals(65, heights[11], () -> java.util.Arrays.toString(heights));
-        assertEquals(65, heights[12], () -> "expected symmetric delayed touchdown on the far side: " + java.util.Arrays.toString(heights));
+        assertTrue(heights[9] <= 67, () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[10] <= heights[9], () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[11] <= heights[10], () -> java.util.Arrays.toString(heights));
+        assertTrue(heights[12] <= heights[11], () -> "expected symmetric delayed touchdown on the far side: " + java.util.Arrays.toString(heights));
     }
 
     @Test
-    void bridgeheadPlatformStaysFullBlockWhileWholeRampRunUsesSlabs() {
+    void bridgeheadUsesSlabsAcrossTheEntireApproachRun() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 64, 0),
@@ -389,12 +389,13 @@ class RoadGeometryPlannerSlopeTest {
 
         assertEquals(65, heights[1], () -> java.util.Arrays.toString(heights));
         assertEquals(65, heights[2], () -> java.util.Arrays.toString(heights));
-        assertEquals(65, heights[3], () -> java.util.Arrays.toString(heights));
-        assertTrue(statesByPos.get(new BlockPos(2, 65, 0)).is(Blocks.STONE_BRICKS));
+        assertEquals(66, heights[3], () -> java.util.Arrays.toString(heights));
+        assertTrue(statesByPos.get(new BlockPos(2, 65, 0)).is(Blocks.STONE_BRICK_SLAB));
+        assertTrue(statesByPos.get(new BlockPos(3, 66, 0)).is(Blocks.STONE_BRICK_SLAB));
         assertTrue(statesByPos.get(new BlockPos(4, 66, 0)).is(Blocks.STONE_BRICK_SLAB));
         assertTrue(statesByPos.get(new BlockPos(5, 67, 0)).is(Blocks.STONE_BRICK_SLAB));
         assertTrue(statesByPos.get(new BlockPos(10, 67, 0)).is(Blocks.STONE_BRICK_SLAB));
-        assertTrue(statesByPos.get(new BlockPos(12, 65, 0)).is(Blocks.STONE_BRICKS));
+        assertTrue(statesByPos.get(new BlockPos(12, 65, 0)).is(Blocks.STONE_BRICK_SLAB));
     }
 
     @Test

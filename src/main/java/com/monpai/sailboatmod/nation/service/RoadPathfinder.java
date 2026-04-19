@@ -192,7 +192,7 @@ public final class RoadPathfinder {
                 LandPathQualityEvaluator.fragmentedColumns(legacy.path())
         );
         if (selection.backEnd() == LandRoadRouteSelector.BackEnd.LEGACY) {
-            return legacy;
+            return normalizeGroundResult(from, to, legacy);
         }
         PlannedPathResult hybrid = LandRoadHybridPathfinder.find(level, from, to, blockedColumns, excludedColumns, context);
         return preferSuccessfulGroundResult(from, to, selection.backEnd(), legacy, hybrid);
@@ -228,11 +228,85 @@ public final class RoadPathfinder {
         if (result == null || !result.success()) {
             return result;
         }
-        List<BlockPos> normalized = normalizeReturnedPath(from, to, result.path());
+        List<BlockPos> normalized = normalizeGroundReturnedPath(from, to, result.path());
         if (!normalized.isEmpty()) {
             return new PlannedPathResult(normalized, RoadPlanningFailureReason.NONE);
         }
         return new PlannedPathResult(List.of(), RoadPlanningFailureReason.SEARCH_EXHAUSTED);
+    }
+
+    private static List<BlockPos> normalizeGroundReturnedPath(BlockPos from, BlockPos to, List<BlockPos> path) {
+        if (from == null || to == null || path == null) {
+            return List.of();
+        }
+        if (from.equals(to)) {
+            return List.of(from.immutable());
+        }
+        if (path.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> corePath = new ArrayList<>(path.size());
+        for (BlockPos pos : path) {
+            if (pos != null) {
+                corePath.add(pos.immutable());
+            }
+        }
+        if (corePath.isEmpty()) {
+            return List.of();
+        }
+        trimUnsupportedGroundEndpoint(corePath, from, true);
+        trimUnsupportedGroundEndpoint(corePath, to, false);
+        if (corePath.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> normalized = new ArrayList<>();
+        BlockPos first = corePath.get(0);
+        if (supportsGroundEndpointTransition(from, first)) {
+            appendPathNode(normalized, from);
+        }
+        for (BlockPos pos : corePath) {
+            appendPathNode(normalized, pos);
+        }
+        BlockPos last = corePath.get(corePath.size() - 1);
+        if (supportsGroundEndpointTransition(last, to)) {
+            appendPathNode(normalized, to);
+        }
+        return isContinuousPath(normalized) ? List.copyOf(normalized) : List.of();
+    }
+
+    private static void trimUnsupportedGroundEndpoint(List<BlockPos> path, BlockPos requestedAnchor, boolean start) {
+        if (path == null || path.size() < 2 || requestedAnchor == null) {
+            return;
+        }
+        int anchorIndex = start ? 0 : path.size() - 1;
+        int neighborIndex = start ? 1 : path.size() - 2;
+        BlockPos anchor = path.get(anchorIndex);
+        BlockPos neighbor = path.get(neighborIndex);
+        if (!requestedAnchor.equals(anchor)) {
+            return;
+        }
+        if (supportsGroundEndpointTransition(anchor, neighbor)) {
+            return;
+        }
+        path.remove(anchorIndex);
+    }
+
+    private static boolean supportsGroundEndpointTransition(BlockPos from, BlockPos to) {
+        if (from == null || to == null) {
+            return false;
+        }
+        if (from.equals(to)) {
+            return false;
+        }
+        int dx = Math.abs(to.getX() - from.getX());
+        int dz = Math.abs(to.getZ() - from.getZ());
+        if (dx == 0 && dz == 0) {
+            return false;
+        }
+        if (Math.max(dx, dz) > 1) {
+            return false;
+        }
+        return Math.abs(to.getY() - from.getY()) <= 1;
     }
 
     private static int estimateNearWaterColumns(Level level, List<BlockPos> path, RoadPlanningPassContext context) {

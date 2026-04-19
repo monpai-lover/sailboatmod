@@ -520,6 +520,51 @@ class RoadCorridorPlannerTest {
     }
 
     @Test
+    void plannerKeepsSharpPierBridgeTurnSlicesFlatAtDeckHeight() {
+        List<BlockPos> centerPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 66, 0),
+                new BlockPos(2, 68, 0),
+                new BlockPos(3, 68, 1),
+                new BlockPos(4, 68, 2),
+                new BlockPos(4, 66, 3),
+                new BlockPos(4, 64, 4)
+        );
+        List<RoadBridgePlanner.BridgeSpanPlan> bridgePlans = List.of(
+                new RoadBridgePlanner.BridgeSpanPlan(
+                        1,
+                        5,
+                        RoadBridgePlanner.BridgeMode.PIER_BRIDGE,
+                        List.of(
+                                new RoadBridgePlanner.BridgePierNode(1, new BlockPos(1, 66, 0), new BlockPos(1, 63, 0), 66, RoadBridgePlanner.BridgeNodeRole.ABUTMENT),
+                                new RoadBridgePlanner.BridgePierNode(3, new BlockPos(3, 68, 1), new BlockPos(3, 40, 1), 68, RoadBridgePlanner.BridgeNodeRole.PIER),
+                                new RoadBridgePlanner.BridgePierNode(5, new BlockPos(4, 66, 3), new BlockPos(4, 63, 3), 66, RoadBridgePlanner.BridgeNodeRole.ABUTMENT)
+                        ),
+                        List.of(
+                                new RoadBridgePlanner.BridgeDeckSegment(1, 3, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP, 66, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(3, 3, RoadBridgePlanner.BridgeDeckSegmentType.MAIN_LEVEL, 68, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(3, 5, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN, 68, 66)
+                        ),
+                        68,
+                        false,
+                        true
+                )
+        );
+        int[] placementHeights = {65, 66, 68, 68, 68, 66, 65};
+
+        RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, bridgePlans, placementHeights);
+
+        for (int sliceIndex : List.of(1, 2, 3, 4, 5)) {
+            int expectedDeckY = placementHeights[sliceIndex];
+            assertTrue(
+                    plan.slices().get(sliceIndex).surfacePositions().stream().allMatch(pos -> pos.getY() == expectedDeckY),
+                    () -> "expected bridge slice " + sliceIndex + " to stay flat at deck y=" + expectedDeckY
+                            + " but got " + plan.slices().get(sliceIndex).surfacePositions()
+            );
+        }
+    }
+
+    @Test
     void plannerClassifiesBridgeheadPlatformSlicesFromPierBridgeDeckSegments() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
@@ -550,11 +595,9 @@ class RoadCorridorPlannerTest {
                                 new RoadBridgePlanner.BridgePierNode(13, new BlockPos(13, 65, 0), new BlockPos(13, 63, 0), 65, RoadBridgePlanner.BridgeNodeRole.ABUTMENT)
                         ),
                         List.of(
-                                new RoadBridgePlanner.BridgeDeckSegment(1, 3, RoadBridgePlanner.BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM, 65, 65),
-                                new RoadBridgePlanner.BridgeDeckSegment(3, 5, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP, 65, 68),
+                                new RoadBridgePlanner.BridgeDeckSegment(1, 5, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP, 65, 68),
                                 new RoadBridgePlanner.BridgeDeckSegment(5, 9, RoadBridgePlanner.BridgeDeckSegmentType.MAIN_LEVEL, 68, 68),
-                                new RoadBridgePlanner.BridgeDeckSegment(9, 11, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN, 68, 65),
-                                new RoadBridgePlanner.BridgeDeckSegment(11, 13, RoadBridgePlanner.BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM, 65, 65)
+                                new RoadBridgePlanner.BridgeDeckSegment(9, 13, RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN, 68, 65)
                         ),
                         68,
                         true,
@@ -564,8 +607,8 @@ class RoadCorridorPlannerTest {
 
         RoadCorridorPlan plan = RoadCorridorPlanner.plan(centerPath, bridgePlans, new int[] {65, 65, 65, 65, 66, 67, 68, 68, 68, 68, 67, 65, 65, 65, 65});
 
-        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM, plan.slices().get(2).segmentKind());
-        assertEquals(RoadCorridorPlan.SegmentKind.BRIDGE_HEAD_PLATFORM, plan.slices().get(12).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.APPROACH_RAMP, plan.slices().get(2).segmentKind());
+        assertEquals(RoadCorridorPlan.SegmentKind.APPROACH_RAMP, plan.slices().get(12).segmentKind());
         assertEquals(RoadCorridorPlan.SegmentKind.APPROACH_RAMP, plan.slices().get(4).segmentKind());
         assertEquals(RoadCorridorPlan.SegmentKind.NAVIGABLE_MAIN_SPAN, plan.slices().get(7).segmentKind());
     }

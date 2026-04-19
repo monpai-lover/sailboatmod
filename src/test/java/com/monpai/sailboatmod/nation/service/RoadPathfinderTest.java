@@ -129,7 +129,7 @@ class RoadPathfinderTest {
     }
 
     @Test
-    void findGroundPathForPlanReturnsRequestedAnchorsWhenHybridBackendIsSelected() {
+    void findGroundPathForPlanKeepsBuildableSurfaceAnchorsWhenHybridBackendIsSelected() {
         TestServerLevel level = allocate(TestServerLevel.class);
         level.blockStates = new HashMap<>();
         level.surfaceHeights = new HashMap<>();
@@ -195,8 +195,56 @@ class RoadPathfinderTest {
         assertEquals(new BlockPos(0, 64, 0), hybrid.path().get(0));
         assertEquals(new BlockPos(6, 68, 0), hybrid.path().get(hybrid.path().size() - 1));
         assertTrue(result.success(), () -> "expected shared ground-route result but got " + result.failureReason());
-        assertEquals(requestedStart, result.path().get(0));
-        assertEquals(requestedEnd, result.path().get(result.path().size() - 1));
+        assertEquals(new BlockPos(0, 64, 0), result.path().get(0));
+        assertEquals(new BlockPos(6, 68, 0), result.path().get(result.path().size() - 1));
+    }
+
+    @Test
+    void findGroundPathForPlanDoesNotAppendRaisedSameColumnEndpointsOntoLandRoute() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        setSurfaceColumn(level, 0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 1, 0, 65, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 2, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 3, 0, 66, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 4, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 5, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState());
+        setSurfaceColumn(level, 6, 0, 68, Blocks.GRASS_BLOCK.defaultBlockState());
+        for (int x = 0; x <= 6; x++) {
+            level.surfaceHeights.put(columnKey(x, 1), 64);
+            level.blockStates.put(new BlockPos(x, 64, 1).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, 1).asLong(), Blocks.STONE.defaultBlockState());
+            level.surfaceHeights.put(columnKey(x, -1), 64);
+            level.blockStates.put(new BlockPos(x, 64, -1).asLong(), Blocks.WATER.defaultBlockState());
+            level.blockStates.put(new BlockPos(x, 63, -1).asLong(), Blocks.STONE.defaultBlockState());
+        }
+
+        BlockPos requestedStart = new BlockPos(0, 66, 0);
+        BlockPos requestedEnd = new BlockPos(6, 70, 0);
+        RoadPlanningPassContext context = new RoadPlanningPassContext(level);
+
+        RoadPathfinder.PlannedPathResult result = RoadPathfinder.findGroundPathForPlan(
+                level,
+                requestedStart,
+                requestedEnd,
+                java.util.Set.of(),
+                java.util.Set.of(),
+                context
+        );
+
+        assertTrue(result.success(), () -> "expected a successful ground route but got " + result.failureReason());
+        assertEquals(new BlockPos(0, 64, 0), result.path().get(0));
+        assertEquals(new BlockPos(6, 68, 0), result.path().get(result.path().size() - 1));
+        assertTrue(
+                result.path().stream()
+                        .map(pos -> pos.getX() + "," + pos.getZ())
+                        .distinct()
+                        .count() == result.path().size(),
+                () -> "ground route should not end with stacked same-column anchors: " + result.path()
+        );
     }
 
     @Test

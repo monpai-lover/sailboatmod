@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class ClaimMapViewportService {
+    private static final int DEFAULT_TERRAIN_COLOR = 0xFF33414A;
+
     @FunctionalInterface
     public interface TileLookup {
         int[] get(String dimensionId, int chunkX, int chunkZ);
@@ -38,6 +40,7 @@ public class ClaimMapViewportService {
         );
         pendingVisibleChunkCount = 0;
         ArrayList<Integer> pixels = new ArrayList<>();
+        int colorsPerTile = Math.max(1, ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB);
         for (int dz = -request.radius(); dz <= request.radius(); dz++) {
             for (int dx = -request.radius(); dx <= request.radius(); dx++) {
                 int chunkX = request.centerChunkX() + dx;
@@ -45,27 +48,40 @@ public class ClaimMapViewportService {
                 int[] tile = tileLookup.get(request.dimensionId(), chunkX, chunkZ);
                 if (tile == null) {
                     pendingVisibleChunkCount++;
+                    appendTilePixels(pixels, null, colorsPerTile);
                     continue;
                 }
                 ClaimPreviewTerrainService.trackViewportDependency(request.dimensionId(), chunkX, chunkZ, request.screenKind());
-                for (int color : tile) {
-                    pixels.add(color);
-                }
+                appendTilePixels(pixels, tile, colorsPerTile);
             }
         }
         pendingPrefetchChunkCount = countMissingPrefetchChunks(request);
-        if (pendingVisibleChunkCount > 0) {
-            return null;
-        }
         ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(
                 request.dimensionId(),
                 request.revision(),
                 request.radius(),
                 request.centerChunkX(),
                 request.centerChunkZ(),
-                pixels
+                pixels,
+                pendingVisibleChunkCount == 0
         );
         return snapshot;
+    }
+
+    private static void appendTilePixels(List<Integer> pixels, int[] tile, int colorsPerTile) {
+        if (pixels == null || colorsPerTile <= 0) {
+            return;
+        }
+        if (tile == null || tile.length == 0) {
+            for (int i = 0; i < colorsPerTile; i++) {
+                pixels.add(DEFAULT_TERRAIN_COLOR);
+            }
+            return;
+        }
+        int lastColor = tile[Math.max(0, tile.length - 1)];
+        for (int i = 0; i < colorsPerTile; i++) {
+            pixels.add(i < tile.length ? tile[i] : lastColor);
+        }
     }
 
     private int countMissingPrefetchChunks(ViewportRequest request) {

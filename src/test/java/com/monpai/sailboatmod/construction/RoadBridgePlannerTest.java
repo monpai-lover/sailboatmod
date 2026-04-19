@@ -365,7 +365,7 @@ class RoadBridgePlannerTest {
     }
 
     @Test
-    void pierBridgeDeckSegmentsIncludeBridgeheadPlatformsBeforeRampClimb() {
+    void pierBridgeDeckSegmentsTransitionDirectlyIntoApproachRamps() {
         List<BlockPos> centerPath = List.of(
                 new BlockPos(0, 64, 0),
                 new BlockPos(1, 64, 0),
@@ -398,7 +398,19 @@ class RoadBridgePlannerTest {
         assertTrue(
                 plan.deckSegments().stream()
                         .map(RoadBridgePlanner.BridgeDeckSegment::type)
-                        .anyMatch(type -> type == RoadBridgePlanner.BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM),
+                        .noneMatch(type -> type == RoadBridgePlanner.BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM),
+                () -> plan.deckSegments().toString()
+        );
+        assertTrue(
+                plan.deckSegments().stream()
+                        .map(RoadBridgePlanner.BridgeDeckSegment::type)
+                        .anyMatch(type -> type == RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_UP),
+                () -> plan.deckSegments().toString()
+        );
+        assertTrue(
+                plan.deckSegments().stream()
+                        .map(RoadBridgePlanner.BridgeDeckSegment::type)
+                        .anyMatch(type -> type == RoadBridgePlanner.BridgeDeckSegmentType.APPROACH_DOWN),
                 () -> plan.deckSegments().toString()
         );
     }

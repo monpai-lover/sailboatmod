@@ -7,12 +7,13 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaimMapViewportServiceTest {
     @Test
-    void serviceDoesNotReturnSnapshotUntilVisibleAreaIsComplete() {
+    void serviceReturnsPartialSnapshotUntilVisibleAreaIsComplete() {
         ClaimMapViewportService service = new ClaimMapViewportService((dimension, chunkX, chunkZ) -> null);
 
         ClaimMapViewportSnapshot snapshot = service.tryBuildSnapshot(
@@ -20,9 +21,11 @@ class ClaimMapViewportServiceTest {
                 List.of()
         );
 
-        assertNull(snapshot);
+        assertNotNull(snapshot);
+        assertFalse(snapshot.complete());
         assertEquals(289, service.pendingVisibleChunkCountForTest());
         assertEquals(240, service.pendingPrefetchChunkCountForTest());
+        assertEquals(289 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, snapshot.pixels().size());
     }
 
     @Test
@@ -35,14 +38,21 @@ class ClaimMapViewportServiceTest {
         );
 
         assertNotNull(snapshot);
+        assertTrue(snapshot.complete());
         assertEquals("minecraft:overworld", snapshot.dimensionId());
         assertEquals(12L, snapshot.revision());
         assertEquals(0, service.pendingVisibleChunkCountForTest());
         assertEquals(0, service.pendingPrefetchChunkCountForTest());
         assertEquals(List.of(
-                        919, 1019, 1119,
-                        920, 1020, 1120,
-                        921, 1021, 1121
+                        919, 919, 919, 919,
+                        1019, 1019, 1019, 1019,
+                        1119, 1119, 1119, 1119,
+                        920, 920, 920, 920,
+                        1020, 1020, 1020, 1020,
+                        1120, 1120, 1120, 1120,
+                        921, 921, 921, 921,
+                        1021, 1021, 1021, 1021,
+                        1121, 1121, 1121, 1121
                 ),
                 snapshot.pixels()
         );
@@ -69,13 +79,14 @@ class ClaimMapViewportServiceTest {
         );
 
         assertNotNull(snapshot);
+        assertTrue(snapshot.complete());
         assertEquals(0, service.pendingVisibleChunkCountForTest());
         assertEquals(3, service.pendingPrefetchChunkCountForTest());
-        assertEquals(9, snapshot.pixels().size());
+        assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, snapshot.pixels().size());
     }
 
     @Test
-    void viewportMissReturnsNullUntilTileWorkerProducesVisibleTiles() {
+    void viewportMissReturnsPartialSnapshotUntilTileWorkerProducesVisibleTiles() {
         ClaimPreviewTerrainService terrainService = new ClaimPreviewTerrainService();
         ClaimPreviewTerrainService.setActiveForTest(terrainService);
         try {
@@ -91,15 +102,18 @@ class ClaimMapViewportServiceTest {
             );
 
             ClaimMapViewportSnapshot first = service.tryBuildSnapshot(request, List.of());
-            assertNull(first);
+            assertNotNull(first);
+            assertFalse(first.complete());
             assertEquals(9, service.pendingVisibleChunkCountForTest());
+            assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, first.pixels().size());
 
             terrainService.processBudgetedWorkForTest(9, 0, (dimensionId, chunkX, chunkZ) -> new int[] {chunkX * 100 + chunkZ});
 
             ClaimMapViewportSnapshot second = service.tryBuildSnapshot(request, List.of());
             assertNotNull(second);
+            assertTrue(second.complete());
             assertEquals(0, service.pendingVisibleChunkCountForTest());
-            assertEquals(9, second.pixels().size());
+            assertEquals(9 * ClaimPreviewTerrainService.SUB * ClaimPreviewTerrainService.SUB, second.pixels().size());
         } finally {
             ClaimPreviewTerrainService.clearActiveForTest();
         }
@@ -107,10 +121,11 @@ class ClaimMapViewportServiceTest {
 
     @Test
     void snapshotNormalizesNullDimensionAndPixels() {
-        ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(null, 7L, 6, 12, 24, null);
+        ClaimMapViewportSnapshot snapshot = new ClaimMapViewportSnapshot(null, 7L, 6, 12, 24, null, false);
 
         assertEquals("", snapshot.dimensionId());
         assertEquals(List.of(), snapshot.pixels());
+        assertFalse(snapshot.complete());
     }
 
     @Test

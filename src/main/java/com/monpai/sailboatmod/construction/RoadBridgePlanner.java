@@ -22,7 +22,6 @@ public final class RoadBridgePlanner {
     private static final int MIN_DROP_FOR_ARCH = 6;
     private static final int MAX_PIER_ANCHOR_GAP = 3;
     private static final int NAVIGABLE_WATER_CLEARANCE = 5;
-    private static final int BRIDGE_HEAD_PLATFORM_COLUMNS = 3;
     private static final int EXTRA_CENTER_PIER_MIN_GAP = 18;
 
     private RoadBridgePlanner() {
@@ -772,18 +771,7 @@ public final class RoadBridgePlanner {
         if (ascending ? mainBoundaryIndex <= edgeIndex : mainBoundaryIndex >= edgeIndex) {
             return;
         }
-        int platformEnd = ascending
-                ? Math.min(mainBoundaryIndex, edgeIndex + (structuredPlatformColumns(edgeIndex, mainBoundaryIndex, Math.max(0, mainDeckY - edgeDeckY)) - 1))
-                : Math.max(mainBoundaryIndex, edgeIndex - (structuredPlatformColumns(edgeIndex, mainBoundaryIndex, Math.max(0, mainDeckY - edgeDeckY)) - 1));
-        segments.add(new BridgeDeckSegment(
-                Math.min(edgeIndex, platformEnd),
-                Math.max(edgeIndex, platformEnd),
-                BridgeDeckSegmentType.BRIDGE_HEAD_PLATFORM,
-                edgeDeckY,
-                edgeDeckY
-        ));
-
-        int rampStart = platformEnd;
+        int rampStart = edgeIndex;
         int rampEnd = mainBoundaryIndex;
         int deckDelta = Math.max(0, mainDeckY - edgeDeckY);
         int rampColumns = Math.abs(rampEnd - rampStart);
@@ -825,19 +813,6 @@ public final class RoadBridgePlanner {
             previousIndex = boundaryIndex;
             previousDeckY = targetDeckY;
         }
-    }
-
-    private static int structuredPlatformColumns(int edgeIndex,
-                                                 int mainBoundaryIndex,
-                                                 int deckDelta) {
-        int availableColumns = Math.abs(mainBoundaryIndex - edgeIndex) + 1;
-        if (availableColumns <= 0) {
-            return 0;
-        }
-        int maxPlatformColumns = deckDelta <= 0
-                ? availableColumns
-                : Math.max(1, availableColumns - deckDelta);
-        return Math.max(1, Math.min(BRIDGE_HEAD_PLATFORM_COLUMNS, maxPlatformColumns));
     }
 
     private static int[] materializeDeckProfile(int start,

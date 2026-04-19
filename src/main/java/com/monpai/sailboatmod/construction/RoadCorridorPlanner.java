@@ -97,7 +97,7 @@ public final class RoadCorridorPlanner {
 
         List<List<BlockPos>> surfacePositionsByIndex = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            surfacePositionsByIndex.add(buildSurfacePositions(centerPath, i, placementHeights));
+            surfacePositionsByIndex.add(buildSurfacePositions(centerPath, i, placementHeights, segmentKinds.get(i)));
         }
         for (int i = 0; i < size - 1; i++) {
             RoadCorridorPlan.SegmentKind currentKind = segmentKinds.get(i);
@@ -165,7 +165,7 @@ public final class RoadCorridorPlanner {
             RoadBridgePlanner.BridgeSpanPlan bridgePlan = planByIndex.get(i);
             RoadBridgePlanner.BridgeMode bridgeMode = bridgePlan == null ? RoadBridgePlanner.BridgeMode.NONE : bridgePlan.mode();
             RoadCorridorPlan.SegmentKind segmentKind = classify(i, bridgePlan, supportNodeByIndex, size);
-            List<BlockPos> surfacePositions = buildSurfacePositions(centerPath, i, placementHeights);
+            List<BlockPos> surfacePositions = buildSurfacePositions(centerPath, i, placementHeights, segmentKind);
             List<BlockPos> railingLightPositions = buildRailingLightPositions(centerPath, i, deckCenter, segmentKind);
             List<BlockPos> supportPositions = List.of();
             List<BlockPos> pierLightPositions = List.of();
@@ -606,15 +606,22 @@ public final class RoadCorridorPlanner {
                 && index % BRIDGE_LIGHT_INTERVAL == 0;
     }
 
-    private static List<BlockPos> buildSurfacePositions(List<BlockPos> centerPath, int index, int[] deckHeights) {
+    private static List<BlockPos> buildSurfacePositions(List<BlockPos> centerPath,
+                                                        int index,
+                                                        int[] deckHeights,
+                                                        RoadCorridorPlan.SegmentKind segmentKind) {
         LinkedHashSet<BlockPos> positions = new LinkedHashSet<>();
+        int deckY = deckHeights[index];
+        boolean preserveSliceDeckHeight = supportsBridgeRailings(segmentKind);
         for (BlockPos column : RoadGeometryPlanner.buildRibbonSlice(centerPath, index).columns()) {
-            int y = RoadGeometryPlanner.interpolatePlacementHeight(
-                    column.getX(),
-                    column.getZ(),
-                    centerPath,
-                    deckHeights
-            );
+            int y = preserveSliceDeckHeight
+                    ? deckY
+                    : RoadGeometryPlanner.interpolatePlacementHeight(
+                            column.getX(),
+                            column.getZ(),
+                            centerPath,
+                            deckHeights
+                    );
             positions.add(new BlockPos(column.getX(), y, column.getZ()));
         }
         return List.copyOf(positions);

@@ -13,7 +13,7 @@ import java.util.PriorityQueue;
 import java.util.Set;
 
 public final class LandRoadHybridPathfinder {
-    private static final int MAX_STEP_UP = 2;
+    private static final int MAX_STEP_UP = 3;
     private static final int MAX_STEP_DOWN = 3;
 
     private LandRoadHybridPathfinder() {

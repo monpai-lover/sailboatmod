@@ -108,19 +108,26 @@ public final class NationClientHooks {
             return;
         }
         ClaimMapViewportSnapshot safeSnapshot = snapshot == null
-                ? new ClaimMapViewportSnapshot("", 0L, 0, 0, 0, List.of())
+                ? new ClaimMapViewportSnapshot("", 0L, 0, 0, 0, List.of(), false)
                 : snapshot;
         claimPreviewRevisionCounter = Math.max(claimPreviewRevisionCounter, safeSnapshot.revision());
         if (safeSnapshot.revision() < latestRequestedClaimPreviewRevision) {
             return;
         }
-        ClaimPreviewMapState state = ClaimPreviewMapState.ready(
-                safeSnapshot.revision(),
-                safeSnapshot.radius(),
-                safeSnapshot.centerChunkX(),
-                safeSnapshot.centerChunkZ(),
-                List.of()
-        );
+        ClaimPreviewMapState state = safeSnapshot.complete()
+                ? ClaimPreviewMapState.ready(
+                        safeSnapshot.revision(),
+                        safeSnapshot.radius(),
+                        safeSnapshot.centerChunkX(),
+                        safeSnapshot.centerChunkZ(),
+                        List.of()
+                )
+                : ClaimPreviewMapState.loading(
+                        safeSnapshot.revision(),
+                        safeSnapshot.radius(),
+                        safeSnapshot.centerChunkX(),
+                        safeSnapshot.centerChunkZ()
+                );
         lastSyncedData = lastSyncedData.withClaimPreview(state, safeSnapshot.pixels());
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {

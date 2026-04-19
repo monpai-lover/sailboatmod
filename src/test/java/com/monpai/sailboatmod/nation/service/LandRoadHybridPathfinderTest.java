@@ -167,6 +167,33 @@ class LandRoadHybridPathfinderTest {
         );
     }
 
+    @Test
+    void hybridPathfinderAllowsShortRouteWithSingleThreeBlockRise() {
+        TestTerrainLevel level = allocate(TestTerrainLevel.class);
+        level.blockStates = new HashMap<>();
+        level.surfaceHeights = new HashMap<>();
+        level.biome = Holder.direct(allocate(Biome.class));
+
+        level.setSurface(0, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(1, 0, 64, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(2, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(3, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+        level.setSurface(4, 0, 67, Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.AIR.defaultBlockState());
+
+        RoadPathfinder.PlannedPathResult result = LandRoadHybridPathfinder.find(
+                level,
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 67, 0),
+                Set.of(),
+                Set.of(),
+                new RoadPlanningPassContext(level)
+        );
+
+        assertTrue(result.success(), () -> "expected a short stepped route to remain traversable, got " + result.failureReason());
+        assertEquals(new BlockPos(0, 64, 0), result.path().get(0));
+        assertEquals(new BlockPos(4, 67, 0), result.path().get(result.path().size() - 1));
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> type) {
         try {

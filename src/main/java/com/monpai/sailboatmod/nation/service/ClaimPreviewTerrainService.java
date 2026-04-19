@@ -350,6 +350,7 @@ public final class ClaimPreviewTerrainService {
             }
             int[] tile = sampleChunkSubColors(level, request.chunkX(), request.chunkZ());
             storeTile(request.dimensionId(), request.chunkX(), request.chunkZ(), tile, savedData);
+            markViewportDirty(request.viewportKey());
         }
     }
 
@@ -381,6 +382,7 @@ public final class ClaimPreviewTerrainService {
                     sampler.sample(request.dimensionId(), request.chunkX(), request.chunkZ()),
                     null
             );
+            markViewportDirty(request.viewportKey());
         }
     }
 
@@ -571,6 +573,15 @@ public final class ClaimPreviewTerrainService {
                 requestState.revision(),
                 screenKey
         );
+    }
+
+    private void markViewportDirty(String screenKey) {
+        if (screenKey == null || screenKey.isBlank()) {
+            return;
+        }
+        if (invalidatedViewportKeySet.add(screenKey)) {
+            invalidatedViewportKeys.offer(screenKey);
+        }
     }
 
     private int[] sampleChunkSubColors(ServerLevel level, int chunkX, int chunkZ) {

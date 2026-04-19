@@ -67,6 +67,21 @@ class TownHomeScreenTest {
     }
 
     @Test
+    void middleDragReleaseRequestsRefresh() {
+        assertTrue(TownHomeScreen.shouldRequestRefreshAfterMapDragRelease(2, true));
+        assertFalse(TownHomeScreen.shouldRequestRefreshAfterMapDragRelease(0, true));
+        assertFalse(TownHomeScreen.shouldRequestRefreshAfterMapDragRelease(2, false));
+    }
+
+    @Test
+    void queuedRefreshFlushesOnlyWhenNewCenterDiffersAndNothingPending() {
+        assertTrue(TownHomeScreen.shouldFlushQueuedPreviewRefresh(false, 14, -6, 10, -6));
+        assertFalse(TownHomeScreen.shouldFlushQueuedPreviewRefresh(true, 14, -6, 10, -6));
+        assertFalse(TownHomeScreen.shouldFlushQueuedPreviewRefresh(false, Integer.MIN_VALUE, -6, 10, -6));
+        assertFalse(TownHomeScreen.shouldFlushQueuedPreviewRefresh(false, 10, -6, 10, -6));
+    }
+
+    @Test
     void updateDataKeepsLastCompleteTerrainWhileNewViewportIsLoading() {
         TownHomeScreen screen = new TownHomeScreen(baseData(
                 List.of(0xFF111111, 0xFF222222, 0xFF333333, 0xFF444444),
@@ -94,6 +109,26 @@ class TownHomeScreenTest {
         ));
 
         assertEquals(0xFFAAAAAA, screen.sampleClaimTerrainColorForTest(1, 0, 0, 0));
+    }
+
+    @Test
+    void loadingViewportPreservesCachedSubpixelTerrainResolution() {
+        TownHomeScreen screen = new TownHomeScreen(
+                TownOverviewData.empty().withClaimPreview(
+                        ClaimPreviewMapState.ready(1L, 0, 0, 0, List.of()),
+                        List.of(0xFF111111, 0xFF222222, 0xFF333333, 0xFF444444)
+                )
+        );
+
+        screen.updateData(TownOverviewData.empty().withClaimPreview(
+                ClaimPreviewMapState.loading(2L, 0, 1, 0),
+                List.of()
+        ));
+
+        assertEquals(0xFF111111, screen.sampleClaimTerrainColorForTest(0, 0, 0, 0));
+        assertEquals(0xFF222222, screen.sampleClaimTerrainColorForTest(0, 0, 1, 0));
+        assertEquals(0xFF333333, screen.sampleClaimTerrainColorForTest(0, 0, 0, 1));
+        assertEquals(0xFF444444, screen.sampleClaimTerrainColorForTest(0, 0, 1, 1));
     }
 
     private static TownOverviewData dataWithJoinTargets() {
