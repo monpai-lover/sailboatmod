@@ -16,17 +16,17 @@
 - Modify: `src/main/java/com/monpai/sailboatmod/nation/service/StructureConstructionManager.java`
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/StructureConstructionManagerRoadLinkTest.java`
 
-- [ ] **Step 1: Write failing tests for stalled runtime progression and support rollback ownership**
+- [x] **Step 1: Write failing tests for stalled runtime progression and support rollback ownership**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Add runtime diagnostics for the currently blocked road step and blockage reason**
+- [x] **Step 3: Add runtime diagnostics for the currently blocked road step and blockage reason**
 
-- [ ] **Step 4: Implement recoverable runtime progression that can skip/reorder permanently blocked steps and continue building**
+- [x] **Step 4: Implement recoverable runtime progression that can skip/reorder permanently blocked steps and continue building**
 
-- [ ] **Step 5: Ensure rollback/dismantle removes runtime-owned supports together with the associated road structure**
+- [x] **Step 5: Ensure rollback/dismantle removes runtime-owned supports together with the associated road structure**
 
-- [ ] **Step 6: Run targeted tests to verify they pass**
+- [x] **Step 6: Run targeted tests to verify they pass**
 
 ### Task 2: Mandatory Bridge Touchdown And Curved Deck Closure
 
@@ -39,15 +39,15 @@
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadGeometryPlannerSlopeTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadGeometryPlannerTest.java`
 
-- [ ] **Step 1: Write failing tests for forced bridge endpoint touchdown on ice/shoreline endpoints and for curved bridge deck closure**
+- [x] **Step 1: Write failing tests for forced bridge endpoint touchdown on ice/shoreline endpoints and for curved bridge deck closure**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Extend bridge endpoint planning so every bridge tail generates downhill + platform + terrain reconnect beyond the clipped bridge span when needed**
+- [x] **Step 3: Extend bridge endpoint planning so every bridge tail generates downhill + platform + terrain reconnect beyond the clipped bridge span when needed**
 
-- [ ] **Step 4: Close curved bridge decks/platforms by merging adjacent turn footprints instead of relying on isolated slices**
+- [x] **Step 4: Close curved bridge decks/platforms by merging adjacent turn footprints instead of relying on isolated slices**
 
-- [ ] **Step 5: Run targeted tests to verify they pass**
+- [x] **Step 5: Run targeted tests to verify they pass**
 
 ### Task 3: Land Road Curve Continuity
 
@@ -58,13 +58,13 @@
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadGeometryPlannerTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/construction/RoadCorridorPlannerTest.java`
 
-- [ ] **Step 1: Write failing tests for ordinary land-road turns that currently split or leave outer-edge gaps**
+- [x] **Step 1: Write failing tests for ordinary land-road turns that currently split or leave outer-edge gaps**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Upgrade centerline/frame-driven slice generation so land-road turns keep continuous lateral coverage**
+- [x] **Step 3: Upgrade centerline/frame-driven slice generation so land-road turns keep continuous lateral coverage**
 
-- [ ] **Step 4: Run targeted tests to verify they pass**
+- [x] **Step 4: Run targeted tests to verify they pass**
 
 ### Task 4: Natural-First Land Pathfinding With Terrain-Modification Fallback
 
@@ -76,15 +76,15 @@
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/RoadPathfinderTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/LandRoadHybridPathfinderTest.java`
 
-- [ ] **Step 1: Write failing tests for complex terrain where natural routing should be preferred but construction-aware fallback should still find a buildable route**
+- [x] **Step 1: Write failing tests for complex terrain where natural routing should be preferred but construction-aware fallback should still find a buildable route**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Refactor path selection into natural-detour-first and construction-aware fallback passes**
+- [x] **Step 3: Refactor path selection into natural-detour-first and construction-aware fallback passes**
 
-- [ ] **Step 4: Annotate route columns/segments with the accepted construction mode so later runtime phases can clear, cut, fill, tunnel, or bridge them**
+- [x] **Step 4: Annotate route columns/segments with the accepted construction mode so later runtime phases can clear, cut, fill, tunnel, or bridge them**
 
-- [ ] **Step 5: Run targeted tests to verify they pass**
+- [x] **Step 5: Run targeted tests to verify they pass**
 
 ### Task 5: Runtime Terrain Modification And Surface Replacement
 
@@ -94,15 +94,15 @@
 - Modify: `src/main/java/com/monpai/sailboatmod/construction/RoadTerrainShaper.java`
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/StructureConstructionManagerRoadLinkTest.java`
 
-- [ ] **Step 1: Write failing tests for obstacle clearing, roadbed fill/cut ownership, and on-grade natural-surface replacement**
+- [x] **Step 1: Write failing tests for obstacle clearing, roadbed fill/cut ownership, and on-grade natural-surface replacement**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Convert terrain modification into first-class runtime-owned road build actions**
+- [x] **Step 3: Convert terrain modification into first-class runtime-owned road build actions**
 
-- [ ] **Step 4: Replace natural surface blocks for on-grade roads instead of floating the road on top of untouched terrain**
+- [x] **Step 4: Replace natural surface blocks for on-grade roads instead of floating the road on top of untouched terrain**
 
-- [ ] **Step 5: Run targeted tests to verify they pass**
+- [x] **Step 5: Run targeted tests to verify they pass**
 
 ### Task 6: Claim Map Cache Isolation Per World And Dimension
 
@@ -118,15 +118,15 @@
 - Test: `src/test/java/com/monpai/sailboatmod/client/screen/nation/NationHomeScreenTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/network/packet/ClaimMapViewportPacketRoundTripTest.java`
 
-- [ ] **Step 1: Write failing tests for cross-world and cross-dimension cache leakage, plus cache reuse when returning to the same map context**
+- [x] **Step 1: Write failing tests for cross-world and cross-dimension cache leakage, plus cache reuse when returning to the same map context**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Add a client map-context key and partition all claim preview caches and screen state by that key**
+- [x] **Step 3: Add a client map-context key and partition all claim preview caches and screen state by that key**
 
-- [ ] **Step 4: Ensure world/dimension switches invalidate only the active context while preserving reusable cache buckets for old contexts**
+- [x] **Step 4: Ensure world/dimension switches invalidate only the active context while preserving reusable cache buckets for old contexts**
 
-- [ ] **Step 5: Run targeted tests to verify they pass**
+- [x] **Step 5: Run targeted tests to verify they pass**
 
 ### Task 7: Claim Map Context Reuse And Screen State Recovery
 
@@ -142,15 +142,15 @@
 - Test: `src/test/java/com/monpai/sailboatmod/client/screen/nation/NationHomeScreenTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/network/packet/ClaimMapViewportPacketRoundTripTest.java`
 
-- [ ] **Step 1: Write failing tests for reopening the same world/dimension context with preserved cache buckets, pending preview revisions, and screen-local viewport state**
+- [x] **Step 1: Write failing tests for reopening the same world/dimension context with preserved cache buckets, pending preview revisions, and screen-local viewport state**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Preserve reusable map-context buckets and reconnect Town/Nation screen state to the correct context when reopening or switching back**
+- [x] **Step 3: Preserve reusable map-context buckets and reconnect Town/Nation screen state to the correct context when reopening or switching back**
 
-- [ ] **Step 4: Ensure context switches discard only stale active view state while keeping reusable buckets and progress metadata for matching contexts**
+- [x] **Step 4: Ensure context switches discard only stale active view state while keeping reusable buckets and progress metadata for matching contexts**
 
-- [ ] **Step 5: Run targeted tests to verify they pass**
+- [x] **Step 5: Run targeted tests to verify they pass**
 
 ### Task 8: Claim Map Parallel Rendering Acceleration And Progress Feedback
 
@@ -169,25 +169,25 @@
 - Test: `src/test/java/com/monpai/sailboatmod/nation/service/ClaimMapViewportServiceTest.java`
 - Test: `src/test/java/com/monpai/sailboatmod/network/packet/ClaimMapViewportPacketRoundTripTest.java`
 
-- [ ] **Step 1: Write failing tests for visible/prefetch progress accounting, low-profile bottom progress UI, and faster completion of visible map chunks under batched parallel rendering**
+- [x] **Step 1: Write failing tests for visible/prefetch progress accounting, low-profile bottom progress UI, and faster completion of visible map chunks under batched parallel rendering**
 
-- [ ] **Step 2: Run targeted tests to verify they fail**
+- [x] **Step 2: Run targeted tests to verify they fail**
 
-- [ ] **Step 3: Add visible/prefetch progress counters to viewport snapshots and packet sync so both screens can render true progress instead of a loading boolean**
+- [x] **Step 3: Add visible/prefetch progress counters to viewport snapshots and packet sync so both screens can render true progress instead of a loading boolean**
 
-- [ ] **Step 4: Replace single-threaded terrain tile draining with bounded multi-threaded sampling that prioritizes visible viewport chunks and batches multiple missing chunk tiles per scheduling pass**
+- [x] **Step 4: Replace single-threaded terrain tile draining with bounded multi-threaded sampling that prioritizes visible viewport chunks and batches multiple missing chunk tiles per scheduling pass**
 
-- [ ] **Step 5: Add a subtle bottom-edge progress indicator that remains visible until both visible and prefetch queues finish, without materially affecting map layout**
+- [x] **Step 5: Add a subtle bottom-edge progress indicator that remains visible until both visible and prefetch queues finish, without materially affecting map layout**
 
-- [ ] **Step 6: Run targeted tests to verify they pass**
+- [x] **Step 6: Run targeted tests to verify they pass**
 
 ### Task 9: Final Verification
 
 **Files:**
 - Modify: none expected unless verification reveals a regression
 
-- [ ] **Step 1: Run the related road/runtime/claim-map regression suite**
+- [x] **Step 1: Run the related road/runtime/claim-map regression suite**
 
-- [ ] **Step 2: Run `.\gradlew.bat compileJava`**
+- [x] **Step 2: Run `.\gradlew.bat compileJava`**
 
-- [ ] **Step 3: If verification is green, run `.\gradlew.bat build` to produce a fresh jar**
+- [x] **Step 3: If verification is green, run `.\gradlew.bat build` to produce a fresh jar**
