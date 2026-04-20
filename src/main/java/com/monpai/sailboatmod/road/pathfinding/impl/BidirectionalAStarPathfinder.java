@@ -34,7 +34,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
     @Override
     public PathResult findPath(BlockPos start, BlockPos end, TerrainSamplingCache cache) {
         int step = config.getAStarStep();
-        int maxSteps = config.getMaxSteps();
+        int maxSteps = config.getMaxSteps() * 2;
         int sx = start.getX(), sz = start.getZ();
         int ex = end.getX(), ez = end.getZ();
 
@@ -79,6 +79,11 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
                 double recorded = forwardBestG.getOrDefault(key(current.x, current.z), Double.MAX_VALUE);
                 if (current.g > recorded) continue;
 
+                // Success check: Manhattan distance <= step * 3
+                if (Math.abs(current.x - ex) + Math.abs(current.z - ez) <= step * 3) {
+                    return PathResult.success(reconstructForwardPath(current, end, cache));
+                }
+
                 for (int[] dir : DIRECTIONS) {
                     int nx = current.x + dir[0] * step;
                     int nz = current.z + dir[1] * step;
@@ -106,6 +111,11 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
                 Node current = backwardOpen.poll();
                 double recorded = backwardBestG.getOrDefault(key(current.x, current.z), Double.MAX_VALUE);
                 if (current.g > recorded) continue;
+
+                // Success check: Manhattan distance <= step * 3
+                if (Math.abs(current.x - sx) + Math.abs(current.z - sz) <= step * 3) {
+                    return PathResult.success(reconstructBackwardPath(current, start, end, cache));
+                }
 
                 for (int[] dir : DIRECTIONS) {
                     int nx = current.x + dir[0] * step;
@@ -175,5 +185,49 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
         }
 
         return PathResult.success(fullPath);
+    }
+
+    private List<BlockPos> reconstructForwardPath(Node goalNode, BlockPos end, TerrainSamplingCache cache) {
+        List<BlockPos> path = new ArrayList<>();
+        Node n = goalNode;
+        while (n != null) {
+            int y = cache.getHeight(n.x, n.z);
+            path.add(new BlockPos(n.x, y, n.z));
+            n = n.parent;
+        }
+        Collections.reverse(path);
+        BlockPos last = path.get(path.size() - 1);
+        if (last.getX() != end.getX() || last.getZ() != end.getZ()) {
+            int ey = cache.getHeight(end.getX(), end.getZ());
+            path.add(new BlockPos(end.getX(), ey, end.getZ()));
+        }
+        return path;
+    }
+
+    private List<BlockPos> reconstructBackwardPath(Node goalNode, BlockPos start, BlockPos end, TerrainSamplingCache cache) {
+        // The backward search traces from near-start back to end via parent chain
+        List<BlockPos> path = new ArrayList<>();
+        Node n = goalNode;
+        while (n != null) {
+            int y = cache.getHeight(n.x, n.z);
+            path.add(new BlockPos(n.x, y, n.z));
+            n = n.parent;
+        }
+        // path is now: [near-start, ..., end] — reverse to get [end, ..., near-start] then reverse again for [start->end]
+        // Actually parent chain goes toward 'end' (backward search started at end), so path = [near-start, ..., end]
+        // We need start->end order, so no reversal needed, but we need to prepend start
+        // Wait: the backward search parent chain goes: goalNode -> ... -> bwdStart(end). So path = [near-start, ..., end].
+        // That's already in start-to-end order. Just ensure start and end are present.
+        BlockPos first = path.get(0);
+        if (first.getX() != start.getX() || first.getZ() != start.getZ()) {
+            int sy = cache.getHeight(start.getX(), start.getZ());
+            path.add(0, new BlockPos(start.getX(), sy, start.getZ()));
+        }
+        BlockPos last = path.get(path.size() - 1);
+        if (last.getX() != end.getX() || last.getZ() != end.getZ()) {
+            int ey = cache.getHeight(end.getX(), end.getZ());
+            path.add(new BlockPos(end.getX(), ey, end.getZ()));
+        }
+        return path;
     }
 }

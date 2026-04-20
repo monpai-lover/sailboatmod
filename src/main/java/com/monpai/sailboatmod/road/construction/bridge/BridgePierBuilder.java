@@ -20,18 +20,17 @@ public class BridgePierBuilder {
 
     public List<PierNode> planPierNodes(List<BlockPos> bridgePath, int deckY, int oceanFloorY) {
         List<PierNode> nodes = new ArrayList<>();
-        int interval = config.getPierInterval();
+        int interval = Math.max(5, config.getPierInterval());
         for (int i = 0; i < bridgePath.size(); i += interval) {
             BlockPos pos = bridgePath.get(i);
-            BlockPos foundation = new BlockPos(pos.getX(), oceanFloorY, pos.getZ());
-            nodes.add(new PierNode(foundation, pos.getY(), deckY));
+            nodes.add(new PierNode(new BlockPos(pos.getX(), oceanFloorY, pos.getZ()), pos.getY(), deckY));
         }
+        // Always include last position if not already included
         if (!bridgePath.isEmpty()) {
             BlockPos last = bridgePath.get(bridgePath.size() - 1);
-            BlockPos lastNode = nodes.isEmpty() ? null : nodes.get(nodes.size() - 1).foundationPos;
-            if (lastNode == null || !lastNode.equals(new BlockPos(last.getX(), oceanFloorY, last.getZ()))) {
-                nodes.add(new PierNode(new BlockPos(last.getX(), oceanFloorY, last.getZ()),
-                    last.getY(), deckY));
+            if (nodes.isEmpty() || !nodes.get(nodes.size() - 1).foundationPos().equals(
+                    new BlockPos(last.getX(), oceanFloorY, last.getZ()))) {
+                nodes.add(new PierNode(new BlockPos(last.getX(), oceanFloorY, last.getZ()), last.getY(), deckY));
             }
         }
         return nodes;
@@ -40,10 +39,8 @@ public class BridgePierBuilder {
     public List<BuildStep> buildPiers(List<PierNode> pierNodes, int order) {
         List<BuildStep> steps = new ArrayList<>();
         for (PierNode node : pierNodes) {
-            int fromY = node.foundationPos.getY();
-            int toY = node.deckY;
-            for (int y = fromY; y <= toY; y++) {
-                BlockPos pos = new BlockPos(node.foundationPos.getX(), y, node.foundationPos.getZ());
+            for (int y = node.foundationPos().getY(); y <= node.deckY(); y++) {
+                BlockPos pos = new BlockPos(node.foundationPos().getX(), y, node.foundationPos().getZ());
                 steps.add(new BuildStep(order++, pos, Blocks.STONE_BRICKS.defaultBlockState(), BuildPhase.PIER));
             }
         }

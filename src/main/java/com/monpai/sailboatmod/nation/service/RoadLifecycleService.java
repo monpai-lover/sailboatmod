@@ -35,14 +35,32 @@ public final class RoadLifecycleService {
         RoadNetworkApi api = getApi();
         Optional<ConstructionQueue> queue = api.getConstruction(roadId);
         if (queue.isEmpty()) return false;
-        api.cancelRoad(roadId, level);
+        ConstructionQueue q = queue.get();
+        if (!q.isRollingBack()) {
+            q.progressiveRollback(level, 1); // start progressive rollback
+        }
         return true;
+    }
+
+    public static boolean tickRollback(ServerLevel level, String roadId, int batchSize) {
+        if (level == null || roadId == null) return true;
+        RoadNetworkApi api = getApi();
+        Optional<ConstructionQueue> queue = api.getConstruction(roadId);
+        if (queue.isEmpty()) return true;
+        ConstructionQueue q = queue.get();
+        if (!q.isRollingBack()) return true;
+        return q.progressiveRollback(level, batchSize);
     }
 
     public static boolean demolishRoad(ServerLevel level, String roadId) {
         if (level == null || roadId == null) return false;
         RoadNetworkApi api = getApi();
-        api.cancelRoad(roadId, level);
+        Optional<ConstructionQueue> queue = api.getConstruction(roadId);
+        if (queue.isEmpty()) return false;
+        ConstructionQueue q = queue.get();
+        if (!q.isRollingBack()) {
+            q.progressiveRollback(level, 1); // start progressive rollback
+        }
         return true;
     }
 

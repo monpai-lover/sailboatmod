@@ -6,9 +6,7 @@ import com.monpai.sailboatmod.road.model.RoadMaterial;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.SlabBlock;
-import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.SlabType;
 
 import java.util.ArrayList;
@@ -24,47 +22,31 @@ public class BridgeRampBuilder {
         Direction perpDir = roadDir.getClockWise();
         int order = startOrder;
         int heightDiff = deckY - platformY;
+        // Each full block needs 2 slab steps (bottom at Y, top at Y = +0.5 visual)
+        int totalSlabSteps = heightDiff * 2;
         int currentY = platformY;
-        int stepIndex = 0;
+        boolean useBottom = true; // alternate bottom, top, bottom, top...
 
-        for (int h = 0; h < heightDiff; h++) {
-            BlockPos stairCenter = startPos.relative(roadDir, stepIndex).atY(currentY);
-            BlockState stairState = material.stair().defaultBlockState()
-                .setValue(StairBlock.FACING, roadDir)
-                .setValue(StairBlock.HALF, Half.BOTTOM);
+        for (int s = 0; s < totalSlabSteps; s++) {
+            BlockPos center = startPos.relative(roadDir, s);
+            SlabType slabType = useBottom ? SlabType.BOTTOM : SlabType.TOP;
+            BlockState slabState = material.slab().defaultBlockState()
+                .setValue(SlabBlock.TYPE, slabType);
 
             for (int w = -halfWidth; w <= halfWidth; w++) {
-                BlockPos pos = stairCenter.relative(perpDir, w);
-                steps.add(new BuildStep(order++, pos, stairState, BuildPhase.RAMP));
-                if (w == -halfWidth || w == halfWidth) {
-                    steps.add(new BuildStep(order++, pos.above(),
-                        material.fence().defaultBlockState(), BuildPhase.RAILING));
-                }
+                BlockPos pos = center.relative(perpDir, w).atY(currentY);
+                steps.add(new BuildStep(order++, pos, slabState, BuildPhase.RAMP));
             }
-            currentY++;
-            stepIndex++;
+            // Railings on both sides of ramp
+            BlockPos leftRail = center.relative(perpDir, -(halfWidth + 1)).atY(currentY + 1);
+            BlockPos rightRail = center.relative(perpDir, halfWidth + 1).atY(currentY + 1);
+            steps.add(new BuildStep(order++, leftRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+            steps.add(new BuildStep(order++, rightRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
 
-            if (h < heightDiff - 1) {
-                BlockPos slabTopCenter = startPos.relative(roadDir, stepIndex).atY(currentY - 1);
-                BlockState slabTop = material.slab().defaultBlockState()
-                    .setValue(SlabBlock.TYPE, SlabType.TOP);
-
-                for (int w = -halfWidth; w <= halfWidth; w++) {
-                    BlockPos pos = slabTopCenter.relative(perpDir, w);
-                    steps.add(new BuildStep(order++, pos, slabTop, BuildPhase.RAMP));
-                }
-                stepIndex++;
-
-                BlockPos slabBotCenter = startPos.relative(roadDir, stepIndex).atY(currentY);
-                BlockState slabBot = material.slab().defaultBlockState()
-                    .setValue(SlabBlock.TYPE, SlabType.BOTTOM);
-
-                for (int w = -halfWidth; w <= halfWidth; w++) {
-                    BlockPos pos = slabBotCenter.relative(perpDir, w);
-                    steps.add(new BuildStep(order++, pos, slabBot, BuildPhase.RAMP));
-                }
-                stepIndex++;
+            if (!useBottom) {
+                currentY++; // after top slab, move up one full block
             }
+            useBottom = !useBottom;
         }
         return steps;
     }
@@ -77,47 +59,30 @@ public class BridgeRampBuilder {
         Direction perpDir = roadDir.getClockWise();
         int order = startOrder;
         int heightDiff = deckY - platformY;
+        int totalSlabSteps = heightDiff * 2;
         int currentY = deckY;
-        int stepIndex = 0;
+        boolean useTop = true; // descending: top, bottom, top, bottom...
 
-        for (int h = 0; h < heightDiff; h++) {
-            if (h > 0) {
-                BlockPos slabBotCenter = startPos.relative(roadDir, stepIndex).atY(currentY);
-                BlockState slabBot = material.slab().defaultBlockState()
-                    .setValue(SlabBlock.TYPE, SlabType.BOTTOM);
+        for (int s = 0; s < totalSlabSteps; s++) {
+            BlockPos center = startPos.relative(roadDir, s);
+            SlabType slabType = useTop ? SlabType.TOP : SlabType.BOTTOM;
+            BlockState slabState = material.slab().defaultBlockState()
+                .setValue(SlabBlock.TYPE, slabType);
 
-                for (int w = -halfWidth; w <= halfWidth; w++) {
-                    BlockPos pos = slabBotCenter.relative(perpDir, w);
-                    steps.add(new BuildStep(order++, pos, slabBot, BuildPhase.RAMP));
-                }
-                stepIndex++;
-
-                BlockPos slabTopCenter = startPos.relative(roadDir, stepIndex).atY(currentY - 1);
-                BlockState slabTop = material.slab().defaultBlockState()
-                    .setValue(SlabBlock.TYPE, SlabType.TOP);
-
-                for (int w = -halfWidth; w <= halfWidth; w++) {
-                    BlockPos pos = slabTopCenter.relative(perpDir, w);
-                    steps.add(new BuildStep(order++, pos, slabTop, BuildPhase.RAMP));
-                }
-                stepIndex++;
+            if (useTop) {
+                currentY--; // before top slab going down, drop one block
             }
-
-            currentY--;
-            BlockPos stairCenter = startPos.relative(roadDir, stepIndex).atY(currentY);
-            BlockState stairState = material.stair().defaultBlockState()
-                .setValue(StairBlock.FACING, roadDir.getOpposite())
-                .setValue(StairBlock.HALF, Half.BOTTOM);
 
             for (int w = -halfWidth; w <= halfWidth; w++) {
-                BlockPos pos = stairCenter.relative(perpDir, w);
-                steps.add(new BuildStep(order++, pos, stairState, BuildPhase.RAMP));
-                if (w == -halfWidth || w == halfWidth) {
-                    steps.add(new BuildStep(order++, pos.above(),
-                        material.fence().defaultBlockState(), BuildPhase.RAILING));
-                }
+                BlockPos pos = center.relative(perpDir, w).atY(currentY);
+                steps.add(new BuildStep(order++, pos, slabState, BuildPhase.RAMP));
             }
-            stepIndex++;
+            BlockPos leftRail = center.relative(perpDir, -(halfWidth + 1)).atY(currentY + 1);
+            BlockPos rightRail = center.relative(perpDir, halfWidth + 1).atY(currentY + 1);
+            steps.add(new BuildStep(order++, leftRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+            steps.add(new BuildStep(order++, rightRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+
+            useTop = !useTop;
         }
         return steps;
     }

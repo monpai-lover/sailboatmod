@@ -32,16 +32,20 @@ public class RoadSegmentPaver {
 
         for (int i = 0; i < centerPath.size(); i++) {
             BlockPos center = centerPath.get(i);
+            int terrainY = cache.getHeight(center.getX(), center.getZ());
             RoadMaterial material = materialSelector.select(cache.getBiome(center.getX(), center.getZ()));
 
             Direction roadDir = getDirection(centerPath, i);
             Direction perpDir = roadDir.getClockWise();
 
-            int prevY = (i > 0) ? centerPath.get(i - 1).getY() : center.getY();
-            int heightDiff = center.getY() - prevY;
+            int prevTerrainY = (i > 0) ? cache.getHeight(centerPath.get(i - 1).getX(), centerPath.get(i - 1).getZ()) : terrainY;
+            int heightDiff = terrainY - prevTerrainY;
 
             for (int w = -halfWidth; w <= halfWidth; w++) {
-                BlockPos pos = center.relative(perpDir, w);
+                int wx = center.getX() + perpDir.getStepX() * w;
+                int wz = center.getZ() + perpDir.getStepZ() * w;
+                int surfaceY = cache.getHeight(wx, wz);
+                BlockPos pos = new BlockPos(wx, surfaceY, wz);
 
                 for (int d = 1; d <= MAX_FOUNDATION_DEPTH; d++) {
                     BlockPos below = pos.below(d);
@@ -70,8 +74,12 @@ public class RoadSegmentPaver {
             }
 
             if (width >= 7) {
-                BlockPos leftRail = center.relative(perpDir, -(halfWidth + 1));
-                BlockPos rightRail = center.relative(perpDir, halfWidth + 1);
+                int lx = center.getX() + perpDir.getStepX() * -(halfWidth + 1);
+                int lz = center.getZ() + perpDir.getStepZ() * -(halfWidth + 1);
+                int rx = center.getX() + perpDir.getStepX() * (halfWidth + 1);
+                int rz = center.getZ() + perpDir.getStepZ() * (halfWidth + 1);
+                BlockPos leftRail = new BlockPos(lx, cache.getHeight(lx, lz), lz);
+                BlockPos rightRail = new BlockPos(rx, cache.getHeight(rx, rz), rz);
                 if (i % 4 == 0) {
                     steps.add(new BuildStep(order++, leftRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
                     steps.add(new BuildStep(order++, rightRail, material.fence().defaultBlockState(), BuildPhase.RAILING));

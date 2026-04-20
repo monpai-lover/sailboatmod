@@ -32,7 +32,7 @@ public class BasicAStarPathfinder implements Pathfinder {
     @Override
     public PathResult findPath(BlockPos start, BlockPos end, TerrainSamplingCache cache) {
         int step = config.getAStarStep();
-        int maxSteps = config.getMaxSteps();
+        int maxSteps = config.getMaxSteps() * 2;
         int goalX = end.getX();
         int goalZ = end.getZ();
 
@@ -50,8 +50,8 @@ public class BasicAStarPathfinder implements Pathfinder {
             steps++;
             Node current = open.poll();
 
-            // Success check: Manhattan distance < step * 2
-            if (Math.abs(current.x - goalX) + Math.abs(current.z - goalZ) < step * 2) {
+            // Success check: Manhattan distance <= step * 3
+            if (Math.abs(current.x - goalX) + Math.abs(current.z - goalZ) <= step * 3) {
                 return PathResult.success(reconstructPath(current, end, cache));
             }
 

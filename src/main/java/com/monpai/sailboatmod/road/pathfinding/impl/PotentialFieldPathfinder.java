@@ -65,8 +65,8 @@ public class PotentialFieldPathfinder implements Pathfinder {
             steps++;
             Node current = open.poll();
 
-            // Success check: Manhattan distance < step * 2 * 1.5
-            if (Math.abs(current.x - goalX) + Math.abs(current.z - goalZ) < step * 2 * 1.5) {
+            // Success check: Manhattan distance <= step * 3
+            if (Math.abs(current.x - goalX) + Math.abs(current.z - goalZ) <= step * 3) {
                 return PathResult.success(reconstructPath(current, end, cache));
             }
 

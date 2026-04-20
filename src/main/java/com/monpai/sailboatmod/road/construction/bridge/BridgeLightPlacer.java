@@ -20,35 +20,36 @@ public class BridgeLightPlacer {
     }
 
     public List<BuildStep> placeLights(List<BlockPos> bridgePath, int deckY, int width,
-                                        RoadMaterial material, int startOrder) {
+                                        RoadMaterial material, Direction roadDir, int startOrder) {
         List<BuildStep> steps = new ArrayList<>();
         int halfWidth = width / 2;
+        Direction perpDir = roadDir.getClockWise();
         int order = startOrder;
         boolean leftSide = true;
 
         for (int i = 0; i < bridgePath.size(); i += config.getLightInterval()) {
-            BlockPos center = bridgePath.get(i);
-            Direction roadDir = getDirection(bridgePath, i);
-            Direction perpDir = roadDir.getClockWise();
-
+            // Light is built on top of the railing (deckY+1 is railing, deckY+2 is light base)
             int side = leftSide ? -(halfWidth + 1) : (halfWidth + 1);
-            Direction armDir = leftSide ? perpDir.getOpposite() : perpDir;
+            BlockPos center = bridgePath.get(i);
+            int baseY = deckY + 2; // on top of railing
 
             BlockPos base = new BlockPos(
-                center.getX() + perpDir.getStepX() * side,
-                deckY + 1,
-                center.getZ() + perpDir.getStepZ() * side
-            );
+                center.getX() + perpDir.getStepX() * side, baseY,
+                center.getZ() + perpDir.getStepZ() * side);
 
+            // 3 fence posts vertically
             for (int h = 0; h < 3; h++) {
                 steps.add(new BuildStep(order++, base.above(h),
                     material.fence().defaultBlockState(), BuildPhase.STREETLIGHT));
             }
 
-            BlockPos armPos = base.above(2).relative(armDir.getOpposite());
+            // Horizontal arm extending INWARD over the road
+            Direction inward = leftSide ? perpDir : perpDir.getOpposite();
+            BlockPos armPos = base.above(2).relative(inward);
             steps.add(new BuildStep(order++, armPos,
                 material.fence().defaultBlockState(), BuildPhase.STREETLIGHT));
 
+            // Hanging lantern below the arm - HARDCODED Blocks.LANTERN
             BlockPos lanternPos = armPos.below();
             steps.add(new BuildStep(order++, lanternPos,
                 Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, true),
@@ -57,15 +58,5 @@ public class BridgeLightPlacer {
             leftSide = !leftSide;
         }
         return steps;
-    }
-
-    private Direction getDirection(List<BlockPos> path, int index) {
-        BlockPos curr = path.get(index);
-        BlockPos next = (index < path.size() - 1) ? path.get(index + 1) : curr;
-        BlockPos prev = (index > 0) ? path.get(index - 1) : curr;
-        int dx = next.getX() - prev.getX();
-        int dz = next.getZ() - prev.getZ();
-        if (Math.abs(dx) >= Math.abs(dz)) return dx >= 0 ? Direction.EAST : Direction.WEST;
-        return dz >= 0 ? Direction.SOUTH : Direction.NORTH;
     }
 }

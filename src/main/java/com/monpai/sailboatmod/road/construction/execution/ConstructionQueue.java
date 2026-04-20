@@ -16,6 +16,7 @@ public class ConstructionQueue {
     private int currentIndex;
     private State state;
     private final List<RollbackEntry> rollbackEntries = new ArrayList<>();
+    private int rollbackIndex = -1; // -1 means not rolling back
 
     public record RollbackEntry(BlockPos pos, BlockState previousState) {}
 
@@ -61,6 +62,25 @@ public class ConstructionQueue {
             RollbackEntry entry = rollbackEntries.get(i);
             level.setBlock(entry.pos(), entry.previousState(), 3);
         }
+    }
+
+    public boolean isRollingBack() {
+        return rollbackIndex >= 0;
+    }
+
+    public boolean progressiveRollback(ServerLevel level, int batchSize) {
+        if (rollbackIndex < 0) {
+            rollbackIndex = rollbackEntries.size() - 1;
+            state = State.CANCELLED;
+        }
+        int count = 0;
+        while (rollbackIndex >= 0 && count < batchSize) {
+            RollbackEntry entry = rollbackEntries.get(rollbackIndex);
+            level.setBlock(entry.pos(), entry.previousState(), 3);
+            rollbackIndex--;
+            count++;
+        }
+        return rollbackIndex < 0; // true when done
     }
 
     public String getRoadId() { return roadId; }

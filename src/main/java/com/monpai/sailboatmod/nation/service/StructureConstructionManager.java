@@ -1930,15 +1930,27 @@ public final class StructureConstructionManager {
         if (existing != null && !existing.isAir() && !existing.canBeReplaced() && !existing.liquid()) {
             return describeBlockedRoadBuildStep(level, step);
         }
+        // Clearance blocked: auto-clear any obstacle above, only error if clear fails
         BlockState above = level.getBlockState(pos.above());
-        if (above != null && !above.isAir() && !clearanceStateIsSafeToRemove(above)) {
-            return "clearance blocked at " + pos.above().toShortString();
+        if (above != null && !above.isAir()) {
+            BlockPos blockingPos = pos.above();
+            level.setBlock(blockingPos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+            BlockState afterClear = level.getBlockState(blockingPos);
+            if (afterClear != null && !afterClear.isAir()) {
+                return "clearance blocked at " + blockingPos.toShortString();
+            }
         }
+        // Missing support: auto-place cobblestone below, only error if placement fails
         BlockState below = level.getBlockState(pos.below());
         if (below == null || below.isAir() || below.liquid()) {
-            return "missing support at " + pos.below().toShortString();
+            BlockPos supportPos = pos.below();
+            level.setBlock(supportPos, Blocks.COBBLESTONE.defaultBlockState(), Block.UPDATE_ALL);
+            BlockState afterScaffold = level.getBlockState(supportPos);
+            if (afterScaffold == null || afterScaffold.isAir() || afterScaffold.liquid()) {
+                return "missing support at " + supportPos.toShortString();
+            }
         }
-        return "blocked build step at " + pos.toShortString();
+        return "";
     }
 
     private static String describeBlockedRoadBuildStep(ServerLevel level,
@@ -3620,21 +3632,23 @@ public final class StructureConstructionManager {
                 continue;
             }
 
-            int armX = Integer.compare(lightPos.getX() - deckCenter.getX(), 0);
-            int armZ = Integer.compare(lightPos.getZ() - deckCenter.getZ(), 0);
+            // Negate so the arm extends INWARD over the road, not outward
+            int armX = -Integer.compare(lightPos.getX() - deckCenter.getX(), 0);
+            int armZ = -Integer.compare(lightPos.getZ() - deckCenter.getZ(), 0);
             BlockPos postBase = resolveLampPostBase(ghostBlocks, lightPos, style, bridgeLamp);
 
             if (style.lightSupport() != null) {
                 appendGhost(ghostBlocks, postBase, style.lightSupport());
                 appendGhost(ghostBlocks, postBase.above(), style.lightSupport());
+                appendGhost(ghostBlocks, postBase.above(2), style.lightSupport());
             }
 
             if (armX == 0 && armZ == 0) {
-                appendGhost(ghostBlocks, postBase.above(2), Blocks.LANTERN.defaultBlockState());
+                appendGhost(ghostBlocks, postBase.above(3), Blocks.LANTERN.defaultBlockState());
                 continue;
             }
 
-            BlockPos armPos = postBase.above().offset(armX, 0, armZ);
+            BlockPos armPos = postBase.above(2).offset(armX, 0, armZ);
             if (style.lightArm() != null) {
                 appendGhost(ghostBlocks, armPos, style.lightArm());
             }

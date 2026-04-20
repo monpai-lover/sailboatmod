@@ -12,53 +12,41 @@ import java.util.List;
 public class BridgeDeckPlacer {
 
     public List<BuildStep> placeDeck(List<BlockPos> bridgePath, int deckY, int width,
-                                      RoadMaterial material, int startOrder) {
+                                      RoadMaterial material, Direction roadDir, int startOrder) {
         List<BuildStep> steps = new ArrayList<>();
         int halfWidth = width / 2;
+        Direction perpDir = roadDir.getClockWise();
         int order = startOrder;
 
         for (int i = 0; i < bridgePath.size(); i++) {
             BlockPos center = bridgePath.get(i);
-            Direction roadDir = getDirection(bridgePath, i);
-            Direction perpDir = roadDir.getClockWise();
-
+            // Deck surface
             for (int w = -halfWidth; w <= halfWidth; w++) {
                 BlockPos pos = new BlockPos(
-                    center.getX() + perpDir.getStepX() * w,
-                    deckY,
-                    center.getZ() + perpDir.getStepZ() * w
-                );
-                steps.add(new BuildStep(order++, pos,
-                    material.surface().defaultBlockState(), BuildPhase.DECK));
+                    center.getX() + perpDir.getStepX() * w, deckY,
+                    center.getZ() + perpDir.getStepZ() * w);
+                steps.add(new BuildStep(order++, pos, material.surface().defaultBlockState(), BuildPhase.DECK));
             }
-
+            // Railings on both sides (fence on top of deck)
             BlockPos leftRail = new BlockPos(
-                center.getX() + perpDir.getStepX() * -(halfWidth + 1),
-                deckY + 1,
-                center.getZ() + perpDir.getStepZ() * -(halfWidth + 1)
-            );
+                center.getX() + perpDir.getStepX() * -(halfWidth + 1), deckY + 1,
+                center.getZ() + perpDir.getStepZ() * -(halfWidth + 1));
             BlockPos rightRail = new BlockPos(
-                center.getX() + perpDir.getStepX() * (halfWidth + 1),
-                deckY + 1,
-                center.getZ() + perpDir.getStepZ() * (halfWidth + 1)
-            );
-            steps.add(new BuildStep(order++, leftRail,
-                material.fence().defaultBlockState(), BuildPhase.RAILING));
-            steps.add(new BuildStep(order++, rightRail,
-                material.fence().defaultBlockState(), BuildPhase.RAILING));
+                center.getX() + perpDir.getStepX() * (halfWidth + 1), deckY + 1,
+                center.getZ() + perpDir.getStepZ() * (halfWidth + 1));
+            steps.add(new BuildStep(order++, leftRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+            steps.add(new BuildStep(order++, rightRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
         }
         return steps;
     }
 
-    private Direction getDirection(List<BlockPos> path, int index) {
+    public static Direction getDirection(List<BlockPos> path, int index) {
         BlockPos curr = path.get(index);
         BlockPos next = (index < path.size() - 1) ? path.get(index + 1) : curr;
         BlockPos prev = (index > 0) ? path.get(index - 1) : curr;
         int dx = next.getX() - prev.getX();
         int dz = next.getZ() - prev.getZ();
-        if (Math.abs(dx) >= Math.abs(dz)) {
-            return dx >= 0 ? Direction.EAST : Direction.WEST;
-        }
+        if (Math.abs(dx) >= Math.abs(dz)) return dx >= 0 ? Direction.EAST : Direction.WEST;
         return dz >= 0 ? Direction.SOUTH : Direction.NORTH;
     }
 }
