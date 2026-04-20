@@ -58,6 +58,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -273,21 +274,27 @@ public final class ManualRoadPlannerService {
         if (isPlanningPending(stack)) {
             return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
         }
-        List<PlanCandidate> candidates = buildPlanCandidates(player, stack);
-        if (candidates.isEmpty()) {
-            clearPreviewState(stack);
-            sendPreviewClear(player);
-            return Component.translatable("message.sailboatmod.road_planner.path_failed");
-        }
-        PlanCandidate candidate = selectPlanCandidate(stack, candidates);
-        if (candidate == null) {
-            clearPreviewState(stack);
-            sendPreviewClear(player);
-            return Component.translatable("message.sailboatmod.road_planner.path_failed");
-        }
-        READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(candidate.targetTown().townId(), candidates, ""));
-        sendPlanningResult(player, READY_PREVIEWS.get(player.getUUID()), candidate.optionId());
-        return Component.empty();
+        markPlanningPending(stack, true);
+        CompletableFuture.supplyAsync(() -> buildPlanCandidates(player, stack))
+            .thenAcceptAsync(candidates -> {
+                markPlanningPending(stack, false);
+                if (candidates.isEmpty()) {
+                    clearPreviewState(stack);
+                    sendPreviewClear(player);
+                    player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.path_failed"));
+                    return;
+                }
+                PlanCandidate candidate = selectPlanCandidate(stack, candidates);
+                if (candidate == null) {
+                    clearPreviewState(stack);
+                    sendPreviewClear(player);
+                    player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.path_failed"));
+                    return;
+                }
+                READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(candidate.targetTown().townId(), candidates, ""));
+                sendPlanningResult(player, READY_PREVIEWS.get(player.getUUID()), candidate.optionId());
+            }, player.server);
+        return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
     }
 
     private static Component previewOrCancelRoad(ServerPlayer player, ItemStack stack) {

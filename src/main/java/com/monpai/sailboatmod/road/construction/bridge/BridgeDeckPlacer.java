@@ -15,11 +15,12 @@ public class BridgeDeckPlacer {
                                       RoadMaterial material, Direction roadDir, int startOrder) {
         List<BuildStep> steps = new ArrayList<>();
         int halfWidth = width / 2;
-        Direction perpDir = roadDir.getClockWise();
         int order = startOrder;
 
         for (int i = 0; i < bridgePath.size(); i++) {
             BlockPos center = bridgePath.get(i);
+            Direction localDir = getDirection(bridgePath, i);
+            Direction perpDir = localDir.getClockWise();
             // Deck surface
             for (int w = -halfWidth; w <= halfWidth; w++) {
                 BlockPos pos = new BlockPos(

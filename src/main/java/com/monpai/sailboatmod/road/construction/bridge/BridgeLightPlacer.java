@@ -23,11 +23,12 @@ public class BridgeLightPlacer {
                                         RoadMaterial material, Direction roadDir, int startOrder) {
         List<BuildStep> steps = new ArrayList<>();
         int halfWidth = width / 2;
-        Direction perpDir = roadDir.getClockWise();
         int order = startOrder;
         boolean leftSide = true;
 
         for (int i = 0; i < bridgePath.size(); i += config.getLightInterval()) {
+            Direction localDir = BridgeDeckPlacer.getDirection(bridgePath, i);
+            Direction perpDir = localDir.getClockWise();
             // Light is built on top of the railing (deckY+1 is railing, deckY+2 is light base)
             int side = leftSide ? -(halfWidth + 1) : (halfWidth + 1);
             BlockPos center = bridgePath.get(i);
