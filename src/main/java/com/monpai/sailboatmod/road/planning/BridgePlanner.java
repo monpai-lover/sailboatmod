@@ -96,22 +96,32 @@ public class BridgePlanner {
     }
 
     private List<BlockPos> findBridgePath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {
+        // Primary: straight line (fast, no zigzag)
+        List<BlockPos> straight = buildStraightPath(from, to, cache);
+        // Check if straight line crosses very deep water (>15 blocks)
+        boolean hasDeepWater = false;
+        for (BlockPos p : straight) {
+            if (cache.isWater(p.getX(), p.getZ()) && cache.getWaterDepth(p.getX(), p.getZ()) > 15) {
+                hasDeepWater = true;
+                break;
+            }
+        }
+        if (!hasDeepWater) return straight;
+        // Fallback: A* with step=8 to route around deep water
         PathfindingConfig cfg = new PathfindingConfig();
-        cfg.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
-        cfg.setMaxSteps(60000);
-        cfg.setAStarStep(1);
-        cfg.setWaterDepthWeight(2.0);
+        cfg.setAlgorithm(PathfindingConfig.Algorithm.BASIC_ASTAR);
+        cfg.setMaxSteps(15000);
+        cfg.setAStarStep(8);
+        cfg.setWaterDepthWeight(10.0);
         cfg.setNearWaterCost(0.0);
         cfg.setElevationWeight(5.0);
-        cfg.setDeviationWeight(0.3);
-        cfg.setHeuristicWeight(8.0);
+        cfg.setDeviationWeight(0.5);
+        cfg.setHeuristicWeight(10.0);
         cfg.setBiomeWeight(0.0);
         cfg.setStabilityWeight(0.0);
         Pathfinder pf = PathfinderFactory.create(cfg);
         PathResult r = pf.findPath(from, to, cache);
-        if (r.success()) return r.path();
-        // Fallback: straight line
-        return buildStraightPath(from, to, cache);
+        return r.success() ? r.path() : straight;
     }
 
     private List<BlockPos> buildStraightPath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {

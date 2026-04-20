@@ -86,11 +86,11 @@ public class BridgeBuilder {
         int entryY = cache != null ? Math.max(cache.getHeight(entryPos.getX(), entryPos.getZ()), waterY) : waterY;
         int exitY = cache != null ? Math.max(cache.getHeight(exitPos.getX(), exitPos.getZ()), waterY) : waterY;
 
-        // Deck height: at least sea+3, at least both shores+2, capped by max ramp from lower shore
+        // Deck height: sea+5 minimum, both shores+3, capped by max ramp
         int maxRampHeight = 5;
-        int deckY = Math.max(waterY + 3, Math.max(entryY + 2, exitY + 2));
+        int deckY = Math.max(waterY + 5, Math.max(entryY + 3, exitY + 3));
         deckY = Math.min(deckY, Math.min(entryY, exitY) + maxRampHeight);
-        deckY = Math.max(deckY, waterY + 3);
+        deckY = Math.max(deckY, waterY + 5);
 
         // Ramp lengths in path indices (2 indices per block of height)
         int ascHeight = Math.min(deckY - entryY, maxRampHeight);
@@ -144,30 +144,66 @@ public class BridgeBuilder {
             order += lights.size();
         }
 
-        // 3. Descending ramp along actual path positions
+        // 3. Descending ramp - adapt to terrain: steep mountain = tunnel in, gentle = normal ramp
         if (descHeight > 0 && descStart < span.endIndex()) {
-            int currentY = deckY;
-            boolean useTop = true;
-            for (int i = descStart; i <= span.endIndex() && i < centerPath.size(); i++) {
-                BlockPos pathPos = centerPath.get(i);
-                if (useTop) currentY--;
-                net.minecraft.world.level.block.state.properties.SlabType slabType =
-                    useTop ? net.minecraft.world.level.block.state.properties.SlabType.TOP
-                           : net.minecraft.world.level.block.state.properties.SlabType.BOTTOM;
-                net.minecraft.world.level.block.state.BlockState slabState = material.slab().defaultBlockState()
-                    .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, slabType);
-                Direction localDir = BridgeDeckPlacer.getDirection(centerPath, i);
-                Direction perpDir = localDir.getClockWise();
-                int halfW = width / 2;
-                for (int w = -halfW; w <= halfW; w++) {
-                    BlockPos pos = new BlockPos(pathPos.getX() + perpDir.getStepX() * w, currentY, pathPos.getZ() + perpDir.getStepZ() * w);
-                    steps.add(new BuildStep(order++, pos, slabState, BuildPhase.RAMP));
+            // Check if exit terrain is steep (mountain) by sampling a few blocks ahead
+            boolean isSteepTerrain = false;
+            if (cache != null) {
+                int checkDist = 5;
+                BlockPos exitCheck = centerPath.get(Math.min(span.endIndex(), centerPath.size() - 1));
+                int terrainAtExit = cache.getHeight(exitCheck.getX(), exitCheck.getZ());
+                // If terrain rises above deck within a short distance, it's a mountain
+                if (terrainAtExit >= deckY - 1) {
+                    isSteepTerrain = true;
                 }
-                BlockPos lRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * -(halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * -(halfW+1));
-                BlockPos rRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * (halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * (halfW+1));
-                steps.add(new BuildStep(order++, lRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
-                steps.add(new BuildStep(order++, rRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
-                useTop = !useTop;
+            }
+
+            if (isSteepTerrain) {
+                // Mountain: bridge deck extends to mountain face, then tunnels in
+                // Just place deck blocks at deckY up to the mountain, no ramp needed
+                for (int i = descStart; i <= span.endIndex() && i < centerPath.size(); i++) {
+                    BlockPos pathPos = centerPath.get(i);
+                    Direction localDir = BridgeDeckPlacer.getDirection(centerPath, i);
+                    Direction perpDir = localDir.getClockWise();
+                    int halfW = width / 2;
+                    for (int w = -halfW; w <= halfW; w++) {
+                        BlockPos pos = new BlockPos(pathPos.getX() + perpDir.getStepX() * w, deckY, pathPos.getZ() + perpDir.getStepZ() * w);
+                        steps.add(new BuildStep(order++, pos, material.surface().defaultBlockState(), BuildPhase.DECK));
+                    }
+                    // Clear blocks above for tunnel entrance
+                    for (int w = -halfW; w <= halfW; w++) {
+                        for (int h = 1; h <= 4; h++) {
+                            BlockPos clearPos = new BlockPos(pathPos.getX() + perpDir.getStepX() * w, deckY + h, pathPos.getZ() + perpDir.getStepZ() * w);
+                            steps.add(new BuildStep(order++, clearPos, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+                        }
+                    }
+                }
+            } else {
+                // Gentle terrain: normal descending ramp
+                int currentY = deckY;
+                boolean useTop = true;
+                for (int i = descStart; i <= span.endIndex() && i < centerPath.size(); i++) {
+                    BlockPos pathPos = centerPath.get(i);
+                    if (useTop) currentY--;
+                    if (currentY < exitY) break; // Don't go below destination
+                    net.minecraft.world.level.block.state.properties.SlabType slabType =
+                        useTop ? net.minecraft.world.level.block.state.properties.SlabType.TOP
+                               : net.minecraft.world.level.block.state.properties.SlabType.BOTTOM;
+                    net.minecraft.world.level.block.state.BlockState slabState = material.slab().defaultBlockState()
+                        .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, slabType);
+                    Direction localDir = BridgeDeckPlacer.getDirection(centerPath, i);
+                    Direction perpDir = localDir.getClockWise();
+                    int halfW = width / 2;
+                    for (int w = -halfW; w <= halfW; w++) {
+                        BlockPos pos = new BlockPos(pathPos.getX() + perpDir.getStepX() * w, currentY, pathPos.getZ() + perpDir.getStepZ() * w);
+                        steps.add(new BuildStep(order++, pos, slabState, BuildPhase.RAMP));
+                    }
+                    BlockPos lRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * -(halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * -(halfW+1));
+                    BlockPos rRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * (halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * (halfW+1));
+                    steps.add(new BuildStep(order++, lRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+                    steps.add(new BuildStep(order++, rRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+                    useTop = !useTop;
+                }
             }
         }
 
