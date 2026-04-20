@@ -73,93 +73,103 @@ public class BridgeBuilder {
                                             TerrainSamplingCache cache) {
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
+        int spanLen = span.endIndex() - span.startIndex();
+        if (spanLen < 2) return steps;
 
-        BlockPos entryPos = centerPath.get(span.startIndex());
-        BlockPos exitPos = centerPath.get(span.endIndex());
         Direction roadDir = BridgeDeckPlacer.getDirection(centerPath, span.startIndex());
         Direction exitDir = BridgeDeckPlacer.getDirection(centerPath, span.endIndex());
 
-        int entryY = cache != null ? cache.getHeight(entryPos.getX(), entryPos.getZ()) : entryPos.getY();
-        int exitY = cache != null ? cache.getHeight(exitPos.getX(), exitPos.getZ()) : exitPos.getY();
+        // Shore heights (clamped above water)
+        BlockPos entryPos = centerPath.get(span.startIndex());
+        BlockPos exitPos = centerPath.get(span.endIndex());
+        int waterY = Math.max(span.waterSurfaceY(), SEA_LEVEL);
+        int entryY = cache != null ? Math.max(cache.getHeight(entryPos.getX(), entryPos.getZ()), waterY) : waterY;
+        int exitY = cache != null ? Math.max(cache.getHeight(exitPos.getX(), exitPos.getZ()), waterY) : waterY;
 
-        // Adaptive deck height: max of shores + clearance, but at least sea level + clearance
-        // Ramp limited to MAX_RAMP_STEPS half-slab steps = MAX_RAMP_STEPS/2 blocks height
-        int maxRampHeight = 5; // 10 half-slab steps / 2
-        int minDeckFromEntry = entryY + 2;
-        int minDeckFromExit = exitY + 2;
-        int minDeckFromSea = Math.max(span.waterSurfaceY(), SEA_LEVEL) + 3;
-        int deckY = Math.max(minDeckFromSea, Math.max(minDeckFromEntry, minDeckFromExit));
-        // Cap so ramps don't exceed max length
+        // Deck height: at least sea+3, at least both shores+2, capped by max ramp from lower shore
+        int maxRampHeight = 5;
+        int deckY = Math.max(waterY + 3, Math.max(entryY + 2, exitY + 2));
         deckY = Math.min(deckY, Math.min(entryY, exitY) + maxRampHeight);
-        // But never below sea level + 3
-        deckY = Math.max(deckY, Math.max(span.waterSurfaceY(), SEA_LEVEL) + 3);
+        deckY = Math.max(deckY, waterY + 3);
 
-        // Clamp entry/exit Y to never be below water surface (no underwater ramps)
-        entryY = Math.max(entryY, Math.max(span.waterSurfaceY(), SEA_LEVEL));
-        exitY = Math.max(exitY, Math.max(span.waterSurfaceY(), SEA_LEVEL));
-
-        // 1. Entry platform
-        BlockPos entryAtTerrain = new BlockPos(entryPos.getX(), entryY, entryPos.getZ());
-        List<BuildStep> entryPlatform = platformBuilder.buildPlatform(entryAtTerrain, roadDir, width, material, order);
-        steps.addAll(entryPlatform);
-        order += entryPlatform.size();
-
-        // 2. Ascending ramp (capped length)
+        // Ramp lengths in path indices (2 indices per block of height)
         int ascHeight = Math.min(deckY - entryY, maxRampHeight);
-        if (ascHeight > 0) {
-            BlockPos rampStart = entryAtTerrain.relative(roadDir, config.getPlatformLength());
-            List<BuildStep> ascRamp = rampBuilder.buildAscendingRamp(
-                rampStart, roadDir, entryY, entryY + ascHeight, width, material, order);
-            steps.addAll(ascRamp);
-            order += ascRamp.size();
+        int ascLen = ascHeight * 2;
+        int descHeight = (deckY - exitY <= 2) ? 0 : Math.min(deckY - exitY, maxRampHeight);
+        int descLen = descHeight * 2;
+
+        // Partition the span: [ascRamp | deck | descRamp]
+        int ascEnd = Math.min(span.startIndex() + ascLen, span.endIndex());
+        int descStart = Math.max(ascEnd, span.endIndex() - descLen);
+
+        // 1. Ascending ramp along actual path positions
+        if (ascHeight > 0 && ascEnd > span.startIndex()) {
+            int currentY = entryY;
+            boolean useBottom = true;
+            for (int i = span.startIndex(); i < ascEnd && i < centerPath.size(); i++) {
+                BlockPos pathPos = centerPath.get(i);
+                net.minecraft.world.level.block.state.properties.SlabType slabType =
+                    useBottom ? net.minecraft.world.level.block.state.properties.SlabType.BOTTOM
+                              : net.minecraft.world.level.block.state.properties.SlabType.TOP;
+                net.minecraft.world.level.block.state.BlockState slabState = material.slab().defaultBlockState()
+                    .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, slabType);
+                Direction localDir = BridgeDeckPlacer.getDirection(centerPath, i);
+                Direction perpDir = localDir.getClockWise();
+                int halfW = width / 2;
+                for (int w = -halfW; w <= halfW; w++) {
+                    BlockPos pos = new BlockPos(pathPos.getX() + perpDir.getStepX() * w, currentY, pathPos.getZ() + perpDir.getStepZ() * w);
+                    steps.add(new BuildStep(order++, pos, slabState, BuildPhase.RAMP));
+                }
+                // Railings
+                BlockPos lRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * -(halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * -(halfW+1));
+                BlockPos rRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * (halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * (halfW+1));
+                steps.add(new BuildStep(order++, lRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+                steps.add(new BuildStep(order++, rRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+                if (!useBottom) currentY++;
+                useBottom = !useBottom;
+            }
         }
 
-        // 3. Flat deck section with piers
-        int rampBlocks = ascHeight * 2 + config.getPlatformLength();
-        int deckStart = Math.min(span.startIndex() + rampBlocks, span.endIndex());
-        // Descending ramp adapts to actual exit terrain height difference
-        int descHeight = deckY - exitY;
-        int descRampBlocks;
-        if (descHeight <= 2) {
-            // Terrain is close to deck height - no ramp needed
-            descRampBlocks = config.getPlatformLength();
-            descHeight = 0;
-        } else {
-            descHeight = Math.min(descHeight, maxRampHeight);
-            descRampBlocks = descHeight * 2 + config.getPlatformLength();
-        }
-        int deckEnd = Math.max(deckStart, span.endIndex() - descRampBlocks);
-
-        if (deckStart < deckEnd) {
-            List<BlockPos> deckPath = centerPath.subList(deckStart, deckEnd + 1);
-            // Piers
+        // 2. Flat deck + piers (from ascEnd to descStart)
+        if (ascEnd < descStart) {
+            List<BlockPos> deckPath = centerPath.subList(ascEnd, descStart + 1);
             List<BridgePierBuilder.PierNode> pierNodes = pierBuilder.planPierNodes(deckPath, deckY, span.oceanFloorY());
-            List<BuildStep> piers = pierBuilder.buildPiers(pierNodes, order);
-            steps.addAll(piers);
-            order += piers.size();
-            // Deck
+            steps.addAll(pierBuilder.buildPiers(pierNodes, order));
+            order += pierNodes.size() * 20; // approximate
             List<BuildStep> deck = deckPlacer.placeDeck(deckPath, deckY, width, material, roadDir, order);
             steps.addAll(deck);
             order += deck.size();
-            // Lights
             List<BuildStep> lights = lightPlacer.placeLights(deckPath, deckY, width, material, roadDir, order);
             steps.addAll(lights);
             order += lights.size();
         }
 
-        // 4. Descending ramp - only if there's actually a height difference
-        if (descHeight > 0) {
-            BlockPos descStart = new BlockPos(exitPos.getX(), deckY, exitPos.getZ()).relative(exitDir.getOpposite(), descHeight * 2);
-            List<BuildStep> descRamp = rampBuilder.buildDescendingRamp(
-                descStart, exitDir, deckY, deckY - descHeight, width, material, order);
-            steps.addAll(descRamp);
-            order += descRamp.size();
+        // 3. Descending ramp along actual path positions
+        if (descHeight > 0 && descStart < span.endIndex()) {
+            int currentY = deckY;
+            boolean useTop = true;
+            for (int i = descStart; i <= span.endIndex() && i < centerPath.size(); i++) {
+                BlockPos pathPos = centerPath.get(i);
+                if (useTop) currentY--;
+                net.minecraft.world.level.block.state.properties.SlabType slabType =
+                    useTop ? net.minecraft.world.level.block.state.properties.SlabType.TOP
+                           : net.minecraft.world.level.block.state.properties.SlabType.BOTTOM;
+                net.minecraft.world.level.block.state.BlockState slabState = material.slab().defaultBlockState()
+                    .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, slabType);
+                Direction localDir = BridgeDeckPlacer.getDirection(centerPath, i);
+                Direction perpDir = localDir.getClockWise();
+                int halfW = width / 2;
+                for (int w = -halfW; w <= halfW; w++) {
+                    BlockPos pos = new BlockPos(pathPos.getX() + perpDir.getStepX() * w, currentY, pathPos.getZ() + perpDir.getStepZ() * w);
+                    steps.add(new BuildStep(order++, pos, slabState, BuildPhase.RAMP));
+                }
+                BlockPos lRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * -(halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * -(halfW+1));
+                BlockPos rRail = new BlockPos(pathPos.getX() + perpDir.getStepX() * (halfW+1), currentY+1, pathPos.getZ() + perpDir.getStepZ() * (halfW+1));
+                steps.add(new BuildStep(order++, lRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+                steps.add(new BuildStep(order++, rRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+                useTop = !useTop;
+            }
         }
-
-        // 5. Exit platform
-        BlockPos exitAtTerrain = new BlockPos(exitPos.getX(), exitY, exitPos.getZ());
-        List<BuildStep> exitPlatform = platformBuilder.buildPlatform(exitAtTerrain, exitDir, width, material, order);
-        steps.addAll(exitPlatform);
 
         return steps;
     }
