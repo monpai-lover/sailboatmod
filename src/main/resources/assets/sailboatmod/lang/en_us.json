@@ -1523,4 +1523,5 @@
     ,"screen.sailboatmod.road_planner.config.tunnel_on": "Tunnel: ON"
     ,"screen.sailboatmod.road_planner.config.tunnel_off": "Tunnel: OFF"
     ,"message.sailboatmod.road_planner.planning": "Planning route..."
+    ,"message.sailboatmod.road_planner.planning_complete": "Route planning complete, right-click road planner to view options"
 }

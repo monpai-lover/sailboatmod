@@ -1522,5 +1522,6 @@
     "screen.sailboatmod.road_planner.config.cancel": "取消",
     "screen.sailboatmod.road_planner.config.tunnel_on": "隧道: 开",
     "screen.sailboatmod.road_planner.config.tunnel_off": "隧道: 关",
-    "message.sailboatmod.road_planner.planning": "正在规划路线..."
+    "message.sailboatmod.road_planner.planning": "正在规划路线...",
+    "message.sailboatmod.road_planner.planning_complete": "路线规划完成，右键打开道路规划器查看方案"
 }

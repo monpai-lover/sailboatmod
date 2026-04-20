@@ -299,10 +299,10 @@ public final class ManualRoadPlannerService {
                     player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.path_failed"));
                     return;
                 }
+                READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(candidate.targetTown().townId(), candidates, ""));
                 sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
                         PlanningStage.BUILDING_PREVIEW, 100, SyncManualRoadPlanningProgressPacket.Status.SUCCESS);
-                READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(candidate.targetTown().townId(), candidates, ""));
-                sendPlanningResult(player, READY_PREVIEWS.get(player.getUUID()), candidate.optionId());
+                player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.planning_complete"));
             }, player.server);
         return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
     }
@@ -2464,10 +2464,7 @@ public final class ManualRoadPlannerService {
                 100,
                 SyncManualRoadPlanningProgressPacket.Status.SUCCESS
         );
-        PlanCandidate candidate = selectPlanCandidate(stack, preview.candidates());
-        if (candidate != null) {
-            sendPlanningResult(player, preview, candidate.optionId());
-        }
+        player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.planning_complete"));
     }
 
     enum PlanningStage {

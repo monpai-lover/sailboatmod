@@ -117,7 +117,17 @@ public class BridgeBuilder {
         // 3. Flat deck section with piers
         int rampBlocks = ascHeight * 2 + config.getPlatformLength();
         int deckStart = Math.min(span.startIndex() + rampBlocks, span.endIndex());
-        int descRampBlocks = Math.min(deckY - exitY, maxRampHeight) * 2 + config.getPlatformLength();
+        // Descending ramp adapts to actual exit terrain height difference
+        int descHeight = deckY - exitY;
+        int descRampBlocks;
+        if (descHeight <= 2) {
+            // Terrain is close to deck height - no ramp needed
+            descRampBlocks = config.getPlatformLength();
+            descHeight = 0;
+        } else {
+            descHeight = Math.min(descHeight, maxRampHeight);
+            descRampBlocks = descHeight * 2 + config.getPlatformLength();
+        }
         int deckEnd = Math.max(deckStart, span.endIndex() - descRampBlocks);
 
         if (deckStart < deckEnd) {
@@ -137,8 +147,7 @@ public class BridgeBuilder {
             order += lights.size();
         }
 
-        // 4. Descending ramp (capped length)
-        int descHeight = Math.min(deckY - exitY, maxRampHeight);
+        // 4. Descending ramp - only if there's actually a height difference
         if (descHeight > 0) {
             BlockPos descStart = new BlockPos(exitPos.getX(), deckY, exitPos.getZ()).relative(exitDir.getOpposite(), descHeight * 2);
             List<BuildStep> descRamp = rampBuilder.buildDescendingRamp(
