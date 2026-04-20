@@ -1,18 +1,22 @@
 package com.monpai.sailboatmod.road.planning;
 
 import com.monpai.sailboatmod.road.config.RoadConfig;
+import com.monpai.sailboatmod.road.config.PathfindingConfig;
 import com.monpai.sailboatmod.road.construction.road.RoadBuilder;
 import com.monpai.sailboatmod.road.model.*;
 import com.monpai.sailboatmod.road.pathfinding.*;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
-import com.monpai.sailboatmod.road.config.PathfindingConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 
 import java.util.*;
 
 public class BridgePlanner {
+    private static final int MAX_RAMP_STEPS = 10;
+    private static final int MIN_DECK_CLEARANCE = 3;
+    private static final int SEA_LEVEL = 63;
+
     private final RoadConfig config;
 
     public BridgePlanner(RoadConfig config) {
@@ -30,37 +34,84 @@ public class BridgePlanner {
     public BridgePlanResult plan(ServerLevel level, BlockPos source, BlockPos target, int width) {
         TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
 
-        // Step 1: Find shoreline anchors near source and target
-        BlockPos sourceAnchor = findShorelineAnchor(cache, source, target, 48);
-        BlockPos targetAnchor = findShorelineAnchor(cache, target, source, 48);
+        // Step 1: Find shoreline anchors
+        BlockPos srcShore = findShorelineAnchor(cache, source, target, 48);
+        BlockPos tgtShore = findShorelineAnchor(cache, target, source, 48);
+        if (srcShore == null) srcShore = source;
+        if (tgtShore == null) tgtShore = target;
 
-        if (sourceAnchor == null) sourceAnchor = source;
-        if (targetAnchor == null) targetAnchor = target;
+        // Step 2: Three-segment path
+        // Segment A: source → srcShore (land road)
+        List<BlockPos> segA = findLandPath(source, srcShore, cache);
 
-        // Step 2: For bridges, draw a STRAIGHT LINE between anchors (no A* zigzag through water)
-        List<BlockPos> straightPath = buildStraightPath(sourceAnchor, targetAnchor, cache);
-
-        if (straightPath.isEmpty()) {
-            return BridgePlanResult.failure("Bridge straight path generation failed");
+        // Segment B: srcShore → tgtShore (bridge, shallow-water-preferred A*)
+        List<BlockPos> segB = findBridgePath(srcShore, tgtShore, cache);
+        if (segB.isEmpty()) {
+            return BridgePlanResult.failure("Bridge water crossing path failed");
         }
 
-        // Step 3: Detect bridge spans on the straight path
-        PathPostProcessor postProcessor = new PathPostProcessor();
-        PathPostProcessor.ProcessedPath processed = postProcessor.process(
-            straightPath, cache, config.getBridge().getBridgeMinWaterDepth());
+        // Segment C: tgtShore → target (land road)
+        List<BlockPos> segC = findLandPath(tgtShore, target, cache);
 
-        List<BlockPos> finalPath = processed.path().isEmpty() ? straightPath : processed.path();
+        // Step 3: Merge three segments
+        List<BlockPos> fullPath = new ArrayList<>();
+        fullPath.addAll(segA);
+        if (!segB.isEmpty()) {
+            int skip = (!segA.isEmpty() && !segB.isEmpty()
+                    && segA.get(segA.size() - 1).equals(segB.get(0))) ? 1 : 0;
+            for (int i = skip; i < segB.size(); i++) fullPath.add(segB.get(i));
+        }
+        if (!segC.isEmpty()) {
+            int skip = (!fullPath.isEmpty() && !segC.isEmpty()
+                    && fullPath.get(fullPath.size() - 1).equals(segC.get(0))) ? 1 : 0;
+            for (int i = skip; i < segC.size(); i++) fullPath.add(segC.get(i));
+        }
 
-        // Step 4: Classify spans and build
+        if (fullPath.isEmpty()) {
+            return BridgePlanResult.failure("Bridge full path is empty");
+        }
+
+        // Step 4: Post-process and build
+        PathPostProcessor post = new PathPostProcessor();
+        PathPostProcessor.ProcessedPath processed = post.process(
+                fullPath, cache, config.getBridge().getBridgeMinWaterDepth());
+        List<BlockPos> finalPath = processed.path().isEmpty() ? fullPath : processed.path();
+
+        // Step 5: Override bridge config with adaptive deck height
+        RoadConfig adaptiveConfig = createAdaptiveConfig(cache, srcShore, tgtShore);
+        RoadBuilder builder = new RoadBuilder(adaptiveConfig);
+        RoadData roadData = builder.buildRoad("bridge", finalPath, width, cache);
+
         List<BridgeSpan> spans = processed.bridgeSpans();
-        if (spans.isEmpty()) {
-            spans = detectCanyonSpans(finalPath, cache);
-        }
-
-        RoadBuilder roadBuilder = new RoadBuilder(config);
-        RoadData roadData = roadBuilder.buildRoad("bridge", finalPath, width, cache);
-
         return new BridgePlanResult(true, null, finalPath, spans, roadData.buildSteps(), roadData);
+    }
+
+    private List<BlockPos> findLandPath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {
+        if (from.equals(to)) return List.of(from);
+        int manhattan = Math.abs(to.getX() - from.getX()) + Math.abs(to.getZ() - from.getZ());
+        if (manhattan <= 3) return List.of(from, to);
+        Pathfinder pf = PathfinderFactory.create(config.getPathfinding());
+        PathResult r = pf.findPath(from, to, cache);
+        return r.success() ? r.path() : List.of(from, to);
+    }
+
+    private List<BlockPos> findBridgePath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {
+        PathfindingConfig cfg = new PathfindingConfig();
+        cfg.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
+        cfg.setMaxSteps(60000);
+        cfg.setAStarStep(1);
+        cfg.setWaterDepthWeight(2.0);
+        cfg.setNearWaterCost(0.0);
+        cfg.setElevationWeight(5.0);
+        cfg.setDeviationWeight(0.3);
+        cfg.setHeuristicWeight(8.0);
+        cfg.setBiomeWeight(0.0);
+        cfg.setStabilityWeight(0.0);
+        Pathfinder pf = PathfinderFactory.create(cfg);
+        PathResult r = pf.findPath(from, to, cache);
+        if (r.success()) return r.path();
+        // Fallback: straight line
+        return buildStraightPath(from, to, cache);
     }
 
     private List<BlockPos> buildStraightPath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {
@@ -70,10 +121,8 @@ public class BridgePlanner {
         int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
         int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1;
         int err = dx - dz;
-
         while (true) {
-            int y = cache.getHeight(x0, z0);
-            path.add(new BlockPos(x0, y, z0));
+            path.add(new BlockPos(x0, cache.getHeight(x0, z0), z0));
             if (x0 == x1 && z0 == z1) break;
             int e2 = 2 * err;
             if (e2 > -dz) { err -= dz; x0 += sx; }
@@ -82,88 +131,44 @@ public class BridgePlanner {
         return path;
     }
 
-    /**
-     * Find a shoreline anchor: a solid ground point near the source that faces toward the target,
-     * preferably at the edge of water or a cliff.
-     */
+    private RoadConfig createAdaptiveConfig(TerrainSamplingCache cache, BlockPos srcShore, BlockPos tgtShore) {
+        int srcH = cache.getHeight(srcShore.getX(), srcShore.getZ());
+        int tgtH = cache.getHeight(tgtShore.getX(), tgtShore.getZ());
+        int maxShoreH = Math.max(srcH, tgtH);
+        int adaptiveDeck = Math.max(maxShoreH + MIN_DECK_CLEARANCE, SEA_LEVEL + MIN_DECK_CLEARANCE);
+        // Ensure ramp won't exceed MAX_RAMP_STEPS (each step = 0.5 block)
+        int maxRampHeight = MAX_RAMP_STEPS / 2;
+        adaptiveDeck = Math.max(adaptiveDeck, Math.max(srcH, tgtH) + 1);
+        adaptiveDeck = Math.min(adaptiveDeck, Math.min(srcH, tgtH) + maxRampHeight);
+
+        RoadConfig rc = new RoadConfig();
+        rc.getBridge().setDeckHeight(adaptiveDeck - SEA_LEVEL);
+        return rc;
+    }
+
     private BlockPos findShorelineAnchor(TerrainSamplingCache cache, BlockPos near, BlockPos toward, int searchRadius) {
         double bestScore = Double.MAX_VALUE;
         BlockPos best = null;
-
         int dirX = Integer.signum(toward.getX() - near.getX());
         int dirZ = Integer.signum(toward.getZ() - near.getZ());
 
-        for (int dx = -searchRadius; dx <= searchRadius; dx += 4) {
-            for (int dz = -searchRadius; dz <= searchRadius; dz += 4) {
+        for (int dx = -searchRadius; dx <= searchRadius; dx += 2) {
+            for (int dz = -searchRadius; dz <= searchRadius; dz += 2) {
                 int x = near.getX() + dx;
                 int z = near.getZ() + dz;
-
-                if (cache.isWater(x, z)) continue; // Must be on land
-                // Check if adjacent to water or void (shoreline)
+                if (cache.isWater(x, z)) continue;
                 boolean nearEdge = cache.isWater(x + 2, z) || cache.isWater(x - 2, z)
-                    || cache.isWater(x, z + 2) || cache.isWater(x, z - 2)
-                    || isCanyonEdge(cache, x, z);
-
+                        || cache.isWater(x, z + 2) || cache.isWater(x, z - 2);
                 if (!nearEdge) continue;
-
-                // Score: prefer closer to source, facing toward target
-                double distToSource = Math.sqrt((dx * dx) + (dz * dz));
-                double dirAlignment = (dx * dirX + dz * dirZ); // positive = toward target
-                double score = distToSource - dirAlignment * 2; // lower is better
-
+                double dist = Math.sqrt(dx * dx + dz * dz);
+                double align = dx * dirX + dz * dirZ;
+                double score = dist - align * 2;
                 if (score < bestScore) {
                     bestScore = score;
-                    int y = cache.getHeight(x, z);
-                    best = new BlockPos(x, y, z);
+                    best = new BlockPos(x, cache.getHeight(x, z), z);
                 }
             }
         }
         return best;
-    }
-
-    private boolean isCanyonEdge(TerrainSamplingCache cache, int x, int z) {
-        int h = cache.getHeight(x, z);
-        // Check if there's a significant drop nearby (>= 6 blocks)
-        for (int[] dir : new int[][]{{2,0},{-2,0},{0,2},{0,-2}}) {
-            int nh = cache.getHeight(x + dir[0], z + dir[1]);
-            if (h - nh >= 6) return true;
-        }
-        return false;
-    }
-
-    private List<BridgeSpan> detectCanyonSpans(List<BlockPos> path, TerrainSamplingCache cache) {
-        List<BridgeSpan> spans = new ArrayList<>();
-        int start = -1;
-        for (int i = 1; i < path.size(); i++) {
-            int prevH = cache.getHeight(path.get(i-1).getX(), path.get(i-1).getZ());
-            int currH = cache.getHeight(path.get(i).getX(), path.get(i).getZ());
-            boolean isVoid = Math.abs(prevH - currH) >= 4 ||
-                (cache.getHeight(path.get(i).getX(), path.get(i).getZ()) < path.get(i).getY() - 3);
-
-            if (isVoid && start == -1) {
-                start = i;
-            } else if (!isVoid && start != -1) {
-                spans.add(new BridgeSpan(start, i - 1, prevH, currH));
-                start = -1;
-            }
-        }
-        if (start != -1) {
-            spans.add(new BridgeSpan(start, path.size() - 1, 0, 0));
-        }
-        return spans;
-    }
-
-    private PathfindingConfig createBridgeFriendlyConfig() {
-        PathfindingConfig cfg = new PathfindingConfig();
-        cfg.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
-        cfg.setMaxSteps(40000); // Extra budget for water crossing
-        // Very low water penalty - we WANT to cross water
-        // The base TerrainCostModel.WATER_COLUMN_BASE_PENALTY is 80,
-        // but we reduce the weight multipliers
-        cfg.setWaterDepthWeight(5.0); // Much lower than default 80
-        cfg.setNearWaterCost(5.0);    // Much lower than default 80
-        cfg.setElevationWeight(40.0); // Lower than default 80 - bridges handle elevation
-        cfg.setDeviationWeight(1.0);  // Slightly higher to keep path direct
-        return cfg;
     }
 }
