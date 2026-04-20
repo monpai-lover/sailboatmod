@@ -19,6 +19,8 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.network.packet.SyncRoadPlannerResultPacket;
+import com.monpai.sailboatmod.road.config.PathfindingConfig;
 import com.monpai.sailboatmod.road.config.RoadConfig;
 import com.monpai.sailboatmod.road.construction.road.RoadBuilder;
 import com.monpai.sailboatmod.road.model.BuildStep;
@@ -26,6 +28,7 @@ import com.monpai.sailboatmod.road.model.RoadData;
 import com.monpai.sailboatmod.road.pathfinding.PathResult;
 import com.monpai.sailboatmod.road.pathfinding.Pathfinder;
 import com.monpai.sailboatmod.road.pathfinding.PathfinderFactory;
+import com.monpai.sailboatmod.road.planning.BridgePlanner;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
 import net.minecraft.core.BlockPos;
@@ -73,6 +76,7 @@ public final class ManualRoadPlannerService {
     private static final String PENDING_PREVIEW_MESSAGE_KEY = "message.sailboatmod.road_planner.planning";
     private static final int MAX_EXIT_CANDIDATES_PER_STATION = 6;
     private static final int EXIT_CANDIDATE_EQUIVALENCE_TOLERANCE = 4;
+    private static final int SHORT_SPAN_WITHOUT_PIERS_LIMIT = 8;
     private static final int SEGMENT_SUBDIVIDE_MANHATTAN = 96;
     private static final int MAX_SEGMENT_INTERMEDIATE_ANCHORS = 24;
     private static final int EXTENDED_BOUNDARY_SEARCH_RADIUS = 6;
@@ -82,26 +86,49 @@ public final class ManualRoadPlannerService {
     private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
     private static final Map<UUID, PlannedPreviewState> READY_PREVIEWS = new ConcurrentHashMap<>();
     private static final AtomicLong MANUAL_PLANNING_REQUEST_IDS = new AtomicLong();
-    private static final Map<UUID, com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket> PLAYER_ROAD_CONFIGS = new ConcurrentHashMap<>();
+    private static final Map<UUID, ManualRoadPlannerConfig> PLAYER_ROAD_CONFIGS = new ConcurrentHashMap<>();
 
     private ManualRoadPlannerService() {
     }
 
-    public static void applyRoadConfig(ServerPlayer player, com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket config) {
-        if (player == null || config == null) {
+    public static void applyRoadConfig(ServerPlayer player,
+                                       ItemStack stack,
+                                       com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket config) {
+        if (player == null || stack == null || config == null) {
             return;
         }
-        int w = config.width();
-        if (w != 3 && w != 5 && w != 7) {
-            w = 3;
-        }
-        PLAYER_ROAD_CONFIGS.put(player.getUUID(), new com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket(
-                w, config.algorithm(), config.materialPreset(), config.tunnelEnabled()));
+        ManualRoadPlannerConfig normalized = ManualRoadPlannerConfig.normalized(
+                config.width(),
+                config.materialPreset(),
+                config.tunnelEnabled()
+        );
+        PLAYER_ROAD_CONFIGS.put(player.getUUID(), normalized);
         LOGGER.debug("Road config applied for {}: width={}, material={}, tunnel={}",
-                player.getName().getString(), w, config.materialPreset(), config.tunnelEnabled());
+                player.getName().getString(), normalized.width(), normalized.materialPreset(), normalized.tunnelEnabled());
+
+        PlannedPreviewState readyPreview = readyPreviewState(player, stack);
+        if (readyPreview == null || readyPreview.candidates().isEmpty()) {
+            return;
+        }
+
+        PlanCandidate rebuilt = rebuildSelectedCandidate(player.serverLevel(), stack, readyPreview.candidates(), normalized);
+        if (rebuilt == null) {
+            sendPreviewClear(player);
+            return;
+        }
+
+        List<PlanCandidate> updatedCandidates = replaceCandidate(readyPreview.candidates(), rebuilt);
+        READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(
+                readyPreview.targetTownId(),
+                updatedCandidates,
+                readyPreview.failureMessageKey()
+        ));
+        String previewHash = previewHash(rebuilt.plan());
+        cachePreviewState(stack.getOrCreateTag(), rebuilt, previewHash, System.currentTimeMillis());
+        sendPreview(player, rebuilt, updatedCandidates, true);
     }
 
-    public static com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket getRoadConfig(UUID playerId) {
+    public static ManualRoadPlannerConfig getRoadConfig(UUID playerId) {
         return PLAYER_ROAD_CONFIGS.get(playerId);
     }
 
@@ -237,7 +264,11 @@ public final class ManualRoadPlannerService {
         }
         PlannedPreviewState readyPreview = readyPreviewState(player, stack);
         if (readyPreview != null) {
-            return applyReadyPreview(player, stack, readyPreview);
+            if (hasPreparedPreviewState(stack)) {
+                return applyReadyPreview(player, stack, readyPreview);
+            }
+            sendPlanningResult(player, readyPreview, stack.getOrCreateTag().getString(TAG_PREVIEW_OPTION_ID));
+            return Component.empty();
         }
         if (isPlanningPending(stack)) {
             return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
@@ -254,9 +285,9 @@ public final class ManualRoadPlannerService {
             sendPreviewClear(player);
             return Component.translatable("message.sailboatmod.road_planner.path_failed");
         }
-        READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(
-                candidate.targetTown().townId(), candidates, ""));
-        return applyReadyPreview(player, stack, READY_PREVIEWS.get(player.getUUID()));
+        READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(candidate.targetTown().townId(), candidates, ""));
+        sendPlanningResult(player, READY_PREVIEWS.get(player.getUUID()), candidate.optionId());
+        return Component.empty();
     }
 
     private static Component previewOrCancelRoad(ServerPlayer player, ItemStack stack) {
@@ -412,20 +443,39 @@ public final class ManualRoadPlannerService {
         }
         RoadConfig config = new RoadConfig();
         TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
-        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
-        PathResult result = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
-        if (!result.success() || result.path().size() < 2) {
-            return null;
+        List<BlockPos> finalPath;
+        boolean bridgeBacked;
+        RoadData roadData;
+        if (optionKind == PreviewOptionKind.BRIDGE) {
+            BridgePlanner bridgePlanner = new BridgePlanner(config);
+            BridgePlanner.BridgePlanResult bridgeResult = bridgePlanner.plan(level, sourceAnchor, targetAnchor,
+                    config.getAppearance().getDefaultWidth());
+            if (!bridgeResult.success() || bridgeResult.roadData() == null) {
+                return null;
+            }
+            finalPath = bridgeResult.centerPath();
+            bridgeBacked = !bridgeResult.bridgeSpans().isEmpty();
+            roadData = bridgeResult.roadData();
+        } else {
+            Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+            PathResult result = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+            if (!result.success() || result.path().size() < 2) {
+                return null;
+            }
+            PathPostProcessor postProcessor = new PathPostProcessor();
+            PathPostProcessor.ProcessedPath processed = postProcessor.process(
+                    result.path(), cache, config.getBridge().getBridgeMinWaterDepth());
+            finalPath = processed.path();
+            if (!allowsPierlessDetourCrossing(maxWaterSpanLength(processed.bridgeSpans()))) {
+                return null;
+            }
+            bridgeBacked = !processed.bridgeSpans().isEmpty();
+            RoadBuilder builder = new RoadBuilder(config);
+            roadData = builder.buildRoad(manualRoadId, finalPath, 3, cache);
         }
-        PathPostProcessor postProcessor = new PathPostProcessor();
-        PathPostProcessor.ProcessedPath processed = postProcessor.process(
-                result.path(), cache, config.getBridge().getBridgeMinWaterDepth());
-        List<BlockPos> finalPath = processed.path();
         if (finalPath.size() < 2) {
             return null;
         }
-        RoadBuilder builder = new RoadBuilder(config);
-        RoadData roadData = builder.buildRoad(manualRoadId, finalPath, 3, cache);
         String dimensionId = level.dimension().location().toString();
         RoadNetworkRecord road = new RoadNetworkRecord(
                 manualRoadId,
@@ -465,9 +515,82 @@ public final class ManualRoadPlannerService {
                 finalPath.get(finalPath.size() / 2),
                 corridorPlan
         );
-        boolean bridgeBacked = !processed.bridgeSpans().isEmpty();
         return new PlanCandidate(sourceTown, targetTown, road, plan,
                 optionKind.optionId, optionKind.label, bridgeBacked);
+    }
+
+    static boolean allowsPierlessDetourCrossingForTest(int waterSpanLength) {
+        return allowsPierlessDetourCrossing(waterSpanLength);
+    }
+
+    private static boolean allowsPierlessDetourCrossing(int waterSpanLength) {
+        return waterSpanLength <= SHORT_SPAN_WITHOUT_PIERS_LIMIT;
+    }
+
+    private static int maxWaterSpanLength(List<com.monpai.sailboatmod.road.model.BridgeSpan> spans) {
+        int longest = 0;
+        if (spans == null) {
+            return 0;
+        }
+        for (com.monpai.sailboatmod.road.model.BridgeSpan span : spans) {
+            if (span != null) {
+                longest = Math.max(longest, span.length());
+            }
+        }
+        return longest;
+    }
+
+    private static List<BlockPos> buildBridgePreferredPath(BlockPos sourceAnchor, BlockPos targetAnchor) {
+        if (sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        List<BlockPos> path = new ArrayList<>();
+        int x0 = sourceAnchor.getX();
+        int z0 = sourceAnchor.getZ();
+        int x1 = targetAnchor.getX();
+        int z1 = targetAnchor.getZ();
+        int dx = Math.abs(x1 - x0);
+        int dz = Math.abs(z1 - z0);
+        int sx = x0 < x1 ? 1 : -1;
+        int sz = z0 < z1 ? 1 : -1;
+        int err = dx - dz;
+        double totalDist = Math.sqrt((double) (x1 - x0) * (x1 - x0) + (double) (z1 - z0) * (z1 - z0));
+        while (true) {
+            double dist = Math.sqrt((double) (x0 - sourceAnchor.getX()) * (x0 - sourceAnchor.getX())
+                    + (double) (z0 - sourceAnchor.getZ()) * (z0 - sourceAnchor.getZ()));
+            double t = totalDist < 0.001D ? 0.0D : dist / totalDist;
+            int y = (int) Math.round(sourceAnchor.getY() + (targetAnchor.getY() - sourceAnchor.getY()) * t);
+            path.add(new BlockPos(x0, y, z0));
+            if (x0 == x1 && z0 == z1) {
+                break;
+            }
+            int e2 = 2 * err;
+            if (e2 > -dz) {
+                err -= dz;
+                x0 += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                z0 += sz;
+            }
+        }
+        return List.copyOf(path);
+    }
+
+    private static boolean bridgePathTouchesWater(List<BlockPos> path, TerrainSamplingCache cache) {
+        if (path == null || path.isEmpty() || cache == null) {
+            return false;
+        }
+        int bridgeColumns = 0;
+        for (BlockPos pos : path) {
+            int supportY = cache.isWater(pos.getX(), pos.getZ())
+                    ? cache.getOceanFloor(pos.getX(), pos.getZ())
+                    : cache.getHeight(pos.getX(), pos.getZ());
+            if (cache.isWater(pos.getX(), pos.getZ()) || (pos.getY() - supportY) >= 3) {
+                bridgeColumns++;
+            }
+        }
+        return bridgeColumns >= 2;
     }
 
     private static WaitingAreaRoute resolveWaitingAreaRoute(ServerLevel level,
@@ -1865,7 +1988,8 @@ public final class ManualRoadPlannerService {
         if (level == null || pos == null) {
             return null;
         }
-        int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX(), pos.getZ()) - 1;
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, PathfindingConfig.SamplingPrecision.HIGH);
+        int surfaceY = cache.getHeight(pos.getX(), pos.getZ());
         return new BlockPos(pos.getX(), surfaceY, pos.getZ());
     }
 
@@ -1986,40 +2110,33 @@ public final class ManualRoadPlannerService {
         if (player == null) {
             return null;
         }
-        HitResult hitResult = player.pick(5.0D, 0.0F, false);
+        HitResult hitResult = player.pick(8.0D, 0.0F, false);
         if (hitResult.getType() != HitResult.Type.BLOCK) {
             return null;
         }
-        BlockPos hitPos = ((BlockHitResult) hitResult).getBlockPos();
         ServerLevel level = player.serverLevel();
-        BlockState hitState = level.getBlockState(hitPos);
-        if (!isExistingRoadSurface(hitState)) {
-            hitState = level.getBlockState(hitPos.above());
-            if (!isExistingRoadSurface(hitState)) {
-                return null;
-            }
-        }
         NationSavedData data = NationSavedData.get(level);
         String dimensionId = level.dimension().location().toString();
-        for (RoadNetworkRecord road : data.getRoadNetworks()) {
-            if (!dimensionId.equalsIgnoreCase(road.dimensionId())) {
-                continue;
-            }
-            for (BlockPos pathPos : road.path()) {
-                if (pathPos.getX() == hitPos.getX() && pathPos.getZ() == hitPos.getZ()) {
-                    String remoteTownId = resolveRemoteTownId(road);
-                    TownRecord remoteTown = data.getTown(remoteTownId);
-                    TownRecord localTown = data.getTown(road.townId());
-                    return new TargetedRoadPreview(
-                            road.roadId(),
-                            displayTownName(localTown),
-                            displayTownName(remoteTown),
-                            null
-                    );
-                }
-            }
+        RoadNetworkRecord selected = ManualRoadDemolitionSelector.selectRoad(
+                ((BlockHitResult) hitResult).getLocation(),
+                player.getLookAngle(),
+                data.getRoadNetworks().stream()
+                        .filter(road -> dimensionId.equalsIgnoreCase(road.dimensionId()))
+                        .toList(),
+                5.0D
+        );
+        if (selected == null) {
+            return null;
         }
-        return null;
+        String remoteTownId = resolveRemoteTownId(selected);
+        TownRecord remoteTown = data.getTown(remoteTownId);
+        TownRecord localTown = data.getTown(selected.townId());
+        return new TargetedRoadPreview(
+                selected.roadId(),
+                displayTownName(localTown),
+                displayTownName(remoteTown),
+                null
+        );
     }
 
     private static String resolveRemoteTownId(RoadNetworkRecord road) {
@@ -2048,27 +2165,175 @@ public final class ManualRoadPlannerService {
         stack.getOrCreateTag().putString(TAG_PREVIEW_OPTION_ID, optionId);
         clearFailureMessage(stack);
         PlannedPreviewState readyPreview = readyPreviewState(player, stack);
-        if (readyPreview != null && !readyPreview.candidates().isEmpty()) {
-            PlanCandidate candidate = selectPlanCandidate(stack, readyPreview.candidates());
-            if (candidate != null) {
-                String previewHash = previewHash(candidate.plan());
-                cachePreviewState(stack.getOrCreateTag(), candidate, previewHash, System.currentTimeMillis());
-                sendPreview(player, candidate, readyPreview.candidates(), true);
-            }
-            return;
-        }
-        if (isPlanningPending(stack)) {
+        if (readyPreview != null || isPlanningPending(stack)) {
             return;
         }
         List<PlanCandidate> candidates = buildPlanCandidates(player, stack);
-        PlanCandidate candidate = selectPlanCandidate(stack, candidates);
-        if (candidate == null) {
-            sendPreviewClear(player);
+        if (candidates.isEmpty()) {
             return;
         }
-        String previewHash = previewHash(candidate.plan());
-        cachePreviewState(stack.getOrCreateTag(), candidate, previewHash, System.currentTimeMillis());
-        sendPreview(player, candidate, candidates, true);
+        READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(
+                candidates.get(0).targetTown().townId(),
+                candidates,
+                ""
+        ));
+    }
+
+    private static boolean hasPreparedPreviewState(ItemStack stack) {
+        if (stack == null || !stack.hasTag() || stack.getTag() == null) {
+            return false;
+        }
+        CompoundTag tag = stack.getTag();
+        return !tag.getString(TAG_PREVIEW_HASH).isBlank()
+                && !tag.getString(TAG_PREVIEW_ROAD_ID).isBlank()
+                && tag.getLong(TAG_PREVIEW_AT) > 0L;
+    }
+
+    private static PlanCandidate rebuildSelectedCandidate(ServerLevel level,
+                                                          ItemStack stack,
+                                                          List<PlanCandidate> candidates,
+                                                          ManualRoadPlannerConfig config) {
+        PlanCandidate selected = selectPlanCandidate(stack, candidates);
+        if (selected == null || level == null || selected.plan() == null || selected.plan().centerPath() == null) {
+            return null;
+        }
+
+        ManualRoadPlannerConfig normalized = config == null ? ManualRoadPlannerConfig.defaults() : config;
+        List<BlockPos> finalPath = selected.plan().centerPath();
+        if (finalPath.size() < 2) {
+            return null;
+        }
+
+        RoadConfig roadConfig = new RoadConfig();
+        roadConfig.getAppearance().setTunnelEnabled(normalized.tunnelEnabled());
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, roadConfig.getPathfinding().getSamplingPrecision());
+        RoadBuilder builder = new RoadBuilder(roadConfig);
+        RoadData roadData = builder.buildRoad(
+                selected.road().roadId(),
+                finalPath,
+                normalized.width(),
+                cache,
+                normalized.materialPreset()
+        );
+
+        RoadNetworkRecord road = new RoadNetworkRecord(
+                selected.road().roadId(),
+                selected.sourceTown().nationId(),
+                selected.sourceTown().townId(),
+                selected.road().dimensionId(),
+                selected.road().structureAId(),
+                selected.road().structureBId(),
+                finalPath,
+                System.currentTimeMillis(),
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+        );
+        return planCandidateFromRoadData(selected, road, roadData, finalPath);
+    }
+
+    private static List<PlanCandidate> replaceCandidate(List<PlanCandidate> candidates, PlanCandidate replacement) {
+        if (candidates == null || candidates.isEmpty() || replacement == null) {
+            return candidates == null ? List.of() : List.copyOf(candidates);
+        }
+        List<PlanCandidate> updated = new ArrayList<>(candidates.size());
+        boolean replaced = false;
+        for (PlanCandidate candidate : candidates) {
+            if (!replaced && candidate.optionId().equalsIgnoreCase(replacement.optionId())) {
+                updated.add(replacement);
+                replaced = true;
+            } else {
+                updated.add(candidate);
+            }
+        }
+        if (!replaced) {
+            updated.add(replacement);
+        }
+        return List.copyOf(updated);
+    }
+
+    private static PlanCandidate planCandidateFromRoadData(PlanCandidate original,
+                                                           RoadNetworkRecord road,
+                                                           RoadData roadData,
+                                                           List<BlockPos> finalPath) {
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new ArrayList<>();
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
+        for (BuildStep bs : roadData.buildSteps()) {
+            ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state()));
+        }
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();
+        for (com.monpai.sailboatmod.road.model.BridgeSpan span : roadData.bridgeSpans()) {
+            bridgeRanges.add(new RoadPlacementPlan.BridgeRange(span.startIndex(), span.endIndex()));
+        }
+        RoadCorridorPlan corridorPlan = RoadCorridorPlan.empty();
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                finalPath,
+                original.plan().sourceInternalAnchor(),
+                original.plan().sourceBoundaryAnchor(),
+                original.plan().targetBoundaryAnchor(),
+                original.plan().targetInternalAnchor(),
+                ghostBlocks,
+                buildSteps,
+                bridgeRanges,
+                bridgeRanges,
+                finalPath,
+                finalPath.get(0),
+                finalPath.get(finalPath.size() - 1),
+                finalPath.get(finalPath.size() / 2),
+                corridorPlan
+        );
+        boolean bridgeBacked = !roadData.bridgeSpans().isEmpty();
+        return new PlanCandidate(
+                original.sourceTown(),
+                original.targetTown(),
+                road,
+                plan,
+                original.optionId(),
+                original.optionLabel(),
+                bridgeBacked
+        );
+    }
+
+    private static void sendPlanningResult(ServerPlayer player,
+                                           PlannedPreviewState preview,
+                                           String selectedOptionId) {
+        if (player == null || preview == null || preview.candidates().isEmpty()) {
+            return;
+        }
+        PlanCandidate selected = selectPlanCandidateId(preview.candidates(), selectedOptionId);
+        List<SyncRoadPlannerResultPacket.OptionEntry> options = new ArrayList<>(preview.candidates().size());
+        for (PlanCandidate candidate : preview.candidates()) {
+            int nodeCount = candidate.plan() == null || candidate.plan().centerPath() == null
+                    ? 0
+                    : candidate.plan().centerPath().size();
+            options.add(new SyncRoadPlannerResultPacket.OptionEntry(
+                    candidate.optionId(),
+                    candidate.optionLabel(),
+                    nodeCount,
+                    candidate.bridgeBacked()
+            ));
+        }
+        ModNetwork.CHANNEL.send(
+                PacketDistributor.PLAYER.with(() -> player),
+                new SyncRoadPlannerResultPacket(
+                        displayTownName(selected.sourceTown()),
+                        displayTownName(selected.targetTown()),
+                        options,
+                        selected.optionId()
+                )
+        );
+    }
+
+    private static PlanCandidate selectPlanCandidateId(List<PlanCandidate> candidates, String preferredOptionId) {
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        String preferred = preferredOptionId == null ? "" : preferredOptionId;
+        for (PlanCandidate candidate : candidates) {
+            if (candidate.optionId().equalsIgnoreCase(preferred)) {
+                return candidate;
+            }
+        }
+        return candidates.get(0);
     }
 
     private static void sendPreview(ServerPlayer player, PlanCandidate candidate, List<PlanCandidate> candidates, boolean awaitingConfirmation) {
@@ -2179,14 +2444,9 @@ public final class ManualRoadPlannerService {
                 100,
                 SyncManualRoadPlanningProgressPacket.Status.SUCCESS
         );
-        applyReadyPreview(player, stack, preview);
         PlanCandidate candidate = selectPlanCandidate(stack, preview.candidates());
         if (candidate != null) {
-            player.sendSystemMessage(Component.translatable(
-                    "message.sailboatmod.road_planner.preview_ready",
-                    displayTownName(candidate.sourceTown()),
-                    displayTownName(candidate.targetTown())
-            ));
+            sendPlanningResult(player, preview, candidate.optionId());
         }
     }
 

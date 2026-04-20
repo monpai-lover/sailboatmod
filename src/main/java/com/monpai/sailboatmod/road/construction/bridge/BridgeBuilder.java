@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class BridgeBuilder {
+    private static final int SHORT_SPAN_WITHOUT_PIERS_LIMIT = 8;
     private final BridgeConfig config;
     private final BridgePierBuilder pierBuilder;
     private final BridgeDeckPlacer deckPlacer;
@@ -27,6 +28,40 @@ public class BridgeBuilder {
 
     public List<BuildStep> build(BridgeSpan span, List<BlockPos> centerPath,
                                   int width, RoadMaterial material, int startOrder) {
+        if (!requiresPiersForLength(span.length())) {
+            return buildShortSpan(span, centerPath, width, material, startOrder);
+        }
+        return buildPierBridge(span, centerPath, width, material, startOrder);
+    }
+
+    public static boolean requiresPiersForLengthForTest(int spanLength) {
+        return requiresPiersForLength(spanLength);
+    }
+
+    private static boolean requiresPiersForLength(int spanLength) {
+        return spanLength > SHORT_SPAN_WITHOUT_PIERS_LIMIT;
+    }
+
+    private List<BuildStep> buildShortSpan(BridgeSpan span,
+                                           List<BlockPos> centerPath,
+                                           int width,
+                                           RoadMaterial material,
+                                           int startOrder) {
+        int deckY = span.waterSurfaceY() + config.getDeckHeight();
+        List<BlockPos> bridgePath = centerPath.subList(span.startIndex(), span.endIndex() + 1);
+        if (bridgePath.isEmpty()) {
+            return List.of();
+        }
+        Direction roadDir = BridgeDeckPlacer.getDirection(centerPath, span.startIndex());
+        List<BuildStep> steps = new ArrayList<>(deckPlacer.placeDeck(bridgePath, deckY, width, material, roadDir, startOrder));
+        if (!bridgePath.isEmpty()) {
+            steps.addAll(lightPlacer.placeLights(bridgePath, deckY, width, material, roadDir, startOrder + steps.size()));
+        }
+        return steps;
+    }
+
+    private List<BuildStep> buildPierBridge(BridgeSpan span, List<BlockPos> centerPath,
+                                            int width, RoadMaterial material, int startOrder) {
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
         int deckY = span.waterSurfaceY() + config.getDeckHeight();

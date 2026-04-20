@@ -7,6 +7,31 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 
 public class BiomeMaterialSelector {
+    public static String normalizePresetId(String materialPreset) {
+        if (materialPreset == null || materialPreset.isBlank()) {
+            return "";
+        }
+        String normalized = materialPreset.trim().toLowerCase(java.util.Locale.ROOT);
+        return "auto".equals(normalized) ? "" : normalized;
+    }
+
+    public static RoadMaterial selectPreset(String materialPreset) {
+        String normalized = normalizePresetId(materialPreset);
+        if (normalized.isBlank()) {
+            return null;
+        }
+        return switch (normalized) {
+            case "stone_brick" -> RoadMaterial.STONE_BRICK;
+            case "sandstone" -> RoadMaterial.SANDSTONE;
+            case "cobblestone" -> RoadMaterial.COBBLESTONE;
+            default -> null;
+        };
+    }
+
+    public RoadMaterial select(String materialPreset, Holder<Biome> biome) {
+        RoadMaterial preset = selectPreset(materialPreset);
+        return preset != null ? preset : select(biome);
+    }
 
     public RoadMaterial select(Holder<Biome> biome) {
         if (biome.is(BiomeTags.IS_BADLANDS)) {

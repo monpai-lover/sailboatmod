@@ -283,6 +283,7 @@ public class SyncRoadPlannerPreviewPacket {
     private static void handleClient(SyncRoadPlannerPreviewPacket msg) {
         if (msg.ghostBlocks.isEmpty()) {
             RoadPlannerClientHooks.clearPreview();
+            RoadPlannerClientHooks.clearPlanningResult();
             return;
         }
         RoadPlannerClientHooks.updatePreview(new RoadPlannerClientHooks.PreviewState(
@@ -305,16 +306,6 @@ public class SyncRoadPlannerPreviewPacket {
                         .map(br -> new RoadPlannerClientHooks.BridgeRange(br.startIndex(), br.endIndex()))
                         .toList()
         ));
-        if (msg.options.size() >= 2) {
-            RoadPlannerClientHooks.openPreviewOptionSelection(
-                    msg.sourceTownName,
-                    msg.targetTownName,
-                    msg.options.stream()
-                            .map(option -> new RoadPlannerClientHooks.PreviewOption(option.optionId(), option.label(), option.pathNodeCount(), option.bridgeBacked()))
-                            .toList(),
-                    msg.selectedOptionId
-            );
-        }
     }
 
     private static void writeGhostBlocks(FriendlyByteBuf buf, List<GhostBlock> blocks) {

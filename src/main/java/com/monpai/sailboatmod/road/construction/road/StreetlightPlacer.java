@@ -26,6 +26,13 @@ public class StreetlightPlacer {
     public List<BuildStep> placeLights(List<BlockPos> centerPath, int width,
                                         List<BridgeSpan> bridgeSpans,
                                         TerrainSamplingCache cache, int startOrder) {
+        return placeLights(centerPath, width, bridgeSpans, cache, startOrder, "auto");
+    }
+
+    public List<BuildStep> placeLights(List<BlockPos> centerPath, int width,
+                                       List<BridgeSpan> bridgeSpans,
+                                       TerrainSamplingCache cache, int startOrder,
+                                       String materialPreset) {
         List<BuildStep> steps = new ArrayList<>();
         int halfWidth = width / 2;
         int order = startOrder;
@@ -35,7 +42,7 @@ public class StreetlightPlacer {
             if (isInBridge(i, bridgeSpans)) continue;
 
             BlockPos center = centerPath.get(i);
-            RoadMaterial material = materialSelector.select(cache.getBiome(center.getX(), center.getZ()));
+            RoadMaterial material = materialSelector.select(materialPreset, cache.getBiome(center.getX(), center.getZ()));
             Direction roadDir = getDirection(centerPath, i);
             Direction perpDir = roadDir.getClockWise();
 

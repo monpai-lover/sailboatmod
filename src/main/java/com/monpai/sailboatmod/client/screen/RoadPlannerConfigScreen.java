@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket;
 import net.minecraft.client.gui.GuiGraphics;
@@ -23,13 +25,24 @@ public class RoadPlannerConfigScreen extends Screen {
     private int selectedWidth = 3;
     private int selectedMaterialIndex = 0;
     private boolean tunnelEnabled = false;
+    private boolean reopenOptionsOnClose = true;
 
     private Button[] widthButtons;
     private Button[] materialButtons;
     private Button tunnelButton;
 
     public RoadPlannerConfigScreen() {
+        this(RoadPlannerClientHooks.currentPlannerConfig());
+    }
+
+    public RoadPlannerConfigScreen(ManualRoadPlannerConfig initialConfig) {
         super(Component.translatable("screen.sailboatmod.road_planner.config.title"));
+        ManualRoadPlannerConfig normalized = initialConfig == null
+                ? ManualRoadPlannerConfig.defaults()
+                : ManualRoadPlannerConfig.normalized(initialConfig.width(), initialConfig.materialPreset(), initialConfig.tunnelEnabled());
+        this.selectedWidth = normalized.width();
+        this.selectedMaterialIndex = materialIndexFor(normalized.materialPreset());
+        this.tunnelEnabled = normalized.tunnelEnabled();
     }
 
     @Override
@@ -140,9 +153,36 @@ public class RoadPlannerConfigScreen extends Screen {
                 : Component.translatable("screen.sailboatmod.road_planner.config.tunnel_off");
     }
 
+    private int materialIndexFor(String materialPreset) {
+        String normalized = materialPreset == null ? "auto" : materialPreset;
+        for (int i = 0; i < MATERIAL_OPTIONS.length; i++) {
+            if (MATERIAL_OPTIONS[i].equalsIgnoreCase(normalized)) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
     private void confirm() {
+        reopenOptionsOnClose = false;
+        ManualRoadPlannerConfig config = ManualRoadPlannerConfig.normalized(
+                selectedWidth,
+                MATERIAL_OPTIONS[selectedMaterialIndex],
+                tunnelEnabled
+        );
+        RoadPlannerClientHooks.rememberPlannerConfig(config);
+        RoadPlannerClientHooks.exitConfigModeAwaitPreview();
         ModNetwork.CHANNEL.sendToServer(new ConfigureRoadPlannerPacket(
-                selectedWidth, "default", MATERIAL_OPTIONS[selectedMaterialIndex], tunnelEnabled));
+                config.width(), "default", config.materialPreset(), config.tunnelEnabled()));
         onClose();
+    }
+
+    @Override
+    public void onClose() {
+        if (reopenOptionsOnClose) {
+            RoadPlannerClientHooks.returnToOptionSelection();
+            return;
+        }
+        super.onClose();
     }
 }

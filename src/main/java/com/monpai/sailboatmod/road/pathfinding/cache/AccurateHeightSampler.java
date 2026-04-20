@@ -15,9 +15,9 @@ public class AccurateHeightSampler {
     public int surfaceHeight(int x, int z) {
         for (int y = level.getMaxBuildHeight(); y >= level.getMinBuildHeight(); y--) {
             BlockState state = level.getBlockState(new BlockPos(x, y, z));
-            if (!state.isAir() && !state.getFluidState().is(Fluids.WATER)
+            if (!state.getFluidState().is(Fluids.WATER)
                     && !state.getFluidState().is(Fluids.FLOWING_WATER)
-                    && !FastHeightSampler.isVegetationOrDestructible(state)) {
+                    && RoadSurfaceHeuristics.isRoadBearingSurface(state)) {
                 return y;
             }
         }

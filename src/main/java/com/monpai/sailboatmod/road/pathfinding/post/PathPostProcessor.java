@@ -85,7 +85,7 @@ public class PathPostProcessor {
             if (water && start == -1) {
                 start = i;
             } else if (!water && start != -1) {
-                int surfaceY = cache.getHeight(path.get(start).getX(), path.get(start).getZ());
+                int surfaceY = cache.getWaterSurfaceY(path.get(start).getX(), path.get(start).getZ());
                 int floorY = cache.getOceanFloor(path.get(start).getX(), path.get(start).getZ());
                 spans.add(new BridgeSpan(start, i - 1, surfaceY, floorY));
                 start = -1;
@@ -94,7 +94,7 @@ public class PathPostProcessor {
         if (start != -1) {
             BlockPos p = path.get(start);
             spans.add(new BridgeSpan(start, path.size() - 1,
-                cache.getHeight(p.getX(), p.getZ()),
+                cache.getWaterSurfaceY(p.getX(), p.getZ()),
                 cache.getOceanFloor(p.getX(), p.getZ())));
         }
         return spans;

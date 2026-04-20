@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client;
 
+import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
 import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
@@ -70,6 +71,49 @@ class RoadPlannerClientHooksTest {
         assertTrue(preview != null && preview.pathNodes().size() == 2);
         assertTrue(preview.options().get(1).bridgeBacked());
         assertTrue("bridge".equals(preview.selectedOptionId()));
+    }
+
+    @Test
+    void previewRefreshDuringConfigurationDoesNotReopenOptionSelection() {
+        RoadPlannerClientHooks.resetStateForTest();
+        RoadPlannerClientHooks.applyPlanningResultForTest(
+                "alpha",
+                "beta",
+                List.of(
+                        new RoadPlannerClientHooks.PreviewOption("detour", "Detour", 24, false),
+                        new RoadPlannerClientHooks.PreviewOption("bridge", "Bridge", 17, true)
+                ),
+                "bridge"
+        );
+        RoadPlannerClientHooks.enterConfigModeForTest();
+        RoadPlannerClientHooks.updatePreview(new RoadPlannerClientHooks.PreviewState(
+                "alpha",
+                "beta",
+                List.of(),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0)),
+                16,
+                null,
+                null,
+                null,
+                true,
+                List.of(),
+                "bridge",
+                List.of()
+        ));
+
+        assertEquals(RoadPlannerClientHooks.UiPhase.CONFIGURATION, RoadPlannerClientHooks.uiPhaseForTest());
+    }
+
+    @Test
+    void plannerConfigMemoryNormalizesAndPersistsSelections() {
+        RoadPlannerClientHooks.resetStateForTest();
+
+        RoadPlannerClientHooks.rememberPlannerConfig(ManualRoadPlannerConfig.normalized(9, "sandstone", true));
+
+        ManualRoadPlannerConfig config = RoadPlannerClientHooks.currentPlannerConfig();
+        assertEquals(7, config.width());
+        assertEquals("sandstone", config.materialPreset());
+        assertTrue(config.tunnelEnabled());
     }
 
     @Test

@@ -25,12 +25,15 @@ public class BridgeRangeDetector {
             BlockPos p = centerPath.get(i);
             boolean isWater = cache.isWater(p.getX(), p.getZ())
                     && cache.getWaterDepth(p.getX(), p.getZ()) >= config.getBridgeMinWaterDepth();
+            int supportY = isWater ? cache.getOceanFloor(p.getX(), p.getZ()) : cache.getHeight(p.getX(), p.getZ());
+            boolean isElevatedGap = (p.getY() - supportY) >= config.getDeckHeight();
+            boolean isBridgeColumn = isWater || isElevatedGap;
 
-            if (isWater && start == -1) {
+            if (isBridgeColumn && start == -1) {
                 start = i;
-                waterSurfaceY = cache.getHeight(p.getX(), p.getZ());
-                oceanFloorY = cache.getOceanFloor(p.getX(), p.getZ());
-            } else if (!isWater && start != -1) {
+                waterSurfaceY = isWater ? cache.getWaterSurfaceY(p.getX(), p.getZ()) : supportY;
+                oceanFloorY = supportY;
+            } else if (!isBridgeColumn && start != -1) {
                 raw.add(new BridgeSpan(start, i - 1, waterSurfaceY, oceanFloorY));
                 start = -1;
             }

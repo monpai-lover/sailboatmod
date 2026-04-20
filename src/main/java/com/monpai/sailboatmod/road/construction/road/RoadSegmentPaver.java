@@ -27,6 +27,10 @@ public class RoadSegmentPaver {
     }
 
     public List<BuildStep> pave(List<BlockPos> centerPath, int width, TerrainSamplingCache cache) {
+        return pave(centerPath, width, cache, "auto");
+    }
+
+    public List<BuildStep> pave(List<BlockPos> centerPath, int width, TerrainSamplingCache cache, String materialPreset) {
         List<BuildStep> steps = new ArrayList<>();
         int halfWidth = width / 2;
         int order = 0;
@@ -34,7 +38,7 @@ public class RoadSegmentPaver {
         for (int i = 0; i < centerPath.size(); i++) {
             BlockPos center = centerPath.get(i);
             int terrainY = cache.getHeight(center.getX(), center.getZ());
-            RoadMaterial material = materialSelector.select(cache.getBiome(center.getX(), center.getZ()));
+            RoadMaterial material = materialSelector.select(materialPreset, cache.getBiome(center.getX(), center.getZ()));
 
             Direction roadDir = getDirection(centerPath, i);
             Direction perpDir = roadDir.getClockWise();

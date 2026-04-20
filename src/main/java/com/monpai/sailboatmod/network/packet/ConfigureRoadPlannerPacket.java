@@ -48,8 +48,22 @@ public class ConfigureRoadPlannerPacket {
             if (player == null) {
                 return;
             }
-            ManualRoadPlannerService.applyRoadConfig(player, msg);
+            ItemStack stack = findPlannerStack(player);
+            if (stack.isEmpty()) {
+                return;
+            }
+            ManualRoadPlannerService.applyRoadConfig(player, stack, msg);
         });
         ctx.get().setPacketHandled(true);
+    }
+
+    private static ItemStack findPlannerStack(ServerPlayer player) {
+        if (player.getMainHandItem().is(ModItems.ROAD_PLANNER_ITEM.get())) {
+            return player.getMainHandItem();
+        }
+        if (player.getOffhandItem().is(ModItems.ROAD_PLANNER_ITEM.get())) {
+            return player.getOffhandItem();
+        }
+        return ItemStack.EMPTY;
     }
 }

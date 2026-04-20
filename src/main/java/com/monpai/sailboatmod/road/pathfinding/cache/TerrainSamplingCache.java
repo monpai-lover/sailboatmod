@@ -18,6 +18,7 @@ public class TerrainSamplingCache {
     private final PathfindingConfig.SamplingPrecision precision;
 
     private final ConcurrentHashMap<Long, Integer> heightCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Integer> waterSurfaceCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Boolean> waterCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Integer> oceanFloorCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Holder<Biome>> biomeCache = new ConcurrentHashMap<>();
@@ -44,14 +45,23 @@ public class TerrainSamplingCache {
 
     public boolean isWater(int x, int z) {
         return waterCache.computeIfAbsent(key(x, z), k -> {
-            int surfaceY = getHeight(x, z);
-            // Check multiple positions for water (surface may be ocean floor)
-            for (int dy = 0; dy <= 3; dy++) {
-                BlockState state = level.getBlockState(new BlockPos(x, surfaceY + dy, z));
-                if (state.is(Blocks.WATER)) return true;
+            int waterSurfaceY = getWaterSurfaceY(x, z);
+            return waterSurfaceY > getOceanFloor(x, z)
+                    || (isWaterBiome(x, z) && level.getBlockState(new BlockPos(x, level.getSeaLevel(), z)).is(Blocks.WATER));
+        });
+    }
+
+    public int getWaterSurfaceY(int x, int z) {
+        return waterSurfaceCache.computeIfAbsent(key(x, z), k -> {
+            int top = fastSampler.motionBlockingHeight(x, z) - 1;
+            int floor = getOceanFloor(x, z);
+            for (int y = Math.max(top, floor); y >= floor; y--) {
+                BlockState state = level.getBlockState(new BlockPos(x, y, z));
+                if (state.is(Blocks.WATER)) {
+                    return y;
+                }
             }
-            // Also check if biome is ocean/river and water exists at sea level
-            return isWaterBiome(x, z) && level.getBlockState(new BlockPos(x, level.getSeaLevel(), z)).is(Blocks.WATER);
+            return floor;
         });
     }
 
@@ -89,7 +99,7 @@ public class TerrainSamplingCache {
 
     public int getWaterDepth(int x, int z) {
         if (!isWater(x, z)) return 0;
-        int surface = getHeight(x, z);
+        int surface = getWaterSurfaceY(x, z);
         int floor = getOceanFloor(x, z);
         return surface - floor;
     }
@@ -98,6 +108,7 @@ public class TerrainSamplingCache {
 
     public void clear() {
         heightCache.clear();
+        waterSurfaceCache.clear();
         waterCache.clear();
         oceanFloorCache.clear();
         biomeCache.clear();
