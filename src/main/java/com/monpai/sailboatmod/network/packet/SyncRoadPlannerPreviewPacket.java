@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.block.Block;
@@ -70,16 +72,39 @@ public class SyncRoadPlannerPreviewPacket {
                                                         String targetTownName,
                                                         Object plan,
                                                         boolean awaitingConfirmation) {
-        // Road system refactored - pending integration
+        if (!(plan instanceof RoadPlacementPlan rpp) || rpp.centerPath() == null || rpp.centerPath().size() < 2) {
+            return new SyncRoadPlannerPreviewPacket(
+                    sourceTownName,
+                    targetTownName,
+                    List.of(),
+                    List.of(),
+                    0,
+                    null,
+                    null,
+                    null,
+                    awaitingConfirmation,
+                    List.of(),
+                    ""
+            );
+        }
+        List<GhostBlock> ghostBlocks = new ArrayList<>();
+        if (rpp.ghostBlocks() != null) {
+            for (RoadGeometryPlanner.GhostRoadBlock ghost : rpp.ghostBlocks()) {
+                if (ghost.pos() != null && ghost.state() != null) {
+                    ghostBlocks.add(new GhostBlock(ghost.pos(), ghost.state()));
+                }
+            }
+        }
+        List<BlockPos> pathNodes = structuredPreviewPathNodes(plan);
         return new SyncRoadPlannerPreviewPacket(
                 sourceTownName,
                 targetTownName,
-                List.of(),
-                List.of(),
-                0,
-                null,
-                null,
-                null,
+                ghostBlocks,
+                pathNodes,
+                rpp.centerPath().size(),
+                rpp.startHighlightPos(),
+                rpp.endHighlightPos(),
+                rpp.focusPos(),
                 awaitingConfirmation,
                 List.of(),
                 ""
@@ -87,8 +112,21 @@ public class SyncRoadPlannerPreviewPacket {
     }
 
     private static List<BlockPos> structuredPreviewPathNodes(Object plan) {
-        // Road system refactored - pending integration
-        return List.of();
+        if (!(plan instanceof RoadPlacementPlan rpp) || rpp.centerPath() == null) {
+            return List.of();
+        }
+        List<BlockPos> path = rpp.centerPath();
+        if (path.size() <= 64) {
+            return List.copyOf(path);
+        }
+        List<BlockPos> sampled = new ArrayList<>();
+        sampled.add(path.get(0));
+        int step = Math.max(1, path.size() / 62);
+        for (int i = step; i < path.size() - 1; i += step) {
+            sampled.add(path.get(i));
+        }
+        sampled.add(path.get(path.size() - 1));
+        return List.copyOf(sampled);
     }
 
     public SyncRoadPlannerPreviewPacket withOptions(List<PreviewOption> options, String selectedOptionId) {

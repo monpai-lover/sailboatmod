@@ -245,8 +245,17 @@ public final class ArmyCommandManager {
         if (target == null || target.equals(BlockPos.ZERO)) {
             return List.of();
         }
-        // Road system refactored - pending integration
-        return List.of();
+        BlockPos origin = resolveArmyCenter(level, army);
+        if (origin == null || origin.equals(BlockPos.ZERO)) {
+            return List.of();
+        }
+        com.monpai.sailboatmod.road.config.RoadConfig config = new com.monpai.sailboatmod.road.config.RoadConfig();
+        com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache cache =
+            new com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        com.monpai.sailboatmod.road.pathfinding.Pathfinder pathfinder =
+            com.monpai.sailboatmod.road.pathfinding.PathfinderFactory.create(config.getPathfinding());
+        com.monpai.sailboatmod.road.pathfinding.PathResult result = pathfinder.findPath(origin, target, cache);
+        return result.success() ? result.path() : List.of();
     }
 
     private static BlockPos resolveArmyCenter(ServerLevel level, ArmyRecord army) {

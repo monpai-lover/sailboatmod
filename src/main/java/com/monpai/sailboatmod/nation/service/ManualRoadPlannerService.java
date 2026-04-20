@@ -3,6 +3,9 @@ package com.monpai.sailboatmod.nation.service;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
+import com.monpai.sailboatmod.construction.RoadCorridorPlan;
+import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.nation.data.ConstructionRuntimeSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
@@ -16,6 +19,15 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.road.config.RoadConfig;
+import com.monpai.sailboatmod.road.construction.road.RoadBuilder;
+import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.road.model.RoadData;
+import com.monpai.sailboatmod.road.pathfinding.PathResult;
+import com.monpai.sailboatmod.road.pathfinding.Pathfinder;
+import com.monpai.sailboatmod.road.pathfinding.PathfinderFactory;
+import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
+import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -204,24 +216,67 @@ public final class ManualRoadPlannerService {
         if (player == null || stack == null) {
             return Component.translatable("message.sailboatmod.road_planner.unavailable");
         }
-        // Road system refactored - pending integration
-        return Component.translatable("message.sailboatmod.road_planner.path_failed");
+        PlannedPreviewState readyPreview = readyPreviewState(player, stack);
+        if (readyPreview != null) {
+            return applyReadyPreview(player, stack, readyPreview);
+        }
+        if (isPlanningPending(stack)) {
+            return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
+        }
+        List<PlanCandidate> candidates = buildPlanCandidates(player, stack);
+        if (candidates.isEmpty()) {
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.path_failed");
+        }
+        PlanCandidate candidate = selectPlanCandidate(stack, candidates);
+        if (candidate == null) {
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            return Component.translatable("message.sailboatmod.road_planner.path_failed");
+        }
+        READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(
+                candidate.targetTown().townId(), candidates, ""));
+        return applyReadyPreview(player, stack, READY_PREVIEWS.get(player.getUUID()));
     }
 
     private static Component previewOrCancelRoad(ServerPlayer player, ItemStack stack) {
         if (player == null || stack == null) {
             return Component.translatable("message.sailboatmod.road_planner.unavailable");
         }
-        // Road system refactored - pending integration
-        return Component.translatable("message.sailboatmod.road_planner.nothing_to_cancel");
+        SelectedRoadRoute route = resolveSelectedRoadRoute(player, stack);
+        if (route == null) {
+            return Component.translatable("message.sailboatmod.road_planner.nothing_to_cancel");
+        }
+        ServerLevel level = player.serverLevel();
+        if (!manualRoadExists(level, route.roadId())) {
+            return Component.translatable("message.sailboatmod.road_planner.nothing_to_cancel");
+        }
+        NationSavedData data = NationSavedData.get(level);
+        data.removeRoadNetwork(route.roadId());
+        data.setDirty();
+        clearPreviewState(stack);
+        sendPreviewClear(player);
+        READY_PREVIEWS.remove(player.getUUID());
+        return Component.translatable("message.sailboatmod.road_planner.cancelled", route.sourceName(), route.targetName());
     }
 
     private static Component previewOrDemolishRoad(ServerPlayer player, ItemStack stack) {
         if (player == null || stack == null) {
             return Component.translatable("message.sailboatmod.road_planner.unavailable");
         }
-        // Road system refactored - pending integration
-        return Component.translatable("message.sailboatmod.road_planner.not_looking_at_road");
+        TargetedRoadPreview targeted = resolveLookedAtRoad(player);
+        if (targeted == null) {
+            return Component.translatable("message.sailboatmod.road_planner.not_looking_at_road");
+        }
+        ServerLevel level = player.serverLevel();
+        NationSavedData data = NationSavedData.get(level);
+        data.removeRoadNetwork(targeted.roadId());
+        data.setDirty();
+        clearPreviewState(stack);
+        sendPreviewClear(player);
+        READY_PREVIEWS.remove(player.getUUID());
+        return Component.translatable("message.sailboatmod.road_planner.demolished", targeted.sourceName(), targeted.targetName());
     }
 
     private static Component previewOrApplyLifecycleAction(ServerPlayer player,
@@ -233,20 +288,88 @@ public final class ManualRoadPlannerService {
                                                            java.util.function.BooleanSupplier action,
                                                            String previewMessageKey,
                                                            String successMessageKey) {
-        // Road system refactored - pending integration
-        return Component.translatable("message.sailboatmod.road_planner.path_failed");
+        if (player == null || stack == null || roadId == null || roadId.isBlank()) {
+            return Component.translatable("message.sailboatmod.road_planner.path_failed");
+        }
+        CompoundTag tag = stack.getOrCreateTag();
+        String cachedRoadId = tag.getString(TAG_PREVIEW_ROAD_ID);
+        long cachedAt = tag.getLong(TAG_PREVIEW_AT);
+        boolean confirmable = roadId.equalsIgnoreCase(cachedRoadId)
+                && System.currentTimeMillis() - cachedAt <= PREVIEW_TIMEOUT_MS;
+        if (confirmable) {
+            boolean success = action != null && action.getAsBoolean();
+            clearPreviewState(stack);
+            sendPreviewClear(player);
+            READY_PREVIEWS.remove(player.getUUID());
+            if (success) {
+                return Component.translatable(successMessageKey, sourceName, targetName);
+            }
+            return Component.translatable("message.sailboatmod.road_planner.path_failed");
+        }
+        tag.putString(TAG_PREVIEW_ROAD_ID, roadId);
+        tag.putLong(TAG_PREVIEW_AT, System.currentTimeMillis());
+        if (plan != null) {
+            sendPreview(player, sourceName, targetName, plan, true);
+        }
+        return Component.translatable(previewMessageKey, sourceName, targetName);
     }
 
     private static List<PlanCandidate> buildPlanCandidates(ServerPlayer player, ItemStack stack) {
-        // Road system refactored - pending integration
-        return List.of();
+        return buildPlanCandidates(player, stack, null);
     }
 
     private static List<PlanCandidate> buildPlanCandidates(ServerPlayer player,
                                                            ItemStack stack,
                                                            PlanningProgressReporter progress) {
-        // Road system refactored - pending integration
-        return List.of();
+        if (player == null || stack == null) {
+            return List.of();
+        }
+        ServerLevel level = player.serverLevel();
+        TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
+        if (sourceTown == null) {
+            return List.of();
+        }
+        List<TownRecord> targets = eligibleTargets(level, sourceTown);
+        if (targets.isEmpty()) {
+            return List.of();
+        }
+        TownRecord targetTown = resolveSelectedTarget(stack, targets);
+        if (targetTown == null) {
+            return List.of();
+        }
+        NationSavedData data = NationSavedData.get(level);
+        String dimensionId = level.dimension().location().toString();
+        List<NationClaimRecord> sourceClaims = claimsInDimension(data, sourceTown, dimensionId);
+        List<NationClaimRecord> targetClaims = claimsInDimension(data, targetTown, dimensionId);
+        Set<Long> blockedColumns = collectBlockedRoadColumns(level, data, sourceTown, targetTown);
+        Set<Long> excludedColumns = collectCoreExclusionColumns(level, data);
+        String roadId = manualRoadIdForTownPair(sourceTown.townId(), targetTown.townId());
+        if (roadId.isBlank() || manualRoadExists(level, roadId)) {
+            return List.of();
+        }
+        if (progress != null) {
+            progress.update(PlanningStage.SAMPLING_TERRAIN, 50);
+        }
+        List<PlanCandidate> candidates = new ArrayList<>();
+        PlanCandidate landCandidate = buildPlanCandidate(level, sourceTown, targetTown,
+                sourceClaims, targetClaims, blockedColumns, excludedColumns, data, roadId,
+                PreviewOptionKind.DETOUR, false, null);
+        if (landCandidate != null) {
+            candidates.add(landCandidate);
+        }
+        if (progress != null) {
+            progress.update(PlanningStage.TRYING_BRIDGE, 50);
+        }
+        PlanCandidate bridgeCandidate = buildPlanCandidate(level, sourceTown, targetTown,
+                sourceClaims, targetClaims, blockedColumns, excludedColumns, data, roadId,
+                PreviewOptionKind.BRIDGE, true, null);
+        if (bridgeCandidate != null) {
+            candidates.add(bridgeCandidate);
+        }
+        if (progress != null) {
+            progress.update(PlanningStage.BUILDING_PREVIEW, 100);
+        }
+        return candidates;
     }
 
     private static PlanCandidate buildPlanCandidate(ServerLevel level,
@@ -261,8 +384,71 @@ public final class ManualRoadPlannerService {
                                                     PreviewOptionKind optionKind,
                                                     boolean allowWaterFallback,
                                                     Object planningContext) {
-        // Road system refactored - pending integration
-        return null;
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims,
+                townCorePos(level, sourceTown), townCorePos(level, targetTown), excludedColumns, allowWaterFallback);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims,
+                townCorePos(level, targetTown), townCorePos(level, sourceTown), excludedColumns, allowWaterFallback);
+        if (sourceAnchor == null || targetAnchor == null) {
+            return null;
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        PathResult result = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+        if (!result.success() || result.path().size() < 2) {
+            return null;
+        }
+        PathPostProcessor postProcessor = new PathPostProcessor();
+        PathPostProcessor.ProcessedPath processed = postProcessor.process(
+                result.path(), cache, config.getBridge().getBridgeMinWaterDepth());
+        List<BlockPos> finalPath = processed.path();
+        if (finalPath.size() < 2) {
+            return null;
+        }
+        RoadBuilder builder = new RoadBuilder(config);
+        RoadData roadData = builder.buildRoad(manualRoadId, finalPath, 3, cache);
+        String dimensionId = level.dimension().location().toString();
+        RoadNetworkRecord road = new RoadNetworkRecord(
+                manualRoadId,
+                sourceTown.nationId(),
+                sourceTown.townId(),
+                dimensionId,
+                "town:" + sourceTown.townId(),
+                "town:" + targetTown.townId(),
+                finalPath,
+                System.currentTimeMillis(),
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+        );
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new ArrayList<>();
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
+        for (BuildStep bs : roadData.buildSteps()) {
+            ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state()));
+        }
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();
+        for (com.monpai.sailboatmod.road.model.BridgeSpan span : roadData.bridgeSpans()) {
+            bridgeRanges.add(new RoadPlacementPlan.BridgeRange(span.startIndex(), span.endIndex()));
+        }
+        RoadCorridorPlan corridorPlan = RoadCorridorPlan.empty();
+        com.monpai.sailboatmod.construction.RoadPlacementPlan plan = new com.monpai.sailboatmod.construction.RoadPlacementPlan(
+                finalPath,
+                sourceAnchor,
+                sourceAnchor,
+                targetAnchor,
+                targetAnchor,
+                ghostBlocks,
+                buildSteps,
+                bridgeRanges,
+                bridgeRanges,
+                finalPath,
+                finalPath.get(0),
+                finalPath.get(finalPath.size() - 1),
+                finalPath.get(finalPath.size() / 2),
+                corridorPlan
+        );
+        boolean bridgeBacked = !processed.bridgeSpans().isEmpty();
+        return new PlanCandidate(sourceTown, targetTown, road, plan,
+                optionKind.optionId, optionKind.label, bridgeBacked);
     }
 
     private static WaitingAreaRoute resolveWaitingAreaRoute(ServerLevel level,
@@ -275,8 +461,29 @@ public final class ManualRoadPlannerService {
                                                             Set<Long> excludedColumns,
                                                             boolean allowWaterFallback,
                                                             Object planningContext) {
-        // Road system refactored - pending integration
-        return null;
+        List<StationZoneCandidate> sourceStations = collectPostStationsInClaims(level, sourceClaims);
+        List<StationZoneCandidate> targetStations = collectPostStationsInClaims(level, targetClaims);
+        if (sourceStations.isEmpty() || targetStations.isEmpty()) {
+            return null;
+        }
+        StationZoneCandidate sourceStation = sourceStations.get(0);
+        StationZoneCandidate targetStation = targetStations.get(0);
+        List<BlockPos> sourceExits = limitExitCandidates(PostStationRoadAnchorHelper.computeExitCandidates(sourceStation.zone()));
+        List<BlockPos> targetExits = limitExitCandidates(PostStationRoadAnchorHelper.computeExitCandidates(targetStation.zone()));
+        if (sourceExits.isEmpty() || targetExits.isEmpty()) {
+            return null;
+        }
+        BlockPos sourceExit = sourceExits.get(0);
+        BlockPos targetExit = targetExits.get(0);
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        PathResult result = pathfinder.findPath(sourceExit, targetExit, cache);
+        if (!result.success() || result.path().size() < 2) {
+            return null;
+        }
+        return new WaitingAreaRoute(sourceStation.stationPos(), targetStation.stationPos(),
+                sourceExit, targetExit, result.path());
     }
 
     private static List<BlockPos> limitExitCandidates(List<BlockPos> exits) {
@@ -310,8 +517,21 @@ public final class ManualRoadPlannerService {
                                                                    Set<Long> excludedColumns,
                                                                    boolean allowWaterFallback,
                                                                    Object planningContext) {
-        // Road system refactored - pending integration
-        return null;
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims,
+                townCorePos(level, sourceTown), townCorePos(level, targetTown), excludedColumns, allowWaterFallback);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims,
+                townCorePos(level, targetTown), townCorePos(level, sourceTown), excludedColumns, allowWaterFallback);
+        if (sourceAnchor == null || targetAnchor == null) {
+            return null;
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        PathResult result = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+        if (!result.success() || result.path().size() < 2) {
+            return null;
+        }
+        return new WaitingAreaRoute(null, null, sourceAnchor, targetAnchor, result.path());
     }
 
     private static List<BlockPos> buildConnectedRouteViaTownAnchors(ServerLevel level,
@@ -328,8 +548,35 @@ public final class ManualRoadPlannerService {
                                                                     Set<Long> excludedColumns,
                                                                     boolean allowWaterFallback,
                                                                     Object planningContext) {
-        // Road system refactored - pending integration
-        return List.of();
+        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims,
+                sourceStationPos, targetStationPos, excludedColumns, allowWaterFallback);
+        BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims,
+                targetStationPos, sourceStationPos, excludedColumns, allowWaterFallback);
+        if (sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        List<BlockPos> fullPath = new ArrayList<>();
+        if (sourceExit != null && !sourceExit.equals(sourceAnchor)) {
+            PathResult seg1 = pathfinder.findPath(sourceExit, sourceAnchor, cache);
+            if (seg1.success()) {
+                appendPathPreservingOrder(fullPath, seg1.path());
+            }
+        }
+        PathResult mainResult = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+        if (!mainResult.success() || mainResult.path().size() < 2) {
+            return List.of();
+        }
+        appendPathPreservingOrder(fullPath, mainResult.path());
+        if (targetExit != null && !targetExit.equals(targetAnchor)) {
+            PathResult seg3 = pathfinder.findPath(targetAnchor, targetExit, cache);
+            if (seg3.success()) {
+                appendPathPreservingOrder(fullPath, seg3.path());
+            }
+        }
+        return fullPath.size() < 2 ? List.of() : List.copyOf(fullPath);
     }
 
     private static List<BlockPos> resolveHybridRoadPath(ServerLevel level,
@@ -339,8 +586,17 @@ public final class ManualRoadPlannerService {
                                                         Set<Long> excludedColumns,
                                                         boolean allowWaterFallback,
                                                         Object planningContext) {
-        // Road system refactored - pending integration
-        return List.of();
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        PathResult result = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+        if (!result.success() || result.path().size() < 2) {
+            return List.of();
+        }
+        return List.copyOf(result.path());
     }
 
     private static List<BlockPos> resolveHybridRoadSegment(ServerLevel level,
@@ -352,8 +608,17 @@ public final class ManualRoadPlannerService {
                                                            Set<BlockPos> networkNodes,
                                                            java.util.Map<BlockPos, Set<BlockPos>> adjacency,
                                                            Object planningContext) {
-        // Road system refactored - pending integration
-        return List.of();
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        PathResult result = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+        if (!result.success() || result.path().size() < 2) {
+            return List.of();
+        }
+        return List.copyOf(result.path());
     }
 
     private static boolean shouldUseHybridNetworkForSegment(ServerLevel level,
@@ -372,16 +637,38 @@ public final class ManualRoadPlannerService {
     }
 
     private static boolean isBridgeSegmentEndpoint(ServerLevel level, BlockPos anchor, Object planningContext) {
-        // Road system refactored - pending integration
-        return false;
+        if (level == null || anchor == null) {
+            return false;
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        return cache.isWater(anchor.getX(), anchor.getZ()) || cache.isNearWater(anchor.getX(), anchor.getZ());
     }
 
     private static boolean hasDirectBridgeDeckSpan(ServerLevel level,
                                                    BlockPos sourceAnchor,
                                                    BlockPos targetAnchor,
                                                    Object planningContext) {
-        // Road system refactored - pending integration
-        return false;
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return false;
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        int steps = Math.max(Math.abs(targetAnchor.getX() - sourceAnchor.getX()),
+                Math.abs(targetAnchor.getZ() - sourceAnchor.getZ()));
+        if (steps <= 0) {
+            return false;
+        }
+        int waterCount = 0;
+        for (int i = 0; i <= steps; i++) {
+            double t = (double) i / steps;
+            int x = (int) Math.round(sourceAnchor.getX() + (targetAnchor.getX() - sourceAnchor.getX()) * t);
+            int z = (int) Math.round(sourceAnchor.getZ() + (targetAnchor.getZ() - sourceAnchor.getZ()) * t);
+            if (cache.isWater(x, z)) {
+                waterCount++;
+            }
+        }
+        return waterCount > steps / 3;
     }
 
     private static List<BlockPos> resolveBridgeAwareDirectSegment(ServerLevel level,
@@ -391,8 +678,17 @@ public final class ManualRoadPlannerService {
                                                                   Set<Long> excludedColumns,
                                                                   boolean allowWaterFallback,
                                                                   Object planningContext) {
-        // Road system refactored - pending integration
-        return List.of();
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        PathResult result = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+        if (!result.success() || result.path().size() < 2) {
+            return List.of();
+        }
+        return List.copyOf(result.path());
     }
 
     private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
@@ -400,8 +696,7 @@ public final class ManualRoadPlannerService {
                                                         BlockPos targetAnchor,
                                                         Set<Long> blockedColumns,
                                                         Set<BlockPos> networkNodes) {
-        // Road system refactored - pending integration
-        return List.of();
+        return collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, Set.of(), networkNodes, false, null);
     }
 
     private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
@@ -410,8 +705,7 @@ public final class ManualRoadPlannerService {
                                                         Set<Long> blockedColumns,
                                                         Set<Long> excludedColumns,
                                                         Set<BlockPos> networkNodes) {
-        // Road system refactored - pending integration
-        return List.of();
+        return collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, networkNodes, false, null);
     }
 
     private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
@@ -421,8 +715,7 @@ public final class ManualRoadPlannerService {
                                                         Set<Long> excludedColumns,
                                                         Set<BlockPos> networkNodes,
                                                         boolean allowWaterFallback) {
-        // Road system refactored - pending integration
-        return List.of();
+        return collectSegmentAnchors(level, sourceAnchor, targetAnchor, blockedColumns, excludedColumns, networkNodes, allowWaterFallback, null);
     }
 
     private static List<BlockPos> collectSegmentAnchors(ServerLevel level,
@@ -433,8 +726,27 @@ public final class ManualRoadPlannerService {
                                                         Set<BlockPos> networkNodes,
                                                         boolean allowWaterFallback,
                                                         Object planningContext) {
-        // Road system refactored - pending integration
-        return List.of();
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        Set<BlockPos> candidates = new LinkedHashSet<>();
+        if (networkNodes != null) {
+            for (BlockPos node : networkNodes) {
+                if (node == null) continue;
+                double distToSource = node.distSqr(sourceAnchor);
+                double distToTarget = node.distSqr(targetAnchor);
+                double routeDistSq = sourceAnchor.distSqr(targetAnchor);
+                if (distToSource < routeDistSq && distToTarget < routeDistSq) {
+                    double corridorDist = distanceToLine(node, sourceAnchor, targetAnchor);
+                    if (corridorDist <= NETWORK_ANCHOR_CORRIDOR_DISTANCE) {
+                        candidates.add(node.immutable());
+                    }
+                }
+            }
+        }
+        List<BlockPos> filtered = filterTraversableIntermediateAnchors(level, candidates, blockedColumns, excludedColumns, planningContext);
+        List<BlockPos> sorted = sortAnchorsAlongRoute(sourceAnchor, targetAnchor, new LinkedHashSet<>(filtered));
+        return sampleAnchorsEvenly(sorted, MAX_SEGMENT_INTERMEDIATE_ANCHORS);
     }
 
     private static List<BlockPos> collectBridgeSegmentAnchors(ServerLevel level,
@@ -442,8 +754,30 @@ public final class ManualRoadPlannerService {
                                                               BlockPos targetAnchor,
                                                               Set<Long> blockedColumns,
                                                               Object planningContext) {
-        // Road system refactored - pending integration
-        return List.of();
+        if (level == null || sourceAnchor == null || targetAnchor == null) {
+            return List.of();
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        List<BlockPos> anchors = new ArrayList<>();
+        int steps = Math.max(Math.abs(targetAnchor.getX() - sourceAnchor.getX()),
+                Math.abs(targetAnchor.getZ() - sourceAnchor.getZ()));
+        if (steps <= 0) {
+            return List.of();
+        }
+        for (int i = 0; i <= steps; i++) {
+            double t = (double) i / steps;
+            int x = (int) Math.round(sourceAnchor.getX() + (targetAnchor.getX() - sourceAnchor.getX()) * t);
+            int z = (int) Math.round(sourceAnchor.getZ() + (targetAnchor.getZ() - sourceAnchor.getZ()) * t);
+            if (!cache.isWater(x, z)) {
+                BlockPos candidate = new BlockPos(x, cache.getHeight(x, z), z);
+                long colKey = columnKey(x, z);
+                if (blockedColumns == null || !blockedColumns.contains(colKey)) {
+                    anchors.add(candidate);
+                }
+            }
+        }
+        return sampleAnchorsEvenly(anchors, MAX_SEGMENT_INTERMEDIATE_ANCHORS);
     }
 
     private static List<BlockPos> sampleAnchorsEvenly(List<BlockPos> anchors, int limit) {
@@ -489,12 +823,14 @@ public final class ManualRoadPlannerService {
                                                                        Set<Long> blockedColumns,
                                                                        Set<Long> excludedColumns,
                                                                        Object planningContext) {
-        // Road system refactored - pending integration
         if (anchors == null || anchors.isEmpty()) {
             return List.of();
         }
         return anchors.stream()
                 .filter(Objects::nonNull)
+                .filter(pos -> !isExcludedColumn(pos, excludedColumns))
+                .filter(pos -> blockedColumns == null || !blockedColumns.contains(columnKey(pos.getX(), pos.getZ())))
+                .filter(pos -> isValidRoadAnchor(level, pos))
                 .map(BlockPos::immutable)
                 .toList();
     }
@@ -547,6 +883,22 @@ public final class ManualRoadPlannerService {
         return ((anchorDx * routeDx) + (anchorDz * routeDz)) / routeLengthSq;
     }
 
+    private static double distanceToLine(BlockPos point, BlockPos lineStart, BlockPos lineEnd) {
+        double dx = lineEnd.getX() - lineStart.getX();
+        double dz = lineEnd.getZ() - lineStart.getZ();
+        double lengthSq = dx * dx + dz * dz;
+        if (lengthSq <= 0.0D) {
+            return Math.sqrt(point.distSqr(lineStart));
+        }
+        double t = ((point.getX() - lineStart.getX()) * dx + (point.getZ() - lineStart.getZ()) * dz) / lengthSq;
+        t = Math.max(0.0D, Math.min(1.0D, t));
+        double projX = lineStart.getX() + t * dx;
+        double projZ = lineStart.getZ() + t * dz;
+        double distX = point.getX() - projX;
+        double distZ = point.getZ() - projZ;
+        return Math.sqrt(distX * distX + distZ * distZ);
+    }
+
     private static Set<Long> unblockPathEndpoints(Set<Long> blockedColumns, BlockPos... anchors) {
         if (blockedColumns == null || blockedColumns.isEmpty()) {
             return Set.of();
@@ -584,8 +936,21 @@ public final class ManualRoadPlannerService {
                                                                  Set<Long> excludedColumns,
                                                                  boolean allowWaterFallback,
                                                                  Object planningContext) {
-        // Road system refactored - pending integration
-        return new PreferredRoadPathResult(List.of(), "road.refactored");
+        if (level == null || from == null || to == null) {
+            return new PreferredRoadPathResult(List.of(), "invalid_arguments");
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        Pathfinder pathfinder = PathfinderFactory.create(config.getPathfinding());
+        PathResult result = pathfinder.findPath(from, to, cache);
+        if (!result.success() || result.path().size() < 2) {
+            String reason = result.failureReason() != null ? result.failureReason() : "no_path";
+            return new PreferredRoadPathResult(List.of(), reason);
+        }
+        PathPostProcessor postProcessor = new PathPostProcessor();
+        PathPostProcessor.ProcessedPath processed = postProcessor.process(
+                result.path(), cache, config.getBridge().getBridgeMinWaterDepth());
+        return new PreferredRoadPathResult(processed.path(), "");
     }
 
     private static boolean shouldUseWaterFallback(boolean landPathFound, boolean waterFallbackAllowed) {
@@ -601,14 +966,13 @@ public final class ManualRoadPlannerService {
     }
 
     static IslandProbePolicy islandProbePolicyForTest(boolean sourceIslandLike, boolean targetIslandLike) {
-        // Road system refactored - pending integration
-        return new IslandProbePolicy(sourceIslandLike || targetIslandLike, sourceIslandLike || targetIslandLike ? 0 : 1, DEFAULT_ISLAND_LAND_PROBE_DISTANCE, sourceIslandLike || targetIslandLike);
+        boolean islandMode = sourceIslandLike || targetIslandLike;
+        return new IslandProbePolicy(islandMode, islandMode ? 0 : 1, DEFAULT_ISLAND_LAND_PROBE_DISTANCE, islandMode);
     }
 
     static boolean shouldPreferBridgeFirstForTest(boolean sourceIslandLike,
                                                   boolean targetIslandLike,
                                                   boolean allowWaterFallback) {
-        // Road system refactored - pending integration
         return allowWaterFallback && (sourceIslandLike || targetIslandLike);
     }
 
@@ -960,8 +1324,24 @@ public final class ManualRoadPlannerService {
         if (!isUsableAnchor(level, pos, towardPos, excludedColumns)) {
             return Double.MAX_VALUE;
         }
-        // Road system refactored - pending integration (RoadPathfinder.describeColumnForAnchorSelection removed)
-        return 0.0D;
+        double score = 0.0D;
+        BlockState surface = level.getBlockState(pos);
+        if (surface.liquid()) {
+            score += 100.0D;
+        }
+        if (preferShoreline) {
+            boolean nearWater = level.getBlockState(pos.north()).liquid()
+                    || level.getBlockState(pos.south()).liquid()
+                    || level.getBlockState(pos.east()).liquid()
+                    || level.getBlockState(pos.west()).liquid();
+            if (nearWater) {
+                score -= 50.0D;
+            }
+        }
+        if (towardPos != null) {
+            score += Math.sqrt(pos.distSqr(towardPos)) * 0.01D;
+        }
+        return score;
     }
 
     private static boolean isUsableAnchor(ServerLevel level, BlockPos pos, Set<Long> excludedColumns) {
@@ -975,7 +1355,6 @@ public final class ManualRoadPlannerService {
     }
 
     private static boolean isExcludedColumn(BlockPos pos, Set<Long> excludedColumns) {
-        // Road system refactored - pending integration (RoadCoreExclusion removed)
         return pos != null && excludedColumns != null && !excludedColumns.isEmpty() && excludedColumns.contains(columnKey(pos.getX(), pos.getZ()));
     }
 
@@ -1024,8 +1403,13 @@ public final class ManualRoadPlannerService {
         if (anchor == null || towardPos == null) {
             return List.of();
         }
-        // Road system refactored - pending integration (RoadGeometryPlanner removed)
-        return List.of(anchor.immutable());
+        List<BlockPos> footprint = new ArrayList<>();
+        footprint.add(anchor.immutable());
+        footprint.add(anchor.west().immutable());
+        footprint.add(anchor.east().immutable());
+        footprint.add(anchor.north().immutable());
+        footprint.add(anchor.south().immutable());
+        return footprint;
     }
 
     private static boolean isReusableExistingRoadAnchor(ServerLevel level, BlockPos pos) {
@@ -1184,8 +1568,36 @@ public final class ManualRoadPlannerService {
     }
 
     private static Set<Long> collectCoreExclusionColumns(ServerLevel level, NationSavedData data) {
-        // Road system refactored - pending integration (RoadCoreExclusion removed)
-        return Set.of();
+        if (level == null || data == null) {
+            return Set.of();
+        }
+        Set<Long> excluded = new HashSet<>();
+        String dimensionId = level.dimension().location().toString();
+        for (TownRecord town : data.getTowns()) {
+            if (town != null && town.hasCore() && dimensionId.equalsIgnoreCase(town.coreDimension())) {
+                BlockPos core = townCorePos(level, town);
+                if (core != null) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            excluded.add(columnKey(core.getX() + dx, core.getZ() + dz));
+                        }
+                    }
+                }
+            }
+        }
+        for (NationRecord nation : data.getNations()) {
+            if (nation != null && nation.hasCore() && dimensionId.equalsIgnoreCase(nation.coreDimension())) {
+                BlockPos core = nationCorePos(level, nation);
+                if (core != null) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            excluded.add(columnKey(core.getX() + dx, core.getZ() + dz));
+                        }
+                    }
+                }
+            }
+        }
+        return excluded.isEmpty() ? Set.of() : Set.copyOf(excluded);
     }
 
     private static List<TownRecord> townsInDimension(ServerLevel level, List<TownRecord> towns) {
@@ -1265,8 +1677,30 @@ public final class ManualRoadPlannerService {
     }
 
     static Set<Long> collectCoreExclusionColumnsForTest(List<BlockPos> townCores, List<BlockPos> nationCores) {
-        // Road system refactored - pending integration (RoadCoreExclusion removed)
-        return Set.of();
+        Set<Long> excluded = new HashSet<>();
+        if (townCores != null) {
+            for (BlockPos core : townCores) {
+                if (core != null) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            excluded.add(columnKey(core.getX() + dx, core.getZ() + dz));
+                        }
+                    }
+                }
+            }
+        }
+        if (nationCores != null) {
+            for (BlockPos core : nationCores) {
+                if (core != null) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            excluded.add(columnKey(core.getX() + dx, core.getZ() + dz));
+                        }
+                    }
+                }
+            }
+        }
+        return excluded.isEmpty() ? Set.of() : Set.copyOf(excluded);
     }
 
     static PlannerMode cyclePlannerModeForTest(ItemStack stack) {
@@ -1412,7 +1846,6 @@ public final class ManualRoadPlannerService {
         if (level == null || pos == null) {
             return null;
         }
-        // Road system refactored - pending integration (RoadPathfinder.findSurfaceForPlanning removed)
         int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX(), pos.getZ()) - 1;
         return new BlockPos(pos.getX(), surfaceY, pos.getZ());
     }
@@ -1435,7 +1868,6 @@ public final class ManualRoadPlannerService {
                                                       boolean[] bridgeMask,
                                                       List<RoadNetworkRecord> roads,
                                                       Set<Long> excludedColumns) {
-        // Road system refactored - pending integration (RoadPathPostProcessor, RoadNetworkSnapService removed)
         if (path == null || path.size() < 2) {
             return List.of();
         }
@@ -1447,7 +1879,6 @@ public final class ManualRoadPlannerService {
         if (candidate == null || candidate.size() < 2) {
             return false;
         }
-        // Road system refactored - pending integration (SegmentedRoadPathOrchestrator, RoadGeometryPlanner removed)
         return true;
     }
 
@@ -1455,8 +1886,19 @@ public final class ManualRoadPlannerService {
                                                       List<BlockPos> path,
                                                       Set<Long> blockedColumns,
                                                       Set<Long> excludedColumns) {
-        // Road system refactored - pending integration (RoadPathfinder removed)
-        return path == null ? new boolean[0] : new boolean[path.size()];
+        if (path == null || path.isEmpty()) {
+            return new boolean[0];
+        }
+        RoadConfig config = new RoadConfig();
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getPathfinding().getSamplingPrecision());
+        boolean[] mask = new boolean[path.size()];
+        int minDepth = config.getBridge().getBridgeMinWaterDepth();
+        for (int i = 0; i < path.size(); i++) {
+            BlockPos p = path.get(i);
+            mask[i] = cache.isWater(p.getX(), p.getZ())
+                    && cache.getWaterDepth(p.getX(), p.getZ()) >= minDepth;
+        }
+        return mask;
     }
 
     private static Set<Long> mergePlannedPathBlockedColumns(Set<Long> blockedColumns, Set<Long> excludedColumns) {
@@ -1522,7 +1964,42 @@ public final class ManualRoadPlannerService {
     }
 
     private static TargetedRoadPreview resolveLookedAtRoad(ServerPlayer player) {
-        // Road system refactored - pending integration (RoadSelectionService, RoadPlacementPlan removed)
+        if (player == null) {
+            return null;
+        }
+        HitResult hitResult = player.pick(5.0D, 0.0F, false);
+        if (hitResult.getType() != HitResult.Type.BLOCK) {
+            return null;
+        }
+        BlockPos hitPos = ((BlockHitResult) hitResult).getBlockPos();
+        ServerLevel level = player.serverLevel();
+        BlockState hitState = level.getBlockState(hitPos);
+        if (!isExistingRoadSurface(hitState)) {
+            hitState = level.getBlockState(hitPos.above());
+            if (!isExistingRoadSurface(hitState)) {
+                return null;
+            }
+        }
+        NationSavedData data = NationSavedData.get(level);
+        String dimensionId = level.dimension().location().toString();
+        for (RoadNetworkRecord road : data.getRoadNetworks()) {
+            if (!dimensionId.equalsIgnoreCase(road.dimensionId())) {
+                continue;
+            }
+            for (BlockPos pathPos : road.path()) {
+                if (pathPos.getX() == hitPos.getX() && pathPos.getZ() == hitPos.getZ()) {
+                    String remoteTownId = resolveRemoteTownId(road);
+                    TownRecord remoteTown = data.getTown(remoteTownId);
+                    TownRecord localTown = data.getTown(road.townId());
+                    return new TargetedRoadPreview(
+                            road.roadId(),
+                            displayTownName(localTown),
+                            displayTownName(remoteTown),
+                            null
+                    );
+                }
+            }
+        }
         return null;
     }
 
@@ -1611,7 +2088,21 @@ public final class ManualRoadPlannerService {
     }
 
     private static void submitPreviewPlanning(Object taskService, ServerPlayer player, ItemStack stack) {
-        // Road system refactored - pending integration (RoadPlanningTaskService removed)
+        if (player == null || stack == null) {
+            return;
+        }
+        markPlanningPending(stack, true);
+        long requestId = MANUAL_PLANNING_REQUEST_IDS.incrementAndGet();
+        PlanningRouteNames routeNames = resolvePlanningRouteNames(player, stack);
+        sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
+                PlanningStage.PREPARING, 0, SyncManualRoadPlanningProgressPacket.Status.RUNNING);
+        List<PlanCandidate> candidates = buildPlanCandidates(player, stack, (stage, percent) ->
+                sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
+                        stage, percent, SyncManualRoadPlanningProgressPacket.Status.RUNNING));
+        String targetTownId = stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
+        String failureKey = candidates.isEmpty() ? "message.sailboatmod.road_planner.path_failed" : "";
+        PlannedPreviewState preview = new PlannedPreviewState(targetTownId, candidates, failureKey);
+        applyPlannedPreview(player, stack, preview, requestId, routeNames);
     }
 
     private static void applyPlannedPreview(ServerPlayer player,
@@ -1953,8 +2444,17 @@ public final class ManualRoadPlannerService {
     }
 
     private static String previewHash(Object plan) {
-        // Road system refactored - pending integration (RoadPlacementPlan removed)
-        return Integer.toHexString(plan == null ? 1 : plan.hashCode());
+        if (plan == null) {
+            return Integer.toHexString(1);
+        }
+        if (plan instanceof com.monpai.sailboatmod.construction.RoadPlacementPlan rpp) {
+            int hash = 17;
+            for (BlockPos pos : rpp.centerPath()) {
+                hash = 31 * hash + hashPos(pos);
+            }
+            return Integer.toHexString(hash);
+        }
+        return Integer.toHexString(plan.hashCode());
     }
 
     private static SyncRoadPlannerPreviewPacket previewPacket(String sourceName,
@@ -1964,13 +2464,25 @@ public final class ManualRoadPlannerService {
                                                               String selectedOptionId,
                                                               boolean awaitingConfirmation,
                                                               boolean requireUsableManualPlan) {
-        // Road system refactored - pending integration (RoadPlacementPlan removed)
-        return SyncRoadPlannerPreviewPacket.fromPlan(
+        if (requireUsableManualPlan && !isUsableManualPreviewPlan(plan)) {
+            return null;
+        }
+        SyncRoadPlannerPreviewPacket packet = SyncRoadPlannerPreviewPacket.fromPlan(
                 sourceName == null ? "-" : sourceName,
                 targetName == null ? "-" : targetName,
                 plan,
                 awaitingConfirmation
         );
+        if (candidates != null && candidates.size() >= 2) {
+            List<SyncRoadPlannerPreviewPacket.PreviewOption> options = new ArrayList<>();
+            for (PlanCandidate c : candidates) {
+                int nodeCount = c.plan() != null ? c.plan().centerPath().size() : 0;
+                options.add(new SyncRoadPlannerPreviewPacket.PreviewOption(
+                        c.optionId(), c.optionLabel(), nodeCount, c.bridgeBacked()));
+            }
+            packet = packet.withOptions(options, selectedOptionId == null ? "" : selectedOptionId);
+        }
+        return packet;
     }
 
     private static void cachePreviewState(CompoundTag tag, PlanCandidate candidate, String previewHash, long now) {
@@ -1995,8 +2507,13 @@ public final class ManualRoadPlannerService {
     }
 
     private static boolean isUsableManualPreviewPlan(Object plan) {
-        // Road system refactored - pending integration (RoadPlacementPlan, RoadCorridorPlan removed)
-        return plan != null;
+        if (plan == null) {
+            return false;
+        }
+        if (plan instanceof com.monpai.sailboatmod.construction.RoadPlacementPlan rpp) {
+            return rpp.centerPath() != null && rpp.centerPath().size() >= 2;
+        }
+        return true;
     }
 
     private static int hashPos(BlockPos pos) {
@@ -2065,7 +2582,6 @@ public final class ManualRoadPlannerService {
     }
 
     private static IslandProbePolicy islandProbePolicy(Object snapshot) {
-        // Road system refactored - pending integration (RoadPlanningSnapshot removed)
         return new IslandProbePolicy(false, 1, DEFAULT_ISLAND_LAND_PROBE_DISTANCE, false);
     }
 
@@ -2086,17 +2602,14 @@ public final class ManualRoadPlannerService {
     }
 
     private static int estimateIslandProbeDistance(Object snapshot) {
-        // Road system refactored - pending integration (RoadPlanningSnapshot removed)
         return 0;
     }
 
     private static boolean hasContinuousWaterSignal(Object snapshot) {
-        // Road system refactored - pending integration (RoadPlanningSnapshot removed)
         return false;
     }
 
     private static boolean shouldPreferBridgeFirst(Object snapshot, boolean allowWaterFallback) {
-        // Road system refactored - pending integration (RoadPlanningSnapshot removed)
         return false;
     }
 
