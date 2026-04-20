@@ -37,35 +37,49 @@ public class BridgePlanner {
         if (sourceAnchor == null) sourceAnchor = source;
         if (targetAnchor == null) targetAnchor = target;
 
-        // Step 2: Build bridge-priority path (low water penalty)
-        PathfindingConfig bridgeConfig = createBridgeFriendlyConfig();
-        Pathfinder pathfinder = PathfinderFactory.create(bridgeConfig);
-        PathResult pathResult = pathfinder.findPath(sourceAnchor, targetAnchor, cache);
+        // Step 2: For bridges, draw a STRAIGHT LINE between anchors (no A* zigzag through water)
+        List<BlockPos> straightPath = buildStraightPath(sourceAnchor, targetAnchor, cache);
 
-        if (!pathResult.success()) {
-            return BridgePlanResult.failure("Bridge pathfinding failed: " + pathResult.failureReason());
+        if (straightPath.isEmpty()) {
+            return BridgePlanResult.failure("Bridge straight path generation failed");
         }
 
-        // Step 3: Post-process path
+        // Step 3: Detect bridge spans on the straight path
         PathPostProcessor postProcessor = new PathPostProcessor();
         PathPostProcessor.ProcessedPath processed = postProcessor.process(
-            pathResult.path(), cache, config.getBridge().getBridgeMinWaterDepth());
+            straightPath, cache, config.getBridge().getBridgeMinWaterDepth());
 
-        if (processed.path().isEmpty()) {
-            return BridgePlanResult.failure("Bridge path post-processing produced empty path");
-        }
+        List<BlockPos> finalPath = processed.path().isEmpty() ? straightPath : processed.path();
 
         // Step 4: Classify spans and build
         List<BridgeSpan> spans = processed.bridgeSpans();
         if (spans.isEmpty()) {
-            // Try to detect canyon/void spans too
-            spans = detectCanyonSpans(processed.path(), cache);
+            spans = detectCanyonSpans(finalPath, cache);
         }
 
         RoadBuilder roadBuilder = new RoadBuilder(config);
-        RoadData roadData = roadBuilder.buildRoad("bridge", processed.path(), width, cache);
+        RoadData roadData = roadBuilder.buildRoad("bridge", finalPath, width, cache);
 
-        return new BridgePlanResult(true, null, processed.path(), spans, roadData.buildSteps(), roadData);
+        return new BridgePlanResult(true, null, finalPath, spans, roadData.buildSteps(), roadData);
+    }
+
+    private List<BlockPos> buildStraightPath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {
+        List<BlockPos> path = new ArrayList<>();
+        int x0 = from.getX(), z0 = from.getZ();
+        int x1 = to.getX(), z1 = to.getZ();
+        int dx = Math.abs(x1 - x0), dz = Math.abs(z1 - z0);
+        int sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1;
+        int err = dx - dz;
+
+        while (true) {
+            int y = cache.getHeight(x0, z0);
+            path.add(new BlockPos(x0, y, z0));
+            if (x0 == x1 && z0 == z1) break;
+            int e2 = 2 * err;
+            if (e2 > -dz) { err -= dz; x0 += sx; }
+            if (e2 < dx) { err += dx; z0 += sz; }
+        }
+        return path;
     }
 
     /**
