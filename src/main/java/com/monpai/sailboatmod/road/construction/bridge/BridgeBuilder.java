@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.road.construction.bridge;
 
 import com.monpai.sailboatmod.road.config.BridgeConfig;
 import com.monpai.sailboatmod.road.model.*;
+import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 
@@ -28,10 +29,16 @@ public class BridgeBuilder {
 
     public List<BuildStep> build(BridgeSpan span, List<BlockPos> centerPath,
                                   int width, RoadMaterial material, int startOrder) {
+        return build(span, centerPath, width, material, startOrder, null);
+    }
+
+    public List<BuildStep> build(BridgeSpan span, List<BlockPos> centerPath,
+                                  int width, RoadMaterial material, int startOrder,
+                                  TerrainSamplingCache cache) {
         if (!requiresPiersForLength(span.length())) {
             return buildShortSpan(span, centerPath, width, material, startOrder);
         }
-        return buildPierBridge(span, centerPath, width, material, startOrder);
+        return buildPierBridge(span, centerPath, width, material, startOrder, cache);
     }
 
     public static boolean requiresPiersForLengthForTest(int spanLength) {
@@ -61,7 +68,8 @@ public class BridgeBuilder {
     }
 
     private List<BuildStep> buildPierBridge(BridgeSpan span, List<BlockPos> centerPath,
-                                            int width, RoadMaterial material, int startOrder) {
+                                            int width, RoadMaterial material, int startOrder,
+                                            TerrainSamplingCache cache) {
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
         int deckY = span.waterSurfaceY() + config.getDeckHeight();
@@ -69,18 +77,25 @@ public class BridgeBuilder {
         BlockPos entryPos = centerPath.get(span.startIndex());
         BlockPos exitPos = centerPath.get(span.endIndex());
         Direction roadDir = BridgeDeckPlacer.getDirection(centerPath, span.startIndex());
-        int entryY = entryPos.getY();
-        int exitY = exitPos.getY();
+
+        // Use actual terrain height at shore positions instead of path Y
+        int entryY = cache != null
+                ? cache.getHeight(entryPos.getX(), entryPos.getZ())
+                : entryPos.getY();
+        int exitY = cache != null
+                ? cache.getHeight(exitPos.getX(), exitPos.getZ())
+                : exitPos.getY();
 
         // 1. Entry platform (at land level, just before water)
+        BlockPos entryAtTerrain = new BlockPos(entryPos.getX(), entryY, entryPos.getZ());
         List<BuildStep> entryPlatform = platformBuilder.buildPlatform(
-            entryPos, roadDir, width, material, order);
+            entryAtTerrain, roadDir, width, material, order);
         steps.addAll(entryPlatform);
         order += entryPlatform.size();
 
-        // 2. Ascending ramp (from entry land level up to deckY)
-        int rampLength = (deckY - entryY) * 2; // 2 slab steps per block height
-        BlockPos rampStart = entryPos.relative(roadDir, config.getPlatformLength());
+        // 2. Ascending ramp (from entry shore level up to deckY)
+        int rampLength = Math.max(1, (deckY - entryY) * 2); // 2 slab steps per block height
+        BlockPos rampStart = entryAtTerrain.relative(roadDir, config.getPlatformLength());
         List<BuildStep> ascRamp = rampBuilder.buildAscendingRamp(
             rampStart, roadDir, entryY, deckY, width, material, order);
         steps.addAll(ascRamp);
@@ -103,8 +118,8 @@ public class BridgeBuilder {
             order += deck.size();
         }
 
-        // 5. Descending ramp (from deckY down to exit land level)
-        int descRampLength = (deckY - exitY) * 2;
+        // 5. Descending ramp (from deckY down to exit shore level)
+        int descRampLength = Math.max(1, (deckY - exitY) * 2);
         int descStartIdx = Math.max(span.startIndex(), span.endIndex() - descRampLength - config.getPlatformLength());
         BlockPos descStart = centerPath.get(descStartIdx).atY(deckY);
         Direction exitDir = BridgeDeckPlacer.getDirection(centerPath, span.endIndex());
@@ -113,9 +128,10 @@ public class BridgeBuilder {
         steps.addAll(descRamp);
         order += descRamp.size();
 
-        // 6. Exit platform
+        // 6. Exit platform (at terrain level)
+        BlockPos exitAtTerrain = new BlockPos(exitPos.getX(), exitY, exitPos.getZ());
         List<BuildStep> exitPlatform = platformBuilder.buildPlatform(
-            exitPos, exitDir, width, material, order);
+            exitAtTerrain, exitDir, width, material, order);
         steps.addAll(exitPlatform);
         order += exitPlatform.size();
 

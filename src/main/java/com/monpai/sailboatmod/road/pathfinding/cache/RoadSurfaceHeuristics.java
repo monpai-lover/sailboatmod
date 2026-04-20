@@ -33,6 +33,20 @@ public final class RoadSurfaceHeuristics {
                 || state.is(Blocks.BROWN_MUSHROOM_BLOCK)
                 || state.is(Blocks.RED_MUSHROOM)
                 || state.is(Blocks.BROWN_MUSHROOM)
+                || state.is(Blocks.BIG_DRIPLEAF)
+                || state.is(Blocks.BIG_DRIPLEAF_STEM)
+                || state.is(Blocks.SMALL_DRIPLEAF)
+                || state.is(Blocks.CAVE_VINES)
+                || state.is(Blocks.CAVE_VINES_PLANT)
+                || state.is(Blocks.HANGING_ROOTS)
+                || state.is(Blocks.MOSS_CARPET)
+                || state.is(Blocks.SPORE_BLOSSOM)
+                || state.is(Blocks.GLOW_LICHEN)
+                || state.is(Blocks.SCULK_VEIN)
+                || state.is(Blocks.MANGROVE_ROOTS)
+                || state.is(Blocks.MANGROVE_PROPAGULE)
+                || state.is(Blocks.AZALEA)
+                || state.is(Blocks.FLOWERING_AZALEA)
                 || state.is(BlockTags.REPLACEABLE);
     }
 

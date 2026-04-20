@@ -88,7 +88,7 @@ public class RoadPlannerConfigScreen extends Screen {
                 b -> confirm()
         ).bounds(left + 14, btnY, 80, 18).build());
         this.addRenderableWidget(Button.builder(
-                Component.translatable("screen.sailboatmod.route_name.cancel"),
+                Component.translatable("screen.sailboatmod.road_planner.config.cancel"),
                 b -> onClose()
         ).bounds(left + SCREEN_W - 74, btnY, 60, 18).build());
     }

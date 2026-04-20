@@ -1514,4 +1514,13 @@
     ,"command.sailboatmod.nation.office.info.entry": "%s (%s) | Priority %s | Permissions %s"
     ,"item.sailboatmod.structure.school": "School"
     ,"item.sailboatmod.structure.cottage": "Cottage"
+    ,"screen.sailboatmod.road_planner.config.title": "Road Configuration"
+    ,"screen.sailboatmod.road_planner.config.width_label": "Road Width"
+    ,"screen.sailboatmod.road_planner.config.material_label": "Material"
+    ,"screen.sailboatmod.road_planner.config.tunnel_label": "Tunnel Mode"
+    ,"screen.sailboatmod.road_planner.config.confirm": "Confirm"
+    ,"screen.sailboatmod.road_planner.config.cancel": "Cancel"
+    ,"screen.sailboatmod.road_planner.config.tunnel_on": "Tunnel: ON"
+    ,"screen.sailboatmod.road_planner.config.tunnel_off": "Tunnel: OFF"
+    ,"message.sailboatmod.road_planner.planning": "Planning route..."
 }

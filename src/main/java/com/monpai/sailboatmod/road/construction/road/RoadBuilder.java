@@ -60,7 +60,7 @@ public class RoadBuilder {
             normalizedPreset, cache.getBiome(centerPath.get(0).getX(), centerPath.get(0).getZ()));
         for (BridgeSpan span : bridgeSpans) {
             List<BuildStep> bridgeSteps = bridgeBuilder.build(
-                span, centerPath, width, defaultMaterial, order);
+                span, centerPath, width, defaultMaterial, order, cache);
             allSteps.addAll(bridgeSteps);
             order += bridgeSteps.size();
         }
