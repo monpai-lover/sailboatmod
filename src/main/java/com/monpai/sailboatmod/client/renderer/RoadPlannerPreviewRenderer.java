@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.registry.ModItems;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
@@ -50,6 +51,9 @@ public final class RoadPlannerPreviewRenderer {
 
         // Phase 1: Render translucent block models (before getting line consumer)
         BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.45F);
         for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
             if (block == null || block.pos() == null || block.state() == null) {
                 continue;
@@ -67,6 +71,8 @@ public final class RoadPlannerPreviewRenderer {
             poseStack.popPose();
         }
         // Flush block rendering before starting lines
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        RenderSystem.disableBlend();
         bufferSource.endBatch();
 
         // Phase 2: Render line wireframes (get line consumer AFTER block rendering is done)

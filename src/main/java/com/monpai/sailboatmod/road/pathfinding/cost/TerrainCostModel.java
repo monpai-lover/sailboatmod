@@ -8,7 +8,7 @@ public class TerrainCostModel {
     private static final double ORTHO_STEP = 1.0;
     private static final double DIAG_STEP = 1.414;
     private static final double WATER_BIOME_COST = 12.0;
-    private static final double WATER_COLUMN_BASE_PENALTY = 800.0;
+    private static final double WATER_COLUMN_BASE_PENALTY = 80.0;
     private static final double WATER_DEPTH_SQUARED_WEIGHT = 2.0;
     public static final double SLOPE_SOFT_THRESHOLD = 0.5;
     public static final double SLOPE_HARD_THRESHOLD = 0.8;

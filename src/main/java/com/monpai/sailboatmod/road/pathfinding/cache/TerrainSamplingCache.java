@@ -45,8 +45,13 @@ public class TerrainSamplingCache {
     public boolean isWater(int x, int z) {
         return waterCache.computeIfAbsent(key(x, z), k -> {
             int surfaceY = getHeight(x, z);
-            BlockState above = level.getBlockState(new BlockPos(x, surfaceY + 1, z));
-            return above.is(Blocks.WATER);
+            // Check multiple positions for water (surface may be ocean floor)
+            for (int dy = 0; dy <= 3; dy++) {
+                BlockState state = level.getBlockState(new BlockPos(x, surfaceY + dy, z));
+                if (state.is(Blocks.WATER)) return true;
+            }
+            // Also check if biome is ocean/river and water exists at sea level
+            return isWaterBiome(x, z) && level.getBlockState(new BlockPos(x, level.getSeaLevel(), z)).is(Blocks.WATER);
         });
     }
 

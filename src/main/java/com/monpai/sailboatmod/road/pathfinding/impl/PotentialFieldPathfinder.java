@@ -38,9 +38,9 @@ public class PotentialFieldPathfinder implements Pathfinder {
         int goalZ = end.getZ();
         int startX = start.getX();
         int startZ = start.getZ();
-        // Search buffer: limit search to within min(1024, manhattan/3) of the start-end line
+        // Search buffer: don't limit search area so island paths can route through water
         int manhattan = Math.abs(goalX - startX) + Math.abs(goalZ - startZ);
-        int searchBuffer = Math.min(1024, manhattan / 3);
+        int searchBuffer = Integer.MAX_VALUE;
 
         // Goal direction for contour computation
         double goalDirX = goalX - startX;
