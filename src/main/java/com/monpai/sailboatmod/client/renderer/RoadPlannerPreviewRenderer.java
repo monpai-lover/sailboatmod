@@ -46,15 +46,14 @@ public final class RoadPlannerPreviewRenderer {
 
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
-        VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
         Vec3 cameraPos = event.getCamera().getPosition();
 
+        // Phase 1: Render translucent block models (before getting line consumer)
+        BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
         for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
-            if (block == null || block.pos() == null) {
+            if (block == null || block.pos() == null || block.state() == null) {
                 continue;
             }
-            BlockState ghostBlockState = block.state();
-            BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
             poseStack.pushPose();
             poseStack.translate(
                     block.pos().getX() - cameraPos.x,
@@ -62,11 +61,21 @@ public final class RoadPlannerPreviewRenderer {
                     block.pos().getZ() - cameraPos.z
             );
             try {
-                blockRenderer.renderSingleBlock(ghostBlockState, poseStack, bufferSource,
+                blockRenderer.renderSingleBlock(block.state(), poseStack, bufferSource,
                         LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY);
             } catch (Exception ignored) {}
             poseStack.popPose();
+        }
+        // Flush block rendering before starting lines
+        bufferSource.endBatch();
 
+        // Phase 2: Render line wireframes (get line consumer AFTER block rendering is done)
+        VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
+
+        for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
+            if (block == null || block.pos() == null) {
+                continue;
+            }
             renderBlockBox(
                     poseStack,
                     lineConsumer,
