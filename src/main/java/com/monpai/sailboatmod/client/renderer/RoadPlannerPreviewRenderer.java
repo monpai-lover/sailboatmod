@@ -51,9 +51,14 @@ public final class RoadPlannerPreviewRenderer {
 
         // Phase 1: Render translucent block models (before getting line consumer)
         BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
+        // Wrap bufferSource to force all block renders through translucent render type
+        MultiBufferSource translucentSource = renderType -> {
+            // Redirect all render types to translucent so blocks get alpha blending
+            return bufferSource.getBuffer(RenderType.translucent());
+        };
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.45F);
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
         for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
             if (block == null || block.pos() == null || block.state() == null) {
                 continue;
@@ -65,15 +70,15 @@ public final class RoadPlannerPreviewRenderer {
                     block.pos().getZ() - cameraPos.z
             );
             try {
-                blockRenderer.renderSingleBlock(block.state(), poseStack, bufferSource,
+                blockRenderer.renderSingleBlock(block.state(), poseStack, translucentSource,
                         LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY);
             } catch (Exception ignored) {}
             poseStack.popPose();
         }
-        // Flush block rendering before starting lines
+        // Flush translucent batch then restore state
+        bufferSource.endBatch(RenderType.translucent());
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
         RenderSystem.disableBlend();
-        bufferSource.endBatch();
 
         // Phase 2: Render line wireframes (get line consumer AFTER block rendering is done)
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
