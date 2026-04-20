@@ -16,10 +16,10 @@ public class RoadPlannerConfigScreen extends Screen {
     private static final int[] WIDTH_OPTIONS = {3, 5, 7};
     private static final String[] MATERIAL_OPTIONS = {"auto", "stone_brick", "sandstone", "cobblestone"};
     private static final Component[] MATERIAL_LABELS = {
-            Component.translatable("screen.sailboatmod.road_planner.config.mat.auto"),
-            Component.translatable("screen.sailboatmod.road_planner.config.mat.stone_brick"),
-            Component.translatable("screen.sailboatmod.road_planner.config.mat.sandstone"),
-            Component.translatable("screen.sailboatmod.road_planner.config.mat.cobblestone")
+            Component.literal("Auto"),
+            Component.literal("Stone Brick"),
+            Component.literal("Sandstone"),
+            Component.literal("Cobblestone")
     };
 
     private int selectedWidth = 3;

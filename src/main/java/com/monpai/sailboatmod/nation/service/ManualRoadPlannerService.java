@@ -275,10 +275,16 @@ public final class ManualRoadPlannerService {
             return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
         }
         markPlanningPending(stack, true);
+        long requestId = MANUAL_PLANNING_REQUEST_IDS.incrementAndGet();
+        PlanningRouteNames routeNames = resolvePlanningRouteNames(player, stack);
+        sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
+                PlanningStage.PREPARING, 0, SyncManualRoadPlanningProgressPacket.Status.RUNNING);
         CompletableFuture.supplyAsync(() -> buildPlanCandidates(player, stack))
             .thenAcceptAsync(candidates -> {
                 markPlanningPending(stack, false);
                 if (candidates.isEmpty()) {
+                    sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
+                            PlanningStage.BUILDING_PREVIEW, 0, SyncManualRoadPlanningProgressPacket.Status.FAILED);
                     clearPreviewState(stack);
                     sendPreviewClear(player);
                     player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.path_failed"));
@@ -286,11 +292,15 @@ public final class ManualRoadPlannerService {
                 }
                 PlanCandidate candidate = selectPlanCandidate(stack, candidates);
                 if (candidate == null) {
+                    sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
+                            PlanningStage.BUILDING_PREVIEW, 0, SyncManualRoadPlanningProgressPacket.Status.FAILED);
                     clearPreviewState(stack);
                     sendPreviewClear(player);
                     player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.path_failed"));
                     return;
                 }
+                sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
+                        PlanningStage.BUILDING_PREVIEW, 100, SyncManualRoadPlanningProgressPacket.Status.SUCCESS);
                 READY_PREVIEWS.put(player.getUUID(), new PlannedPreviewState(candidate.targetTown().townId(), candidates, ""));
                 sendPlanningResult(player, READY_PREVIEWS.get(player.getUUID()), candidate.optionId());
             }, player.server);

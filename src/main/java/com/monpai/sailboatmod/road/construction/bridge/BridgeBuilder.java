@@ -11,6 +11,7 @@ import java.util.List;
 
 public class BridgeBuilder {
     private static final int SHORT_SPAN_WITHOUT_PIERS_LIMIT = 8;
+    private static final int SEA_LEVEL = 63;
     private final BridgeConfig config;
     private final BridgePierBuilder pierBuilder;
     private final BridgeDeckPlacer deckPlacer;
@@ -54,7 +55,7 @@ public class BridgeBuilder {
                                            int width,
                                            RoadMaterial material,
                                            int startOrder) {
-        int deckY = span.waterSurfaceY() + config.getDeckHeight();
+        int deckY = Math.max(span.waterSurfaceY(), SEA_LEVEL) + config.getDeckHeight();
         List<BlockPos> bridgePath = centerPath.subList(span.startIndex(), span.endIndex() + 1);
         if (bridgePath.isEmpty()) {
             return List.of();
@@ -72,7 +73,7 @@ public class BridgeBuilder {
                                             TerrainSamplingCache cache) {
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
-        int deckY = span.waterSurfaceY() + config.getDeckHeight();
+        int deckY = Math.max(span.waterSurfaceY(), SEA_LEVEL) + config.getDeckHeight();
 
         BlockPos entryPos = centerPath.get(span.startIndex());
         BlockPos exitPos = centerPath.get(span.endIndex());
