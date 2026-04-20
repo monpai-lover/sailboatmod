@@ -16,7 +16,8 @@ public class AccurateHeightSampler {
         for (int y = level.getMaxBuildHeight(); y >= level.getMinBuildHeight(); y--) {
             BlockState state = level.getBlockState(new BlockPos(x, y, z));
             if (!state.isAir() && !state.getFluidState().is(Fluids.WATER)
-                    && !state.getFluidState().is(Fluids.FLOWING_WATER)) {
+                    && !state.getFluidState().is(Fluids.FLOWING_WATER)
+                    && !FastHeightSampler.isVegetationOrDestructible(state)) {
                 return y;
             }
         }

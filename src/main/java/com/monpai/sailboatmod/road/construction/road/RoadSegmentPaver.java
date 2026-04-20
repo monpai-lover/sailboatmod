@@ -18,6 +18,7 @@ import java.util.List;
 
 public class RoadSegmentPaver {
     private static final int MAX_FOUNDATION_DEPTH = 3;
+    private static final int CLEAR_HEIGHT = 4;
 
     private final BiomeMaterialSelector materialSelector;
 
@@ -47,6 +48,17 @@ public class RoadSegmentPaver {
                 int surfaceY = cache.getHeight(wx, wz);
                 BlockPos pos = new BlockPos(wx, surfaceY, wz);
 
+                // Clear obstacles above road surface
+                for (int h = 1; h <= CLEAR_HEIGHT; h++) {
+                    steps.add(new BuildStep(order++, pos.above(h), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+                }
+
+                // Convert grass to dirt below
+                for (int d = 1; d <= 2; d++) {
+                    steps.add(new BuildStep(order++, pos.below(d), Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
+                }
+
+                // Foundation fill
                 for (int d = 1; d <= MAX_FOUNDATION_DEPTH; d++) {
                     BlockPos below = pos.below(d);
                     steps.add(new BuildStep(order++, below, Blocks.COBBLESTONE.defaultBlockState(), BuildPhase.FOUNDATION));
