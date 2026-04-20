@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client;
 
+import com.monpai.sailboatmod.client.screen.RoadPlannerConfigScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerOptionSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
@@ -35,6 +36,13 @@ public final class RoadPlannerClientHooks {
         }
     }
 
+    public record BridgeRange(int startIndex, int endIndex) {
+        public BridgeRange {
+            startIndex = Math.max(0, startIndex);
+            endIndex = Math.max(startIndex, endIndex);
+        }
+    }
+
     public record PreviewState(String sourceTownName,
                                String targetTownName,
                                List<PreviewGhostBlock> ghostBlocks,
@@ -45,7 +53,8 @@ public final class RoadPlannerClientHooks {
                                BlockPos focusPos,
                                boolean awaitingConfirmation,
                                List<PreviewOption> options,
-                               String selectedOptionId) {
+                               String selectedOptionId,
+                               List<BridgeRange> bridgeRanges) {
         public PreviewState {
             ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
             pathNodes = immutablePositions(pathNodes);
@@ -55,6 +64,7 @@ public final class RoadPlannerClientHooks {
             focusPos = immutable(focusPos);
             options = options == null ? List.of() : List.copyOf(options);
             selectedOptionId = selectedOptionId == null ? "" : selectedOptionId;
+            bridgeRanges = bridgeRanges == null ? List.of() : List.copyOf(bridgeRanges);
         }
     }
 

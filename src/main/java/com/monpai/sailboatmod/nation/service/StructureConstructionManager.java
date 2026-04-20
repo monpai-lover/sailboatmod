@@ -14,6 +14,13 @@ import com.monpai.sailboatmod.construction.RoadLegacyJobRebuilder;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.construction.RoadTerrainShaper;
 import com.monpai.sailboatmod.construction.RuntimeRoadGhostWindow;
+import com.monpai.sailboatmod.road.config.RoadConfig;
+import com.monpai.sailboatmod.road.construction.road.RoadBuilder;
+import com.monpai.sailboatmod.road.model.BridgeSpan;
+import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.road.model.RoadData;
+import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
+import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -1518,38 +1525,51 @@ public final class StructureConstructionManager {
                 centerPath == null ? List.of() : centerPath,
                 collectCoreExclusionColumns(level)
         );
-        List<RoadPlacementPlan.BridgeRange> bridgeRanges = trimmedCenterPath.isEmpty()
-                ? List.of()
-                : detectBridgeRanges(level, trimmedCenterPath);
-        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = trimmedCenterPath.isEmpty()
-                ? List.of()
-                : detectNavigableWaterBridgeRanges(level, trimmedCenterPath, bridgeRanges);
-        List<RoadPlacementPlan.BridgeRange> constructionBridgeRanges = trimmedCenterPath.isEmpty()
-                ? List.of()
-                : expandBridgeConstructionRanges(level, trimmedCenterPath, bridgeRanges, navigableWaterBridgeRanges);
-        RoadCorridorPlan corridorPlan = createRoadCorridorPlan(level, trimmedCenterPath, constructionBridgeRanges, navigableWaterBridgeRanges);
         if (trimmedCenterPath.isEmpty()) {
-            return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
+            RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(List.of());
+            return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor,
+                    targetBoundaryAnchor, targetInternalAnchor,
                     List.of(), List.of(), List.of(), List.of(), List.of(), null, null, null, corridorPlan);
         }
-        RoadPlacementArtifacts artifacts = filterCoreExcludedArtifacts(
-                buildRoadPlacementArtifacts(level, corridorPlan),
-                collectCoreExclusionColumns(level)
-        );
+
+        // Use new road system
+        RoadConfig roadConfig = new RoadConfig();
+        TerrainSamplingCache cache =
+            new TerrainSamplingCache(level, roadConfig.getPathfinding().getSamplingPrecision());
+        PathPostProcessor postProcessor = new PathPostProcessor();
+        PathPostProcessor.ProcessedPath processed =
+            postProcessor.process(trimmedCenterPath, cache, roadConfig.getBridge().getBridgeMinWaterDepth());
+
+        RoadBuilder roadBuilder = new RoadBuilder(roadConfig);
+        RoadData roadData = roadBuilder.buildRoad("manual", processed.path(), roadConfig.getAppearance().getDefaultWidth(), cache);
+
+        // Convert new types to old types
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new ArrayList<>();
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
+        List<BlockPos> ownedBlocks = new ArrayList<>();
+        for (BuildStep step : roadData.buildSteps()) {
+            ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state()));
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(step.order(), step.pos(), step.state(),
+                RoadGeometryPlanner.RoadBuildPhase.SURFACE));
+            ownedBlocks.add(step.pos());
+        }
+
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();
+        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = new ArrayList<>();
+        for (BridgeSpan span : roadData.bridgeSpans()) {
+            bridgeRanges.add(new RoadPlacementPlan.BridgeRange(span.startIndex(), span.endIndex()));
+            navigableWaterBridgeRanges.add(new RoadPlacementPlan.BridgeRange(span.startIndex(), span.endIndex()));
+        }
+
+        RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(processed.path());
+
         return new RoadPlacementPlan(
-                trimmedCenterPath,
-                sourceInternalAnchor,
-                sourceBoundaryAnchor,
-                targetBoundaryAnchor,
-                targetInternalAnchor,
-                artifacts.ghostBlocks(),
-                artifacts.buildSteps(),
-                constructionBridgeRanges,
-                navigableWaterBridgeRanges,
-                artifacts.ownedBlocks(),
-                artifacts.buildSteps().isEmpty() ? null : highlightPos(sourceBoundaryAnchor, trimmedCenterPath, true),
-                artifacts.buildSteps().isEmpty() ? null : highlightPos(targetBoundaryAnchor, trimmedCenterPath, false),
-                artifacts.buildSteps().isEmpty() ? null : resolveRoadPlanFocusPos(trimmedCenterPath, artifacts.ghostBlocks()),
+                processed.path(),
+                sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
+                ghostBlocks, buildSteps, bridgeRanges, navigableWaterBridgeRanges, ownedBlocks,
+                highlightPos(sourceBoundaryAnchor, processed.path(), true),
+                highlightPos(targetBoundaryAnchor, processed.path(), false),
+                resolveRoadPlanFocusPos(processed.path(), ghostBlocks),
                 corridorPlan
         );
     }
@@ -5725,5 +5745,19 @@ public final class StructureConstructionManager {
                 existingClaim.entityDamageAccessLevel(),
                 existingClaim.claimedAt()
         ));
+    }
+
+    static boolean isIsland(ServerLevel level, BlockPos pos) {
+        int waterCount = 0, total = 0;
+        for (int dx = -32; dx <= 32; dx += 8) {
+            for (int dz = -32; dz <= 32; dz += 8) {
+                total++;
+                int y = level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX() + dx, pos.getZ() + dz);
+                if (level.getBlockState(new BlockPos(pos.getX() + dx, y, pos.getZ() + dz)).is(Blocks.WATER)) {
+                    waterCount++;
+                }
+            }
+        }
+        return waterCount > total / 2;
     }
 }

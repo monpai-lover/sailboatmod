@@ -9,11 +9,15 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
@@ -49,6 +53,20 @@ public final class RoadPlannerPreviewRenderer {
             if (block == null || block.pos() == null) {
                 continue;
             }
+            BlockState ghostBlockState = block.state();
+            BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
+            poseStack.pushPose();
+            poseStack.translate(
+                    block.pos().getX() - cameraPos.x,
+                    block.pos().getY() - cameraPos.y,
+                    block.pos().getZ() - cameraPos.z
+            );
+            try {
+                blockRenderer.renderSingleBlock(ghostBlockState, poseStack, bufferSource,
+                        LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY);
+            } catch (Exception ignored) {}
+            poseStack.popPose();
+
             renderBlockBox(
                     poseStack,
                     lineConsumer,
@@ -65,21 +83,26 @@ public final class RoadPlannerPreviewRenderer {
             );
         }
         List<BlockPos> pathNodes = preview.pathNodes();
+        List<RoadPlannerClientHooks.BridgeRange> bridgeRanges = preview.bridgeRanges();
         for (int i = 1; i < pathNodes.size(); i++) {
             BlockPos from = pathNodes.get(i - 1);
             BlockPos to = pathNodes.get(i);
             if (from == null || to == null) {
                 continue;
             }
+            boolean isBridge = isInBridgeRange(i - 1, bridgeRanges);
+            float segR = isBridge ? 0.3F : 0.2F;
+            float segG = isBridge ? 0.6F : 0.9F;
+            float segB = isBridge ? 1.0F : 0.3F;
             renderPathSegmentBox(
                     poseStack,
                     lineConsumer,
                     from,
                     to,
                     cameraPos,
-                    0.86F,
-                    0.94F,
-                    1.0F,
+                    segR,
+                    segG,
+                    segB,
                     0.95F,
                     0.08D
             );
@@ -211,6 +234,18 @@ public final class RoadPlannerPreviewRenderer {
     private static boolean isHoldingPlanner(Player player) {
         return player.getMainHandItem().is(ModItems.ROAD_PLANNER_ITEM.get())
                 || player.getOffhandItem().is(ModItems.ROAD_PLANNER_ITEM.get());
+    }
+
+    private static boolean isInBridgeRange(int nodeIndex, List<RoadPlannerClientHooks.BridgeRange> bridgeRanges) {
+        if (bridgeRanges == null || bridgeRanges.isEmpty()) {
+            return false;
+        }
+        for (RoadPlannerClientHooks.BridgeRange range : bridgeRanges) {
+            if (nodeIndex >= range.startIndex() && nodeIndex <= range.endIndex()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void renderBlockBox(PoseStack poseStack,

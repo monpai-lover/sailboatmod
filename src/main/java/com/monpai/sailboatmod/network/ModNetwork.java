@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket;
 import com.monpai.sailboatmod.network.packet.CloseClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
@@ -516,6 +517,13 @@ public final class ModNetwork {
                 UseBuilderHammerPacket::encode,
                 UseBuilderHammerPacket::decode,
                 UseBuilderHammerPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                ConfigureRoadPlannerPacket.class,
+                ConfigureRoadPlannerPacket::encode,
+                ConfigureRoadPlannerPacket::decode,
+                ConfigureRoadPlannerPacket::handle
         );
     }
 

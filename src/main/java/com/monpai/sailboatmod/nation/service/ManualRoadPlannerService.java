@@ -82,8 +82,27 @@ public final class ManualRoadPlannerService {
     private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
     private static final Map<UUID, PlannedPreviewState> READY_PREVIEWS = new ConcurrentHashMap<>();
     private static final AtomicLong MANUAL_PLANNING_REQUEST_IDS = new AtomicLong();
+    private static final Map<UUID, com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket> PLAYER_ROAD_CONFIGS = new ConcurrentHashMap<>();
 
     private ManualRoadPlannerService() {
+    }
+
+    public static void applyRoadConfig(ServerPlayer player, com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket config) {
+        if (player == null || config == null) {
+            return;
+        }
+        int w = config.width();
+        if (w != 3 && w != 5 && w != 7) {
+            w = 3;
+        }
+        PLAYER_ROAD_CONFIGS.put(player.getUUID(), new com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket(
+                w, config.algorithm(), config.materialPreset(), config.tunnelEnabled()));
+        LOGGER.debug("Road config applied for {}: width={}, material={}, tunnel={}",
+                player.getName().getString(), w, config.materialPreset(), config.tunnelEnabled());
+    }
+
+    public static com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket getRoadConfig(UUID playerId) {
+        return PLAYER_ROAD_CONFIGS.get(playerId);
     }
 
     enum PlannerMode {
@@ -2083,7 +2102,7 @@ public final class ManualRoadPlannerService {
     private static void sendPreviewClear(ServerPlayer player) {
         ModNetwork.CHANNEL.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new SyncRoadPlannerPreviewPacket("", "", List.of(), List.of(), 0, null, null, null, false, List.of(), "")
+                new SyncRoadPlannerPreviewPacket("", "", List.of(), List.of(), 0, null, null, null, false, List.of(), "", List.of())
         );
     }
 

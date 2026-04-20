@@ -24,7 +24,8 @@ class RoadPlannerClientHooksTest {
                 null,
                 false,
                 List.of(),
-                ""
+                "",
+                List.of()
         ));
 
         RoadPlannerClientHooks.clearPreview();
@@ -60,7 +61,8 @@ class RoadPlannerClientHooksTest {
                         new RoadPlannerClientHooks.PreviewOption("detour", "Detour", 28, false),
                         new RoadPlannerClientHooks.PreviewOption("bridge", "Bridge", 17, true)
                 ),
-                "bridge"
+                "bridge",
+                List.of()
         ));
 
         RoadPlannerClientHooks.PreviewState preview = RoadPlannerClientHooks.previewState();
