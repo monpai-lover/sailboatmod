@@ -410,7 +410,7 @@ public final class ManualRoadPlannerService {
         List<PlanCandidate> candidates = new ArrayList<>();
         PlanCandidate landCandidate = buildPlanCandidate(level, sourceTown, targetTown,
                 sourceClaims, targetClaims, blockedColumns, excludedColumns, data, roadId,
-                PreviewOptionKind.DETOUR, false, null);
+                PreviewOptionKind.DETOUR, false, null, player.blockPosition());
         if (landCandidate != null) {
             candidates.add(landCandidate);
         }
@@ -419,7 +419,7 @@ public final class ManualRoadPlannerService {
         }
         PlanCandidate bridgeCandidate = buildPlanCandidate(level, sourceTown, targetTown,
                 sourceClaims, targetClaims, blockedColumns, excludedColumns, data, roadId,
-                PreviewOptionKind.BRIDGE, true, null);
+                PreviewOptionKind.BRIDGE, true, null, player.blockPosition());
         if (bridgeCandidate != null) {
             candidates.add(bridgeCandidate);
         }
@@ -440,8 +440,11 @@ public final class ManualRoadPlannerService {
                                                     String manualRoadId,
                                                     PreviewOptionKind optionKind,
                                                     boolean allowWaterFallback,
-                                                    Object planningContext) {
-        BlockPos sourceAnchor = resolveTownAnchor(level, data, sourceTown, sourceClaims,
+                                                    Object planningContext,
+                                                    BlockPos playerPos) {
+        // Use player position as source anchor instead of guessing town anchor
+        BlockPos sourceAnchor = playerPos != null ? playerPos
+                : resolveTownAnchor(level, data, sourceTown, sourceClaims,
                 townCorePos(level, sourceTown), townCorePos(level, targetTown), excludedColumns, allowWaterFallback);
         BlockPos targetAnchor = resolveTownAnchor(level, data, targetTown, targetClaims,
                 townCorePos(level, targetTown), townCorePos(level, sourceTown), excludedColumns, allowWaterFallback);
