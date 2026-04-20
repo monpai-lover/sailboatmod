@@ -20,22 +20,29 @@ public class BridgeRangeDetector {
         int start = -1;
         int waterSurfaceY = 0;
         int oceanFloorY = 0;
+        int deckY = 0;
 
         for (int i = 0; i < centerPath.size(); i++) {
             BlockPos p = centerPath.get(i);
             boolean isWater = cache.isWater(p.getX(), p.getZ())
                     && cache.getWaterDepth(p.getX(), p.getZ()) >= config.getBridgeMinWaterDepth();
-            int supportY = isWater ? cache.getOceanFloor(p.getX(), p.getZ()) : cache.getHeight(p.getX(), p.getZ());
-            boolean isElevatedGap = (p.getY() - supportY) >= config.getDeckHeight();
-            boolean isBridgeColumn = isWater || isElevatedGap;
+            int terrainH = cache.getHeight(p.getX(), p.getZ());
 
-            if (isBridgeColumn && start == -1) {
+            if (isWater && start == -1) {
+                // Start bridge span
                 start = i;
-                waterSurfaceY = isWater ? cache.getWaterSurfaceY(p.getX(), p.getZ()) : supportY;
-                oceanFloorY = supportY;
-            } else if (!isBridgeColumn && start != -1) {
-                raw.add(new BridgeSpan(start, i - 1, waterSurfaceY, oceanFloorY));
-                start = -1;
+                waterSurfaceY = cache.getWaterSurfaceY(p.getX(), p.getZ());
+                oceanFloorY = cache.getOceanFloor(p.getX(), p.getZ());
+                deckY = Math.max(waterSurfaceY, 63) + config.getDeckHeight();
+            } else if (!isWater && start != -1) {
+                // Land encountered - only end bridge if terrain is near deck height
+                // If terrain is much lower than deck, keep bridging (we're over a valley/low shore)
+                if (terrainH >= deckY - 5) {
+                    // Terrain is close to deck height - end bridge here
+                    raw.add(new BridgeSpan(start, i - 1, waterSurfaceY, oceanFloorY));
+                    start = -1;
+                }
+                // Otherwise keep the bridge going over this low land
             }
         }
         if (start != -1) {
