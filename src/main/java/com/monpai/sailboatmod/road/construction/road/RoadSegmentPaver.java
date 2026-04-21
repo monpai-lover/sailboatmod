@@ -14,7 +14,9 @@ import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.SlabType;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class RoadSegmentPaver {
     private static final int MAX_FOUNDATION_DEPTH = 3;
@@ -34,6 +36,7 @@ public class RoadSegmentPaver {
         List<BuildStep> steps = new ArrayList<>();
         int halfWidth = width / 2;
         int order = 0;
+        Set<Long> placed = new HashSet<>();
 
         for (int i = 0; i < centerPath.size(); i++) {
             BlockPos center = centerPath.get(i);
@@ -46,11 +49,49 @@ public class RoadSegmentPaver {
             int prevTerrainY = (i > 0) ? cache.getHeight(centerPath.get(i - 1).getX(), centerPath.get(i - 1).getZ()) : terrainY;
             int heightDiff = terrainY - prevTerrainY;
 
+            // Collect positions for this segment (perpendicular expansion)
+            List<int[]> segPositions = new ArrayList<>();
             for (int w = -halfWidth; w <= halfWidth; w++) {
-                int wx = center.getX() + perpDir.getStepX() * w;
-                int wz = center.getZ() + perpDir.getStepZ() * w;
-                int surfaceY = cache.getHeight(wx, wz);
-                BlockPos pos = new BlockPos(wx, surfaceY, wz);
+                segPositions.add(new int[]{center.getX() + perpDir.getStepX() * w, center.getZ() + perpDir.getStepZ() * w});
+            }
+
+            // Fill gap between this segment and previous segment (curve infill)
+            if (i > 0) {
+                BlockPos prev = centerPath.get(i - 1);
+                Direction prevDir = getDirection(centerPath, i - 1);
+                Direction prevPerp = prevDir.getClockWise();
+                for (int w = -halfWidth; w <= halfWidth; w++) {
+                    int px = prev.getX() + prevPerp.getStepX() * w;
+                    int pz = prev.getZ() + prevPerp.getStepZ() * w;
+                    int cx = center.getX() + perpDir.getStepX() * w;
+                    int cz = center.getZ() + perpDir.getStepZ() * w;
+                    // Bresenham between prev edge and current edge to fill gaps
+                    int dx = Math.abs(cx - px), dz = Math.abs(cz - pz);
+                    if (dx > 1 || dz > 1) {
+                        int sx = px < cx ? 1 : -1, sz = pz < cz ? 1 : -1;
+                        int err = dx - dz;
+                        int fx = px, fz = pz;
+                        while (fx != cx || fz != cz) {
+                            long key = ((long) fx << 32) | (fz & 0xFFFFFFFFL);
+                            if (placed.add(key)) {
+                                int sy = cache.getHeight(fx, fz);
+                                segPositions.add(new int[]{fx, fz});
+                            }
+                            int e2 = 2 * err;
+                            if (e2 > -dz) { err -= dz; fx += sx; }
+                            if (e2 < dx) { err += dx; fz += sz; }
+                        }
+                    }
+                }
+            }
+
+            // Place blocks for all positions in this segment
+            for (int[] xz : segPositions) {
+                long key = ((long) xz[0] << 32) | (xz[1] & 0xFFFFFFFFL);
+                if (!placed.add(key)) continue; // Skip duplicates
+
+                int surfaceY = cache.getHeight(xz[0], xz[1]);
+                BlockPos pos = new BlockPos(xz[0], surfaceY, xz[1]);
 
                 // Clear obstacles above road surface
                 for (int h = 1; h <= CLEAR_HEIGHT; h++) {
@@ -80,12 +121,6 @@ public class RoadSegmentPaver {
                     steps.add(new BuildStep(order++, pos, stairState, BuildPhase.SURFACE));
                 } else {
                     steps.add(new BuildStep(order++, pos, material.surface().defaultBlockState(), BuildPhase.SURFACE));
-                }
-
-                if (width >= 5 && (w == -halfWidth || w == halfWidth)) {
-                    BlockState slabState = material.slab().defaultBlockState()
-                        .setValue(SlabBlock.TYPE, SlabType.BOTTOM);
-                    steps.add(new BuildStep(order++, pos, slabState, BuildPhase.SURFACE));
                 }
             }
 
