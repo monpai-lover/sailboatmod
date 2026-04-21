@@ -121,7 +121,11 @@ public class BridgePlanner {
         cfg.setStabilityWeight(0.0);
         Pathfinder pf = PathfinderFactory.create(cfg);
         PathResult r = pf.findPath(from, to, cache);
-        return r.success() ? r.path() : straight;
+        // Only use A* result if it's shorter than 2x the straight line (prevent U-shaped detours)
+        if (r.success() && r.path().size() < straight.size() * 2) {
+            return r.path();
+        }
+        return straight;
     }
 
     private List<BlockPos> buildStraightPath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {
