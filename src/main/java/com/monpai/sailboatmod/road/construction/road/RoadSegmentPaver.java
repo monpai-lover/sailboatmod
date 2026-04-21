@@ -41,6 +41,12 @@ public class RoadSegmentPaver {
         for (int i = 0; i < centerPath.size(); i++) {
             BlockPos center = centerPath.get(i);
             int terrainY = cache.getHeight(center.getX(), center.getZ());
+
+            // Skip water positions — bridges handle these
+            if (cache.isWater(center.getX(), center.getZ())) {
+                continue;
+            }
+
             RoadMaterial material = materialSelector.select(materialPreset, cache.getBiome(center.getX(), center.getZ()));
 
             Direction roadDir = getDirection(centerPath, i);
@@ -149,9 +155,10 @@ public class RoadSegmentPaver {
     }
 
     private Direction getDirection(List<BlockPos> path, int index) {
-        BlockPos curr = path.get(index);
-        BlockPos next = (index < path.size() - 1) ? path.get(index + 1) : path.get(index);
-        BlockPos prev = (index > 0) ? path.get(index - 1) : curr;
+        int lookBack = Math.max(0, index - 4);
+        int lookAhead = Math.min(path.size() - 1, index + 4);
+        BlockPos prev = path.get(lookBack);
+        BlockPos next = path.get(lookAhead);
         int dx = next.getX() - prev.getX();
         int dz = next.getZ() - prev.getZ();
         if (Math.abs(dx) >= Math.abs(dz)) {

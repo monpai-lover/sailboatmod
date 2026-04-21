@@ -63,6 +63,9 @@ public final class RoadPlannerPreviewRenderer {
             if (block == null || block.pos() == null || block.state() == null) {
                 continue;
             }
+            if (block.state().isAir()) {
+                continue;
+            }
             poseStack.pushPose();
             poseStack.translate(
                     block.pos().getX() - cameraPos.x,
@@ -85,6 +88,9 @@ public final class RoadPlannerPreviewRenderer {
 
         for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
             if (block == null || block.pos() == null) {
+                continue;
+            }
+            if (block.state() != null && block.state().isAir()) {
                 continue;
             }
             renderBlockBox(

@@ -34,7 +34,21 @@ public class BridgeRangeDetector {
                 waterSurfaceY = cache.getWaterSurfaceY(p.getX(), p.getZ());
                 oceanFloorY = cache.getOceanFloor(p.getX(), p.getZ());
                 deckY = Math.max(waterSurfaceY, 63) + config.getDeckHeight();
-            } else if (!isWater && start != -1) {
+            }
+
+            // Also detect steep terrain drops (valleys/ravines)
+            if (!isWater && i > 0) {
+                int prevH = cache.getHeight(centerPath.get(i-1).getX(), centerPath.get(i-1).getZ());
+                boolean isSteepDrop = (prevH - terrainH) >= 4;
+                if (isSteepDrop && start == -1) {
+                    start = i;
+                    waterSurfaceY = prevH; // Use the higher terrain as reference
+                    oceanFloorY = terrainH;
+                    deckY = prevH + 3;
+                }
+            }
+
+            if (!isWater && start != -1) {
                 // Land encountered - only end bridge if terrain is near deck height
                 // If terrain is much lower than deck, keep bridging (we're over a valley/low shore)
                 if (terrainH >= deckY - 5) {

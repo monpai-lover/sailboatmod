@@ -42,9 +42,10 @@ public class BridgeDeckPlacer {
     }
 
     public static Direction getDirection(List<BlockPos> path, int index) {
-        BlockPos curr = path.get(index);
-        BlockPos next = (index < path.size() - 1) ? path.get(index + 1) : curr;
-        BlockPos prev = (index > 0) ? path.get(index - 1) : curr;
+        int lookBack = Math.max(0, index - 4);
+        int lookAhead = Math.min(path.size() - 1, index + 4);
+        BlockPos prev = path.get(lookBack);
+        BlockPos next = path.get(lookAhead);
         int dx = next.getX() - prev.getX();
         int dz = next.getZ() - prev.getZ();
         if (Math.abs(dx) >= Math.abs(dz)) return dx >= 0 ? Direction.EAST : Direction.WEST;
