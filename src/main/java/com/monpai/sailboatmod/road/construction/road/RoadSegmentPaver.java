@@ -49,16 +49,47 @@ public class RoadSegmentPaver {
             int prevTerrainY = (i > 0) ? cache.getHeight(centerPath.get(i - 1).getX(), centerPath.get(i - 1).getZ()) : terrainY;
             int heightDiff = terrainY - prevTerrainY;
 
-            // Collect positions: perpendicular expansion + square fill for curve coverage
+            // Collect positions: perpendicular expansion + Bresenham gap fill + acute angle fan
             List<int[]> segPositions = new ArrayList<>();
             // Primary: perpendicular to road direction
             for (int w = -halfWidth; w <= halfWidth; w++) {
                 segPositions.add(new int[]{center.getX() + perpDir.getStepX() * w, center.getZ() + perpDir.getStepZ() * w});
             }
-            // Square fill around center to cover sharp turn inner corners
-            for (int dx = -halfWidth; dx <= halfWidth; dx++) {
-                for (int dz = -halfWidth; dz <= halfWidth; dz++) {
-                    segPositions.add(new int[]{center.getX() + dx, center.getZ() + dz});
+
+            // Bresenham fill between previous and current perpendicular edges
+            if (i > 0) {
+                BlockPos prev = centerPath.get(i - 1);
+                Direction prevDir = getDirection(centerPath, i - 1);
+                Direction prevPerp = prevDir.getClockWise();
+                for (int w = -halfWidth; w <= halfWidth; w++) {
+                    int px = prev.getX() + prevPerp.getStepX() * w;
+                    int pz = prev.getZ() + prevPerp.getStepZ() * w;
+                    int cx = center.getX() + perpDir.getStepX() * w;
+                    int cz = center.getZ() + perpDir.getStepZ() * w;
+                    int ddx = Math.abs(cx - px), ddz = Math.abs(cz - pz);
+                    if (ddx > 1 || ddz > 1) {
+                        int sx = px < cx ? 1 : -1, sz = pz < cz ? 1 : -1;
+                        int err = ddx - ddz;
+                        int fx = px, fz = pz;
+                        while (fx != cx || fz != cz) {
+                            segPositions.add(new int[]{fx, fz});
+                            int e2 = 2 * err;
+                            if (e2 > -ddz) { err -= ddz; fx += sx; }
+                            if (e2 < ddx) { err += ddx; fz += sz; }
+                        }
+                    }
+                }
+
+                // Acute angle detection: if direction changed sharply, fill the inner corner
+                if (prevDir != roadDir) {
+                    // Fill a diamond/circle at the turn point to cover inner corner gaps
+                    for (int dx = -halfWidth; dx <= halfWidth; dx++) {
+                        for (int dz = -halfWidth; dz <= halfWidth; dz++) {
+                            if (Math.abs(dx) + Math.abs(dz) <= halfWidth + 1) {
+                                segPositions.add(new int[]{center.getX() + dx, center.getZ() + dz});
+                            }
+                        }
+                    }
                 }
             }
 

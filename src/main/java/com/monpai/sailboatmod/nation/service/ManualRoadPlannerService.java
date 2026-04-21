@@ -250,6 +250,7 @@ public final class ManualRoadPlannerService {
             if (target.townId().equalsIgnoreCase(selectedTownId)) {
                 stack.getOrCreateTag().putString(TAG_TARGET_TOWN_ID, target.townId());
                 READY_PREVIEWS.remove(player.getUUID());
+                markPlanningPending(stack, false);
                 clearPreviewState(stack);
                 sendPreviewClear(player);
                 return Component.translatable("message.sailboatmod.road_planner.target_selected", displayTownName(target));
