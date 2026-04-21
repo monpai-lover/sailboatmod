@@ -49,39 +49,16 @@ public class RoadSegmentPaver {
             int prevTerrainY = (i > 0) ? cache.getHeight(centerPath.get(i - 1).getX(), centerPath.get(i - 1).getZ()) : terrainY;
             int heightDiff = terrainY - prevTerrainY;
 
-            // Collect positions for this segment (perpendicular expansion)
+            // Collect positions: perpendicular expansion + square fill for curve coverage
             List<int[]> segPositions = new ArrayList<>();
+            // Primary: perpendicular to road direction
             for (int w = -halfWidth; w <= halfWidth; w++) {
                 segPositions.add(new int[]{center.getX() + perpDir.getStepX() * w, center.getZ() + perpDir.getStepZ() * w});
             }
-
-            // Fill gap between this segment and previous segment (curve infill)
-            if (i > 0) {
-                BlockPos prev = centerPath.get(i - 1);
-                Direction prevDir = getDirection(centerPath, i - 1);
-                Direction prevPerp = prevDir.getClockWise();
-                for (int w = -halfWidth; w <= halfWidth; w++) {
-                    int px = prev.getX() + prevPerp.getStepX() * w;
-                    int pz = prev.getZ() + prevPerp.getStepZ() * w;
-                    int cx = center.getX() + perpDir.getStepX() * w;
-                    int cz = center.getZ() + perpDir.getStepZ() * w;
-                    // Bresenham between prev edge and current edge to fill gaps
-                    int dx = Math.abs(cx - px), dz = Math.abs(cz - pz);
-                    if (dx > 1 || dz > 1) {
-                        int sx = px < cx ? 1 : -1, sz = pz < cz ? 1 : -1;
-                        int err = dx - dz;
-                        int fx = px, fz = pz;
-                        while (fx != cx || fz != cz) {
-                            long key = ((long) fx << 32) | (fz & 0xFFFFFFFFL);
-                            if (placed.add(key)) {
-                                int sy = cache.getHeight(fx, fz);
-                                segPositions.add(new int[]{fx, fz});
-                            }
-                            int e2 = 2 * err;
-                            if (e2 > -dz) { err -= dz; fx += sx; }
-                            if (e2 < dx) { err += dx; fz += sz; }
-                        }
-                    }
+            // Square fill around center to cover sharp turn inner corners
+            for (int dx = -halfWidth; dx <= halfWidth; dx++) {
+                for (int dz = -halfWidth; dz <= halfWidth; dz++) {
+                    segPositions.add(new int[]{center.getX() + dx, center.getZ() + dz});
                 }
             }
 
