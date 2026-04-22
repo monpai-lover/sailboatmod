@@ -37,6 +37,12 @@ public class RoadBuilder {
 
     public RoadData buildRoad(String roadId, List<BlockPos> centerPath, int width,
                               TerrainSamplingCache cache, String materialPreset) {
+        return buildRoad(roadId, centerPath, width, cache, materialPreset, List.of());
+    }
+
+    public RoadData buildRoad(String roadId, List<BlockPos> centerPath, int width,
+                              TerrainSamplingCache cache, String materialPreset,
+                              List<RoadSegmentPlacement> placements) {
         List<BridgeSpan> bridgeSpans = bridgeDetector.detect(centerPath, cache);
 
         List<BuildStep> allSteps = new ArrayList<>();
@@ -44,10 +50,21 @@ public class RoadBuilder {
         String normalizedPreset = materialPreset == null ? "auto" : materialPreset;
         List<BlockPos> landPath = filterLandPath(centerPath, bridgeSpans);
 
-        List<BuildStep> landSteps = paver.pave(
-            landPath, width, cache, normalizedPreset);
-        for (BuildStep step : landSteps) {
-            allSteps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
+        if (!placements.isEmpty()) {
+            List<BuildStep> landSteps = paver.pave(placements, cache, normalizedPreset);
+            for (BuildStep step : landSteps) {
+                allSteps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
+            }
+        } else {
+            List<RoadSegmentPlacement> fallbackPlacements = new ArrayList<>();
+            for (int i = 0; i < landPath.size(); i++) {
+                fallbackPlacements.add(new RoadSegmentPlacement(
+                        landPath.get(i), i, List.of(landPath.get(i)), false));
+            }
+            List<BuildStep> landSteps = paver.pave(fallbackPlacements, cache, normalizedPreset);
+            for (BuildStep step : landSteps) {
+                allSteps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
+            }
         }
 
         if (config.getAppearance().isTunnelEnabled()) {

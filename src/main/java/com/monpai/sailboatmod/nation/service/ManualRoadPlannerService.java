@@ -485,14 +485,14 @@ public final class ManualRoadPlannerService {
             }
             PathPostProcessor postProcessor = new PathPostProcessor();
             PathPostProcessor.ProcessedPath processed = postProcessor.process(
-                    result.path(), cache, config.getBridge().getBridgeMinWaterDepth());
+                    result.path(), cache, config.getBridge().getBridgeMinWaterDepth(), 3 / 2);
             finalPath = processed.path();
             if (!allowsPierlessDetourCrossing(maxWaterSpanLength(processed.bridgeSpans()))) {
                 return null;
             }
             bridgeBacked = !processed.bridgeSpans().isEmpty();
             RoadBuilder builder = new RoadBuilder(config);
-            roadData = builder.buildRoad(manualRoadId, finalPath, 3, cache);
+            roadData = builder.buildRoad(manualRoadId, finalPath, 3, cache, "auto", processed.placements());
         }
         if (finalPath.size() < 2) {
             return null;

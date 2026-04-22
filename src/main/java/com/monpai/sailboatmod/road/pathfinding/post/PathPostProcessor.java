@@ -1,12 +1,15 @@
 package com.monpai.sailboatmod.road.pathfinding.post;
 
 import com.monpai.sailboatmod.road.model.BridgeSpan;
+import com.monpai.sailboatmod.road.model.RoadSegmentPlacement;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import com.monpai.sailboatmod.road.pathfinding.post.SplineHelper.CurveMode;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class PathPostProcessor {
     private static final int SPLINE_SEGMENTS_PER_SPAN = 4;
@@ -14,9 +17,15 @@ public class PathPostProcessor {
     private static final int RELAXATION_PASSES = 3;
     private static final double SHARP_TURN_THRESHOLD = 60.0;
 
-    public record ProcessedPath(List<BlockPos> path, List<BridgeSpan> bridgeSpans) {}
+    public record ProcessedPath(List<BlockPos> path, List<BridgeSpan> bridgeSpans,
+                                List<RoadSegmentPlacement> placements) {
+        public ProcessedPath(List<BlockPos> path, List<BridgeSpan> bridgeSpans) {
+            this(path, bridgeSpans, List.of());
+        }
+    }
 
-    public ProcessedPath process(List<BlockPos> rawPath, TerrainSamplingCache cache, int bridgeMinWaterDepth) {
+    public ProcessedPath process(List<BlockPos> rawPath, TerrainSamplingCache cache,
+                                  int bridgeMinWaterDepth, int halfWidth) {
         List<BlockPos> simplified = simplify(rawPath);
         List<BridgeSpan> bridges = detectBridges(simplified, cache, bridgeMinWaterDepth);
         List<BlockPos> straightened = straightenBridges(simplified, bridges);
@@ -29,7 +38,13 @@ public class PathPostProcessor {
         List<BlockPos> splined = autoSpline(heightAdjusted, SPLINE_SEGMENTS_PER_SPAN);
         List<BlockPos> rasterized = rasterize(splined);
         List<BridgeSpan> finalBridges = detectBridges(rasterized, cache, bridgeMinWaterDepth);
-        return new ProcessedPath(rasterized, finalBridges);
+        List<RoadSegmentPlacement> placements = rasterizeSegments(rasterized, halfWidth, finalBridges);
+        anchorEndpoints(placements, cache);
+        return new ProcessedPath(rasterized, finalBridges, placements);
+    }
+
+    public ProcessedPath process(List<BlockPos> rawPath, TerrainSamplingCache cache, int bridgeMinWaterDepth) {
+        return process(rawPath, cache, bridgeMinWaterDepth, 1);
     }
 
     private List<BlockPos> applyHeights(List<BlockPos> path, int[] heights) {
@@ -180,5 +195,100 @@ public class PathPostProcessor {
             if (e2 < dx) { err += dx; z0 += sz; }
         }
         return points;
+    }
+
+    private List<RoadSegmentPlacement> rasterizeSegments(List<BlockPos> path, int halfWidth,
+                                                          List<BridgeSpan> bridges) {
+        if (path.size() < 2) {
+            if (path.isEmpty()) return List.of();
+            return List.of(new RoadSegmentPlacement(path.get(0), 0, List.copyOf(path), isInBridge(0, bridges)));
+        }
+        double halfWidthSq = (halfWidth + 0.5) * (halfWidth + 0.5);
+        Map<Long, int[]> bestHit = new HashMap<>(); // key -> [segIndex, y]
+
+        for (int seg = 0; seg < path.size() - 1; seg++) {
+            BlockPos a = path.get(seg);
+            BlockPos b = path.get(seg + 1);
+            int minX = Math.min(a.getX(), b.getX()) - halfWidth - 1;
+            int maxX = Math.max(a.getX(), b.getX()) + halfWidth + 1;
+            int minZ = Math.min(a.getZ(), b.getZ()) - halfWidth - 1;
+            int maxZ = Math.max(a.getZ(), b.getZ()) + halfWidth + 1;
+
+            double segDx = b.getX() - a.getX();
+            double segDz = b.getZ() - a.getZ();
+            double segLenSq = segDx * segDx + segDz * segDz;
+
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    double t;
+                    if (segLenSq < 0.001) {
+                        t = 0;
+                    } else {
+                        t = ((x - a.getX()) * segDx + (z - a.getZ()) * segDz) / segLenSq;
+                        t = Math.max(0, Math.min(1, t));
+                    }
+                    double projX = a.getX() + t * segDx;
+                    double projZ = a.getZ() + t * segDz;
+                    double distSq = (x - projX) * (x - projX) + (z - projZ) * (z - projZ);
+                    if (distSq > halfWidthSq) continue;
+
+                    int y = (int) Math.round(a.getY() + t * (b.getY() - a.getY()));
+                    long key = ((long) x << 32) | (z & 0xFFFFFFFFL);
+                    int[] prev = bestHit.get(key);
+                    if (prev == null) {
+                        bestHit.put(key, new int[]{seg, y, (int) (distSq * 1000)});
+                    } else if ((int) (distSq * 1000) < prev[2]) {
+                        prev[0] = seg;
+                        prev[1] = y;
+                        prev[2] = (int) (distSq * 1000);
+                    }
+                }
+            }
+        }
+
+        Map<Integer, List<BlockPos>> segPositions = new HashMap<>();
+        for (Map.Entry<Long, int[]> entry : bestHit.entrySet()) {
+            long key = entry.getKey();
+            int[] val = entry.getValue();
+            int x = (int) (key >> 32);
+            int z = (int) key;
+            segPositions.computeIfAbsent(val[0], k -> new ArrayList<>()).add(new BlockPos(x, val[1], z));
+        }
+
+        List<RoadSegmentPlacement> placements = new ArrayList<>();
+        for (int seg = 0; seg < path.size() - 1; seg++) {
+            List<BlockPos> positions = segPositions.getOrDefault(seg, List.of());
+            if (positions.isEmpty()) continue;
+            placements.add(new RoadSegmentPlacement(
+                    path.get(seg), seg, positions, isInBridge(seg, bridges)));
+        }
+        return placements;
+    }
+
+    private void anchorEndpoints(List<RoadSegmentPlacement> placements, TerrainSamplingCache cache) {
+        if (placements.isEmpty() || cache == null) return;
+        int anchorCount = Math.min(3, placements.size());
+        for (int p = 0; p < anchorCount; p++) {
+            anchorPlacement(placements, p, cache);
+        }
+        for (int p = placements.size() - anchorCount; p < placements.size(); p++) {
+            if (p >= anchorCount) anchorPlacement(placements, p, cache);
+        }
+    }
+
+    private void anchorPlacement(List<RoadSegmentPlacement> placements, int index,
+                                  TerrainSamplingCache cache) {
+        RoadSegmentPlacement pl = placements.get(index);
+        if (pl.bridge()) return;
+        List<BlockPos> fixed = new ArrayList<>(pl.positions().size());
+        for (BlockPos pos : pl.positions()) {
+            int groundY = cache.getHeight(pos.getX(), pos.getZ());
+            if (Math.abs(pos.getY() - groundY) > 2) {
+                fixed.add(new BlockPos(pos.getX(), groundY, pos.getZ()));
+            } else {
+                fixed.add(pos);
+            }
+        }
+        placements.set(index, new RoadSegmentPlacement(pl.center(), pl.segmentIndex(), fixed, pl.bridge()));
     }
 }
