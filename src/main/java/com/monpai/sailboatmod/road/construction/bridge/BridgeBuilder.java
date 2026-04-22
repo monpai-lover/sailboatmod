@@ -133,7 +133,7 @@ public class BridgeBuilder {
         // 2. Flat deck + piers (from ascEnd to descStart)
         if (ascEnd < descStart) {
             List<BlockPos> deckPath = centerPath.subList(ascEnd, descStart + 1);
-            List<BridgePierBuilder.PierNode> pierNodes = pierBuilder.planPierNodes(deckPath, deckY, span.oceanFloorY());
+            List<BridgePierBuilder.PierNode> pierNodes = pierBuilder.planPierNodes(deckPath, deckY, span.oceanFloorY(), cache);
             steps.addAll(pierBuilder.buildPiers(pierNodes, order));
             order += pierNodes.size() * 20; // approximate
             List<BuildStep> deck = deckPlacer.placeDeck(deckPath, deckY, width, material, roadDir, order);

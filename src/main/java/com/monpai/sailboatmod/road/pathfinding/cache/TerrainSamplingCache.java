@@ -106,6 +106,10 @@ public class TerrainSamplingCache {
 
     public ServerLevel getLevel() { return level; }
 
+    public int motionBlockingHeight(int x, int z) {
+        return fastSampler.motionBlockingHeight(x, z);
+    }
+
     public void clear() {
         heightCache.clear();
         waterSurfaceCache.clear();

@@ -115,9 +115,11 @@ public class RoadSegmentPaver {
                 }
                 BlockPos pos = new BlockPos(xz[0], surfaceY, xz[1]);
 
-                // Clear obstacles above road surface
-                for (int h = 1; h <= CLEAR_HEIGHT; h++) {
-                    steps.add(new BuildStep(order++, pos.above(h), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+                // Clear obstacles above road surface up to tree canopy height
+                int motionTop = cache.motionBlockingHeight(xz[0], xz[1]);
+                int clearTop = Math.max(surfaceY + CLEAR_HEIGHT, motionTop);
+                for (int h = surfaceY + 1; h <= clearTop; h++) {
+                    steps.add(new BuildStep(order++, new BlockPos(xz[0], h, xz[1]), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
                 }
 
                 // Convert grass to dirt below
