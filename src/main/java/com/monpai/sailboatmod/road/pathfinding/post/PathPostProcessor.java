@@ -203,7 +203,7 @@ public class PathPostProcessor {
             if (path.isEmpty()) return List.of();
             return List.of(new RoadSegmentPlacement(path.get(0), 0, List.copyOf(path), isInBridge(0, bridges)));
         }
-        double halfWidthSq = (halfWidth + 0.5) * (halfWidth + 0.5);
+        double halfWidthSq = (double) halfWidth * halfWidth;
         Map<Long, int[]> bestHit = new HashMap<>(); // key -> [segIndex, y]
 
         for (int seg = 0; seg < path.size() - 1; seg++) {

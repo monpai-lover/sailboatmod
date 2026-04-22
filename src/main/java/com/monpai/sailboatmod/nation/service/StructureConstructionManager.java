@@ -1836,36 +1836,31 @@ public final class StructureConstructionManager {
                 effectPos = step.pos();
             } else if (decision == ConstructionStepSatisfactionService.StepDecision.RETRYABLE) {
                 ConstructionStepExecutor.clearNaturalObstacles(level, step.pos());
-                if (blockedReason.isBlank()) {
-                    blockedReason = "waiting to clear " + step.pos().toShortString();
-                }
+                level.setBlock(step.pos(), step.state(), Block.UPDATE_ALL);
+                attemptedStepKeys.add(stepKey);
+                consumedStepKeys.add(stepKey);
+                completedCount++;
+                placedAny = true;
+                effectPos = step.pos();
             } else if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
                 level.setBlock(step.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
-                boolean forcePlaced = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
-                if (forcePlaced) {
-                    placedAny = true;
-                    attemptedStepKeys.add(stepKey);
-                    consumedStepKeys.add(stepKey);
-                    completedCount++;
-                    effectPos = step.pos();
-                } else {
-                    skippedStepKeys.add(stepKey);
-                    consumedStepKeys.add(stepKey);
-                    completedCount++;
-                }
+                level.setBlock(step.pos(), step.state(), Block.UPDATE_ALL);
+                attemptedStepKeys.add(stepKey);
+                consumedStepKeys.add(stepKey);
+                completedCount++;
+                placedAny = true;
+                effectPos = step.pos();
             } else {
                 placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
-                placedAny |= placed;
-                if (placed) {
-                    attemptedStepKeys.add(stepKey);
-                    consumedStepKeys.add(stepKey);
-                    completedCount++;
-                    effectPos = step.pos();
-                } else {
-                    if (blockedReason.isBlank()) {
-                        blockedReason = describeRoadPlacementFailure(level, step);
-                    }
+                if (!placed) {
+                    level.setBlock(step.pos(), step.state(), Block.UPDATE_ALL);
+                    placed = true;
                 }
+                placedAny = true;
+                attemptedStepKeys.add(stepKey);
+                consumedStepKeys.add(stepKey);
+                completedCount++;
+                effectPos = step.pos();
             }
             if (completedCount >= targetCount) {
                 break;
@@ -2790,6 +2785,11 @@ public final class StructureConstructionManager {
         if (at.equals(style.surface())) {
             return false;
         }
+        boolean isDecor = isDecorBlock(style.surface());
+        if (isDecor) {
+            level.setBlock(pos, style.surface(), Block.UPDATE_ALL);
+            return true;
+        }
         boolean replacingRoadSurface = canReplaceRoadSurface(at, style.surface());
         if (!replacingRoadSurface && isRoadSurface(at)) {
             return false;
@@ -2804,6 +2804,15 @@ public final class StructureConstructionManager {
         }
         level.setBlock(pos, style.surface(), Block.UPDATE_ALL);
         return true;
+    }
+
+    private static boolean isDecorBlock(BlockState state) {
+        if (state == null) return false;
+        return state.is(net.minecraft.tags.BlockTags.FENCES)
+                || state.is(net.minecraft.tags.BlockTags.FENCE_GATES)
+                || state.is(Blocks.LANTERN)
+                || state.is(Blocks.SOUL_LANTERN)
+                || state.is(net.minecraft.tags.BlockTags.WALLS);
     }
 
     private static boolean requiresSupportedRoadPlacement(RoadPlacementStyle style, BlockState below) {
