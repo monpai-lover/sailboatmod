@@ -1840,11 +1840,18 @@ public final class StructureConstructionManager {
                     blockedReason = "waiting to clear " + step.pos().toShortString();
                 }
             } else if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
-                skippedStepKeys.add(stepKey);
-                consumedStepKeys.add(stepKey);
-                completedCount++;
-                if (blockedReason.isBlank()) {
-                    blockedReason = describeBlockedRoadBuildStep(level, step);
+                level.setBlock(step.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+                boolean forcePlaced = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
+                if (forcePlaced) {
+                    placedAny = true;
+                    attemptedStepKeys.add(stepKey);
+                    consumedStepKeys.add(stepKey);
+                    completedCount++;
+                    effectPos = step.pos();
+                } else {
+                    skippedStepKeys.add(stepKey);
+                    consumedStepKeys.add(stepKey);
+                    completedCount++;
                 }
             } else {
                 placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));

@@ -21,6 +21,7 @@ public class BridgeRangeDetector {
         int waterSurfaceY = 0;
         int oceanFloorY = 0;
         int deckY = 0;
+        int consecutiveLand = 0;
 
         for (int i = 0; i < centerPath.size(); i++) {
             BlockPos p = centerPath.get(i);
@@ -29,34 +30,24 @@ public class BridgeRangeDetector {
             int terrainH = cache.getHeight(p.getX(), p.getZ());
 
             if (isWater && start == -1) {
-                // Start bridge span
                 start = i;
                 waterSurfaceY = cache.getWaterSurfaceY(p.getX(), p.getZ());
                 oceanFloorY = cache.getOceanFloor(p.getX(), p.getZ());
                 deckY = Math.max(waterSurfaceY, 63) + config.getDeckHeight();
+                consecutiveLand = 0;
             }
 
-            // Also detect steep terrain drops (valleys/ravines)
-            if (!isWater && i > 0) {
-                int prevH = cache.getHeight(centerPath.get(i-1).getX(), centerPath.get(i-1).getZ());
-                boolean isSteepDrop = (prevH - terrainH) >= 4;
-                if (isSteepDrop && start == -1) {
-                    start = i;
-                    waterSurfaceY = prevH; // Use the higher terrain as reference
-                    oceanFloorY = terrainH;
-                    deckY = prevH + 3;
-                }
+            if (isWater) {
+                consecutiveLand = 0;
             }
 
             if (!isWater && start != -1) {
-                // Land encountered - only end bridge if terrain is near deck height
-                // If terrain is much lower than deck, keep bridging (we're over a valley/low shore)
-                if (terrainH >= deckY - 5) {
-                    // Terrain is close to deck height - end bridge here
+                consecutiveLand++;
+                if (terrainH >= deckY - 5 || consecutiveLand >= 3) {
                     raw.add(new BridgeSpan(start, i - 1, waterSurfaceY, oceanFloorY));
                     start = -1;
+                    consecutiveLand = 0;
                 }
-                // Otherwise keep the bridge going over this low land
             }
         }
         if (start != -1) {

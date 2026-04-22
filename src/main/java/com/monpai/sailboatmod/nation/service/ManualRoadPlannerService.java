@@ -513,7 +513,7 @@ public final class ManualRoadPlannerService {
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
         for (BuildStep bs : roadData.buildSteps()) {
             ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
-            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state()));
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state(), mapBuildPhase(bs.phase())));
         }
         List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();
         for (com.monpai.sailboatmod.road.model.BridgeSpan span : roadData.bridgeSpans()) {
@@ -2279,7 +2279,7 @@ public final class ManualRoadPlannerService {
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
         for (BuildStep bs : roadData.buildSteps()) {
             ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
-            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state()));
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state(), mapBuildPhase(bs.phase())));
         }
         List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();
         for (com.monpai.sailboatmod.road.model.BridgeSpan span : roadData.bridgeSpans()) {
@@ -2992,5 +2992,16 @@ public final class ManualRoadPlannerService {
                                     BlockPos sourceExit,
                                     BlockPos targetExit,
                                     List<BlockPos> path) {
+    }
+
+    private static RoadGeometryPlanner.RoadBuildPhase mapBuildPhase(com.monpai.sailboatmod.road.model.BuildPhase phase) {
+        if (phase == null) return RoadGeometryPlanner.RoadBuildPhase.SURFACE;
+        return switch (phase) {
+            case FOUNDATION -> RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
+            case SURFACE -> RoadGeometryPlanner.RoadBuildPhase.SURFACE;
+            case RAMP, DECK -> RoadGeometryPlanner.RoadBuildPhase.DECK;
+            case PIER -> RoadGeometryPlanner.RoadBuildPhase.SUPPORT;
+            case RAILING, STREETLIGHT -> RoadGeometryPlanner.RoadBuildPhase.DECOR;
+        };
     }
 }
