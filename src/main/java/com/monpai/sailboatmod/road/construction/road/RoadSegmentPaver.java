@@ -42,16 +42,18 @@ public class RoadSegmentPaver {
 
                 if (cache.isWater(x, z) && cache.getWaterDepth(x, z) > 2) continue;
 
-                int surfaceY;
-                if (cache.isWater(x, z)) {
-                    surfaceY = cache.getWaterSurfaceY(x, z);
-                } else {
-                    surfaceY = cache.getHeight(x, z);
-                }
+                // Use the placement's Y (slope-limited) as road surface height
+                int roadY = pos.getY();
+                // Actual terrain height for cut-face clearing
+                int terrainY = cache.isWater(x, z)
+                        ? cache.getWaterSurfaceY(x, z)
+                        : cache.getHeight(x, z);
+                int surfaceY = Math.min(roadY, terrainY);
                 BlockPos surfacePos = new BlockPos(x, surfaceY, z);
 
+                // Clear everything above road surface up to terrain top + headroom
                 int motionTop = cache.motionBlockingHeight(x, z);
-                int clearTop = Math.max(surfaceY + CLEAR_HEIGHT, motionTop);
+                int clearTop = Math.max(surfaceY + CLEAR_HEIGHT, Math.max(motionTop, terrainY + 1));
                 for (int h = surfaceY + 1; h <= clearTop; h++) {
                     steps.add(new BuildStep(order++, new BlockPos(x, h, z),
                             Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
