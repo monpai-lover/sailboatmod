@@ -91,6 +91,13 @@ public class RoadPlannerOptionSelectionScreen extends Screen {
         net.minecraft.client.Minecraft.getInstance().setScreen(new RoadPlannerConfigScreen());
     }
 
+    @Override
+    public void onClose() {
+        RoadPlannerClientHooks.clearPlanningResult();
+        RoadPlannerClientHooks.clearPreview();
+        super.onClose();
+    }
+
     private int defaultSelectedIndex() {
         for (int i = 0; i < options.size(); i++) {
             if (options.get(i).optionId().equalsIgnoreCase(selectedOptionId)) {

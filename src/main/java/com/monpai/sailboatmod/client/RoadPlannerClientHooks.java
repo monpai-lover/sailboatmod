@@ -147,9 +147,12 @@ public final class RoadPlannerClientHooks {
         if (minecraft.screen instanceof RoadPlannerOptionSelectionScreen) {
             return;
         }
-        if (uiPhase == UiPhase.CONFIGURATION || uiPhase == UiPhase.PREVIEW_CONFIRMATION) {
+        boolean screenStillOpen = minecraft.screen instanceof RoadPlannerConfigScreen;
+        if (screenStillOpen && (uiPhase == UiPhase.CONFIGURATION || uiPhase == UiPhase.PREVIEW_CONFIRMATION)) {
             return;
         }
+        previewState = null;
+        configScreenOpen = false;
         uiPhase = UiPhase.OPTION_SELECTION;
         minecraft.setScreen(new RoadPlannerOptionSelectionScreen(sourceTownName, targetTownName, options, selectedOptionId));
     }

@@ -104,7 +104,15 @@ public class RoadSegmentPaver {
                 long key = ((long) xz[0] << 32) | (xz[1] & 0xFFFFFFFFL);
                 if (!placed.add(key)) continue; // Skip duplicates
 
-                int surfaceY = cache.getHeight(xz[0], xz[1]);
+                // Skip widened positions that fall into deep water
+                if (cache.isWater(xz[0], xz[1]) && cache.getWaterDepth(xz[0], xz[1]) > 2) continue;
+
+                int surfaceY;
+                if (cache.isWater(xz[0], xz[1])) {
+                    surfaceY = cache.getWaterSurfaceY(xz[0], xz[1]);
+                } else {
+                    surfaceY = cache.getHeight(xz[0], xz[1]);
+                }
                 BlockPos pos = new BlockPos(xz[0], surfaceY, xz[1]);
 
                 // Clear obstacles above road surface
