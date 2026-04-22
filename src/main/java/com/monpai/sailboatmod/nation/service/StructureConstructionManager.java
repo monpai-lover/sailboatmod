@@ -705,6 +705,10 @@ public final class StructureConstructionManager {
         }
 
         completedBuilds.forEach(jobId -> {
+            RoadConstructionJob completedJob = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
+            if (completedJob != null && completedJob.plan != null) {
+                removeScaffolding(level, completedJob.plan);
+            }
             clearActiveRoadRuntimeState(jobId);
         });
         completedRollbacks.forEach(jobId -> {
@@ -2957,7 +2961,7 @@ public final class StructureConstructionManager {
         if (style.bridge()) {
             return;
         }
-        fillRoadFoundation(level, pos, style.support(), ROAD_FOUNDATION_DEPTH);
+        fillRoadFoundation(level, pos, Blocks.SCAFFOLDING.defaultBlockState(), ROAD_FOUNDATION_DEPTH);
     }
 
     private static void fillRoadFoundation(ServerLevel level, BlockPos pos, BlockState fillState, int maxDepth) {
@@ -2974,6 +2978,23 @@ public final class StructureConstructionManager {
             level.setBlock(cursor, fillState, Block.UPDATE_ALL);
             cursor = cursor.below();
             depth++;
+        }
+    }
+
+    private static void removeScaffolding(ServerLevel level, RoadPlacementPlan plan) {
+        if (level == null || plan == null) return;
+        Set<Long> visited = new HashSet<>();
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            long key = step.pos().asLong();
+            if (!visited.add(key)) continue;
+            for (int d = 1; d <= ROAD_FOUNDATION_DEPTH; d++) {
+                BlockPos below = step.pos().below(d);
+                if (level.getBlockState(below).is(Blocks.SCAFFOLDING)) {
+                    level.setBlock(below, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+                } else {
+                    break;
+                }
+            }
         }
     }
 

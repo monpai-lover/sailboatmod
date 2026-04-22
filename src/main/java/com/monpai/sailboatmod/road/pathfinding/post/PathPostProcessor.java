@@ -274,6 +274,20 @@ public class PathPostProcessor {
         for (int p = placements.size() - anchorCount; p < placements.size(); p++) {
             if (p >= anchorCount) anchorPlacement(placements, p, cache);
         }
+        // Anchor land segments adjacent to bridge ends
+        for (int p = 0; p < placements.size(); p++) {
+            if (placements.get(p).bridge()) {
+                for (int d = 1; d <= 3; d++) {
+                    if (p - d >= 0 && !placements.get(p - d).bridge()) anchorPlacement(placements, p - d, cache);
+                    int after = p;
+                    while (after < placements.size() && placements.get(after).bridge()) after++;
+                    if (after + d - 1 < placements.size() && !placements.get(after + d - 1).bridge()) {
+                        anchorPlacement(placements, after + d - 1, cache);
+                    }
+                }
+                while (p < placements.size() && placements.get(p).bridge()) p++;
+            }
+        }
     }
 
     private void anchorPlacement(List<RoadSegmentPlacement> placements, int index,
