@@ -87,7 +87,15 @@ public class RoadPlannerOptionSelectionScreen extends Screen {
             return;
         }
         ModNetwork.CHANNEL.sendToServer(new SelectRoadPlannerPreviewOptionPacket(options.get(selectedIndex).optionId()));
-        onClose();
+        RoadPlannerClientHooks.enterConfigMode();
+        net.minecraft.client.Minecraft.getInstance().setScreen(new RoadPlannerConfigScreen());
+    }
+
+    @Override
+    public void onClose() {
+        RoadPlannerClientHooks.clearPlanningResult();
+        RoadPlannerClientHooks.clearPreview();
+        super.onClose();
     }
 
     private int defaultSelectedIndex() {

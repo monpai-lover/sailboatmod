@@ -14,6 +14,13 @@ import com.monpai.sailboatmod.construction.RoadLegacyJobRebuilder;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.construction.RoadTerrainShaper;
 import com.monpai.sailboatmod.construction.RuntimeRoadGhostWindow;
+import com.monpai.sailboatmod.road.config.RoadConfig;
+import com.monpai.sailboatmod.road.construction.road.RoadBuilder;
+import com.monpai.sailboatmod.road.model.BridgeSpan;
+import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.road.model.RoadData;
+import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
+import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -698,6 +705,10 @@ public final class StructureConstructionManager {
         }
 
         completedBuilds.forEach(jobId -> {
+            RoadConstructionJob completedJob = ACTIVE_ROAD_CONSTRUCTIONS.get(jobId);
+            if (completedJob != null && completedJob.plan != null) {
+                removeScaffolding(level, completedJob.plan);
+            }
             clearActiveRoadRuntimeState(jobId);
         });
         completedRollbacks.forEach(jobId -> {
@@ -1518,38 +1529,54 @@ public final class StructureConstructionManager {
                 centerPath == null ? List.of() : centerPath,
                 collectCoreExclusionColumns(level)
         );
-        List<RoadPlacementPlan.BridgeRange> bridgeRanges = trimmedCenterPath.isEmpty()
-                ? List.of()
-                : detectBridgeRanges(level, trimmedCenterPath);
-        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = trimmedCenterPath.isEmpty()
-                ? List.of()
-                : detectNavigableWaterBridgeRanges(level, trimmedCenterPath, bridgeRanges);
-        List<RoadPlacementPlan.BridgeRange> constructionBridgeRanges = trimmedCenterPath.isEmpty()
-                ? List.of()
-                : expandBridgeConstructionRanges(level, trimmedCenterPath, bridgeRanges, navigableWaterBridgeRanges);
-        RoadCorridorPlan corridorPlan = createRoadCorridorPlan(level, trimmedCenterPath, constructionBridgeRanges, navigableWaterBridgeRanges);
         if (trimmedCenterPath.isEmpty()) {
-            return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
+            RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(List.of());
+            return new RoadPlacementPlan(List.of(), sourceInternalAnchor, sourceBoundaryAnchor,
+                    targetBoundaryAnchor, targetInternalAnchor,
                     List.of(), List.of(), List.of(), List.of(), List.of(), null, null, null, corridorPlan);
         }
-        RoadPlacementArtifacts artifacts = filterCoreExcludedArtifacts(
-                buildRoadPlacementArtifacts(level, corridorPlan),
-                collectCoreExclusionColumns(level)
-        );
+
+        // Use new road system
+        RoadConfig roadConfig = new RoadConfig();
+        TerrainSamplingCache cache =
+            new TerrainSamplingCache(level, roadConfig.getPathfinding().getSamplingPrecision());
+        PathPostProcessor postProcessor = new PathPostProcessor();
+        PathPostProcessor.ProcessedPath processed =
+            postProcessor.process(trimmedCenterPath, cache, roadConfig.getBridge().getBridgeMinWaterDepth());
+
+        RoadBuilder roadBuilder = new RoadBuilder(roadConfig);
+        RoadData roadData = roadBuilder.buildRoad("manual", processed.path(), roadConfig.getAppearance().getDefaultWidth(),
+                cache, "auto", processed.placements(), processed.bridgeSpans());
+
+        // Convert new types to old types
+        List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new ArrayList<>();
+        List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
+        List<BlockPos> ownedBlocks = new ArrayList<>();
+        for (BuildStep step : roadData.buildSteps()) {
+            if (!step.state().isAir()) {
+                ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state()));
+            }
+            buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(step.order(), step.pos(), step.state(),
+                RoadGeometryPlanner.RoadBuildPhase.SURFACE));
+            ownedBlocks.add(step.pos());
+        }
+
+        List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();
+        List<RoadPlacementPlan.BridgeRange> navigableWaterBridgeRanges = new ArrayList<>();
+        for (BridgeSpan span : roadData.bridgeSpans()) {
+            bridgeRanges.add(new RoadPlacementPlan.BridgeRange(span.startIndex(), span.endIndex()));
+            navigableWaterBridgeRanges.add(new RoadPlacementPlan.BridgeRange(span.startIndex(), span.endIndex()));
+        }
+
+        RoadCorridorPlan corridorPlan = RoadCorridorPlanner.plan(processed.path());
+
         return new RoadPlacementPlan(
-                trimmedCenterPath,
-                sourceInternalAnchor,
-                sourceBoundaryAnchor,
-                targetBoundaryAnchor,
-                targetInternalAnchor,
-                artifacts.ghostBlocks(),
-                artifacts.buildSteps(),
-                constructionBridgeRanges,
-                navigableWaterBridgeRanges,
-                artifacts.ownedBlocks(),
-                artifacts.buildSteps().isEmpty() ? null : highlightPos(sourceBoundaryAnchor, trimmedCenterPath, true),
-                artifacts.buildSteps().isEmpty() ? null : highlightPos(targetBoundaryAnchor, trimmedCenterPath, false),
-                artifacts.buildSteps().isEmpty() ? null : resolveRoadPlanFocusPos(trimmedCenterPath, artifacts.ghostBlocks()),
+                processed.path(),
+                sourceInternalAnchor, sourceBoundaryAnchor, targetBoundaryAnchor, targetInternalAnchor,
+                ghostBlocks, buildSteps, bridgeRanges, navigableWaterBridgeRanges, ownedBlocks,
+                highlightPos(sourceBoundaryAnchor, processed.path(), true),
+                highlightPos(targetBoundaryAnchor, processed.path(), false),
+                resolveRoadPlanFocusPos(processed.path(), ghostBlocks),
                 corridorPlan
         );
     }
@@ -1816,29 +1843,31 @@ public final class StructureConstructionManager {
                 effectPos = step.pos();
             } else if (decision == ConstructionStepSatisfactionService.StepDecision.RETRYABLE) {
                 ConstructionStepExecutor.clearNaturalObstacles(level, step.pos());
-                if (blockedReason.isBlank()) {
-                    blockedReason = "waiting to clear " + step.pos().toShortString();
-                }
-            } else if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
-                skippedStepKeys.add(stepKey);
+                level.setBlock(step.pos(), step.state(), Block.UPDATE_ALL);
+                attemptedStepKeys.add(stepKey);
                 consumedStepKeys.add(stepKey);
                 completedCount++;
-                if (blockedReason.isBlank()) {
-                    blockedReason = describeBlockedRoadBuildStep(level, step);
-                }
+                placedAny = true;
+                effectPos = step.pos();
+            } else if (decision == ConstructionStepSatisfactionService.StepDecision.BLOCKED) {
+                level.setBlock(step.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+                level.setBlock(step.pos(), step.state(), Block.UPDATE_ALL);
+                attemptedStepKeys.add(stepKey);
+                consumedStepKeys.add(stepKey);
+                completedCount++;
+                placedAny = true;
+                effectPos = step.pos();
             } else {
                 placed = tryPlaceRoad(level, step.pos(), roadPlacementStyleForState(level, step.pos(), step.state()));
-                placedAny |= placed;
-                if (placed) {
-                    attemptedStepKeys.add(stepKey);
-                    consumedStepKeys.add(stepKey);
-                    completedCount++;
-                    effectPos = step.pos();
-                } else {
-                    if (blockedReason.isBlank()) {
-                        blockedReason = describeRoadPlacementFailure(level, step);
-                    }
+                if (!placed) {
+                    level.setBlock(step.pos(), step.state(), Block.UPDATE_ALL);
+                    placed = true;
                 }
+                placedAny = true;
+                attemptedStepKeys.add(stepKey);
+                consumedStepKeys.add(stepKey);
+                completedCount++;
+                effectPos = step.pos();
             }
             if (completedCount >= targetCount) {
                 break;
@@ -1930,15 +1959,27 @@ public final class StructureConstructionManager {
         if (existing != null && !existing.isAir() && !existing.canBeReplaced() && !existing.liquid()) {
             return describeBlockedRoadBuildStep(level, step);
         }
+        // Clearance blocked: auto-clear any obstacle above, only error if clear fails
         BlockState above = level.getBlockState(pos.above());
-        if (above != null && !above.isAir() && !clearanceStateIsSafeToRemove(above)) {
-            return "clearance blocked at " + pos.above().toShortString();
+        if (above != null && !above.isAir()) {
+            BlockPos blockingPos = pos.above();
+            level.setBlock(blockingPos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+            BlockState afterClear = level.getBlockState(blockingPos);
+            if (afterClear != null && !afterClear.isAir()) {
+                return "clearance blocked at " + blockingPos.toShortString();
+            }
         }
+        // Missing support: auto-place cobblestone below, only error if placement fails
         BlockState below = level.getBlockState(pos.below());
         if (below == null || below.isAir() || below.liquid()) {
-            return "missing support at " + pos.below().toShortString();
+            BlockPos supportPos = pos.below();
+            level.setBlock(supportPos, Blocks.COBBLESTONE.defaultBlockState(), Block.UPDATE_ALL);
+            BlockState afterScaffold = level.getBlockState(supportPos);
+            if (afterScaffold == null || afterScaffold.isAir() || afterScaffold.liquid()) {
+                return "missing support at " + supportPos.toShortString();
+            }
         }
-        return "blocked build step at " + pos.toShortString();
+        return "";
     }
 
     private static String describeBlockedRoadBuildStep(ServerLevel level,
@@ -2751,6 +2792,11 @@ public final class StructureConstructionManager {
         if (at.equals(style.surface())) {
             return false;
         }
+        boolean isDecor = isDecorBlock(style.surface());
+        if (isDecor) {
+            level.setBlock(pos, style.surface(), Block.UPDATE_ALL);
+            return true;
+        }
         boolean replacingRoadSurface = canReplaceRoadSurface(at, style.surface());
         if (!replacingRoadSurface && isRoadSurface(at)) {
             return false;
@@ -2765,6 +2811,15 @@ public final class StructureConstructionManager {
         }
         level.setBlock(pos, style.surface(), Block.UPDATE_ALL);
         return true;
+    }
+
+    private static boolean isDecorBlock(BlockState state) {
+        if (state == null) return false;
+        return state.is(net.minecraft.tags.BlockTags.FENCES)
+                || state.is(net.minecraft.tags.BlockTags.FENCE_GATES)
+                || state.is(Blocks.LANTERN)
+                || state.is(Blocks.SOUL_LANTERN)
+                || state.is(net.minecraft.tags.BlockTags.WALLS);
     }
 
     private static boolean requiresSupportedRoadPlacement(RoadPlacementStyle style, BlockState below) {
@@ -2909,7 +2964,7 @@ public final class StructureConstructionManager {
         if (style.bridge()) {
             return;
         }
-        fillRoadFoundation(level, pos, style.support(), ROAD_FOUNDATION_DEPTH);
+        fillRoadFoundation(level, pos, Blocks.SCAFFOLDING.defaultBlockState(), ROAD_FOUNDATION_DEPTH);
     }
 
     private static void fillRoadFoundation(ServerLevel level, BlockPos pos, BlockState fillState, int maxDepth) {
@@ -2926,6 +2981,23 @@ public final class StructureConstructionManager {
             level.setBlock(cursor, fillState, Block.UPDATE_ALL);
             cursor = cursor.below();
             depth++;
+        }
+    }
+
+    private static void removeScaffolding(ServerLevel level, RoadPlacementPlan plan) {
+        if (level == null || plan == null) return;
+        Set<Long> visited = new HashSet<>();
+        for (RoadGeometryPlanner.RoadBuildStep step : plan.buildSteps()) {
+            long key = step.pos().asLong();
+            if (!visited.add(key)) continue;
+            for (int d = 1; d <= ROAD_FOUNDATION_DEPTH; d++) {
+                BlockPos below = step.pos().below(d);
+                if (level.getBlockState(below).is(Blocks.SCAFFOLDING)) {
+                    level.setBlock(below, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+                } else {
+                    break;
+                }
+            }
         }
     }
 
@@ -3620,21 +3692,23 @@ public final class StructureConstructionManager {
                 continue;
             }
 
-            int armX = Integer.compare(lightPos.getX() - deckCenter.getX(), 0);
-            int armZ = Integer.compare(lightPos.getZ() - deckCenter.getZ(), 0);
+            // Negate so the arm extends INWARD over the road, not outward
+            int armX = -Integer.compare(lightPos.getX() - deckCenter.getX(), 0);
+            int armZ = -Integer.compare(lightPos.getZ() - deckCenter.getZ(), 0);
             BlockPos postBase = resolveLampPostBase(ghostBlocks, lightPos, style, bridgeLamp);
 
             if (style.lightSupport() != null) {
                 appendGhost(ghostBlocks, postBase, style.lightSupport());
                 appendGhost(ghostBlocks, postBase.above(), style.lightSupport());
+                appendGhost(ghostBlocks, postBase.above(2), style.lightSupport());
             }
 
             if (armX == 0 && armZ == 0) {
-                appendGhost(ghostBlocks, postBase.above(2), Blocks.LANTERN.defaultBlockState());
+                appendGhost(ghostBlocks, postBase.above(3), Blocks.LANTERN.defaultBlockState());
                 continue;
             }
 
-            BlockPos armPos = postBase.above().offset(armX, 0, armZ);
+            BlockPos armPos = postBase.above(2).offset(armX, 0, armZ);
             if (style.lightArm() != null) {
                 appendGhost(ghostBlocks, armPos, style.lightArm());
             }
@@ -5711,5 +5785,19 @@ public final class StructureConstructionManager {
                 existingClaim.entityDamageAccessLevel(),
                 existingClaim.claimedAt()
         ));
+    }
+
+    static boolean isIsland(ServerLevel level, BlockPos pos) {
+        int waterCount = 0, total = 0;
+        for (int dx = -32; dx <= 32; dx += 8) {
+            for (int dz = -32; dz <= 32; dz += 8) {
+                total++;
+                int y = level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX() + dx, pos.getZ() + dz);
+                if (level.getBlockState(new BlockPos(pos.getX() + dx, y, pos.getZ() + dz)).is(Blocks.WATER)) {
+                    waterCount++;
+                }
+            }
+        }
+        return waterCount > total / 2;
     }
 }

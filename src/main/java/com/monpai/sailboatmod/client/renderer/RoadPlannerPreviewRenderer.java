@@ -4,16 +4,21 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.registry.ModItems;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
@@ -42,11 +47,50 @@ public final class RoadPlannerPreviewRenderer {
 
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
-        VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
         Vec3 cameraPos = event.getCamera().getPosition();
+
+        // Phase 1: Render translucent block models (before getting line consumer)
+        BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
+        // Wrap bufferSource to force all block renders through translucent render type
+        MultiBufferSource translucentSource = renderType -> {
+            // Redirect all render types to translucent so blocks get alpha blending
+            return bufferSource.getBuffer(RenderType.translucent());
+        };
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
+        for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
+            if (block == null || block.pos() == null || block.state() == null) {
+                continue;
+            }
+            if (block.state().isAir()) {
+                continue;
+            }
+            poseStack.pushPose();
+            poseStack.translate(
+                    block.pos().getX() - cameraPos.x,
+                    block.pos().getY() - cameraPos.y,
+                    block.pos().getZ() - cameraPos.z
+            );
+            try {
+                blockRenderer.renderSingleBlock(block.state(), poseStack, translucentSource,
+                        LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY);
+            } catch (Exception ignored) {}
+            poseStack.popPose();
+        }
+        // Flush translucent batch then restore state
+        bufferSource.endBatch(RenderType.translucent());
+        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
+        RenderSystem.disableBlend();
+
+        // Phase 2: Render line wireframes (get line consumer AFTER block rendering is done)
+        VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
 
         for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
             if (block == null || block.pos() == null) {
+                continue;
+            }
+            if (block.state() != null && block.state().isAir()) {
                 continue;
             }
             renderBlockBox(
@@ -65,21 +109,26 @@ public final class RoadPlannerPreviewRenderer {
             );
         }
         List<BlockPos> pathNodes = preview.pathNodes();
+        List<RoadPlannerClientHooks.BridgeRange> bridgeRanges = preview.bridgeRanges();
         for (int i = 1; i < pathNodes.size(); i++) {
             BlockPos from = pathNodes.get(i - 1);
             BlockPos to = pathNodes.get(i);
             if (from == null || to == null) {
                 continue;
             }
+            boolean isBridge = isInBridgeRange(i - 1, bridgeRanges);
+            float segR = isBridge ? 0.3F : 0.2F;
+            float segG = isBridge ? 0.6F : 0.9F;
+            float segB = isBridge ? 1.0F : 0.3F;
             renderPathSegmentBox(
                     poseStack,
                     lineConsumer,
                     from,
                     to,
                     cameraPos,
-                    0.86F,
-                    0.94F,
-                    1.0F,
+                    segR,
+                    segG,
+                    segB,
                     0.95F,
                     0.08D
             );
@@ -211,6 +260,18 @@ public final class RoadPlannerPreviewRenderer {
     private static boolean isHoldingPlanner(Player player) {
         return player.getMainHandItem().is(ModItems.ROAD_PLANNER_ITEM.get())
                 || player.getOffhandItem().is(ModItems.ROAD_PLANNER_ITEM.get());
+    }
+
+    private static boolean isInBridgeRange(int nodeIndex, List<RoadPlannerClientHooks.BridgeRange> bridgeRanges) {
+        if (bridgeRanges == null || bridgeRanges.isEmpty()) {
+            return false;
+        }
+        for (RoadPlannerClientHooks.BridgeRange range : bridgeRanges) {
+            if (nodeIndex >= range.startIndex() && nodeIndex <= range.endIndex()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void renderBlockBox(PoseStack poseStack,

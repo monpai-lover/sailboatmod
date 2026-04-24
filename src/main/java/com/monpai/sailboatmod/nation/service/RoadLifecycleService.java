@@ -1,31 +1,67 @@
 package com.monpai.sailboatmod.nation.service;
 
-import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.road.api.RoadNetworkApi;
+import com.monpai.sailboatmod.road.config.RoadConfig;
+import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 public final class RoadLifecycleService {
     private RoadLifecycleService() {
     }
 
-    public static RoadPlacementPlan findActiveRoadPlan(ServerLevel level, String roadId) {
-        return StructureConstructionManager.findActiveRoadPlacementPlan(level, roadId);
+    private static RoadNetworkApi getApi() {
+        return new RoadNetworkApi(new RoadConfig());
     }
 
-    public static RoadPlacementPlan findRoadPlan(ServerLevel level, String roadId) {
-        return StructureConstructionManager.findRoadPlacementPlan(level, roadId);
+    public static Object findActiveRoadPlan(ServerLevel level, String roadId) {
+        if (level == null || roadId == null) return null;
+        RoadNetworkApi api = getApi();
+        Optional<ConstructionQueue> queue = api.getConstruction(roadId);
+        return queue.orElse(null);
+    }
+
+    public static Object findRoadPlan(ServerLevel level, String roadId) {
+        return findActiveRoadPlan(level, roadId);
     }
 
     public static boolean cancelRoad(ServerLevel level, String roadId) {
-        return StructureConstructionManager.cancelActiveRoadConstruction(level, roadId);
+        if (level == null || roadId == null) return false;
+        RoadNetworkApi api = getApi();
+        Optional<ConstructionQueue> queue = api.getConstruction(roadId);
+        if (queue.isEmpty()) return false;
+        ConstructionQueue q = queue.get();
+        if (!q.isRollingBack()) {
+            q.progressiveRollback(level, 1); // start progressive rollback
+        }
+        return true;
+    }
+
+    public static boolean tickRollback(ServerLevel level, String roadId, int batchSize) {
+        if (level == null || roadId == null) return true;
+        RoadNetworkApi api = getApi();
+        Optional<ConstructionQueue> queue = api.getConstruction(roadId);
+        if (queue.isEmpty()) return true;
+        ConstructionQueue q = queue.get();
+        if (!q.isRollingBack()) return true;
+        return q.progressiveRollback(level, batchSize);
     }
 
     public static boolean demolishRoad(ServerLevel level, String roadId) {
-        return StructureConstructionManager.demolishRoadById(level, roadId);
+        if (level == null || roadId == null) return false;
+        RoadNetworkApi api = getApi();
+        Optional<ConstructionQueue> queue = api.getConstruction(roadId);
+        if (queue.isEmpty()) return false;
+        ConstructionQueue q = queue.get();
+        if (!q.isRollingBack()) {
+            q.progressiveRollback(level, 1); // start progressive rollback
+        }
+        return true;
     }
 
     static List<BlockPos> ownedBlocksRemovalOrderForTest(List<BlockPos> ownedBlocks) {
