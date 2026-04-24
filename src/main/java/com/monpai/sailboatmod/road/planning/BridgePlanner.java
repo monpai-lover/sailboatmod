@@ -85,7 +85,7 @@ public class BridgePlanner {
                 processed.placements(), processed.bridgeSpans());
 
         List<BridgeSpan> spans = processed.bridgeSpans();
-        RouteCandidateMetrics metrics = RouteCandidateMetrics.from(finalPath, spans);
+        RouteCandidateMetrics metrics = RouteCandidateMetrics.from(segB, spans);
         if (!metrics.bridgeDominant()) {
             return new BridgePlanResult(false, "Bridge route is not bridge-dominant", finalPath, spans, List.of(), null);
         }

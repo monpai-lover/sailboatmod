@@ -42,9 +42,9 @@ public class PathPostProcessor {
     public ProcessedPath process(List<BlockPos> rawPath, TerrainSamplingCache cache,
                                   int bridgeMinWaterDepth, int halfWidth) {
         List<BridgeSpan> rawBridges = detectBridges(rawPath, cache, bridgeMinWaterDepth);
-        boolean hasRawShortFlatBridge = hasShortFlatBridge(rawBridges);
-        List<BlockPos> simplified = hasRawShortFlatBridge ? new ArrayList<>(rawPath) : simplify(rawPath);
-        List<BridgeSpan> bridges = hasRawShortFlatBridge
+        boolean hasRawBridge = !rawBridges.isEmpty();
+        List<BlockPos> simplified = hasRawBridge ? new ArrayList<>(rawPath) : simplify(rawPath);
+        List<BridgeSpan> bridges = hasRawBridge
                 ? rawBridges
                 : detectBridges(simplified, cache, bridgeMinWaterDepth);
         List<BlockPos> straightened = straightenBridges(simplified, bridges);
@@ -54,7 +54,10 @@ public class PathPostProcessor {
         int[] smoothedHeights = smoother.smooth(relaxed, bridges);
         List<BlockPos> heightAdjusted = applyHeights(relaxed, smoothedHeights);
 
-        List<BlockPos> splined = autoSpline(heightAdjusted, SPLINE_SEGMENTS_PER_SPAN);
+        boolean hasRegularBridge = bridges.stream().anyMatch(span -> span.kind() != BridgeSpanKind.SHORT_SPAN_FLAT);
+        List<BlockPos> splined = hasRegularBridge
+                ? new ArrayList<>(heightAdjusted)
+                : autoSpline(heightAdjusted, SPLINE_SEGMENTS_PER_SPAN);
         List<BlockPos> rasterized = rasterize(splined);
         List<BridgeSpan> finalBridges = detectBridges(rasterized, cache, bridgeMinWaterDepth);
         finalBridges = preserveShortFlatClassification(finalBridges, bridges, rasterized, simplified);
