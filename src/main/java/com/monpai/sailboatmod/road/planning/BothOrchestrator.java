@@ -68,21 +68,22 @@ public class BothOrchestrator {
                     List.of(), List.of(), List.of(), null);
             }
 
+            int halfWidth = PathPostProcessor.halfWidthForRoadWidth(width);
             PathPostProcessor post = new PathPostProcessor();
             PathPostProcessor.ProcessedPath processed = post.process(
-                result.path(), cache, config.getBridge().getBridgeMinWaterDepth());
+                result.path(), cache, config.getBridge().getBridgeMinWaterDepth(), halfWidth);
 
-            // Detour: only allow short-span bridges (<=8 blocks)
-            List<BridgeSpan> filteredSpans = new ArrayList<>();
-            for (BridgeSpan span : processed.bridgeSpans()) {
-                if (span.length() <= 8) {
-                    filteredSpans.add(span);
-                }
-                // >8 spans are NOT bridged in detour mode - they stay as ground path
+            List<BridgeSpan> filteredSpans = processed.bridgeSpans().stream()
+                    .filter(RoutePolicy.DETOUR::allowsSpan)
+                    .toList();
+            if (filteredSpans.size() != processed.bridgeSpans().size()) {
+                return new PlanCandidate("detour", "Detour", false,
+                        "Detour requires a regular bridge crossing", List.of(), List.of(), List.of(), null);
             }
 
             RoadBuilder builder = new RoadBuilder(config);
-            RoadData roadData = builder.buildRoad("detour", processed.path(), width, cache);
+            RoadData roadData = builder.buildRoad("detour", processed.path(), width, cache, "auto",
+                    processed.placements(), filteredSpans);
 
             return new PlanCandidate("detour", "Detour", true, null,
                 processed.path(), filteredSpans, roadData.buildSteps(), roadData);

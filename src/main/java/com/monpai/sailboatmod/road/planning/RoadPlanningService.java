@@ -35,13 +35,15 @@ public class RoadPlanningService {
             if (task.getResult() != null && task.getResult().success()) {
                 TerrainSamplingCache cache = new TerrainSamplingCache(level,
                     config.getPathfinding().getSamplingPrecision());
+                int width = config.getAppearance().getDefaultWidth();
+                int halfWidth = PathPostProcessor.halfWidthForRoadWidth(width);
                 PathPostProcessor postProcessor = new PathPostProcessor();
                 PathPostProcessor.ProcessedPath processed = postProcessor.process(
-                    task.getResult().path(), cache, config.getBridge().getBridgeMinWaterDepth());
+                    task.getResult().path(), cache, config.getBridge().getBridgeMinWaterDepth(), halfWidth);
 
-                int width = config.getAppearance().getDefaultWidth();
                 RoadData roadData = roadBuilder.buildRoad(
-                    task.getTaskId(), processed.path(), width, cache);
+                    task.getTaskId(), processed.path(), width, cache, "auto",
+                    processed.placements(), processed.bridgeSpans());
 
                 ConstructionQueue queue = new ConstructionQueue(task.getTaskId(), roadData.buildSteps());
                 activeConstructions.put(task.getTaskId(), queue);

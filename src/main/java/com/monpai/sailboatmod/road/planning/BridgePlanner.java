@@ -72,17 +72,23 @@ public class BridgePlanner {
         }
 
         // Step 4: Post-process and build
+        int halfWidth = PathPostProcessor.halfWidthForRoadWidth(width);
         PathPostProcessor post = new PathPostProcessor();
         PathPostProcessor.ProcessedPath processed = post.process(
-                fullPath, cache, config.getBridge().getBridgeMinWaterDepth());
+                fullPath, cache, config.getBridge().getBridgeMinWaterDepth(), halfWidth);
         List<BlockPos> finalPath = processed.path().isEmpty() ? fullPath : processed.path();
 
         // Step 5: Override bridge config with adaptive deck height
         RoadConfig adaptiveConfig = createAdaptiveConfig(cache, srcShore, tgtShore);
         RoadBuilder builder = new RoadBuilder(adaptiveConfig);
-        RoadData roadData = builder.buildRoad("bridge", finalPath, width, cache);
+        RoadData roadData = builder.buildRoad("bridge", finalPath, width, cache, "auto",
+                processed.placements(), processed.bridgeSpans());
 
         List<BridgeSpan> spans = processed.bridgeSpans();
+        RouteCandidateMetrics metrics = RouteCandidateMetrics.from(finalPath, spans);
+        if (!metrics.bridgeDominant()) {
+            return new BridgePlanResult(false, "Bridge route is not bridge-dominant", finalPath, spans, List.of(), null);
+        }
         return new BridgePlanResult(true, null, finalPath, spans, roadData.buildSteps(), roadData);
     }
 
@@ -96,36 +102,7 @@ public class BridgePlanner {
     }
 
     private List<BlockPos> findBridgePath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {
-        // Primary: straight line (fast, no zigzag)
-        List<BlockPos> straight = buildStraightPath(from, to, cache);
-        // Check if straight line crosses very deep water (>15 blocks)
-        boolean hasDeepWater = false;
-        for (BlockPos p : straight) {
-            if (cache.isWater(p.getX(), p.getZ()) && cache.getWaterDepth(p.getX(), p.getZ()) > 15) {
-                hasDeepWater = true;
-                break;
-            }
-        }
-        if (!hasDeepWater) return straight;
-        // Fallback: A* with step=8 to route around deep water
-        PathfindingConfig cfg = new PathfindingConfig();
-        cfg.setAlgorithm(PathfindingConfig.Algorithm.BASIC_ASTAR);
-        cfg.setMaxSteps(15000);
-        cfg.setAStarStep(8);
-        cfg.setWaterDepthWeight(10.0);
-        cfg.setNearWaterCost(0.0);
-        cfg.setElevationWeight(5.0);
-        cfg.setDeviationWeight(0.5);
-        cfg.setHeuristicWeight(10.0);
-        cfg.setBiomeWeight(0.0);
-        cfg.setStabilityWeight(0.0);
-        Pathfinder pf = PathfinderFactory.create(cfg);
-        PathResult r = pf.findPath(from, to, cache);
-        // Only use A* result if it's shorter than 2x the straight line (prevent U-shaped detours)
-        if (r.success() && r.path().size() < straight.size() * 2) {
-            return r.path();
-        }
-        return straight;
+        return buildStraightPath(from, to, cache);
     }
 
     private List<BlockPos> buildStraightPath(BlockPos from, BlockPos to, TerrainSamplingCache cache) {

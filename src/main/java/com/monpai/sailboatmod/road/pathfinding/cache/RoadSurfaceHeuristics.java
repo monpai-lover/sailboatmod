@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.road.pathfinding.cache;
 
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -47,7 +48,33 @@ public final class RoadSurfaceHeuristics {
                 || state.is(Blocks.MANGROVE_PROPAGULE)
                 || state.is(Blocks.AZALEA)
                 || state.is(Blocks.FLOWERING_AZALEA)
-                || state.is(BlockTags.REPLACEABLE);
+                || state.is(Blocks.KELP)
+                || state.is(Blocks.KELP_PLANT)
+                || state.is(Blocks.SEAGRASS)
+                || state.is(Blocks.TALL_SEAGRASS)
+                || state.is(Blocks.SEA_PICKLE)
+                || state.is(BlockTags.REPLACEABLE)
+                || hasNaturalNoiseName(state);
+    }
+
+    private static boolean hasNaturalNoiseName(BlockState state) {
+        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        return path.endsWith("_leaves")
+                || path.endsWith("_log")
+                || path.endsWith("_wood")
+                || path.endsWith("_stem")
+                || path.endsWith("_hyphae");
+    }
+
+    public static boolean isProtectedFromNaturalCleanup(BlockState state) {
+        return state != null && (state.is(Blocks.BEDROCK) || state.is(Blocks.BARRIER));
+    }
+
+    public static boolean isNaturalCleanupTarget(BlockState state) {
+        return state != null
+                && !state.isAir()
+                && !isProtectedFromNaturalCleanup(state)
+                && (isIgnoredSurfaceNoise(state) || state.is(BlockTags.REPLACEABLE));
     }
 
     public static boolean isRoadBearingSurface(BlockState state) {

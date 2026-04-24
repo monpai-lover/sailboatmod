@@ -1,11 +1,14 @@
 package com.monpai.sailboatmod.road.pathfinding.post;
 
 import com.monpai.sailboatmod.road.model.BridgeSpan;
+import com.monpai.sailboatmod.road.model.BridgeSpanKind;
 import net.minecraft.core.BlockPos;
 
 import java.util.List;
 
 public class HeightProfileSmoother {
+    private static final int SHORT_BRIDGE_HEAD_BUFFER = 2;
+
     private final double maxSlopePerSegment;
 
     public HeightProfileSmoother(double maxSlopePerSegment) {
@@ -20,7 +23,7 @@ public class HeightProfileSmoother {
 
         // Forward pass
         for (int i = 1; i < heights.length; i++) {
-            if (isInBridge(i, bridges)) continue;
+            if (isProtected(i, bridges)) continue;
             int maxH = (int) Math.ceil(heights[i - 1] + maxSlopePerSegment);
             int minH = (int) Math.floor(heights[i - 1] - maxSlopePerSegment);
             heights[i] = Math.max(minH, Math.min(maxH, heights[i]));
@@ -28,7 +31,7 @@ public class HeightProfileSmoother {
 
         // Backward pass
         for (int i = heights.length - 2; i >= 0; i--) {
-            if (isInBridge(i, bridges)) continue;
+            if (isProtected(i, bridges)) continue;
             int maxH = (int) Math.ceil(heights[i + 1] + maxSlopePerSegment);
             int minH = (int) Math.floor(heights[i + 1] - maxSlopePerSegment);
             heights[i] = Math.max(minH, Math.min(maxH, heights[i]));
@@ -40,6 +43,18 @@ public class HeightProfileSmoother {
     private boolean isInBridge(int index, List<BridgeSpan> bridges) {
         for (BridgeSpan span : bridges) {
             if (index >= span.startIndex() && index <= span.endIndex()) return true;
+        }
+        return false;
+    }
+
+    private boolean isProtected(int index, List<BridgeSpan> bridges) {
+        for (BridgeSpan span : bridges) {
+            if (index >= span.startIndex() && index <= span.endIndex()) return true;
+            if (span.kind() == BridgeSpanKind.SHORT_SPAN_FLAT
+                    && index >= span.startIndex() - SHORT_BRIDGE_HEAD_BUFFER
+                    && index <= span.endIndex() + SHORT_BRIDGE_HEAD_BUFFER) {
+                return true;
+            }
         }
         return false;
     }

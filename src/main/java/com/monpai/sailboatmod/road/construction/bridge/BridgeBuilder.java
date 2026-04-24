@@ -36,6 +36,9 @@ public class BridgeBuilder {
     public List<BuildStep> build(BridgeSpan span, List<BlockPos> centerPath,
                                   int width, RoadMaterial material, int startOrder,
                                   TerrainSamplingCache cache) {
+        if (span.kind() == BridgeSpanKind.SHORT_SPAN_FLAT) {
+            return buildShortFlatSpan(span, centerPath, width, material, startOrder, cache);
+        }
         if (!requiresPiersForLength(span.length())) {
             return buildShortSpan(span, centerPath, width, material, startOrder);
         }
@@ -66,6 +69,97 @@ public class BridgeBuilder {
             steps.addAll(lightPlacer.placeLights(bridgePath, deckY, width, material, roadDir, startOrder + steps.size()));
         }
         return steps;
+    }
+
+    private List<BuildStep> buildShortFlatSpan(BridgeSpan span,
+                                               List<BlockPos> centerPath,
+                                               int width,
+                                               RoadMaterial material,
+                                               int startOrder,
+                                               TerrainSamplingCache cache) {
+        List<BlockPos> bridgePath = centerPath.subList(span.startIndex(), span.endIndex() + 1);
+        if (bridgePath.isEmpty()) {
+            return List.of();
+        }
+        int deckY = span.hasDeckY() ? span.deckY() : Math.max(span.waterSurfaceY(), SEA_LEVEL) + config.getDeckHeight();
+        Direction roadDir = BridgeDeckPlacer.getDirection(centerPath, span.startIndex());
+        List<BuildStep> steps = new ArrayList<>();
+        int order = startOrder;
+
+        List<BuildStep> deck = deckPlacer.placeDeck(bridgePath, deckY, width, material, roadDir, order);
+        steps.addAll(deck);
+        order += deck.size();
+        List<BuildStep> lights = lightPlacer.placeLights(bridgePath, deckY, width, material, roadDir, order);
+        steps.addAll(lights);
+        order += lights.size();
+        return steps;
+    }
+
+    private int addShortFlatRamp(List<BuildStep> steps,
+                                 BridgeSpan span,
+                                 List<BlockPos> centerPath,
+                                 int width,
+                                 RoadMaterial material,
+                                 int deckY,
+                                 int order,
+                                 boolean beforeSpan,
+                                 TerrainSamplingCache cache) {
+        int index = beforeSpan ? span.startIndex() - 1 : span.endIndex() + 1;
+        if (index < 0 || index >= centerPath.size()) {
+            return order;
+        }
+        BlockPos pathPos = centerPath.get(index);
+        int terrainY = cache != null ? cache.getHeight(pathPos.getX(), pathPos.getZ()) : pathPos.getY();
+        int baseY = Math.max(pathPos.getY(), terrainY);
+        if (baseY >= deckY) {
+            return order;
+        }
+
+        int heightDiff = deckY - baseY;
+        int rampSteps = Math.max(1, heightDiff * 2);
+        int approachStart = beforeSpan
+                ? Math.max(0, span.startIndex() - rampSteps)
+                : span.endIndex() + 1;
+        int approachEnd = beforeSpan
+                ? span.startIndex() - 1
+                : Math.min(centerPath.size() - 1, span.endIndex() + rampSteps);
+        if (approachStart > approachEnd) {
+            return order;
+        }
+
+        int total = approachEnd - approachStart + 1;
+        int halfW = width / 2;
+        for (int i = approachStart; i <= approachEnd; i++) {
+            int step = beforeSpan ? i - approachStart + 1 : i - approachStart + 1;
+            BlockPos rampCenter = centerPath.get(i);
+            int rampY = beforeSpan
+                    ? baseY + (int) Math.ceil(heightDiff * (double) step / (total + 1))
+                    : deckY - (int) Math.ceil(heightDiff * (double) step / (total + 1));
+            rampY = Math.max(baseY, Math.min(deckY - 1, rampY));
+            Direction localDir = BridgeDeckPlacer.getDirection(centerPath, i);
+            Direction perpDir = localDir.getClockWise();
+            boolean topHalf = beforeSpan ? step % 2 == 0 : step % 2 == 1;
+            net.minecraft.world.level.block.state.properties.SlabType slabType = topHalf
+                    ? net.minecraft.world.level.block.state.properties.SlabType.TOP
+                    : net.minecraft.world.level.block.state.properties.SlabType.BOTTOM;
+            net.minecraft.world.level.block.state.BlockState slabState = material.slab().defaultBlockState()
+                    .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, slabType);
+            for (int w = -halfW; w <= halfW; w++) {
+                BlockPos pos = new BlockPos(rampCenter.getX() + perpDir.getStepX() * w,
+                        rampY,
+                        rampCenter.getZ() + perpDir.getStepZ() * w);
+                steps.add(new BuildStep(order++, pos, slabState, BuildPhase.RAMP));
+            }
+            BlockPos lRail = new BlockPos(rampCenter.getX() + perpDir.getStepX() * -(halfW + 1),
+                    rampY + 1,
+                    rampCenter.getZ() + perpDir.getStepZ() * -(halfW + 1));
+            BlockPos rRail = new BlockPos(rampCenter.getX() + perpDir.getStepX() * (halfW + 1),
+                    rampY + 1,
+                    rampCenter.getZ() + perpDir.getStepZ() * (halfW + 1));
+            steps.add(new BuildStep(order++, lRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+            steps.add(new BuildStep(order++, rRail, material.fence().defaultBlockState(), BuildPhase.RAILING));
+        }
+        return order;
     }
 
     private List<BuildStep> buildPierBridge(BridgeSpan span, List<BlockPos> centerPath,

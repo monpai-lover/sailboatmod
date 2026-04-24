@@ -1545,14 +1545,17 @@ public final class StructureConstructionManager {
             postProcessor.process(trimmedCenterPath, cache, roadConfig.getBridge().getBridgeMinWaterDepth());
 
         RoadBuilder roadBuilder = new RoadBuilder(roadConfig);
-        RoadData roadData = roadBuilder.buildRoad("manual", processed.path(), roadConfig.getAppearance().getDefaultWidth(), cache);
+        RoadData roadData = roadBuilder.buildRoad("manual", processed.path(), roadConfig.getAppearance().getDefaultWidth(),
+                cache, "auto", processed.placements(), processed.bridgeSpans());
 
         // Convert new types to old types
         List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new ArrayList<>();
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
         List<BlockPos> ownedBlocks = new ArrayList<>();
         for (BuildStep step : roadData.buildSteps()) {
-            ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state()));
+            if (!step.state().isAir()) {
+                ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(step.pos(), step.state()));
+            }
             buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(step.order(), step.pos(), step.state(),
                 RoadGeometryPlanner.RoadBuildPhase.SURFACE));
             ownedBlocks.add(step.pos());

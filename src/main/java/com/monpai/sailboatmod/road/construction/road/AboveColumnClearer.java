@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.road.construction.road;
 
+import com.monpai.sailboatmod.road.pathfinding.cache.RoadSurfaceHeuristics;
+
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.core.BlockPos;
@@ -43,9 +45,9 @@ public class AboveColumnClearer {
     }
 
     public static boolean shouldClear(ServerLevel level, BlockPos pos) {
-        BlockState state = level.getBlockState(pos);
-        if (state.isAir()) return false;
-        if (state.is(Blocks.BEDROCK) || state.is(Blocks.BARRIER)) return false;
-        return true;
+        if (level == null || pos == null) {
+            return false;
+        }
+        return RoadSurfaceHeuristics.isNaturalCleanupTarget(level.getBlockState(pos));
     }
 }

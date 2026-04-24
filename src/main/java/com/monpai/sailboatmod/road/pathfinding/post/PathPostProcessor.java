@@ -1,6 +1,9 @@
 package com.monpai.sailboatmod.road.pathfinding.post;
 
+import com.monpai.sailboatmod.road.config.BridgeConfig;
+import com.monpai.sailboatmod.road.construction.bridge.BridgeRangeDetector;
 import com.monpai.sailboatmod.road.model.BridgeSpan;
+import com.monpai.sailboatmod.road.model.BridgeSpanKind;
 import com.monpai.sailboatmod.road.model.RoadSegmentPlacement;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import com.monpai.sailboatmod.road.pathfinding.post.SplineHelper.CurveMode;
@@ -13,21 +16,37 @@ import java.util.Map;
 
 public class PathPostProcessor {
     private static final int SPLINE_SEGMENTS_PER_SPAN = 4;
+
+    public static int halfWidthForRoadWidth(int width) {
+        return Math.max(0, width / 2);
+    }
     private static final double RELAXATION_WEIGHT = 0.3;
     private static final int RELAXATION_PASSES = 3;
     private static final double SHARP_TURN_THRESHOLD = 60.0;
+    private static final int SHORT_BRIDGE_HEAD_BUFFER = 2;
 
     public record ProcessedPath(List<BlockPos> path, List<BridgeSpan> bridgeSpans,
-                                List<RoadSegmentPlacement> placements) {
+                                List<RoadSegmentPlacement> placements,
+                                List<Integer> targetY) {
         public ProcessedPath(List<BlockPos> path, List<BridgeSpan> bridgeSpans) {
-            this(path, bridgeSpans, List.of());
+            this(path, bridgeSpans, List.of(),
+                    path == null ? List.of() : path.stream().map(BlockPos::getY).toList());
+        }
+
+        public ProcessedPath(List<BlockPos> path, List<BridgeSpan> bridgeSpans,
+                             List<RoadSegmentPlacement> placements) {
+            this(path, bridgeSpans, placements,
+                    path == null ? List.of() : path.stream().map(BlockPos::getY).toList());
         }
     }
-
     public ProcessedPath process(List<BlockPos> rawPath, TerrainSamplingCache cache,
                                   int bridgeMinWaterDepth, int halfWidth) {
-        List<BlockPos> simplified = simplify(rawPath);
-        List<BridgeSpan> bridges = detectBridges(simplified, cache, bridgeMinWaterDepth);
+        List<BridgeSpan> rawBridges = detectBridges(rawPath, cache, bridgeMinWaterDepth);
+        boolean hasRawShortFlatBridge = hasShortFlatBridge(rawBridges);
+        List<BlockPos> simplified = hasRawShortFlatBridge ? new ArrayList<>(rawPath) : simplify(rawPath);
+        List<BridgeSpan> bridges = hasRawShortFlatBridge
+                ? rawBridges
+                : detectBridges(simplified, cache, bridgeMinWaterDepth);
         List<BlockPos> straightened = straightenBridges(simplified, bridges);
         List<BlockPos> relaxed = relax(straightened, bridges);
 
@@ -38,9 +57,12 @@ public class PathPostProcessor {
         List<BlockPos> splined = autoSpline(heightAdjusted, SPLINE_SEGMENTS_PER_SPAN);
         List<BlockPos> rasterized = rasterize(splined);
         List<BridgeSpan> finalBridges = detectBridges(rasterized, cache, bridgeMinWaterDepth);
-        List<RoadSegmentPlacement> placements = rasterizeSegments(rasterized, halfWidth, finalBridges);
+        finalBridges = preserveShortFlatClassification(finalBridges, bridges, rasterized, simplified);
+        List<BlockPos> stablePath = anchorLandHeights(clampShortFlatDecks(rasterized, finalBridges), finalBridges, cache);
+        List<RoadSegmentPlacement> placements = rasterizeSegments(stablePath, halfWidth, finalBridges);
         anchorEndpoints(placements, cache);
-        return new ProcessedPath(rasterized, finalBridges, placements);
+        List<Integer> targetY = stablePath.stream().map(BlockPos::getY).toList();
+        return new ProcessedPath(stablePath, finalBridges, placements, targetY);
     }
 
     public ProcessedPath process(List<BlockPos> rawPath, TerrainSamplingCache cache, int bridgeMinWaterDepth) {
@@ -91,28 +113,9 @@ public class PathPostProcessor {
     }
 
     private List<BridgeSpan> detectBridges(List<BlockPos> path, TerrainSamplingCache cache, int minDepth) {
-        List<BridgeSpan> spans = new ArrayList<>();
-        int start = -1;
-        for (int i = 0; i < path.size(); i++) {
-            BlockPos p = path.get(i);
-            boolean water = cache.isWater(p.getX(), p.getZ())
-                    && cache.getWaterDepth(p.getX(), p.getZ()) >= minDepth;
-            if (water && start == -1) {
-                start = i;
-            } else if (!water && start != -1) {
-                int surfaceY = cache.getWaterSurfaceY(path.get(start).getX(), path.get(start).getZ());
-                int floorY = cache.getOceanFloor(path.get(start).getX(), path.get(start).getZ());
-                spans.add(new BridgeSpan(start, i - 1, surfaceY, floorY));
-                start = -1;
-            }
-        }
-        if (start != -1) {
-            BlockPos p = path.get(start);
-            spans.add(new BridgeSpan(start, path.size() - 1,
-                cache.getWaterSurfaceY(p.getX(), p.getZ()),
-                cache.getOceanFloor(p.getX(), p.getZ())));
-        }
-        return spans;
+        BridgeConfig config = new BridgeConfig();
+        config.setBridgeMinWaterDepth(minDepth);
+        return new BridgeRangeDetector(config).detect(path, cache);
     }
 
     private List<BlockPos> straightenBridges(List<BlockPos> path, List<BridgeSpan> bridges) {
@@ -145,7 +148,7 @@ public class PathPostProcessor {
         for (int pass = 0; pass < RELAXATION_PASSES; pass++) {
             List<BlockPos> next = new ArrayList<>(result);
             for (int i = 1; i < result.size() - 1; i++) {
-                if (isInBridge(i, bridges)) continue;
+                if (isProtectedFromRelaxation(i, bridges)) continue;
                 BlockPos prev = result.get(i - 1);
                 BlockPos curr = result.get(i);
                 BlockPos nxt = result.get(i + 1);
@@ -158,6 +161,109 @@ public class PathPostProcessor {
             result = next;
         }
         return result;
+    }
+
+    private boolean isProtectedFromRelaxation(int index, List<BridgeSpan> bridges) {
+        for (BridgeSpan span : bridges) {
+            if (index >= span.startIndex() && index <= span.endIndex()) return true;
+            if (span.kind() == BridgeSpanKind.SHORT_SPAN_FLAT
+                    && index >= span.startIndex() - SHORT_BRIDGE_HEAD_BUFFER
+                    && index <= span.endIndex() + SHORT_BRIDGE_HEAD_BUFFER) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasShortFlatBridge(List<BridgeSpan> bridges) {
+        for (BridgeSpan span : bridges) {
+            if (span.kind() == BridgeSpanKind.SHORT_SPAN_FLAT) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<BlockPos> clampShortFlatDecks(List<BlockPos> path, List<BridgeSpan> bridges) {
+        List<BlockPos> result = new ArrayList<>(path);
+        for (BridgeSpan span : bridges) {
+            if (span.kind() != BridgeSpanKind.SHORT_SPAN_FLAT || !span.hasDeckY()) {
+                continue;
+            }
+            int start = Math.max(0, span.startIndex());
+            int end = Math.min(result.size() - 1, span.endIndex());
+            for (int i = start; i <= end; i++) {
+                BlockPos pos = result.get(i);
+                result.set(i, new BlockPos(pos.getX(), span.deckY(), pos.getZ()));
+            }
+        }
+        return result;
+    }
+
+    private List<BridgeSpan> preserveShortFlatClassification(List<BridgeSpan> finalBridges,
+                                                             List<BridgeSpan> originalBridges,
+                                                             List<BlockPos> finalPath,
+                                                             List<BlockPos> originalPath) {
+        List<BridgeSpan> result = new ArrayList<>(finalBridges.size());
+        for (BridgeSpan span : finalBridges) {
+            BridgeSpan matched = matchingShortFlatSpan(span, originalBridges, finalPath, originalPath);
+            result.add(matched == null ? span : new BridgeSpan(span.startIndex(), span.endIndex(),
+                    span.waterSurfaceY(), span.oceanFloorY(), BridgeSpanKind.SHORT_SPAN_FLAT, matched.deckY()));
+        }
+        return result;
+    }
+
+    private BridgeSpan matchingShortFlatSpan(BridgeSpan span, List<BridgeSpan> originalBridges,
+                                             List<BlockPos> finalPath,
+                                             List<BlockPos> originalPath) {
+        int start = Math.max(0, span.startIndex());
+        int end = Math.min(finalPath.size() - 1, span.endIndex());
+        for (BridgeSpan original : originalBridges) {
+            if (original.kind() != BridgeSpanKind.SHORT_SPAN_FLAT || !original.hasDeckY()) {
+                continue;
+            }
+            for (int i = start; i <= end; i++) {
+                BlockPos pos = finalPath.get(i);
+                if (isNearOriginalSpan(pos, original, originalPath)) {
+                    return original;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isNearOriginalSpan(BlockPos pos, BridgeSpan original, List<BlockPos> originalPath) {
+        for (int i = Math.max(0, original.startIndex()); i <= Math.min(originalPath.size() - 1, original.endIndex()); i++) {
+            BlockPos originalPos = originalPath.get(i);
+            if (Math.abs(pos.getX() - originalPos.getX()) <= 1 && Math.abs(pos.getZ() - originalPos.getZ()) <= 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<BlockPos> anchorLandHeights(List<BlockPos> path, List<BridgeSpan> bridges,
+                                             TerrainSamplingCache cache) {
+        List<BlockPos> result = new ArrayList<>(path.size());
+        for (int i = 0; i < path.size(); i++) {
+            BlockPos pos = path.get(i);
+            if (!isInShortFlatBridge(i, bridges) && !cache.isWater(pos.getX(), pos.getZ())) {
+                result.add(new BlockPos(pos.getX(), cache.getHeight(pos.getX(), pos.getZ()), pos.getZ()));
+            } else {
+                result.add(pos);
+            }
+        }
+        return result;
+    }
+
+    private boolean isInShortFlatBridge(int index, List<BridgeSpan> bridges) {
+        for (BridgeSpan span : bridges) {
+            if (span.kind() == BridgeSpanKind.SHORT_SPAN_FLAT
+                    && index >= span.startIndex() && index <= span.endIndex()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<BlockPos> rasterize(List<BlockPos> path) {
@@ -195,6 +301,11 @@ public class PathPostProcessor {
             if (e2 < dx) { err += dx; z0 += sz; }
         }
         return points;
+    }
+
+    public List<RoadSegmentPlacement> rasterizeForBuilderFallback(List<BlockPos> path, int halfWidth,
+                                                               List<BridgeSpan> bridges) {
+        return rasterizeSegments(path, halfWidth, bridges == null ? List.of() : bridges);
     }
 
     private List<RoadSegmentPlacement> rasterizeSegments(List<BlockPos> path, int halfWidth,

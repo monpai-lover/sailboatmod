@@ -29,6 +29,7 @@ import com.monpai.sailboatmod.road.pathfinding.PathResult;
 import com.monpai.sailboatmod.road.pathfinding.Pathfinder;
 import com.monpai.sailboatmod.road.pathfinding.PathfinderFactory;
 import com.monpai.sailboatmod.road.planning.BridgePlanner;
+import com.monpai.sailboatmod.road.planning.RoutePolicy;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
 import net.minecraft.core.BlockPos;
@@ -329,6 +330,10 @@ public final class ManualRoadPlannerService {
         return Component.translatable("message.sailboatmod.road_planner.cancelled", route.sourceName(), route.targetName());
     }
 
+
+    static boolean isVisibleRoadPreviewStep(BuildStep step) {
+        return step != null && !step.state().isAir();
+    }
     private static Component previewOrDemolishRoad(ServerPlayer player, ItemStack stack) {
         if (player == null || stack == null) {
             return Component.translatable("message.sailboatmod.road_planner.unavailable");
@@ -338,15 +343,15 @@ public final class ManualRoadPlannerService {
             return Component.translatable("message.sailboatmod.road_planner.not_looking_at_road");
         }
         ServerLevel level = player.serverLevel();
-        NationSavedData data = NationSavedData.get(level);
-        data.removeRoadNetwork(targeted.roadId());
-        data.setDirty();
+        boolean demolitionStarted = StructureConstructionManager.demolishRoadById(level, targeted.roadId());
+        if (!demolitionStarted) {
+            return Component.literal("Road demolition unavailable: no construction or rollback plan was found.");
+        }
         clearPreviewState(stack);
         sendPreviewClear(player);
         READY_PREVIEWS.remove(player.getUUID());
         return Component.translatable("message.sailboatmod.road_planner.demolished", targeted.sourceName(), targeted.targetName());
     }
-
     private static Component previewOrApplyLifecycleAction(ServerPlayer player,
                                                            ItemStack stack,
                                                            String roadId,
@@ -483,16 +488,19 @@ public final class ManualRoadPlannerService {
             if (!result.success() || result.path().size() < 2) {
                 return null;
             }
+            int width = config.getAppearance().getDefaultWidth();
+            int halfWidth = PathPostProcessor.halfWidthForRoadWidth(width);
             PathPostProcessor postProcessor = new PathPostProcessor();
             PathPostProcessor.ProcessedPath processed = postProcessor.process(
-                    result.path(), cache, config.getBridge().getBridgeMinWaterDepth(), 3 / 2);
+                    result.path(), cache, config.getBridge().getBridgeMinWaterDepth(), halfWidth);
             finalPath = processed.path();
             if (!allowsPierlessDetourCrossing(maxWaterSpanLength(processed.bridgeSpans()))) {
                 return null;
             }
             bridgeBacked = !processed.bridgeSpans().isEmpty();
             RoadBuilder builder = new RoadBuilder(config);
-            roadData = builder.buildRoad(manualRoadId, finalPath, 3, cache, "auto", processed.placements());
+            roadData = builder.buildRoad(manualRoadId, finalPath, width, cache, "auto",
+                    processed.placements(), processed.bridgeSpans());
         }
         if (finalPath.size() < 2) {
             return null;
@@ -512,7 +520,9 @@ public final class ManualRoadPlannerService {
         List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new ArrayList<>();
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
         for (BuildStep bs : roadData.buildSteps()) {
-            ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
+            if (isVisibleRoadPreviewStep(bs)) {
+                ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
+            }
             buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state(), mapBuildPhase(bs.phase())));
         }
         List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();
@@ -2278,7 +2288,9 @@ public final class ManualRoadPlannerService {
         List<RoadGeometryPlanner.GhostRoadBlock> ghostBlocks = new ArrayList<>();
         List<RoadGeometryPlanner.RoadBuildStep> buildSteps = new ArrayList<>();
         for (BuildStep bs : roadData.buildSteps()) {
-            ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
+            if (isVisibleRoadPreviewStep(bs)) {
+                ghostBlocks.add(new RoadGeometryPlanner.GhostRoadBlock(bs.pos(), bs.state()));
+            }
             buildSteps.add(new RoadGeometryPlanner.RoadBuildStep(bs.order(), bs.pos(), bs.state(), mapBuildPhase(bs.phase())));
         }
         List<RoadPlacementPlan.BridgeRange> bridgeRanges = new ArrayList<>();

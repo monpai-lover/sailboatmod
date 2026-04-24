@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.road.construction.bridge.BridgeBuilder;
 import com.monpai.sailboatmod.road.construction.bridge.BridgeRangeDetector;
 import com.monpai.sailboatmod.road.model.*;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
+import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 
@@ -19,11 +20,13 @@ public class RoadBuilder {
     private final BridgeBuilder bridgeBuilder;
     private final BiomeMaterialSelector materialSelector;
     private final TunnelDigger tunnelDigger;
+    private final RoadSegmentStepPlanner segmentStepPlanner;
 
     public RoadBuilder(RoadConfig config) {
         this.config = config;
         this.materialSelector = new BiomeMaterialSelector();
         this.paver = new RoadSegmentPaver(materialSelector);
+        this.segmentStepPlanner = new RoadSegmentStepPlanner(paver);
         this.streetlightPlacer = new StreetlightPlacer(config.getAppearance(), materialSelector);
         this.bridgeDetector = new BridgeRangeDetector(config.getBridge());
         this.bridgeBuilder = new BridgeBuilder(config.getBridge());
@@ -43,30 +46,32 @@ public class RoadBuilder {
     public RoadData buildRoad(String roadId, List<BlockPos> centerPath, int width,
                               TerrainSamplingCache cache, String materialPreset,
                               List<RoadSegmentPlacement> placements) {
-        List<BridgeSpan> bridgeSpans = bridgeDetector.detect(centerPath, cache);
+        return buildRoad(roadId, centerPath, width, cache, materialPreset, placements, List.of());
+    }
+
+    public RoadData buildRoad(String roadId, List<BlockPos> centerPath, int width,
+                              TerrainSamplingCache cache, String materialPreset,
+                              List<RoadSegmentPlacement> placements,
+                              List<BridgeSpan> upstreamBridgeSpans) {
+        List<BridgeSpan> bridgeSpans = upstreamBridgeSpans == null || upstreamBridgeSpans.isEmpty()
+                ? bridgeDetector.detect(centerPath, cache)
+                : upstreamBridgeSpans;
 
         List<BuildStep> allSteps = new ArrayList<>();
         int order = 0;
         String normalizedPreset = materialPreset == null ? "auto" : materialPreset;
         List<BlockPos> landPath = filterLandPath(centerPath, bridgeSpans);
 
-        if (!placements.isEmpty()) {
-            List<BuildStep> landSteps = paver.pave(placements, cache, normalizedPreset);
-            for (BuildStep step : landSteps) {
-                allSteps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
-            }
-        } else {
-            List<RoadSegmentPlacement> fallbackPlacements = new ArrayList<>();
-            for (int i = 0; i < landPath.size(); i++) {
-                fallbackPlacements.add(new RoadSegmentPlacement(
-                        landPath.get(i), i, List.of(landPath.get(i)), false));
-            }
-            List<BuildStep> landSteps = paver.pave(fallbackPlacements, cache, normalizedPreset);
-            for (BuildStep step : landSteps) {
-                allSteps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
-            }
+        List<RoadSegmentPlacement> effectivePlacements = placements == null || placements.isEmpty()
+                ? new PathPostProcessor().rasterizeForBuilderFallback(centerPath,
+                PathPostProcessor.halfWidthForRoadWidth(width), bridgeSpans)
+                : placements;
+        List<Integer> targetY = centerPath.stream().map(BlockPos::getY).toList();
+        List<BuildStep> landSteps = segmentStepPlanner.buildLandSteps(
+                effectivePlacements, centerPath, targetY, bridgeSpans, cache, normalizedPreset, order);
+        for (BuildStep step : landSteps) {
+            allSteps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
         }
-
         if (config.getAppearance().isTunnelEnabled()) {
             List<BuildStep> tunnelSteps = buildTunnelSteps(landPath, width, cache, order);
             allSteps.addAll(tunnelSteps);
@@ -86,7 +91,8 @@ public class RoadBuilder {
             centerPath, width, bridgeSpans, cache, order, normalizedPreset);
         allSteps.addAll(lights);
 
-        return new RoadData(roadId, width, List.of(), bridgeSpans, defaultMaterial, allSteps, centerPath);
+        return new RoadData(roadId, width, List.of(), bridgeSpans, defaultMaterial, allSteps, centerPath,
+                effectivePlacements, targetY);
     }
 
     private List<BuildStep> buildTunnelSteps(List<BlockPos> landPath,

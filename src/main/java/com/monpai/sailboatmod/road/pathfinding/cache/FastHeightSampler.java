@@ -13,7 +13,7 @@ public class FastHeightSampler {
     }
 
     public int surfaceHeight(int x, int z) {
-        int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+        int y = motionBlockingHeight(x, z) - 1;
         while (y > level.getMinBuildHeight() && RoadSurfaceHeuristics.isIgnoredSurfaceNoise(level.getBlockState(new BlockPos(x, y, z)))) {
             y--;
         }
@@ -21,7 +21,7 @@ public class FastHeightSampler {
     }
 
     public int motionBlockingHeight(int x, int z) {
-        return level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+        return level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, new BlockPos(x, 0, z)).getY();
     }
 
     public static boolean isVegetationOrDestructible(BlockState state) {
