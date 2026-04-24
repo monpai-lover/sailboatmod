@@ -167,15 +167,15 @@ public class BridgeBuilder {
                                             TerrainSamplingCache cache) {
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
-        int spanLen = span.endIndex() - span.startIndex();
+        int spanLen = span.length();
         if (spanLen < 2) return steps;
 
         Direction roadDir = BridgeDeckPlacer.getDirection(centerPath, span.startIndex());
         Direction exitDir = BridgeDeckPlacer.getDirection(centerPath, span.endIndex());
 
         // Shore heights (clamped above water)
-        BlockPos entryPos = centerPath.get(span.startIndex());
-        BlockPos exitPos = centerPath.get(span.endIndex());
+        BlockPos entryPos = centerPath.get(Math.max(0, span.startIndex() - 1));
+        BlockPos exitPos = centerPath.get(Math.min(centerPath.size() - 1, span.endIndex() + 1));
         int waterY = Math.max(span.waterSurfaceY(), SEA_LEVEL);
         int entryY = cache != null ? Math.max(cache.getHeight(entryPos.getX(), entryPos.getZ()), waterY) : waterY;
         int exitY = cache != null ? Math.max(cache.getHeight(exitPos.getX(), exitPos.getZ()), waterY) : waterY;
@@ -225,11 +225,12 @@ public class BridgeBuilder {
         }
 
         // 2. Flat deck + piers (from ascEnd to descStart)
-        if (ascEnd < descStart) {
+        if (ascEnd <= descStart) {
             List<BlockPos> deckPath = centerPath.subList(ascEnd, descStart + 1);
             List<BridgePierBuilder.PierNode> pierNodes = pierBuilder.planPierNodes(deckPath, deckY, span.oceanFloorY(), cache);
-            steps.addAll(pierBuilder.buildPiers(pierNodes, order));
-            order += pierNodes.size() * 20; // approximate
+            List<BuildStep> piers = pierBuilder.buildPiers(pierNodes, order);
+            steps.addAll(piers);
+            order += piers.size();
             List<BuildStep> deck = deckPlacer.placeDeck(deckPath, deckY, width, material, roadDir, order);
             steps.addAll(deck);
             order += deck.size();

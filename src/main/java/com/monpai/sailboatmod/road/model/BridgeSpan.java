@@ -18,7 +18,7 @@ public record BridgeSpan(int startIndex, int endIndex, int waterSurfaceY, int oc
     }
 
     public int length() {
-        return endIndex - startIndex;
+        return endIndex - startIndex + 1;
     }
 
     public boolean hasDeckY() {
