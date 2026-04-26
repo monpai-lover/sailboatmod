@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RoadPlanner 小地图 UI 审阅稿</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: rgba(15, 23, 42, .92);
+      --panel-2: rgba(30, 41, 59, .86);
+      --line: rgba(148, 163, 184, .26);
+      --text: #e5edf8;
+      --muted: #94a3b8;
+      --green: #34d399;
+      --blue: #38bdf8;
+      --amber: #f59e0b;
+      --red: #fb7185;
+      --violet: #a78bfa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 20% 10%, #12345a 0, transparent 32%), var(--bg);
+      color: var(--text);
+      font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    .screen { display: grid; grid-template-columns: 92px 1fr 300px; gap: 14px; padding: 16px; height: 100vh; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 24px 70px rgba(0,0,0,.35); backdrop-filter: blur(12px); }
+    .tools { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .tool { height: 58px; border: 1px solid var(--line); border-radius: 14px; display: grid; place-items: center; gap: 2px; color: var(--muted); background: rgba(15, 23, 42, .7); cursor: pointer; transition: .18s ease; }
+    .tool svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .tool span { font-size: 11px; }
+    .tool.active { color: #04111d; background: linear-gradient(135deg, var(--green), var(--blue)); border-color: transparent; }
+    .map-wrap { position: relative; overflow: hidden; }
+    .topbar { position: absolute; left: 18px; right: 18px; top: 14px; height: 54px; z-index: 5; display: flex; justify-content: space-between; align-items: center; padding: 0 14px; background: rgba(2, 6, 23, .68); border: 1px solid var(--line); border-radius: 16px; }
+    .title { font-weight: 700; letter-spacing: .02em; }
+    .chips { display: flex; gap: 8px; }
+    .chip { padding: 6px 10px; border-radius: 999px; background: rgba(15,23,42,.82); border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .chip.good { color: var(--green); }
+    .map { position: absolute; inset: 0; background: #1f2f1f; }
+    .tile-grid { position: absolute; inset: -80px; background-image: linear-gradient(rgba(255,255,255,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.06) 1px, transparent 1px), radial-gradient(circle at 34% 38%, #2e6234 0 8%, transparent 18%), radial-gradient(circle at 70% 64%, #163b69 0 9%, transparent 18%), linear-gradient(130deg, #2f5d31 0 22%, #55613b 22% 44%, #274d2c 44% 63%, #17405d 63% 75%, #3b4c2f 75%); background-size: 64px 64px, 64px 64px, 100% 100%, 100% 100%, 100% 100%; transform: rotate(.001deg); }
+    .corridor { position: absolute; left: 15%; right: 15%; top: 44%; height: 120px; transform: rotate(-7deg); border: 2px dashed rgba(56,189,248,.72); background: rgba(56,189,248,.12); border-radius: 80px; }
+    .manual-corridor { position: absolute; left: 18%; top: 48%; width: 280px; height: 76px; transform: rotate(10deg); border: 2px solid rgba(52,211,153,.72); background: rgba(52,211,153,.13); border-radius: 60px; }
+    svg.route { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .node { fill: #e5edf8; stroke: #06111f; stroke-width: 4; }
+    .road-line { fill: none; stroke: var(--green); stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 2px 4px rgba(0,0,0,.55)); }
+    .rough-line { fill: none; stroke: var(--blue); stroke-width: 4; stroke-dasharray: 10 10; stroke-linecap: round; opacity: .9; }
+    .bridge-line { fill: none; stroke: var(--amber); stroke-width: 10; stroke-linecap: round; }
+    .arrow { position: absolute; right: 34px; top: 42%; width: 74px; height: 74px; display: grid; place-items: center; border-radius: 50%; background: rgba(2,6,23,.72); border: 1px solid rgba(56,189,248,.55); color: var(--blue); }
+    .arrow svg { width: 42px; height: 42px; stroke: currentColor; fill: none; stroke-width: 2.5; transform: rotate(72deg); }
+    .legend { position: absolute; left: 18px; bottom: 18px; padding: 12px; border-radius: 14px; background: rgba(2,6,23,.7); border: 1px solid var(--line); display: grid; gap: 7px; }
+    .legend div { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+    .swatch { width: 22px; height: 4px; border-radius: 99px; }
+    .side { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .section { padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel-2); }
+    .section h2 { margin: 0 0 10px; font-size: 13px; color: #cbd5e1; text-transform: uppercase; letter-spacing: .08em; }
+    .metric { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid rgba(148,163,184,.14); }
+    .metric:last-child { border-bottom: 0; }
+    .metric span:first-child { color: var(--muted); }
+    .buttons { display: grid; gap: 8px; }
+    button { border: 1px solid var(--line); background: rgba(15,23,42,.9); color: var(--text); border-radius: 12px; min-height: 38px; cursor: pointer; transition: .18s ease; }
+    button:hover { border-color: rgba(56,189,248,.7); color: white; }
+    button.primary { border: 0; color: #04111d; background: linear-gradient(135deg, var(--green), var(--blue)); font-weight: 700; }
+    .progress { height: 10px; border-radius: 999px; overflow: hidden; background: rgba(15,23,42,.9); border: 1px solid var(--line); }
+    .progress > i { display: block; width: 58%; height: 100%; background: linear-gradient(90deg, var(--green), var(--blue)); }
+    .status { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main class="screen">
+    <aside class="panel tools" aria-label="规划工具栏">
+      <div class="tool active"><svg viewBox="0 0 24 24"><path d="M4 17c5-8 11 2 16-8"/></svg><span>道路</span></div>
+      <div class="tool"><svg viewBox="0 0 24 24"><path d="M3 14h18M6 14V9m12 5V9M8 9h8"/></svg><span>桥梁</span></div>
+      <div class="tool"><svg viewBox="0 0 24 24"><path d="M4 15c2-5 14-5 16 0M7 15v4m10-4v4"/></svg><span>隧道</span></div>
+      <div class="tool"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg><span>擦除</span></div>
+      <div class="tool"><svg viewBox="0 0 24 24"><path d="M4 4l7 16 2-7 7-2z"/></svg><span>选择</span></div>
+    </aside>
+    <section class="panel map-wrap" aria-label="道路规划小地图">
+      <div class="topbar">
+        <div><div class="title">RoadPlanner 小地图</div><div class="status">B+C corridor：手绘优先 + 粗略寻路预加载</div></div>
+        <div class="chips"><span class="chip good">LOD 4 粗图已缓存</span><span class="chip">Region 03</span><span class="chip">128×128</span></div>
+      </div>
+      <div class="map"><div class="tile-grid"></div><div class="corridor"></div><div class="manual-corridor"></div></div>
+      <svg class="route" viewBox="0 0 1000 700" preserveAspectRatio="none">
+        <path class="rough-line" d="M190 380 C 330 320, 520 335, 805 250" />
+        <path class="road-line" d="M180 395 C 260 430, 345 405, 420 360" />
+        <path class="bridge-line" d="M420 360 C 485 330, 545 325, 610 315" />
+        <circle class="node" cx="180" cy="395" r="9"/><circle class="node" cx="420" cy="360" r="9"/><circle class="node" cx="610" cy="315" r="9"/><circle class="node" cx="805" cy="250" r="11"/>
+      </svg>
+      <div class="arrow"><svg viewBox="0 0 24 24"><path d="M12 19V5m0 0l-6 6m6-6l6 6"/></svg></div>
+      <div class="legend"><div><i class="swatch" style="background:var(--green)"></i>手绘道路</div><div><i class="swatch" style="background:var(--amber)"></i>桥梁工具段</div><div><i class="swatch" style="background:var(--blue)"></i>粗略预加载走廊</div></div>
+    </section>
+    <aside class="panel side" aria-label="规划信息与操作">
+      <div class="section"><h2>目的地</h2><div class="metric"><span>距离</span><b>384 blocks</b></div><div class="metric"><span>方向</span><b>东北偏东</b></div><div class="metric"><span>目标</span><b>X 384 / Z 0</b></div></div>
+      <div class="section"><h2>地图性能</h2><div class="metric"><span>纹理上传</span><b>仅脏瓦片</b></div><div class="metric"><span>当前瓦片</span><b>1000ms 节流</b></div><div class="metric"><span>邻居瓦片</span><b>500ms 轮询</b></div><div class="metric"><span>空白过滤</span><b>≥25 像素</b></div></div>
+      <div class="section"><h2>预加载队列</h2><div class="progress"><i></i></div><p class="status">正在准备前方 3 个 region。走廊外区域默认不强制加载。</p></div>
+      <div class="section buttons"><button>上一阶段区域</button><button>下一阶段区域</button><button>撤销节点</button><button>自动补全</button><button class="primary">确认建造</button><button>取消</button></div>
+    </aside>
+  </main>
+</body>
+</html>
