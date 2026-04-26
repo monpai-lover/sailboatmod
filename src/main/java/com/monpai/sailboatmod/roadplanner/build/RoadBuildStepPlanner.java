@@ -59,7 +59,10 @@ public class RoadBuildStepPlanner {
             case ROAD_SURFACE -> 2;
             case ROAD_EDGE -> 3;
             case BRIDGE_DECK -> 4;
-            case TUNNEL -> 5;
+            case BRIDGE_PIER -> 5;
+            case BRIDGE_RAMP -> 6;
+            case BRIDGE_RAILING -> 7;
+            case TUNNEL -> 8;
         };
     }
 }
