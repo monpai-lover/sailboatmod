@@ -64,6 +64,11 @@ import com.monpai.sailboatmod.network.packet.TownGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.ToggleSailPacket;
 import com.monpai.sailboatmod.network.packet.UploadNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.UploadTownFlagChunkPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerConfirmBuildPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRegionNavigationPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkRegistry;
@@ -533,6 +538,42 @@ public final class ModNetwork {
                 ConfigureRoadPlannerPacket::encode,
                 ConfigureRoadPlannerPacket::decode,
                 ConfigureRoadPlannerPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadMapSnapshotRequestPacket.class,
+                RoadMapSnapshotRequestPacket::encode,
+                RoadMapSnapshotRequestPacket::decode,
+                RoadMapSnapshotRequestPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadMapSnapshotSyncPacket.class,
+                RoadMapSnapshotSyncPacket::encode,
+                RoadMapSnapshotSyncPacket::decode,
+                RoadMapSnapshotSyncPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerRegionNavigationPacket.class,
+                RoadPlannerRegionNavigationPacket::encode,
+                RoadPlannerRegionNavigationPacket::decode,
+                RoadPlannerRegionNavigationPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerConfirmBuildPacket.class,
+                RoadPlannerConfirmBuildPacket::encode,
+                RoadPlannerConfirmBuildPacket::decode,
+                RoadPlannerConfirmBuildPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerCancelJobPacket.class,
+                RoadPlannerCancelJobPacket::encode,
+                RoadPlannerCancelJobPacket::decode,
+                RoadPlannerCancelJobPacket::handle
         );
     }
 
