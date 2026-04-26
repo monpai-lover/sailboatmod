@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.roadplanner.service;
 
 import com.monpai.sailboatmod.roadplanner.model.RoadPlan;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlanningSession;
+import com.monpai.sailboatmod.roadplanner.model.RoadSegment;
 import com.monpai.sailboatmod.roadplanner.model.RoadSettings;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -60,6 +61,53 @@ public class RoadPlannerSessionService {
     public Optional<RoadPlanningSession> replacePlan(UUID playerId, RoadPlan plan) {
         Objects.requireNonNull(plan, "plan");
         return update(playerId, session -> copySession(session, plan.destination(), session.activeRegionIndex(), plan));
+    }
+
+    public Optional<RoadPlanningSession> nextRegion(UUID playerId, int regionSize) {
+        return update(playerId, session -> navigateRelative(session, Math.max(16, regionSize), 1));
+    }
+
+    public Optional<RoadPlanningSession> previousRegion(UUID playerId, int regionSize) {
+        return update(playerId, session -> navigateRelative(session, Math.max(16, regionSize), -1));
+    }
+
+    private RoadPlanningSession navigateRelative(RoadPlanningSession session, int regionSize, int delta) {
+        int targetIndex = Math.max(0, session.activeRegionIndex() + delta);
+        RoadPlan plan = session.plan();
+        if (targetIndex < plan.segments().size()) {
+            return copySession(session, session.destinationPos(), targetIndex, plan);
+        }
+
+        BlockPos entry = lastExitOrStart(plan);
+        BlockPos center = nextRegionCenter(entry, plan.destination(), regionSize);
+        RoadSegment newSegment = new RoadSegment(targetIndex, center, entry, null, List.of(), false);
+        List<RoadSegment> segments = new java.util.ArrayList<>(plan.segments());
+        segments.add(newSegment);
+        RoadPlan newPlan = new RoadPlan(plan.planId(), plan.start(), plan.destination(), segments, plan.settings());
+        return copySession(session, session.destinationPos(), targetIndex, newPlan);
+    }
+
+    private BlockPos lastExitOrStart(RoadPlan plan) {
+        if (plan.segments().isEmpty()) {
+            return plan.start();
+        }
+        RoadSegment last = plan.segments().get(plan.segments().size() - 1);
+        if (last.exitPoint() != null) {
+            return last.exitPoint();
+        }
+        if (!plan.nodesInOrder().isEmpty()) {
+            return plan.nodesInOrder().get(plan.nodesInOrder().size() - 1).pos();
+        }
+        return plan.start();
+    }
+
+    private BlockPos nextRegionCenter(BlockPos from, BlockPos destination, int regionSize) {
+        int dx = Integer.compare(destination.getX() - from.getX(), 0);
+        int dz = Integer.compare(destination.getZ() - from.getZ(), 0);
+        if (dx == 0 && dz == 0) {
+            dx = 1;
+        }
+        return new BlockPos(from.getX() + dx * regionSize, from.getY(), from.getZ() + dz * regionSize);
     }
 
     private Optional<RoadPlanningSession> update(UUID playerId, SessionUpdater updater) {
