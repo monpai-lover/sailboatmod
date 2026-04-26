@@ -19,6 +19,8 @@ public class RoadPlannerScreen extends WindowScreen {
     private static final Color MUTED = new Color(148, 163, 184);
 
     private RoadPlannerClientState state;
+    private RoadWeaverStyleContextMenuModel contextMenu;
+    private RoadPlannerTextInputModel textInput;
 
     public RoadPlannerScreen(UUID sessionId) {
         super(ElementaVersion.V2, false, false, false);
@@ -28,6 +30,20 @@ public class RoadPlannerScreen extends WindowScreen {
 
     public RoadPlannerClientState state() {
         return state;
+    }
+
+    public void applyInteraction(RoadPlannerMapInteractionResult result) {
+        this.state = result.state();
+        this.contextMenu = result.contextMenu().orElse(null);
+        this.textInput = result.textInput().orElse(null);
+    }
+
+    public RoadWeaverStyleContextMenuModel contextMenuForRender() {
+        return contextMenu;
+    }
+
+    public RoadPlannerTextInputModel textInputForRender() {
+        return textInput;
     }
 
     private void buildSkeleton() {
