@@ -382,7 +382,7 @@ Add in service:
 - `destinationFor(UUID playerId)`
 - `clearDestination(UUID playerId)`
 
-Use `ConcurrentHashMap<UUID, BlockPos>` for now; later persistence can move to saved data.
+Use `ConcurrentHashMap<UUID, BlockPos>` in this pass; saved-data persistence is outside this implementation plan.
 
 Modify `RoadPlannerItem.use`:
 
@@ -493,7 +493,7 @@ Expected helper missing or not wired.
 - [ ] **Step 3: Implement screen graph wiring**
 
 - Add `RoadNetworkGraph graph` field in screen.
-- Use graph sync packet/client hook later to set this graph.
+- Expose a client hook in this pass so `RoadPlannerGraphSyncPacket` can update this graph.
 - For now expose setter used by sync/test.
 - In `mouseClicked` right button over map: convert mouse to world, run canvas hit test, open menu.
 
