@@ -173,6 +173,10 @@ public class RoadPlannerScreen extends Screen {
     }
 
     private void handleContextAction(RoadPlannerContextMenuAction action) {
+        if (action == RoadPlannerContextMenuAction.RENAME_ROAD && minecraft != null && state.selectedRoadEdgeId() != null) {
+            minecraft.setScreen(new RoadPlannerTextInputScreen(state.sessionId(), state.selectedRoadEdgeId(), "", this));
+            return;
+        }
         statusLine = "菜单: " + action.name();
     }
 
