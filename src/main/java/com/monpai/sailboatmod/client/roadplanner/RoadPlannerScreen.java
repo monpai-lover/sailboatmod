@@ -1,170 +1,217 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
-import gg.essential.elementa.ElementaVersion;
-import gg.essential.elementa.WindowScreen;
-import gg.essential.elementa.components.UIBlock;
-import gg.essential.elementa.components.UIText;
-import gg.essential.elementa.constraints.PixelConstraint;
+import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
+import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapRegion;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapViewport;
+import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 
-import java.awt.Color;
+import java.util.List;
 import java.util.UUID;
 
-public class RoadPlannerScreen extends WindowScreen {
-    private static final Color BACKGROUND = new Color(5, 12, 24, 190);
-    private static final Color PANEL = new Color(13, 22, 38, 238);
-    private static final Color PANEL_2 = new Color(18, 30, 50, 238);
-    private static final Color MAP_BG = new Color(8, 18, 30, 245);
-    private static final Color GRID = new Color(42, 62, 86, 180);
-    private static final Color ACCENT = new Color(52, 211, 153, 255);
-    private static final Color BLUE = new Color(96, 165, 250, 255);
-    private static final Color RED = new Color(248, 113, 113, 255);
-    private static final Color MUTED = new Color(148, 163, 184);
-    private static final Color TEXT = new Color(229, 231, 235);
-    private static final Color MENU_PANEL = new Color(16, 24, 39, 246);
-    private static final Color MENU_BORDER = new Color(47, 59, 82, 255);
-    private static final Color MENU_HOVER = new Color(59, 130, 246, 102);
+public class RoadPlannerScreen extends Screen {
+    private static final int BG = 0xB0050C18;
+    private static final int PANEL = 0xEE0D1626;
+    private static final int PANEL_2 = 0xEE121E32;
+    private static final int TEXT = 0xFFE5E7EB;
+    private static final int MUTED = 0xFF94A3B8;
+    private static final int ACCENT = 0xFF34D399;
 
-    private final RoadPlannerScreenLayoutModel layout = RoadPlannerScreenLayoutModel.mvp();
+    private static final List<RoadToolType> TOOLS = List.of(
+            RoadToolType.ROAD,
+            RoadToolType.BRIDGE,
+            RoadToolType.TUNNEL,
+            RoadToolType.ERASE,
+            RoadToolType.SELECT
+    );
+    private static final List<String> TOOL_LABELS = List.of("道路", "桥梁", "隧道", "擦除", "选择");
+    private static final List<String> ACTION_LABELS = List.of("上一阶段", "下一阶段", "撤销节点", "清除区域", "自动补全", "确认建造", "取消");
+
     private RoadPlannerClientState state;
-    private RoadWeaverStyleContextMenuModel contextMenu;
-    private RoadPlannerTextInputModel textInput;
+    private RoadPlannerVanillaLayout layout;
+    private RoadPlannerMapCanvas canvas;
+    private RoadPlannerVanillaContextMenu contextMenu;
+    private RoadNetworkGraph graph = new RoadNetworkGraph();
+    private String statusLine = "拖动画线路径节点；右键已建道路打开 RoadWeaver 风格编辑菜单";
+    private final boolean testMode;
 
     public RoadPlannerScreen(UUID sessionId) {
-        super(ElementaVersion.V2, false, false, false);
+        this(sessionId, false);
+    }
+
+    private RoadPlannerScreen(UUID sessionId, boolean testMode) {
+        super(Component.literal("RoadPlanner"));
         this.state = RoadPlannerClientState.open(sessionId);
-        buildLayout();
+        this.testMode = testMode;
+    }
+
+    public static RoadPlannerScreen forTest(UUID sessionId, int width, int height) {
+        RoadPlannerScreen screen = new RoadPlannerScreen(sessionId, true);
+        screen.width = width;
+        screen.height = height;
+        screen.recomputeLayout();
+        return screen;
     }
 
     public RoadPlannerClientState state() {
         return state;
     }
 
-    public void applyInteraction(RoadPlannerMapInteractionResult result) {
-        this.state = result.state();
-        this.contextMenu = result.contextMenu().orElse(null);
-        this.textInput = result.textInput().orElse(null);
+    public RoadPlannerVanillaLayout layoutForTest() {
+        return layout;
     }
 
-    public RoadWeaverStyleContextMenuModel contextMenuForRender() {
+    public RoadPlannerVanillaContextMenu contextMenuForTest() {
         return contextMenu;
     }
 
-    public RoadPlannerTextInputModel textInputForRender() {
-        return textInput;
+    public void setGraphForTest(RoadNetworkGraph graph) {
+        this.graph = graph == null ? new RoadNetworkGraph() : graph;
     }
 
-    private void buildLayout() {
-        UIBlock root = block(BACKGROUND, 0, 0, 1280, 720);
-        getWindow().addChild(root);
-
-        UIBlock toolbar = block(PANEL, 16, 16, 126, 688);
-        root.addChild(toolbar);
-        toolbar.addChild(label("工具", 18, 16, ACCENT));
-        for (int i = 0; i < layout.tools().size(); i++) {
-            toolbar.addChild(toolButton(layout.tools().get(i), 14, 58 + i * 54, i == 0));
-        }
-        toolbar.addChild(label("宽度", 18, 362, MUTED));
-        toolbar.addChild(chip("3", 14, 392, false));
-        toolbar.addChild(chip("5", 52, 392, true));
-        toolbar.addChild(chip("7", 90, 392, false));
-
-        UIBlock mapPanel = block(PANEL, 158, 16, 804, 688);
-        root.addChild(mapPanel);
-        mapPanel.addChild(label("RoadPlanner 道路规划小地图", 22, 18, TEXT));
-        mapPanel.addChild(label("拖动画线路径节点；右键已建道路打开 RoadWeaver 风格编辑菜单", 22, 44, MUTED));
-        mapPanel.addChild(minimap(22, 82, 760, 520));
-        addButtons(mapPanel, 22, 620);
-
-        UIBlock side = block(PANEL, 978, 16, 286, 688);
-        root.addChild(side);
-        side.addChild(label("道路信息", 18, 18, TEXT));
-        for (int i = 0; i < layout.statusLines().size(); i++) {
-            side.addChild(label(layout.statusLines().get(i), 18, 52 + i * 24, MUTED));
-        }
-        side.addChild(label("目标", 18, 190, TEXT));
-        side.addChild(label("未设置目的地", 18, 218, MUTED));
-        side.addChild(label("编辑菜单预览", 18, 270, TEXT));
-        side.addChild(roadWeaverMenuPreview(18, 306));
+    @Override
+    protected void init() {
+        recomputeLayout();
+        addToolButtons();
+        addActionButtons();
     }
 
-    private UIBlock minimap(int x, int y, int width, int height) {
-        UIBlock map = block(MAP_BG, x, y, width, height);
-        for (int gx = 0; gx <= width; gx += 76) {
-            map.addChild(block(GRID, gx, 0, 1, height));
-        }
-        for (int gy = 0; gy <= height; gy += 52) {
-            map.addChild(block(GRID, 0, gy, width, 1));
-        }
-        map.addChild(block(ACCENT, 58, height - 78, 14, 14));
-        map.addChild(label("起点", 78, height - 80, TEXT));
-        map.addChild(block(BLUE, width / 2 - 120, height / 2, 220, 5));
-        map.addChild(block(BLUE, width / 2 + 92, height / 2 - 46, 5, 50));
-        map.addChild(label("当前节点线", width / 2 - 116, height / 2 + 14, TEXT));
-        map.addChild(block(RED, width - 84, 46, 24, 6));
-        map.addChild(block(RED, width - 66, 36, 6, 26));
-        map.addChild(label("目的地方向", width - 176, 34, RED));
-        map.addChild(label("128x128 区域 / 真实地形快照加载中", 18, 16, MUTED));
-        return map;
+    private void recomputeLayout() {
+        layout = RoadPlannerVanillaLayout.compute(width, height);
+        RoadMapRegion region = RoadMapRegion.centeredOn(BlockPos.ZERO, 128, MapLod.LOD_1);
+        RoadMapViewport viewport = new RoadMapViewport(layout.map().x(), layout.map().y(), layout.map().width(), layout.map().height());
+        canvas = new RoadPlannerMapCanvas(layout.map(), new RoadPlannerMapComponent(region, viewport));
     }
 
-    private void addButtons(UIBlock parent, int x, int y) {
-        int cursor = x;
-        for (String button : layout.buttons()) {
-            int width = button.length() >= 4 ? 88 : 72;
-            parent.addChild(button(button, cursor, y, width));
-            cursor += width + 10;
+    private void addToolButtons() {
+        int x = layout.toolbar().x() + 12;
+        int y = layout.toolbar().y() + 56;
+        int buttonWidth = layout.toolbar().width() - 24;
+        for (int index = 0; index < TOOLS.size(); index++) {
+            RoadToolType tool = TOOLS.get(index);
+            Button button = Button.builder(Component.literal(TOOL_LABELS.get(index)), ignored -> state = state.withActiveTool(tool))
+                    .bounds(x, y + index * 34, buttonWidth, 26)
+                    .build();
+            addRenderableWidget(button);
         }
     }
 
-    private UIBlock toolButton(String text, int x, int y, boolean active) {
-        UIBlock button = block(active ? new Color(22, 101, 82, 235) : PANEL_2, x, y, 98, 38);
-        button.addChild(label(text, 18, 11, active ? ACCENT : TEXT));
-        return button;
+    private void addActionButtons() {
+        for (int index = 0; index < ACTION_LABELS.size(); index++) {
+            RoadPlannerVanillaLayout.Rect rect = layout.bottomButtons().get(index);
+            String label = ACTION_LABELS.get(index);
+            Button button = Button.builder(Component.literal(label), ignored -> handleAction(label))
+                    .bounds(rect.x(), rect.y(), rect.width(), rect.height())
+                    .build();
+            addRenderableWidget(button);
+        }
     }
 
-    private UIBlock chip(String text, int x, int y, boolean active) {
-        UIBlock chip = block(active ? new Color(37, 99, 235, 235) : PANEL_2, x, y, 28, 24);
-        chip.addChild(label(text, 9, 6, TEXT));
-        return chip;
+    private void handleAction(String label) {
+        if ("取消".equals(label)) {
+            onClose();
+            return;
+        }
+        statusLine = label + " 已点击";
     }
 
-    private UIBlock button(String text, int x, int y, int width) {
-        UIBlock button = block(PANEL_2, x, y, width, 34);
-        button.addChild(label(text, 12, 10, TEXT));
-        return button;
+    @Override
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        renderBackground(graphics);
+        graphics.fill(0, 0, width, height, BG);
+        renderPanels(graphics);
+        canvas.renderPlaceholder(graphics, font);
+        super.render(graphics, mouseX, mouseY, partialTick);
+        if (contextMenu != null && contextMenu.isOpen()) {
+            contextMenu.render(graphics, font, mouseX, mouseY, width, height);
+        }
     }
 
-    private UIBlock block(Color color, int x, int y, int width, int height) {
-        UIBlock block = new UIBlock(color);
-        block.setX(new PixelConstraint(x));
-        block.setY(new PixelConstraint(y));
-        block.setWidth(new PixelConstraint(width));
-        block.setHeight(new PixelConstraint(height));
-        return block;
+    private void renderPanels(GuiGraphics graphics) {
+        fillRect(graphics, layout.toolbar(), PANEL);
+        fillRect(graphics, layout.sidebar(), PANEL);
+        graphics.drawString(font, "工具", layout.toolbar().x() + 16, layout.toolbar().y() + 18, ACCENT, false);
+        graphics.drawString(font, "RoadPlanner 道路规划小地图", layout.map().x(), layout.map().y() - 22, TEXT, false);
+        graphics.drawString(font, statusLine, layout.map().x(), layout.map().y() - 8, MUTED, false);
+        graphics.drawString(font, "道路信息", layout.sidebar().x() + 16, layout.sidebar().y() + 18, TEXT, false);
+        graphics.drawString(font, "阶段: 1", layout.sidebar().x() + 16, layout.sidebar().y() + 48, MUTED, false);
+        graphics.drawString(font, "距离目的地: 未设置", layout.sidebar().x() + 16, layout.sidebar().y() + 68, MUTED, false);
+        graphics.drawString(font, "宽度: " + state.selectedWidth(), layout.sidebar().x() + 16, layout.sidebar().y() + 88, MUTED, false);
+        graphics.drawString(font, "当前工具: " + state.activeTool(), layout.sidebar().x() + 16, layout.sidebar().y() + 108, MUTED, false);
+        graphics.drawString(font, "ESC: 关闭菜单 / 关闭规划器", layout.sidebar().x() + 16, layout.sidebar().bottom() - 28, MUTED, false);
     }
 
-    private UIText label(String text, int x, int y, Color color) {
-        UIText label = new UIText(text);
-        label.setX(new PixelConstraint(x));
-        label.setY(new PixelConstraint(y));
-        label.setColor(color);
-        return label;
+    private void fillRect(GuiGraphics graphics, RoadPlannerVanillaLayout.Rect rect, int color) {
+        graphics.fill(rect.x(), rect.y(), rect.right(), rect.bottom(), color);
     }
 
-    private UIBlock roadWeaverMenuPreview(int x, int y) {
-        UIBlock shadow = block(new Color(0, 0, 0, 96), x + 2, y + 2, 178, 132);
-        UIBlock border = block(MENU_BORDER, x, y, 178, 132);
-        shadow.addChild(border);
-        UIBlock menu = block(MENU_PANEL, 1, 1, 176, 130);
-        border.addChild(menu);
-        menu.addChild(label("重命名道路", 6, 8, TEXT));
-        UIBlock hover = block(MENU_HOVER, 3, 28, 170, 16);
-        menu.addChild(hover);
-        hover.addChild(label("编辑节点", 3, 2, TEXT));
-        menu.addChild(label("────────────", 6, 48, MUTED));
-        menu.addChild(label("拆除本段", 6, 66, RED));
-        menu.addChild(label("拆除分支", 6, 84, RED));
-        menu.addChild(label("查看回滚账本", 6, 106, TEXT));
-        return shadow;
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (contextMenu != null && contextMenu.isOpen()) {
+            RoadPlannerVanillaContextMenu.ClickResult result = contextMenu.click(mouseX, mouseY, button);
+            if (result.consumed()) {
+                result.action().ifPresent(this::handleContextAction);
+                return true;
+            }
+        }
+        if (button == 1 && canvas.contains(mouseX, mouseY)) {
+            BlockPos world = canvas.mouseToWorld(mouseX, mouseY);
+            RoadPlannerMapInteractionResult result = canvas.rightClickGraph(state, graph, world.getX(), world.getZ(), (int) mouseX, (int) mouseY);
+            state = result.state();
+            result.contextMenu().ifPresent(menu -> contextMenu = RoadPlannerVanillaContextMenu.forRoadEdge(menu.roadEdgeId()));
+            if (contextMenu != null) {
+                contextMenu.open((int) mouseX, (int) mouseY);
+                return true;
+            }
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    private void handleContextAction(RoadPlannerContextMenuAction action) {
+        statusLine = "菜单: " + action.name();
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == 256) {
+            EscapeResult result = handleEscape(contextMenu != null && contextMenu.isOpen(), false);
+            if (result == EscapeResult.CLOSE_CONTEXT_MENU) {
+                contextMenu.close();
+                return true;
+            }
+            onClose();
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    public EscapeResult handleEscapeForTest(boolean contextMenuOpen, boolean textInputOpen) {
+        return handleEscape(contextMenuOpen, textInputOpen);
+    }
+
+    private EscapeResult handleEscape(boolean contextMenuOpen, boolean textInputOpen) {
+        if (textInputOpen) {
+            return EscapeResult.CLOSE_TEXT_INPUT;
+        }
+        if (contextMenuOpen) {
+            return EscapeResult.CLOSE_CONTEXT_MENU;
+        }
+        return EscapeResult.CLOSE_SCREEN;
+    }
+
+    @Override
+    public boolean isPauseScreen() {
+        return false;
+    }
+
+    public enum EscapeResult {
+        CLOSE_CONTEXT_MENU,
+        CLOSE_TEXT_INPUT,
+        CLOSE_SCREEN
     }
 }
