@@ -27,6 +27,9 @@ RoadWeaver and Recruits already solve these UI concerns with vanilla `Screen` re
 5. The central minimap canvas receives mouse drag/right-click/scroll events without Elementa focus conflicts.
 6. RoadWeaver-style context menus and text input are implemented with vanilla `GuiGraphics` rendering.
 7. Recruits-style world map structure is used for map canvas layout, panning, zooming, and layered rendering.
+8. Shift+right-click with the planner item stores the current player position as destination and does not open any UI.
+9. Rename/demolish editor packets perform real client-to-server intent handling instead of empty packet handlers.
+10. Right-click road hit testing is wired to rendered/known graph edges, not only covered by pure model tests.
 
 ## Non-Goals For This Pass
 
@@ -34,6 +37,7 @@ RoadWeaver and Recruits already solve these UI concerns with vanilla `Screen` re
 - Do not implement final real chunk rendering if current snapshot data is not ready.
 - Do not replace build queue, rollback, graph, bridge, or packet models.
 - Do not keep Elementa as a wrapper around the map.
+- Do not leave user-visible actions as packet-handler stubs when the UI exposes those actions.
 
 ## Architecture
 
@@ -115,6 +119,29 @@ Enter submits, ESC cancels and returns to parent planner screen.
 7. Rename/demolish actions send existing editor packets.
 8. Confirm build uses existing confirm/build queue path.
 
+### Destination Shortcut Flow
+
+1. Player Shift+right-clicks the Road Planner item.
+2. Server stores `destinationPos = player.blockPosition().immutable()` in the new RoadPlanner destination/session service or item/session data.
+3. Server sends feedback: "已将当前位置设为道路目的地".
+4. No old target-selection UI opens.
+
+### Editor Packet Flow
+
+Rename:
+
+1. Client opens text input from context menu.
+2. Submit sends `RoadPlannerRenameRoadPacket(routeId, edgeId, roadName)`.
+3. Server validates route/edge access and updates road graph metadata.
+4. Server syncs updated graph with `RoadPlannerGraphSyncPacket`.
+
+Demolish:
+
+1. Client sends `RoadPlannerDemolishRoadPacket(routeId, edgeId, EDGE|BRANCH)`.
+2. Server resolves edge set through `RoadDemolitionPlanner`.
+3. If conflicts exist, server reports warning and does not overwrite player edits.
+4. If valid, server enqueues demolition/rollback job and syncs progress.
+
 ## Error Handling
 
 - If map snapshot is not ready, render a visible placeholder: "真实地形快照加载中".
@@ -122,6 +149,8 @@ Enter submits, ESC cancels and returns to parent planner screen.
 - If right-click misses any road edge, close context menu and do nothing.
 - If ESC is pressed while context menu or text input is open, close only that overlay.
 - If packet send cannot happen client-side, show a local warning line rather than crashing.
+- If Shift+right-click cannot persist destination, send a system message explaining the failure.
+- If rename/demolish targets a missing route/edge, reject the packet and show a warning instead of silently succeeding.
 
 ## Testing Plan
 
@@ -132,6 +161,10 @@ Pure tests:
 - Context menu layout clamps to screen bounds.
 - Context menu click triggers correct action and ignores disabled items.
 - Map canvas converts mouse coordinate to world coordinate using existing region math.
+- Shift+right-click entry stores current player position as destination intent and does not open planner.
+- Rename packet handler updates graph metadata through a testable server-side editor service.
+- Demolish packet handler creates a demolition plan/job through a testable server-side editor service.
+- Right-click hit testing uses graph edge positions and opens the context menu for a known route edge.
 
 Compile validation:
 
@@ -146,7 +179,10 @@ Compile validation:
 3. Add vanilla context menu implementation.
 4. Add vanilla text input screen for rename.
 5. Wire tool/action buttons to client state and packets where safe.
-6. Compile, run targeted tests, assemble jar.
+6. Implement Shift+right-click destination persistence and feedback.
+7. Replace rename/demolish packet handler stubs with calls into road graph/editor services.
+8. Wire rendered road graph edges into right-click hit testing.
+9. Compile, run targeted tests, assemble jar.
 
 ## Manual QA Checklist
 
@@ -156,4 +192,18 @@ Compile validation:
 - GUI scale changes preserve layout.
 - Right-click menu looks like RoadWeaver style.
 - Rename opens text box and returns to planner.
+- Rename changes the road name after server sync, not only locally.
+- Demolish edge/branch creates a queued rollback/demolition job or visible conflict warning.
+- Shift+right-click planner item sets the current player location as destination and does not open UI.
 - Confirm button is visible but disabled/warned until requirements are ready.
+
+## Audit Items Folded Into This Redesign
+
+| Item | Status In Current Build | Required Fix In Redesign |
+| --- | --- | --- |
+| Shift+right-click current position destination | Missing or only message-level behavior | Persist destination intent/session data server-side |
+| Road line right-click hit test | Pure model only | Wire graph edges into screen/map canvas event flow |
+| Rename packet | Round-trip only, handler stub | Route to editor service and sync graph |
+| Demolish packet | Round-trip only, handler stub | Route to demolition planner/build queue |
+| Packet graph sync | Data packet exists | Use after editor service updates |
+| Elementa buttons/layout/ESC | Broken in gameplay | Replace with vanilla Screen widgets/events |
