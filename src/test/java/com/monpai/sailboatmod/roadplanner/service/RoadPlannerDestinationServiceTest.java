@@ -7,6 +7,8 @@ import net.minecraft.server.Bootstrap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,5 +35,16 @@ class RoadPlannerDestinationServiceTest {
         assertEquals(RoadPlannerItem.EntryAction.SET_CURRENT_POSITION_DESTINATION, RoadPlannerItem.entryAction(true));
         assertFalse(RoadPlannerItem.usesLegacyManualPlanner());
         assertTrue(RoadPlannerItem.entryAction(false).opensPlanner());
+    }
+
+    @Test
+    void shiftRightClickDestinationIsPersistedPerPlayer() {
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerDestinationService service = new RoadPlannerDestinationService();
+        BlockPos destination = new BlockPos(10, 70, -5);
+
+        service.saveCurrentPositionDestination(playerId, destination);
+
+        assertEquals(destination, service.destinationFor(playerId).orElseThrow());
     }
 }

@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.item;
 
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerDestinationService;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -55,6 +56,7 @@ public class RoadPlannerItem extends Item {
                         net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
                 );
             } else {
+                RoadPlannerDestinationService.global().saveCurrentPositionDestination(serverPlayer.getUUID(), serverPlayer.blockPosition());
                 serverPlayer.sendSystemMessage(Component.translatable("item.sailboatmod.road_planner.destination.current_position"));
             }
         }
