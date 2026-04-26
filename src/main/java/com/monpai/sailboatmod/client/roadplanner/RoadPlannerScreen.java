@@ -74,6 +74,10 @@ public class RoadPlannerScreen extends Screen {
         this.graph = graph == null ? new RoadNetworkGraph() : graph;
     }
 
+    public boolean rightClickMapForTest(double worldX, double worldZ, int mouseX, int mouseY) {
+        return openContextMenuForGraph(worldX, worldZ, mouseX, mouseY);
+    }
+
     @Override
     protected void init() {
         recomputeLayout();
@@ -161,15 +165,20 @@ public class RoadPlannerScreen extends Screen {
         }
         if (button == 1 && canvas.contains(mouseX, mouseY)) {
             BlockPos world = canvas.mouseToWorld(mouseX, mouseY);
-            RoadPlannerMapInteractionResult result = canvas.rightClickGraph(state, graph, world.getX(), world.getZ(), (int) mouseX, (int) mouseY);
-            state = result.state();
-            result.contextMenu().ifPresent(menu -> contextMenu = RoadPlannerVanillaContextMenu.forRoadEdge(menu.roadEdgeId()));
-            if (contextMenu != null) {
-                contextMenu.open((int) mouseX, (int) mouseY);
-                return true;
-            }
+            return openContextMenuForGraph(world.getX(), world.getZ(), (int) mouseX, (int) mouseY);
         }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    private boolean openContextMenuForGraph(double worldX, double worldZ, int mouseX, int mouseY) {
+        RoadPlannerMapInteractionResult result = canvas.rightClickGraph(state, graph, worldX, worldZ, mouseX, mouseY);
+        state = result.state();
+        if (result.contextMenu().isEmpty()) {
+            return false;
+        }
+        contextMenu = RoadPlannerVanillaContextMenu.forRoadEdge(result.contextMenu().orElseThrow().roadEdgeId());
+        contextMenu.open(mouseX, mouseY);
+        return true;
     }
 
     private void handleContextAction(RoadPlannerContextMenuAction action) {

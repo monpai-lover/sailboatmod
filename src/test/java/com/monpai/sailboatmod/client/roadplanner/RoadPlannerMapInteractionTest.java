@@ -41,6 +41,21 @@ class RoadPlannerMapInteractionTest {
         assertEquals("港口大道", result.textInput().orElseThrow().initialValue());
     }
 
+    @Test
+    void vanillaScreenRightClickMapOpensContextMenuForGraphEdge() {
+        RoadNetworkGraph graph = new RoadNetworkGraph();
+        RoadGraphNode a = graph.addNode(new BlockPos(0, 64, 0), RoadGraphNode.Kind.NORMAL);
+        RoadGraphNode b = graph.addNode(new BlockPos(64, 64, 0), RoadGraphNode.Kind.NORMAL);
+        graph.addEdge(a.nodeId(), b.nodeId(), metadata());
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.setGraphForTest(graph);
+
+        boolean consumed = screen.rightClickMapForTest(30, 2, 360, 240);
+
+        assertTrue(consumed);
+        assertTrue(screen.contextMenuForTest().isOpen());
+    }
+
     private RoadRouteMetadata metadata() {
         return new RoadRouteMetadata("港口大道", "主城", "港口镇", UUID.randomUUID(), 0L, 5,
                 CompiledRoadSectionType.ROAD, RoadRouteMetadata.Status.BUILT);
