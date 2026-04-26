@@ -43,6 +43,36 @@ public class RoadNetworkGraph {
         return List.copyOf(edges.values());
     }
 
+    public Optional<RoadGraphEdge> edge(UUID edgeId) {
+        return Optional.ofNullable(edges.get(edgeId));
+    }
+
+    public Optional<RoadGraphEdge> renameEdge(UUID edgeId, String roadName) {
+        RoadGraphEdge edge = edges.get(edgeId);
+        if (edge == null) {
+            return Optional.empty();
+        }
+        RoadRouteMetadata metadata = edge.metadata();
+        RoadGraphEdge updated = new RoadGraphEdge(
+                edge.edgeId(),
+                edge.fromNodeId(),
+                edge.toNodeId(),
+                new RoadRouteMetadata(
+                        roadName,
+                        metadata.fromTownName(),
+                        metadata.toTownName(),
+                        metadata.creatorId(),
+                        metadata.createdAtGameTime(),
+                        metadata.width(),
+                        metadata.type(),
+                        metadata.status()
+                ),
+                edge.lengthBlocks()
+        );
+        edges.put(edgeId, updated);
+        return Optional.of(updated);
+    }
+
     private RoadGraphNode requireNode(UUID nodeId) {
         RoadGraphNode node = nodes.get(nodeId);
         if (node == null) {

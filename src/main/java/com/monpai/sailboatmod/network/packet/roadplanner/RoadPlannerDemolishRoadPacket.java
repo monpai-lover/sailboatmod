@@ -1,8 +1,13 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.monpai.sailboatmod.roadplanner.build.RoadRollbackLedger;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerEditorService;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -24,7 +29,16 @@ public record RoadPlannerDemolishRoadPacket(UUID routeId, UUID edgeId, Scope sco
     }
 
     public static void handle(RoadPlannerDemolishRoadPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().setPacketHandled(true);
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> {
+            ServerPlayer sender = context.getSender();
+            RoadPlannerEditorService.DemolishResult result = RoadPlannerEditorService.global()
+                    .planDemolition(packet.routeId(), packet.edgeId(), packet.scope(), new RoadRollbackLedger(), Map.of());
+            if (sender != null && result.job().isEmpty()) {
+                sender.sendSystemMessage(Component.literal(result.issues().isEmpty() ? "道路拆除失败" : result.issues().get(0).message()));
+            }
+        });
+        context.setPacketHandled(true);
     }
 
     public enum Scope {

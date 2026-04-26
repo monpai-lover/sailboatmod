@@ -1,6 +1,10 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerEditorService;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.UUID;
@@ -24,6 +28,14 @@ public record RoadPlannerRenameRoadPacket(UUID routeId, UUID edgeId, String road
     }
 
     public static void handle(RoadPlannerRenameRoadPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().setPacketHandled(true);
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> {
+            ServerPlayer sender = context.getSender();
+            RoadPlannerEditorService.RenameResult result = RoadPlannerEditorService.global().renameRoad(new RoadNetworkGraph(), packet.edgeId(), packet.roadName());
+            if (sender != null && !result.success()) {
+                sender.sendSystemMessage(Component.literal(result.issues().isEmpty() ? "道路重命名失败" : result.issues().get(0).message()));
+            }
+        });
+        context.setPacketHandled(true);
     }
 }
