@@ -68,7 +68,10 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestP
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerConfirmBuildPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerDemolishRoadPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerGraphSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRegionNavigationPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRenameRoadPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkRegistry;
@@ -574,6 +577,28 @@ public final class ModNetwork {
                 RoadPlannerCancelJobPacket::encode,
                 RoadPlannerCancelJobPacket::decode,
                 RoadPlannerCancelJobPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerRenameRoadPacket.class,
+                RoadPlannerRenameRoadPacket::encode,
+                RoadPlannerRenameRoadPacket::decode,
+                RoadPlannerRenameRoadPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerDemolishRoadPacket.class,
+                RoadPlannerDemolishRoadPacket::encode,
+                RoadPlannerDemolishRoadPacket::decode,
+                RoadPlannerDemolishRoadPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerGraphSyncPacket.class,
+                RoadPlannerGraphSyncPacket::encode,
+                RoadPlannerGraphSyncPacket::decode,
+                RoadPlannerGraphSyncPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
     }
 
