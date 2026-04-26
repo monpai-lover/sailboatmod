@@ -8,6 +8,7 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 public class OpenRoadPlannerScreenPacket {
@@ -56,7 +57,7 @@ public class OpenRoadPlannerScreenPacket {
 
     public static void handle(OpenRoadPlannerScreenPacket msg, Supplier<NetworkEvent.Context> ctx) {
         ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
-                RoadPlannerClientHooks.openTargetSelection(msg.offhand, msg.sourceTownName, msg.targets, msg.selectedTownId)));
+                RoadPlannerClientHooks.openNewPlannerEntry(UUID.randomUUID())));
         ctx.get().setPacketHandled(true);
     }
 }

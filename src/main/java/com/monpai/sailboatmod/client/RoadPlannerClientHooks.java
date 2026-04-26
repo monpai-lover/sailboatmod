@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerConfigScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerOptionSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
@@ -12,6 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class RoadPlannerClientHooks {
     private static final long PLANNING_PROGRESS_TIMEOUT_MS = 5_000L;
@@ -134,6 +136,14 @@ public final class RoadPlannerClientHooks {
 
     public static void openTargetSelection(boolean offhand, String sourceTownName, List<TargetEntry> entries, String selectedTownId) {
         Minecraft.getInstance().setScreen(new RoadPlannerTargetSelectionScreen(offhand, sourceTownName, entries, selectedTownId));
+    }
+
+    public static void openNewPlannerEntry(UUID sessionId) {
+        Minecraft.getInstance().setScreen(new RoadPlannerScreen(sessionId));
+    }
+
+    public static Class<?> screenClassForNewPlannerEntry(UUID sessionId) {
+        return RoadPlannerScreen.class;
     }
 
     public static void openPreviewOptionSelection(String sourceTownName,
