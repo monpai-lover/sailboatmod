@@ -25,6 +25,10 @@ public final class RoadPlannerDraftStore {
         return sessionId == null ? null : DRAFTS.get(sessionId);
     }
 
+    public static void clearForTest() {
+        DRAFTS.clear();
+    }
+
     public record Draft(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes,
                         BlockPos startPos, BlockPos endPos) {
         public Draft(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {

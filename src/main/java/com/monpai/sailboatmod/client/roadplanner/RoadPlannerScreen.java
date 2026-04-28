@@ -133,14 +133,14 @@ public class RoadPlannerScreen extends Screen {
                 2.0D
         );
         linePlan.clear();
-        RoadPlannerDraftStore.Draft draft = RoadPlannerDraftStore.get(state.sessionId());
-        if (draft == null) {
+        RoadPlannerDraftStore.Draft draft = testMode ? null : RoadPlannerDraftStore.get(state.sessionId());
+        if (!testMode && draft == null) {
             draft = draftPersistence.load(state.sessionId()).orElse(null);
         }
-        if (draft == null && routeDraftId != null) {
+        if (!testMode && draft == null && routeDraftId != null) {
             draft = RoadPlannerDraftStore.get(routeDraftId);
         }
-        if (draft == null && routeDraftId != null) {
+        if (!testMode && draft == null && routeDraftId != null) {
             draft = draftPersistence.load(routeDraftId).orElse(null);
         }
         if (draft != null && !draft.nodes().isEmpty()) {
@@ -776,9 +776,11 @@ public class RoadPlannerScreen extends Screen {
     private boolean openContextMenuForGraph(double worldX, double worldZ, int mouseX, int mouseY) {
         RoadPlannerMapInteractionResult result = canvas.rightClickGraph(state, graph, worldX, worldZ, mouseX, mouseY);
         state = result.state();
-        contextMenu = result.contextMenu()
-                .map(menu -> RoadPlannerVanillaContextMenu.forRoadEdge(menu.roadEdgeId()))
-                .orElseGet(() -> RoadPlannerVanillaContextMenu.forRoadEdge(UUID.randomUUID()));
+        if (result.contextMenu().isEmpty()) {
+            contextMenu = null;
+            return false;
+        }
+        contextMenu = RoadPlannerVanillaContextMenu.forRoadEdge(result.contextMenu().orElseThrow().roadEdgeId());
         contextMenu.open(mouseX, mouseY);
         return true;
     }
@@ -829,6 +831,13 @@ public class RoadPlannerScreen extends Screen {
 
 
     private void setSelectedEdgeType(CompiledRoadSectionType type) {
+        if (state.selectedRoadEdgeId() != null) {
+            graph.updateEdgeType(state.selectedRoadEdgeId(), type).ifPresentOrElse(
+                    edge -> statusLine = "\u5df2\u5c06\u8be5\u6bb5\u5c5e\u6027\u8bbe\u4e3a: " + editableTypeLabel(type),
+                    () -> statusLine = "\u672a\u627e\u5230\u9009\u4e2d\u9053\u8def\u6bb5"
+            );
+            return;
+        }
         if (selectedNode == null) {
             statusLine = "\u8bf7\u5148\u7528\u9009\u62e9\u5de5\u5177\u9009\u4e2d\u4e00\u4e2a\u8282\u70b9";
             return;
@@ -1022,29 +1031,40 @@ public class RoadPlannerScreen extends Screen {
 
     private boolean setEndpointAt(BlockPos target) {
         if (!hasTownRoute) {
-            if (startTownPos.equals(BlockPos.ZERO)) {
-                startTownPos = snapToNearestNode(target);
-                statusLine = "已设置起点标记";
+            if (linePlan.nodeCount() == 0) {
+                startTownPos = target.immutable();
+                linePlan.setStartNode(target);
+                statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u8d77\u70b9";
             } else {
-                destinationTownPos = snapToNearestNode(target);
-                statusLine = "已设置终点标记";
+                destinationTownPos = target.immutable();
+                linePlan.setEndNode(target, segmentTypeForConnection(target, RoadPlannerSegmentType.ROAD));
+                statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u7ec8\u70b9";
             }
             selectedNode = null;
+            saveDraft();
             return true;
         }
         if (RoadPlannerEndpointRules.isInRoleClaim(claimOverlayRenderer, target, RoadPlannerClaimOverlay.Role.START)) {
-            startTownPos = snapToNearestNode(target);
+            startTownPos = target.immutable();
+            linePlan.setStartNode(target);
             selectedNode = null;
-            statusLine = "已设置起点标记";
+            saveDraft();
+            statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u8d77\u70b9";
             return true;
         }
         if (RoadPlannerEndpointRules.isInRoleClaim(claimOverlayRenderer, target, RoadPlannerClaimOverlay.Role.DESTINATION)) {
-            destinationTownPos = snapToNearestNode(target);
+            if (linePlan.nodeCount() == 0) {
+                statusLine = "\u8bf7\u5148\u5728\u8d77\u70b9 Town \u8bbe\u7f6e\u8d77\u70b9";
+                return true;
+            }
+            destinationTownPos = target.immutable();
+            linePlan.setEndNode(target, segmentTypeForConnection(target, RoadPlannerSegmentType.ROAD));
             selectedNode = null;
-            statusLine = "已设置终点标记";
+            saveDraft();
+            statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u7ec8\u70b9";
             return true;
         }
-        statusLine = "端点必须放在起点或目标 Town 领地内";
+        statusLine = "\u7aef\u70b9\u5fc5\u987b\u653e\u5728\u8d77\u70b9\u6216\u76ee\u6807 Town \u9886\u5730\u5185";
         return true;
     }
 

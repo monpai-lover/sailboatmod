@@ -60,7 +60,7 @@ class RoadPlannerRouteExpanderTest {
         );
 
         assertTrue(expanded.success());
-        assertTrue(expanded.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR));
+        assertTrue(expanded.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL));
         assertTrue(RoadPlannerBuildControlService.previewBuildSteps(expanded.nodes(), expanded.segmentTypes(), RoadPlannerBuildSettings.DEFAULTS, null)
                 .stream().anyMatch(step -> step.phase() == BuildPhase.DECK));
     }

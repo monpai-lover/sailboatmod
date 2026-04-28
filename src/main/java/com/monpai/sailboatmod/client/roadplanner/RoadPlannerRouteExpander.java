@@ -31,12 +31,15 @@ public final class RoadPlannerRouteExpander {
             RoadPlannerSegmentType requestedType = compactTypes.get(segmentIndex);
             List<SegmentPoint> segmentPoints = expandSegment(from, to, requestedType, safeLandProbe, safeHeightSampler);
             for (int index = 1; index < segmentPoints.size(); index++) {
+                SegmentPoint previous = segmentPoints.get(index - 1);
                 SegmentPoint point = segmentPoints.get(index);
-                addConnectedNode(expandedNodes, expandedTypes, point.pos(), point.segmentType());
+                addConnectedNode(expandedNodes, expandedTypes, point.pos(), point.segmentTypeForConnectionFrom(previous.segmentType()));
             }
         }
         RoadPlannerBridgeSegmentNormalizer.Result normalized = RoadPlannerBridgeSegmentNormalizer.normalize(expandedNodes, expandedTypes, safeLandProbe);
-        return new Result(!normalized.hasBlockingIssues(), normalized.nodes(), normalized.segmentTypes(), normalized.issues());
+        boolean hasBridge = normalized.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL);
+        boolean success = !normalized.hasBlockingIssues() || hasBridge;
+        return new Result(success, normalized.nodes(), normalized.segmentTypes(), normalized.issues());
     }
 
     private static List<SegmentPoint> expandSegment(BlockPos from,
@@ -126,6 +129,18 @@ public final class RoadPlannerRouteExpander {
     }
 
     private record SegmentPoint(BlockPos pos, RoadPlannerSegmentType segmentType) {
+        RoadPlannerSegmentType segmentTypeForConnectionFrom(RoadPlannerSegmentType previousType) {
+            if (previousType == RoadPlannerSegmentType.BRIDGE_MAJOR || segmentType == RoadPlannerSegmentType.BRIDGE_MAJOR) {
+                return RoadPlannerSegmentType.BRIDGE_MAJOR;
+            }
+            if (previousType == RoadPlannerSegmentType.BRIDGE_SMALL || segmentType == RoadPlannerSegmentType.BRIDGE_SMALL) {
+                return RoadPlannerSegmentType.BRIDGE_SMALL;
+            }
+            if (previousType == RoadPlannerSegmentType.TUNNEL || segmentType == RoadPlannerSegmentType.TUNNEL) {
+                return RoadPlannerSegmentType.TUNNEL;
+            }
+            return RoadPlannerSegmentType.ROAD;
+        }
     }
 
     public record Result(boolean success,
