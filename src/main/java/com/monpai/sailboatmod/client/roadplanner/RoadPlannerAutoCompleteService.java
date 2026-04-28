@@ -125,6 +125,14 @@ public class RoadPlannerAutoCompleteService {
         if (vertical >= 10 || horizontal >= 96) {
             return RoadPlannerSegmentType.BRIDGE_MAJOR;
         }
+        if (!landProbe.isLand(from.getX(), from.getZ()) || !landProbe.isLand(to.getX(), to.getZ())) {
+            return RoadPlannerSegmentType.BRIDGE_MAJOR;
+        }
+        int midX = (from.getX() + to.getX()) / 2;
+        int midZ = (from.getZ() + to.getZ()) / 2;
+        if (!landProbe.isLand(midX, midZ)) {
+            return RoadPlannerSegmentType.BRIDGE_MAJOR;
+        }
         if (vertical >= 4 || horizontal >= 48) {
             return RoadPlannerSegmentType.BRIDGE_SMALL;
         }
