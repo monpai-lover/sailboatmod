@@ -35,7 +35,9 @@ class RoadPlannerClientStateTest {
 
         assertEquals(RoadToolType.SELECT, toolbar.activeTool());
         assertTrue(menu.hasAction(RoadPlannerContextMenuAction.RENAME_ROAD));
-        assertTrue(menu.hasAction(RoadPlannerContextMenuAction.EDIT_NODES));
+        assertTrue(menu.hasAction(RoadPlannerContextMenuAction.SET_ROAD_TYPE));
+        assertTrue(menu.hasAction(RoadPlannerContextMenuAction.SET_BRIDGE_TYPE));
+        assertTrue(menu.hasAction(RoadPlannerContextMenuAction.SET_TUNNEL_TYPE));
         assertTrue(menu.hasAction(RoadPlannerContextMenuAction.DEMOLISH_EDGE));
         assertTrue(menu.hasAction(RoadPlannerContextMenuAction.DEMOLISH_BRANCH));
         assertTrue(menu.hasAction(RoadPlannerContextMenuAction.CONNECT_TOWN));

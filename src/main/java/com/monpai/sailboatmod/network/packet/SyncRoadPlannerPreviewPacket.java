@@ -281,7 +281,7 @@ public class SyncRoadPlannerPreviewPacket {
 
     @net.minecraftforge.api.distmarker.OnlyIn(Dist.CLIENT)
     private static void handleClient(SyncRoadPlannerPreviewPacket msg) {
-        if (msg.ghostBlocks.isEmpty()) {
+        if (msg.ghostBlocks.isEmpty() && msg.pathNodes.isEmpty()) {
             RoadPlannerClientHooks.clearPreview();
             RoadPlannerClientHooks.clearPlanningResult();
             return;

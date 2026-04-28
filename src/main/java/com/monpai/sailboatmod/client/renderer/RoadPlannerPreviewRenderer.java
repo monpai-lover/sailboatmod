@@ -41,7 +41,7 @@ public final class RoadPlannerPreviewRenderer {
         Minecraft minecraft = Minecraft.getInstance();
         Player player = minecraft.player;
         RoadPlannerClientHooks.PreviewState preview = RoadPlannerClientHooks.previewState();
-        if (player == null || preview == null || preview.ghostBlocks().isEmpty() || !isHoldingPlanner(player)) {
+        if (player == null || preview == null || (preview.ghostBlocks().isEmpty() && preview.pathNodes().isEmpty()) || !isHoldingPlanner(player)) {
             return;
         }
 

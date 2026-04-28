@@ -9,16 +9,28 @@ public record RoadSettings(int width,
                            Block mainMaterial,
                            Block edgeMaterial,
                            boolean enableBridge,
-                           boolean enableTunnel) {
+                           boolean enableTunnel,
+                           int lampIntervalBlocks) {
+    public RoadSettings(int width,
+                        Block mainMaterial,
+                        Block edgeMaterial,
+                        boolean enableBridge,
+                        boolean enableTunnel) {
+        this(width, mainMaterial, edgeMaterial, enableBridge, enableTunnel, 24);
+    }
+
     public RoadSettings {
         if (width != 3 && width != 5 && width != 7) {
             throw new IllegalArgumentException("width must be 3, 5, or 7");
+        }
+        if (lampIntervalBlocks <= 0) {
+            throw new IllegalArgumentException("lampIntervalBlocks must be positive");
         }
         mainMaterial = Objects.requireNonNull(mainMaterial, "mainMaterial");
         edgeMaterial = Objects.requireNonNull(edgeMaterial, "edgeMaterial");
     }
 
     public static RoadSettings defaults() {
-        return new RoadSettings(5, Blocks.STONE_BRICKS, Blocks.SMOOTH_STONE, true, true);
+        return new RoadSettings(5, Blocks.STONE_BRICKS, Blocks.SMOOTH_STONE, true, true, 24);
     }
 }

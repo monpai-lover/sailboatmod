@@ -28,14 +28,17 @@ public record RoadWeaverStyleContextMenuModel(UUID roadEdgeId,
 
     public static RoadWeaverStyleContextMenuModel forRoadEdge(UUID roadEdgeId, int anchorX, int anchorY) {
         return new RoadWeaverStyleContextMenuModel(roadEdgeId, anchorX, anchorY, List.of(
-                RoadWeaverStyleContextMenuItem.action("重命名道路", RoadPlannerContextMenuAction.RENAME_ROAD),
-                RoadWeaverStyleContextMenuItem.action("编辑节点", RoadPlannerContextMenuAction.EDIT_NODES),
+                RoadWeaverStyleContextMenuItem.action("\u91cd\u547d\u540d\u9053\u8def", RoadPlannerContextMenuAction.RENAME_ROAD),
                 RoadWeaverStyleContextMenuItem.divider(),
-                RoadWeaverStyleContextMenuItem.action("拆除本段", RoadPlannerContextMenuAction.DEMOLISH_EDGE),
-                RoadWeaverStyleContextMenuItem.action("拆除分支", RoadPlannerContextMenuAction.DEMOLISH_BRANCH),
+                RoadWeaverStyleContextMenuItem.action("\u8bbe\u4e3a\u9053\u8def", RoadPlannerContextMenuAction.SET_ROAD_TYPE),
+                RoadWeaverStyleContextMenuItem.action("\u8bbe\u4e3a\u6865\u6881", RoadPlannerContextMenuAction.SET_BRIDGE_TYPE),
+                RoadWeaverStyleContextMenuItem.action("\u8bbe\u4e3a\u96a7\u9053", RoadPlannerContextMenuAction.SET_TUNNEL_TYPE),
                 RoadWeaverStyleContextMenuItem.divider(),
-                RoadWeaverStyleContextMenuItem.action("连接城镇", RoadPlannerContextMenuAction.CONNECT_TOWN),
-                RoadWeaverStyleContextMenuItem.action("查看回滚账本", RoadPlannerContextMenuAction.VIEW_LEDGER)
+                RoadWeaverStyleContextMenuItem.action("\u62c6\u9664\u672c\u6bb5", RoadPlannerContextMenuAction.DEMOLISH_EDGE),
+                RoadWeaverStyleContextMenuItem.action("\u62c6\u9664\u5206\u652f", RoadPlannerContextMenuAction.DEMOLISH_BRANCH),
+                RoadWeaverStyleContextMenuItem.divider(),
+                RoadWeaverStyleContextMenuItem.action("\u8fde\u63a5\u57ce\u9547", RoadPlannerContextMenuAction.CONNECT_TOWN),
+                RoadWeaverStyleContextMenuItem.action("\u67e5\u770b\u56de\u6eda\u8d26\u672c", RoadPlannerContextMenuAction.VIEW_LEDGER)
         ), -1);
     }
 

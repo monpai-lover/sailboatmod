@@ -22,7 +22,7 @@ public record RoadPlannerClientState(UUID sessionId,
     }
 
     public static RoadPlannerClientState open(UUID sessionId) {
-        return new RoadPlannerClientState(sessionId, true, RoadToolType.ROAD, 0, 5, null);
+        return new RoadPlannerClientState(sessionId, true, RoadToolType.SELECT, 0, 5, null);
     }
 
     public RoadPlannerClientState withActiveTool(RoadToolType tool) {

@@ -73,6 +73,68 @@ public class RoadNetworkGraph {
         return Optional.of(updated);
     }
 
+
+
+
+
+    public Optional<RoadGraphEdge> updateEdgeType(UUID edgeId, com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType type) {
+        RoadGraphEdge edge = edges.get(edgeId);
+        if (edge == null || type == null) {
+            return Optional.empty();
+        }
+        RoadRouteMetadata metadata = edge.metadata();
+        RoadGraphEdge updated = new RoadGraphEdge(
+                edge.edgeId(),
+                edge.fromNodeId(),
+                edge.toNodeId(),
+                new RoadRouteMetadata(
+                        metadata.roadName(),
+                        metadata.fromTownName(),
+                        metadata.toTownName(),
+                        metadata.creatorId(),
+                        metadata.createdAtGameTime(),
+                        metadata.width(),
+                        type,
+                        metadata.status()
+                ),
+                edge.lengthBlocks()
+        );
+        edges.put(edgeId, updated);
+        return Optional.of(updated);
+    }
+
+    public Optional<RoadGraphEdge> removeEdge(UUID edgeId) {
+        if (edgeId == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(edges.remove(edgeId));
+    }
+
+    public int removeBranchFromEdge(UUID edgeId) {
+        RoadGraphEdge root = edges.get(edgeId);
+        if (root == null) {
+            return 0;
+        }
+        UUID branchNodeId = root.toNodeId();
+        List<UUID> toRemove = new ArrayList<>();
+        collectBranchEdges(branchNodeId, root.fromNodeId(), toRemove);
+        for (UUID removeId : toRemove) {
+            edges.remove(removeId);
+        }
+        return toRemove.size();
+    }
+
+    private void collectBranchEdges(UUID nodeId, UUID previousNodeId, List<UUID> edgeIds) {
+        for (RoadGraphEdge edge : new ArrayList<>(edges.values())) {
+            if (!edge.connects(nodeId) || edge.connects(previousNodeId)) {
+                continue;
+            }
+            edgeIds.add(edge.edgeId());
+            UUID next = edge.fromNodeId().equals(nodeId) ? edge.toNodeId() : edge.fromNodeId();
+            collectBranchEdges(next, nodeId, edgeIds);
+        }
+    }
+
     private RoadGraphNode requireNode(UUID nodeId) {
         RoadGraphNode node = nodes.get(nodeId);
         if (node == null) {

@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.roadplanner.compile;
 
+import com.monpai.sailboatmod.roadplanner.build.RoadBuildStep;
 import com.monpai.sailboatmod.roadplanner.model.NodeSource;
 import com.monpai.sailboatmod.roadplanner.model.RoadNode;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlan;
@@ -8,10 +9,12 @@ import com.monpai.sailboatmod.roadplanner.model.RoadSettings;
 import com.monpai.sailboatmod.roadplanner.model.RoadStroke;
 import com.monpai.sailboatmod.roadplanner.model.RoadStrokeSettings;
 import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
+import com.monpai.sailboatmod.roadplanner.weaver.bridge.WeaverBridgeBackend;
 import com.monpai.sailboatmod.roadplanner.weaver.model.WeaverSpanType;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -58,6 +61,40 @@ class RoadPlanWeaverAdapterTest {
 
         assertEquals(1, compiled.issues().size());
         assertTrue(compiled.issues().get(0).blocking());
+    }
+
+    @Test
+    void roadPreviewAddsLampCandidatesByConfiguredInterval() {
+        RoadNode a = node(0, 64, 0);
+        RoadNode b = node(24, 64, 0);
+        RoadStroke road = stroke(RoadToolType.ROAD, a, b);
+        RoadSettings settings = new RoadSettings(5, Blocks.STONE_BRICKS, Blocks.SMOOTH_STONE, true, true, 8);
+        RoadPlan plan = new RoadPlan(UUID.randomUUID(), a.pos(), b.pos(), List.of(
+                new RoadSegment(0, a.pos(), a.pos(), b.pos(), List.of(road), true)
+        ), settings);
+
+        CompiledRoadPath compiled = new RoadPlanWeaverAdapter().compile(plan);
+
+        assertTrue(compiled.previewCandidates().stream().anyMatch(candidate -> candidate.phase() == RoadBuildStep.Phase.LAMP));
+    }
+
+    @Test
+    void bridgePreviewFallsBackToCurrentCompilerWhenBackendFails() {
+        RoadNode a = node(0, 64, 0);
+        RoadNode b = node(8, 64, 0);
+        RoadStroke bridge = stroke(RoadToolType.BRIDGE, a, b);
+        RoadPlan plan = new RoadPlan(UUID.randomUUID(), a.pos(), b.pos(), List.of(
+                new RoadSegment(0, a.pos(), a.pos(), b.pos(), List.of(bridge), true)
+        ), RoadSettings.defaults());
+        WeaverBridgeBackend failingBackend = (centers, width, state) -> {
+            throw new IllegalStateException("boom");
+        };
+
+        CompiledRoadPath compiled = new RoadPlanWeaverAdapter(failingBackend).compile(plan);
+
+        assertEquals(CompiledRoadSectionType.BRIDGE, compiled.sections().get(0).type());
+        assertTrue(compiled.previewCandidates().stream().anyMatch(candidate -> candidate.phase() == RoadBuildStep.Phase.BRIDGE_DECK));
+        assertTrue(compiled.issues().stream().anyMatch(issue -> "bridge_backend_fallback".equals(issue.code())));
     }
 
     private RoadNode node(int x, int y, int z) {

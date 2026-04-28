@@ -2,7 +2,9 @@ package com.monpai.sailboatmod.client.roadplanner;
 
 public enum RoadPlannerContextMenuAction {
     RENAME_ROAD,
-    EDIT_NODES,
+    SET_ROAD_TYPE,
+    SET_BRIDGE_TYPE,
+    SET_TUNNEL_TYPE,
     DEMOLISH_EDGE,
     DEMOLISH_BRANCH,
     CONNECT_TOWN,

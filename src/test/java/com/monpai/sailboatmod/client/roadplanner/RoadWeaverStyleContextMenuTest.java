@@ -30,9 +30,9 @@ class RoadWeaverStyleContextMenuTest {
         UUID edgeId = UUID.randomUUID();
         RoadWeaverStyleContextMenuModel menu = RoadWeaverStyleContextMenuModel.forRoadEdge(edgeId, 10, 10)
                 .withActionEnabled(RoadPlannerContextMenuAction.DEMOLISH_BRANCH, false)
-                .withMousePosition(18, 77);
+                .withMousePosition(18, 117);
 
-        RoadWeaverStyleContextMenuClick disabledClick = menu.click(18, 77, 0);
+        RoadWeaverStyleContextMenuClick disabledClick = menu.click(18, 117, 0);
         RoadWeaverStyleContextMenuClick outsideClick = menu.click(320, 240, 0);
 
         assertTrue(disabledClick.consumed());

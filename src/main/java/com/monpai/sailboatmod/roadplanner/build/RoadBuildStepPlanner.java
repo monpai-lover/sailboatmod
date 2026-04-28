@@ -33,6 +33,9 @@ public class RoadBuildStepPlanner {
         if (!candidate.visible() || candidate.state().is(Blocks.AIR)) {
             return RoadBuildStep.Phase.CLEAR_TO_SKY;
         }
+        if (candidate.phase() == RoadBuildStep.Phase.LAMP) {
+            return RoadBuildStep.Phase.LAMP;
+        }
         if (candidate.state().equals(edgeState)) {
             return RoadBuildStep.Phase.ROAD_EDGE;
         }
@@ -62,7 +65,8 @@ public class RoadBuildStepPlanner {
             case BRIDGE_PIER -> 5;
             case BRIDGE_RAMP -> 6;
             case BRIDGE_RAILING -> 7;
-            case TUNNEL -> 8;
+            case LAMP -> 8;
+            case TUNNEL -> 9;
         };
     }
 }

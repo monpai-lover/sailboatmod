@@ -1,17 +1,29 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import io.netty.buffer.Unpooled;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.server.Bootstrap;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class RoadPlannerPacketRoundTripTest {
+    @BeforeAll
+    static void bootstrapMinecraft() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+    }
+
     @Test
     void snapshotRequestRoundTripsCorridorFields() {
         RoadMapSnapshotRequestPacket packet = new RoadMapSnapshotRequestPacket(
@@ -58,6 +70,28 @@ class RoadPlannerPacketRoundTripTest {
                 roundTrip(new RoadPlannerConfirmBuildPacket(sessionId), RoadPlannerConfirmBuildPacket::encode, RoadPlannerConfirmBuildPacket::decode));
         assertEquals(new RoadPlannerCancelJobPacket(sessionId),
                 roundTrip(new RoadPlannerCancelJobPacket(sessionId), RoadPlannerCancelJobPacket::encode, RoadPlannerCancelJobPacket::decode));
+        assertEquals(new OpenRoadPlannerActionMenuPacket(RoadPlannerActionMenuMode.PREVIEW, sessionId),
+                roundTrip(new OpenRoadPlannerActionMenuPacket(RoadPlannerActionMenuMode.PREVIEW, sessionId), OpenRoadPlannerActionMenuPacket::encode, OpenRoadPlannerActionMenuPacket::decode));
+        assertEquals(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_DEMOLITION_PLANNER),
+                roundTrip(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_DEMOLITION_PLANNER), RoadPlannerMenuActionPacket::encode, RoadPlannerMenuActionPacket::decode));
+        assertEquals(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.RETURN_TO_PLANNER),
+                roundTrip(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.RETURN_TO_PLANNER), RoadPlannerMenuActionPacket::encode, RoadPlannerMenuActionPacket::decode));
+    }
+
+    @Test
+    void previewRequestCreatesGhostBlocksForWorldPreview() {
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD)
+        );
+
+        SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest();
+
+        assertFalse(preview.ghostBlocks().isEmpty());
+        assertEquals(2, preview.pathNodes().size());
+        assertEquals(2, preview.pathNodeCount());
     }
 
     private <T> T roundTrip(T packet, PacketEncoder<T> encoder, PacketDecoder<T> decoder) {

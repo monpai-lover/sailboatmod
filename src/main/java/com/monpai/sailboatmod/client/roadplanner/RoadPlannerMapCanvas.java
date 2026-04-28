@@ -1,25 +1,52 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
+import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapRegion;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapViewport;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 
 public class RoadPlannerMapCanvas {
-    private static final int MAP_BG = 0xF508121E;
-    private static final int GRID = 0xAA2A3E56;
-    private static final int TEXT = 0xFFE5E7EB;
-    private static final int MUTED = 0xFF94A3B8;
-    private static final int ACCENT = 0xFF34D399;
-    private static final int BLUE = 0xFF60A5FA;
-    private static final int RED = 0xFFF87171;
-
     private final RoadPlannerVanillaLayout.Rect rect;
     private final RoadPlannerMapComponent component;
+    private final RoadPlannerMapView view;
+    private final RoadPlannerTileManager tileManager;
+    private final RoadPlannerHeightSampler heightSampler;
 
     public RoadPlannerMapCanvas(RoadPlannerVanillaLayout.Rect rect, RoadPlannerMapComponent component) {
+        this(rect, component, null, null, (x, z) -> 64);
+    }
+
+    public RoadPlannerMapCanvas(RoadPlannerVanillaLayout.Rect rect,
+                                RoadPlannerMapComponent component,
+                                RoadPlannerMapView view,
+                                RoadPlannerTileManager tileManager) {
+        this(rect, component, view, tileManager, (x, z) -> 64);
+    }
+
+    public RoadPlannerMapCanvas(RoadPlannerVanillaLayout.Rect rect,
+                                RoadPlannerMapComponent component,
+                                RoadPlannerMapView view,
+                                RoadPlannerTileManager tileManager,
+                                RoadPlannerHeightSampler heightSampler) {
         this.rect = rect;
         this.component = component;
+        this.view = view;
+        this.tileManager = tileManager;
+        this.heightSampler = heightSampler == null ? (x, z) -> 64 : heightSampler;
+    }
+
+    static RoadPlannerMapCanvas forTest(RoadPlannerVanillaLayout.Rect rect, RoadPlannerMapView view, RoadPlannerHeightSampler sampler) {
+        return new RoadPlannerMapCanvas(rect,
+                new RoadPlannerMapComponent(
+                        RoadMapRegion.centeredOn(BlockPos.ZERO, 128, MapLod.LOD_1),
+                        new RoadMapViewport(rect.x(), rect.y(), rect.width(), rect.height())
+                ),
+                view,
+                null,
+                sampler);
     }
 
     public boolean contains(double mouseX, double mouseY) {
@@ -27,6 +54,10 @@ public class RoadPlannerMapCanvas {
     }
 
     public BlockPos mouseToWorld(double mouseX, double mouseY) {
+        if (view != null) {
+            RoadPlannerMapLayout.Rect mapRect = mapRect();
+            return heightSampler.blockPosAt(view.screenToWorldX(mouseX, mapRect), view.screenToWorldZ(mouseY, mapRect));
+        }
         return component.guiToWorldXZ(mouseX, mouseY);
     }
 
@@ -39,24 +70,47 @@ public class RoadPlannerMapCanvas {
         return new RoadPlannerMapInteraction(graph).rightClickRoadLine(state, worldX, worldZ, mouseX, mouseY, 8.0D);
     }
 
+    public void render(GuiGraphics graphics, Font font) {
+        graphics.fill(rect.x(), rect.y(), rect.right(), rect.bottom(), 0xFF111820);
+        if (tileManager != null && view != null) {
+            renderTiles(graphics);
+        }
+    }
+
     public void renderPlaceholder(GuiGraphics graphics, Font font) {
-        graphics.fill(rect.x(), rect.y(), rect.right(), rect.bottom(), MAP_BG);
-        for (int x = rect.x(); x <= rect.right(); x += Math.max(48, rect.width() / 8)) {
-            graphics.fill(x, rect.y(), x + 1, rect.bottom(), GRID);
+        render(graphics, font);
+    }
+
+    private void renderTiles(GuiGraphics graphics) {
+        tileManager.refreshWorldContext();
+        RoadPlannerMapLayout.Rect mapRect = mapRect();
+        double tileScreenSize = Math.max(16.0D, RoadPlannerTile.TILE_SIZE_BLOCKS * view.scale());
+        int minWorldX = view.screenToWorldX(rect.x(), mapRect);
+        int maxWorldX = view.screenToWorldX(rect.right(), mapRect);
+        int minWorldZ = view.screenToWorldZ(rect.y(), mapRect);
+        int maxWorldZ = view.screenToWorldZ(rect.bottom(), mapRect);
+        int startTileX = Math.floorDiv(Math.min(minWorldX, maxWorldX), RoadPlannerTile.TILE_SIZE_BLOCKS) - 1;
+        int endTileX = Math.floorDiv(Math.max(minWorldX, maxWorldX), RoadPlannerTile.TILE_SIZE_BLOCKS) + 1;
+        int startTileZ = Math.floorDiv(Math.min(minWorldZ, maxWorldZ), RoadPlannerTile.TILE_SIZE_BLOCKS) - 1;
+        int endTileZ = Math.floorDiv(Math.max(minWorldZ, maxWorldZ), RoadPlannerTile.TILE_SIZE_BLOCKS) + 1;
+        for (int tileZ = startTileZ; tileZ <= endTileZ; tileZ++) {
+            for (int tileX = startTileX; tileX <= endTileX; tileX++) {
+                RoadPlannerTile tile = tileManager.getOrCreateTile(tileX, tileZ);
+                int screenX = view.worldToScreenX(tileX * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
+                int screenZ = view.worldToScreenZ(tileZ * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
+                tile.render(graphics, screenX, screenZ, (int) Math.ceil(tileScreenSize) + 1);
+            }
         }
-        for (int y = rect.y(); y <= rect.bottom(); y += Math.max(40, rect.height() / 6)) {
-            graphics.fill(rect.x(), y, rect.right(), y + 1, GRID);
-        }
-        graphics.drawString(font, "128x128 区域 / 真实地形快照加载中", rect.x() + 18, rect.y() + 16, MUTED, false);
-        graphics.fill(rect.x() + 58, rect.bottom() - 78, rect.x() + 72, rect.bottom() - 64, ACCENT);
-        graphics.drawString(font, "起点", rect.x() + 78, rect.bottom() - 80, TEXT, false);
+    }
+
+    private void renderAnchorMarker(GuiGraphics graphics, Font font) {
         int centerX = rect.x() + rect.width() / 2;
         int centerY = rect.y() + rect.height() / 2;
-        graphics.fill(centerX - 120, centerY, centerX + 100, centerY + 5, BLUE);
-        graphics.fill(centerX + 92, centerY - 46, centerX + 97, centerY + 4, BLUE);
-        graphics.drawString(font, "当前节点线", centerX - 116, centerY + 14, TEXT, false);
-        graphics.fill(rect.right() - 84, rect.y() + 46, rect.right() - 60, rect.y() + 52, RED);
-        graphics.fill(rect.right() - 66, rect.y() + 36, rect.right() - 60, rect.y() + 62, RED);
-        graphics.drawString(font, "目的地方向", rect.right() - 176, rect.y() + 34, RED, false);
+        graphics.fill(centerX - 5, centerY - 5, centerX + 5, centerY + 5, RoadPlannerMapTheme.NODE);
+        graphics.drawString(font, "起点", centerX + 10, centerY - 4, RoadPlannerMapTheme.TEXT, false);
+    }
+
+    private RoadPlannerMapLayout.Rect mapRect() {
+        return new RoadPlannerMapLayout.Rect(rect.x(), rect.y(), rect.width(), rect.height());
     }
 }

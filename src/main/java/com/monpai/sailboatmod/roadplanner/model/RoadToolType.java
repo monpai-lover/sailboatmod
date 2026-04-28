@@ -5,5 +5,9 @@ public enum RoadToolType {
     BRIDGE,
     TUNNEL,
     ERASE,
-    SELECT
+    SELECT,
+    WATER_CROSSING,
+    BEZIER,
+    ENDPOINT,
+    FORCE_RENDER
 }

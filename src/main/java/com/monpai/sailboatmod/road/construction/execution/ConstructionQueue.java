@@ -87,4 +87,5 @@ public class ConstructionQueue {
     public State getState() { return state; }
     public int getTotalSteps() { return steps.size(); }
     public int getCompletedSteps() { return currentIndex; }
+    public List<BuildStep> getSteps() { return List.copyOf(steps); }
 }

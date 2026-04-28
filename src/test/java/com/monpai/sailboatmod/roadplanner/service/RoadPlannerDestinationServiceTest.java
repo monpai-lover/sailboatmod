@@ -35,6 +35,8 @@ class RoadPlannerDestinationServiceTest {
         assertEquals(RoadPlannerItem.EntryAction.SET_CURRENT_POSITION_DESTINATION, RoadPlannerItem.entryAction(true));
         assertFalse(RoadPlannerItem.usesLegacyManualPlanner());
         assertTrue(RoadPlannerItem.entryAction(false).opensPlanner());
+        assertFalse(RoadPlannerItem.entryAction(true).opensPlanner());
+        assertTrue(RoadPlannerItem.entryAction(true).storesDestinationOnly());
     }
 
     @Test

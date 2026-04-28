@@ -31,6 +31,14 @@ class RoadPlanModelTest {
     }
 
     @Test
+    void settingsCarryLampInterval() {
+        assertEquals(24, RoadSettings.defaults().lampIntervalBlocks());
+        assertEquals(16, new RoadSettings(5, Blocks.STONE_BRICKS, Blocks.SMOOTH_STONE, true, true, 16).lampIntervalBlocks());
+        assertThrows(IllegalArgumentException.class,
+                () -> new RoadSettings(5, Blocks.STONE_BRICKS, Blocks.SMOOTH_STONE, true, true, 0));
+    }
+
+    @Test
     void segmentStoresImmutableStrokeNodes() {
         RoadNode first = new RoadNode(new BlockPos(0, 64, 0), 10L, NodeSource.MANUAL);
         RoadNode second = new RoadNode(new BlockPos(8, 64, 0), 11L, NodeSource.MANUAL);

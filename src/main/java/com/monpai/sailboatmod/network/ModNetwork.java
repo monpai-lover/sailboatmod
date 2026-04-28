@@ -66,10 +66,15 @@ import com.monpai.sailboatmod.network.packet.UploadNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.UploadTownFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerActionMenuPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteResultPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerConfirmBuildPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerDemolishRoadPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerGraphSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMenuActionPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPreviewRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRegionNavigationPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRenameRoadPacket;
 import net.minecraft.resources.ResourceLocation;
@@ -566,10 +571,47 @@ public final class ModNetwork {
         );
         CHANNEL.registerMessage(
                 packetId++,
+                OpenRoadPlannerActionMenuPacket.class,
+                OpenRoadPlannerActionMenuPacket::encode,
+                OpenRoadPlannerActionMenuPacket::decode,
+                OpenRoadPlannerActionMenuPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
                 RoadPlannerConfirmBuildPacket.class,
                 RoadPlannerConfirmBuildPacket::encode,
                 RoadPlannerConfirmBuildPacket::decode,
                 RoadPlannerConfirmBuildPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerAutoCompleteRequestPacket.class,
+                RoadPlannerAutoCompleteRequestPacket::encode,
+                RoadPlannerAutoCompleteRequestPacket::decode,
+                RoadPlannerAutoCompleteRequestPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerAutoCompleteResultPacket.class,
+                RoadPlannerAutoCompleteResultPacket::encode,
+                RoadPlannerAutoCompleteResultPacket::decode,
+                RoadPlannerAutoCompleteResultPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerPreviewRequestPacket.class,
+                RoadPlannerPreviewRequestPacket::encode,
+                RoadPlannerPreviewRequestPacket::decode,
+                RoadPlannerPreviewRequestPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerMenuActionPacket.class,
+                RoadPlannerMenuActionPacket::encode,
+                RoadPlannerMenuActionPacket::decode,
+                RoadPlannerMenuActionPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,

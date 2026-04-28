@@ -16,7 +16,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 public class RoadPlannerSessionService {
+    private static final RoadPlannerSessionService GLOBAL = new RoadPlannerSessionService();
     private final ConcurrentMap<UUID, RoadPlanningSession> sessionsByPlayer = new ConcurrentHashMap<>();
+
+    public static RoadPlannerSessionService global() {
+        return GLOBAL;
+    }
 
     public RoadPlanningSession startSession(UUID playerId,
                                             ResourceKey<Level> dimension,

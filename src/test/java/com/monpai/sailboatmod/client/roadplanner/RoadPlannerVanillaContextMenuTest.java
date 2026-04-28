@@ -31,8 +31,8 @@ class RoadPlannerVanillaContextMenuTest {
         menu.layout(900, 500, label -> label.length() * 6);
 
         int branchY = menu.bounds().y() + RoadPlannerVanillaContextMenu.PADDING
-                + RoadPlannerVanillaContextMenu.ITEM_HEIGHT * 3
-                + RoadPlannerVanillaContextMenu.SEPARATOR_HEIGHT
+                + RoadPlannerVanillaContextMenu.ITEM_HEIGHT * 5
+                + RoadPlannerVanillaContextMenu.SEPARATOR_HEIGHT * 2
                 + 4;
         menu.updateHover(menu.bounds().x() + 8, branchY);
 

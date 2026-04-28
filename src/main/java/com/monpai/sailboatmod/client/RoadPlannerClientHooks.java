@@ -1,10 +1,14 @@
 package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerScreen;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerClaimOverlay;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.client.screen.RoadPlannerConfigScreen;
+import com.monpai.sailboatmod.client.screen.RoadPlannerActionMenuScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerOptionSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
 import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerActionMenuMode;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -142,8 +146,54 @@ public final class RoadPlannerClientHooks {
         Minecraft.getInstance().setScreen(new RoadPlannerScreen(sessionId));
     }
 
+    public static void openActionMenu(RoadPlannerActionMenuMode mode, UUID sessionId) {
+        Minecraft.getInstance().setScreen(new RoadPlannerActionMenuScreen(mode, sessionId));
+    }
+
+    public static void openNewPlannerEntry(UUID sessionId,
+                                           String sourceTownId,
+                                           String sourceTownName,
+                                           BlockPos sourceAnchor,
+                                           String destinationTownId,
+                                           String destinationTownName,
+                                           BlockPos destinationAnchor) {
+        openNewPlannerEntry(sessionId, sourceTownId, sourceTownName, sourceAnchor,
+                destinationTownId, destinationTownName, destinationAnchor, List.of());
+    }
+
+    public static void openNewPlannerEntry(UUID sessionId,
+                                           String sourceTownId,
+                                           String sourceTownName,
+                                           BlockPos sourceAnchor,
+                                           String destinationTownId,
+                                           String destinationTownName,
+                                           BlockPos destinationAnchor,
+                                           List<RoadPlannerClaimOverlay> claimOverlays) {
+        Minecraft.getInstance().setScreen(new RoadPlannerScreen(
+                sessionId,
+                sourceTownId,
+                sourceTownName,
+                sourceAnchor,
+                destinationTownId,
+                destinationTownName,
+                destinationAnchor,
+                claimOverlays
+        ));
+    }
+
     public static Class<?> screenClassForNewPlannerEntry(UUID sessionId) {
         return RoadPlannerScreen.class;
+    }
+
+    public static void applyAutoCompleteResult(UUID sessionId,
+                                               boolean success,
+                                               List<BlockPos> nodes,
+                                               List<RoadPlannerSegmentType> segmentTypes,
+                                               String message) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof RoadPlannerScreen screen) {
+            screen.applyAutoCompleteResult(sessionId, success, nodes, segmentTypes, message);
+        }
     }
 
     public static void openPreviewOptionSelection(String sourceTownName,

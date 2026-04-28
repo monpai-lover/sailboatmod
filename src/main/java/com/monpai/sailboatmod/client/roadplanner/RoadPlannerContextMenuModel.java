@@ -11,7 +11,9 @@ public record RoadPlannerContextMenuModel(UUID roadEdgeId, List<RoadPlannerConte
     public static RoadPlannerContextMenuModel forSelectedRoadEdge(UUID roadEdgeId) {
         return new RoadPlannerContextMenuModel(roadEdgeId, List.of(
                 RoadPlannerContextMenuAction.RENAME_ROAD,
-                RoadPlannerContextMenuAction.EDIT_NODES,
+                RoadPlannerContextMenuAction.SET_ROAD_TYPE,
+                RoadPlannerContextMenuAction.SET_BRIDGE_TYPE,
+                RoadPlannerContextMenuAction.SET_TUNNEL_TYPE,
                 RoadPlannerContextMenuAction.DEMOLISH_EDGE,
                 RoadPlannerContextMenuAction.DEMOLISH_BRANCH,
                 RoadPlannerContextMenuAction.CONNECT_TOWN,

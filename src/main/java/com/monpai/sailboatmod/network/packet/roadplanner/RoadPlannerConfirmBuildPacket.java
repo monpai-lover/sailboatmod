@@ -1,6 +1,9 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.UUID;
@@ -20,6 +23,18 @@ public record RoadPlannerConfirmBuildPacket(UUID sessionId) {
     }
 
     public static void handle(RoadPlannerConfirmBuildPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().setPacketHandled(true);
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> {
+            ServerPlayer sender = context.getSender();
+            if (sender == null) {
+                return;
+            }
+            RoadPlannerBuildControlService.global().confirmPreview(sender.getUUID(), packet.sessionId(), sender.serverLevel())
+                    .ifPresentOrElse(
+                            jobId -> sender.sendSystemMessage(Component.literal("道路建造已加入施工队列，可用道路规划器管理或取消。")),
+                            () -> sender.sendSystemMessage(Component.literal("没有可确认的道路预览。"))
+                    );
+        });
+        context.setPacketHandled(true);
     }
 }

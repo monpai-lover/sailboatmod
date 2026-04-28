@@ -36,6 +36,7 @@ public record RoadBuildStep(UUID edgeId,
         BRIDGE_PIER,
         BRIDGE_RAMP,
         BRIDGE_RAILING,
+        LAMP,
         TUNNEL
     }
 }
