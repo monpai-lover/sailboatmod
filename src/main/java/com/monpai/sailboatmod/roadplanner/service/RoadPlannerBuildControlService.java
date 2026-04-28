@@ -266,7 +266,19 @@ public class RoadPlannerBuildControlService {
 
             if (i >= entryRampLen && i < totalLen - exitRampLen && i % 4 == 0) {
                 int y = deckPos.getY();
-                for (int py = y - 1; py >= y - 12 && py >= 0; py--) {
+                int bottomY = Math.max(0, waterSurfaceY - 8);
+                if (level != null) {
+                    int solidY = y - 1;
+                    while (solidY > bottomY) {
+                        BlockPos probe = new BlockPos(deckPos.getX(), solidY, deckPos.getZ());
+                        if (!level.getBlockState(probe).isAir() && !level.getBlockState(probe).getFluidState().isSource()) {
+                            break;
+                        }
+                        solidY--;
+                    }
+                    bottomY = solidY;
+                }
+                for (int py = y - 1; py >= bottomY; py--) {
                     steps.add(new BuildStep(order++, new BlockPos(deckPos.getX(), py, deckPos.getZ()), pierState, BuildPhase.DECK));
                 }
             }
