@@ -6,12 +6,12 @@ import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.world.level.ChunkPos;
 
 import java.io.File;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class RoadPlannerTileManager implements AutoCloseable {
     private final File rootDir;
-    private final Map<RoadPlannerTileKey, RoadPlannerTile> loadedTiles = new HashMap<>();
+    private final Map<RoadPlannerTileKey, RoadPlannerTile> loadedTiles = new ConcurrentHashMap<>();
     private String worldId;
     private String dimensionId;
 
@@ -72,24 +72,33 @@ public class RoadPlannerTileManager implements AutoCloseable {
         tile.saveToFile(tileFile(tile.key()));
     }
 
-    public void forceRenderChunk(ChunkPos chunkPos) {
+    public RoadPlannerChunkImage captureChunkImage(ChunkPos chunkPos) {
+        Minecraft minecraft = Minecraft.getInstance();
+        ClientLevel level = minecraft.level;
+        if (level == null || !isChunkLoaded(level, chunkPos)) {
+            return null;
+        }
+        return new RoadPlannerChunkImage(level, chunkPos);
+    }
+
+    public void applyChunkImage(ChunkPos chunkPos, RoadPlannerChunkImage chunkImage) {
+        if (chunkImage == null) {
+            return;
+        }
         int tileX = Math.floorDiv(chunkPos.x, 16);
         int tileZ = Math.floorDiv(chunkPos.z, 16);
         RoadPlannerTile tile = getOrCreateTile(tileX, tileZ);
-        Minecraft minecraft = Minecraft.getInstance();
-        ClientLevel level = minecraft.level;
-        if (level == null) {
-            return;
-        }
-        if (isChunkLoaded(level, chunkPos)) {
-            int localX = Math.floorMod(chunkPos.x, 16);
-            int localZ = Math.floorMod(chunkPos.z, 16);
-            try (RoadPlannerChunkImage chunkImage = new RoadPlannerChunkImage(level, chunkPos)) {
-                tile.updateChunk(chunkImage, localX, localZ);
-            }
-            tile.saveToFile(tileFile(tile.key()));
-        } else if (!tile.loadedFromCache()) {
-            renderLoadedChunksInTile(tile, level);
+        int localX = Math.floorMod(chunkPos.x, 16);
+        int localZ = Math.floorMod(chunkPos.z, 16);
+        tile.updateChunk(chunkImage, localX, localZ);
+        chunkImage.close();
+        tile.saveToFile(tileFile(tile.key()));
+    }
+
+    public void forceRenderChunk(ChunkPos chunkPos) {
+        RoadPlannerChunkImage image = captureChunkImage(chunkPos);
+        if (image != null) {
+            applyChunkImage(chunkPos, image);
         }
     }
 

@@ -332,9 +332,14 @@ public class RoadPlannerScreen extends Screen {
     @Override
     public void tick() {
         if (tileManager != null) {
-            forceRenderQueue.processChunks(6,
-                    chunk -> tileManager.hasCachedTileForChunk(chunk) || tileRenderScheduler.alreadySubmitted(chunk),
-                    chunk -> tileRenderScheduler.submit(chunk, () -> tileManager.forceRenderChunk(chunk)));
+            forceRenderQueue.processChunks(4,
+                    chunk -> tileRenderScheduler.alreadySubmitted(chunk),
+                    chunk -> {
+                        RoadPlannerChunkImage image = tileManager.captureChunkImage(chunk);
+                        if (image != null) {
+                            tileRenderScheduler.submit(chunk, () -> tileManager.applyChunkImage(chunk, image));
+                        }
+                    });
         } else {
             forceRenderQueue.processChunks(8);
         }

@@ -39,8 +39,11 @@ public class RoadPlannerTileRenderScheduler implements AutoCloseable {
             return false;
         }
         executor.execute(() -> {
-            if (!closed && task != null) {
-                task.run();
+            try {
+                if (!closed && task != null) {
+                    task.run();
+                }
+            } catch (Exception ignored) {
             }
         });
         return true;

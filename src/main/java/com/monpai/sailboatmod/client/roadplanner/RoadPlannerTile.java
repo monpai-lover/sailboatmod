@@ -83,7 +83,7 @@ public class RoadPlannerTile implements AutoCloseable {
         return !loadedFromCache;
     }
 
-    public void updateChunk(RoadPlannerChunkImage chunkImage, int chunkXInTile, int chunkZInTile) {
+    public synchronized void updateChunk(RoadPlannerChunkImage chunkImage, int chunkXInTile, int chunkZInTile) {
         if (image == null || chunkImage == null || !chunkImage.isMeaningful()) {
             return;
         }
@@ -98,7 +98,7 @@ public class RoadPlannerTile implements AutoCloseable {
         dirty = true;
     }
 
-    public void render(GuiGraphics graphics, int x, int y, int size) {
+    public synchronized void render(GuiGraphics graphics, int x, int y, int size) {
         if (textureId == null) {
             return;
         }
