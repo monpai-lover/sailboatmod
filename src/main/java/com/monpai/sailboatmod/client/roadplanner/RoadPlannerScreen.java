@@ -1033,7 +1033,11 @@ public class RoadPlannerScreen extends Screen {
             int z = (int) Math.round(oneMinusT * oneMinusT * start.getZ() + 2.0D * oneMinusT * t * controlZ + t * t * target.getZ());
             BlockPos sample = new BlockPos(x, y, z);
             if (!sample.equals(linePlan.nodes().get(linePlan.nodeCount() - 1))) {
-                linePlan.addClickNode(sample, segmentTypeForConnection(sample, segmentTypeForCurveSample(sample, segmentType)));
+                RoadPlannerSegmentType sampleType = segmentTypeForConnection(sample, segmentTypeForCurveSample(sample, segmentType));
+                if (!isClientLand(sample.getX(), sample.getZ())) {
+                    sampleType = RoadPlannerSegmentType.BRIDGE_MAJOR;
+                }
+                linePlan.addClickNode(sample, sampleType);
             }
         }
     }

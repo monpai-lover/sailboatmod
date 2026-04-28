@@ -176,6 +176,16 @@ public class RoadPlannerBuildControlService {
                     snapshot.settings()
             );
             for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
+                for (int dy = 1; dy <= 4; dy++) {
+                    steps.add(new BuildStep(order++, block.pos().above(dy), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+                }
+            }
+            for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
+                steps.add(new BuildStep(order++, block.pos().below(1), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
+                steps.add(new BuildStep(order++, block.pos().below(2), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
+                steps.add(new BuildStep(order++, block.pos().below(3), net.minecraft.world.level.block.Blocks.COBBLESTONE.defaultBlockState(), BuildPhase.FOUNDATION));
+            }
+            for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
                 BuildPhase phase = type == RoadPlannerSegmentType.BRIDGE_SMALL ? BuildPhase.DECK : BuildPhase.SURFACE;
                 steps.add(new BuildStep(order++, block.pos(), block.state(), phase));
             }
