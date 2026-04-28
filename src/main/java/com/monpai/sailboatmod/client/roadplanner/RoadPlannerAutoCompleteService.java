@@ -127,14 +127,8 @@ public class RoadPlannerAutoCompleteService {
         }
         boolean fromLand = landProbe.isLand(from.getX(), from.getZ());
         boolean toLand = landProbe.isLand(to.getX(), to.getZ());
-        if (!fromLand && !toLand) {
+        if (!fromLand || !toLand) {
             return horizontal <= 24 ? RoadPlannerSegmentType.BRIDGE_SMALL : RoadPlannerSegmentType.BRIDGE_MAJOR;
-        }
-        if (fromLand && !toLand) {
-            return RoadPlannerSegmentType.ROAD;
-        }
-        if (!fromLand && toLand) {
-            return RoadPlannerSegmentType.ROAD;
         }
         int samples = Math.max(3, horizontal / 8);
         int waterCount = 0;

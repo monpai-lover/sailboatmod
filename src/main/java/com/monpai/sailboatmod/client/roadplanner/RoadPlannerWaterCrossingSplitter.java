@@ -76,23 +76,31 @@ public final class RoadPlannerWaterCrossingSplitter {
         nodes.add(new SplitNode(from, RoadPlannerSegmentType.ROAD));
 
         for (WaterSpan span : spans) {
-            int shoreStartIdx = Math.max(0, span.startSampleIndex() - 1);
-            int shoreEndIdx = Math.min(samples.size() - 1, span.endSampleIndex() + 1);
+            int shoreStartIdx = span.startSampleIndex() - 1;
+            while (shoreStartIdx > 0 && !samples.get(shoreStartIdx).land()) {
+                shoreStartIdx--;
+            }
+            shoreStartIdx = Math.max(0, shoreStartIdx);
+            int shoreEndIdx = span.endSampleIndex() + 1;
+            while (shoreEndIdx < samples.size() - 1 && !samples.get(shoreEndIdx).land()) {
+                shoreEndIdx++;
+            }
+            shoreEndIdx = Math.min(samples.size() - 1, shoreEndIdx);
             SamplePoint shoreStart = samples.get(shoreStartIdx);
             SamplePoint shoreEnd = samples.get(shoreEndIdx);
 
             BlockPos landEntry = posAt(from, dx, dy, dz, shoreStart.t(), heightSampler);
             BlockPos landExit = posAt(from, dx, dy, dz, shoreEnd.t(), heightSampler);
 
-            if (!landEntry.equals(from)) {
-                nodes.add(new SplitNode(landEntry, RoadPlannerSegmentType.ROAD));
-            }
-
             int spanWidth = span.endSampleIndex() - span.startSampleIndex();
             int spanBlocks = spanWidth * SAMPLE_SPACING;
             RoadPlannerSegmentType bridgeType = spanBlocks <= 24
                     ? RoadPlannerSegmentType.BRIDGE_SMALL
                     : RoadPlannerSegmentType.BRIDGE_MAJOR;
+
+            if (!landEntry.equals(from) && !landEntry.equals(nodes.get(nodes.size() - 1).pos())) {
+                nodes.add(new SplitNode(landEntry, bridgeType));
+            }
 
             int bridgeSamples = Math.max(1, (span.endSampleIndex() - span.startSampleIndex()) / 3);
             for (int b = 1; b <= bridgeSamples; b++) {
@@ -101,7 +109,7 @@ public final class RoadPlannerWaterCrossingSplitter {
                 nodes.add(new SplitNode(bridgeNode, bridgeType));
             }
 
-            nodes.add(new SplitNode(landExit, RoadPlannerSegmentType.ROAD));
+            nodes.add(new SplitNode(landExit, bridgeType));
         }
 
         if (!to.equals(nodes.get(nodes.size() - 1).pos())) {
