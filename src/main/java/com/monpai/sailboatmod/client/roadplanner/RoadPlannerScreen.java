@@ -14,6 +14,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.Fluids;
 
@@ -331,18 +332,52 @@ public class RoadPlannerScreen extends Screen {
 
     @Override
     public void tick() {
-        if (tileManager != null) {
-            forceRenderQueue.processChunks(4,
-                    chunk -> tileRenderScheduler.alreadySubmitted(chunk),
-                    chunk -> {
-                        RoadPlannerChunkImage image = tileManager.captureChunkImage(chunk);
-                        if (image != null) {
-                            tileRenderScheduler.submit(chunk, () -> tileManager.applyChunkImage(chunk, image));
-                        }
-                    });
-        } else {
-            forceRenderQueue.processChunks(8);
+        if (tileManager == null) {
+            return;
         }
+        renderPlayerAreaChunks(3);
+        processCorridorWithRetry(3);
+    }
+
+    private void renderPlayerAreaChunks(int maxChunks) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) {
+            return;
+        }
+        int playerChunkX = mc.player.blockPosition().getX() >> 4;
+        int playerChunkZ = mc.player.blockPosition().getZ() >> 4;
+        int rendered = 0;
+        int radius = 1;
+        while (rendered < maxChunks && radius <= 16) {
+            for (int dx = -radius; dx <= radius && rendered < maxChunks; dx++) {
+                for (int dz = -radius; dz <= radius && rendered < maxChunks; dz++) {
+                    if (Math.abs(dx) != radius && Math.abs(dz) != radius) {
+                        continue;
+                    }
+                    ChunkPos cp = new ChunkPos(playerChunkX + dx, playerChunkZ + dz);
+                    if (tileRenderScheduler.alreadySubmitted(cp)) {
+                        continue;
+                    }
+                    RoadPlannerChunkImage image = tileManager.captureChunkImage(cp);
+                    if (image != null) {
+                        tileRenderScheduler.submit(cp, () -> tileManager.applyChunkImage(cp, image));
+                        rendered++;
+                    }
+                }
+            }
+            radius++;
+        }
+    }
+
+    private void processCorridorWithRetry(int maxChunks) {
+        forceRenderQueue.processChunks(maxChunks,
+                chunk -> tileRenderScheduler.alreadySubmitted(chunk),
+                chunk -> {
+                    RoadPlannerChunkImage image = tileManager.captureChunkImage(chunk);
+                    if (image != null) {
+                        tileRenderScheduler.submit(chunk, () -> tileManager.applyChunkImage(chunk, image));
+                    }
+                });
     }
 
     @Override
