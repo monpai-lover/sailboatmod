@@ -124,6 +124,20 @@ public class RoadPlannerBuildControlService {
         List<BuildStep> steps = new java.util.ArrayList<>();
         RoadPlannerCompiledPath compiled = RoadPlannerPathCompiler.compile(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings());
         int order = 0;
+        java.util.Set<BlockPos> surfacePositions = new java.util.LinkedHashSet<>();
+        for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
+            surfacePositions.add(block.pos());
+        }
+        for (BlockPos pos : surfacePositions) {
+            for (int dy = 1; dy <= 4; dy++) {
+                steps.add(new BuildStep(order++, pos.above(dy), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+            }
+        }
+        for (BlockPos pos : surfacePositions) {
+            steps.add(new BuildStep(order++, pos.below(1), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
+            steps.add(new BuildStep(order++, pos.below(2), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
+            steps.add(new BuildStep(order++, pos.below(3), net.minecraft.world.level.block.Blocks.COBBLESTONE.defaultBlockState(), BuildPhase.FOUNDATION));
+        }
         for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
             BuildPhase phase = block.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR || block.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL
                     ? BuildPhase.DECK
