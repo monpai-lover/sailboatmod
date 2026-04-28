@@ -278,16 +278,16 @@ public class RoadPlannerScreen extends Screen {
             return;
         }
         if (!success) {
-            statusLine = message == null || message.isBlank() ? "自动补全失败" : message;
+            statusLine = message == null || message.isBlank() ? "\u81ea\u52a8\u8865\u5168\u5931\u8d25" : message;
             return;
         }
-        RoadPlannerBridgeSegmentNormalizer.Result normalized = normalizeBridgeSegments(nodes, segmentTypes);
-        linePlan.replaceWith(normalized.nodes(), normalized.segmentTypes());
+        RoadPlannerRouteExpander.Result expanded = expandRoute(nodes, segmentTypes);
+        linePlan.replaceWith(expanded.nodes(), expanded.segmentTypes());
         saveDraft();
-        if (normalized.nodes().size() >= 2) {
-            forceRenderQueue.enqueueCorridor(normalized.nodes().get(0), normalized.nodes().get(normalized.nodes().size() - 1), 64, "自动路线缓存");
+        if (expanded.nodes().size() >= 2) {
+            forceRenderQueue.enqueueCorridor(expanded.nodes().get(0), expanded.nodes().get(expanded.nodes().size() - 1), 64, "\u81ea\u52a8\u8def\u7ebf\u7f13\u5b58");
         }
-        statusLine = message == null || message.isBlank() ? "自动补全完成" : message;
+        statusLine = message == null || message.isBlank() ? "\u81ea\u52a8\u8865\u5168\u5b8c\u6210" : message;
     }
 
     public void setGraphForTest(RoadNetworkGraph graph) {
@@ -360,7 +360,8 @@ public class RoadPlannerScreen extends Screen {
                     }
                     RoadPlannerChunkImage image = tileManager.captureChunkImage(cp);
                     if (image != null) {
-                        tileRenderScheduler.submit(cp, () -> tileManager.applyChunkImage(cp, image));
+                        RoadPlannerTile tile = tileManager.ensureTileExists(cp);
+                        tileRenderScheduler.submit(cp, () -> tileManager.applyChunkImage(cp, image, tile));
                         rendered++;
                     }
                 }
@@ -375,7 +376,8 @@ public class RoadPlannerScreen extends Screen {
                 chunk -> {
                     RoadPlannerChunkImage image = tileManager.captureChunkImage(chunk);
                     if (image != null) {
-                        tileRenderScheduler.submit(chunk, () -> tileManager.applyChunkImage(chunk, image));
+                        RoadPlannerTile tile = tileManager.ensureTileExists(chunk);
+                        tileRenderScheduler.submit(chunk, () -> tileManager.applyChunkImage(chunk, image, tile));
                     }
                 });
     }
@@ -912,18 +914,27 @@ public class RoadPlannerScreen extends Screen {
 
     private void submitPreviewWithSettings(RoadPlannerBuildSettings settings) {
         buildSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
-        RoadPlannerBridgeSegmentNormalizer.Result normalized = normalizeBridgeSegments(linePlan.nodes(), linePlan.segments());
-        if (normalized.hasBlockingIssues()) {
-            statusLine = "桥梁缺少陆地锚点，请增加桥前/桥后陆地节点";
+        RoadPlannerRouteExpander.Result expanded = expandRoute(linePlan.nodes(), linePlan.segments());
+        if (!expanded.success()) {
+            statusLine = "\u6865\u6881\u7f3a\u5c11\u9646\u5730\u951a\u70b9\u6216\u8def\u7ebf\u8282\u70b9\u4e0d\u8db3\uff0c\u8bf7\u68c0\u67e5\u8def\u7ebf";
             return;
         }
-        linePlan.replaceWith(normalized.nodes(), normalized.segmentTypes());
+        linePlan.replaceWith(expanded.nodes(), expanded.segmentTypes());
         saveDraft();
-        if (RoadPlannerGhostPreviewBridge.submitPreview(startTownName, destinationTownName, normalized.nodes(), normalized.segmentTypes(), buildSettings)) {
+        if (RoadPlannerGhostPreviewBridge.submitPreview(startTownName, destinationTownName, expanded.nodes(), expanded.segmentTypes(), buildSettings)) {
             onClose();
         }
     }
 
+
+    private RoadPlannerRouteExpander.Result expandRoute(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
+        return RoadPlannerRouteExpander.expand(
+                nodes,
+                segmentTypes,
+                RoadPlannerScreen::isClientLand,
+                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain()
+        );
+    }
 
     private void addNodeWithWaterSplit(BlockPos target, RoadPlannerSegmentType segmentType) {
         if (linePlan.nodeCount() == 0) {

@@ -81,13 +81,34 @@ public class RoadPlannerTileManager implements AutoCloseable {
         return new RoadPlannerChunkImage(level, chunkPos);
     }
 
+    public RoadPlannerTile ensureTileExists(ChunkPos chunkPos) {
+        int tileX = Math.floorDiv(chunkPos.x, 16);
+        int tileZ = Math.floorDiv(chunkPos.z, 16);
+        return getOrCreateTile(tileX, tileZ);
+    }
+
+    public void applyChunkImage(ChunkPos chunkPos, RoadPlannerChunkImage chunkImage, RoadPlannerTile tile) {
+        if (chunkImage == null || tile == null) {
+            return;
+        }
+        int localX = Math.floorMod(chunkPos.x, 16);
+        int localZ = Math.floorMod(chunkPos.z, 16);
+        tile.updateChunk(chunkImage, localX, localZ);
+        chunkImage.close();
+        tile.saveToFile(tileFile(tile.key()));
+    }
+
     public void applyChunkImage(ChunkPos chunkPos, RoadPlannerChunkImage chunkImage) {
         if (chunkImage == null) {
             return;
         }
         int tileX = Math.floorDiv(chunkPos.x, 16);
         int tileZ = Math.floorDiv(chunkPos.z, 16);
-        RoadPlannerTile tile = getOrCreateTile(tileX, tileZ);
+        RoadPlannerTile tile = loadedTiles.get(new RoadPlannerTileKey(worldId, dimensionId, tileX, tileZ));
+        if (tile == null) {
+            chunkImage.close();
+            return;
+        }
         int localX = Math.floorMod(chunkPos.x, 16);
         int localZ = Math.floorMod(chunkPos.z, 16);
         tile.updateChunk(chunkImage, localX, localZ);

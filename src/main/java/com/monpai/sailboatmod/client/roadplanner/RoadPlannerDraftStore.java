@@ -27,6 +27,10 @@ public final class RoadPlannerDraftStore {
 
     public record Draft(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes,
                         BlockPos startPos, BlockPos endPos) {
+        public Draft(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
+            this(nodes, segmentTypes, BlockPos.ZERO, BlockPos.ZERO);
+        }
+
         public Draft {
             nodes = nodes == null ? List.of() : nodes.stream().map(BlockPos::immutable).toList();
             segmentTypes = segmentTypes == null ? List.of() : List.copyOf(segmentTypes);
