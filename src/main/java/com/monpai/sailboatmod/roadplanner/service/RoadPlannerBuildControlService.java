@@ -216,44 +216,51 @@ public class RoadPlannerBuildControlService {
         int entryRampLen = Math.min((deckY - entryY) * 2, totalLen / 4);
         int exitRampLen = Math.min((deckY - exitY) * 2, totalLen / 4);
 
-        List<BuildStep> steps = new java.util.ArrayList<>();
-        int order = 0;
-        int halfWidth = width / 2;
-        BlockState deckState = net.minecraft.world.level.block.Blocks.SPRUCE_PLANKS.defaultBlockState();
-        BlockState pierState = net.minecraft.world.level.block.Blocks.STONE_BRICKS.defaultBlockState();
-        BlockState railState = net.minecraft.world.level.block.Blocks.OAK_FENCE.defaultBlockState();
-
+        List<BlockPos> elevatedCenterline = new java.util.ArrayList<>(totalLen);
         for (int i = 0; i < totalLen; i++) {
             BlockPos center = centerline.get(i);
             int y;
             if (i < entryRampLen && entryRampLen > 0) {
-                double t = i / (double) entryRampLen;
-                y = (int) Math.round(entryY + (deckY - entryY) * t);
+                y = (int) Math.round(entryY + (deckY - entryY) * (i / (double) entryRampLen));
             } else if (i >= totalLen - exitRampLen && exitRampLen > 0) {
-                double t = (totalLen - 1 - i) / (double) exitRampLen;
-                y = (int) Math.round(exitY + (deckY - exitY) * t);
+                y = (int) Math.round(exitY + (deckY - exitY) * ((totalLen - 1 - i) / (double) exitRampLen));
             } else {
                 y = deckY;
             }
-            BlockPos deckPos = new BlockPos(center.getX(), y, center.getZ());
+            elevatedCenterline.add(new BlockPos(center.getX(), y, center.getZ()));
+        }
+
+        BlockState deckState = net.minecraft.world.level.block.Blocks.SPRUCE_PLANKS.defaultBlockState();
+        BlockState pierState = net.minecraft.world.level.block.Blocks.STONE_BRICKS.defaultBlockState();
+        BlockState railState = net.minecraft.world.level.block.Blocks.OAK_FENCE.defaultBlockState();
+
+        List<BuildStep> steps = new java.util.ArrayList<>();
+        int order = 0;
+
+        for (com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverBuildCandidate candidate :
+                com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverSegmentPaver.paveCenterline(elevatedCenterline, width, deckState)) {
+            steps.add(new BuildStep(order++, candidate.pos(), candidate.state(), BuildPhase.DECK));
+        }
+
+        int halfWidth = width / 2;
+        for (int i = 0; i < totalLen; i++) {
+            BlockPos deckPos = elevatedCenterline.get(i);
             int dx = 0, dz = 0;
             if (i + 1 < totalLen) {
-                dx = Integer.compare(centerline.get(i + 1).getX() - center.getX(), 0);
-                dz = Integer.compare(centerline.get(i + 1).getZ() - center.getZ(), 0);
+                dx = Integer.compare(elevatedCenterline.get(i + 1).getX() - deckPos.getX(), 0);
+                dz = Integer.compare(elevatedCenterline.get(i + 1).getZ() - deckPos.getZ(), 0);
             } else if (i > 0) {
-                dx = Integer.compare(center.getX() - centerline.get(i - 1).getX(), 0);
-                dz = Integer.compare(center.getZ() - centerline.get(i - 1).getZ(), 0);
+                dx = Integer.compare(deckPos.getX() - elevatedCenterline.get(i - 1).getX(), 0);
+                dz = Integer.compare(deckPos.getZ() - elevatedCenterline.get(i - 1).getZ(), 0);
             }
-            int perpX = -dz;
-            int perpZ = dx;
-            for (int offset = -halfWidth; offset <= halfWidth; offset++) {
-                steps.add(new BuildStep(order++, deckPos.offset(perpX * offset, 0, perpZ * offset), deckState, BuildPhase.DECK));
-            }
+            int perpX = -dz, perpZ = dx;
             steps.add(new BuildStep(order++, deckPos.offset(perpX * (halfWidth + 1), 1, perpZ * (halfWidth + 1)), railState, BuildPhase.DECK));
             steps.add(new BuildStep(order++, deckPos.offset(perpX * -(halfWidth + 1), 1, perpZ * -(halfWidth + 1)), railState, BuildPhase.DECK));
+
             if (i >= entryRampLen && i < totalLen - exitRampLen && i % 4 == 0) {
+                int y = deckPos.getY();
                 for (int py = y - 1; py >= y - 12 && py >= 0; py--) {
-                    steps.add(new BuildStep(order++, new BlockPos(center.getX(), py, center.getZ()), pierState, BuildPhase.DECK));
+                    steps.add(new BuildStep(order++, new BlockPos(deckPos.getX(), py, deckPos.getZ()), pierState, BuildPhase.DECK));
                 }
             }
         }

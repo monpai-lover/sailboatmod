@@ -742,7 +742,19 @@ public class RoadPlannerScreen extends Screen {
     }
 
     private void handleContextAction(RoadPlannerContextMenuAction action) {
-        if (action == null || state.selectedRoadEdgeId() == null) {
+        if (action == null) {
+            return;
+        }
+        if (action == RoadPlannerContextMenuAction.SET_ROAD_TYPE || action == RoadPlannerContextMenuAction.SET_BRIDGE_TYPE || action == RoadPlannerContextMenuAction.SET_TUNNEL_TYPE) {
+            switch (action) {
+                case SET_ROAD_TYPE -> setSelectedEdgeType(CompiledRoadSectionType.ROAD);
+                case SET_BRIDGE_TYPE -> setSelectedEdgeType(CompiledRoadSectionType.BRIDGE);
+                case SET_TUNNEL_TYPE -> setSelectedEdgeType(CompiledRoadSectionType.TUNNEL);
+                default -> {}
+            }
+            return;
+        }
+        if (state.selectedRoadEdgeId() == null) {
             statusLine = "\u672a\u9009\u4e2d\u9053\u8def\u6bb5";
             return;
         }

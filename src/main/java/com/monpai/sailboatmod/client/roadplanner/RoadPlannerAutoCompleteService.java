@@ -126,15 +126,20 @@ public class RoadPlannerAutoCompleteService {
             return RoadPlannerSegmentType.BRIDGE_MAJOR;
         }
         if (!landProbe.isLand(from.getX(), from.getZ()) || !landProbe.isLand(to.getX(), to.getZ())) {
-            return RoadPlannerSegmentType.BRIDGE_MAJOR;
+            return horizontal <= 24 ? RoadPlannerSegmentType.BRIDGE_SMALL : RoadPlannerSegmentType.BRIDGE_MAJOR;
         }
-        int midX = (from.getX() + to.getX()) / 2;
-        int midZ = (from.getZ() + to.getZ()) / 2;
-        if (!landProbe.isLand(midX, midZ)) {
-            return RoadPlannerSegmentType.BRIDGE_MAJOR;
+        int samples = Math.max(3, horizontal / 8);
+        int waterCount = 0;
+        for (int s = 1; s < samples; s++) {
+            double t = s / (double) samples;
+            int sx = (int) Math.round(from.getX() + (to.getX() - from.getX()) * t);
+            int sz = (int) Math.round(from.getZ() + (to.getZ() - from.getZ()) * t);
+            if (!landProbe.isLand(sx, sz)) {
+                waterCount++;
+            }
         }
-        if (vertical >= 4 || horizontal >= 48) {
-            return RoadPlannerSegmentType.BRIDGE_SMALL;
+        if (waterCount > 0) {
+            return horizontal <= 24 ? RoadPlannerSegmentType.BRIDGE_SMALL : RoadPlannerSegmentType.BRIDGE_MAJOR;
         }
         return RoadPlannerSegmentType.ROAD;
     }
