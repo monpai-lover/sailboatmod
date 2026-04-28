@@ -83,6 +83,24 @@ public class RoadPlannerTile implements AutoCloseable {
         return !loadedFromCache;
     }
 
+    public void updateChunkDirect(RoadPlannerChunkImage chunkImage, int chunkXInTile, int chunkZInTile) {
+        if (image == null || chunkImage == null || !chunkImage.isMeaningful()) {
+            return;
+        }
+        NativeImage chunk = chunkImage.image();
+        int startX = chunkXInTile * 16;
+        int startZ = chunkZInTile * 16;
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                image.setPixelRGBA(startX + x, startZ + z, chunk.getPixelRGBA(x, z));
+            }
+        }
+        if (texture != null) {
+            texture.upload();
+        }
+        loadedFromCache = true;
+    }
+
     public synchronized void updateChunk(RoadPlannerChunkImage chunkImage, int chunkXInTile, int chunkZInTile) {
         if (image == null || chunkImage == null || !chunkImage.isMeaningful()) {
             return;

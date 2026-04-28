@@ -143,6 +143,12 @@ public class RoadPlannerTileManager implements AutoCloseable {
         }
     }
 
+    public void saveTile(RoadPlannerTile tile) {
+        if (tile != null) {
+            tile.saveToFile(tileFile(tile.key()));
+        }
+    }
+
     public void refreshWorldContext() {
         String nextWorldId = detectWorldId();
         String nextDimensionId = detectDimensionId();

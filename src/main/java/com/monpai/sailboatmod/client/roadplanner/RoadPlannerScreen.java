@@ -335,51 +335,65 @@ public class RoadPlannerScreen extends Screen {
         if (tileManager == null) {
             return;
         }
-        renderPlayerAreaChunks(3);
-        processCorridorWithRetry(3);
+        renderPlayerAreaChunks(6);
+        processCorridorDirect(4);
     }
 
     private void renderPlayerAreaChunks(int maxChunks) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null) {
+        if (mc.player == null || mc.level == null) {
             return;
         }
         int playerChunkX = mc.player.blockPosition().getX() >> 4;
         int playerChunkZ = mc.player.blockPosition().getZ() >> 4;
         int rendered = 0;
-        int radius = 1;
-        while (rendered < maxChunks && radius <= 16) {
+        for (int radius = 0; rendered < maxChunks && radius <= 16; radius++) {
             for (int dx = -radius; dx <= radius && rendered < maxChunks; dx++) {
                 for (int dz = -radius; dz <= radius && rendered < maxChunks; dz++) {
-                    if (Math.abs(dx) != radius && Math.abs(dz) != radius) {
+                    if (radius > 0 && Math.abs(dx) != radius && Math.abs(dz) != radius) {
                         continue;
                     }
                     ChunkPos cp = new ChunkPos(playerChunkX + dx, playerChunkZ + dz);
                     if (tileRenderScheduler.alreadySubmitted(cp)) {
                         continue;
                     }
-                    RoadPlannerChunkImage image = tileManager.captureChunkImage(cp);
-                    if (image != null) {
-                        RoadPlannerTile tile = tileManager.ensureTileExists(cp);
-                        tileRenderScheduler.submit(cp, () -> tileManager.applyChunkImage(cp, image, tile));
+                    if (renderChunkDirect(cp)) {
                         rendered++;
                     }
                 }
             }
-            radius++;
         }
     }
 
-    private void processCorridorWithRetry(int maxChunks) {
+    private void processCorridorDirect(int maxChunks) {
         forceRenderQueue.processChunks(maxChunks,
                 chunk -> tileRenderScheduler.alreadySubmitted(chunk),
-                chunk -> {
-                    RoadPlannerChunkImage image = tileManager.captureChunkImage(chunk);
-                    if (image != null) {
-                        RoadPlannerTile tile = tileManager.ensureTileExists(chunk);
-                        tileRenderScheduler.submit(chunk, () -> tileManager.applyChunkImage(chunk, image, tile));
-                    }
-                });
+                this::renderChunkDirect);
+    }
+
+    private boolean renderChunkDirect(ChunkPos cp) {
+        tileRenderScheduler.markSubmitted(cp);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) {
+            return false;
+        }
+        try {
+            if (mc.level.getChunkSource().getChunk(cp.x, cp.z, false) == null) {
+                return false;
+            }
+            RoadPlannerChunkImage image = new RoadPlannerChunkImage(mc.level, cp);
+            int tileX = Math.floorDiv(cp.x, 16);
+            int tileZ = Math.floorDiv(cp.z, 16);
+            RoadPlannerTile tile = tileManager.getOrCreateTile(tileX, tileZ);
+            int localX = Math.floorMod(cp.x, 16);
+            int localZ = Math.floorMod(cp.z, 16);
+            tile.updateChunkDirect(image, localX, localZ);
+            image.close();
+            tileManager.saveTile(tile);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     @Override
