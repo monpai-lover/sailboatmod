@@ -211,7 +211,14 @@ public class RoadPlannerBuildControlService {
         BlockPos exitNode = bridgeNodes.get(bridgeNodes.size() - 1);
         int entryY = entryNode.getY();
         int exitY = exitNode.getY();
-        int deckY = Math.max(entryY, exitY) + heightBonus;
+        int waterSurfaceY = 63;
+        if (level != null) {
+            int midIdx = centerline.size() / 2;
+            BlockPos midPos = centerline.get(midIdx);
+            waterSurfaceY = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR, midPos.getX(), midPos.getZ());
+            waterSurfaceY = Math.max(waterSurfaceY, 63);
+        }
+        int deckY = Math.max(waterSurfaceY + 6, Math.max(entryY, exitY) + heightBonus);
         int totalLen = centerline.size();
         int entryRampLen = Math.min((deckY - entryY) * 2, totalLen / 4);
         int exitRampLen = Math.min((deckY - exitY) * 2, totalLen / 4);
