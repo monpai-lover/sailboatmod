@@ -20,6 +20,7 @@ public class RoadPlannerTile implements AutoCloseable {
     private ResourceLocation textureId;
     private long lastAccessedAt;
     private boolean loadedFromCache;
+    private volatile boolean dirty;
 
     public RoadPlannerTile(RoadPlannerTileKey key) {
         this.key = key;
@@ -94,14 +95,16 @@ public class RoadPlannerTile implements AutoCloseable {
                 image.setPixelRGBA(startX + x, startZ + z, chunk.getPixelRGBA(x, z));
             }
         }
-        if (texture != null) {
-            texture.upload();
-        }
+        dirty = true;
     }
 
     public void render(GuiGraphics graphics, int x, int y, int size) {
         if (textureId == null) {
             return;
+        }
+        if (dirty && texture != null) {
+            texture.upload();
+            dirty = false;
         }
         graphics.blit(textureId, x, y, 0, 0, size, size, size, size);
         markAccessed();
