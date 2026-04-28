@@ -101,7 +101,7 @@ public final class RoadPlannerWaterCrossingSplitter {
                 nodes.add(new SplitNode(bridgeNode, bridgeType));
             }
 
-            nodes.add(new SplitNode(landExit, bridgeType));
+            nodes.add(new SplitNode(landExit, RoadPlannerSegmentType.ROAD));
         }
 
         if (!to.equals(nodes.get(nodes.size() - 1).pos())) {
