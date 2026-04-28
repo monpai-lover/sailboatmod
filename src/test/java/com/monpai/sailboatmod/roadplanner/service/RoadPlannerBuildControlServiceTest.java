@@ -78,4 +78,69 @@ class RoadPlannerBuildControlServiceTest {
         assertTrue(queue.getSteps().stream().anyMatch(step -> step.state().is(Blocks.STONE_BRICKS)));
         assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.STREETLIGHT));
     }
+    @Test
+    void confirmedPreviewCreatesProgressSnapshot() {
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService();
+        UUID playerId = UUID.randomUUID();
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+
+        UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
+
+        List<RoadPlannerBuildProgressSnapshot> snapshots = service.progressSnapshotsForTest();
+        assertEquals(1, snapshots.size());
+        RoadPlannerBuildProgressSnapshot snapshot = snapshots.get(0);
+        assertEquals(jobId.toString(), snapshot.roadId());
+        assertEquals(new BlockPos(0, 64, 0), snapshot.focusPos());
+        assertEquals(0, snapshot.progressPercent());
+        assertTrue(snapshot.activeWorkers() > 0);
+    }
+
+    @Test
+    void tickAdvancesQueueAndSnapshotPercent() {
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService();
+        UUID playerId = UUID.randomUUID();
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+        UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
+        int before = service.buildQueueForTest(jobId).orElseThrow().getCompletedSteps();
+
+        service.tick(null);
+
+        var queue = service.buildQueueForTest(jobId).orElseThrow();
+        assertTrue(queue.getCompletedSteps() > before);
+        int percent = service.progressSnapshotsForTest().get(0).progressPercent();
+        assertTrue(percent >= 0 && percent <= 100);
+        assertEquals((int) Math.round(queue.progress() * 100.0), percent);
+    }
+
+    @Test
+    void completedQueueIsRemovedAfterTicks() {
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService();
+        UUID playerId = UUID.randomUUID();
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0)),
+                List.of(),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+        UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
+
+        int maxTicks = service.buildQueueForTest(jobId).orElseThrow().getTotalSteps() + 1;
+        for (int i = 0; i < maxTicks && service.buildQueueForTest(jobId).isPresent(); i++) {
+            service.tick(null);
+        }
+
+        assertFalse(service.buildQueueForTest(jobId).isPresent());
+        assertFalse(service.buildFor(playerId).isPresent());
+        assertTrue(service.progressSnapshotsForTest().isEmpty());
+    }
 }

@@ -2,15 +2,85 @@ package com.monpai.sailboatmod.client.renderer;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 class RoadPlannerPreviewRendererTest {
+    @BeforeAll
+    static void bootstrap() {
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+    }
+    @Test
+    void previewRenderListSkipsAirAndDedupesByPositionAndState() {
+        RoadPlannerClientHooks.PreviewGhostBlock first = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(1, 64, 1),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+        RoadPlannerClientHooks.PreviewGhostBlock samePositionDifferentState = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(1, 64, 1),
+                Blocks.SMOOTH_STONE.defaultBlockState()
+        );
+        RoadPlannerClientHooks.PreviewGhostBlock later = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(2, 64, 1),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+
+        List<RoadPlannerClientHooks.PreviewGhostBlock> filtered = RoadPlannerPreviewRenderer.previewRenderListForTest(
+                List.of(
+                        first,
+                        new RoadPlannerClientHooks.PreviewGhostBlock(new BlockPos(9, 64, 9), Blocks.AIR.defaultBlockState()),
+                        first,
+                        samePositionDifferentState,
+                        later
+                ),
+                new BlockPos(1, 64, 1),
+                100.0D,
+                10
+        );
+
+        assertEquals(List.of(first, samePositionDifferentState, later), filtered);
+    }
+
+    @Test
+    void previewRenderListCullsByFocusDistanceAndCapsPreservingOrder() {
+        RoadPlannerClientHooks.PreviewGhostBlock first = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(0, 64, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+        RoadPlannerClientHooks.PreviewGhostBlock second = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(1, 64, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+        RoadPlannerClientHooks.PreviewGhostBlock far = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(4, 64, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+        RoadPlannerClientHooks.PreviewGhostBlock third = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(0, 65, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+
+        List<RoadPlannerClientHooks.PreviewGhostBlock> filtered = RoadPlannerPreviewRenderer.previewRenderListForTest(
+                List.of(first, second, far, third),
+                new BlockPos(0, 64, 0),
+                2.0D,
+                2
+        );
+
+        assertEquals(List.of(first, second), filtered);
+    }
     @Test
     void blockBoxesUseExactCameraOffset() {
         RoadPlannerPreviewRenderer.PreviewBox box = RoadPlannerPreviewRenderer.previewBoxForTest(

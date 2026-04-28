@@ -26,10 +26,15 @@ import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class RoadPlannerPreviewRenderer {
+    private static final double MAX_PREVIEW_RENDER_DISTANCE = 96.0D;
+    private static final int MAX_PREVIEW_RENDER_BLOCKS = 4096;
+
     private RoadPlannerPreviewRenderer() {
     }
 
@@ -48,6 +53,12 @@ public final class RoadPlannerPreviewRenderer {
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
         Vec3 cameraPos = event.getCamera().getPosition();
+        List<RoadPlannerClientHooks.PreviewGhostBlock> renderGhostBlocks = previewRenderList(
+                preview.ghostBlocks(),
+                preview.focusPos(),
+                MAX_PREVIEW_RENDER_DISTANCE,
+                MAX_PREVIEW_RENDER_BLOCKS
+        );
 
         // Phase 1: Render translucent block models (before getting line consumer)
         BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
@@ -59,13 +70,7 @@ public final class RoadPlannerPreviewRenderer {
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
-        for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
-            if (block == null || block.pos() == null || block.state() == null) {
-                continue;
-            }
-            if (block.state().isAir()) {
-                continue;
-            }
+        for (RoadPlannerClientHooks.PreviewGhostBlock block : renderGhostBlocks) {
             poseStack.pushPose();
             poseStack.translate(
                     block.pos().getX() - cameraPos.x,
@@ -86,13 +91,7 @@ public final class RoadPlannerPreviewRenderer {
         // Phase 2: Render line wireframes (get line consumer AFTER block rendering is done)
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
 
-        for (RoadPlannerClientHooks.PreviewGhostBlock block : preview.ghostBlocks()) {
-            if (block == null || block.pos() == null) {
-                continue;
-            }
-            if (block.state() != null && block.state().isAir()) {
-                continue;
-            }
+        for (RoadPlannerClientHooks.PreviewGhostBlock block : renderGhostBlocks) {
             renderBlockBox(
                     poseStack,
                     lineConsumer,
@@ -168,7 +167,7 @@ public final class RoadPlannerPreviewRenderer {
             height += 30;
         }
         if (!progressStates.isEmpty()) {
-            height += 22;
+            height += 34;
         }
         guiGraphics.fill(x, y, x + width, y + height, 0xC9121820);
         guiGraphics.fill(x + 1, y + 1, x + width - 1, y + height - 1, 0xEE1D2731);
@@ -246,6 +245,8 @@ public final class RoadPlannerPreviewRenderer {
                     false
             );
             textY += 12;
+            drawProgressBar(guiGraphics, x + 10, textY, width - 20, 8, progress.progressPercent());
+            textY += 14;
             guiGraphics.drawString(
                     minecraft.font,
                     Component.translatable("screen.sailboatmod.road_planner.overlay.workers", progress.activeWorkers()),
@@ -395,6 +396,36 @@ public final class RoadPlannerPreviewRenderer {
         );
     }
 
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> previewRenderList(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            BlockPos focusPos,
+            double maxDistance,
+            int maxBlocks
+    ) {
+        if (blocks == null || blocks.isEmpty() || maxBlocks <= 0) {
+            return List.of();
+        }
+        double maxDistanceSqr = maxDistance < 0.0D ? Double.POSITIVE_INFINITY : maxDistance * maxDistance;
+        Set<PreviewGhostKey> seen = new HashSet<>();
+        java.util.ArrayList<RoadPlannerClientHooks.PreviewGhostBlock> filtered = new java.util.ArrayList<>(Math.min(blocks.size(), maxBlocks));
+        for (RoadPlannerClientHooks.PreviewGhostBlock block : blocks) {
+            if (block == null || block.pos() == null || block.state() == null || block.state().isAir()) {
+                continue;
+            }
+            if (focusPos != null && block.pos().distSqr(focusPos) > maxDistanceSqr) {
+                continue;
+            }
+            if (!seen.add(new PreviewGhostKey(block.pos(), block.state()))) {
+                continue;
+            }
+            filtered.add(block);
+            if (filtered.size() >= maxBlocks) {
+                break;
+            }
+        }
+        return List.copyOf(filtered);
+    }
+
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
         return previewBox(pos, cameraPos);
     }
@@ -409,6 +440,16 @@ public final class RoadPlannerPreviewRenderer {
 
     static boolean rendersFilledBoxesForTest() {
         return false;
+    }
+
+
+    static List<RoadPlannerClientHooks.PreviewGhostBlock> previewRenderListForTest(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            BlockPos focusPos,
+            double maxDistance,
+            int maxBlocks
+    ) {
+        return previewRenderList(blocks, focusPos, maxDistance, maxBlocks);
     }
 
     static Component planningHeadlineForTest(RoadPlannerClientHooks.PlanningProgressState state) {
@@ -446,5 +487,8 @@ public final class RoadPlannerPreviewRenderer {
     }
 
     record PreviewBox(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+    }
+
+    private record PreviewGhostKey(BlockPos pos, BlockState state) {
     }
 }

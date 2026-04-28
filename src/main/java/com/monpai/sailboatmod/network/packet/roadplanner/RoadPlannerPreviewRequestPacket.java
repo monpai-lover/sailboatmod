@@ -1,8 +1,6 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
-import com.monpai.sailboatmod.client.roadplanner.RoadPlannerCompiledPath;
-import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathCompiler;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
@@ -81,7 +79,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
     }
 
     public SyncRoadPlannerPreviewPacket toPreviewPacketForTest() {
-        return toSafePlaceholderPreview();
+        return toSafePreview(null);
     }
 
     private SyncRoadPlannerPreviewPacket toSafePreview(ServerLevel level) {
@@ -105,51 +103,26 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
         );
     }
 
-    private SyncRoadPlannerPreviewPacket toSafePlaceholderPreview() {
-        if (nodes.size() < 2) {
-            return new SyncRoadPlannerPreviewPacket(startTownName, destinationTownName, List.of(), List.of(), 0, null, null, null, false, List.of(), "", List.of());
-        }
-        return new SyncRoadPlannerPreviewPacket(
-                startTownName,
-                destinationTownName,
-                ghostBlocksFromNodes(),
-                nodes,
-                nodes.size(),
-                nodes.get(0),
-                nodes.get(nodes.size() - 1),
-                nodes.get(nodes.size() - 1),
-                true,
-                List.of(),
-                "",
-                bridgeRangesFromSegments()
-        );
-    }
-
-    private List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocksFromNodes() {
-        RoadPlannerCompiledPath compiled = RoadPlannerPathCompiler.compile(nodes, segmentTypes, settings);
-        List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks = new ArrayList<>();
-        for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-            ghostBlocks.add(new SyncRoadPlannerPreviewPacket.GhostBlock(block.pos(), block.state()));
-        }
-        for (RoadPlannerCompiledPath.LightBlock light : compiled.lights()) {
-            ghostBlocks.add(new SyncRoadPlannerPreviewPacket.GhostBlock(light.pos(), light.state()));
-        }
-        return List.copyOf(ghostBlocks);
-    }
-
     private List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocksFromBuildSteps(ServerLevel level) {
         List<BuildStep> steps = RoadPlannerBuildControlService.previewBuildSteps(nodes, segmentTypes, settings, level);
-        if (steps.isEmpty()) {
-            return ghostBlocksFromNodes();
-        }
         List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks = new ArrayList<>();
         for (BuildStep step : steps) {
-            if (step == null || step.pos() == null || step.state() == null || step.state().isAir()) {
+            if (!isVisiblePreviewStep(step)) {
                 continue;
             }
             ghostBlocks.add(new SyncRoadPlannerPreviewPacket.GhostBlock(step.pos(), step.state()));
         }
         return List.copyOf(ghostBlocks);
+    }
+
+    private static boolean isVisiblePreviewStep(BuildStep step) {
+        if (step == null || step.pos() == null || step.state() == null || step.phase() == null || step.state().isAir()) {
+            return false;
+        }
+        return switch (step.phase()) {
+            case SURFACE, DECK, STREETLIGHT -> true;
+            default -> false;
+        };
     }
 
     private List<SyncRoadPlannerPreviewPacket.BridgeRange> bridgeRangesFromSegments() {

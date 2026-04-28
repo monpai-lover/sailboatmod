@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import com.monpai.sailboatmod.nation.service.ClaimMapTaskService;
 import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
@@ -57,6 +58,7 @@ public final class ServerEvents {
             server.getAllLevels().forEach(level -> {
                 com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
+                RoadPlannerBuildControlService.global().tick(level);
             });
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);

@@ -1,17 +1,18 @@
 package com.monpai.sailboatmod.roadplanner.service;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
-import com.monpai.sailboatmod.client.roadplanner.RoadPlannerCompiledPath;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathCompiler;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
-import com.monpai.sailboatmod.road.config.RoadConfig;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
-import com.monpai.sailboatmod.road.planning.BridgePlanner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraftforge.network.NetworkDirection;
 
 import java.util.List;
 import java.util.Optional;
@@ -25,7 +26,10 @@ public class RoadPlannerBuildControlService {
     private final ConcurrentMap<UUID, UUID> activePreviews = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, UUID> activeBuilds = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, PreviewSnapshot> previews = new ConcurrentHashMap<>();
+    private static final int STEPS_PER_TICK = 8;
+
     private final ConcurrentMap<UUID, ConstructionQueue> buildQueues = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, BuildMetadata> buildMetadata = new ConcurrentHashMap<>();
 
     public static RoadPlannerBuildControlService global() {
         return GLOBAL;
@@ -72,9 +76,10 @@ public class RoadPlannerBuildControlService {
         }
         activePreviews.remove(playerId);
         UUID jobId = UUID.randomUUID();
-        ConstructionQueue queue = new ConstructionQueue(jobId.toString(), buildSteps(previews.remove(previewId), level));
-        executeInitialSteps(queue, level, 16);
+        PreviewSnapshot snapshot = previews.remove(previewId);
+        ConstructionQueue queue = new ConstructionQueue(jobId.toString(), buildSteps(snapshot, level));
         buildQueues.put(jobId, queue);
+        buildMetadata.put(jobId, BuildMetadata.from(playerId, jobId, snapshot, queue));
         activeBuilds.put(playerId, jobId);
         return Optional.of(jobId);
     }
@@ -99,6 +104,7 @@ public class RoadPlannerBuildControlService {
             return false;
         }
         ConstructionQueue queue = buildQueues.remove(jobId);
+        buildMetadata.remove(jobId);
         if (queue != null && level != null) {
             queue.rollback(level);
         }
@@ -110,93 +116,90 @@ public class RoadPlannerBuildControlService {
         return cancelBuild(playerId, requestedId, null);
     }
 
+    public void tick(ServerLevel level) {
+        List<UUID> completedJobs = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<UUID, ConstructionQueue> entry : buildQueues.entrySet()) {
+            ConstructionQueue queue = entry.getValue();
+            executeSteps(queue, level, STEPS_PER_TICK);
+            if (!queue.hasNext()) {
+                queue.complete();
+                completedJobs.add(entry.getKey());
+            }
+        }
+        for (UUID jobId : completedJobs) {
+            buildQueues.remove(jobId);
+            BuildMetadata metadata = buildMetadata.remove(jobId);
+            if (metadata != null) {
+                activeBuilds.remove(metadata.ownerId(), jobId);
+            }
+        }
+        syncProgress(level);
+    }
+
+    public List<RoadPlannerBuildProgressSnapshot> progressSnapshotsForTest() {
+        return progressSnapshots();
+    }
+
+    private List<RoadPlannerBuildProgressSnapshot> progressSnapshots() {
+        return buildQueues.entrySet().stream()
+                .map(entry -> snapshotFor(entry.getKey(), entry.getValue()))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .toList();
+    }
+
+    private Optional<RoadPlannerBuildProgressSnapshot> snapshotFor(UUID jobId, ConstructionQueue queue) {
+        BuildMetadata metadata = buildMetadata.get(jobId);
+        if (metadata == null || queue == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new RoadPlannerBuildProgressSnapshot(
+                jobId.toString(),
+                metadata.sourceTownName(),
+                metadata.targetTownName(),
+                metadata.focusPos(),
+                (int) Math.round(queue.progress() * 100.0),
+                queue.hasNext() ? 1 : 0
+        ));
+    }
+
+    private void syncProgress(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        for (java.util.Map.Entry<UUID, UUID> entry : activeBuilds.entrySet()) {
+            ServerPlayer player = level.getServer().getPlayerList().getPlayer(entry.getKey());
+            if (player == null) {
+                continue;
+            }
+            ConstructionQueue queue = buildQueues.get(entry.getValue());
+            Optional<RoadPlannerBuildProgressSnapshot> snapshot = snapshotFor(entry.getValue(), queue);
+            List<SyncRoadConstructionProgressPacket.Entry> entries = snapshot
+                    .map(progress -> List.of(new SyncRoadConstructionProgressPacket.Entry(
+                            progress.roadId(),
+                            progress.sourceTownName(),
+                            progress.targetTownName(),
+                            progress.focusPos(),
+                            progress.progressPercent(),
+                            progress.activeWorkers())))
+                    .orElseGet(List::of);
+            ModNetwork.CHANNEL.sendTo(new SyncRoadConstructionProgressPacket(entries), player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
+        }
+    }
+
     private static List<BuildStep> buildSteps(PreviewSnapshot snapshot) {
         return buildSteps(snapshot, null);
     }
 
     private static List<BuildStep> buildSteps(PreviewSnapshot snapshot, ServerLevel level) {
-        if (snapshot == null || snapshot.nodes().isEmpty()) {
+        if (snapshot == null) {
             return List.of();
         }
-        if (level != null && hasMajorBridge(snapshot.segmentTypes())) {
-            return buildStepsWithBridgeBackend(snapshot, level);
-        }
-        List<BuildStep> steps = new java.util.ArrayList<>();
-        RoadPlannerCompiledPath compiled = RoadPlannerPathCompiler.compile(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings());
-        int order = 0;
-        java.util.Set<BlockPos> surfacePositions = new java.util.LinkedHashSet<>();
-        for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-            surfacePositions.add(block.pos());
-        }
-        for (BlockPos pos : surfacePositions) {
-            for (int dy = 1; dy <= 4; dy++) {
-                steps.add(new BuildStep(order++, pos.above(dy), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
-            }
-        }
-        for (BlockPos pos : surfacePositions) {
-            steps.add(new BuildStep(order++, pos.below(1), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
-            steps.add(new BuildStep(order++, pos.below(2), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
-            steps.add(new BuildStep(order++, pos.below(3), net.minecraft.world.level.block.Blocks.COBBLESTONE.defaultBlockState(), BuildPhase.FOUNDATION));
-        }
-        for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-            BuildPhase phase = block.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR || block.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL
-                    ? BuildPhase.DECK
-                    : BuildPhase.SURFACE;
-            steps.add(new BuildStep(order++, block.pos(), block.state(), phase));
-        }
-        for (RoadPlannerCompiledPath.LightBlock light : compiled.lights()) {
-            steps.add(new BuildStep(order++, light.pos(), light.state(), BuildPhase.STREETLIGHT));
-        }
-        return List.copyOf(steps);
+        return RoadPlannerBuildStepCompiler.compile(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), level);
     }
 
-    private static List<BuildStep> buildStepsWithBridgeBackend(PreviewSnapshot snapshot, ServerLevel level) {
-        List<BlockPos> nodes = snapshot.nodes();
-        List<RoadPlannerSegmentType> segmentTypes = snapshot.segmentTypes();
-        List<BuildStep> steps = new java.util.ArrayList<>();
-        int order = 0;
-        int segmentIndex = 0;
-        while (segmentIndex < nodes.size() - 1) {
-            RoadPlannerSegmentType type = segmentTypeAt(segmentTypes, segmentIndex);
-            if (type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL) {
-                int bridgeStart = segmentIndex;
-                RoadPlannerSegmentType bridgeType = type;
-                while (segmentIndex < nodes.size() - 1 && (segmentTypeAt(segmentTypes, segmentIndex) == RoadPlannerSegmentType.BRIDGE_MAJOR || segmentTypeAt(segmentTypes, segmentIndex) == RoadPlannerSegmentType.BRIDGE_SMALL)) {
-                    segmentIndex++;
-                }
-                int heightBonus = bridgeType == RoadPlannerSegmentType.BRIDGE_SMALL ? 3 : 5;
-                List<BuildStep> bridgeSteps = nodeAnchoredBridgeSteps(
-                        nodes.subList(bridgeStart, segmentIndex + 1), snapshot.settings().width(), level, heightBonus);
-                for (BuildStep step : bridgeSteps) {
-                    steps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
-                }
-                continue;
-            }
-            RoadPlannerCompiledPath compiled = RoadPlannerPathCompiler.compile(
-                    List.of(nodes.get(segmentIndex), nodes.get(segmentIndex + 1)),
-                    List.of(type),
-                    snapshot.settings()
-            );
-            for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-                for (int dy = 1; dy <= 4; dy++) {
-                    steps.add(new BuildStep(order++, block.pos().above(dy), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
-                }
-            }
-            for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-                steps.add(new BuildStep(order++, block.pos().below(1), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
-                steps.add(new BuildStep(order++, block.pos().below(2), net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState(), BuildPhase.FOUNDATION));
-                steps.add(new BuildStep(order++, block.pos().below(3), net.minecraft.world.level.block.Blocks.COBBLESTONE.defaultBlockState(), BuildPhase.FOUNDATION));
-            }
-            for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-                BuildPhase phase = type == RoadPlannerSegmentType.BRIDGE_SMALL ? BuildPhase.DECK : BuildPhase.SURFACE;
-                steps.add(new BuildStep(order++, block.pos(), block.state(), phase));
-            }
-            for (RoadPlannerCompiledPath.LightBlock light : compiled.lights()) {
-                steps.add(new BuildStep(order++, light.pos(), light.state(), BuildPhase.STREETLIGHT));
-            }
-            segmentIndex++;
-        }
-        return List.copyOf(steps);
+    static List<BuildStep> nodeAnchoredBridgeStepsForCompiler(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus) {
+        return nodeAnchoredBridgeSteps(bridgeNodes, width, level, heightBonus);
     }
 
     private static List<BuildStep> nodeAnchoredBridgeSteps(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus) {
@@ -286,39 +289,40 @@ public class RoadPlannerBuildControlService {
         return List.copyOf(steps);
     }
 
-    private static List<BuildStep> legacyBridgeSteps(ServerLevel level, BlockPos start, BlockPos end, int width) {
-        BridgePlanner.BridgePlanResult result = new BridgePlanner(new RoadConfig()).plan(level, start, end, width);
-        if (result == null || !result.success() || result.buildSteps() == null) {
-            return List.of();
-        }
-        return result.buildSteps();
-    }
-
-    private static boolean hasMajorBridge(List<RoadPlannerSegmentType> segmentTypes) {
-        return segmentTypes != null && segmentTypes.stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL);
-    }
-
-    private static RoadPlannerSegmentType segmentTypeAt(List<RoadPlannerSegmentType> segmentTypes, int index) {
-        if (segmentTypes == null || index < 0 || index >= segmentTypes.size() || segmentTypes.get(index) == null) {
-            return RoadPlannerSegmentType.ROAD;
-        }
-        return segmentTypes.get(index);
-    }
-
-    private static void executeInitialSteps(ConstructionQueue queue, ServerLevel level, int maxSteps) {
-        if (queue == null || level == null) {
+    private static void executeSteps(ConstructionQueue queue, ServerLevel level, int maxSteps) {
+        if (queue == null) {
             return;
         }
         int count = 0;
         while (queue.hasNext() && count < maxSteps) {
             BuildStep step = queue.next();
-            queue.executeStep(step, level);
+            if (level != null) {
+                queue.executeStep(step, level);
+            }
             count++;
         }
     }
 
     private static boolean matches(UUID requestedId, UUID actualId) {
         return requestedId == null || requestedId.equals(new UUID(0L, 0L)) || requestedId.equals(actualId);
+    }
+
+    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos) {
+        private BuildMetadata {
+            sourceTownName = sourceTownName == null ? "" : sourceTownName;
+            targetTownName = targetTownName == null ? "" : targetTownName;
+            focusPos = focusPos == null ? BlockPos.ZERO : focusPos.immutable();
+        }
+
+        static BuildMetadata from(UUID ownerId, UUID jobId, PreviewSnapshot snapshot, ConstructionQueue queue) {
+            BlockPos focusPos = BlockPos.ZERO;
+            if (snapshot != null && !snapshot.nodes().isEmpty()) {
+                focusPos = snapshot.nodes().get(0);
+            } else if (queue != null && !queue.getSteps().isEmpty()) {
+                focusPos = queue.getSteps().get(0).pos();
+            }
+            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos);
+        }
     }
 
     public record PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings) {
