@@ -937,41 +937,47 @@ public class RoadPlannerScreen extends Screen {
 
     private boolean setEndpointAt(BlockPos target) {
         if (!hasTownRoute) {
-            if (linePlan.nodeCount() == 0) {
-                linePlan.setStartNode(target);
-                startTownPos = target.immutable();
-                statusLine = "已设置道路起点";
+            if (startTownPos.equals(BlockPos.ZERO)) {
+                startTownPos = snapToNearestNode(target);
+                statusLine = "已设置起点标记";
             } else {
-                linePlan.setEndNode(target, segmentTypeForConnection(target, RoadPlannerSegmentType.ROAD));
-                destinationTownPos = target.immutable();
-                statusLine = "已设置道路终点";
+                destinationTownPos = snapToNearestNode(target);
+                statusLine = "已设置终点标记";
             }
             selectedNode = null;
-            saveDraft();
             return true;
         }
         if (RoadPlannerEndpointRules.isInRoleClaim(claimOverlayRenderer, target, RoadPlannerClaimOverlay.Role.START)) {
-            linePlan.setStartNode(target);
-            startTownPos = target.immutable();
+            startTownPos = snapToNearestNode(target);
             selectedNode = null;
-            saveDraft();
-            statusLine = "已设置道路起点";
+            statusLine = "已设置起点标记";
             return true;
         }
         if (RoadPlannerEndpointRules.isInRoleClaim(claimOverlayRenderer, target, RoadPlannerClaimOverlay.Role.DESTINATION)) {
-            if (linePlan.nodeCount() == 0) {
-                statusLine = "请先在起点 Town 设置起点";
-                return true;
-            }
-            linePlan.setEndNode(target, segmentTypeForConnection(target, RoadPlannerSegmentType.ROAD));
-            destinationTownPos = target.immutable();
+            destinationTownPos = snapToNearestNode(target);
             selectedNode = null;
-            saveDraft();
-            statusLine = "已设置道路终点";
+            statusLine = "已设置终点标记";
             return true;
         }
-        statusLine = "\u7aef\u70b9\u5fc5\u987b\u653e\u5728\u8d77\u70b9\u6216\u76ee\u6807 Town \u9886\u5730\u5185";
+        statusLine = "端点必须放在起点或目标 Town 领地内";
         return true;
+    }
+
+    private BlockPos snapToNearestNode(BlockPos target) {
+        List<BlockPos> nodes = linePlan.nodes();
+        if (nodes.isEmpty()) {
+            return target.immutable();
+        }
+        BlockPos nearest = nodes.get(0);
+        double bestDist = target.distSqr(nearest);
+        for (int i = 1; i < nodes.size(); i++) {
+            double dist = target.distSqr(nodes.get(i));
+            if (dist < bestDist) {
+                bestDist = dist;
+                nearest = nodes.get(i);
+            }
+        }
+        return nearest.immutable();
     }
 
     private RoadPlannerSegmentType segmentTypeForConnection(BlockPos target, RoadPlannerSegmentType fallback) {
