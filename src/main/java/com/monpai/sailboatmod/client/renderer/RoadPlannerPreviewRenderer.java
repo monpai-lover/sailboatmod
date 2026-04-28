@@ -92,19 +92,23 @@ public final class RoadPlannerPreviewRenderer {
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
 
         for (RoadPlannerClientHooks.PreviewGhostBlock block : renderGhostBlocks) {
+            float lineR, lineG, lineB;
+            if (block.state().is(net.minecraft.world.level.block.Blocks.STONE_BRICKS)) {
+                lineR = 0.95F; lineG = 0.55F; lineB = 0.15F;
+            } else if (block.state().is(net.minecraft.world.level.block.Blocks.SPRUCE_PLANKS) || block.state().is(net.minecraft.world.level.block.Blocks.OAK_PLANKS)) {
+                lineR = 0.30F; lineG = 0.75F; lineB = 1.0F;
+            } else if (block.state().is(net.minecraft.world.level.block.Blocks.OAK_FENCE)) {
+                lineR = 0.80F; lineG = 0.80F; lineB = 0.40F;
+            } else {
+                lineR = 0.20F; lineG = 0.90F; lineB = 0.30F;
+            }
             renderBlockBox(
                     poseStack,
                     lineConsumer,
                     block.pos(),
                     cameraPos,
-                    0.30F,
-                    0.90F,
-                    0.88F,
-                    0.0F,
-                    0.94F,
-                    0.76F,
-                    0.20F,
-                    0.95F
+                    0.30F, 0.90F, 0.88F, 0.0F,
+                    lineR, lineG, lineB, 0.95F
             );
         }
         List<BlockPos> pathNodes = preview.pathNodes();
