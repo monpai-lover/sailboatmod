@@ -88,14 +88,20 @@ public final class RoadPlannerWaterCrossingSplitter {
                 nodes.add(new SplitNode(landEntry, RoadPlannerSegmentType.ROAD));
             }
 
+            int spanWidth = span.endSampleIndex() - span.startSampleIndex();
+            int spanBlocks = spanWidth * SAMPLE_SPACING;
+            RoadPlannerSegmentType bridgeType = spanBlocks <= 24
+                    ? RoadPlannerSegmentType.BRIDGE_SMALL
+                    : RoadPlannerSegmentType.BRIDGE_MAJOR;
+
             int bridgeSamples = Math.max(1, (span.endSampleIndex() - span.startSampleIndex()) / 3);
             for (int b = 1; b <= bridgeSamples; b++) {
                 double bt = shoreStart.t() + (shoreEnd.t() - shoreStart.t()) * b / (bridgeSamples + 1);
                 BlockPos bridgeNode = posAt(from, dx, dy, dz, bt, heightSampler);
-                nodes.add(new SplitNode(bridgeNode, RoadPlannerSegmentType.BRIDGE_MAJOR));
+                nodes.add(new SplitNode(bridgeNode, bridgeType));
             }
 
-            nodes.add(new SplitNode(landExit, RoadPlannerSegmentType.BRIDGE_MAJOR));
+            nodes.add(new SplitNode(landExit, bridgeType));
         }
 
         if (!to.equals(nodes.get(nodes.size() - 1).pos())) {

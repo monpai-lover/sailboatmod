@@ -80,15 +80,19 @@ public class RoadPlannerForceRenderQueue {
                              java.util.function.Predicate<ChunkPos> skipPredicate,
                              java.util.function.Consumer<ChunkPos> chunkConsumer) {
         int processed = 0;
-        while (processed < maxChunks && !pending.isEmpty()) {
+        int polled = 0;
+        int maxPoll = maxChunks * 4;
+        while (processed < maxChunks && !pending.isEmpty() && polled < maxPoll) {
             ChunkPos chunk = pending.poll();
-            if (skipPredicate == null || !skipPredicate.test(chunk)) {
-                if (chunkConsumer != null) {
-                    chunkConsumer.accept(chunk);
-                }
-                processed++;
-                completedChunks++;
+            polled++;
+            completedChunks++;
+            if (skipPredicate != null && skipPredicate.test(chunk)) {
+                continue;
             }
+            if (chunkConsumer != null) {
+                chunkConsumer.accept(chunk);
+            }
+            processed++;
         }
         return processed;
     }

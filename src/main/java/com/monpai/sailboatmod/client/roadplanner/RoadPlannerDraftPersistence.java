@@ -33,6 +33,12 @@ public class RoadPlannerDraftPersistence {
         for (RoadPlannerSegmentType type : draft.segmentTypes()) {
             lines.add("S," + type.name());
         }
+        if (draft.startPos() != null && !draft.startPos().equals(BlockPos.ZERO)) {
+            lines.add("P," + draft.startPos().getX() + "," + draft.startPos().getY() + "," + draft.startPos().getZ());
+        }
+        if (draft.endPos() != null && !draft.endPos().equals(BlockPos.ZERO)) {
+            lines.add("E," + draft.endPos().getX() + "," + draft.endPos().getY() + "," + draft.endPos().getZ());
+        }
         try {
             Files.write(file.toPath(), lines);
         } catch (IOException ignored) {
@@ -49,6 +55,8 @@ public class RoadPlannerDraftPersistence {
         }
         List<BlockPos> nodes = new ArrayList<>();
         List<RoadPlannerSegmentType> segments = new ArrayList<>();
+        BlockPos startPos = BlockPos.ZERO;
+        BlockPos endPos = BlockPos.ZERO;
         try {
             for (String line : Files.readAllLines(file.toPath())) {
                 String[] parts = line.split(",");
@@ -56,12 +64,16 @@ public class RoadPlannerDraftPersistence {
                     nodes.add(new BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3])));
                 } else if (parts.length == 2 && "S".equals(parts[0])) {
                     segments.add(RoadPlannerSegmentType.valueOf(parts[1]));
+                } else if (parts.length == 4 && "P".equals(parts[0])) {
+                    startPos = new BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
+                } else if (parts.length == 4 && "E".equals(parts[0])) {
+                    endPos = new BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
                 }
             }
         } catch (RuntimeException | IOException ignored) {
             return Optional.empty();
         }
-        return Optional.of(new RoadPlannerDraftStore.Draft(nodes, segments));
+        return Optional.of(new RoadPlannerDraftStore.Draft(nodes, segments, startPos, endPos));
     }
 
     private File file(UUID sessionId) {

@@ -13,21 +13,25 @@ public final class RoadPlannerDraftStore {
     private RoadPlannerDraftStore() {
     }
 
-    public static void save(UUID sessionId, List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
+    public static void save(UUID sessionId, List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes,
+                        BlockPos startPos, BlockPos endPos) {
         if (sessionId == null || nodes == null || nodes.isEmpty()) {
             return;
         }
-        DRAFTS.put(sessionId, new Draft(nodes, segmentTypes));
+        DRAFTS.put(sessionId, new Draft(nodes, segmentTypes, startPos, endPos));
     }
 
     public static Draft get(UUID sessionId) {
         return sessionId == null ? null : DRAFTS.get(sessionId);
     }
 
-    public record Draft(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
+    public record Draft(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes,
+                        BlockPos startPos, BlockPos endPos) {
         public Draft {
             nodes = nodes == null ? List.of() : nodes.stream().map(BlockPos::immutable).toList();
             segmentTypes = segmentTypes == null ? List.of() : List.copyOf(segmentTypes);
+            startPos = startPos == null ? BlockPos.ZERO : startPos.immutable();
+            endPos = endPos == null ? BlockPos.ZERO : endPos.immutable();
         }
     }
 }

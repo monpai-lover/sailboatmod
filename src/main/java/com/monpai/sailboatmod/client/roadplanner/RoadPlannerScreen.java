@@ -144,6 +144,12 @@ public class RoadPlannerScreen extends Screen {
         }
         if (draft != null && !draft.nodes().isEmpty()) {
             linePlan.replaceWith(draft.nodes(), draft.segmentTypes());
+            if (!draft.startPos().equals(BlockPos.ZERO)) {
+                this.startTownPos = draft.startPos();
+            }
+            if (!draft.endPos().equals(BlockPos.ZERO)) {
+                this.destinationTownPos = draft.endPos();
+            }
         }
         selectedNode = null;
         statusLine = "路线: " + displayTownName(this.startTownName, "起点 Town") + " -> "
@@ -706,6 +712,7 @@ public class RoadPlannerScreen extends Screen {
             if (canvas.contains(mouseX, mouseY)) {
                 forceRenderSelectionEnd = canvas.mouseToWorld(mouseX, mouseY);
             }
+            tileRenderScheduler.clear();
             forceRenderQueue.enqueueSelection(forceRenderSelectionStart, forceRenderSelectionEnd == null ? forceRenderSelectionStart : forceRenderSelectionEnd, "\u9009\u533a\u6e32\u67d3");
             statusLine = "\u5df2\u52a0\u5165\u5f3a\u5236\u6e32\u67d3\u9009\u533a";
             forceRenderSelectionStart = null;
@@ -768,14 +775,26 @@ public class RoadPlannerScreen extends Screen {
 
 
     private void setSelectedEdgeType(CompiledRoadSectionType type) {
-        if (state.selectedRoadEdgeId() == null) {
-            statusLine = "\u672a\u9009\u4e2d\u9053\u8def\u6bb5";
+        if (selectedNode == null) {
+            statusLine = "\u8bf7\u5148\u7528\u9009\u62e9\u5de5\u5177\u9009\u4e2d\u4e00\u4e2a\u8282\u70b9";
             return;
         }
-        graph.updateEdgeType(state.selectedRoadEdgeId(), type).ifPresentOrElse(
-                edge -> statusLine = "\u5df2\u5c06\u8be5\u6bb5\u5c5e\u6027\u8bbe\u4e3a: " + editableTypeLabel(type),
-                () -> statusLine = "\u672a\u627e\u5230\u9009\u4e2d\u9053\u8def\u6bb5"
-        );
+        int segIndex = selectedNode.nodeIndex();
+        if (segIndex >= linePlan.segmentCount()) {
+            segIndex = Math.max(0, segIndex - 1);
+        }
+        if (segIndex < 0 || segIndex >= linePlan.segmentCount()) {
+            statusLine = "\u8be5\u8282\u70b9\u6ca1\u6709\u53ef\u4fee\u6539\u7684\u6bb5";
+            return;
+        }
+        RoadPlannerSegmentType segType = switch (type) {
+            case BRIDGE -> RoadPlannerSegmentType.BRIDGE_MAJOR;
+            case TUNNEL -> RoadPlannerSegmentType.TUNNEL;
+            default -> RoadPlannerSegmentType.ROAD;
+        };
+        linePlan.setSegmentTypeFromNode(segIndex, segType);
+        saveDraft();
+        statusLine = "\u5df2\u5c06\u8be5\u6bb5\u8bbe\u4e3a: " + editableTypeLabel(type);
     }
 
     private String editableTypeLabel(CompiledRoadSectionType type) {
@@ -856,7 +875,7 @@ public class RoadPlannerScreen extends Screen {
 
     private void addNodeWithWaterSplit(BlockPos target, RoadPlannerSegmentType segmentType) {
         if (linePlan.nodeCount() == 0) {
-            linePlan.addClickNode(target, segmentTypeForConnection(target, segmentType));
+            linePlan.addClickNode(target, segmentType);
             return;
         }
         BlockPos from = linePlan.nodes().get(linePlan.nodeCount() - 1);
@@ -893,11 +912,14 @@ public class RoadPlannerScreen extends Screen {
     }
 
     private void saveDraft() {
-        RoadPlannerDraftStore.Draft draft = new RoadPlannerDraftStore.Draft(linePlan.nodes(), linePlan.segments());
-        RoadPlannerDraftStore.save(state.sessionId(), draft.nodes(), draft.segmentTypes());
+        RoadPlannerDraftStore.Draft draft = new RoadPlannerDraftStore.Draft(
+                linePlan.nodes(), linePlan.segments(), startTownPos, destinationTownPos);
+        RoadPlannerDraftStore.save(state.sessionId(), draft.nodes(), draft.segmentTypes(),
+                draft.startPos(), draft.endPos());
         draftPersistence.save(state.sessionId(), draft);
         if (routeDraftId != null) {
-            RoadPlannerDraftStore.save(routeDraftId, draft.nodes(), draft.segmentTypes());
+            RoadPlannerDraftStore.save(routeDraftId, draft.nodes(), draft.segmentTypes(),
+                    draft.startPos(), draft.endPos());
             draftPersistence.save(routeDraftId, draft);
         }
     }
@@ -982,23 +1004,14 @@ public class RoadPlannerScreen extends Screen {
 
     private RoadPlannerSegmentType segmentTypeForConnection(BlockPos target, RoadPlannerSegmentType fallback) {
         RoadPlannerSegmentType safeFallback = fallback == null ? RoadPlannerSegmentType.ROAD : fallback;
-        if (safeFallback == RoadPlannerSegmentType.BRIDGE_MAJOR || safeFallback == RoadPlannerSegmentType.TUNNEL) {
+        if (safeFallback == RoadPlannerSegmentType.BRIDGE_MAJOR || safeFallback == RoadPlannerSegmentType.BRIDGE_SMALL || safeFallback == RoadPlannerSegmentType.TUNNEL) {
             return safeFallback;
         }
         if (requiresBridgeTool(target)) {
             return RoadPlannerSegmentType.BRIDGE_MAJOR;
         }
-        boolean targetOnWater = !isClientLand(target.getX(), target.getZ());
-        if (targetOnWater) {
+        if (!isClientLand(target.getX(), target.getZ())) {
             return RoadPlannerSegmentType.BRIDGE_MAJOR;
-        }
-        List<BlockPos> nodes = linePlan.nodes();
-        if (!nodes.isEmpty()) {
-            BlockPos previous = nodes.get(nodes.size() - 1);
-            boolean previousOnWater = !isClientLand(previous.getX(), previous.getZ());
-            if (previousOnWater) {
-                return RoadPlannerSegmentType.BRIDGE_MAJOR;
-            }
         }
         return safeFallback;
     }

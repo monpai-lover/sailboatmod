@@ -158,13 +158,15 @@ public class RoadPlannerBuildControlService {
         int segmentIndex = 0;
         while (segmentIndex < nodes.size() - 1) {
             RoadPlannerSegmentType type = segmentTypeAt(segmentTypes, segmentIndex);
-            if (type == RoadPlannerSegmentType.BRIDGE_MAJOR) {
+            if (type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL) {
                 int bridgeStart = segmentIndex;
-                while (segmentIndex < nodes.size() - 1 && segmentTypeAt(segmentTypes, segmentIndex) == RoadPlannerSegmentType.BRIDGE_MAJOR) {
+                RoadPlannerSegmentType bridgeType = type;
+                while (segmentIndex < nodes.size() - 1 && (segmentTypeAt(segmentTypes, segmentIndex) == RoadPlannerSegmentType.BRIDGE_MAJOR || segmentTypeAt(segmentTypes, segmentIndex) == RoadPlannerSegmentType.BRIDGE_SMALL)) {
                     segmentIndex++;
                 }
+                int heightBonus = bridgeType == RoadPlannerSegmentType.BRIDGE_SMALL ? 3 : 5;
                 List<BuildStep> bridgeSteps = nodeAnchoredBridgeSteps(
-                        nodes.subList(bridgeStart, segmentIndex + 1), snapshot.settings().width(), level);
+                        nodes.subList(bridgeStart, segmentIndex + 1), snapshot.settings().width(), level, heightBonus);
                 for (BuildStep step : bridgeSteps) {
                     steps.add(new BuildStep(order++, step.pos(), step.state(), step.phase()));
                 }
@@ -197,21 +199,22 @@ public class RoadPlannerBuildControlService {
         return List.copyOf(steps);
     }
 
-    private static List<BuildStep> nodeAnchoredBridgeSteps(List<BlockPos> bridgeNodes, int width, ServerLevel level) {
+    private static List<BuildStep> nodeAnchoredBridgeSteps(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus) {
         if (bridgeNodes == null || bridgeNodes.size() < 2) {
             return List.of();
         }
         List<BlockPos> centerline = RoadPlannerPathCompiler.interpolateCenters(bridgeNodes);
-        if (centerline.isEmpty()) {
+        if (centerline.size() < 2) {
             return List.of();
         }
         BlockPos entryNode = bridgeNodes.get(0);
         BlockPos exitNode = bridgeNodes.get(bridgeNodes.size() - 1);
         int entryY = entryNode.getY();
         int exitY = exitNode.getY();
-        int deckY = Math.max(entryY, exitY) + 5;
+        int deckY = Math.max(entryY, exitY) + heightBonus;
         int totalLen = centerline.size();
-        int rampLen = Math.min(totalLen / 4, 20);
+        int entryRampLen = Math.min((deckY - entryY) * 2, totalLen / 4);
+        int exitRampLen = Math.min((deckY - exitY) * 2, totalLen / 4);
 
         List<BuildStep> steps = new java.util.ArrayList<>();
         int order = 0;
@@ -223,11 +226,11 @@ public class RoadPlannerBuildControlService {
         for (int i = 0; i < totalLen; i++) {
             BlockPos center = centerline.get(i);
             int y;
-            if (i < rampLen) {
-                double t = rampLen > 0 ? i / (double) rampLen : 1.0;
+            if (i < entryRampLen && entryRampLen > 0) {
+                double t = i / (double) entryRampLen;
                 y = (int) Math.round(entryY + (deckY - entryY) * t);
-            } else if (i >= totalLen - rampLen) {
-                double t = rampLen > 0 ? (totalLen - 1 - i) / (double) rampLen : 1.0;
+            } else if (i >= totalLen - exitRampLen && exitRampLen > 0) {
+                double t = (totalLen - 1 - i) / (double) exitRampLen;
                 y = (int) Math.round(exitY + (deckY - exitY) * t);
             } else {
                 y = deckY;
@@ -248,8 +251,8 @@ public class RoadPlannerBuildControlService {
             }
             steps.add(new BuildStep(order++, deckPos.offset(perpX * (halfWidth + 1), 1, perpZ * (halfWidth + 1)), railState, BuildPhase.DECK));
             steps.add(new BuildStep(order++, deckPos.offset(perpX * -(halfWidth + 1), 1, perpZ * -(halfWidth + 1)), railState, BuildPhase.DECK));
-            if (i >= rampLen && i < totalLen - rampLen && i % 4 == 0) {
-                for (int py = y - 1; py >= y - 8 && py >= 0; py--) {
+            if (i >= entryRampLen && i < totalLen - exitRampLen && i % 4 == 0) {
+                for (int py = y - 1; py >= y - 12 && py >= 0; py--) {
                     steps.add(new BuildStep(order++, new BlockPos(center.getX(), py, center.getZ()), pierState, BuildPhase.DECK));
                 }
             }
@@ -266,7 +269,7 @@ public class RoadPlannerBuildControlService {
     }
 
     private static boolean hasMajorBridge(List<RoadPlannerSegmentType> segmentTypes) {
-        return segmentTypes != null && segmentTypes.stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR);
+        return segmentTypes != null && segmentTypes.stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL);
     }
 
     private static RoadPlannerSegmentType segmentTypeAt(List<RoadPlannerSegmentType> segmentTypes, int index) {

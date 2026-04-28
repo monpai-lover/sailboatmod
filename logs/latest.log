@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 [284æœˆ2026 00:19:45.949] [Test worker/ERROR] [com.monpai.sailboatmod.ServerEvents/]: Failed to initialize sqlite
+=======
+[254ÔÂ2026 09:55:07.721] [Test worker/ERROR] [com.monpai.sailboatmod.ServerEvents/]: Failed to initialize sqlite
+>>>>>>> Stashed changes
 java.lang.NoClassDefFoundError: org/sqlite/core/NativeDB
 	at com.monpai.sailboatmod.ServerEventsTest.lambda$startupTaskWrapperCatchesLinkageErrors$0(ServerEventsTest.java:12) ~[test/:?]
 	at com.monpai.sailboatmod.ServerEvents.runStartupTaskSafely(ServerEvents.java:122) ~[main/:?]
@@ -88,6 +92,12 @@ java.lang.NoClassDefFoundError: org/sqlite/core/NativeDB
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:65) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) ~[gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) ~[gradle-worker.jar:?]
+<<<<<<< Updated upstream
 [284æœˆ2026 00:19:46.221] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=4 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
 [284æœˆ2026 00:19:46.223] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=0 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
 [284æœˆ2026 00:19:46.224] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=0 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
+=======
+[254ÔÂ2026 09:55:10.446] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=4 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
+[254ÔÂ2026 09:55:10.450] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=0 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
+[254ÔÂ2026 09:55:10.451] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=0 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
+>>>>>>> Stashed changes
