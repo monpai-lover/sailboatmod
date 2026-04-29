@@ -79,7 +79,7 @@ public final class RoadPlannerBuildStepCompiler {
         List<BuildStep> steps = new ArrayList<>();
         Set<BlockPos> surfacePositions = new LinkedHashSet<>();
         for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-            if (includeFallbackState(block.state()) && !isUnderwaterRoad(block)) {
+            if (includeFallbackState(block.state())) {
                 surfacePositions.add(block.pos());
             }
         }
@@ -94,7 +94,7 @@ public final class RoadPlannerBuildStepCompiler {
             steps.add(new BuildStep(steps.size(), pos.below(3), Blocks.COBBLESTONE.defaultBlockState(), BuildPhase.FOUNDATION));
         }
         for (RoadPlannerCompiledPath.CompiledBlock block : compiled.blocks()) {
-            if (!includeFallbackState(block.state()) || isUnderwaterRoad(block)) {
+            if (!includeFallbackState(block.state())) {
                 continue;
             }
             steps.add(new BuildStep(steps.size(), block.pos(), block.state(), phaseFor(block.segmentType())));
@@ -195,10 +195,6 @@ public final class RoadPlannerBuildStepCompiler {
 
     private static boolean includeFallbackState(BlockState state) {
         return state != null && !state.isAir() && state.getFluidState().isEmpty();
-    }
-
-    private static boolean isUnderwaterRoad(RoadPlannerCompiledPath.CompiledBlock block) {
-        return block.segmentType() == RoadPlannerSegmentType.ROAD && block.pos().getY() <= 62;
     }
 
     private record NormalizedRoute(List<RouteSection> sections) {

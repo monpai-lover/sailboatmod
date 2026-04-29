@@ -98,7 +98,19 @@ public final class RoadPlannerPathCompiler {
         for (int index = 0; index < centers.size(); index++) {
             boolean place = index == 0 || index == centers.size() - 1 || distance >= LIGHT_INTERVAL_BLOCKS;
             if (place) {
-                BlockPos base = centers.get(index).offset(radius + 1, 1, 0);
+                BlockPos center = centers.get(index);
+                int dx = 0, dz = 0;
+                if (index + 1 < centers.size()) {
+                    dx = Integer.compare(centers.get(index + 1).getX() - center.getX(), 0);
+                    dz = Integer.compare(centers.get(index + 1).getZ() - center.getZ(), 0);
+                } else if (index > 0) {
+                    dx = Integer.compare(center.getX() - centers.get(index - 1).getX(), 0);
+                    dz = Integer.compare(center.getZ() - centers.get(index - 1).getZ(), 0);
+                }
+                if (dx == 0 && dz == 0) { dx = 1; }
+                int perpX = -dz;
+                int perpZ = dx;
+                BlockPos base = center.offset(perpX * (radius + 1), 1, perpZ * (radius + 1));
                 lights.add(new RoadPlannerCompiledPath.LightBlock(base, Blocks.OAK_FENCE.defaultBlockState()));
                 lights.add(new RoadPlannerCompiledPath.LightBlock(base.above(), Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, true)));
                 distance = 0;

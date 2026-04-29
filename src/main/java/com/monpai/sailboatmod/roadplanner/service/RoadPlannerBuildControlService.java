@@ -241,15 +241,40 @@ public class RoadPlannerBuildControlService {
         }
 
         BlockState deckState = net.minecraft.world.level.block.Blocks.SPRUCE_PLANKS.defaultBlockState();
+        BlockState slabBottom = net.minecraft.world.level.block.Blocks.SPRUCE_SLAB.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, net.minecraft.world.level.block.state.properties.SlabType.BOTTOM);
+        BlockState slabTop = net.minecraft.world.level.block.Blocks.SPRUCE_SLAB.defaultBlockState()
+                .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, net.minecraft.world.level.block.state.properties.SlabType.TOP);
         BlockState pierState = net.minecraft.world.level.block.Blocks.STONE_BRICKS.defaultBlockState();
         BlockState railState = net.minecraft.world.level.block.Blocks.OAK_FENCE.defaultBlockState();
 
         List<BuildStep> steps = new java.util.ArrayList<>();
         int order = 0;
 
-        for (com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverBuildCandidate candidate :
-                com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverSegmentPaver.paveCenterline(elevatedCenterline, width, deckState)) {
-            steps.add(new BuildStep(order++, candidate.pos(), candidate.state(), BuildPhase.DECK));
+        boolean[] isRamp = new boolean[totalLen];
+        for (int i = 0; i < totalLen; i++) {
+            isRamp[i] = (i < entryRampLen && entryRampLen > 0) || (i >= totalLen - exitRampLen && exitRampLen > 0);
+        }
+
+        for (int i = 0; i < totalLen; i++) {
+            BlockPos pos = elevatedCenterline.get(i);
+            BlockState state;
+            if (isRamp[i]) {
+                int prevY = i > 0 ? elevatedCenterline.get(i - 1).getY() : pos.getY();
+                if (pos.getY() > prevY) {
+                    state = slabBottom;
+                } else if (pos.getY() == prevY && i > 0 && elevatedCenterline.get(i - 1).getY() < pos.getY()) {
+                    state = slabTop;
+                } else {
+                    state = (i % 2 == 0) ? slabBottom : slabTop;
+                }
+            } else {
+                state = deckState;
+            }
+            for (com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverBuildCandidate candidate :
+                    com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverSegmentPaver.paveCenterline(List.of(pos), width, state)) {
+                steps.add(new BuildStep(order++, candidate.pos(), candidate.state(), BuildPhase.DECK));
+            }
         }
 
         int halfWidth = width / 2;

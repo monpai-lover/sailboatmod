@@ -372,15 +372,15 @@ public class RoadPlannerScreen extends Screen {
     }
 
     private boolean renderChunkDirect(ChunkPos cp) {
-        tileRenderScheduler.markSubmitted(cp);
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null) {
             return false;
         }
         try {
-            if (mc.level.getChunkSource().getChunk(cp.x, cp.z, false) == null) {
+            if (!mc.level.hasChunk(cp.x, cp.z)) {
                 return false;
             }
+            tileRenderScheduler.markSubmitted(cp);
             RoadPlannerChunkImage image = new RoadPlannerChunkImage(mc.level, cp);
             int tileX = Math.floorDiv(cp.x, 16);
             int tileZ = Math.floorDiv(cp.z, 16);
