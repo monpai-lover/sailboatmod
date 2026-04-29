@@ -305,7 +305,6 @@ public class RoadPlannerScreen extends Screen {
     @Override
     protected void init() {
         recomputeLayout();
-        forceRenderQueue.enqueueCorridor(startTownPos, destinationTownPos, 64, "路线走廊");
     }
 
     @Override
