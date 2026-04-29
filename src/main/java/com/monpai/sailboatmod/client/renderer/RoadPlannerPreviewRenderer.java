@@ -32,8 +32,12 @@ import java.util.Set;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class RoadPlannerPreviewRenderer {
-    private static final double MAX_PREVIEW_RENDER_DISTANCE = 96.0D;
-    private static final int MAX_PREVIEW_RENDER_BLOCKS = 4096;
+    private static final double MAX_PREVIEW_RENDER_DISTANCE = 64.0D;
+    private static final int MAX_PREVIEW_RENDER_BLOCKS = 1024;
+    private static final double MAX_MODEL_RENDER_DISTANCE_SQR = 48.0D * 48.0D;
+    private static final double MAX_WIREFRAME_RENDER_DISTANCE_SQR = 64.0D * 64.0D;
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> cachedRenderList = List.of();
+    private static int cachedPreviewHash = 0;
 
     private RoadPlannerPreviewRenderer() {
     }
@@ -53,24 +57,23 @@ public final class RoadPlannerPreviewRenderer {
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
         Vec3 cameraPos = event.getCamera().getPosition();
-        List<RoadPlannerClientHooks.PreviewGhostBlock> renderGhostBlocks = previewRenderList(
+        List<RoadPlannerClientHooks.PreviewGhostBlock> renderGhostBlocks = getCachedRenderList(
                 preview.ghostBlocks(),
-                preview.focusPos(),
+                player.blockPosition(),
                 MAX_PREVIEW_RENDER_DISTANCE,
                 MAX_PREVIEW_RENDER_BLOCKS
         );
 
-        // Phase 1: Render translucent block models (before getting line consumer)
+        // Phase 1: Render translucent block models only for nearby blocks
         BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
-        // Wrap bufferSource to force all block renders through translucent render type
-        MultiBufferSource translucentSource = renderType -> {
-            // Redirect all render types to translucent so blocks get alpha blending
-            return bufferSource.getBuffer(RenderType.translucent());
-        };
+        MultiBufferSource translucentSource = renderType -> bufferSource.getBuffer(RenderType.translucent());
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
         for (RoadPlannerClientHooks.PreviewGhostBlock block : renderGhostBlocks) {
+            if (block.pos().distSqr(player.blockPosition()) > MAX_MODEL_RENDER_DISTANCE_SQR) {
+                continue;
+            }
             poseStack.pushPose();
             poseStack.translate(
                     block.pos().getX() - cameraPos.x,
@@ -92,6 +95,9 @@ public final class RoadPlannerPreviewRenderer {
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
 
         for (RoadPlannerClientHooks.PreviewGhostBlock block : renderGhostBlocks) {
+            if (block.pos().distSqr(player.blockPosition()) > MAX_WIREFRAME_RENDER_DISTANCE_SQR) {
+                continue;
+            }
             float lineR, lineG, lineB;
             if (block.state().is(net.minecraft.world.level.block.Blocks.STONE_BRICKS)) {
                 lineR = 0.95F; lineG = 0.55F; lineB = 0.15F;
@@ -398,6 +404,21 @@ public final class RoadPlannerPreviewRenderer {
                 Math.max(fromY, toY) + thickness,
                 Math.max(fromZ, toZ) + thickness
         );
+    }
+
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> getCachedRenderList(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            BlockPos focusPos,
+            double maxDistance,
+            int maxBlocks
+    ) {
+        int hash = System.identityHashCode(blocks);
+        if (hash == cachedPreviewHash && !cachedRenderList.isEmpty()) {
+            return cachedRenderList;
+        }
+        cachedRenderList = previewRenderList(blocks, focusPos, maxDistance, maxBlocks);
+        cachedPreviewHash = hash;
+        return cachedRenderList;
     }
 
     private static List<RoadPlannerClientHooks.PreviewGhostBlock> previewRenderList(
