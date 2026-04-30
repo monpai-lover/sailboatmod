@@ -38,4 +38,24 @@ public record RoadPlannerBuildSettings(int width, String materialPreset, boolean
             default -> Blocks.SMOOTH_STONE;
         };
     }
+
+    public static Block slabFor(String materialPreset) {
+        return switch (normalizeMaterial(materialPreset)) {
+            case "stone_bricks", "stone_brick" -> Blocks.STONE_BRICK_SLAB;
+            case "cobblestone" -> Blocks.COBBLESTONE_SLAB;
+            case "oak_planks" -> Blocks.OAK_SLAB;
+            case "spruce_planks" -> Blocks.SPRUCE_SLAB;
+            default -> Blocks.SMOOTH_STONE_SLAB;
+        };
+    }
+
+    public BlockState slabBottomState() {
+        return slabFor(materialPreset).defaultBlockState()
+                .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, net.minecraft.world.level.block.state.properties.SlabType.BOTTOM);
+    }
+
+    public BlockState slabTopState() {
+        return slabFor(materialPreset).defaultBlockState()
+                .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, net.minecraft.world.level.block.state.properties.SlabType.TOP);
+    }
 }

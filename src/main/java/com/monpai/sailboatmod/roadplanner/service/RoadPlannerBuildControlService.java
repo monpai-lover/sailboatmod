@@ -198,11 +198,15 @@ public class RoadPlannerBuildControlService {
         return RoadPlannerBuildStepCompiler.compile(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), level);
     }
 
-    static List<BuildStep> nodeAnchoredBridgeStepsForCompiler(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus) {
-        return nodeAnchoredBridgeSteps(bridgeNodes, width, level, heightBonus);
+    static List<BuildStep> nodeAnchoredBridgeStepsForCompiler(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus, com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings settings) {
+        return nodeAnchoredBridgeSteps(bridgeNodes, width, level, heightBonus, settings);
     }
 
-    private static List<BuildStep> nodeAnchoredBridgeSteps(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus) {
+    static List<BuildStep> nodeAnchoredBridgeStepsForCompiler(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus) {
+        return nodeAnchoredBridgeSteps(bridgeNodes, width, level, heightBonus, com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings.DEFAULTS);
+    }
+
+    private static List<BuildStep> nodeAnchoredBridgeSteps(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus, com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings settings) {
         if (bridgeNodes == null || bridgeNodes.size() < 2) {
             return List.of();
         }
@@ -240,11 +244,9 @@ public class RoadPlannerBuildControlService {
             elevatedCenterline.add(new BlockPos(center.getX(), y, center.getZ()));
         }
 
-        BlockState deckState = net.minecraft.world.level.block.Blocks.SPRUCE_PLANKS.defaultBlockState();
-        BlockState slabBottom = net.minecraft.world.level.block.Blocks.SPRUCE_SLAB.defaultBlockState()
-                .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, net.minecraft.world.level.block.state.properties.SlabType.BOTTOM);
-        BlockState slabTop = net.minecraft.world.level.block.Blocks.SPRUCE_SLAB.defaultBlockState()
-                .setValue(net.minecraft.world.level.block.SlabBlock.TYPE, net.minecraft.world.level.block.state.properties.SlabType.TOP);
+        BlockState deckState = settings.surfaceState();
+        BlockState slabBottom = settings.slabBottomState();
+        BlockState slabTop = settings.slabTopState();
         BlockState pierState = net.minecraft.world.level.block.Blocks.STONE_BRICKS.defaultBlockState();
         BlockState railState = net.minecraft.world.level.block.Blocks.OAK_FENCE.defaultBlockState();
 

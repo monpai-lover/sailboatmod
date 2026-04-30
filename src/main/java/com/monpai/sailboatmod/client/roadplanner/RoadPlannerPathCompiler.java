@@ -81,9 +81,7 @@ public final class RoadPlannerPathCompiler {
 
     private static BlockState stateFor(RoadPlannerSegmentType type, RoadPlannerBuildSettings settings) {
         return switch (type) {
-            case BRIDGE_MAJOR -> Blocks.SPRUCE_PLANKS.defaultBlockState();
-            case BRIDGE_SMALL -> Blocks.OAK_PLANKS.defaultBlockState();
-            case TUNNEL -> Blocks.STONE_BRICKS.defaultBlockState();
+            case BRIDGE_MAJOR, BRIDGE_SMALL, TUNNEL -> settings.surfaceState();
             default -> settings.surfaceState();
         };
     }

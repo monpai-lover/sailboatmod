@@ -64,7 +64,7 @@ public final class RoadPlannerBuildStepCompiler {
             List<RoadPlannerSegmentType> sectionTypes = segmentTypes.subList(start, segmentIndex);
             if (bridgeGroup) {
                 int heightBonus = hasMajorBridge ? 5 : 3;
-                steps.addAll(RoadPlannerBuildControlService.nodeAnchoredBridgeStepsForCompiler(sectionNodes, settings.width(), level, heightBonus));
+                steps.addAll(RoadPlannerBuildControlService.nodeAnchoredBridgeStepsForCompiler(sectionNodes, settings.width(), level, heightBonus, settings));
             } else {
                 steps.addAll(fallbackSteps(sectionNodes, sectionTypes, settings));
             }
