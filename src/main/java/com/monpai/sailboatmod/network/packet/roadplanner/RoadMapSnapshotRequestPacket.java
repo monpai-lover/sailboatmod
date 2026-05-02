@@ -1,8 +1,17 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapColorizer;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapRegion;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapServerColumnSampler;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapSnapshot;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapSnapshotService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.UUID;
@@ -53,7 +62,32 @@ public record RoadMapSnapshotRequestPacket(UUID sessionId,
     }
 
     public static void handle(RoadMapSnapshotRequestPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().setPacketHandled(true);
+        NetworkEvent.Context context = contextSupplier.get();
+        context.enqueueWork(() -> handleOnServer(packet, context.getSender()));
+        context.setPacketHandled(true);
+    }
+
+    private static void handleOnServer(RoadMapSnapshotRequestPacket packet, ServerPlayer sender) {
+        if (sender == null || !(sender.level() instanceof ServerLevel level)) {
+            return;
+        }
+        RoadMapRegion region = RoadMapRegion.centeredOn(packet.regionCenter(), packet.regionSize(), packet.lod());
+        RoadMapSnapshotService service = RoadMapSnapshotService.directExecutorForTest(new RoadMapColorizer());
+        RoadMapSnapshot snapshot = service.buildSnapshotAsync(level.getGameTime(), region, new RoadMapServerColumnSampler(level)).join();
+        RoadMapSnapshotSyncPacket response = new RoadMapSnapshotSyncPacket(
+                packet.sessionId(),
+                packet.worldId(),
+                level.dimension().location().toString(),
+                packet.requestId(),
+                packet.purpose(),
+                region.center().getX(),
+                region.center().getZ(),
+                region.regionSize(),
+                region.lod(),
+                region.pixelWidth(),
+                region.pixelHeight(),
+                snapshot.argbPixels());
+        ModNetwork.CHANNEL.sendTo(response, sender.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
     }
 
     public static int normalizeRegionSize(int requestedSize, MapLod lod) {
