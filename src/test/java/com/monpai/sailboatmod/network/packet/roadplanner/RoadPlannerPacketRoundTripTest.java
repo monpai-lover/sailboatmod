@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlan;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import io.netty.buffer.Unpooled;
@@ -96,6 +98,53 @@ class RoadPlannerPacketRoundTripTest {
         assertFalse(preview.ghostBlocks().isEmpty());
         assertEquals(2, preview.pathNodes().size());
         assertEquals(2, preview.pathNodeCount());
+    }
+
+    @Test
+    void preloadPacketsRoundTripIdentityAndPixels() {
+        UUID sessionId = UUID.randomUUID();
+        RoadPlannerMapPreloadRequestPacket request = new RoadPlannerMapPreloadRequestPacket(
+                sessionId,
+                17L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.ENTER_PLANNER_PRELOAD,
+                "world_a",
+                "minecraft:overworld",
+                new BlockPos(0, 64, 0),
+                new BlockPos(512, 64, 256),
+                List.of(new BlockPos(128, 64, 64), new BlockPos(256, 64, 128)),
+                RoadPlannerMapPreloadRequestPacket.PROTOCOL_VERSION);
+        RoadPlannerMapTileSyncPacket tile = new RoadPlannerMapTileSyncPacket(
+                sessionId,
+                17L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_4,
+                0,
+                0,
+                RoadMapTileSpec.TILE_PIXELS,
+                RoadMapTileSpec.TILE_PIXELS,
+                new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS]);
+        RoadPlannerMapPreloadProgressPacket progress = new RoadPlannerMapPreloadProgressPacket(
+                sessionId,
+                17L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD,
+                "world_a",
+                "minecraft:overworld",
+                RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE,
+                1,
+                8,
+                RoadPlannerMapPreloadProgressPacket.State.SAMPLING,
+                "sampling");
+        RoadPlannerMapPreloadCancelPacket cancel = new RoadPlannerMapPreloadCancelPacket(
+                sessionId,
+                17L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER);
+
+        assertEquals(request, roundTrip(request, RoadPlannerMapPreloadRequestPacket::encode, RoadPlannerMapPreloadRequestPacket::decode));
+        assertEquals(tile, roundTrip(tile, RoadPlannerMapTileSyncPacket::encode, RoadPlannerMapTileSyncPacket::decode));
+        assertEquals(progress, roundTrip(progress, RoadPlannerMapPreloadProgressPacket::encode, RoadPlannerMapPreloadProgressPacket::decode));
+        assertEquals(cancel, roundTrip(cancel, RoadPlannerMapPreloadCancelPacket::encode, RoadPlannerMapPreloadCancelPacket::decode));
     }
 
     private <T> T roundTrip(T packet, PacketEncoder<T> encoder, PacketDecoder<T> decoder) {

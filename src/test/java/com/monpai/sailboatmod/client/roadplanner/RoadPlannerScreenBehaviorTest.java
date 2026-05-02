@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
 import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
@@ -18,6 +20,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerScreenBehaviorTest {
@@ -52,6 +55,65 @@ class RoadPlannerScreenBehaviorTest {
         clickToolbarAction(screen, RoadPlannerTopToolbar.Group.ROUTE, "自动补全");
 
         assertTrue(screen.plannedNodeCountForTest() >= 2);
+    }
+
+    @Test
+    void initSendsEntryPreloadAndZoomDoesNotCreateAnotherRequest() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720, new BlockPos(0, 64, 0), new BlockPos(256, 64, 0));
+        screen.init();
+
+        RoadPlannerMapPreloadRequestPacket first = screen.lastMapPreloadRequestForTest();
+        assertEquals(RoadPlannerMapPreloadRequestPacket.Purpose.ENTER_PLANNER_PRELOAD, first.purpose());
+
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        screen.mouseScrolled(map.x() + 50, map.y() + 50, 1.0D);
+
+        assertSame(first, screen.lastMapPreloadRequestForTest());
+    }
+
+    @Test
+    void autoCompleteResultTriggersRoutePreloadRequest() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.applyAutoCompleteResult(screen.state().sessionId(), true,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(256, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                "done");
+
+        assertEquals(RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD, screen.lastMapPreloadRequestForTest().purpose());
+    }
+
+    @Test
+    void forceRenderSelectionTriggersForceRenderPreloadRequest() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+
+        clickToolbarTool(screen, RoadToolType.FORCE_RENDER);
+        screen.mouseClicked(map.x() + 40, map.y() + 40, 0);
+        screen.mouseDragged(map.x() + 120, map.y() + 120, 0, 80, 80);
+        screen.mouseReleased(map.x() + 120, map.y() + 120, 0);
+
+        assertEquals(RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER, screen.lastMapPreloadRequestForTest().purpose());
+    }
+
+    @Test
+    void preloadProgressUpdatesStatusWhenRequestMatches() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720, new BlockPos(0, 64, 0), new BlockPos(256, 64, 0));
+        screen.init();
+        RoadPlannerMapPreloadRequestPacket request = screen.lastMapPreloadRequestForTest();
+
+        screen.applyMapPreloadProgress(new RoadPlannerMapPreloadProgressPacket(
+                request.sessionId(),
+                request.requestId(),
+                request.purpose(),
+                request.worldId(),
+                request.dimensionId(),
+                com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE,
+                1,
+                4,
+                RoadPlannerMapPreloadProgressPacket.State.SAMPLING,
+                "sampling"));
+
+        assertTrue(screen.mapStatusLineForTest().contains("sampling"));
     }
 
     @Test

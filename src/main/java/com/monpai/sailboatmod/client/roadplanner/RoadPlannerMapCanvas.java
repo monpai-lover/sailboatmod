@@ -85,6 +85,7 @@ public class RoadPlannerMapCanvas {
         tileManager.refreshWorldContext();
         RoadPlannerMapLayout.Rect mapRect = mapRect();
         double tileScreenSize = Math.max(16.0D, RoadPlannerTile.TILE_SIZE_BLOCKS * view.scale());
+        MapLod renderLod = RoadPlannerTileLodSelector.select(view.scale());
         int minWorldX = view.screenToWorldX(rect.x(), mapRect);
         int maxWorldX = view.screenToWorldX(rect.right(), mapRect);
         int minWorldZ = view.screenToWorldZ(rect.y(), mapRect);
@@ -95,7 +96,7 @@ public class RoadPlannerMapCanvas {
         int endTileZ = Math.floorDiv(Math.max(minWorldZ, maxWorldZ), RoadPlannerTile.TILE_SIZE_BLOCKS) + 1;
         for (int tileZ = startTileZ; tileZ <= endTileZ; tileZ++) {
             for (int tileX = startTileX; tileX <= endTileX; tileX++) {
-                RoadPlannerTile tile = tileManager.getOrCreateTile(tileX, tileZ);
+                RoadPlannerTile tile = tileManager.resolveRenderableTile(tileX, tileZ, renderLod);
                 int screenX = view.worldToScreenX(tileX * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
                 int screenZ = view.worldToScreenZ(tileZ * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
                 tile.render(graphics, screenX, screenZ, (int) Math.ceil(tileScreenSize) + 1);

@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
+import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
@@ -8,6 +10,7 @@ import net.minecraft.world.level.ChunkPos;
 
 import java.io.File;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,9 +22,17 @@ public class RoadPlannerTileManager implements AutoCloseable {
     private String dimensionId;
 
     public RoadPlannerTileManager(File rootDir) {
+        this(rootDir, detectWorldId(), detectDimensionId());
+    }
+
+    private RoadPlannerTileManager(File rootDir, String worldId, String dimensionId) {
         this.rootDir = rootDir;
-        this.worldId = detectWorldId();
-        this.dimensionId = detectDimensionId();
+        this.worldId = worldId == null || worldId.isBlank() ? "unknown" : worldId;
+        this.dimensionId = dimensionId == null || dimensionId.isBlank() ? "overworld" : dimensionId;
+    }
+
+    public static RoadPlannerTileManager forTest(File rootDir, String worldId, String dimensionId) {
+        return new RoadPlannerTileManager(rootDir, worldId, dimensionId);
     }
 
     public static RoadPlannerTileManager createDefault() {
@@ -41,25 +52,49 @@ public class RoadPlannerTileManager implements AutoCloseable {
     }
 
     public RoadPlannerTile getOrCreateTile(int tileX, int tileZ) {
-        RoadPlannerTileKey key = new RoadPlannerTileKey(worldId, dimensionId, tileX, tileZ);
-        RoadPlannerTile tile = loadedTiles.get(key);
-        if (tile == null) {
-            tile = new RoadPlannerTile(key);
-            tile.loadOrCreate(tileFile(key));
-            loadedTiles.put(key, tile);
-        }
+        return getOrCreateTile(tileX, tileZ, MapLod.LOD_1);
+    }
+
+    public RoadPlannerTile getOrCreateTile(int tileX, int tileZ, MapLod lod) {
+        MapLod safeLod = lod == null ? MapLod.LOD_1 : lod;
+        RoadPlannerTileKey key = new RoadPlannerTileKey(worldId, dimensionId, safeLod, tileX, tileZ);
+        RoadPlannerTile tile = loadedTiles.computeIfAbsent(key, candidate -> {
+            RoadPlannerTile created = new RoadPlannerTile(candidate);
+            created.loadOrCreate(tileFile(candidate));
+            return created;
+        });
         tile.markAccessed();
         return tile;
     }
 
     public boolean hasCachedTileForChunk(ChunkPos chunkPos) {
-        RoadPlannerTileKey key = new RoadPlannerTileKey(
-                worldId,
-                dimensionId,
-                Math.floorDiv(chunkPos.x, 16),
-                Math.floorDiv(chunkPos.z, 16)
-        );
+        return hasCachedTileForChunk(chunkPos, MapLod.LOD_1);
+    }
+
+    public boolean hasCachedTileForChunk(ChunkPos chunkPos, MapLod lod) {
+        if (chunkPos == null) {
+            return false;
+        }
+        int tileX = Math.floorDiv(chunkPos.x, 16);
+        int tileZ = Math.floorDiv(chunkPos.z, 16);
+        RoadPlannerTileKey key = new RoadPlannerTileKey(worldId, dimensionId, lod, tileX, tileZ);
         return tileFile(key).exists();
+    }
+
+    public RoadPlannerTile resolveRenderableTile(int tileX, int tileZ, MapLod preferredLod) {
+        for (MapLod lod : renderLodSearchOrder(preferredLod)) {
+            RoadPlannerTileKey key = new RoadPlannerTileKey(worldId, dimensionId, lod, tileX, tileZ);
+            RoadPlannerTile loaded = loadedTiles.get(key);
+            if (loaded != null) {
+                loaded.markAccessed();
+                return loaded;
+            }
+            File file = tileFile(key);
+            if (file.exists()) {
+                return getOrCreateTile(tileX, tileZ, lod);
+            }
+        }
+        return getOrCreateTile(tileX, tileZ, preferredLod);
     }
 
     public void updateLoadedChunksInTile(RoadPlannerTile tile) {
@@ -95,7 +130,7 @@ public class RoadPlannerTileManager implements AutoCloseable {
     public RoadPlannerTile ensureTileExists(ChunkPos chunkPos) {
         int tileX = Math.floorDiv(chunkPos.x, 16);
         int tileZ = Math.floorDiv(chunkPos.z, 16);
-        return getOrCreateTile(tileX, tileZ);
+        return getOrCreateTile(tileX, tileZ, MapLod.LOD_1);
     }
 
     public void applyChunkImage(ChunkPos chunkPos, RoadPlannerChunkImage chunkImage, RoadPlannerTile tile) {
@@ -115,7 +150,7 @@ public class RoadPlannerTileManager implements AutoCloseable {
         }
         int tileX = Math.floorDiv(chunkPos.x, 16);
         int tileZ = Math.floorDiv(chunkPos.z, 16);
-        RoadPlannerTile tile = loadedTiles.get(new RoadPlannerTileKey(worldId, dimensionId, tileX, tileZ));
+        RoadPlannerTile tile = loadedTiles.get(new RoadPlannerTileKey(worldId, dimensionId, MapLod.LOD_1, tileX, tileZ));
         if (tile == null) {
             chunkImage.close();
             return;
@@ -140,7 +175,7 @@ public class RoadPlannerTileManager implements AutoCloseable {
         Set<RoadPlannerTile> touched = new HashSet<>();
         int appliedPixels = 0;
         for (RoadPlannerSnapshotTileMapper.TilePixel pixel : RoadPlannerSnapshotTileMapper.map(packet)) {
-            RoadPlannerTile tile = getOrCreateTile(pixel.tileX(), pixel.tileZ());
+            RoadPlannerTile tile = getOrCreateTile(pixel.tileX(), pixel.tileZ(), packet.lod());
             tile.updatePixel(pixel.localX(), pixel.localZ(), pixel.argb());
             touched.add(tile);
             appliedPixels++;
@@ -151,30 +186,26 @@ public class RoadPlannerTileManager implements AutoCloseable {
         return appliedPixels;
     }
 
+    public int applyTileSync(RoadPlannerMapTileSyncPacket packet) {
+        if (packet == null) {
+            return 0;
+        }
+        if (!packet.worldId().isBlank() && !packet.worldId().equals(worldId)) {
+            return 0;
+        }
+        if (!packet.dimensionId().isBlank() && !packet.dimensionId().equals(dimensionId)) {
+            return 0;
+        }
+        RoadPlannerTile tile = getOrCreateTile(packet.tileX(), packet.tileZ(), packet.lod());
+        tile.replacePixels(packet.argbPixels());
+        saveTile(tile);
+        return 1;
+    }
+
     public void forceRenderChunk(ChunkPos chunkPos) {
         RoadPlannerChunkImage image = captureChunkImage(chunkPos);
         if (image != null) {
             applyChunkImage(chunkPos, image);
-        }
-    }
-
-    private void renderLoadedChunksInTile(RoadPlannerTile tile, ClientLevel level) {
-        boolean anyRendered = false;
-        int startChunkX = tile.key().tileX() * 16;
-        int startChunkZ = tile.key().tileZ() * 16;
-        for (int localZ = 0; localZ < 16; localZ++) {
-            for (int localX = 0; localX < 16; localX++) {
-                ChunkPos cp = new ChunkPos(startChunkX + localX, startChunkZ + localZ);
-                if (isChunkLoaded(level, cp)) {
-                    try (RoadPlannerChunkImage chunkImage = new RoadPlannerChunkImage(level, cp)) {
-                        tile.updateChunk(chunkImage, localX, localZ);
-                        anyRendered = true;
-                    }
-                }
-            }
-        }
-        if (anyRendered) {
-            tile.saveToFile(tileFile(tile.key()));
         }
     }
 
@@ -194,8 +225,19 @@ public class RoadPlannerTileManager implements AutoCloseable {
         }
     }
 
+    private List<MapLod> renderLodSearchOrder(MapLod preferredLod) {
+        MapLod safeLod = preferredLod == null ? MapLod.LOD_1 : preferredLod;
+        return switch (safeLod) {
+            case LOD_1 -> List.of(MapLod.LOD_1);
+            case LOD_2 -> List.of(MapLod.LOD_2, MapLod.LOD_1);
+            case LOD_4 -> List.of(MapLod.LOD_4, MapLod.LOD_2, MapLod.LOD_1);
+            case LOD_8 -> List.of(MapLod.LOD_8, MapLod.LOD_4, MapLod.LOD_2, MapLod.LOD_1);
+        };
+    }
+
     private File tileFile(RoadPlannerTileKey key) {
-        return new File(new File(new File(rootDir, key.worldId()), key.dimensionId()), key.fileName());
+        File lodDir = new File(new File(new File(rootDir, key.worldId()), key.dimensionId()), "lod_" + key.lod().blocksPerPixel());
+        return new File(lodDir, key.fileName());
     }
 
     private static String detectWorldId() {

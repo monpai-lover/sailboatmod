@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.nation.service.ClaimMapTaskService;
 import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerMapPreloadService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
@@ -39,6 +40,7 @@ public final class ServerEvents {
         ClaimPreviewTerrainService.onServerStarted(event.getServer());
         ClaimMapTaskService.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
+        RoadPlannerMapPreloadService.onServerStarted(event.getServer());
     }
 
     private static int cleanupTickCounter;
@@ -59,6 +61,7 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
                 RoadPlannerBuildControlService.global().tick(level);
+                RoadPlannerMapPreloadService.global().tick(level);
             });
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
@@ -105,6 +108,7 @@ public final class ServerEvents {
         com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerStopping();
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
+        RoadPlannerMapPreloadService.onServerStopped();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
     }

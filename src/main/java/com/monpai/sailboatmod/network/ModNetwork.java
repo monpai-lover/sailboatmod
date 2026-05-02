@@ -67,6 +67,10 @@ import com.monpai.sailboatmod.network.packet.UploadTownFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerActionMenuPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCancelPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteResultPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
@@ -560,6 +564,36 @@ public final class ModNetwork {
                 RoadMapSnapshotSyncPacket::encode,
                 RoadMapSnapshotSyncPacket::decode,
                 RoadMapSnapshotSyncPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerMapPreloadRequestPacket.class,
+                RoadPlannerMapPreloadRequestPacket::encode,
+                RoadPlannerMapPreloadRequestPacket::decode,
+                RoadPlannerMapPreloadRequestPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerMapPreloadCancelPacket.class,
+                RoadPlannerMapPreloadCancelPacket::encode,
+                RoadPlannerMapPreloadCancelPacket::decode,
+                RoadPlannerMapPreloadCancelPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerMapPreloadProgressPacket.class,
+                RoadPlannerMapPreloadProgressPacket::encode,
+                RoadPlannerMapPreloadProgressPacket::decode,
+                RoadPlannerMapPreloadProgressPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerMapTileSyncPacket.class,
+                RoadPlannerMapTileSyncPacket::encode,
+                RoadPlannerMapTileSyncPacket::decode,
+                RoadPlannerMapTileSyncPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(

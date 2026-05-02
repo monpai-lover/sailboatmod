@@ -32,6 +32,7 @@ class RoadMapRegionTest {
         assertEquals(1, MapLod.LOD_1.blocksPerPixel());
         assertEquals(2, MapLod.LOD_2.blocksPerPixel());
         assertEquals(4, MapLod.LOD_4.blocksPerPixel());
+        assertEquals(8, MapLod.LOD_8.blocksPerPixel());
 
         assertEquals(64, RoadMapRegion.centeredOn(BlockPos.ZERO, 128, MapLod.LOD_2).pixelWidth());
         assertEquals(32, RoadMapRegion.centeredOn(BlockPos.ZERO, 128, MapLod.LOD_4).pixelHeight());

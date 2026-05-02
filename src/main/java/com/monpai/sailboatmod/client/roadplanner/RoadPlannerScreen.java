@@ -4,6 +4,10 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCancelPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
 import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
@@ -64,6 +68,7 @@ public class RoadPlannerScreen extends Screen {
     private final RoadPlannerNodeHitTester nodeHitTester = new RoadPlannerNodeHitTester(8.0D);
     private final RoadPlannerEraseTool eraseTool = new RoadPlannerEraseTool();
     private final RoadPlannerDraftPersistence draftPersistence;
+    private final RoadPlannerRoutePreloadScheduler routePreloadScheduler = new RoadPlannerRoutePreloadScheduler();
     private RoadPlannerBuildSettings buildSettings = RoadPlannerBuildSettings.DEFAULTS;
     private RoadPlannerNodeSelection selectedNode;
     private BlockPos startTownPos = BlockPos.ZERO;
@@ -77,6 +82,9 @@ public class RoadPlannerScreen extends Screen {
     private BlockPos forceRenderSelectionEnd;
     private String statusLine = "\u8bf7\u5148\u9009\u62e9\u76ee\u6807 Town\uff0c\u518d\u5728\u8d77\u70b9 Town \u9886\u5730\u5185\u8bbe\u7f6e\u9053\u8def\u8d77\u70b9";
     private String mapStatusLine = "等待地图请求";
+    private RoadPlannerMapPreloadRequestPacket lastMapPreloadRequest;
+    private RoadPlannerMapPreloadProgressPacket lastMapPreloadProgress;
+    private RoadPlannerMapPreloadCancelPacket lastMapPreloadCancel;
     private boolean panning;
     private double lastMouseX;
     private double lastMouseY;
@@ -277,6 +285,111 @@ public class RoadPlannerScreen extends Screen {
         return mapStatusLine;
     }
 
+    public RoadPlannerMapPreloadRequestPacket lastMapPreloadRequestForTest() {
+        return lastMapPreloadRequest;
+    }
+
+    public RoadPlannerMapPreloadProgressPacket lastMapPreloadProgressForTest() {
+        return lastMapPreloadProgress;
+    }
+
+    public RoadPlannerMapPreloadCancelPacket lastMapPreloadCancelForTest() {
+        return lastMapPreloadCancel;
+    }
+
+    public void applyMapPreloadProgress(RoadPlannerMapPreloadProgressPacket packet) {
+        if (packet == null || !state.sessionId().equals(packet.sessionId())) {
+            return;
+        }
+        if (!routePreloadScheduler.acceptsResponse(packet.sessionId(), packet.requestId(), packet.purpose(), packet.worldId(), packet.dimensionId())) {
+            return;
+        }
+        lastMapPreloadProgress = packet;
+        int percent = packet.totalTiles() <= 0 ? 0 : Math.min(100, (int) Math.round(packet.completedTiles() * 100.0D / packet.totalTiles()));
+        String message = packet.message() == null || packet.message().isBlank() ? packet.state().name() : packet.message();
+        mapStatusLine = "地图预加载: " + percent + "% " + message;
+    }
+
+    public void applyMapTileSync(RoadPlannerMapTileSyncPacket packet) {
+        if (packet == null || !state.sessionId().equals(packet.sessionId())) {
+            return;
+        }
+        if (!routePreloadScheduler.acceptsResponse(packet.sessionId(), packet.requestId(), packet.purpose(), packet.worldId(), packet.dimensionId())) {
+            return;
+        }
+        if (tileManager != null) {
+            tileManager.applyTileSync(packet);
+            mapStatusLine = "地图: 已接收预加载切片";
+        }
+    }
+
+    private void requestEnterPlannerPreload() {
+        if (!hasTownRoute && linePlan.nodeCount() == 0) {
+            return;
+        }
+        String worldId = tileManager == null ? "" : tileManager.worldId();
+        String dimensionId = tileManager == null ? "" : tileManager.dimensionId();
+        routePreloadScheduler.entryRequest(
+                state.sessionId(),
+                worldId,
+                dimensionId,
+                startTownPos,
+                destinationTownPos,
+                linePlan.nodes())
+                .ifPresent(this::sendMapPreloadRequest);
+    }
+
+    private void requestRoutePreload(List<BlockPos> routeNodes) {
+        String worldId = tileManager == null ? "" : tileManager.worldId();
+        String dimensionId = tileManager == null ? "" : tileManager.dimensionId();
+        routePreloadScheduler.routeRequest(
+                state.sessionId(),
+                worldId,
+                dimensionId,
+                routeNodes)
+                .ifPresent(this::sendMapPreloadRequest);
+    }
+
+    private void requestForceRenderPreload(BlockPos start, BlockPos destination) {
+        String worldId = tileManager == null ? "" : tileManager.worldId();
+        String dimensionId = tileManager == null ? "" : tileManager.dimensionId();
+        routePreloadScheduler.forceRenderRequest(
+                state.sessionId(),
+                worldId,
+                dimensionId,
+                start,
+                destination)
+                .ifPresent(this::sendMapPreloadRequest);
+    }
+
+    private void sendMapPreloadRequest(RoadPlannerRoutePreloadScheduler.Request request) {
+        if (request == null) {
+            return;
+        }
+        lastMapPreloadRequest = request.toPacket();
+        mapStatusLine = switch (request.purpose()) {
+            case ENTER_PLANNER_PRELOAD -> "地图: 进入规划器预热中";
+            case ROUTE_PRELOAD -> "地图: 路线预热中";
+            case FORCE_RENDER -> "地图: 强制渲染预热中";
+        };
+        if (testMode || minecraft == null || minecraft.getConnection() == null) {
+            return;
+        }
+        ModNetwork.CHANNEL.sendToServer(lastMapPreloadRequest);
+    }
+
+    private void sendMapPreloadCancel() {
+        RoadPlannerRoutePreloadScheduler.Request activeRequest = routePreloadScheduler.latestRequest().orElse(null);
+        if (activeRequest == null) {
+            return;
+        }
+        lastMapPreloadCancel = activeRequest.toCancelPacket();
+        if (testMode || minecraft == null || minecraft.getConnection() == null) {
+            return;
+        }
+        ModNetwork.CHANNEL.sendToServer(lastMapPreloadCancel);
+    }
+
     public void applyMapSnapshot(RoadMapSnapshotSyncPacket packet) {
         if (packet == null || !state.sessionId().equals(packet.sessionId())) {
             return;
@@ -313,6 +426,7 @@ public class RoadPlannerScreen extends Screen {
         if (expanded.nodes().size() >= 2) {
             forceRenderQueue.enqueueCorridor(expanded.nodes().get(0), expanded.nodes().get(expanded.nodes().size() - 1), 64, "\u81ea\u52a8\u8def\u7ebf\u7f13\u5b58");
         }
+        requestRoutePreload(expanded.nodes());
         statusLine = message == null || message.isBlank() ? "\u81ea\u52a8\u8865\u5168\u5b8c\u6210" : message;
     }
 
@@ -331,11 +445,12 @@ public class RoadPlannerScreen extends Screen {
     @Override
     protected void init() {
         recomputeLayout();
-        requestInitialMapSnapshot();
+        requestEnterPlannerPreload();
     }
 
     @Override
     public void removed() {
+        sendMapPreloadCancel();
         super.removed();
         if (tileManager != null) {
             tileManager.close();
@@ -395,7 +510,6 @@ public class RoadPlannerScreen extends Screen {
         if (tileManager == null) {
             return;
         }
-        requestViewportMapSnapshot();
         renderPlayerAreaChunks(2);
         processCorridorDirect(2);
     }
@@ -445,7 +559,7 @@ public class RoadPlannerScreen extends Screen {
             RoadPlannerChunkImage image = new RoadPlannerChunkImage(mc.level, cp);
             int tileX = Math.floorDiv(cp.x, 16);
             int tileZ = Math.floorDiv(cp.z, 16);
-            RoadPlannerTile tile = tileManager.getOrCreateTile(tileX, tileZ);
+            RoadPlannerTile tile = tileManager.getOrCreateTile(tileX, tileZ, MapLod.LOD_1);
             int localX = Math.floorMod(cp.x, 16);
             int localZ = Math.floorMod(cp.z, 16);
             tile.updateChunkDirect(image, localX, localZ);
@@ -615,7 +729,7 @@ public class RoadPlannerScreen extends Screen {
         }
         RoadPlannerMapLayout.Rect inspector = mapLayout.inspector();
         fillPanel(graphics, inspector);
-        RoadPlannerForceRenderProgress progress = forceRenderQueue.progress();
+        MapProgressView progress = currentMapProgressView();
         graphics.drawString(font, "路线信息", inspector.x() + 10, inspector.y() + 10, RoadPlannerMapTheme.TEXT, false);
         graphics.drawString(font, "工具: " + state.activeTool(), inspector.x() + 10, inspector.y() + 30, RoadPlannerMapTheme.MUTED_TEXT, false);
         graphics.drawString(font, "起点: " + displayTownName(startTownName, "未选择"), inspector.x() + 10, inspector.y() + 48, RoadPlannerMapTheme.MUTED_TEXT, false);
@@ -652,11 +766,10 @@ public class RoadPlannerScreen extends Screen {
     private void renderStatusBar(GuiGraphics graphics) {
         RoadPlannerMapLayout.Rect status = mapLayout.statusBar();
         fillPanel(graphics, status);
-        RoadPlannerForceRenderProgress progress = forceRenderQueue.progress();
+        MapProgressView progress = currentMapProgressView();
         String routeText = "节点 " + linePlan.nodeCount() + " | " + displayTownName(startTownName, "未选择") + " -> "
                 + displayTownName(destinationTownName, "未选择") + " | " + progress.percent() + "%";
-        String progressText = progress.totalChunks() > 0 ? " 渲染 " + progress.label() + " " + progress.completedChunks() + "/" + progress.totalChunks() : "";
-        graphics.drawString(font, statusLine + " | " + routeText + progressText + " | " + mapStatusLine, status.x() + 10, status.y() + 9, RoadPlannerMapTheme.TEXT, false);
+        graphics.drawString(font, statusLine + " | " + routeText + " | " + progress.summary(), status.x() + 10, status.y() + 9, RoadPlannerMapTheme.TEXT, false);
     }
 
     private void renderProgressBar(GuiGraphics graphics, int x, int y, int width, int height, int percent) {
@@ -668,6 +781,31 @@ public class RoadPlannerScreen extends Screen {
         graphics.fill(rect.x() + 2, rect.y() + 2, rect.right() + 2, rect.bottom() + 2, RoadPlannerMapTheme.MAP_SHADOW);
         graphics.fill(rect.x() - 1, rect.y() - 1, rect.right() + 1, rect.bottom() + 1, RoadPlannerMapTheme.FLOATING_PANEL_BORDER);
         graphics.fill(rect.x(), rect.y(), rect.right(), rect.bottom(), RoadPlannerMapTheme.FLOATING_PANEL);
+    }
+
+    private MapProgressView currentMapProgressView() {
+        RoadPlannerMapPreloadProgressPacket packet = currentAcceptedMapPreloadProgress();
+        if (packet != null) {
+            int percent = packet.totalTiles() <= 0 ? 0 : Math.min(100, (int) Math.round(packet.completedTiles() * 100.0D / packet.totalTiles()));
+            String message = packet.message() == null || packet.message().isBlank() ? packet.state().name() : packet.message();
+            return new MapProgressView(percent, "预加载 " + percent + "% " + message);
+        }
+        RoadPlannerForceRenderProgress progress = forceRenderQueue.progress();
+        if (progress.totalChunks() > 0) {
+            return new MapProgressView(progress.percent(), "强制渲染 " + progress.label() + " " + progress.completedChunks() + "/" + progress.totalChunks());
+        }
+        return new MapProgressView(0, mapStatusLine);
+    }
+
+    private RoadPlannerMapPreloadProgressPacket currentAcceptedMapPreloadProgress() {
+        RoadPlannerMapPreloadProgressPacket packet = lastMapPreloadProgress;
+        if (packet == null) {
+            return null;
+        }
+        if (!routePreloadScheduler.acceptsResponse(packet.sessionId(), packet.requestId(), packet.purpose(), packet.worldId(), packet.dimensionId())) {
+            return null;
+        }
+        return packet;
     }
 
     private void drawLine(GuiGraphics graphics, int x1, int y1, int x2, int y2, int color, int thickness) {
@@ -832,7 +970,7 @@ public class RoadPlannerScreen extends Screen {
             BlockPos renderEnd = forceRenderSelectionEnd == null ? forceRenderSelectionStart : forceRenderSelectionEnd;
             tileRenderScheduler.clear();
             forceRenderQueue.enqueueSelection(forceRenderSelectionStart, renderEnd, "\u9009\u533a\u6e32\u67d3");
-            requestForceRenderMapSnapshot(forceRenderSelectionStart, renderEnd);
+            requestForceRenderPreload(forceRenderSelectionStart, renderEnd);
             statusLine = "\u5df2\u53d1\u9001\u5f3a\u5236\u6e32\u67d3\u9009\u533a";
             forceRenderSelectionStart = null;
             forceRenderSelectionEnd = null;
@@ -1294,5 +1432,8 @@ public class RoadPlannerScreen extends Screen {
         CLOSE_CONTEXT_MENU,
         CLOSE_TEXT_INPUT,
         CLOSE_SCREEN
+    }
+
+    private record MapProgressView(int percent, String summary) {
     }
 }

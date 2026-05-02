@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 
 import java.io.File;
 import java.io.IOException;
@@ -128,6 +129,23 @@ public class RoadPlannerTile implements AutoCloseable {
         dirty = true;
     }
 
+    public synchronized void replacePixels(int[] argbPixels) {
+        if (image == null || argbPixels == null || argbPixels.length != RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS) {
+            return;
+        }
+        for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
+            for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
+                image.setPixelRGBA(x, y, argbPixels[y * RoadMapTileSpec.TILE_PIXELS + x]);
+            }
+        }
+        loadedFromCache = true;
+        dirty = true;
+        if (texture != null) {
+            texture.upload();
+            dirty = false;
+        }
+    }
+
     public synchronized void render(GuiGraphics graphics, int x, int y, int size) {
         if (textureId == null) {
             return;
@@ -179,16 +197,21 @@ public class RoadPlannerTile implements AutoCloseable {
         if (image == null) {
             return;
         }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.getTextureManager() == null) {
+            return;
+        }
         texture = new DynamicTexture(image);
-        textureId = Minecraft.getInstance().getTextureManager().register(
-                "road_planner_tile_" + key.worldId() + "_" + key.dimensionId() + "_" + key.tileX() + "_" + key.tileZ(),
+        textureId = minecraft.getTextureManager().register(
+                "road_planner_tile_" + key.worldId() + "_" + key.dimensionId() + "_" + key.lod().name() + "_" + key.tileX() + "_" + key.tileZ(),
                 texture
         );
     }
 
     private void closeTextureOnly() {
-        if (textureId != null) {
-            Minecraft.getInstance().getTextureManager().release(textureId);
+        Minecraft minecraft = Minecraft.getInstance();
+        if (textureId != null && minecraft != null && minecraft.getTextureManager() != null) {
+            minecraft.getTextureManager().release(textureId);
             textureId = null;
         }
         if (texture != null) {
