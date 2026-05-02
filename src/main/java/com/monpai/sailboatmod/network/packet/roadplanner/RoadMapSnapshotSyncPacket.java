@@ -1,7 +1,11 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerScreen;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.Arrays;
@@ -105,6 +109,14 @@ public record RoadMapSnapshotSyncPacket(UUID sessionId,
     }
 
     public static void handle(RoadMapSnapshotSyncPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
+        contextSupplier.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleOnClient(packet)));
         contextSupplier.get().setPacketHandled(true);
+    }
+
+    private static void handleOnClient(RoadMapSnapshotSyncPacket packet) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof RoadPlannerScreen screen) {
+            screen.applyMapSnapshot(packet);
+        }
     }
 }
