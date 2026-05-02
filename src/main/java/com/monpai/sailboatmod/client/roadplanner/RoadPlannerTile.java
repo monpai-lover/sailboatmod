@@ -116,6 +116,18 @@ public class RoadPlannerTile implements AutoCloseable {
         dirty = true;
     }
 
+    public synchronized void updatePixel(int localX, int localZ, int argb) {
+        if (image == null) {
+            return;
+        }
+        if (localX < 0 || localX >= TILE_PIXEL_SIZE || localZ < 0 || localZ >= TILE_PIXEL_SIZE) {
+            return;
+        }
+        image.setPixelRGBA(localX, localZ, argb);
+        loadedFromCache = true;
+        dirty = true;
+    }
+
     public synchronized void render(GuiGraphics graphics, int x, int y, int size) {
         if (textureId == null) {
             return;

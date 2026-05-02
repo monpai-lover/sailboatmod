@@ -1,12 +1,15 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.world.level.ChunkPos;
 
 import java.io.File;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class RoadPlannerTileManager implements AutoCloseable {
@@ -27,6 +30,14 @@ public class RoadPlannerTileManager implements AutoCloseable {
 
     public int loadedTileCount() {
         return loadedTiles.size();
+    }
+
+    public String worldId() {
+        return worldId;
+    }
+
+    public String dimensionId() {
+        return dimensionId;
     }
 
     public RoadPlannerTile getOrCreateTile(int tileX, int tileZ) {
@@ -114,6 +125,30 @@ public class RoadPlannerTileManager implements AutoCloseable {
         tile.updateChunk(chunkImage, localX, localZ);
         chunkImage.close();
         tile.saveToFile(tileFile(tile.key()));
+    }
+
+    public int applySnapshot(RoadMapSnapshotSyncPacket packet) {
+        if (packet == null) {
+            return 0;
+        }
+        if (!packet.worldId().isBlank() && !packet.worldId().equals(worldId)) {
+            return 0;
+        }
+        if (!packet.dimensionId().isBlank() && !packet.dimensionId().equals(dimensionId)) {
+            return 0;
+        }
+        Set<RoadPlannerTile> touched = new HashSet<>();
+        int appliedPixels = 0;
+        for (RoadPlannerSnapshotTileMapper.TilePixel pixel : RoadPlannerSnapshotTileMapper.map(packet)) {
+            RoadPlannerTile tile = getOrCreateTile(pixel.tileX(), pixel.tileZ());
+            tile.updatePixel(pixel.localX(), pixel.localZ(), pixel.argb());
+            touched.add(tile);
+            appliedPixels++;
+        }
+        for (RoadPlannerTile tile : touched) {
+            saveTile(tile);
+        }
+        return appliedPixels;
     }
 
     public void forceRenderChunk(ChunkPos chunkPos) {
