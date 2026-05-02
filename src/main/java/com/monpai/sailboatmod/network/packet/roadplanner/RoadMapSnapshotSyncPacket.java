@@ -12,6 +12,8 @@ import java.util.function.Supplier;
 public record RoadMapSnapshotSyncPacket(UUID sessionId,
                                         String worldId,
                                         String dimensionId,
+                                        long requestId,
+                                        RoadMapSnapshotRequestPacket.Purpose purpose,
                                         int regionCenterX,
                                         int regionCenterZ,
                                         int regionSize,
@@ -23,6 +25,7 @@ public record RoadMapSnapshotSyncPacket(UUID sessionId,
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
         worldId = worldId == null ? "" : worldId;
         dimensionId = dimensionId == null ? "" : dimensionId;
+        purpose = purpose == null ? RoadMapSnapshotRequestPacket.Purpose.VIEWPORT : purpose;
         lod = lod == null ? MapLod.LOD_4 : lod;
         argbPixels = argbPixels == null ? new int[0] : Arrays.copyOf(argbPixels, argbPixels.length);
     }
@@ -31,6 +34,8 @@ public record RoadMapSnapshotSyncPacket(UUID sessionId,
         RoadPlannerPacketCodec.writeUuid(buffer, packet.sessionId());
         RoadPlannerPacketCodec.writeString(buffer, packet.worldId(), 128);
         RoadPlannerPacketCodec.writeString(buffer, packet.dimensionId(), 128);
+        buffer.writeVarLong(packet.requestId());
+        buffer.writeEnum(packet.purpose());
         buffer.writeInt(packet.regionCenterX());
         buffer.writeInt(packet.regionCenterZ());
         buffer.writeVarInt(packet.regionSize());
@@ -47,6 +52,8 @@ public record RoadMapSnapshotSyncPacket(UUID sessionId,
         UUID sessionId = RoadPlannerPacketCodec.readUuid(buffer);
         String worldId = buffer.readUtf(128);
         String dimensionId = buffer.readUtf(128);
+        long requestId = buffer.readVarLong();
+        RoadMapSnapshotRequestPacket.Purpose purpose = buffer.readEnum(RoadMapSnapshotRequestPacket.Purpose.class);
         int regionCenterX = buffer.readInt();
         int regionCenterZ = buffer.readInt();
         int regionSize = buffer.readVarInt();
@@ -58,7 +65,8 @@ public record RoadMapSnapshotSyncPacket(UUID sessionId,
         for (int index = 0; index < count; index++) {
             pixels[index] = buffer.readInt();
         }
-        return new RoadMapSnapshotSyncPacket(sessionId, worldId, dimensionId, regionCenterX, regionCenterZ, regionSize, lod, pixelWidth, pixelHeight, pixels);
+        return new RoadMapSnapshotSyncPacket(sessionId, worldId, dimensionId, requestId, purpose,
+                regionCenterX, regionCenterZ, regionSize, lod, pixelWidth, pixelHeight, pixels);
     }
 
     @Override
@@ -74,7 +82,8 @@ public record RoadMapSnapshotSyncPacket(UUID sessionId,
         if (!(other instanceof RoadMapSnapshotSyncPacket packet)) {
             return false;
         }
-        return regionCenterX == packet.regionCenterX
+        return requestId == packet.requestId
+                && regionCenterX == packet.regionCenterX
                 && regionCenterZ == packet.regionCenterZ
                 && regionSize == packet.regionSize
                 && pixelWidth == packet.pixelWidth
@@ -82,13 +91,15 @@ public record RoadMapSnapshotSyncPacket(UUID sessionId,
                 && Objects.equals(sessionId, packet.sessionId)
                 && Objects.equals(worldId, packet.worldId)
                 && Objects.equals(dimensionId, packet.dimensionId)
+                && purpose == packet.purpose
                 && lod == packet.lod
                 && Arrays.equals(argbPixels, packet.argbPixels);
     }
 
     @Override
     public int hashCode() {
-        int result = Objects.hash(sessionId, worldId, dimensionId, regionCenterX, regionCenterZ, regionSize, lod, pixelWidth, pixelHeight);
+        int result = Objects.hash(sessionId, worldId, dimensionId, requestId, purpose,
+                regionCenterX, regionCenterZ, regionSize, lod, pixelWidth, pixelHeight);
         result = 31 * result + Arrays.hashCode(argbPixels);
         return result;
     }

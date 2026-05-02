@@ -25,15 +25,15 @@ class RoadPlannerPacketRoundTripTest {
     }
 
     @Test
-    void snapshotRequestRoundTripsCorridorFields() {
+    void snapshotRequestRoundTripsViewportFields() {
         RoadMapSnapshotRequestPacket packet = new RoadMapSnapshotRequestPacket(
                 UUID.randomUUID(),
                 "world_a",
                 "minecraft:overworld",
-                new BlockPos(0, 64, 0),
-                new BlockPos(384, 70, 0),
-                List.of(new BlockPos(128, 65, 0)),
-                128,
+                42L,
+                RoadMapSnapshotRequestPacket.Purpose.INITIAL_VIEWPORT,
+                new BlockPos(128, 0, -64),
+                256,
                 MapLod.LOD_4);
 
         RoadMapSnapshotRequestPacket decoded = roundTrip(packet, RoadMapSnapshotRequestPacket::encode, RoadMapSnapshotRequestPacket::decode);
@@ -42,11 +42,13 @@ class RoadPlannerPacketRoundTripTest {
     }
 
     @Test
-    void snapshotSyncRoundTripsPixels() {
+    void snapshotSyncRoundTripsPixelsAndRequestIdentity() {
         RoadMapSnapshotSyncPacket packet = new RoadMapSnapshotSyncPacket(
                 UUID.randomUUID(),
                 "world_a",
                 "minecraft:overworld",
+                42L,
+                RoadMapSnapshotRequestPacket.Purpose.FORCE_RENDER,
                 0,
                 0,
                 128,
@@ -58,6 +60,8 @@ class RoadPlannerPacketRoundTripTest {
         RoadMapSnapshotSyncPacket decoded = roundTrip(packet, RoadMapSnapshotSyncPacket::encode, RoadMapSnapshotSyncPacket::decode);
 
         assertEquals(packet, decoded);
+        assertEquals(42L, decoded.requestId());
+        assertEquals(RoadMapSnapshotRequestPacket.Purpose.FORCE_RENDER, decoded.purpose());
         assertEquals(0xFF0000AA, decoded.argbPixels()[1]);
     }
 
