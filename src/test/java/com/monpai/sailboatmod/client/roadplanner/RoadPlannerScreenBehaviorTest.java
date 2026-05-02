@@ -1,5 +1,8 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
+import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
 import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphEdge;
@@ -189,6 +192,28 @@ class RoadPlannerScreenBehaviorTest {
         screen.handleContextActionForTest(RoadPlannerContextMenuAction.CONNECT_TOWN);
 
         assertEquals(RoadToolType.ENDPOINT, screen.activeToolForTest());
+    }
+
+    @Test
+    void staleSnapshotDoesNotMarkMapUpdated() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadMapSnapshotSyncPacket stale = new RoadMapSnapshotSyncPacket(
+                screen.state().sessionId(),
+                "world",
+                "minecraft:overworld",
+                999L,
+                RoadMapSnapshotRequestPacket.Purpose.INITIAL_VIEWPORT,
+                0,
+                0,
+                128,
+                MapLod.LOD_4,
+                32,
+                32,
+                new int[32 * 32]);
+
+        screen.applyMapSnapshot(stale);
+
+        assertTrue(screen.mapStatusLineForTest().contains("等待地图"));
     }
 
     private RoadRouteMetadata roadMetadata() {
