@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerMapCanvasTest {
@@ -42,6 +43,22 @@ class RoadPlannerMapCanvasTest {
         RoadPlannerMapInteractionResult result = canvas.rightClickGraph(RoadPlannerClientState.open(UUID.randomUUID()), graph, 30, 2, 220, 160);
 
         assertTrue(result.contextMenu().isPresent());
+    }
+
+    @Test
+    void canvasTileRequestsStayOnLod1AfterZoomingOut() {
+        RoadPlannerVanillaLayout.Rect rect = new RoadPlannerVanillaLayout.Rect(100, 60, 400, 300);
+        RoadPlannerMapView view = RoadPlannerMapView.centered(0, 0, 3.0D);
+        RoadPlannerMapCanvas canvas = new RoadPlannerMapCanvas(rect, component(rect), view, null);
+
+        var initialRequests = canvas.tileRequestsForTest();
+        view.zoomAround(300, 210, 0.1D, new RoadPlannerMapLayout.Rect(rect.x(), rect.y(), rect.width(), rect.height()));
+        var zoomedOutRequests = canvas.tileRequestsForTest();
+
+        assertFalse(initialRequests.isEmpty());
+        assertFalse(zoomedOutRequests.isEmpty());
+        assertTrue(initialRequests.stream().allMatch(request -> request.lod() == MapLod.LOD_1));
+        assertTrue(zoomedOutRequests.stream().allMatch(request -> request.lod() == MapLod.LOD_1));
     }
 
     private RoadPlannerMapComponent component(RoadPlannerVanillaLayout.Rect rect) {

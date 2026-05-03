@@ -8,6 +8,8 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 
+import java.util.List;
+
 public class RoadPlannerMapCanvas {
     private final RoadPlannerVanillaLayout.Rect rect;
     private final RoadPlannerMapComponent component;
@@ -81,27 +83,20 @@ public class RoadPlannerMapCanvas {
         render(graphics, font);
     }
 
+    List<RoadPlannerMapTileRenderPlanner.TileRequest> tileRequestsForTest() {
+        return tileRequestsForRender();
+    }
+
     private void renderTiles(GuiGraphics graphics) {
         tileManager.refreshWorldContext();
-        RoadPlannerMapLayout.Rect mapRect = mapRect();
-        double tileScreenSize = Math.max(16.0D, RoadPlannerTile.TILE_SIZE_BLOCKS * view.scale());
-        MapLod renderLod = RoadPlannerTileLodSelector.select(view.scale());
-        int minWorldX = view.screenToWorldX(rect.x(), mapRect);
-        int maxWorldX = view.screenToWorldX(rect.right(), mapRect);
-        int minWorldZ = view.screenToWorldZ(rect.y(), mapRect);
-        int maxWorldZ = view.screenToWorldZ(rect.bottom(), mapRect);
-        int startTileX = Math.floorDiv(Math.min(minWorldX, maxWorldX), RoadPlannerTile.TILE_SIZE_BLOCKS) - 1;
-        int endTileX = Math.floorDiv(Math.max(minWorldX, maxWorldX), RoadPlannerTile.TILE_SIZE_BLOCKS) + 1;
-        int startTileZ = Math.floorDiv(Math.min(minWorldZ, maxWorldZ), RoadPlannerTile.TILE_SIZE_BLOCKS) - 1;
-        int endTileZ = Math.floorDiv(Math.max(minWorldZ, maxWorldZ), RoadPlannerTile.TILE_SIZE_BLOCKS) + 1;
-        for (int tileZ = startTileZ; tileZ <= endTileZ; tileZ++) {
-            for (int tileX = startTileX; tileX <= endTileX; tileX++) {
-                RoadPlannerTile tile = tileManager.resolveRenderableTile(tileX, tileZ, renderLod);
-                int screenX = view.worldToScreenX(tileX * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
-                int screenZ = view.worldToScreenZ(tileZ * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
-                tile.render(graphics, screenX, screenZ, (int) Math.ceil(tileScreenSize) + 1);
-            }
+        for (RoadPlannerMapTileRenderPlanner.TileRequest request : tileRequestsForRender()) {
+            RoadPlannerTile tile = tileManager.resolveRenderableTile(request.tileX(), request.tileZ(), request.lod());
+            tile.render(graphics, request.screenX(), request.screenZ(), request.screenSize());
         }
+    }
+
+    private List<RoadPlannerMapTileRenderPlanner.TileRequest> tileRequestsForRender() {
+        return RoadPlannerMapTileRenderPlanner.plan(rect, view);
     }
 
     private void renderAnchorMarker(GuiGraphics graphics, Font font) {
