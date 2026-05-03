@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.Locale;
 
 public class RoadPlannerTile implements AutoCloseable {
     public static final int TILE_SIZE_BLOCKS = 256;
@@ -202,10 +203,19 @@ public class RoadPlannerTile implements AutoCloseable {
             return;
         }
         texture = new DynamicTexture(image);
-        textureId = minecraft.getTextureManager().register(
-                "road_planner_tile_" + key.worldId() + "_" + key.dimensionId() + "_" + key.lod().name() + "_" + key.tileX() + "_" + key.tileZ(),
-                texture
-        );
+        textureId = minecraft.getTextureManager().register(textureRegistrationName(key), texture);
+    }
+
+    static String textureRegistrationName(RoadPlannerTileKey key) {
+        return sanitizeTexturePath("road_planner_tile_" + key.worldId()
+                + "_" + key.dimensionId()
+                + "_lod_" + key.lod().blocksPerPixel()
+                + "_" + key.tileX()
+                + "_" + key.tileZ());
+    }
+
+    private static String sanitizeTexturePath(String value) {
+        return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9/._-]", "_");
     }
 
     private void closeTextureOnly() {
