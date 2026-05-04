@@ -115,7 +115,7 @@ public final class RoadPlannerWaterCrossingSplitter {
             RoadPlannerSegmentType bridgeType = span.bridgeType();
 
             if (!landEntry.equals(from) && !landEntry.equals(nodes.get(nodes.size() - 1).pos())) {
-                nodes.add(new SplitNode(landEntry, bridgeType));
+                nodes.add(new SplitNode(landEntry, RoadPlannerSegmentType.ROAD));
             }
 
             int bridgeSamples = Math.max(1, (span.endSampleIndex() - span.startSampleIndex()) / 3);
@@ -125,7 +125,7 @@ public final class RoadPlannerWaterCrossingSplitter {
                 nodes.add(new SplitNode(bridgeNode, bridgeType));
             }
 
-            nodes.add(new SplitNode(landExit, bridgeType));
+            nodes.add(new SplitNode(landExit, RoadPlannerSegmentType.ROAD));
         }
 
         BlockPos lastPos = nodes.get(nodes.size() - 1).pos();

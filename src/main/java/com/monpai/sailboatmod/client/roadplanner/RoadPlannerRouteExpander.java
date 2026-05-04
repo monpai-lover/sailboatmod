@@ -15,26 +15,57 @@ public final class RoadPlannerRouteExpander {
                                 List<RoadPlannerSegmentType> segmentTypes,
                                 RoadPlannerBridgeRuleService.LandProbe landProbe,
                                 RoadPlannerHeightSampler heightSampler) {
+        return expand(nodes, segmentTypes, landProbe, heightSampler, RoadPlannerWaterDepthProbe.shallowFromLandProbe(landProbe));
+    }
+
+    public static Result expand(List<BlockPos> nodes,
+                                List<RoadPlannerSegmentType> segmentTypes,
+                                RoadPlannerBridgeRuleService.LandProbe landProbe,
+                                RoadPlannerHeightSampler heightSampler,
+                                RoadPlannerWaterDepthProbe waterDepthProbe) {
         List<BlockPos> compactNodes = compact(nodes);
         if (compactNodes.size() < 2) {
             return Result.failure(compactNodes, normalizeSegments(segmentTypes, compactNodes.size()), "route_requires_two_nodes");
         }
         RoadPlannerBridgeRuleService.LandProbe safeLandProbe = landProbe == null ? (x, z) -> true : landProbe;
         RoadPlannerHeightSampler safeHeightSampler = heightSampler == null ? (x, z) -> 64 : heightSampler;
+        RoadPlannerWaterDepthProbe safeWaterDepthProbe = waterDepthProbe == null
+                ? RoadPlannerWaterDepthProbe.shallowFromLandProbe(safeLandProbe)
+                : waterDepthProbe;
         List<RoadPlannerSegmentType> compactTypes = normalizeSegments(segmentTypes, compactNodes.size());
         List<BlockPos> expandedNodes = new ArrayList<>();
         List<RoadPlannerSegmentType> expandedTypes = new ArrayList<>();
         addDistinct(expandedNodes, compactNodes.get(0));
-        for (int segmentIndex = 0; segmentIndex < compactNodes.size() - 1; segmentIndex++) {
+        int segmentIndex = 0;
+        while (segmentIndex < compactNodes.size() - 1) {
             BlockPos from = compactNodes.get(segmentIndex);
             BlockPos to = compactNodes.get(segmentIndex + 1);
             RoadPlannerSegmentType requestedType = compactTypes.get(segmentIndex);
-            List<SegmentPoint> segmentPoints = expandSegment(from, to, requestedType, safeLandProbe, safeHeightSampler);
+            List<SegmentPoint> segmentPoints = null;
+            int consumedSegments = 1;
+            if (requestedType == RoadPlannerSegmentType.ROAD
+                    && !safeLandProbe.isLand(to.getX(), to.getZ())
+                    && segmentIndex + 2 < compactNodes.size()
+                    && compactTypes.get(segmentIndex + 1) == RoadPlannerSegmentType.ROAD) {
+                BlockPos nextLandAnchor = compactNodes.get(segmentIndex + 2);
+                if (safeLandProbe.isLand(from.getX(), from.getZ()) && safeLandProbe.isLand(nextLandAnchor.getX(), nextLandAnchor.getZ())) {
+                    List<SegmentPoint> combinedPoints = expandSegment(from, nextLandAnchor, RoadPlannerSegmentType.ROAD,
+                            safeLandProbe, safeHeightSampler, safeWaterDepthProbe);
+                    if (combinedPoints.stream().anyMatch(point -> isBridge(point.segmentType()))) {
+                        segmentPoints = combinedPoints;
+                        consumedSegments = 2;
+                    }
+                }
+            }
+            if (segmentPoints == null) {
+                segmentPoints = expandSegment(from, to, requestedType, safeLandProbe, safeHeightSampler, safeWaterDepthProbe);
+            }
             for (int index = 1; index < segmentPoints.size(); index++) {
                 SegmentPoint previous = segmentPoints.get(index - 1);
                 SegmentPoint point = segmentPoints.get(index);
-                addConnectedNode(expandedNodes, expandedTypes, point.pos(), segmentTypeForConnection(previous, point, safeLandProbe));
+                addConnectedNode(expandedNodes, expandedTypes, point.pos(), segmentTypeForConnection(previous, point));
             }
+            segmentIndex += consumedSegments;
         }
         RoadPlannerBridgeSegmentNormalizer.Result normalized = RoadPlannerBridgeSegmentNormalizer.normalize(expandedNodes, expandedTypes, safeLandProbe);
         boolean hasBridge = normalized.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL);
@@ -46,14 +77,15 @@ public final class RoadPlannerRouteExpander {
                                                     BlockPos to,
                                                     RoadPlannerSegmentType requestedType,
                                                     RoadPlannerBridgeRuleService.LandProbe landProbe,
-                                                    RoadPlannerHeightSampler heightSampler) {
+                                                    RoadPlannerHeightSampler heightSampler,
+                                                    RoadPlannerWaterDepthProbe waterDepthProbe) {
         if (requestedType == RoadPlannerSegmentType.TUNNEL) {
             return interpolateTyped(from, to, RoadPlannerSegmentType.TUNNEL, heightSampler);
         }
         if (requestedType == RoadPlannerSegmentType.BRIDGE_MAJOR || requestedType == RoadPlannerSegmentType.BRIDGE_SMALL) {
             return interpolateTyped(from, to, requestedType, heightSampler);
         }
-        RoadPlannerWaterCrossingSplitter.SplitResult split = RoadPlannerWaterCrossingSplitter.split(from, to, landProbe, heightSampler);
+        RoadPlannerWaterCrossingSplitter.SplitResult split = RoadPlannerWaterCrossingSplitter.split(from, to, landProbe, heightSampler, waterDepthProbe);
         if (split.didSplit()) {
             List<SegmentPoint> points = new ArrayList<>();
             for (RoadPlannerWaterCrossingSplitter.SplitNode node : split.nodes()) {
@@ -129,8 +161,7 @@ public final class RoadPlannerRouteExpander {
     }
 
     private static RoadPlannerSegmentType segmentTypeForConnection(SegmentPoint previous,
-                                                                    SegmentPoint point,
-                                                                    RoadPlannerBridgeRuleService.LandProbe landProbe) {
+                                                                    SegmentPoint point) {
         RoadPlannerSegmentType previousType = previous.segmentType();
         RoadPlannerSegmentType pointType = point.segmentType();
         if (previousType == RoadPlannerSegmentType.BRIDGE_MAJOR || pointType == RoadPlannerSegmentType.BRIDGE_MAJOR) {
@@ -142,28 +173,11 @@ public final class RoadPlannerRouteExpander {
         if (previousType == RoadPlannerSegmentType.TUNNEL || pointType == RoadPlannerSegmentType.TUNNEL) {
             return RoadPlannerSegmentType.TUNNEL;
         }
-        if (segmentTouchesWater(previous.pos(), point.pos(), landProbe)) {
-            return RoadPlannerSegmentType.BRIDGE_SMALL;
-        }
         return RoadPlannerSegmentType.ROAD;
     }
 
-    private static boolean segmentTouchesWater(BlockPos from,
-                                               BlockPos to,
-                                               RoadPlannerBridgeRuleService.LandProbe landProbe) {
-        int dx = to.getX() - from.getX();
-        int dz = to.getZ() - from.getZ();
-        double distance = Math.sqrt(dx * dx + dz * dz);
-        int steps = Math.max(1, (int) Math.ceil(distance / 2.0D));
-        for (int step = 0; step <= steps; step++) {
-            double t = step / (double) steps;
-            int x = (int) Math.round(from.getX() + dx * t);
-            int z = (int) Math.round(from.getZ() + dz * t);
-            if (!landProbe.isLand(x, z)) {
-                return true;
-            }
-        }
-        return false;
+    private static boolean isBridge(RoadPlannerSegmentType type) {
+        return type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL;
     }
 
     private record SegmentPoint(BlockPos pos, RoadPlannerSegmentType segmentType) {

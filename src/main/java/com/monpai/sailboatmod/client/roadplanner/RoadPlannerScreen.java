@@ -29,7 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
-public class RoadPlannerScreen extends Screen {
+public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncReceiver {
     private static final List<RoadToolType> TOOLS = List.of(
             RoadToolType.SELECT,
             RoadToolType.ROAD,
@@ -189,6 +189,35 @@ public class RoadPlannerScreen extends Screen {
         BlockPos surface = new BlockPos(x, surfaceY, z);
         return !level.getBlockState(surface).getFluidState().is(Fluids.WATER)
                 && !level.getBlockState(surface.above()).getFluidState().is(Fluids.WATER);
+    }
+
+    private static int clientWaterDepth(int x, int z) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.level == null) {
+            return 0;
+        }
+        ClientLevel level = minecraft.level;
+        int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+        if (surfaceY < level.getMinBuildHeight()) {
+            return 0;
+        }
+        BlockPos surface = new BlockPos(x, surfaceY, z);
+        if (!level.getBlockState(surface).getFluidState().is(Fluids.WATER)
+                && !level.getBlockState(surface.above()).getFluidState().is(Fluids.WATER)) {
+            return 0;
+        }
+        int depth = 0;
+        for (int y = surfaceY; y >= level.getMinBuildHeight(); y--) {
+            BlockPos probe = new BlockPos(x, y, z);
+            if (!level.getBlockState(probe).getFluidState().is(Fluids.WATER)) {
+                break;
+            }
+            depth++;
+            if (depth >= 16) {
+                break;
+            }
+        }
+        return depth;
     }
 
     public static RoadPlannerScreen forTest(UUID sessionId, int width, int height) {
@@ -968,7 +997,6 @@ public class RoadPlannerScreen extends Screen {
                 forceRenderSelectionEnd = canvas.mouseToWorld(mouseX, mouseY);
             }
             BlockPos renderEnd = forceRenderSelectionEnd == null ? forceRenderSelectionStart : forceRenderSelectionEnd;
-            tileRenderScheduler.clear();
             forceRenderQueue.enqueueSelection(forceRenderSelectionStart, renderEnd, "\u9009\u533a\u6e32\u67d3");
             requestForceRenderPreload(forceRenderSelectionStart, renderEnd);
             statusLine = "\u5df2\u53d1\u9001\u5f3a\u5236\u6e32\u67d3\u9009\u533a";
@@ -1156,7 +1184,8 @@ public class RoadPlannerScreen extends Screen {
                 nodes,
                 segmentTypes,
                 RoadPlannerScreen::isClientLand,
-                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain()
+                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain(),
+                testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth
         );
     }
 
@@ -1170,7 +1199,8 @@ public class RoadPlannerScreen extends Screen {
                 from,
                 target,
                 RoadPlannerScreen::isClientLand,
-                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain()
+                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain(),
+                testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth
         );
         if (!split.didSplit()) {
             linePlan.addClickNode(target, segmentTypeForConnection(target, segmentType));
@@ -1252,8 +1282,7 @@ public class RoadPlannerScreen extends Screen {
                 statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u8d77\u70b9";
             } else {
                 destinationTownPos = target.immutable();
-                linePlan.setEndNode(target, segmentTypeForConnection(target, RoadPlannerSegmentType.ROAD));
-                statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u7ec8\u70b9";
+                statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u7ec8\u70b9\uff0c\u672a\u81ea\u52a8\u8fde\u63a5";
             }
             selectedNode = null;
             saveDraft();
@@ -1273,10 +1302,9 @@ public class RoadPlannerScreen extends Screen {
                 return true;
             }
             destinationTownPos = target.immutable();
-            linePlan.setEndNode(target, segmentTypeForConnection(target, RoadPlannerSegmentType.ROAD));
             selectedNode = null;
             saveDraft();
-            statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u7ec8\u70b9";
+            statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u7ec8\u70b9\uff0c\u672a\u81ea\u52a8\u8fde\u63a5";
             return true;
         }
         statusLine = "\u7aef\u70b9\u5fc5\u987b\u653e\u5728\u8d77\u70b9\u6216\u76ee\u6807 Town \u9886\u5730\u5185";

@@ -98,6 +98,49 @@ class RoadPlannerRouteExpanderTest {
         assertFalse(isBridge(expanded.segmentTypes().get(expanded.segmentTypes().size() - 1)), "land exit should remain road");
     }
 
+    @Test
+    void tinyWaterNoiseDoesNotBecomeBridgeDuringConnectionTyping() {
+        RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                (x, z) -> x < 18 || x > 20,
+                (x, z) -> 64,
+                (x, z) -> x >= 18 && x <= 20 ? 1 : 0
+        );
+
+        assertTrue(expanded.success());
+        assertTrue(expanded.segmentTypes().stream().allMatch(type -> type == RoadPlannerSegmentType.ROAD));
+    }
+
+    @Test
+    void narrowWaterCrossingUsesSmallBridgeSegment() {
+        RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                (x, z) -> x < 16 || x > 23,
+                (x, z) -> 64,
+                (x, z) -> x >= 16 && x <= 23 ? 1 : 0
+        );
+
+        assertTrue(expanded.success());
+        assertTrue(expanded.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_SMALL));
+        assertFalse(expanded.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR));
+    }
+
+    @Test
+    void narrowDeepWaterCrossingUsesMajorBridgeSegment() {
+        RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                (x, z) -> x < 16 || x > 23,
+                (x, z) -> 64,
+                (x, z) -> x >= 16 && x <= 23 ? 3 : 0
+        );
+
+        assertTrue(expanded.success());
+        assertTrue(expanded.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR));
+    }
+
     private static boolean isBridge(RoadPlannerSegmentType type) {
         return type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL;
     }
