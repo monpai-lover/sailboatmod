@@ -34,6 +34,7 @@ import java.util.Set;
 public final class RoadPlannerPreviewRenderer {
     private static final double MAX_PREVIEW_RENDER_DISTANCE = 64.0D;
     private static final int MAX_PREVIEW_RENDER_BLOCKS = 1024;
+    private static final int MAX_WIREFRAME_RENDER_BLOCKS = 4096;
     private static final double MAX_MODEL_RENDER_DISTANCE_SQR = 48.0D * 48.0D;
     private static final double MAX_WIREFRAME_RENDER_DISTANCE_SQR = 64.0D * 64.0D;
     private static List<RoadPlannerClientHooks.PreviewGhostBlock> cachedRenderList = List.of();
@@ -57,11 +58,15 @@ public final class RoadPlannerPreviewRenderer {
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
         Vec3 cameraPos = event.getCamera().getPosition();
-        List<RoadPlannerClientHooks.PreviewGhostBlock> renderGhostBlocks = getCachedRenderList(
+        List<RoadPlannerClientHooks.PreviewGhostBlock> modelGhostBlocks = getCachedRenderList(
                 preview.ghostBlocks(),
                 player.blockPosition(),
                 MAX_PREVIEW_RENDER_DISTANCE,
                 MAX_PREVIEW_RENDER_BLOCKS
+        );
+        List<RoadPlannerClientHooks.PreviewGhostBlock> wireframeGhostBlocks = previewWireframeRenderList(
+                preview.ghostBlocks(),
+                MAX_WIREFRAME_RENDER_BLOCKS
         );
 
         // Phase 1: Render translucent block models only for nearby blocks
@@ -70,7 +75,7 @@ public final class RoadPlannerPreviewRenderer {
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
-        for (RoadPlannerClientHooks.PreviewGhostBlock block : renderGhostBlocks) {
+        for (RoadPlannerClientHooks.PreviewGhostBlock block : modelGhostBlocks) {
             if (block.pos().distSqr(player.blockPosition()) > MAX_MODEL_RENDER_DISTANCE_SQR) {
                 continue;
             }
@@ -94,10 +99,7 @@ public final class RoadPlannerPreviewRenderer {
         // Phase 2: Render line wireframes (get line consumer AFTER block rendering is done)
         VertexConsumer lineConsumer = bufferSource.getBuffer(RenderType.lines());
 
-        for (RoadPlannerClientHooks.PreviewGhostBlock block : renderGhostBlocks) {
-            if (block.pos().distSqr(player.blockPosition()) > MAX_WIREFRAME_RENDER_DISTANCE_SQR) {
-                continue;
-            }
+        for (RoadPlannerClientHooks.PreviewGhostBlock block : wireframeGhostBlocks) {
             float lineR, lineG, lineB;
             if (block.state().is(net.minecraft.world.level.block.Blocks.STONE_BRICKS)) {
                 lineR = 0.95F; lineG = 0.55F; lineB = 0.15F;
@@ -451,6 +453,13 @@ public final class RoadPlannerPreviewRenderer {
         return List.copyOf(filtered);
     }
 
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> previewWireframeRenderList(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            int maxBlocks
+    ) {
+        return previewRenderList(blocks, null, -1.0D, maxBlocks);
+    }
+
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
         return previewBox(pos, cameraPos);
     }
@@ -475,6 +484,13 @@ public final class RoadPlannerPreviewRenderer {
             int maxBlocks
     ) {
         return previewRenderList(blocks, focusPos, maxDistance, maxBlocks);
+    }
+
+    static List<RoadPlannerClientHooks.PreviewGhostBlock> previewWireframeRenderListForTest(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            int maxBlocks
+    ) {
+        return previewWireframeRenderList(blocks, maxBlocks);
     }
 
     static Component planningHeadlineForTest(RoadPlannerClientHooks.PlanningProgressState state) {

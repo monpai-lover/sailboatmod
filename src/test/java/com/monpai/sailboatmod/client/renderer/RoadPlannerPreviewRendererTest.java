@@ -81,6 +81,26 @@ class RoadPlannerPreviewRendererTest {
 
         assertEquals(List.of(first, second), filtered);
     }
+
+    @Test
+    void wireframePreviewListKeepsFarBridgeBlocks() {
+        RoadPlannerClientHooks.PreviewGhostBlock near = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(0, 64, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+        RoadPlannerClientHooks.PreviewGhostBlock far = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(180, 64, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+
+        List<RoadPlannerClientHooks.PreviewGhostBlock> wireframe = RoadPlannerPreviewRenderer.previewWireframeRenderListForTest(
+                List.of(near, far),
+                4096
+        );
+
+        assertEquals(List.of(near, far), wireframe);
+    }
+
     @Test
     void blockBoxesUseExactCameraOffset() {
         RoadPlannerPreviewRenderer.PreviewBox box = RoadPlannerPreviewRenderer.previewBoxForTest(
