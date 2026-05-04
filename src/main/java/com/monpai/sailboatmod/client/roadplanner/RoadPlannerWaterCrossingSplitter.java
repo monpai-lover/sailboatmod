@@ -6,8 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class RoadPlannerWaterCrossingSplitter {
-    private static final int SAMPLE_SPACING = 4;
-    private static final int MIN_WATER_SAMPLES = 2;
+    private static final int SAMPLE_SPACING = 1;
+    private static final int MIN_BRIDGE_WATER_BLOCKS = 4;
+    private static final int SMALL_BRIDGE_MAX_BLOCKS = 24;
+    private static final int MAJOR_BRIDGE_MIN_DEPTH = 3;
 
     private RoadPlannerWaterCrossingSplitter() {
     }
@@ -15,14 +17,24 @@ public final class RoadPlannerWaterCrossingSplitter {
     public static SplitResult split(BlockPos from, BlockPos to,
                                     RoadPlannerBridgeRuleService.LandProbe landProbe,
                                     RoadPlannerHeightSampler heightSampler) {
+        return split(from, to, landProbe, heightSampler, RoadPlannerWaterDepthProbe.shallowFromLandProbe(landProbe));
+    }
+
+    public static SplitResult split(BlockPos from, BlockPos to,
+                                    RoadPlannerBridgeRuleService.LandProbe landProbe,
+                                    RoadPlannerHeightSampler heightSampler,
+                                    RoadPlannerWaterDepthProbe waterDepthProbe) {
         if (from == null || to == null || landProbe == null) {
             return SplitResult.noSplit();
         }
         boolean fromLand = landProbe.isLand(from.getX(), from.getZ());
         boolean toLand = landProbe.isLand(to.getX(), to.getZ());
         if (fromLand && toLand) {
+            RoadPlannerWaterDepthProbe safeDepthProbe = waterDepthProbe == null
+                    ? RoadPlannerWaterDepthProbe.shallowFromLandProbe(landProbe)
+                    : waterDepthProbe;
             List<SamplePoint> samples = sampleLine(from, to, landProbe);
-            List<WaterSpan> spans = detectWaterSpans(samples);
+            List<WaterSpan> spans = detectWaterSpans(samples, safeDepthProbe);
             if (spans.isEmpty()) {
                 return SplitResult.noSplit();
             }
@@ -46,17 +58,25 @@ public final class RoadPlannerWaterCrossingSplitter {
         return samples;
     }
 
-    private static List<WaterSpan> detectWaterSpans(List<SamplePoint> samples) {
+    private static List<WaterSpan> detectWaterSpans(List<SamplePoint> samples, RoadPlannerWaterDepthProbe waterDepthProbe) {
         List<WaterSpan> spans = new ArrayList<>();
         int i = 0;
         while (i < samples.size()) {
             if (!samples.get(i).land()) {
                 int spanStart = i;
+                int maxDepth = 0;
                 while (i < samples.size() && !samples.get(i).land()) {
+                    SamplePoint sample = samples.get(i);
+                    maxDepth = Math.max(maxDepth, Math.max(0, waterDepthProbe.waterDepthAt(sample.x(), sample.z())));
                     i++;
                 }
-                if (i - spanStart >= MIN_WATER_SAMPLES) {
-                    spans.add(new WaterSpan(spanStart, i - 1));
+                int spanEnd = i - 1;
+                int spanBlocks = Math.max(1, spanEnd - spanStart + 1) * SAMPLE_SPACING;
+                if (spanBlocks >= MIN_BRIDGE_WATER_BLOCKS) {
+                    RoadPlannerSegmentType bridgeType = maxDepth >= MAJOR_BRIDGE_MIN_DEPTH || spanBlocks > SMALL_BRIDGE_MAX_BLOCKS
+                            ? RoadPlannerSegmentType.BRIDGE_MAJOR
+                            : RoadPlannerSegmentType.BRIDGE_SMALL;
+                    spans.add(new WaterSpan(spanStart, spanEnd, spanBlocks, maxDepth, bridgeType));
                 }
             } else {
                 i++;
@@ -92,11 +112,7 @@ public final class RoadPlannerWaterCrossingSplitter {
             BlockPos landEntry = posAt(from, dx, dy, dz, shoreStart.t(), heightSampler);
             BlockPos landExit = posAt(from, dx, dy, dz, shoreEnd.t(), heightSampler);
 
-            int spanWidth = span.endSampleIndex() - span.startSampleIndex();
-            int spanBlocks = spanWidth * SAMPLE_SPACING;
-            RoadPlannerSegmentType bridgeType = spanBlocks <= 24
-                    ? RoadPlannerSegmentType.BRIDGE_SMALL
-                    : RoadPlannerSegmentType.BRIDGE_MAJOR;
+            RoadPlannerSegmentType bridgeType = span.bridgeType();
 
             if (!landEntry.equals(from) && !landEntry.equals(nodes.get(nodes.size() - 1).pos())) {
                 nodes.add(new SplitNode(landEntry, bridgeType));
@@ -128,7 +144,11 @@ public final class RoadPlannerWaterCrossingSplitter {
     }
 
     public record SamplePoint(int x, int z, double t, boolean land) {}
-    public record WaterSpan(int startSampleIndex, int endSampleIndex) {}
+    public record WaterSpan(int startSampleIndex,
+                            int endSampleIndex,
+                            int spanBlocks,
+                            int maxDepth,
+                            RoadPlannerSegmentType bridgeType) {}
     public record SplitNode(BlockPos pos, RoadPlannerSegmentType segmentType) {}
 
     public record SplitResult(boolean didSplit, List<SplitNode> nodes) {
