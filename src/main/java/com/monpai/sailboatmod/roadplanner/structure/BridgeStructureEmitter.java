@@ -4,8 +4,6 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
-import com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverBuildCandidate;
-import com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverSegmentPaver;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -17,6 +15,9 @@ public final class BridgeStructureEmitter {
     private static final int MAJOR_HEIGHT_BONUS = 5;
     private static final int SMALL_HEIGHT_BONUS = 3;
     private static final int PIER_INTERVAL = 4;
+
+    private record BridgeProfile(List<RoadCenterlinePoint> points, int deckStartInclusive, int deckEndExclusive) {
+    }
 
     private BridgeStructureEmitter() {
     }
@@ -60,27 +61,23 @@ public final class BridgeStructureEmitter {
         }
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
-        int heightBonus = span.sourceSegmentType() == RoadPlannerSegmentType.BRIDGE_SMALL ? SMALL_HEIGHT_BONUS : MAJOR_HEIGHT_BONUS;
-        int entryY = points.get(0).targetY();
-        int exitY = points.get(points.size() - 1).targetY();
-        int terrainFloor = points.stream().mapToInt(RoadCenterlinePoint::terrainY).min().orElse(Math.min(entryY, exitY));
-        int deckY = Math.max(Math.max(entryY, exitY) + heightBonus, terrainFloor + 6);
-        int entryRampLen = Math.min(Math.max(2, (deckY - entryY) * 2), Math.max(1, points.size() / 4));
-        int exitRampLen = Math.min(Math.max(2, (deckY - exitY) * 2), Math.max(1, points.size() / 4));
-        int deckStart = Math.min(points.size() - 1, entryRampLen);
-        int deckEndExclusive = Math.max(deckStart + 1, points.size() - exitRampLen);
+        BridgeProfile profile = buildBridgeProfile(points, span);
+        List<RoadCenterlinePoint> bridgeProfile = profile.points();
+        int deckStart = profile.deckStartInclusive();
+        int deckEndExclusive = profile.deckEndExclusive();
 
         for (int index = 0; index < points.size(); index++) {
-            RoadCenterlinePoint point = points.get(index);
-            int y = bridgeY(index, points.size(), entryY, exitY, deckY, entryRampLen, exitRampLen);
+            RoadCenterlinePoint point = bridgeProfile.get(index);
+            int y = point.targetY();
             boolean ramp = index < deckStart || index >= deckEndExclusive;
             BlockState state = ramp ? rampState(settings, index) : settings.surfaceState();
             BuildPhase phase = ramp ? BuildPhase.RAMP : BuildPhase.DECK;
             BlockPos center = new BlockPos(point.pos().getX(), y, point.pos().getZ());
-            for (WeaverBuildCandidate candidate : WeaverSegmentPaver.paveCenterline(List.of(center), settings.width(), state)) {
-                steps.add(new BuildStep(order++, candidate.pos(), candidate.state(), phase));
+            List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
+            for (BlockPos surfacePos : footprint) {
+                steps.add(new BuildStep(order++, surfacePos, state, phase));
             }
-            steps.addAll(railings(points, index, center, settings, order));
+            steps.addAll(railings(bridgeProfile, index, center, settings, order));
             order = startOrder + steps.size();
             if (!ramp && index % PIER_INTERVAL == 0) {
                 int bottomY = Math.min(point.terrainY(), y - 1);
@@ -92,19 +89,56 @@ public final class BridgeStructureEmitter {
         return List.copyOf(steps);
     }
 
-    private static int bridgeY(int index, int total, int entryY, int exitY, int deckY, int entryRampLen, int exitRampLen) {
-        if (index < entryRampLen && entryRampLen > 0) {
-            return (int) Math.round(entryY + (deckY - entryY) * (index / (double) entryRampLen));
+    private static BlockState rampState(RoadPlannerBuildSettings settings, int index) {
+        return (index & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
+    }
+
+    private static BridgeProfile buildBridgeProfile(List<RoadCenterlinePoint> points, RoadSpan span) {
+        int entryY = points.get(0).targetY();
+        int exitY = points.get(points.size() - 1).targetY();
+        int terrainFloor = points.stream().mapToInt(RoadCenterlinePoint::terrainY).min().orElse(Math.min(entryY, exitY));
+        boolean smallBridge = span.sourceSegmentType() == RoadPlannerSegmentType.BRIDGE_SMALL;
+        int desiredDeckY = smallBridge
+                ? Math.max(Math.max(entryY, exitY) + 1, terrainFloor + 2)
+                : Math.max(Math.max(entryY, exitY) + MAJOR_HEIGHT_BONUS, terrainFloor + 6);
+        int maxAvailableRampSamples = Math.max(2, Math.max(1, (points.size() - 2) / 2));
+        int maxDeckYFromEntry = entryY + maxAvailableRampSamples;
+        int maxDeckYFromExit = exitY + maxAvailableRampSamples;
+        int deckY = Math.min(desiredDeckY, Math.min(maxDeckYFromEntry, maxDeckYFromExit));
+        deckY = Math.max(deckY, Math.max(entryY, exitY) + 1);
+
+        int entryRampLen = Math.max(2, Math.min(points.size() / 3, Math.abs(deckY - entryY) + 1));
+        int exitRampLen = Math.max(2, Math.min(points.size() / 3, Math.abs(deckY - exitY) + 1));
+        int deckStart = Math.min(points.size() - 1, entryRampLen);
+        int deckEndExclusive = Math.max(deckStart + 1, points.size() - exitRampLen);
+
+        List<RoadCenterlinePoint> adjusted = new ArrayList<>(points.size());
+        for (int index = 0; index < points.size(); index++) {
+            RoadCenterlinePoint point = points.get(index);
+            int y = bridgeY(index, points.size(), entryY, exitY, deckY, entryRampLen, exitRampLen);
+            adjusted.add(point.withTargetY(y));
         }
-        if (index >= total - exitRampLen && exitRampLen > 0) {
-            int remaining = total - 1 - index;
-            return (int) Math.round(exitY + (deckY - exitY) * (remaining / (double) exitRampLen));
+        return new BridgeProfile(List.copyOf(adjusted), deckStart, deckEndExclusive);
+    }
+
+    private static int bridgeY(int index, int total, int entryY, int exitY, int deckY, int entryRampLen, int exitRampLen) {
+        if (index < entryRampLen && entryRampLen > 1) {
+            return monotonicRampY(entryY, deckY, index, entryRampLen - 1);
+        }
+        if (index >= total - exitRampLen && exitRampLen > 1) {
+            int localIndex = total - 1 - index;
+            return monotonicRampY(exitY, deckY, localIndex, exitRampLen - 1);
         }
         return deckY;
     }
 
-    private static BlockState rampState(RoadPlannerBuildSettings settings, int index) {
-        return (index & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
+    private static int monotonicRampY(int lowY, int highY, int localIndexFromLowEnd, int maxLocalIndex) {
+        int delta = highY - lowY;
+        if (delta <= 0 || maxLocalIndex <= 0) {
+            return highY;
+        }
+        int rise = Math.min(delta, localIndexFromLowEnd);
+        return lowY + rise;
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,
@@ -112,25 +146,12 @@ public final class BridgeStructureEmitter {
                                             BlockPos center,
                                             RoadPlannerBuildSettings settings,
                                             int startOrder) {
-        int dx = 0;
-        int dz = 0;
-        if (index + 1 < points.size()) {
-            dx = Integer.compare(points.get(index + 1).pos().getX() - center.getX(), 0);
-            dz = Integer.compare(points.get(index + 1).pos().getZ() - center.getZ(), 0);
-        } else if (index > 0) {
-            dx = Integer.compare(center.getX() - points.get(index - 1).pos().getX(), 0);
-            dz = Integer.compare(center.getZ() - points.get(index - 1).pos().getZ(), 0);
-        }
-        if (dx == 0 && dz == 0) {
-            dx = 1;
-        }
-        int halfWidth = settings.width() / 2;
-        int perpX = -dz;
-        int perpZ = dx;
         BlockState rail = Blocks.OAK_FENCE.defaultBlockState();
-        return List.of(
-                new BuildStep(startOrder, center.offset(perpX * (halfWidth + 1), 1, perpZ * (halfWidth + 1)), rail, BuildPhase.RAILING),
-                new BuildStep(startOrder + 1, center.offset(perpX * -(halfWidth + 1), 1, perpZ * -(halfWidth + 1)), rail, BuildPhase.RAILING)
-        );
+        List<BlockPos> positions = RoadFootprintPlanner.railingPositions(points, index, center, settings.width());
+        List<BuildStep> steps = new ArrayList<>(positions.size());
+        for (BlockPos pos : positions) {
+            steps.add(new BuildStep(startOrder + steps.size(), pos, rail, BuildPhase.RAILING));
+        }
+        return List.copyOf(steps);
     }
 }

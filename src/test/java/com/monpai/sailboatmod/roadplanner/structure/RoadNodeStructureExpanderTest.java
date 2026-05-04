@@ -163,6 +163,26 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void northSouthRoadUsesCrossPathWidthInsteadOfLengthwiseResampling() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(0, 64, 8)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(64),
+                RoadStructureMode.BUILD
+        );
+
+        List<BlockPos> surface = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.SURFACE)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        assertTrue(surface.contains(new BlockPos(-2, 64, 0)), "width should extend west of a north-south road");
+        assertTrue(surface.contains(new BlockPos(2, 64, 0)), "width should extend east of a north-south road");
+        assertFalse(surface.contains(new BlockPos(0, 64, -2)), "width must not extend backwards along the road direction");
+    }
+
+    @Test
     void smoothedSteepRoadEmitsRampSteps() {
         RoadTerrainSampler steep = (x, z) -> 64 + x * 2;
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
@@ -195,6 +215,87 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING));
         assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER));
         assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING));
+    }
+
+    @Test
+    void northSouthBridgeDeckAndRailingsUseCrossPathWidth() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(0, 64, 24)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        List<BlockPos> deck = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+        List<BlockPos> railings = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        int deckY = deck.stream()
+                .filter(pos -> pos.getZ() == 12 && pos.getX() == 0)
+                .mapToInt(BlockPos::getY)
+                .max()
+                .orElseThrow();
+        assertTrue(deck.contains(new BlockPos(-2, deckY, 12)), "bridge deck width should extend west/east");
+        assertTrue(deck.contains(new BlockPos(2, deckY, 12)), "bridge deck width should extend west/east");
+        assertTrue(railings.contains(new BlockPos(-3, deckY + 1, 12)), "left railing should sit outside west edge");
+        assertTrue(railings.contains(new BlockPos(3, deckY + 1, 12)), "right railing should sit outside east edge");
+    }
+
+    @Test
+    void shortSmallBridgeStillEmitsRampAndDeck() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_SMALL),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(62),
+                RoadStructureMode.BUILD
+        );
+
+        assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP));
+        assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK));
+        assertBridgeCenterlineDoesNotJumpMoreThanOneBlock(result);
+    }
+
+    @Test
+    void bridgeRampProfileDoesNotJumpMoreThanOneBlockPerSample() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        assertBridgeCenterlineDoesNotJumpMoreThanOneBlock(result);
+    }
+
+    private static void assertBridgeCenterlineDoesNotJumpMoreThanOneBlock(RoadNodeExpansionResult result) {
+        List<BlockPos> centerRampAndDeck = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP
+                        || step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .filter(pos -> pos.getZ() == 0)
+                .sorted(java.util.Comparator.<BlockPos>comparingInt(BlockPos::getX).thenComparingInt(BlockPos::getY))
+                .toList();
+
+        int previousX = Integer.MIN_VALUE;
+        int previousY = Integer.MIN_VALUE;
+        for (BlockPos pos : centerRampAndDeck) {
+            if (pos.getX() == previousX) {
+                continue;
+            }
+            if (previousX != Integer.MIN_VALUE) {
+                assertTrue(Math.abs(pos.getY() - previousY) <= 1, "bridge y jump at x=" + pos.getX());
+            }
+            previousX = pos.getX();
+            previousY = pos.getY();
+        }
     }
 
     @Test
