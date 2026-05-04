@@ -143,4 +143,25 @@ class RoadPlannerBuildControlServiceTest {
         assertFalse(service.buildFor(playerId).isPresent());
         assertTrue(service.progressSnapshotsForTest().isEmpty());
     }
+
+
+    @Test
+    void confirmedBridgePreviewQueuesRampPierAndRailingSteps() {
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService();
+        UUID playerId = UUID.randomUUID();
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+
+        UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
+
+        var queue = service.buildQueueForTest(jobId).orElseThrow();
+        assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.RAMP));
+        assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.PIER));
+        assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.RAILING));
+        assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.DECK));
+    }
 }

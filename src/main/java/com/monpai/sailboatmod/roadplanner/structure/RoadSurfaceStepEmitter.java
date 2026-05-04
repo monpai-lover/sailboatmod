@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverBuildCandidate;
 import com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverSegmentPaver;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LanternBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
@@ -48,7 +49,49 @@ public final class RoadSurfaceStepEmitter {
                 steps.add(new BuildStep(order++, candidate.pos(), candidate.state(), surfacePhase));
             }
         }
+        order = addStreetlights(steps, centerline, spans, safeSettings, order);
         return List.copyOf(steps);
+    }
+
+    private static int addStreetlights(List<BuildStep> steps,
+                                       List<RoadCenterlinePoint> centerline,
+                                       List<RoadSpan> spans,
+                                       RoadPlannerBuildSettings settings,
+                                       int order) {
+        if (!settings.streetlightsEnabled()) {
+            return order;
+        }
+        int distance = 0;
+        for (int index = 0; index < centerline.size(); index++) {
+            if (!isRoadIndex(spans, index)) {
+                continue;
+            }
+            boolean place = index == 0 || index == centerline.size() - 1 || distance >= 24;
+            if (place) {
+                BlockPos center = new BlockPos(centerline.get(index).pos().getX(), centerline.get(index).targetY(), centerline.get(index).pos().getZ());
+                int dx = 0;
+                int dz = 0;
+                if (index + 1 < centerline.size()) {
+                    dx = Integer.compare(centerline.get(index + 1).pos().getX() - center.getX(), 0);
+                    dz = Integer.compare(centerline.get(index + 1).pos().getZ() - center.getZ(), 0);
+                } else if (index > 0) {
+                    dx = Integer.compare(center.getX() - centerline.get(index - 1).pos().getX(), 0);
+                    dz = Integer.compare(center.getZ() - centerline.get(index - 1).pos().getZ(), 0);
+                }
+                if (dx == 0 && dz == 0) {
+                    dx = 1;
+                }
+                int perpX = -dz;
+                int perpZ = dx;
+                BlockPos base = center.offset(perpX * (settings.width() / 2 + 1), 1, perpZ * (settings.width() / 2 + 1));
+                steps.add(new BuildStep(order++, base, Blocks.OAK_FENCE.defaultBlockState(), BuildPhase.STREETLIGHT));
+                steps.add(new BuildStep(order++, base.above(), Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, true), BuildPhase.STREETLIGHT));
+                distance = 0;
+            } else {
+                distance++;
+            }
+        }
+        return order;
     }
 
     private static boolean isRoadIndex(List<RoadSpan> spans, int index) {
