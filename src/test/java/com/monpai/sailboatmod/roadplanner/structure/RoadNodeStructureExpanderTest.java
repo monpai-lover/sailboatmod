@@ -145,4 +145,36 @@ class RoadNodeStructureExpanderTest {
         assertTrue(maxDelta <= 1, "integer targetY must not jump more than one block between samples");
         assertTrue(result.centerline().stream().anyMatch(point -> point.targetY() < point.terrainY()));
     }
+
+
+    @Test
+    void flatRoadEmitsFoundationAndSurfaceSteps() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(64),
+                RoadStructureMode.BUILD
+        );
+
+        assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.FOUNDATION));
+        assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.SURFACE));
+        assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == com.monpai.sailboatmod.road.model.BuildPhase.SURFACE));
+    }
+
+    @Test
+    void smoothedSteepRoadEmitsRampSteps() {
+        RoadTerrainSampler steep = (x, z) -> 64 + x * 2;
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(12, 88, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                steep,
+                RoadStructureMode.BUILD
+        );
+
+        assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP));
+        assertTrue(result.buildSteps().stream().anyMatch(step -> step.state().isAir()));
+        assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.FOUNDATION && !step.state().isAir()));
+    }
 }

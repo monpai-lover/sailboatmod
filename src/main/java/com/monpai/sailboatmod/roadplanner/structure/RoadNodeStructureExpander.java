@@ -3,7 +3,10 @@ package com.monpai.sailboatmod.roadplanner.structure;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import net.minecraft.core.BlockPos;
+import com.monpai.sailboatmod.road.model.BuildPhase;
+import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.List;
 
@@ -51,14 +54,61 @@ public final class RoadNodeStructureExpander {
             allCenterline.addAll(smoothedCenterline);
             centerlineOffset += smoothedCenterline.size();
         }
+        java.util.List<BuildStep> steps = new java.util.ArrayList<>();
+        steps.addAll(RoadSurfaceStepEmitter.emit(allCenterline, allSpans, settings, steps.size()));
+        java.util.List<BuildStep> dedupedSteps = dedupeAndReorder(steps);
+        java.util.List<RoadPreviewBlock> previewBlocks = previewBlocksFromSteps(dedupedSteps);
         return new RoadNodeExpansionResult(
                 canonicalNodes,
                 canonicalSegmentTypes,
                 allCenterline,
                 allSpans,
-                List.of(),
-                List.of(),
+                previewBlocks,
+                dedupedSteps,
                 List.of()
         );
+    }
+
+    private static java.util.List<RoadPreviewBlock> previewBlocksFromSteps(java.util.List<BuildStep> steps) {
+        if (steps == null || steps.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<RoadPreviewBlock> preview = new java.util.ArrayList<>();
+        for (BuildStep step : steps) {
+            if (isVisiblePreviewStep(step)) {
+                preview.add(new RoadPreviewBlock(step.pos(), step.state(), step.phase()));
+            }
+        }
+        return java.util.List.copyOf(preview);
+    }
+
+    private static boolean isVisiblePreviewStep(BuildStep step) {
+        if (step == null || step.pos() == null || step.state() == null || step.phase() == null || step.state().isAir()) {
+            return false;
+        }
+        return switch (step.phase()) {
+            case SURFACE, RAMP, DECK, PIER, RAILING, STREETLIGHT -> true;
+            case FOUNDATION -> false;
+        };
+    }
+
+    private static java.util.List<BuildStep> dedupeAndReorder(java.util.List<BuildStep> steps) {
+        java.util.Set<StepKey> seen = new java.util.LinkedHashSet<>();
+        java.util.List<BuildStep> deduped = new java.util.ArrayList<>();
+        if (steps != null) {
+            for (BuildStep step : steps) {
+                if (step == null || step.pos() == null || step.state() == null || step.phase() == null) {
+                    continue;
+                }
+                StepKey key = new StepKey(step.pos().immutable(), step.phase(), step.state());
+                if (seen.add(key)) {
+                    deduped.add(new BuildStep(deduped.size(), step.pos(), step.state(), step.phase()));
+                }
+            }
+        }
+        return java.util.List.copyOf(deduped);
+    }
+
+    private record StepKey(BlockPos pos, BuildPhase phase, BlockState state) {
     }
 }
