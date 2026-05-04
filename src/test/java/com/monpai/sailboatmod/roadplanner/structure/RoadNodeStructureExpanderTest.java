@@ -108,4 +108,41 @@ class RoadNodeStructureExpanderTest {
         assertEquals(0, result.buildSteps().size());
         assertEquals(0, result.previewBlocks().size());
     }
+
+
+    @Test
+    void buildsContinuousCenterlineAndBridgeSpan() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(64),
+                RoadStructureMode.PREVIEW
+        );
+
+        assertFalse(result.centerline().isEmpty());
+        assertEquals(new BlockPos(0, 64, 0), result.centerline().get(0).pos());
+        assertEquals(new BlockPos(8, 64, 0), result.centerline().get(result.centerline().size() - 1).pos());
+        assertTrue(result.spans().stream().anyMatch(span -> span.type() == RoadSpanType.ROAD));
+        assertTrue(result.spans().stream().anyMatch(span -> span.type() == RoadSpanType.BRIDGE));
+    }
+
+    @Test
+    void steepRoadTerrainIsSmoothedForCartTravel() {
+        RoadTerrainSampler steep = (x, z) -> 64 + x * 2;
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 80, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                steep,
+                RoadStructureMode.PREVIEW
+        );
+
+        int maxDelta = 0;
+        for (int i = 1; i < result.centerline().size(); i++) {
+            maxDelta = Math.max(maxDelta, Math.abs(result.centerline().get(i).targetY() - result.centerline().get(i - 1).targetY()));
+        }
+        assertTrue(maxDelta <= 1, "integer targetY must not jump more than one block between samples");
+        assertTrue(result.centerline().stream().anyMatch(point -> point.targetY() < point.terrainY()));
+    }
 }

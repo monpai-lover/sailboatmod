@@ -36,11 +36,26 @@ public final class RoadNodeStructureExpander {
                     List.of(RoadStructureIssue.error("路径节点不足，至少需要两个有效节点。"))
             );
         }
+        List<BlockPos> canonicalNodes = RoadRouteSectionNormalizer.flattenNodes(sections);
+        List<RoadPlannerSegmentType> canonicalSegmentTypes = RoadRouteSectionNormalizer.flattenSegmentTypes(sections);
+        java.util.List<RoadCenterlinePoint> allCenterline = new java.util.ArrayList<>();
+        java.util.List<RoadSpan> allSpans = new java.util.ArrayList<>();
+        int centerlineOffset = 0;
+        for (RoadRouteSection section : sections) {
+            List<RoadCenterlinePoint> rawCenterline = RoadCenterlineBuilder.build(section, terrainSampler);
+            List<RoadSpan> rawSpans = RoadSpanClassifier.classify(rawCenterline);
+            List<RoadCenterlinePoint> smoothedCenterline = RoadHeightProfileSmoother.smooth(rawCenterline, rawSpans);
+            for (RoadSpan span : rawSpans) {
+                allSpans.add(new RoadSpan(span.type(), span.startIndex() + centerlineOffset, span.endIndex() + centerlineOffset, span.sourceSegmentType()));
+            }
+            allCenterline.addAll(smoothedCenterline);
+            centerlineOffset += smoothedCenterline.size();
+        }
         return new RoadNodeExpansionResult(
-                RoadRouteSectionNormalizer.flattenNodes(sections),
-                RoadRouteSectionNormalizer.flattenSegmentTypes(sections),
-                List.of(),
-                List.of(),
+                canonicalNodes,
+                canonicalSegmentTypes,
+                allCenterline,
+                allSpans,
                 List.of(),
                 List.of(),
                 List.of()
