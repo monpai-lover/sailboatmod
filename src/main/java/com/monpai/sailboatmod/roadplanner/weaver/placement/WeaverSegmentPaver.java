@@ -24,10 +24,9 @@ public final class WeaverSegmentPaver {
         int radius = width / 2;
         for (int index = 0; index < centers.size(); index++) {
             BlockPos center = centers.get(index);
-            for (int ox = -radius; ox <= radius; ox++) {
-                for (int oz = -radius; oz <= radius; oz++) {
-                    footprint.add(center.offset(ox, 0, oz));
-                }
+            Direction2d direction = directionAt(centers, index);
+            for (int offset = -radius; offset <= radius; offset++) {
+                footprint.add(center.offset(direction.normalX() * offset, 0, direction.normalZ() * offset));
             }
         }
 
