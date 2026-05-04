@@ -8,6 +8,9 @@ import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
+import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
+import com.monpai.sailboatmod.roadplanner.structure.RoadStructureMode;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -62,11 +65,18 @@ public class RoadPlannerBuildControlService {
         return Optional.ofNullable(buildQueues.get(jobId));
     }
 
+    public static RoadNodeExpansionResult previewExpansion(List<BlockPos> nodes,
+                                                           List<RoadPlannerSegmentType> segmentTypes,
+                                                           RoadPlannerBuildSettings settings,
+                                                           ServerLevel level) {
+        return RoadNodeStructureExpander.expand(nodes, segmentTypes, settings, level, RoadStructureMode.PREVIEW);
+    }
+
     public static List<BuildStep> previewBuildSteps(List<BlockPos> nodes,
                                                     List<RoadPlannerSegmentType> segmentTypes,
                                                     RoadPlannerBuildSettings settings,
                                                     ServerLevel level) {
-        return buildSteps(new PreviewSnapshot(nodes, segmentTypes, settings), level);
+        return previewExpansion(nodes, segmentTypes, settings, level).buildSteps();
     }
 
     public Optional<UUID> confirmPreview(UUID playerId, UUID requestedId, ServerLevel level) {

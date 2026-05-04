@@ -5,13 +5,14 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
+import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
+import com.monpai.sailboatmod.roadplanner.structure.RoadPreviewBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkEvent;
-import com.monpai.sailboatmod.road.model.BuildStep;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -104,25 +105,12 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
     }
 
     private List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocksFromBuildSteps(ServerLevel level) {
-        List<BuildStep> steps = RoadPlannerBuildControlService.previewBuildSteps(nodes, segmentTypes, settings, level);
+        RoadNodeExpansionResult expansion = RoadPlannerBuildControlService.previewExpansion(nodes, segmentTypes, settings, level);
         List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks = new ArrayList<>();
-        for (BuildStep step : steps) {
-            if (!isVisiblePreviewStep(step)) {
-                continue;
-            }
-            ghostBlocks.add(new SyncRoadPlannerPreviewPacket.GhostBlock(step.pos(), step.state()));
+        for (RoadPreviewBlock block : expansion.previewBlocks()) {
+            ghostBlocks.add(new SyncRoadPlannerPreviewPacket.GhostBlock(block.pos(), block.state()));
         }
         return List.copyOf(ghostBlocks);
-    }
-
-    private static boolean isVisiblePreviewStep(BuildStep step) {
-        if (step == null || step.pos() == null || step.state() == null || step.phase() == null || step.state().isAir()) {
-            return false;
-        }
-        return switch (step.phase()) {
-            case SURFACE, DECK, STREETLIGHT -> true;
-            default -> false;
-        };
     }
 
     private List<SyncRoadPlannerPreviewPacket.BridgeRange> bridgeRangesFromSegments() {

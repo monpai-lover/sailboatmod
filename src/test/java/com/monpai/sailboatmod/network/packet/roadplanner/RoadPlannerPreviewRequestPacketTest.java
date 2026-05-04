@@ -60,18 +60,19 @@ class RoadPlannerPreviewRequestPacketTest {
     }
 
     @Test
-    void placeholderPreviewUsesCompiledBuildStepsForBridgeDeckGhosts() {
+    void previewUsesUnifiedBridgeExpansionForRampPierAndRailingGhosts() {
         RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
                 "A",
                 "B",
-                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
                 List.of(RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE),
                 new RoadPlannerBuildSettings(5, "stone_bricks", false)
         );
 
         List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks = packet.toPreviewPacketForTest().ghostBlocks();
 
-        assertTrue(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.SPRUCE_PLANKS));
+        assertTrue(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.STONE_BRICKS));
+        assertTrue(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.OAK_FENCE));
         assertFalse(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.DIRT));
         assertFalse(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.COBBLESTONE));
     }
