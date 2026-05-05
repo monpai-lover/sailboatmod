@@ -8,6 +8,10 @@ import net.minecraft.world.level.levelgen.Heightmap;
 public interface RoadTerrainSampler {
     int terrainY(int x, int z);
 
+    default int waterSurfaceY(int x, int z) {
+        return terrainY(x, z) - 1;
+    }
+
     default int oceanFloorY(int x, int z) {
         return terrainY(x, z) - 1;
     }
@@ -28,6 +32,11 @@ public interface RoadTerrainSampler {
             @Override
             public int terrainY(int x, int z) {
                 return level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z);
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z) - 1;
             }
 
             @Override

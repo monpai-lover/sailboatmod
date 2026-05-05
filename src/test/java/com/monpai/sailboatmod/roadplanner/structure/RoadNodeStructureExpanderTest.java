@@ -248,7 +248,7 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
-    void shortSmallBridgeStillEmitsRampAndDeck() {
+    void shortSmallBridgeSkipsPiersLikeActualBridgeBuilder() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
                 List.of(RoadPlannerSegmentType.BRIDGE_SMALL),
@@ -257,9 +257,8 @@ class RoadNodeStructureExpanderTest {
                 RoadStructureMode.BUILD
         );
 
-        assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP));
         assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK));
-        assertBridgeCenterlineDoesNotJumpMoreThanOneBlock(result);
+        assertFalse(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER));
     }
 
     @Test
