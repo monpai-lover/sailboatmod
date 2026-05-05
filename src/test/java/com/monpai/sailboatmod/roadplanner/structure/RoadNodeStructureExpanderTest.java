@@ -298,6 +298,42 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void longBridgePiersUseOceanFloorAndActualDeckHeight() {
+        RoadTerrainSampler waterSampler = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 63, 0), new BlockPos(24, 63, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                waterSampler,
+                RoadStructureMode.BUILD
+        );
+
+        List<BlockPos> piers = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        assertFalse(piers.isEmpty());
+        assertEquals(54, piers.stream().mapToInt(BlockPos::getY).min().orElseThrow());
+        assertEquals(68, piers.stream().mapToInt(BlockPos::getY).max().orElseThrow());
+    }
+
+    @Test
     void blockedBridgeMarkerBuildsAsMajorBridge() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),

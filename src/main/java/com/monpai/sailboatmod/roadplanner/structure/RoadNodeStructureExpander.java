@@ -56,7 +56,7 @@ public final class RoadNodeStructureExpander {
         }
         java.util.List<BuildStep> steps = new java.util.ArrayList<>();
         steps.addAll(RoadSurfaceStepEmitter.emit(allCenterline, allSpans, settings, steps.size()));
-        steps.addAll(BridgeStructureEmitter.emit(allCenterline, allSpans, settings, BridgeTemplateProvider.empty(), steps.size()));
+        steps.addAll(BridgeStructureEmitter.emit(allCenterline, allSpans, settings, BridgeTemplateProvider.empty(), steps.size(), terrainSampler));
         java.util.List<BuildStep> dedupedSteps = dedupeAndReorder(steps);
         java.util.List<RoadPreviewBlock> previewBlocks = previewBlocksFromSteps(dedupedSteps);
         return new RoadNodeExpansionResult(
