@@ -32,10 +32,8 @@ import java.util.Set;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class RoadPlannerPreviewRenderer {
-    private static final double MAX_PREVIEW_RENDER_DISTANCE = 64.0D;
-    private static final int MAX_PREVIEW_RENDER_BLOCKS = 1024;
+    private static final int MAX_MODEL_RENDER_BLOCKS = 4096;
     private static final int MAX_WIREFRAME_RENDER_BLOCKS = 4096;
-    private static final double MAX_MODEL_RENDER_DISTANCE_SQR = 48.0D * 48.0D;
     private static final double MAX_WIREFRAME_RENDER_DISTANCE_SQR = 64.0D * 64.0D;
     private static List<RoadPlannerClientHooks.PreviewGhostBlock> cachedRenderList = List.of();
     private static int cachedPreviewHash = 0;
@@ -58,11 +56,9 @@ public final class RoadPlannerPreviewRenderer {
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
         Vec3 cameraPos = event.getCamera().getPosition();
-        List<RoadPlannerClientHooks.PreviewGhostBlock> modelGhostBlocks = getCachedRenderList(
+        List<RoadPlannerClientHooks.PreviewGhostBlock> modelGhostBlocks = previewModelRenderList(
                 preview.ghostBlocks(),
-                player.blockPosition(),
-                MAX_PREVIEW_RENDER_DISTANCE,
-                MAX_PREVIEW_RENDER_BLOCKS
+                MAX_MODEL_RENDER_BLOCKS
         );
         List<RoadPlannerClientHooks.PreviewGhostBlock> wireframeGhostBlocks = previewWireframeRenderList(
                 preview.ghostBlocks(),
@@ -76,9 +72,6 @@ public final class RoadPlannerPreviewRenderer {
         RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 0.4F);
         for (RoadPlannerClientHooks.PreviewGhostBlock block : modelGhostBlocks) {
-            if (block.pos().distSqr(player.blockPosition()) > MAX_MODEL_RENDER_DISTANCE_SQR) {
-                continue;
-            }
             poseStack.pushPose();
             poseStack.translate(
                     block.pos().getX() - cameraPos.x,
@@ -460,6 +453,13 @@ public final class RoadPlannerPreviewRenderer {
         return previewRenderList(blocks, null, -1.0D, maxBlocks);
     }
 
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> previewModelRenderList(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            int maxBlocks
+    ) {
+        return previewRenderList(blocks, null, -1.0D, maxBlocks);
+    }
+
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
         return previewBox(pos, cameraPos);
     }
@@ -491,6 +491,13 @@ public final class RoadPlannerPreviewRenderer {
             int maxBlocks
     ) {
         return previewWireframeRenderList(blocks, maxBlocks);
+    }
+
+    static List<RoadPlannerClientHooks.PreviewGhostBlock> previewModelRenderListForTest(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            int maxBlocks
+    ) {
+        return previewModelRenderList(blocks, maxBlocks);
     }
 
     static Component planningHeadlineForTest(RoadPlannerClientHooks.PlanningProgressState state) {

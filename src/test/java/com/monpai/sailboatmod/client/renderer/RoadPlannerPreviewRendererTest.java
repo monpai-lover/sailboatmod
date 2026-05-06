@@ -102,6 +102,25 @@ class RoadPlannerPreviewRendererTest {
     }
 
     @Test
+    void modelPreviewListKeepsFarBridgeBlocks() {
+        RoadPlannerClientHooks.PreviewGhostBlock near = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(0, 64, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+        RoadPlannerClientHooks.PreviewGhostBlock far = new RoadPlannerClientHooks.PreviewGhostBlock(
+                new BlockPos(180, 64, 0),
+                Blocks.STONE_BRICKS.defaultBlockState()
+        );
+
+        List<RoadPlannerClientHooks.PreviewGhostBlock> model = RoadPlannerPreviewRenderer.previewModelRenderListForTest(
+                List.of(near, far),
+                4096
+        );
+
+        assertEquals(List.of(near, far), model);
+    }
+
+    @Test
     void blockBoxesUseExactCameraOffset() {
         RoadPlannerPreviewRenderer.PreviewBox box = RoadPlannerPreviewRenderer.previewBoxForTest(
                 new BlockPos(10, 64, 20),
