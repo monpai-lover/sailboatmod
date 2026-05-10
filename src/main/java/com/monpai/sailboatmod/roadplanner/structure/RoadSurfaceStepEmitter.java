@@ -3,8 +3,6 @@ package com.monpai.sailboatmod.roadplanner.structure;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
-import com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverBuildCandidate;
-import com.monpai.sailboatmod.roadplanner.weaver.placement.WeaverSegmentPaver;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LanternBlock;
@@ -31,22 +29,21 @@ public final class RoadSurfaceStepEmitter {
             if (!isRoadIndex(spans, index)) {
                 continue;
             }
-            RoadCenterlinePoint point = centerline.get(index);
-            BlockPos center = new BlockPos(point.pos().getX(), point.targetY(), point.pos().getZ());
             boolean ramp = isRamp(centerline, spans, index);
             BlockState surfaceState = ramp ? rampState(safeSettings, index) : safeSettings.surfaceState();
             BuildPhase surfacePhase = ramp ? BuildPhase.RAMP : BuildPhase.SURFACE;
-            List<WeaverBuildCandidate> footprint = WeaverSegmentPaver.paveCenterline(List.of(center), safeSettings.width(), surfaceState);
-            for (WeaverBuildCandidate candidate : footprint) {
+            List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width());
+            for (BlockPos surfacePos : footprint) {
                 for (int dy = 1; dy <= 4; dy++) {
-                    steps.add(new BuildStep(order++, candidate.pos().above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+                    steps.add(new BuildStep(order++, surfacePos.above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
                 }
-                int bottomY = Math.min(point.terrainY(), point.targetY()) - 3;
-                for (int y = candidate.pos().getY() - 1; y >= bottomY; y--) {
+                int terrainY = RoadFootprintPlanner.interpolateTerrainY(surfacePos.getX(), surfacePos.getZ(), centerline);
+                int bottomY = Math.min(terrainY, surfacePos.getY()) - 3;
+                for (int y = surfacePos.getY() - 1; y >= bottomY; y--) {
                     BlockState foundation = y == bottomY ? Blocks.COBBLESTONE.defaultBlockState() : Blocks.DIRT.defaultBlockState();
-                    steps.add(new BuildStep(order++, new BlockPos(candidate.pos().getX(), y, candidate.pos().getZ()), foundation, BuildPhase.FOUNDATION));
+                    steps.add(new BuildStep(order++, new BlockPos(surfacePos.getX(), y, surfacePos.getZ()), foundation, BuildPhase.FOUNDATION));
                 }
-                steps.add(new BuildStep(order++, candidate.pos(), candidate.state(), surfacePhase));
+                steps.add(new BuildStep(order++, surfacePos, surfaceState, surfacePhase));
             }
         }
         order = addStreetlights(steps, centerline, spans, safeSettings, order);

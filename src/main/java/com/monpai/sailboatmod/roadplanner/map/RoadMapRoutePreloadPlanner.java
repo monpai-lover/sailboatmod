@@ -28,8 +28,21 @@ public final class RoadMapRoutePreloadPlanner {
         if (nodes.isEmpty()) {
             return new RoadMapRoutePreloadPlan(RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY, List.of(), 0, 0);
         }
-        List<ChunkPos> pathChunks = pathChunks(nodes);
-        List<ChunkPos> rectangleChunks = rectangleChunks(nodes);
+        List<ChunkPos> pathChunks = pathChunks(nodes, pathPaddingChunks);
+        List<ChunkPos> rectangleChunks = rectangleChunks(nodes, rectanglePaddingChunks);
+        return buildPlan(pathChunks, rectangleChunks);
+    }
+
+    public RoadMapRoutePreloadPlan planSelection(BlockPos start, BlockPos destination) {
+        List<BlockPos> nodes = List.of(
+                (start == null ? BlockPos.ZERO : start).immutable(),
+                (destination == null ? BlockPos.ZERO : destination).immutable());
+        List<ChunkPos> pathChunks = pathChunks(nodes, 0);
+        List<ChunkPos> rectangleChunks = rectangleChunks(nodes, 0);
+        return buildPlan(pathChunks, rectangleChunks);
+    }
+
+    private RoadMapRoutePreloadPlan buildPlan(List<ChunkPos> pathChunks, List<ChunkPos> rectangleChunks) {
         RoadMapRoutePreloadPlan.CoverageMode mode =
                 rectangleChunks.size() <= maxRectangleChunks
                         ? RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE
@@ -41,9 +54,9 @@ public final class RoadMapRoutePreloadPlanner {
         return new RoadMapRoutePreloadPlan(mode, List.copyOf(ordered), pathChunks.size(), rectangleChunks.size());
     }
 
-    private List<ChunkPos> pathChunks(List<BlockPos> nodes) {
+    private List<ChunkPos> pathChunks(List<BlockPos> nodes, int paddingChunks) {
         LinkedHashSet<ChunkPos> ordered = new LinkedHashSet<>();
-        addPathChunk(nodes.get(0), ordered);
+        addPathChunk(nodes.get(0), ordered, paddingChunks);
         for (int index = 1; index < nodes.size(); index++) {
             BlockPos from = nodes.get(index - 1);
             BlockPos to = nodes.get(index);
@@ -54,31 +67,33 @@ public final class RoadMapRoutePreloadPlanner {
                 double t = step / (double) samples;
                 int x = (int) Math.round(from.getX() + dx * t);
                 int z = (int) Math.round(from.getZ() + dz * t);
-                addPathChunk(new BlockPos(x, from.getY(), z), ordered);
+                addPathChunk(new BlockPos(x, from.getY(), z), ordered, paddingChunks);
             }
         }
         return List.copyOf(ordered);
     }
 
-    private void addPathChunk(BlockPos pos, LinkedHashSet<ChunkPos> ordered) {
+    private void addPathChunk(BlockPos pos, LinkedHashSet<ChunkPos> ordered, int paddingChunks) {
         int chunkX = Math.floorDiv(pos.getX(), 16);
         int chunkZ = Math.floorDiv(pos.getZ(), 16);
-        for (int offsetX = -pathPaddingChunks; offsetX <= pathPaddingChunks; offsetX++) {
-            for (int offsetZ = -pathPaddingChunks; offsetZ <= pathPaddingChunks; offsetZ++) {
+        int safePaddingChunks = Math.max(0, paddingChunks);
+        for (int offsetX = -safePaddingChunks; offsetX <= safePaddingChunks; offsetX++) {
+            for (int offsetZ = -safePaddingChunks; offsetZ <= safePaddingChunks; offsetZ++) {
                 ordered.add(new ChunkPos(chunkX + offsetX, chunkZ + offsetZ));
             }
         }
     }
 
-    private List<ChunkPos> rectangleChunks(List<BlockPos> nodes) {
+    private List<ChunkPos> rectangleChunks(List<BlockPos> nodes, int paddingChunks) {
         int minX = nodes.stream().mapToInt(BlockPos::getX).min().orElse(0);
         int maxX = nodes.stream().mapToInt(BlockPos::getX).max().orElse(0);
         int minZ = nodes.stream().mapToInt(BlockPos::getZ).min().orElse(0);
         int maxZ = nodes.stream().mapToInt(BlockPos::getZ).max().orElse(0);
-        int startChunkX = Math.floorDiv(minX, 16) - rectanglePaddingChunks;
-        int endChunkX = Math.floorDiv(maxX, 16) + rectanglePaddingChunks;
-        int startChunkZ = Math.floorDiv(minZ, 16) - rectanglePaddingChunks;
-        int endChunkZ = Math.floorDiv(maxZ, 16) + rectanglePaddingChunks;
+        int safePaddingChunks = Math.max(0, paddingChunks);
+        int startChunkX = Math.floorDiv(minX, 16) - safePaddingChunks;
+        int endChunkX = Math.floorDiv(maxX, 16) + safePaddingChunks;
+        int startChunkZ = Math.floorDiv(minZ, 16) - safePaddingChunks;
+        int endChunkZ = Math.floorDiv(maxZ, 16) + safePaddingChunks;
         List<ChunkPos> chunks = new ArrayList<>();
         for (int chunkZ = startChunkZ; chunkZ <= endChunkZ; chunkZ++) {
             for (int chunkX = startChunkX; chunkX <= endChunkX; chunkX++) {

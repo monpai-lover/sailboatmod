@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
@@ -125,6 +126,21 @@ class RoadPlannerPacketRoundTripTest {
                 RoadMapTileSpec.TILE_PIXELS,
                 RoadMapTileSpec.TILE_PIXELS,
                 new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS]);
+        boolean[] coverageMask = new boolean[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS];
+        coverageMask[0] = true;
+        RoadPlannerMapTileSyncPacket maskedTile = new RoadPlannerMapTileSyncPacket(
+                sessionId,
+                18L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_1,
+                1,
+                -1,
+                RoadMapTileSpec.TILE_PIXELS,
+                RoadMapTileSpec.TILE_PIXELS,
+                new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS],
+                coverageMask);
         RoadPlannerMapPreloadProgressPacket progress = new RoadPlannerMapPreloadProgressPacket(
                 sessionId,
                 17L,
@@ -143,6 +159,7 @@ class RoadPlannerPacketRoundTripTest {
 
         assertEquals(request, roundTrip(request, RoadPlannerMapPreloadRequestPacket::encode, RoadPlannerMapPreloadRequestPacket::decode));
         assertEquals(tile, roundTrip(tile, RoadPlannerMapTileSyncPacket::encode, RoadPlannerMapTileSyncPacket::decode));
+        assertArrayEquals(coverageMask, roundTrip(maskedTile, RoadPlannerMapTileSyncPacket::encode, RoadPlannerMapTileSyncPacket::decode).coverageMask());
         assertEquals(progress, roundTrip(progress, RoadPlannerMapPreloadProgressPacket::encode, RoadPlannerMapPreloadProgressPacket::decode));
         assertEquals(cancel, roundTrip(cancel, RoadPlannerMapPreloadCancelPacket::encode, RoadPlannerMapPreloadCancelPacket::decode));
     }

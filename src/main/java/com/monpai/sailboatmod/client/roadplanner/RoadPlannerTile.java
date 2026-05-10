@@ -147,6 +147,32 @@ public class RoadPlannerTile implements AutoCloseable {
         }
     }
 
+    public synchronized void mergePixels(int[] argbPixels, boolean[] coverageMask) {
+        if (image == null || argbPixels == null || argbPixels.length != RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS) {
+            return;
+        }
+        boolean fullCoverage = coverageMask == null || coverageMask.length != argbPixels.length;
+        boolean applied = false;
+        for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
+            for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
+                int index = y * RoadMapTileSpec.TILE_PIXELS + x;
+                if (fullCoverage || coverageMask[index]) {
+                    image.setPixelRGBA(x, y, argbPixels[index]);
+                    applied = true;
+                }
+            }
+        }
+        if (!applied) {
+            return;
+        }
+        loadedFromCache = true;
+        dirty = true;
+        if (texture != null) {
+            texture.upload();
+            dirty = false;
+        }
+    }
+
     public synchronized void render(GuiGraphics graphics, int x, int y, int size) {
         if (textureId == null) {
             return;

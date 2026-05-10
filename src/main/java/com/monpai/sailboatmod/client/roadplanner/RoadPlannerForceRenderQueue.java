@@ -38,19 +38,20 @@ public class RoadPlannerForceRenderQueue {
     }
 
     public void enqueueSelection(BlockPos a, BlockPos b, String label) {
-        pending.clear();
         this.label = label == null ? "选区渲染" : label;
-        this.completedChunks = 0;
+        LinkedHashSet<ChunkPos> chunks = new LinkedHashSet<>(pending);
         int minChunkX = Math.min(a.getX(), b.getX()) >> 4;
         int maxChunkX = Math.max(a.getX(), b.getX()) >> 4;
         int minChunkZ = Math.min(a.getZ(), b.getZ()) >> 4;
         int maxChunkZ = Math.max(a.getZ(), b.getZ()) >> 4;
         for (int z = minChunkZ; z <= maxChunkZ; z++) {
             for (int x = minChunkX; x <= maxChunkX; x++) {
-                pending.add(new ChunkPos(x, z));
+                chunks.add(new ChunkPos(x, z));
             }
         }
-        totalChunks = pending.size();
+        pending.clear();
+        pending.addAll(chunks);
+        totalChunks = completedChunks + pending.size();
     }
 
     public int processChunks(int maxChunks) {

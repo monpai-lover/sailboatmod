@@ -30,4 +30,13 @@ class RoadPlannerForceRenderQueueTest {
         assertEquals("\u9009\u533a\u6e32\u67d3", queue.progress().label());
         assertEquals(16, queue.progress().totalChunks());
     }
+
+    @Test
+    void selectionTaskAppendsNewRegionsInsteadOfReplacingPendingWork() {
+        RoadPlannerForceRenderQueue queue = new RoadPlannerForceRenderQueue();
+        queue.enqueueSelection(BlockPos.ZERO, new BlockPos(48, 64, 48), "\u9009\u533a\u6e32\u67d3");
+        queue.enqueueSelection(new BlockPos(64, 64, 0), new BlockPos(112, 64, 48), "\u9009\u533a\u6e32\u67d3");
+
+        assertEquals(32, queue.progress().totalChunks());
+    }
 }

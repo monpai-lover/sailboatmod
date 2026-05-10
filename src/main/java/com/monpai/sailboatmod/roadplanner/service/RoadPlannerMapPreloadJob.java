@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapLodPyramid;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlan;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapSnapshot;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import net.minecraft.world.level.ChunkPos;
 
 import java.util.ArrayDeque;
@@ -90,10 +91,11 @@ public final class RoadPlannerMapPreloadJob {
                 message = "快照像素不足";
                 break;
             }
-            emitTile(key, snapshot, MapLod.LOD_1, sourcePixels, width, height, sink);
+            boolean[] sourceCoverageMask = coverageMaskForTile(key, width, height);
+            emitTile(key, snapshot, MapLod.LOD_1, sourcePixels, sourceCoverageMask, width, height, sink);
             state = RoadPlannerMapPreloadProgressPacket.State.DERIVING;
             for (MapLod lod : List.of(MapLod.LOD_2, MapLod.LOD_4, MapLod.LOD_8)) {
-                emitTile(key, snapshot, lod, sourcePixels, width, height, sink);
+                emitTile(key, snapshot, lod, sourcePixels, sourceCoverageMask, width, height, sink);
             }
             completedTiles++;
             processed++;
@@ -166,6 +168,7 @@ public final class RoadPlannerMapPreloadJob {
                           RoadMapSnapshot snapshot,
                           MapLod lod,
                           int[] sourcePixels,
+                          boolean[] sourceCoverageMask,
                           int width,
                           int height,
                           Consumer<RoadPlannerMapTileSyncPacket> sink) {
@@ -175,6 +178,9 @@ public final class RoadPlannerMapPreloadJob {
         int[] pixels = lod == MapLod.LOD_1
                 ? sourcePixels
                 : RoadMapLodPyramid.deriveDisplayPixels(sourcePixels, width, height, lod);
+        boolean[] coverageMask = lod == MapLod.LOD_1
+                ? sourceCoverageMask
+                : RoadMapLodPyramid.deriveDisplayMask(sourceCoverageMask, width, height, lod);
         sink.accept(new RoadPlannerMapTileSyncPacket(
                 sessionId,
                 requestId,
@@ -186,7 +192,25 @@ public final class RoadPlannerMapPreloadJob {
                 key.tileZ(),
                 width,
                 height,
-                pixels));
+                pixels,
+                coverageMask));
+    }
+
+    private boolean[] coverageMaskForTile(RoadPlannerTileKey key, int width, int height) {
+        if (key == null || width <= 0 || height <= 0) {
+            return new boolean[0];
+        }
+        boolean[] mask = new boolean[width * height];
+        int blockOriginX = key.tileX() * RoadMapTileSpec.TILE_BLOCKS;
+        int blockOriginZ = key.tileZ() * RoadMapTileSpec.TILE_BLOCKS;
+        for (int y = 0; y < height; y++) {
+            int chunkZ = Math.floorDiv(blockOriginZ + y, 16);
+            for (int x = 0; x < width; x++) {
+                int chunkX = Math.floorDiv(blockOriginX + x, 16);
+                mask[y * width + x] = coversChunk(chunkX, chunkZ);
+            }
+        }
+        return mask;
     }
 
     private boolean isTerminal() {

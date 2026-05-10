@@ -197,7 +197,7 @@ public class RoadPlannerTileManager implements AutoCloseable {
             return 0;
         }
         RoadPlannerTile tile = getOrCreateTile(packet.tileX(), packet.tileZ(), packet.lod());
-        tile.replacePixels(packet.argbPixels());
+        tile.mergePixels(packet.argbPixels(), packet.coverageMask());
         saveTile(tile);
         return 1;
     }

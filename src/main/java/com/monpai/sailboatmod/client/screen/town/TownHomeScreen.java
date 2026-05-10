@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.client.screen.town;
 
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.TownClientHooks;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
+import com.monpai.sailboatmod.client.screen.ClaimWorldMapView;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
@@ -18,6 +20,8 @@ import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.SetTownClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.TownGuiActionPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -28,6 +32,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -36,7 +41,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-public class TownHomeScreen extends Screen {
+public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceiver {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final boolean CLAIM_TRACE_ENABLED = true;
     private static final int SCREEN_W = 440;
@@ -134,6 +139,7 @@ public class TownHomeScreen extends Screen {
     private int queuedPreviewCenterZ = Integer.MIN_VALUE;
     private boolean resetPending = false;
     private boolean refreshPending;
+    private final ClaimWorldMapView claimWorldMapView = new ClaimWorldMapView();
     private final Map<Long, NationOverviewClaim> cachedClaimOverlays = new HashMap<>();
 
     public TownHomeScreen(TownOverviewData data) {
@@ -141,6 +147,7 @@ public class TownHomeScreen extends Screen {
         this.data = data == null ? TownOverviewData.empty() : data;
         rememberClaimRadius(this.data);
         syncSelections();
+        syncClaimWorldMapViewToMapCenter(false);
     }
 
     public void updateData(TownOverviewData updated) {
@@ -182,6 +189,7 @@ public class TownHomeScreen extends Screen {
             this.mapOffsetX = visibleCenterX - this.data.previewCenterChunkX();
             this.mapOffsetZ = visibleCenterZ - this.data.previewCenterChunkZ();
         }
+        syncClaimWorldMapViewToMapCenter(true);
         this.memberScroll = clampMemberScroll(this.memberScroll);
         syncSelections();
         syncTownNameInput();
@@ -266,6 +274,7 @@ public class TownHomeScreen extends Screen {
     public void removed() {
         super.removed();
         com.monpai.sailboatmod.client.TownClientHooks.onScreenClosed(this.data.townId());
+        this.claimWorldMapView.close();
     }
 
     @Override
@@ -337,6 +346,16 @@ public class TownHomeScreen extends Screen {
             this.joinNationScroll = clampJoinNationScroll(this.joinNationScroll + (delta > 0 ? -1 : 1));
             return true;
         }
+        boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
+        int claimMapScreenX = claimMapX(left() + BODY_X);
+        int claimMapScreenY = claimMapY(top() + BODY_Y) - this.pageScroll;
+        if (claimsMapView
+                && mouseX >= claimMapScreenX && mouseX < claimMapScreenX + CLAIM_MAP_W
+                && mouseY >= claimMapScreenY && mouseY < claimMapScreenY + CLAIM_MAP_H) {
+            this.claimWorldMapView.zoomAround(mouseX, mouseY, delta > 0 ? 1.2D : 0.833333D, claimMapScreenX, claimMapScreenY, CLAIM_MAP_W, CLAIM_MAP_H);
+            syncMapOffsetFromClaimWorldMap();
+            return true;
+        }
         if (this.currentPage == Page.MEMBERS) {
             int[] bounds = memberListBounds();
             if (mouseX >= bounds[0] && mouseX < bounds[0] + bounds[2] && mouseY >= bounds[1] && mouseY < bounds[1] + bounds[3]) {
@@ -365,7 +384,7 @@ public class TownHomeScreen extends Screen {
         if (button == 0 && claimsMapView && trySelectClaim(mouseX, mouseY)) return true;
         if (button == 2 && claimsMapView) {
             int mapX = claimMapX(left() + BODY_X);
-            int mapY = claimMapY(top() + BODY_Y);
+            int mapY = claimMapY(top() + BODY_Y) - this.pageScroll;
             if (mouseX >= mapX && mouseX < mapX + CLAIM_MAP_W && mouseY >= mapY && mouseY < mapY + CLAIM_MAP_H) {
                 this.isDraggingMap = true;
                 this.dragStartX = mouseX;
@@ -381,6 +400,7 @@ public class TownHomeScreen extends Screen {
         if (shouldRequestRefreshAfterMapDragRelease(button, this.isDraggingMap)) {
             this.isDraggingMap = false;
             requestRefresh(mapCenterX(), mapCenterZ());
+            requestVisibleClaimMapForceRender();
             return true;
         }
         return super.mouseReleased(mouseX, mouseY, button);
@@ -390,21 +410,10 @@ public class TownHomeScreen extends Screen {
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (button == 2 && this.isDraggingMap
                 && ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage)) {
-            int diameter = claimRadius() * 2 + 1;
-            double cellW = (double) CLAIM_MAP_W / diameter;
-            double cellH = (double) CLAIM_MAP_H / diameter;
-            double dx = mouseX - this.dragStartX;
-            double dy = mouseY - this.dragStartY;
-            if (Math.abs(dx) >= cellW) {
-                int chunks = (int) (dx / cellW);
-                this.mapOffsetX -= chunks;
-                this.dragStartX += chunks * cellW;
-            }
-            if (Math.abs(dy) >= cellH) {
-                int chunks = (int) (dy / cellH);
-                this.mapOffsetZ -= chunks;
-                this.dragStartY += chunks * cellH;
-            }
+            this.claimWorldMapView.panByScreenDelta(mouseX - this.dragStartX, mouseY - this.dragStartY);
+            syncMapOffsetFromClaimWorldMap();
+            this.dragStartX = mouseX;
+            this.dragStartY = mouseY;
             return true;
         }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
@@ -828,43 +837,20 @@ public class TownHomeScreen extends Screen {
     }
     private void drawClaimMap(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
         g.fill(mapX - 1, mapY - 1, mapX + CLAIM_MAP_W + 1, mapY + CLAIM_MAP_H + 1, 0xFF8EAF9E);
-        g.fill(mapX, mapY, mapX + CLAIM_MAP_W, mapY + CLAIM_MAP_H, 0xAA0B110F);
-        int centerX = mapCenterX();
-        int centerZ = mapCenterZ();
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        int totalCells = claimRadius() * 2 + 1;
-        int totalSubCells = totalCells * sub;
-        for (int gz = 0; gz < totalCells; gz++) {
-            int chunkZ = centerZ + gz - claimRadius();
-            for (int gx = 0; gx < totalCells; gx++) {
-                int chunkX = centerX + gx - claimRadius();
-                NationOverviewClaim claim = findClaim(chunkX, chunkZ);
-                for (int sz = 0; sz < sub; sz++) {
-                    int subCellZ = gz * sub + sz;
-                    int y1 = mapY + subCellZ * CLAIM_MAP_H / totalSubCells;
-                    int y2 = mapY + (subCellZ + 1) * CLAIM_MAP_H / totalSubCells;
-                    for (int sx = 0; sx < sub; sx++) {
-                        int subCellX = gx * sub + sx;
-                        int x1 = mapX + subCellX * CLAIM_MAP_W / totalSubCells;
-                        int x2 = mapX + (subCellX + 1) * CLAIM_MAP_W / totalSubCells;
-                        int color = sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
-                        g.fill(x1, y1, Math.max(x1 + 1, x2), Math.max(y1 + 1, y2), color);
-                    }
-                }
-            }
-        }
-        for (int gz = 0; gz < totalCells; gz++) {
-            int chunkZ = centerZ + gz - claimRadius();
-            for (int gx = 0; gx < totalCells; gx++) {
-                int chunkX = centerX + gx - claimRadius();
+        this.claimWorldMapView.renderBase(g, this.font, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H, mapCenterX(), mapCenterZ(), claimRadius());
+        requestInitialVisibleClaimMapForceRender(mapX, mapY);
+        ClaimWorldMapView.ChunkBounds bounds = this.claimWorldMapView.visibleChunkBounds(mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
+        for (int chunkZ = bounds.minChunkZ(); chunkZ <= bounds.maxChunkZ(); chunkZ++) {
+            for (int chunkX = bounds.minChunkX(); chunkX <= bounds.maxChunkX(); chunkX++) {
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim == null) continue;
-                int subCellX0 = gx * sub;
-                int subCellZ0 = gz * sub;
-                int x1 = mapX + subCellX0 * CLAIM_MAP_W / totalSubCells;
-                int x2 = mapX + (subCellX0 + sub) * CLAIM_MAP_W / totalSubCells;
-                int y1 = mapY + subCellZ0 * CLAIM_MAP_H / totalSubCells;
-                int y2 = mapY + (subCellZ0 + sub) * CLAIM_MAP_H / totalSubCells;
+                ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
+                int x1 = Math.max(mapX, rect.x());
+                int x2 = Math.min(mapX + CLAIM_MAP_W, rect.right());
+                int y1 = Math.max(mapY, rect.y());
+                int y2 = Math.min(mapY + CLAIM_MAP_H, rect.bottom());
+                if (x1 >= x2 || y1 >= y2) continue;
+                g.fill(x1, y1, x2, y2, 0x66000000 | (claim.primaryColorRgb() & 0x00FFFFFF));
                 int borderColor = 0xFF000000 | claim.secondaryColorRgb();
                 String ownerId = claimOwnerKey(claim);
                 if (!sameOwner(ownerId, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
@@ -913,11 +899,11 @@ public class TownHomeScreen extends Screen {
     }
 
     private void drawTownLabels(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
-        if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return;
-        int cellX = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseX - mapX) * (claimRadius() * 2 + 1) / CLAIM_MAP_W)));
-        int cellZ = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseY - mapY) * (claimRadius() * 2 + 1) / CLAIM_MAP_H)));
-        int hoverChunkX = mapCenterX() + cellX - claimRadius();
-        int hoverChunkZ = mapCenterZ() + cellZ - claimRadius();
+        int screenMapY = mapY - this.pageScroll;
+        if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < screenMapY || mouseY >= screenMapY + CLAIM_MAP_H) return;
+        ChunkPos hoverChunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, mapX, screenMapY, CLAIM_MAP_W, CLAIM_MAP_H);
+        int hoverChunkX = hoverChunk.x;
+        int hoverChunkZ = hoverChunk.z;
         NationOverviewClaim hoverClaim = findClaim(hoverChunkX, hoverChunkZ);
         if (hoverClaim == null) return;
         String hoverId = hoverClaim.townId().isBlank() ? hoverClaim.nationId() : hoverClaim.townId();
@@ -932,7 +918,8 @@ public class TownHomeScreen extends Screen {
         String text = label + "(" + count + ")";
         int tw = this.font.width(text);
         int tx = Math.max(mapX, Math.min(mouseX - tw / 2, mapX + CLAIM_MAP_W - tw));
-        int ty = Math.max(mapY, Math.min(mouseY - 14, mapY + CLAIM_MAP_H - 10));
+        int logicalMouseY = mouseY + this.pageScroll;
+        int ty = Math.max(mapY, Math.min(logicalMouseY - 14, mapY + CLAIM_MAP_H - 10));
         g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xCC000000);
         g.drawString(this.font, text, tx, ty, color);
     }
@@ -983,13 +970,12 @@ public class TownHomeScreen extends Screen {
     }
 
     private void drawClaimMarker(GuiGraphics g, int mapX, int mapY, int chunkX, int chunkZ, int color) {
-        int lx = chunkX - mapCenterX() + claimRadius();
-        int lz = chunkZ - mapCenterZ() + claimRadius();
-        if (lx < 0 || lx > claimRadius() * 2 || lz < 0 || lz > claimRadius() * 2) return;
-        int x1 = mapX + lx * CLAIM_MAP_W / (claimRadius() * 2 + 1);
-        int y1 = mapY + lz * CLAIM_MAP_H / (claimRadius() * 2 + 1);
-        int x2 = mapX + (lx + 1) * CLAIM_MAP_W / (claimRadius() * 2 + 1);
-        int y2 = mapY + (lz + 1) * CLAIM_MAP_H / (claimRadius() * 2 + 1);
+        ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
+        int x1 = Math.max(mapX, rect.x());
+        int y1 = Math.max(mapY, rect.y());
+        int x2 = Math.min(mapX + CLAIM_MAP_W, rect.right());
+        int y2 = Math.min(mapY + CLAIM_MAP_H, rect.bottom());
+        if (x1 >= x2 || y1 >= y2) return;
         drawRect(g, x1, y1, Math.max(x1 + 1, x2) - 1, Math.max(y1 + 1, y2) - 1, color);
     }
 
@@ -1237,6 +1223,7 @@ public class TownHomeScreen extends Screen {
         traceClaim("resetMapOffset hasCore=" + this.data.hasCore() + " currentChunk=" + this.data.currentChunkX() + "," + this.data.currentChunkZ());
         this.mapOffsetX = 0;
         this.mapOffsetZ = 0;
+        syncClaimWorldMapViewToMapCenter(false);
         this.resetPending = true;
         if (this.data.hasCore()) {
             net.minecraft.core.BlockPos corePos = net.minecraft.core.BlockPos.of(this.data.corePos());
@@ -1244,6 +1231,50 @@ public class TownHomeScreen extends Screen {
         } else {
             requestRefresh(this.data.currentChunkX(), this.data.currentChunkZ());
         }
+    }
+
+    @Override
+    public void applyMapTileSync(RoadPlannerMapTileSyncPacket packet) {
+        if (this.claimWorldMapView.applyTileSync(packet) > 0) {
+            this.statusLine = Component.literal("地图: 已接收强制渲染切片");
+        }
+    }
+
+    private void requestInitialVisibleClaimMapForceRender(int mapX, int mapY) {
+        if (minecraft == null || minecraft.getConnection() == null) {
+            return;
+        }
+        if (this.claimWorldMapView.markInitialForceRenderRequested()) {
+            requestVisibleClaimMapForceRender(mapX, mapY);
+        }
+    }
+
+    private void requestVisibleClaimMapForceRender() {
+        requestVisibleClaimMapForceRender(claimMapX(left() + BODY_X), claimMapY(top() + BODY_Y));
+    }
+
+    private void requestVisibleClaimMapForceRender(int mapX, int mapY) {
+        if (minecraft == null || minecraft.getConnection() == null) {
+            return;
+        }
+        RoadPlannerMapPreloadRequestPacket packet = this.claimWorldMapView.createVisibleForceRenderRequest(
+                this.claimWorldMapView.worldId(),
+                currentDimensionId(),
+                mapX,
+                mapY,
+                CLAIM_MAP_W,
+                CLAIM_MAP_H
+        );
+        ModNetwork.CHANNEL.sendToServer(packet);
+    }
+
+    private void syncClaimWorldMapViewToMapCenter(boolean preserveScale) {
+        this.claimWorldMapView.centerOnChunk(mapCenterX(), mapCenterZ(), claimRadius(), CLAIM_MAP_W, CLAIM_MAP_H, preserveScale);
+    }
+
+    private void syncMapOffsetFromClaimWorldMap() {
+        this.mapOffsetX = this.claimWorldMapView.centerChunkX() - this.data.previewCenterChunkX();
+        this.mapOffsetZ = this.claimWorldMapView.centerChunkZ() - this.data.previewCenterChunkZ();
     }
 
     private void maybeRequestPreviewRefresh() {
@@ -1534,10 +1565,9 @@ public class TownHomeScreen extends Screen {
         int mapX = claimMapX(left() + BODY_X);
         int mapY = claimMapY(top() + BODY_Y) - this.pageScroll;
         if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false;
-        int cellX = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseX - mapX) * (claimRadius() * 2 + 1) / CLAIM_MAP_W)));
-        int cellZ = Math.max(0, Math.min(claimRadius() * 2, (int) ((mouseY - mapY) * (claimRadius() * 2 + 1) / CLAIM_MAP_H)));
-        int chunkX = mapCenterX() + cellX - claimRadius();
-        int chunkZ = mapCenterZ() + cellZ - claimRadius();
+        ChunkPos chunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
+        int chunkX = chunk.x;
+        int chunkZ = chunk.z;
         if (hasShiftDown() && this.areaCorner1X != Integer.MIN_VALUE) {
             this.areaCorner2X = chunkX; this.areaCorner2Z = chunkZ;
         } else {

@@ -59,8 +59,7 @@ public final class RoadPlannerMapPreloadService {
             return;
         }
         RoadPlannerMapPreloadRequestPacket.Purpose purpose = packet.purpose();
-        List<BlockPos> routeNodes = resolveRouteNodes(player.serverLevel(), packet);
-        RoadMapRoutePreloadPlan plan = ROUTE_PLANNER.plan(routeNodes);
+        RoadMapRoutePreloadPlan plan = resolvePlan(player.serverLevel(), packet);
         JobKey key = new JobKey(packet.sessionId(), purpose);
         jobs.put(key, new ActiveJob(player.getUUID(), packet.sessionId(), packet.requestId(), purpose, packet.worldId(), packet.dimensionId(), new RoadPlannerMapPreloadJob(
                 packet.sessionId(),
@@ -120,10 +119,14 @@ public final class RoadPlannerMapPreloadService {
         }
     }
 
-    private List<BlockPos> resolveRouteNodes(ServerLevel level, RoadPlannerMapPreloadRequestPacket packet) {
+    private RoadMapRoutePreloadPlan resolvePlan(ServerLevel level, RoadPlannerMapPreloadRequestPacket packet) {
         if (packet.purpose() == RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER) {
-            return List.of(packet.start(), packet.destination());
+            return ROUTE_PLANNER.planSelection(packet.start(), packet.destination());
         }
+        return ROUTE_PLANNER.plan(resolveRouteNodes(level, packet));
+    }
+
+    private List<BlockPos> resolveRouteNodes(ServerLevel level, RoadPlannerMapPreloadRequestPacket packet) {
         List<BlockPos> nodes = packet.routeNodes();
         if (!nodes.isEmpty()) {
             return nodes;

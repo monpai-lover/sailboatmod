@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlanner;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapSnapshot;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -42,6 +43,32 @@ class RoadPlannerMapPreloadJobTest {
         assertEquals(MapLod.LOD_2, packets.get(1).lod());
         assertEquals(MapLod.LOD_4, packets.get(2).lod());
         assertEquals(MapLod.LOD_8, packets.get(3).lod());
+    }
+
+    @Test
+    void jobMarksOnlyCoveredChunkPixelsInTileSyncMask() {
+        RoadMapRoutePreloadPlan plan = new RoadMapRoutePreloadPlan(
+                RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE,
+                List.of(new ChunkPos(0, 0)),
+                1,
+                1);
+        RoadPlannerMapPreloadJob job = new RoadPlannerMapPreloadJob(
+                UUID.randomUUID(),
+                1L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER,
+                "world_a",
+                "minecraft:overworld",
+                plan);
+        List<RoadPlannerMapTileSyncPacket> packets = new ArrayList<>();
+
+        job.advance(1, this::loadSnapshot, packets::add);
+
+        boolean[] mask = packets.get(0).coverageMask();
+        assertEquals(RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS, mask.length);
+        assertEquals(true, mask[0]);
+        assertEquals(true, mask[15 * RoadMapTileSpec.TILE_PIXELS + 15]);
+        assertEquals(false, mask[16]);
+        assertEquals(false, mask[16 * RoadMapTileSpec.TILE_PIXELS]);
     }
 
     private RoadMapSnapshot loadSnapshot(RoadPlannerTileKey key) {

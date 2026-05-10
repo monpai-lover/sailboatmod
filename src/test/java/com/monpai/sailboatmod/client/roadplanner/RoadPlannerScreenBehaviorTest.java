@@ -160,7 +160,7 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
-    void endpointToolSetsStartOrEndByTownClaimRole() {
+    void endpointToolPlacesDestinationMarkerWithoutAutoLinkingEndpoints() {
         BlockPos start = new BlockPos(0, 64, 0);
         BlockPos destination = new BlockPos(160, 64, 0);
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720, start, destination, List.of(
@@ -172,7 +172,8 @@ class RoadPlannerScreenBehaviorTest {
         assertTrue(screen.clickWorldForTest(4, 4));
         assertEquals(1, screen.plannedNodeCountForTest());
         assertTrue(screen.clickWorldForTest(164, 4));
-        assertEquals(2, screen.plannedNodeCountForTest());
+        assertEquals(1, screen.plannedNodeCountForTest());
+        assertEquals(new BlockPos(164, 64, 4), screen.destinationTownPosForTest());
     }
 
     @Test

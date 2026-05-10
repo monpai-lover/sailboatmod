@@ -43,4 +43,16 @@ class RoadMapRoutePreloadPlannerTest {
         var keys = plan.tileKeys("world_a", "minecraft:overworld", MapLod.LOD_1);
         assertEquals(keys.size(), new java.util.LinkedHashSet<>(keys).size());
     }
+
+    @Test
+    void selectionPlanUsesUnpaddedSelectedRectangle() {
+        RoadMapRoutePreloadPlanner planner = new RoadMapRoutePreloadPlanner(4096, 4, 3, 8);
+
+        RoadMapRoutePreloadPlan plan = planner.planSelection(
+                new BlockPos(0, 64, 0),
+                new BlockPos(48, 64, 48));
+
+        assertEquals(RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE, plan.coverageMode());
+        assertEquals(16, plan.chunks().size());
+    }
 }
