@@ -26,23 +26,56 @@ public final class RoadPlannerPathfinderRunnerFactory {
         if (level == null) {
             return null;
         }
-        PathfindingConfig config = new PathfindingConfig();
-        config.setAlgorithm(PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
-        Pathfinder pathfinder = PathfinderFactory.create(config);
+        PathfindingConfig coarseConfig = new PathfindingConfig();
+        coarseConfig.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
+        Pathfinder coarsePathfinder = PathfinderFactory.create(coarseConfig);
+
+        PathfindingConfig fineConfig = new PathfindingConfig();
+        fineConfig.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
+        fineConfig.setAStarStep(4);
+        fineConfig.setSamplingPrecision(PathfindingConfig.SamplingPrecision.HIGH);
+        Pathfinder finePathfinder = PathfinderFactory.create(fineConfig);
+
         RoadPlannerObstacleMask baseMask = RoadPlannerObstacleMask.fromNationData(level, NationSavedData.get(level));
-        TerrainSamplingCache terrainCache = new TerrainSamplingCache(level, config.getSamplingPrecision());
+        TerrainSamplingCache terrainCache = new TerrainSamplingCache(level, coarseConfig.getSamplingPrecision());
+
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {
             RoadPlannerObstacleMask routeMask = baseMask.withoutEndpoints(from, destination);
-            TerrainSamplingCache routeCache = new TerrainSamplingCache(level, config.getSamplingPrecision(), routeMask.blockedColumns());
-            PathResult result = pathfinder.findPath(from, destination, routeCache);
-            if (!result.success() || routeMask.pathTouchesBlockedColumn(result.path())) {
+
+            // Stage 1: coarse pathfinding (step=8, NORMAL precision)
+            TerrainSamplingCache coarseCache = new TerrainSamplingCache(level, coarseConfig.getSamplingPrecision(), routeMask.blockedColumns());
+            PathResult coarseResult = coarsePathfinder.findPath(from, destination, coarseCache);
+            if (!coarseResult.success() || routeMask.pathTouchesBlockedColumn(coarseResult.path())) {
                 return List.of();
             }
-            return result.path();
+
+            // Stage 2: fine pathfinding along corridor (step=4, HIGH precision)
+            TerrainSamplingCache fineCache = buildCorridorCache(level, coarseResult.path(), routeMask, fineConfig.getSamplingPrecision(), 32);
+            PathResult fineResult = finePathfinder.findPath(from, destination, fineCache);
+            if (fineResult.success() && !routeMask.pathTouchesBlockedColumn(fineResult.path())) {
+                return fineResult.path();
+            }
+            return coarseResult.path();
         };
+
         return new RoadPlannerAutoCompleteService(
                 runner,
                 new RoadPlannerTerrainSegmentClassifier(terrainCache, new RoadConfig().getBridge())
         );
+    }
+
+    private static TerrainSamplingCache buildCorridorCache(ServerLevel level, List<BlockPos> corridorPath,
+                                                            RoadPlannerObstacleMask mask,
+                                                            PathfindingConfig.SamplingPrecision precision,
+                                                            int radius) {
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, precision, mask.blockedColumns());
+        for (BlockPos pos : corridorPath) {
+            for (int dx = -radius; dx <= radius; dx += 8) {
+                for (int dz = -radius; dz <= radius; dz += 8) {
+                    cache.getHeight(pos.getX() + dx, pos.getZ() + dz);
+                }
+            }
+        }
+        return cache;
     }
 }
