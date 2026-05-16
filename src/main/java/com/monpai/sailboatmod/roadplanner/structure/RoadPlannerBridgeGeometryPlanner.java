@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class RoadPlannerBridgeGeometryPlanner {
-    private static final int SHORT_SPAN_WITHOUT_PIERS_LIMIT = 8;
     private static final int SEA_LEVEL = 63;
 
     private RoadPlannerBridgeGeometryPlanner() {
@@ -20,22 +19,20 @@ public final class RoadPlannerBridgeGeometryPlanner {
                             BridgeConfig config) {
         BridgeConfig safeConfig = safeConfig(config);
         if (points == null || points.isEmpty()) {
-            return new Plan(List.of(), List.of(), SEA_LEVEL + safeConfig.getDeckHeight());
+            return new Plan(List.of(), List.of(), SEA_LEVEL + safeConfig.getDeckHeight(), RoadPlannerBridgeProfile.PIER_BRIDGE);
         }
         RoadTerrainSampler safeSampler = terrainSampler == null ? RoadTerrainSampler.flat(points.get(0).terrainY()) : terrainSampler;
         int waterSurfaceY = bridgeWaterSurfaceY(points, safeSampler);
         int waterY = Math.max(waterSurfaceY, SEA_LEVEL);
         int entryY = Math.max(points.get(0).targetY(), waterY);
         int exitY = Math.max(points.get(points.size() - 1).targetY(), waterY);
-        int deckY = deckYForActualBridge(waterY, entryY, exitY, safeConfig);
         int spanLength = span == null ? points.size() - 1 : span.endIndex() - span.startIndex();
-        boolean shortSpan = spanLength <= SHORT_SPAN_WITHOUT_PIERS_LIMIT;
+        RoadPlannerBridgeProfile profile = resolveProfile(RoadPlannerBridgeProfile.classify(spanLength), waterY, entryY, exitY);
+        int deckY = deckYForProfile(profile, waterY, entryY, exitY, safeConfig);
 
-        List<PlannedPoint> plannedPoints = shortSpan
-                ? flatDeck(points, deckY)
-                : rampedDeck(points, entryY, exitY, deckY);
-        List<Pier> piers = shortSpan ? List.of() : piers(points, plannedPoints, deckY, safeSampler, safeConfig);
-        return new Plan(plannedPoints, piers, deckY);
+        List<PlannedPoint> plannedPoints = rampedDeck(points, entryY, exitY, deckY);
+        List<Pier> piers = profile.usesPiers() ? piers(points, plannedPoints, deckY, safeSampler, safeConfig) : List.of();
+        return new Plan(plannedPoints, piers, deckY, profile);
     }
 
     private static BridgeConfig safeConfig(BridgeConfig config) {
@@ -52,27 +49,60 @@ public final class RoadPlannerBridgeGeometryPlanner {
 
     private static int deckYForActualBridge(int waterY, int entryY, int exitY, BridgeConfig config) {
         int maxRampHeight = config.getDeckHeight();
+        int higherShore = Math.max(entryY, exitY);
         int deckY = Math.max(waterY + config.getDeckHeight(), Math.max(entryY + 3, exitY + 3));
         deckY = Math.min(deckY, Math.min(entryY, exitY) + maxRampHeight);
-        return Math.max(deckY, waterY + config.getDeckHeight());
+        return Math.max(Math.max(deckY, waterY + config.getDeckHeight()), higherShore);
     }
 
-    private static List<PlannedPoint> flatDeck(List<RoadCenterlinePoint> points, int deckY) {
-        List<PlannedPoint> result = new ArrayList<>(points.size());
-        for (RoadCenterlinePoint point : points) {
-            result.add(new PlannedPoint(point.withTargetY(deckY), BuildPhase.DECK));
+    private static RoadPlannerBridgeProfile resolveProfile(RoadPlannerBridgeProfile profile,
+                                                           int waterY,
+                                                           int entryY,
+                                                           int exitY) {
+        RoadPlannerBridgeProfile safeProfile = profile == null ? RoadPlannerBridgeProfile.PIER_BRIDGE : profile;
+        if (safeProfile.usesPiers()) {
+            return safeProfile;
         }
-        return List.copyOf(result);
+        int lowerShore = Math.min(entryY, exitY);
+        int higherShore = Math.max(entryY, exitY);
+        int requiredDeck = Math.max(waterY + safeProfile.waterClearance(), higherShore + 1);
+        int maxLowDeck = lowerShore + safeProfile.maxRiseFromLowerShore();
+        return requiredDeck <= maxLowDeck ? safeProfile : RoadPlannerBridgeProfile.PIER_BRIDGE;
+    }
+
+    private static int deckYForProfile(RoadPlannerBridgeProfile profile,
+                                       int waterY,
+                                       int entryY,
+                                       int exitY,
+                                       BridgeConfig config) {
+        RoadPlannerBridgeProfile safeProfile = profile == null ? RoadPlannerBridgeProfile.PIER_BRIDGE : profile;
+        if (safeProfile == RoadPlannerBridgeProfile.PIER_BRIDGE) {
+            return deckYForActualBridge(waterY, entryY, exitY, config);
+        }
+        int lowerShore = Math.min(entryY, exitY);
+        int higherShore = Math.max(entryY, exitY);
+        int clearanceDeck = waterY + safeProfile.waterClearance();
+        int shoreDeck = higherShore + 1;
+        int maxLowDeck = lowerShore + safeProfile.maxRiseFromLowerShore();
+        return Math.max(higherShore, Math.min(Math.max(clearanceDeck, shoreDeck), maxLowDeck));
     }
 
     private static List<PlannedPoint> rampedDeck(List<RoadCenterlinePoint> points, int entryY, int exitY, int deckY) {
         int total = points.size();
+        if (total == 1) {
+            int y = Math.max(points.get(0).targetY(), Math.min(deckY, Math.max(entryY, exitY)));
+            return List.of(new PlannedPoint(points.get(0).withTargetY(y), BuildPhase.DECK));
+        }
         int ascHeight = Math.max(0, deckY - entryY);
         int descHeight = Math.max(0, deckY - exitY);
-        int ascLen = Math.min(Math.max(1, ascHeight * 2), Math.max(1, total / 3));
-        int descLen = Math.min(Math.max(1, descHeight * 2), Math.max(1, total / 3));
-        int deckStart = Math.min(total - 1, ascLen);
-        int deckEndExclusive = Math.max(deckStart + 1, total - descLen);
+        int intervals = total - 1;
+        int ascLen = rampLength(ascHeight, intervals);
+        int descLen = rampLength(descHeight, intervals);
+        int deckStart = Math.min(intervals, ascLen);
+        int deckEndExclusive = Math.max(deckStart, total - descLen);
+        if (deckEndExclusive > total) {
+            deckEndExclusive = total;
+        }
         List<PlannedPoint> result = new ArrayList<>(total);
         for (int index = 0; index < total; index++) {
             int y;
@@ -93,9 +123,19 @@ public final class RoadPlannerBridgeGeometryPlanner {
         return List.copyOf(result);
     }
 
+    private static int rampLength(int height, int availableIntervals) {
+        if (availableIntervals <= 0) {
+            return 0;
+        }
+        if (height <= 0) {
+            return 0;
+        }
+        return Math.min(Math.max(1, height), availableIntervals);
+    }
+
     private static int rampY(int shoreY, int deckY, int localIndex, int rampLen) {
         if (deckY <= shoreY || rampLen <= 0) {
-            return deckY;
+            return shoreY;
         }
         double t = Math.min(1.0D, Math.max(0.0D, localIndex / (double) rampLen));
         return (int) Math.round(shoreY + (deckY - shoreY) * t);
@@ -134,10 +174,11 @@ public final class RoadPlannerBridgeGeometryPlanner {
     public record Pier(BlockPos center, int bottomY, int topY) {
     }
 
-    public record Plan(List<PlannedPoint> points, List<Pier> piers, int deckY) {
+    public record Plan(List<PlannedPoint> points, List<Pier> piers, int deckY, RoadPlannerBridgeProfile profile) {
         public Plan {
             points = points == null ? List.of() : List.copyOf(points);
             piers = piers == null ? List.of() : List.copyOf(piers);
+            profile = profile == null ? RoadPlannerBridgeProfile.PIER_BRIDGE : profile;
         }
     }
 }

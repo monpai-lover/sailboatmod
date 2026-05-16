@@ -202,7 +202,7 @@ class RoadNodeStructureExpanderTest {
     @Test
     void bridgeSpanEmitsRampDeckPierAndRailingPhases() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
-                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
                 List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
                 RoadPlannerBuildSettings.DEFAULTS,
                 RoadTerrainSampler.flat(60),
@@ -316,7 +316,7 @@ class RoadNodeStructureExpanderTest {
             }
         };
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
-                List.of(new BlockPos(0, 63, 0), new BlockPos(24, 63, 0)),
+                List.of(new BlockPos(0, 63, 0), new BlockPos(48, 63, 0)),
                 List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
                 RoadPlannerBuildSettings.DEFAULTS,
                 waterSampler,
