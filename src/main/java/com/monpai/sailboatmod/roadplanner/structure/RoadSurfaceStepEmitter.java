@@ -30,7 +30,7 @@ public final class RoadSurfaceStepEmitter {
                 continue;
             }
             boolean ramp = isRamp(centerline, spans, index);
-            BlockState surfaceState = ramp ? rampState(safeSettings, index) : safeSettings.surfaceState();
+            BlockState surfaceState = ramp ? rampState(safeSettings, centerline, index) : safeSettings.surfaceState();
             BuildPhase surfacePhase = ramp ? BuildPhase.RAMP : BuildPhase.SURFACE;
             List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width());
             for (BlockPos surfacePos : footprint) {
@@ -105,7 +105,13 @@ public final class RoadSurfaceStepEmitter {
         return y != prevY || y != nextY;
     }
 
-    private static BlockState rampState(RoadPlannerBuildSettings settings, int index) {
-        return (index & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
+    private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadCenterlinePoint> centerline, int index) {
+        int y = centerline.get(index).targetY();
+        int prevY = index > 0 ? centerline.get(index - 1).targetY() : y;
+        int nextY = index + 1 < centerline.size() ? centerline.get(index + 1).targetY() : y;
+        if (y > prevY || nextY < y) {
+            return settings.slabBottomState();
+        }
+        return settings.slabTopState();
     }
 }

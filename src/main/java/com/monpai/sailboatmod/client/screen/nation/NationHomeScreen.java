@@ -322,10 +322,10 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         this.addRenderableWidget(this.joinNationInput);
         this.joinNationButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.join"), b -> submitJoinNation()).bounds(left + BODY_X + 300, top + BODY_Y + 176, 110, 18).build());
         this.nationHelpButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.help"), b -> runCommand("nation help")).bounds(left + BODY_X + 300, top + BODY_Y + 204, 110, 18).build());
-        this.openCapitalTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.open_town"), b -> openCapitalTown()).bounds(left + BODY_X + 300, top + BODY_Y + 204, 110, 18).build());
+        this.openCapitalTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.open_town"), b -> openCapitalTown()).bounds(left + BODY_X + 320, top + BODY_Y + 204, 72, 18).build());
         this.removeCoreButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.remove_core"), b -> submitRemoveCore()).bounds(left + BODY_X + 300, top + BODY_Y + 226, 110, 18).build());
-        this.previousTownButton = this.addRenderableWidget(Button.builder(Component.literal("<"), b -> previousTownSelection()).bounds(left + BODY_X + 300, top + BODY_Y + 176, 52, 18).build());
-        this.nextTownButton = this.addRenderableWidget(Button.builder(Component.literal(">"), b -> nextTownSelection()).bounds(left + BODY_X + 358, top + BODY_Y + 176, 52, 18).build());
+        this.previousTownButton = this.addRenderableWidget(Button.builder(Component.literal("<"), b -> previousTownSelection()).bounds(left + BODY_X + 300, top + BODY_Y + 204, 18, 18).build());
+        this.nextTownButton = this.addRenderableWidget(Button.builder(Component.literal(">"), b -> nextTownSelection()).bounds(left + BODY_X + 394, top + BODY_Y + 204, 18, 18).build());
 
         this.primaryColorInput = new EditBox(this.font, left + BODY_X + 170, top + BODY_Y + 126, 96, 18, Component.translatable("screen.sailboatmod.nation.color.primary"));
         this.primaryColorInput.setMaxLength(7);

@@ -80,7 +80,7 @@ public final class BridgeStructureEmitter {
             RoadCenterlinePoint point = planned.point();
             int y = point.targetY();
             boolean ramp = planned.phase() == BuildPhase.RAMP;
-            BlockState state = ramp ? rampState(settings, index) : settings.surfaceState();
+            BlockState state = ramp ? rampState(settings, plannedPoints, index) : settings.surfaceState();
             BuildPhase phase = planned.phase();
             BlockPos center = new BlockPos(point.pos().getX(), y, point.pos().getZ());
             List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
@@ -98,8 +98,14 @@ public final class BridgeStructureEmitter {
         return List.copyOf(steps);
     }
 
-    private static BlockState rampState(RoadPlannerBuildSettings settings, int index) {
-        return (index & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
+    private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {
+        int y = points.get(index).point().targetY();
+        int prevY = index > 0 ? points.get(index - 1).point().targetY() : y;
+        int nextY = index + 1 < points.size() ? points.get(index + 1).point().targetY() : y;
+        if (y > prevY || nextY < y) {
+            return settings.slabBottomState();
+        }
+        return settings.slabTopState();
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,
