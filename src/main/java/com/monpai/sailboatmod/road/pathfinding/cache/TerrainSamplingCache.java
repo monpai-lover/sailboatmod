@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.road.pathfinding.cache;
 
+import com.monpai.sailboatmod.construction.RoadCoreExclusion;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
@@ -9,6 +10,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import com.monpai.sailboatmod.road.config.PathfindingConfig;
 
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class TerrainSamplingCache {
@@ -16,6 +18,7 @@ public class TerrainSamplingCache {
     private final FastHeightSampler fastSampler;
     private final AccurateHeightSampler accurateSampler;
     private final PathfindingConfig.SamplingPrecision precision;
+    private final Set<Long> blockedColumns;
 
     private final ConcurrentHashMap<Long, Integer> heightCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Integer> waterSurfaceCache = new ConcurrentHashMap<>();
@@ -24,10 +27,17 @@ public class TerrainSamplingCache {
     private final ConcurrentHashMap<Long, Holder<Biome>> biomeCache = new ConcurrentHashMap<>();
 
     public TerrainSamplingCache(ServerLevel level, PathfindingConfig.SamplingPrecision precision) {
+        this(level, precision, Set.of());
+    }
+
+    public TerrainSamplingCache(ServerLevel level, PathfindingConfig.SamplingPrecision precision, Set<Long> blockedColumns) {
         this.level = level;
         this.fastSampler = new FastHeightSampler(level);
         this.accurateSampler = new AccurateHeightSampler(level);
         this.precision = precision;
+        this.blockedColumns = blockedColumns == null || blockedColumns.isEmpty()
+                ? Set.of()
+                : Set.copyOf(blockedColumns);
     }
 
     private static long key(int x, int z) {
@@ -83,6 +93,10 @@ public class TerrainSamplingCache {
     public boolean isNearWater(int x, int z) {
         return isWater(x - 1, z) || isWater(x + 1, z)
             || isWater(x, z - 1) || isWater(x, z + 1);
+    }
+
+    public boolean isBlocked(int x, int z) {
+        return blockedColumns.contains(RoadCoreExclusion.columnKey(x, z));
     }
 
     public double terrainStability(int x, int z) {

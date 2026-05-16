@@ -86,6 +86,9 @@ public class PotentialFieldPathfinder implements Pathfinder {
             for (int[] dir : DIRECTIONS) {
                 int nx = current.x + dir[0] * step;
                 int nz = current.z + dir[1] * step;
+                if (cache.isBlocked(nx, nz)) {
+                    continue;
+                }
 
                 // Search buffer check: perpendicular distance from start-end line
                 double perpDist = perpendicularDistance(nx, nz, startX, startZ, goalX, goalZ, goalLen);

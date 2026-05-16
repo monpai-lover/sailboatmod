@@ -64,6 +64,9 @@ public class BasicAStarPathfinder implements Pathfinder {
             for (int[] dir : DIRECTIONS) {
                 int nx = current.x + dir[0] * step;
                 int nz = current.z + dir[1] * step;
+                if (cache.isBlocked(nx, nz)) {
+                    continue;
+                }
 
                 double moveCost = costModel.moveCost(current.x, current.z, nx, nz, cache) * step;
                 double devCost = costModel.deviationCost(nx, nz, start, end);

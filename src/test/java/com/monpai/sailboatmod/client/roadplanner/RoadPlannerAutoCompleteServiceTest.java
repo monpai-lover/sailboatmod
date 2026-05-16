@@ -73,6 +73,21 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
+    void injectedPathfinderRunnerEmptyResultFailsInsteadOfInterpolating() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> List.of());
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                new BlockPos(0, 64, 0),
+                new BlockPos(96, 64, 0),
+                List.of(),
+                24
+        );
+
+        assertFalse(result.success());
+        assertTrue(result.nodes().isEmpty());
+    }
+
+    @Test
     void appliesInjectedBridgeThresholdClassifier() {
         RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService(
                 (from, to) -> List.of(

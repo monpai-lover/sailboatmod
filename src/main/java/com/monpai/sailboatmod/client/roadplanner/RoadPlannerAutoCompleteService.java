@@ -43,6 +43,9 @@ public class RoadPlannerAutoCompleteService {
         int spacing = Math.max(4, spacingBlocks);
         List<BlockPos> suffixNodes = runPathfinder(from, destination);
         if (suffixNodes.isEmpty()) {
+            if (pathfinderRunner != null) {
+                return RoadPlannerAutoCompleteResult.failure("鑷姩瀵昏矾澶辫触");
+            }
             suffixNodes = interpolateRoadWeaverStyle(from, destination, spacing);
         }
         if (suffixNodes.size() < 2) {
