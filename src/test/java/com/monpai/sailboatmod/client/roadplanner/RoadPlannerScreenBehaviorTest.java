@@ -205,6 +205,42 @@ class RoadPlannerScreenBehaviorTest {
         assertTrue(screen.forceRenderTotalChunksForTest() > 0);
     }
 
+    @Test
+    void rightClickPlannedNodeOpensPlannedRouteMenuBeforeGraphEdge() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
+        screen.mouseClicked(map.x() + 180, map.y() + 120, 0);
+        BlockPos plannedStart = worldFromScreen(map, map.x() + 120, map.y() + 120);
+        BlockPos plannedEnd = worldFromScreen(map, map.x() + 180, map.y() + 120);
+
+        RoadNetworkGraph graph = new RoadNetworkGraph();
+        RoadGraphNode from = graph.addNode(plannedStart, RoadGraphNode.Kind.TOWN_CONNECTION);
+        RoadGraphNode to = graph.addNode(plannedEnd, RoadGraphNode.Kind.TOWN_CONNECTION);
+        graph.addEdge(from.nodeId(), to.nodeId(), roadMetadata());
+        screen.setGraphForTest(graph);
+
+        assertTrue(screen.rightClickMapForTest(plannedStart.getX(), plannedStart.getZ(), 300, 300));
+
+        assertEquals(RoadPlannerVanillaContextMenu.Kind.PLANNED_ROUTE, screen.contextMenuForTest().kind());
+    }
+
+    @Test
+    void plannedRouteContextMenuPropertyActionUpdatesDraftSegment() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
+        screen.mouseClicked(map.x() + 180, map.y() + 120, 0);
+        BlockPos plannedStart = worldFromScreen(map, map.x() + 120, map.y() + 120);
+
+        assertTrue(screen.rightClickMapForTest(plannedStart.getX(), plannedStart.getZ(), 300, 300));
+        screen.handleContextActionForTest(RoadPlannerContextMenuAction.SET_BRIDGE_TYPE);
+
+        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, screen.segmentTypeForTest(0));
+    }
+
 
     @Test
     void contextMenuDemolishEdgeRemovesSelectedGraphEdge() {
@@ -307,5 +343,11 @@ class RoadPlannerScreenBehaviorTest {
         RoadPlannerTopToolbar.Item action = RoadPlannerTopToolbar.toolbar(1280, group)
                 .items().stream().filter(item -> label.equals(item.label())).findFirst().orElseThrow();
         screen.mouseClicked(action.bounds().x() + 4, action.bounds().y() + 4, 0);
+    }
+
+    private BlockPos worldFromScreen(RoadPlannerMapLayout.Rect map, int screenX, int screenY) {
+        int worldX = (int) Math.round((screenX - (map.x() + map.width() / 2.0D)) / 2.0D);
+        int worldZ = (int) Math.round((screenY - (map.y() + map.height() / 2.0D)) / 2.0D);
+        return new BlockPos(worldX, 64, worldZ);
     }
 }

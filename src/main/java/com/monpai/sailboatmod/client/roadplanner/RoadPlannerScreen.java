@@ -66,6 +66,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private final RoadPlannerAutoCompleteService autoCompleteService = new RoadPlannerAutoCompleteService();
     private final RoadPlannerBridgeRuleService bridgeRuleService = new RoadPlannerBridgeRuleService(RoadPlannerScreen::isClientLand);
     private final RoadPlannerNodeHitTester nodeHitTester = new RoadPlannerNodeHitTester(8.0D);
+    private final RoadPlannerRouteHitTester routeHitTester = new RoadPlannerRouteHitTester(8.0D, 6.0D);
     private final RoadPlannerEraseTool eraseTool = new RoadPlannerEraseTool();
     private final RoadPlannerDraftPersistence draftPersistence;
     private final RoadPlannerRoutePreloadScheduler routePreloadScheduler = new RoadPlannerRoutePreloadScheduler();
@@ -274,6 +275,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         return linePlan.nodeCount();
     }
 
+    public RoadPlannerSegmentType segmentTypeForTest(int segmentIndex) {
+        return linePlan.segments().get(segmentIndex);
+    }
+
     public BlockPos startTownPosForTest() {
         return startTownPos;
     }
@@ -464,7 +469,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public boolean rightClickMapForTest(double worldX, double worldZ, int mouseX, int mouseY) {
-        return openContextMenuForGraph(worldX, worldZ, mouseX, mouseY);
+        return openContextMenuAtWorld(worldX, worldZ, mouseX, mouseY);
     }
 
     public boolean clickWorldForTest(int worldX, int worldZ) {
@@ -898,7 +903,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (canvas.contains(mouseX, mouseY)) {
             if (button == 1) {
                 BlockPos world = canvas.mouseToWorld(mouseX, mouseY);
-                return openContextMenuForGraph(world.getX(), world.getZ(), (int) mouseX, (int) mouseY);
+                return openContextMenuAtWorld(world.getX(), world.getZ(), (int) mouseX, (int) mouseY);
             }
             if (button == 0 && state.activeTool() == RoadToolType.SELECT) {
                 BlockPos world = canvas.mouseToWorld(mouseX, mouseY);
@@ -1024,6 +1029,25 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return false;
         }
         contextMenu = RoadPlannerVanillaContextMenu.forRoadEdge(result.contextMenu().orElseThrow().roadEdgeId());
+        contextMenu.open(mouseX, mouseY);
+        return true;
+    }
+
+    private boolean openContextMenuAtWorld(double worldX, double worldZ, int mouseX, int mouseY) {
+        if (openContextMenuForPlannedRoute(worldX, worldZ, mouseX, mouseY)) {
+            return true;
+        }
+        return openContextMenuForGraph(worldX, worldZ, mouseX, mouseY);
+    }
+
+    private boolean openContextMenuForPlannedRoute(double worldX, double worldZ, int mouseX, int mouseY) {
+        RoadPlannerRouteHitTester.Hit hit = routeHitTester.hit(linePlan.nodes(), worldX, worldZ).orElse(null);
+        if (hit == null || hit.segmentIndex() < 0 || hit.segmentIndex() >= linePlan.segmentCount()) {
+            return false;
+        }
+        selectedNode = new RoadPlannerNodeSelection(hit.segmentIndex());
+        state = state.withSelectedRoadEdge(null);
+        contextMenu = RoadPlannerVanillaContextMenu.forPlannedRoute();
         contextMenu.open(mouseX, mouseY);
         return true;
     }

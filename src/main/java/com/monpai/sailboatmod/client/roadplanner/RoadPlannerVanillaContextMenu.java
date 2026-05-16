@@ -10,6 +10,11 @@ import java.util.UUID;
 import java.util.function.ToIntFunction;
 
 public class RoadPlannerVanillaContextMenu {
+    public enum Kind {
+        ROAD_EDGE,
+        PLANNED_ROUTE
+    }
+
     public static final int PADDING = 6;
     public static final int ITEM_HEIGHT = 16;
     public static final int SEPARATOR_HEIGHT = 8;
@@ -20,6 +25,7 @@ public class RoadPlannerVanillaContextMenu {
     private static final int MENU_DISABLED = 0xFF808080;
 
     private final UUID roadEdgeId;
+    private final Kind kind;
     private final List<Item> items = new ArrayList<>();
     private boolean open;
     private int anchorX;
@@ -27,12 +33,13 @@ public class RoadPlannerVanillaContextMenu {
     private int hoverIndex = -1;
     private RoadPlannerVanillaLayout.Rect bounds = new RoadPlannerVanillaLayout.Rect(0, 0, 0, 0);
 
-    private RoadPlannerVanillaContextMenu(UUID roadEdgeId) {
+    private RoadPlannerVanillaContextMenu(UUID roadEdgeId, Kind kind) {
         this.roadEdgeId = roadEdgeId == null ? new UUID(0L, 0L) : roadEdgeId;
+        this.kind = kind == null ? Kind.ROAD_EDGE : kind;
     }
 
     public static RoadPlannerVanillaContextMenu forRoadEdge(UUID roadEdgeId) {
-        RoadPlannerVanillaContextMenu menu = new RoadPlannerVanillaContextMenu(roadEdgeId);
+        RoadPlannerVanillaContextMenu menu = new RoadPlannerVanillaContextMenu(roadEdgeId, Kind.ROAD_EDGE);
         menu.items.add(Item.action("\u91cd\u547d\u540d\u9053\u8def", RoadPlannerContextMenuAction.RENAME_ROAD));
         menu.items.add(Item.separator());
         menu.items.add(Item.action("\u8bbe\u4e3a\u9053\u8def", RoadPlannerContextMenuAction.SET_ROAD_TYPE));
@@ -44,6 +51,14 @@ public class RoadPlannerVanillaContextMenu {
         menu.items.add(Item.separator());
         menu.items.add(Item.action("\u8fde\u63a5\u57ce\u9547", RoadPlannerContextMenuAction.CONNECT_TOWN));
         menu.items.add(Item.action("\u67e5\u770b\u56de\u6eda\u8d26\u672c", RoadPlannerContextMenuAction.VIEW_LEDGER));
+        return menu;
+    }
+
+    public static RoadPlannerVanillaContextMenu forPlannedRoute() {
+        RoadPlannerVanillaContextMenu menu = new RoadPlannerVanillaContextMenu(new UUID(0L, 0L), Kind.PLANNED_ROUTE);
+        menu.items.add(Item.action("\u8bbe\u4e3a\u9053\u8def", RoadPlannerContextMenuAction.SET_ROAD_TYPE));
+        menu.items.add(Item.action("\u8bbe\u4e3a\u6865\u6881", RoadPlannerContextMenuAction.SET_BRIDGE_TYPE));
+        menu.items.add(Item.action("\u8bbe\u4e3a\u96a7\u9053", RoadPlannerContextMenuAction.SET_TUNNEL_TYPE));
         return menu;
     }
 
@@ -65,6 +80,10 @@ public class RoadPlannerVanillaContextMenu {
 
     public UUID roadEdgeId() {
         return roadEdgeId;
+    }
+
+    public Kind kind() {
+        return kind;
     }
 
     public RoadPlannerVanillaLayout.Rect bounds() {
