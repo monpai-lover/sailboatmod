@@ -85,7 +85,7 @@ public class SegmentedAdaptivePathfinder implements Pathfinder {
             }
         }
         waypoints.add(new Waypoint(samples.get(segStart).pos, algorithmFor(prevClass)));
-        waypoints.add(new Waypoint(end, PathfindingConfig.Algorithm.POTENTIAL_FIELD));
+        waypoints.add(new Waypoint(end, algorithmFor(prevClass)));
         return waypoints;
     }
 

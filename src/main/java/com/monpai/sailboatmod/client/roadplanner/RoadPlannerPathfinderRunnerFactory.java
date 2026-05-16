@@ -59,7 +59,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
 
         return new RoadPlannerAutoCompleteService(
                 runner,
-                new RoadPlannerTerrainSegmentClassifier(terrainCache, new RoadConfig().getBridge())
+                new RoadPlannerTerrainSegmentClassifier(terrainCache, new RoadConfig().getBridge()),
+                (x, z) -> !terrainCache.isWater(x, z)
         );
     }
 
@@ -69,8 +70,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
                                                             int radius) {
         TerrainSamplingCache cache = new TerrainSamplingCache(level, precision, mask.blockedColumns());
         for (BlockPos pos : corridorPath) {
-            for (int dx = -radius; dx <= radius; dx += 8) {
-                for (int dz = -radius; dz <= radius; dz += 8) {
+            for (int dx = -radius; dx <= radius; dx += 4) {
+                for (int dz = -radius; dz <= radius; dz += 4) {
                     cache.getHeight(pos.getX() + dx, pos.getZ() + dz);
                 }
             }
