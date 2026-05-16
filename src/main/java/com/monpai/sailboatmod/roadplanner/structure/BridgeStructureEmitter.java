@@ -54,6 +54,8 @@ public final class BridgeStructureEmitter {
         return List.copyOf(steps);
     }
 
+    private static final BlockState FOUNDATION_BLOCK = Blocks.STONE_BRICKS.defaultBlockState();
+
     private static List<BuildStep> emitProgrammaticBridge(List<RoadCenterlinePoint> points,
                                                           RoadSpan span,
                                                           RoadPlannerBuildSettings settings,
@@ -87,7 +89,18 @@ public final class BridgeStructureEmitter {
             for (BlockPos surfacePos : footprint) {
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
             }
-            steps.addAll(railings(bridgeProfile, index, center, settings, order));
+            // Foundation below deck/ramp on center column
+            int terrainY = point.terrainY();
+            for (int fy = y - 1; fy > terrainY; fy--) {
+                steps.add(new BuildStep(order++, new BlockPos(center.getX(), fy, center.getZ()), FOUNDATION_BLOCK, BuildPhase.FOUNDATION));
+            }
+            // Railing support: place a deck block below each railing position
+            List<BuildStep> railSteps = railings(bridgeProfile, index, center, settings, order);
+            for (BuildStep rs : railSteps) {
+                BlockPos railBase = rs.pos().below();
+                steps.add(new BuildStep(order++, railBase, settings.surfaceState(), BuildPhase.DECK));
+            }
+            steps.addAll(railSteps);
             order = startOrder + steps.size();
         }
         for (RoadPlannerBridgeGeometryPlanner.Pier pier : plan.piers()) {

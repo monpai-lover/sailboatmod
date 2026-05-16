@@ -4,7 +4,7 @@ public class PathfindingConfig {
     public enum Algorithm { BASIC_ASTAR, BIDIRECTIONAL_ASTAR, GRADIENT_DESCENT, POTENTIAL_FIELD, SEGMENTED_ADAPTIVE }
     public enum SamplingPrecision { NORMAL, HIGH, ULTRA_HIGH }
 
-    private Algorithm algorithm = Algorithm.POTENTIAL_FIELD;
+    private Algorithm algorithm = Algorithm.SEGMENTED_ADAPTIVE;
     private int maxSteps = 20000;
     private SamplingPrecision samplingPrecision = SamplingPrecision.NORMAL;
     private double elevationWeight = 80.0;

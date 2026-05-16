@@ -185,6 +185,11 @@ class CarriageRoutePlannerTest {
         }
 
         @Override
+        public int getMaxBuildHeight() {
+            return 256;
+        }
+
+        @Override
         public Holder<Biome> getBiome(BlockPos pos) {
             return biome;
         }

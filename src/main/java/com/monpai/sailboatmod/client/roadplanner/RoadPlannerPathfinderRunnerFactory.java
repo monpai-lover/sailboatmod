@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.construction.RoadCoreExclusion;
 import com.monpai.sailboatmod.road.config.PathfindingConfig;
 import com.monpai.sailboatmod.road.config.RoadConfig;
 import com.monpai.sailboatmod.road.pathfinding.PathResult;
@@ -11,7 +12,9 @@ import com.monpai.sailboatmod.roadplanner.obstacle.RoadPlannerObstacleMask;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class RoadPlannerPathfinderRunnerFactory {
     private RoadPlannerPathfinderRunnerFactory() {
@@ -68,7 +71,12 @@ public final class RoadPlannerPathfinderRunnerFactory {
                                                             RoadPlannerObstacleMask mask,
                                                             PathfindingConfig.SamplingPrecision precision,
                                                             int radius) {
-        TerrainSamplingCache cache = new TerrainSamplingCache(level, precision, mask.blockedColumns());
+        TerrainSamplingCache cache = new TerrainSamplingCache(
+                level,
+                precision,
+                mask.blockedColumns(),
+                corridorColumns(corridorPath, radius, 4)
+        );
         for (BlockPos pos : corridorPath) {
             for (int dx = -radius; dx <= radius; dx += 4) {
                 for (int dz = -radius; dz <= radius; dz += 4) {
@@ -77,5 +85,25 @@ public final class RoadPlannerPathfinderRunnerFactory {
             }
         }
         return cache;
+    }
+
+    static Set<Long> corridorColumns(List<BlockPos> corridorPath, int radius, int step) {
+        if (corridorPath == null || corridorPath.isEmpty()) {
+            return Set.of();
+        }
+        int safeRadius = Math.max(0, radius);
+        int safeStep = Math.max(1, step);
+        Set<Long> columns = new HashSet<>();
+        for (BlockPos pos : corridorPath) {
+            if (pos == null) {
+                continue;
+            }
+            for (int dx = -safeRadius; dx <= safeRadius; dx += safeStep) {
+                for (int dz = -safeRadius; dz <= safeRadius; dz += safeStep) {
+                    columns.add(RoadCoreExclusion.columnKey(pos.getX() + dx, pos.getZ() + dz));
+                }
+            }
+        }
+        return Set.copyOf(columns);
     }
 }
