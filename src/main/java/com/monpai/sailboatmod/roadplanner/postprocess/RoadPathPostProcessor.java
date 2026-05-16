@@ -144,13 +144,15 @@ public final class RoadPathPostProcessor {
                 } else {
                     BlockPos p0 = ext.get(i);
                     BlockPos p3 = ext.get(i + 3);
-                    double[] pt = bezierDeCasteljau(
+                    double crX = catmullRom(p0.getX(), p1.getX(), p2.getX(), p3.getX(), t);
+                    double crZ = catmullRom(p0.getZ(), p1.getZ(), p2.getZ(), p3.getZ(), t);
+                    double[] bzPt = bezierDeCasteljau(
                             p0.getX(), p0.getZ(),
                             p1.getX(), p1.getZ(),
                             p2.getX(), p2.getZ(),
                             p3.getX(), p3.getZ(), t);
-                    sx = pt[0];
-                    sz = pt[1];
+                    sx = crX * 0.4 + bzPt[0] * 0.6;
+                    sz = crZ * 0.4 + bzPt[1] * 0.6;
                 }
                 splinePoints.add(new double[]{sx, sz});
             }
