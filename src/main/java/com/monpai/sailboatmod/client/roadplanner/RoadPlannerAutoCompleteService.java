@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.roadplanner.postprocess.RoadPathPostProcessor;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
@@ -50,6 +51,9 @@ public class RoadPlannerAutoCompleteService {
         }
         if (suffixNodes.size() < 2) {
             return RoadPlannerAutoCompleteResult.failure("自动寻路失败");
+        }
+        if (suffixNodes.size() >= 6) {
+            suffixNodes = RoadPathPostProcessor.process(suffixNodes, detectBridgeMask(suffixNodes));
         }
         List<BlockPos> mergedNodes = mergeManualPrefix(manualNodes, suffixNodes);
         List<RoadPlannerSegmentType> segmentTypes = classifySegments(mergedNodes);
@@ -151,6 +155,15 @@ public class RoadPlannerAutoCompleteService {
                     : RoadPlannerSegmentType.BRIDGE_SMALL;
         }
         return RoadPlannerSegmentType.ROAD;
+    }
+
+    private boolean[] detectBridgeMask(List<BlockPos> nodes) {
+        boolean[] mask = new boolean[nodes.size()];
+        for (int i = 0; i < nodes.size(); i++) {
+            BlockPos pos = nodes.get(i);
+            mask[i] = !landProbe.isLand(pos.getX(), pos.getZ());
+        }
+        return mask;
     }
 
     @FunctionalInterface

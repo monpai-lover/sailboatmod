@@ -43,7 +43,9 @@ public class TerrainCostModel {
         double waterCost = waterCostAggressive(cache, toX, toZ);
         double nearWaterCost = cache.isNearWater(toX, toZ) ? config.getNearWaterCost() : 0;
 
-        return stepCost + elevationCost + biomeCost + stabilityCost + waterCost + nearWaterCost;
+        double slopePenalty = slopeCost(fromX, fromZ, toX, toZ, cache);
+
+        return stepCost + elevationCost + slopePenalty + biomeCost + stabilityCost + waterCost + nearWaterCost;
     }
 
     public double waterCostAggressive(TerrainSamplingCache cache, int x, int z) {
