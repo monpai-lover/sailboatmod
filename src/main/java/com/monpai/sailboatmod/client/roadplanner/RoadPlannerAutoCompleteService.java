@@ -128,7 +128,9 @@ public class RoadPlannerAutoCompleteService {
         boolean fromLand = landProbe.isLand(from.getX(), from.getZ());
         boolean toLand = landProbe.isLand(to.getX(), to.getZ());
         if (!fromLand || !toLand) {
-            return horizontal <= 24 ? RoadPlannerSegmentType.BRIDGE_SMALL : RoadPlannerSegmentType.BRIDGE_MAJOR;
+            return RoadPlannerBridgeThresholds.requiresMajorBridge(horizontal)
+                    ? RoadPlannerSegmentType.BRIDGE_MAJOR
+                    : RoadPlannerSegmentType.BRIDGE_SMALL;
         }
         int samples = Math.max(3, horizontal / 8);
         int waterCount = 0;
@@ -141,7 +143,9 @@ public class RoadPlannerAutoCompleteService {
             }
         }
         if (waterCount > samples / 2) {
-            return horizontal <= 24 ? RoadPlannerSegmentType.BRIDGE_SMALL : RoadPlannerSegmentType.BRIDGE_MAJOR;
+            return RoadPlannerBridgeThresholds.requiresMajorBridge(horizontal)
+                    ? RoadPlannerSegmentType.BRIDGE_MAJOR
+                    : RoadPlannerSegmentType.BRIDGE_SMALL;
         }
         return RoadPlannerSegmentType.ROAD;
     }

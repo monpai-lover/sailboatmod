@@ -16,7 +16,7 @@ class RoadPlannerWaterCrossingSplitterTest {
     }
 
     @Test
-    void fourToTwentyFourBlockWaterSpanCreatesSmallBridge() {
+    void fourToThirtyTwoBlockWaterSpanCreatesSmallBridge() {
         RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(6, 13, 1);
 
         assertTrue(result.didSplit());
@@ -25,11 +25,28 @@ class RoadPlannerWaterCrossingSplitterTest {
     }
 
     @Test
-    void wideWaterSpanCreatesMajorBridge() {
-        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(4, 32, 1);
+    void thirtyTwoBlockWaterSpanCreatesSmallBridge() {
+        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(4, 35, 1);
+
+        assertTrue(result.didSplit());
+        assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL));
+        assertFalse(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
+    }
+
+    @Test
+    void thirtyThreeBlockWaterSpanCreatesMajorBridge() {
+        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(3, 35, 1);
 
         assertTrue(result.didSplit());
         assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
+    }
+
+    @Test
+    void waterCrossingNearDestinationUsesTrailingDrySamplesAsExitShore() {
+        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(10, 36, 1);
+
+        assertTrue(result.didSplit());
+        assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL));
     }
 
     @Test
