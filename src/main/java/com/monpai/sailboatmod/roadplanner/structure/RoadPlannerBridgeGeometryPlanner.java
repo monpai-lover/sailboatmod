@@ -103,6 +103,11 @@ public final class RoadPlannerBridgeGeometryPlanner {
         if (deckEndExclusive > total) {
             deckEndExclusive = total;
         }
+        if (deckStart >= deckEndExclusive && (ascHeight > 0 || descHeight > 0)) {
+            int deckIndex = Math.max(0, Math.min(total - 1, total / 2));
+            deckStart = deckIndex;
+            deckEndExclusive = deckIndex + 1;
+        }
         List<PlannedPoint> result = new ArrayList<>(total);
         for (int index = 0; index < total; index++) {
             int y;

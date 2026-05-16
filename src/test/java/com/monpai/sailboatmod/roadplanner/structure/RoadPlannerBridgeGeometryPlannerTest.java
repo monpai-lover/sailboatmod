@@ -69,6 +69,20 @@ class RoadPlannerBridgeGeometryPlannerTest {
     }
 
     @Test
+    void twoPointLowArchStillRaisesOnePointToDeckHeight() {
+        RoadPlannerBridgeGeometryPlanner.Plan plan = RoadPlannerBridgeGeometryPlanner.plan(
+                centerline(0, 1, 64),
+                new RoadSpan(RoadSpanType.BRIDGE, 0, 1, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                waterSampler(63, 40),
+                new BridgeConfig()
+        );
+
+        assertEquals(RoadPlannerBridgeProfile.LOW_ARCH, plan.profile());
+        assertTrue(plan.points().stream().anyMatch(point -> point.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK));
+        assertTrue(plan.points().stream().anyMatch(point -> point.point().targetY() == plan.deckY()));
+    }
+
+    @Test
     void mediumCrossingUsesLowBridgeWithoutPiers() {
         RoadPlannerBridgeGeometryPlanner.Plan plan = RoadPlannerBridgeGeometryPlanner.plan(
                 centerline(0, 24, 64),
