@@ -16,7 +16,7 @@ public final class RoadPathPostProcessor {
             return rawPath == null ? List.of() : List.copyOf(rawPath);
         }
         boolean[] safeMask = bridgeMask != null && bridgeMask.length == rawPath.size() ? bridgeMask : new boolean[rawPath.size()];
-        List<BlockPos> simplified = simplify(rawPath);
+        List<BlockPos> simplified = simplify(rawPath, safeMask);
         boolean[] simplifiedMask = remapBridgeMask(rawPath, simplified, safeMask);
         List<BlockPos> straightened = straightenBridgeRuns(simplified, simplifiedMask);
         return relax(straightened, simplifiedMask);
@@ -27,14 +27,14 @@ public final class RoadPathPostProcessor {
             return rawPath == null ? List.of() : List.copyOf(rawPath);
         }
         boolean[] safeMask = bridgeMask != null && bridgeMask.length == rawPath.size() ? bridgeMask : new boolean[rawPath.size()];
-        List<BlockPos> simplified = simplify(rawPath);
+        List<BlockPos> simplified = simplify(rawPath, safeMask);
         boolean[] simplifiedMask = remapBridgeMask(rawPath, simplified, safeMask);
         List<BlockPos> straightened = straightenBridgeRuns(simplified, simplifiedMask);
         List<BlockPos> relaxed = relax(straightened, simplifiedMask);
         return splineAndExtract(relaxed, simplifiedMask);
     }
 
-    static List<BlockPos> simplify(List<BlockPos> nodes) {
+    static List<BlockPos> simplify(List<BlockPos> nodes, boolean[] bridgeMask) {
         if (nodes.size() < 3) return List.copyOf(nodes);
         List<BlockPos> result = new ArrayList<>();
         result.add(nodes.get(0));
@@ -47,7 +47,7 @@ public final class RoadPathPostProcessor {
             long dx2 = next.getX() - curr.getX();
             long dz2 = next.getZ() - curr.getZ();
             long cross = Math.abs(dx1 * dz2 - dz1 * dx2);
-            if (cross > SIMPLIFY_CROSS_THRESHOLD) {
+            if (cross > SIMPLIFY_CROSS_THRESHOLD || bridgeMask[i]) {
                 result.add(curr);
                 prev = curr;
             }
