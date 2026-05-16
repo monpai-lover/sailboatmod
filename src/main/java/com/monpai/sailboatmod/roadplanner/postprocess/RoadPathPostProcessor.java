@@ -144,8 +144,13 @@ public final class RoadPathPostProcessor {
                 } else {
                     BlockPos p0 = ext.get(i);
                     BlockPos p3 = ext.get(i + 3);
-                    sx = catmullRom(p0.getX(), p1.getX(), p2.getX(), p3.getX(), t);
-                    sz = catmullRom(p0.getZ(), p1.getZ(), p2.getZ(), p3.getZ(), t);
+                    double[] pt = bezierDeCasteljau(
+                            p0.getX(), p0.getZ(),
+                            p1.getX(), p1.getZ(),
+                            p2.getX(), p2.getZ(),
+                            p3.getX(), p3.getZ(), t);
+                    sx = pt[0];
+                    sz = pt[1];
                 }
                 splinePoints.add(new double[]{sx, sz});
             }
@@ -242,5 +247,45 @@ public final class RoadPathPostProcessor {
         double dx = b.getX() - a.getX();
         double dz = b.getZ() - a.getZ();
         return dx * dx + dz * dz;
+    }
+
+    private static double[] bezierDeCasteljau(double x0, double z0, double x1, double z1,
+                                              double x2, double z2, double x3, double z3, double t) {
+        double bx0 = x1;
+        double bz0 = z1;
+        double bx1 = x1 + (x2 - x0) / 6.0;
+        double bz1 = z1 + (z2 - z0) / 6.0;
+        double bx2 = x2 - (x3 - x1) / 6.0;
+        double bz2 = z2 - (z3 - z1) / 6.0;
+        double bx3 = x2;
+        double bz3 = z2;
+        double[] cx = elevate(new double[]{bx0, bx1, bx2, bx3});
+        double[] cz = elevate(new double[]{bz0, bz1, bz2, bz3});
+        cx = elevate(cx);
+        cz = elevate(cz);
+        return new double[]{deCasteljau(cx, t), deCasteljau(cz, t)};
+    }
+
+    private static double[] elevate(double[] pts) {
+        int n = pts.length;
+        double[] result = new double[n + 1];
+        result[0] = pts[0];
+        result[n] = pts[n - 1];
+        for (int i = 1; i < n; i++) {
+            double w = (double) i / n;
+            result[i] = w * pts[i - 1] + (1.0 - w) * pts[i];
+        }
+        return result;
+    }
+
+    private static double deCasteljau(double[] pts, double t) {
+        int n = pts.length;
+        double[] work = java.util.Arrays.copyOf(pts, n);
+        for (int r = 1; r < n; r++) {
+            for (int i = 0; i < n - r; i++) {
+                work[i] = (1.0 - t) * work[i] + t * work[i + 1];
+            }
+        }
+        return work[0];
     }
 }

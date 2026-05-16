@@ -73,6 +73,29 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
+    void longInjectedPathIsPostProcessedBeforeSegmentClassification() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> List.of(
+                from,
+                new BlockPos(8, 64, 0),
+                new BlockPos(16, 64, 0),
+                new BlockPos(24, 64, 0),
+                new BlockPos(32, 64, 0),
+                to
+        ));
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 64, 0),
+                List.of(),
+                8
+        );
+
+        assertTrue(result.success());
+        assertEquals(List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)), result.nodes());
+        assertEquals(1, result.segmentTypes().size());
+    }
+
+    @Test
     void injectedPathfinderRunnerEmptyResultFailsInsteadOfInterpolating() {
         RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> List.of());
 

@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client;
 
-import com.monpai.sailboatmod.client.screen.nation.TradeScreen;
+import com.ldtteam.blockui.BOScreen;
+import com.monpai.sailboatmod.client.gui.NationTradeWindow;
 import com.monpai.sailboatmod.nation.menu.TradeScreenData;
 import net.minecraft.client.Minecraft;
 
@@ -12,21 +13,23 @@ public final class TradeClientHooks {
     public static void openOrUpdate(TradeScreenData data) {
         lastSyncedData = data == null ? TradeScreenData.empty() : data;
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.screen instanceof TradeScreen tradeScreen) {
-            tradeScreen.updateData(lastSyncedData);
+        NationTradeWindow tradeWindow = currentTradeWindow(minecraft);
+        if (tradeWindow != null) {
+            tradeWindow.updateData(lastSyncedData);
             return;
         }
         if (System.currentTimeMillis() - closedAtMillis < REOPEN_COOLDOWN_MS) {
             return;
         }
-        minecraft.setScreen(new TradeScreen(lastSyncedData));
+        new NationTradeWindow(lastSyncedData).open();
     }
 
     public static void updateIfOpen(TradeScreenData data) {
         lastSyncedData = data == null ? TradeScreenData.empty() : data;
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.screen instanceof TradeScreen tradeScreen) {
-            tradeScreen.updateData(lastSyncedData);
+        NationTradeWindow tradeWindow = currentTradeWindow(minecraft);
+        if (tradeWindow != null) {
+            tradeWindow.updateData(lastSyncedData);
         }
     }
 
@@ -40,6 +43,13 @@ public final class TradeClientHooks {
 
     public static void clearCache() {
         lastSyncedData = TradeScreenData.empty();
+    }
+
+    private static NationTradeWindow currentTradeWindow(Minecraft minecraft) {
+        if (minecraft.screen instanceof BOScreen screen && screen.getWindow() instanceof NationTradeWindow tradeWindow) {
+            return tradeWindow;
+        }
+        return null;
     }
 
     private TradeClientHooks() {

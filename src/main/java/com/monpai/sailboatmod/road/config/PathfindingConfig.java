@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.road.config;
 
 public class PathfindingConfig {
-    public enum Algorithm { BASIC_ASTAR, BIDIRECTIONAL_ASTAR, GRADIENT_DESCENT, POTENTIAL_FIELD }
+    public enum Algorithm { BASIC_ASTAR, BIDIRECTIONAL_ASTAR, GRADIENT_DESCENT, POTENTIAL_FIELD, SEGMENTED_ADAPTIVE }
     public enum SamplingPrecision { NORMAL, HIGH, ULTRA_HIGH }
 
     private Algorithm algorithm = Algorithm.POTENTIAL_FIELD;

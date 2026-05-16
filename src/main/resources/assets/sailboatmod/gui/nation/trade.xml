@@ -1,0 +1,104 @@
+<window size="456 288" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/ldtteam/BlockUI/version/1.20.1/src/main/resources/assets/blockui/gui/block_ui.xsd"
+        lightbox="true" pause="false">
+
+    <text id="title" size="400 13" pos="28 6" color="black" textalign="MIDDLE"/>
+    <button id="close" size="14 15" pos="436 5" label="X" textcolor="black"/>
+
+    <box id="ourColor" size="8 10" pos="14 25" linewidth="2" color="white"/>
+    <text id="ourName" size="180 12" pos="26 24" color="gold"/>
+    <text size="22 12" pos="217 24" color="gray" textalign="MIDDLE" label="->"/>
+    <box id="targetColor" size="8 10" pos="246 25" linewidth="2" color="white"/>
+    <text id="targetName" size="180 12" pos="258 24" color="gold"/>
+
+    <box size="214 205" pos="12 40" linewidth="1" color="gray"/>
+    <box size="214 205" pos="230 40" linewidth="1" color="gray"/>
+
+    <text id="offerTitle" size="198 12" pos="20 46" color="gold" textalign="MIDDLE"/>
+    <text id="requestTitle" size="198 12" pos="238 46" color="gold" textalign="MIDDLE"/>
+    <text id="ourBalance" size="198 11" pos="20 62" color="gray"/>
+    <text id="targetBalance" size="198 11" pos="238 62" color="gray"/>
+
+    <text id="offerCurrencyLabel" size="54 11" pos="20 78" color="black"/>
+    <input id="offerCurrency" size="72 14" pos="76 75" color="black" colordisabled="gray" maxlength="15"/>
+    <text id="requestCurrencyLabel" size="54 11" pos="238 78" color="black"/>
+    <input id="requestCurrency" size="72 14" pos="294 75" color="black" colordisabled="gray" maxlength="15"/>
+
+    <button id="offerSlot0" size="18 18" pos="20 96" label=""/>
+    <itemicon id="offerIcon0" size="16 16" pos="21 97" enabled="false"/>
+    <button id="offerSlot1" size="18 18" pos="40 96" label=""/>
+    <itemicon id="offerIcon1" size="16 16" pos="41 97" enabled="false"/>
+    <button id="offerSlot2" size="18 18" pos="60 96" label=""/>
+    <itemicon id="offerIcon2" size="16 16" pos="61 97" enabled="false"/>
+    <button id="offerSlot3" size="18 18" pos="20 116" label=""/>
+    <itemicon id="offerIcon3" size="16 16" pos="21 117" enabled="false"/>
+    <button id="offerSlot4" size="18 18" pos="40 116" label=""/>
+    <itemicon id="offerIcon4" size="16 16" pos="41 117" enabled="false"/>
+    <button id="offerSlot5" size="18 18" pos="60 116" label=""/>
+    <itemicon id="offerIcon5" size="16 16" pos="61 117" enabled="false"/>
+    <button id="offerSlot6" size="18 18" pos="20 136" label=""/>
+    <itemicon id="offerIcon6" size="16 16" pos="21 137" enabled="false"/>
+    <button id="offerSlot7" size="18 18" pos="40 136" label=""/>
+    <itemicon id="offerIcon7" size="16 16" pos="41 137" enabled="false"/>
+    <button id="offerSlot8" size="18 18" pos="60 136" label=""/>
+    <itemicon id="offerIcon8" size="16 16" pos="61 137" enabled="false"/>
+
+    <button id="requestSlot0" size="18 18" pos="238 96" label=""/>
+    <itemicon id="requestIcon0" size="16 16" pos="239 97" enabled="false"/>
+    <button id="requestSlot1" size="18 18" pos="258 96" label=""/>
+    <itemicon id="requestIcon1" size="16 16" pos="259 97" enabled="false"/>
+    <button id="requestSlot2" size="18 18" pos="278 96" label=""/>
+    <itemicon id="requestIcon2" size="16 16" pos="279 97" enabled="false"/>
+    <button id="requestSlot3" size="18 18" pos="238 116" label=""/>
+    <itemicon id="requestIcon3" size="16 16" pos="239 117" enabled="false"/>
+    <button id="requestSlot4" size="18 18" pos="258 116" label=""/>
+    <itemicon id="requestIcon4" size="16 16" pos="259 117" enabled="false"/>
+    <button id="requestSlot5" size="18 18" pos="278 116" label=""/>
+    <itemicon id="requestIcon5" size="16 16" pos="279 117" enabled="false"/>
+    <button id="requestSlot6" size="18 18" pos="238 136" label=""/>
+    <itemicon id="requestIcon6" size="16 16" pos="239 137" enabled="false"/>
+    <button id="requestSlot7" size="18 18" pos="258 136" label=""/>
+    <itemicon id="requestIcon7" size="16 16" pos="259 137" enabled="false"/>
+    <button id="requestSlot8" size="18 18" pos="278 136" label=""/>
+    <itemicon id="requestIcon8" size="16 16" pos="279 137" enabled="false"/>
+
+    <text id="ourTreasuryTitle" size="198 11" pos="20 162" color="gray"/>
+    <list id="ourTreasuryList" size="104 58" pos="20 176" emptytext="">
+        <view size="100% 20">
+            <button id="ourTreasurySlot0" size="18 18" pos="0 1" label=""/>
+            <itemicon id="ourTreasuryIcon0" size="16 16" pos="1 2" enabled="false"/>
+            <button id="ourTreasurySlot1" size="18 18" pos="20 1" label=""/>
+            <itemicon id="ourTreasuryIcon1" size="16 16" pos="21 2" enabled="false"/>
+            <button id="ourTreasurySlot2" size="18 18" pos="40 1" label=""/>
+            <itemicon id="ourTreasuryIcon2" size="16 16" pos="41 2" enabled="false"/>
+            <button id="ourTreasurySlot3" size="18 18" pos="60 1" label=""/>
+            <itemicon id="ourTreasuryIcon3" size="16 16" pos="61 2" enabled="false"/>
+            <button id="ourTreasurySlot4" size="18 18" pos="80 1" label=""/>
+            <itemicon id="ourTreasuryIcon4" size="16 16" pos="81 2" enabled="false"/>
+        </view>
+    </list>
+
+    <text id="targetTreasuryTitle" size="198 11" pos="238 162" color="gray"/>
+    <text id="targetTreasuryHidden" size="190 36" pos="238 178" color="gray" wrap="true"/>
+    <list id="targetTreasuryList" size="104 58" pos="238 176" emptytext="">
+        <view size="100% 20">
+            <button id="targetTreasurySlot0" size="18 18" pos="0 1" label=""/>
+            <itemicon id="targetTreasuryIcon0" size="16 16" pos="1 2" enabled="false"/>
+            <button id="targetTreasurySlot1" size="18 18" pos="20 1" label=""/>
+            <itemicon id="targetTreasuryIcon1" size="16 16" pos="21 2" enabled="false"/>
+            <button id="targetTreasurySlot2" size="18 18" pos="40 1" label=""/>
+            <itemicon id="targetTreasuryIcon2" size="16 16" pos="41 2" enabled="false"/>
+            <button id="targetTreasurySlot3" size="18 18" pos="60 1" label=""/>
+            <itemicon id="targetTreasuryIcon3" size="16 16" pos="61 2" enabled="false"/>
+            <button id="targetTreasurySlot4" size="18 18" pos="80 1" label=""/>
+            <itemicon id="targetTreasuryIcon4" size="16 16" pos="81 2" enabled="false"/>
+        </view>
+    </list>
+
+    <text id="status" size="432 12" pos="12 250" color="gray"/>
+    <button id="propose" size="86 17" pos="12 268" label="" textcolor="black"/>
+    <button id="accept" size="54 17" pos="104 268" label="" textcolor="black"/>
+    <button id="reject" size="54 17" pos="164 268" label="" textcolor="red"/>
+    <button id="counter" size="64 17" pos="224 268" label="" textcolor="black"/>
+    <button id="cancel" size="62 17" pos="294 268" label="" textcolor="red"/>
+</window>

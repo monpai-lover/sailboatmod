@@ -26,10 +26,6 @@ public final class RoadPlannerPathfinderRunnerFactory {
         if (level == null) {
             return null;
         }
-        PathfindingConfig coarseConfig = new PathfindingConfig();
-        coarseConfig.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
-        Pathfinder coarsePathfinder = PathfinderFactory.create(coarseConfig);
-
         PathfindingConfig fineConfig = new PathfindingConfig();
         fineConfig.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
         fineConfig.setAStarStep(4);
@@ -37,19 +33,22 @@ public final class RoadPlannerPathfinderRunnerFactory {
         Pathfinder finePathfinder = PathfinderFactory.create(fineConfig);
 
         RoadPlannerObstacleMask baseMask = RoadPlannerObstacleMask.fromNationData(level, NationSavedData.get(level));
-        TerrainSamplingCache terrainCache = new TerrainSamplingCache(level, coarseConfig.getSamplingPrecision());
+        TerrainSamplingCache terrainCache = new TerrainSamplingCache(level, PathfindingConfig.SamplingPrecision.NORMAL);
 
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {
             RoadPlannerObstacleMask routeMask = baseMask.withoutEndpoints(from, destination);
 
-            // Stage 1: coarse pathfinding (step=8, NORMAL precision)
+            // Stage 1: coarse pathfinding (step=8, SEGMENTED_ADAPTIVE auto-selects per terrain)
+            PathfindingConfig coarseConfig = new PathfindingConfig();
+            coarseConfig.setAlgorithm(PathfindingConfig.Algorithm.SEGMENTED_ADAPTIVE);
+            Pathfinder coarsePathfinder = PathfinderFactory.create(coarseConfig);
             TerrainSamplingCache coarseCache = new TerrainSamplingCache(level, coarseConfig.getSamplingPrecision(), routeMask.blockedColumns());
             PathResult coarseResult = coarsePathfinder.findPath(from, destination, coarseCache);
             if (!coarseResult.success() || routeMask.pathTouchesBlockedColumn(coarseResult.path())) {
                 return List.of();
             }
 
-            // Stage 2: fine pathfinding along corridor (step=4, HIGH precision)
+            // Stage 2: fine pathfinding along corridor (step=4, HIGH precision, PotentialField)
             TerrainSamplingCache fineCache = buildCorridorCache(level, coarseResult.path(), routeMask, fineConfig.getSamplingPrecision(), 32);
             PathResult fineResult = finePathfinder.findPath(from, destination, fineCache);
             if (fineResult.success() && !routeMask.pathTouchesBlockedColumn(fineResult.path())) {
