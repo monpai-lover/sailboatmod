@@ -1,4 +1,4 @@
-package com.monpai.sailboatmod.market.web;
+package com.monpai.sailboatmod.market.terminal;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;

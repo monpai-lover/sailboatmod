@@ -18,11 +18,13 @@ base {
 jarJar.enable()
 
 def sqliteJdbcVersion = '3.46.1.3'
+def sqliteEmbeddedResourcePath = 'META-INF/sailboatmod-libs'
 
 configurations {
-    embeddedLibrary
+    sqliteEmbeddedLibrary {
+        transitive = false
+    }
 }
-
 // Mojang ships Java 17 to end users in 1.18+, so your mod should target Java 17.
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
@@ -221,19 +223,15 @@ tasks.register('processMarketWebResources', ProcessResources) {
 tasks.named('jar', Jar).configure {
     archiveFileName = "${mod_id}-${mod_version}${fixSuffix}.jar"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    dependsOn 'shadowSqliteJar'
-    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*.class'
-    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*'
-    exclude 'com/monpai/sailboatmod/market/web/SailboatMarketWebAddon.class'
-    exclude 'com/monpai/sailboatmod/market/web/MarketPlayerIdentity.class'
+    dependsOn project.configurations.sqliteEmbeddedLibrary
+    exclude 'com/monpai/sailboatmod/market/web/**'
     exclude 'marketweb/**'
 
-    // Merge sqlite-jdbc into the runtime jar under its original package name.
-    // sqlite-jdbc's JNI bindings expect org.sqlite.* and break if the package is relocated.
     from({
-        zipTree(tasks.named('shadowSqliteJar').get().archiveFile.get().asFile)
+        project.configurations.sqliteEmbeddedLibrary
     }) {
-        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/versions/**/module-info.class', 'module-info.class'
+        into sqliteEmbeddedResourcePath
+        rename { "sqlite-jdbc-${sqliteJdbcVersion}.jar" }
     }
 
     manifest {
@@ -254,17 +252,15 @@ tasks.named('jar', Jar).configure {
 
 tasks.named('jarJar', Jar).configure {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    dependsOn 'shadowSqliteJar'
-    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*.class'
-    exclude 'com/monpai/sailboatmod/market/web/MarketWeb*'
-    exclude 'com/monpai/sailboatmod/market/web/SailboatMarketWebAddon.class'
-    exclude 'com/monpai/sailboatmod/market/web/MarketPlayerIdentity.class'
+    dependsOn project.configurations.sqliteEmbeddedLibrary
+    exclude 'com/monpai/sailboatmod/market/web/**'
     exclude 'marketweb/**'
 
     from({
-        zipTree(tasks.named('shadowSqliteJar').get().archiveFile.get().asFile)
+        project.configurations.sqliteEmbeddedLibrary
     }) {
-        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/versions/**/module-info.class', 'module-info.class'
+        into sqliteEmbeddedResourcePath
+        rename { "sqlite-jdbc-${sqliteJdbcVersion}.jar" }
     }
 }
 
@@ -295,19 +291,6 @@ tasks.register('marketWebJar', Jar) {
 
 reobf {
     marketWebJar {}
-}
-
-tasks.register('shadowSqliteJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
-    archiveBaseName.set("${mod_id}-sqlite")
-    archiveClassifier.set('shadow')
-    configurations = [project.configurations.embeddedLibrary]
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-
-    mergeServiceFiles()
-
-    dependencies {
-        include(dependency("org.xerial:sqlite-jdbc:${sqliteJdbcVersion}"))
-    }
 }
 
 tasks.register('copyReobfJarVersioned') {
@@ -417,7 +400,7 @@ dependencies {
     jarJar("org.jetbrains.kotlin:kotlin-stdlib-jdk8:[${kotlin_version},1.9.26)")
 
     runtimeOnly("org.xerial:sqlite-jdbc:${sqliteJdbcVersion}")
-    embeddedLibrary("org.xerial:sqlite-jdbc:${sqliteJdbcVersion}")
+    sqliteEmbeddedLibrary("org.xerial:sqlite-jdbc:${sqliteJdbcVersion}")
 }
 
 

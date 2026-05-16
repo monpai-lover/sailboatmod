@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.block;
 
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
-import com.monpai.sailboatmod.market.web.MarketTerminalSavedData;
+import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import com.monpai.sailboatmod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;

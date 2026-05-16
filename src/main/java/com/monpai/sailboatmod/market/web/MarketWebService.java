@@ -16,6 +16,7 @@ import com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import com.monpai.sailboatmod.market.commodity.BuyOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;

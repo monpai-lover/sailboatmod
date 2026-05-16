@@ -23,7 +23,7 @@ import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
-import com.monpai.sailboatmod.market.web.MarketTerminalSavedData;
+import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import com.monpai.sailboatmod.menu.MarketMenu;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.DockTownBindingRecord;
