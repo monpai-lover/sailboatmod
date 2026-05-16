@@ -146,12 +146,12 @@ class RoadPlannerBuildControlServiceTest {
 
 
     @Test
-    void confirmedBridgePreviewQueuesRampPierAndRailingSteps() {
+    void confirmedLongBridgePreviewQueuesRampPierAndRailingSteps() {
         RoadPlannerBuildControlService service = new RoadPlannerBuildControlService();
         UUID playerId = UUID.randomUUID();
         UUID previewId = service.startPreview(
                 playerId,
-                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
                 List.of(com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType.BRIDGE_MAJOR),
                 RoadPlannerBuildSettings.DEFAULTS
         );

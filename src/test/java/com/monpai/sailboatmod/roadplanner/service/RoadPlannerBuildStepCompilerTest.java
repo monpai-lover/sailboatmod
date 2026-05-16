@@ -35,9 +35,9 @@ class RoadPlannerBuildStepCompilerTest {
     }
 
     @Test
-    void majorBridgeCreatesDeckRampPierAndRailingStepsWithoutSurfaceRoad() {
+    void longMajorBridgeCreatesDeckRampPierAndRailingStepsWithoutSurfaceRoad() {
         List<BuildStep> steps = RoadPlannerBuildStepCompiler.compileForTest(
-                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
                 List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
                 RoadPlannerBuildSettings.DEFAULTS
         );
