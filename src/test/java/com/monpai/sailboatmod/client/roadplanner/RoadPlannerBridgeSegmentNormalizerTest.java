@@ -41,4 +41,57 @@ class RoadPlannerBridgeSegmentNormalizerTest {
 
         assertTrue(result.hasBlockingIssues());
     }
+
+    @Test
+    void internalRoadSegmentBetweenBridgeSegmentsIsPromotedBackToBridge() {
+        BlockPos a = new BlockPos(0, 64, 0);
+        BlockPos b = new BlockPos(8, 65, 0);
+        BlockPos c = new BlockPos(16, 65, 0);
+        BlockPos d = new BlockPos(24, 65, 0);
+        BlockPos e = new BlockPos(32, 64, 0);
+
+        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
+                List.of(a, b, c, d, e),
+                List.of(
+                        RoadPlannerSegmentType.BRIDGE_SMALL,
+                        RoadPlannerSegmentType.ROAD,
+                        RoadPlannerSegmentType.BRIDGE_SMALL,
+                        RoadPlannerSegmentType.ROAD
+                ),
+                (x, z) -> x == 0 || x == 32 || x == 16
+        );
+
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(0));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(1));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(2));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(3));
+        assertEquals(1, result.bridgeRanges().size());
+        assertEquals(0, result.bridgeRanges().get(0).startSegmentIndex());
+        assertEquals(4, result.bridgeRanges().get(0).endSegmentIndexExclusive());
+    }
+
+    @Test
+    void endpointRoadSegmentsOutsideBridgeRangeStayRoad() {
+        BlockPos a = new BlockPos(-8, 64, 0);
+        BlockPos b = new BlockPos(0, 64, 0);
+        BlockPos c = new BlockPos(8, 66, 0);
+        BlockPos d = new BlockPos(16, 64, 0);
+        BlockPos e = new BlockPos(24, 64, 0);
+
+        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
+                List.of(a, b, c, d, e),
+                List.of(
+                        RoadPlannerSegmentType.ROAD,
+                        RoadPlannerSegmentType.BRIDGE_SMALL,
+                        RoadPlannerSegmentType.BRIDGE_SMALL,
+                        RoadPlannerSegmentType.ROAD
+                ),
+                (x, z) -> x <= 0 || x >= 16
+        );
+
+        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(0));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(1));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(2));
+        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(3));
+    }
 }
