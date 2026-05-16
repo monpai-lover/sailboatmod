@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.screen.nation;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.NationClientHooks;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
+import com.monpai.sailboatmod.client.screen.ClaimMapViewport;
 import com.monpai.sailboatmod.client.screen.ClaimWorldMapView;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
@@ -460,12 +461,10 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
         boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
-        int claimMapScreenX = claimMapX(left() + BODY_X);
-        int claimMapScreenY = claimMapY(top() + BODY_Y) - this.pageScroll;
-        if (claimsMapView
-                && mouseX >= claimMapScreenX && mouseX < claimMapScreenX + CLAIM_MAP_W
-                && mouseY >= claimMapScreenY && mouseY < claimMapScreenY + CLAIM_MAP_H) {
-            this.claimWorldMapView.zoomAround(mouseX, mouseY, delta > 0 ? 1.2D : 0.833333D, claimMapScreenX, claimMapScreenY, CLAIM_MAP_W, CLAIM_MAP_H);
+        ClaimMapViewport viewport = claimMapViewport();
+        ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
+        if (claimsMapView && visibleViewport != null && visibleViewport.contains(mouseX, mouseY)) {
+            this.claimWorldMapView.zoomAround(mouseX, mouseY, delta > 0 ? 1.2D : 0.833333D, viewport.x(), viewport.y(), viewport.width(), viewport.height());
             syncMapOffsetFromClaimWorldMap();
             return true;
         }
@@ -512,9 +511,9 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         if (button == 0 && claimsMapView && trySelectClaim(mouseX, mouseY)) return true;
         if (button == 0 && this.currentPage == Page.DIPLOMACY && trySelectDiplomacyNation(mouseX, mouseY)) return true;
         if (button == 2 && claimsMapView) {
-            int mapX = claimMapX(left() + BODY_X);
-            int mapY = claimMapY(top() + BODY_Y) - this.pageScroll;
-            if (mouseX >= mapX && mouseX < mapX + CLAIM_MAP_W && mouseY >= mapY && mouseY < mapY + CLAIM_MAP_H) {
+            ClaimMapViewport viewport = claimMapViewport();
+            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
+            if (visibleViewport != null && visibleViewport.contains(mouseX, mouseY)) {
                 this.isDraggingMap = true;
                 this.dragStartX = mouseX;
                 this.dragStartY = mouseY;
@@ -539,6 +538,14 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (button == 2 && this.isDraggingMap
                 && ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage)) {
+            ClaimMapViewport viewport = claimMapViewport();
+            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
+            if (visibleViewport == null || !visibleViewport.contains(mouseX, mouseY)) {
+                this.isDraggingMap = false;
+                requestRefresh(mapCenterX(), mapCenterZ());
+                requestVisibleClaimMapForceRender();
+                return true;
+            }
             this.claimWorldMapView.panByScreenDelta(mouseX - this.dragStartX, mouseY - this.dragStartY);
             syncMapOffsetFromClaimWorldMap();
             this.dragStartX = mouseX;
@@ -582,7 +589,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         switch (this.currentPage) {
             case OVERVIEW -> drawOverviewPage(g, left + BODY_X, top + BODY_Y);
             case MEMBERS -> drawMembersPage(g, left + BODY_X, top + BODY_Y);
-            case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y, mouseX, mouseY);
+            case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y, mouseX, mouseY, false);
             case WAR -> drawWarPage(g, left + BODY_X, top + BODY_Y);
             case DIPLOMACY -> drawDiplomacyPage(g, left + BODY_X, top + BODY_Y);
             case TREASURY -> drawTreasuryPage(g, left + BODY_X, top + BODY_Y);
@@ -590,6 +597,15 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         }
         g.pose().popPose();
         g.disableScissor();
+        if (this.currentPage == Page.CLAIMS && this.claimsSubPage == 0) {
+            ClaimMapViewport viewport = claimMapViewport();
+            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
+            if (visibleViewport != null) {
+                g.enableScissor(visibleViewport.x(), visibleViewport.y(), visibleViewport.right(), visibleViewport.bottom());
+                drawClaimMap(g, viewport, visibleViewport, mouseX, mouseY);
+                g.disableScissor();
+            }
+        }
         if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
     }
 
@@ -660,7 +676,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.manage_hint"), infoX, y + 228, 0xFF8D98A3);
     }
 
-    private void drawClaimsPage(GuiGraphics g, int x, int y, int mouseX, int mouseY) {
+    private void drawClaimsPage(GuiGraphics g, int x, int y, int mouseX, int mouseY, boolean drawMap) {
         if (this.claimsSubPage == 1) {
             drawClaimsPermPage(g, x, y);
             return;
@@ -673,7 +689,13 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         int mapX = claimMapX(x);
         int mapY = claimMapY(y);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.map_title"), mapX, y + 12, 0xFFB8C0C8);
-        drawClaimMap(g, mapX, mapY, mouseX, mouseY);
+        if (drawMap) {
+            ClaimMapViewport viewport = claimMapViewport();
+            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
+            if (visibleViewport != null) {
+                drawClaimMap(g, viewport, visibleViewport, mouseX, mouseY);
+            }
+        }
     }
 
     private void drawClaimsPermPage(GuiGraphics g, int x, int y) {
@@ -1132,20 +1154,20 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     private int mapCenterX() { return this.data.previewCenterChunkX() + this.mapOffsetX; }
     private int mapCenterZ() { return this.data.previewCenterChunkZ() + this.mapOffsetZ; }
 
-    private void drawClaimMap(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
-        g.fill(mapX - 1, mapY - 1, mapX + CLAIM_MAP_W + 1, mapY + CLAIM_MAP_H + 1, 0xFF8EAF9E);
-        this.claimWorldMapView.renderBase(g, this.font, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H, mapCenterX(), mapCenterZ(), claimRadius());
-        requestInitialVisibleClaimMapForceRender(mapX, mapY);
-        ClaimWorldMapView.ChunkBounds bounds = this.claimWorldMapView.visibleChunkBounds(mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
+    private void drawClaimMap(GuiGraphics g, ClaimMapViewport viewport, ClaimMapViewport visibleViewport, int mouseX, int mouseY) {
+        g.fill(viewport.x() - 1, viewport.y() - 1, viewport.right() + 1, viewport.bottom() + 1, 0xFF8EAF9E);
+        this.claimWorldMapView.renderBase(g, this.font, viewport, mapCenterX(), mapCenterZ(), claimRadius());
+        requestInitialVisibleClaimMapForceRender(viewport);
+        ClaimWorldMapView.ChunkBounds bounds = this.claimWorldMapView.visibleChunkBounds(viewport);
         for (int chunkZ = bounds.minChunkZ(); chunkZ <= bounds.maxChunkZ(); chunkZ++) {
             for (int chunkX = bounds.minChunkX(); chunkX <= bounds.maxChunkX(); chunkX++) {
                 NationOverviewClaim claim = findClaim(chunkX, chunkZ);
                 if (claim == null) continue;
-                ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
-                int x1 = Math.max(mapX, rect.x());
-                int x2 = Math.min(mapX + CLAIM_MAP_W, rect.right());
-                int y1 = Math.max(mapY, rect.y());
-                int y2 = Math.min(mapY + CLAIM_MAP_H, rect.bottom());
+                ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, viewport);
+                int x1 = Math.max(viewport.x(), rect.x());
+                int x2 = Math.min(viewport.right(), rect.right());
+                int y1 = Math.max(viewport.y(), rect.y());
+                int y2 = Math.min(viewport.bottom(), rect.bottom());
                 if (x1 >= x2 || y1 >= y2) continue;
                 g.fill(x1, y1, x2, y2, 0x66000000 | (claim.primaryColorRgb() & 0x00FFFFFF));
                 int borderColor = 0xFF000000 | claim.secondaryColorRgb();
@@ -1156,8 +1178,8 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
                 if (!sameOwner(ownerId, chunkX + 1, chunkZ)) g.fill(x2 - 1, y1, x2, y2, borderColor);
             }
         }
-        drawClaimMarker(g, mapX, mapY, this.data.currentChunkX(), this.data.currentChunkZ(), 0xFFFFFFFF);
-        drawClaimMarker(g, mapX, mapY, this.selectedClaimChunkX, this.selectedClaimChunkZ, 0xFFFFD166);
+        drawClaimMarker(g, viewport, this.data.currentChunkX(), this.data.currentChunkZ(), 0xFFFFFFFF);
+        drawClaimMarker(g, viewport, this.selectedClaimChunkX, this.selectedClaimChunkZ, 0xFFFFD166);
         if (hasAreaSelection()) {
             int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
             int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
@@ -1165,26 +1187,26 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
             for (int az = minZ; az <= maxZ; az++) {
                 for (int ax = minX; ax <= maxX; ax++) {
-                    drawClaimMarker(g, mapX, mapY, ax, az, 0xAAFF8844);
+                    drawClaimMarker(g, viewport, ax, az, 0xAAFF8844);
                 }
             }
         } else if (this.areaCorner1X != Integer.MIN_VALUE) {
-            drawClaimMarker(g, mapX, mapY, this.areaCorner1X, this.areaCorner1Z, 0xAAFF8844);
+            drawClaimMarker(g, viewport, this.areaCorner1X, this.areaCorner1Z, 0xAAFF8844);
         }
-        drawClaimMapProgress(g, mapX, mapY);
-        drawTownLabels(g, mapX, mapY, mouseX, mouseY);
+        drawClaimMapProgress(g, viewport);
+        drawTownLabels(g, viewport, visibleViewport, mouseX, mouseY);
     }
 
-    private void drawClaimMapProgress(GuiGraphics g, int mapX, int mapY) {
+    private void drawClaimMapProgress(GuiGraphics g, ClaimMapViewport viewport) {
         if (!shouldShowClaimMapProgress(this.data.claimMapState())) {
             return;
         }
-        int visibleWidth = claimMapProgressWidth(this.data.claimMapState(), CLAIM_MAP_W - 2, true);
-        int prefetchWidth = claimMapProgressWidth(this.data.claimMapState(), CLAIM_MAP_W - 2, false);
-        int barX = mapX + 1;
-        int barW = CLAIM_MAP_W - 2;
-        int visibleY = mapY + CLAIM_MAP_H - 5;
-        int prefetchY = mapY + CLAIM_MAP_H - 2;
+        int visibleWidth = claimMapProgressWidth(this.data.claimMapState(), viewport.width() - 2, true);
+        int prefetchWidth = claimMapProgressWidth(this.data.claimMapState(), viewport.width() - 2, false);
+        int barX = viewport.x() + 1;
+        int barW = viewport.width() - 2;
+        int visibleY = viewport.bottom() - 5;
+        int prefetchY = viewport.bottom() - 2;
         g.fill(barX, visibleY, barX + barW, visibleY + 1, 0x55313A40);
         g.fill(barX, prefetchY, barX + barW, prefetchY + 1, 0x55313A40);
         if (visibleWidth > 0) {
@@ -1195,10 +1217,9 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         }
     }
 
-    private void drawTownLabels(GuiGraphics g, int mapX, int mapY, int mouseX, int mouseY) {
-        int screenMapY = mapY - this.pageScroll;
-        if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < screenMapY || mouseY >= screenMapY + CLAIM_MAP_H) return;
-        ChunkPos hoverChunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, mapX, screenMapY, CLAIM_MAP_W, CLAIM_MAP_H);
+    private void drawTownLabels(GuiGraphics g, ClaimMapViewport viewport, ClaimMapViewport visibleViewport, int mouseX, int mouseY) {
+        if (!visibleViewport.contains(mouseX, mouseY)) return;
+        ChunkPos hoverChunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, viewport);
         int hoverChunkX = hoverChunk.x;
         int hoverChunkZ = hoverChunk.z;
         NationOverviewClaim hoverClaim = findClaim(hoverChunkX, hoverChunkZ);
@@ -1213,9 +1234,12 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         int color = 0xFF000000 | hoverClaim.primaryColorRgb();
         String text = label + "(" + count + ")";
         int tw = this.font.width(text);
-        int tx = Math.max(mapX, Math.min(mouseX - tw / 2, mapX + CLAIM_MAP_W - tw));
-        int logicalMouseY = mouseY + this.pageScroll;
-        int ty = Math.max(mapY, Math.min(logicalMouseY - 14, mapY + CLAIM_MAP_H - 10));
+        int labelLeft = visibleViewport.x();
+        int labelRight = Math.max(labelLeft, visibleViewport.right() - tw);
+        int labelTop = visibleViewport.y();
+        int labelBottom = Math.max(labelTop, visibleViewport.bottom() - 10);
+        int tx = Math.max(labelLeft, Math.min(mouseX - tw / 2, labelRight));
+        int ty = Math.max(labelTop, Math.min(mouseY - 14, labelBottom));
         g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xCC000000);
         g.drawString(this.font, text, tx, ty, color);
     }
@@ -1265,12 +1289,12 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         return Math.max(0, Math.min(safeMapWidth, Math.round((ready / (float) total) * safeMapWidth)));
     }
 
-    private void drawClaimMarker(GuiGraphics g, int mapX, int mapY, int chunkX, int chunkZ, int color) {
-        ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
-        int x1 = Math.max(mapX, rect.x());
-        int y1 = Math.max(mapY, rect.y());
-        int x2 = Math.min(mapX + CLAIM_MAP_W, rect.right());
-        int y2 = Math.min(mapY + CLAIM_MAP_H, rect.bottom());
+    private void drawClaimMarker(GuiGraphics g, ClaimMapViewport viewport, int chunkX, int chunkZ, int color) {
+        ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, viewport);
+        int x1 = Math.max(viewport.x(), rect.x());
+        int y1 = Math.max(viewport.y(), rect.y());
+        int x2 = Math.min(viewport.right(), rect.right());
+        int y2 = Math.min(viewport.bottom(), rect.bottom());
         if (x1 >= x2 || y1 >= y2) return;
         drawRect(g, x1, y1, Math.max(x1 + 1, x2) - 1, Math.max(y1 + 1, y2) - 1, color);
     }
@@ -1623,30 +1647,27 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         }
     }
 
-    private void requestInitialVisibleClaimMapForceRender(int mapX, int mapY) {
+    private void requestInitialVisibleClaimMapForceRender(ClaimMapViewport viewport) {
         if (minecraft == null || minecraft.getConnection() == null) {
             return;
         }
         if (this.claimWorldMapView.markInitialForceRenderRequested()) {
-            requestVisibleClaimMapForceRender(mapX, mapY);
+            requestVisibleClaimMapForceRender(viewport);
         }
     }
 
     private void requestVisibleClaimMapForceRender() {
-        requestVisibleClaimMapForceRender(claimMapX(left() + BODY_X), claimMapY(top() + BODY_Y));
+        requestVisibleClaimMapForceRender(claimMapViewport());
     }
 
-    private void requestVisibleClaimMapForceRender(int mapX, int mapY) {
+    private void requestVisibleClaimMapForceRender(ClaimMapViewport viewport) {
         if (minecraft == null || minecraft.getConnection() == null) {
             return;
         }
         RoadPlannerMapPreloadRequestPacket packet = this.claimWorldMapView.createVisibleForceRenderRequest(
                 this.claimWorldMapView.worldId(),
                 currentDimensionId(),
-                mapX,
-                mapY,
-                CLAIM_MAP_W,
-                CLAIM_MAP_H
+                viewport
         );
         ModNetwork.CHANNEL.sendToServer(packet);
     }
@@ -1999,9 +2020,10 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     private void syncSelections() { if (this.selectedClaimChunkX == Integer.MIN_VALUE || Math.abs(this.selectedClaimChunkX - this.data.currentChunkX()) > claimRadius() || Math.abs(this.selectedClaimChunkZ - this.data.currentChunkZ()) > claimRadius()) { this.selectedClaimChunkX = this.data.currentChunkX(); this.selectedClaimChunkZ = this.data.currentChunkZ(); } if (this.data.members().isEmpty()) { this.selectedMemberUuid = ""; this.memberScroll = 0; return; } if (this.selectedMemberUuid.isBlank()) this.selectedMemberUuid = this.data.members().get(0).playerUuid(); for (NationOverviewMember member : this.data.members()) if (member.playerUuid().equals(this.selectedMemberUuid)) return; this.selectedMemberUuid = this.data.members().get(0).playerUuid(); }
     private boolean trySelectMember(double mouseX, double mouseY) { int[] b = memberListBounds(); if (mouseX < b[0] || mouseX >= b[0] + b[2] || mouseY < b[1] || mouseY >= b[1] + b[3] || this.data.members().isEmpty()) return false; int row = (int) ((mouseY - b[1] - 4) / MEMBER_ROW_H); if (row < 0 || row >= MEMBER_VISIBLE_ROWS) return false; int idx = clampMemberScroll(this.memberScroll) + row; if (idx < 0 || idx >= this.data.members().size()) return false; this.selectedMemberUuid = this.data.members().get(idx).playerUuid(); updateButtonState(); return true; }
     private boolean trySelectClaim(double mouseX, double mouseY) {
-        int mapX = claimMapX(left() + BODY_X); int mapY = claimMapY(top() + BODY_Y) - this.pageScroll;
-        if (mouseX < mapX || mouseX >= mapX + CLAIM_MAP_W || mouseY < mapY || mouseY >= mapY + CLAIM_MAP_H) return false;
-        ChunkPos chunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, mapX, mapY, CLAIM_MAP_W, CLAIM_MAP_H);
+        ClaimMapViewport viewport = claimMapViewport();
+        ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
+        if (visibleViewport == null || !visibleViewport.contains(mouseX, mouseY)) return false;
+        ChunkPos chunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, viewport);
         int chunkX = chunk.x;
         int chunkZ = chunk.z;
         if (hasShiftDown() && this.areaCorner1X != Integer.MIN_VALUE) {
@@ -2015,6 +2037,8 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     }
     private boolean trySelectDiplomacyNation(double mouseX, double mouseY) { int listX = left() + BODY_X + 8; int listY = top() + BODY_Y + 28; int listW = 220; int listH = DIP_VISIBLE_ROWS * DIP_ROW_H; if (mouseX < listX || mouseX >= listX + listW || mouseY < listY || mouseY >= listY + listH || this.data.allNations().isEmpty()) return false; int row = (int) ((mouseY - listY) / DIP_ROW_H); if (row < 0 || row >= DIP_VISIBLE_ROWS) return false; int idx = Math.max(0, Math.min(this.diplomacyScroll, this.data.allNations().size() - DIP_VISIBLE_ROWS)) + row; if (idx < 0 || idx >= this.data.allNations().size()) return false; this.selectedDiplomacyNationId = this.data.allNations().get(idx).nationId(); updateButtonState(); return true; }
     private int[] memberListBounds() { return new int[] { left() + BODY_X + 10, top() + BODY_Y + 48, MEMBER_LIST_W, MEMBER_VISIBLE_ROWS * MEMBER_ROW_H + 8 }; }
+    private ClaimMapViewport claimMapViewport() { return ClaimMapViewport.scrolled(claimMapX(left() + BODY_X), claimMapY(top() + BODY_Y), this.pageScroll, CLAIM_MAP_W, CLAIM_MAP_H); }
+    private ClaimMapViewport visibleClaimMapViewport(ClaimMapViewport viewport) { return viewport.intersection(left() + BODY_X + 1, bodyViewportTop(), left() + BODY_X + BODY_W - 1, bodyViewportBottom()); }
     private int claimMapX(int bodyX) { return bodyX + BODY_W - CLAIM_MAP_W - 16; }
     private int claimMapY(int bodyY) { return bodyY + 24; }
     private NationOverviewMember selectedMember() { for (NationOverviewMember m : this.data.members()) if (m.playerUuid().equals(this.selectedMemberUuid)) return m; return null; }

@@ -93,6 +93,15 @@ public final class ClaimWorldMapView implements AutoCloseable {
         new RoadPlannerMapCanvas(rect, component, view, tileManager()).render(graphics, font);
     }
 
+    public void renderBase(GuiGraphics graphics,
+                           Font font,
+                           ClaimMapViewport viewport,
+                           int fallbackCenterChunkX,
+                           int fallbackCenterChunkZ,
+                           int radius) {
+        renderBase(graphics, font, viewport.x(), viewport.y(), viewport.width(), viewport.height(), fallbackCenterChunkX, fallbackCenterChunkZ, radius);
+    }
+
     public void panByScreenDelta(double deltaX, double deltaY) {
         ensureView(0, 0, 0, 1, 1);
         view.panByScreenDelta(deltaX, deltaY);
@@ -111,6 +120,10 @@ public final class ClaimWorldMapView implements AutoCloseable {
         return new ChunkPos(Math.floorDiv(worldX, 16), Math.floorDiv(worldZ, 16));
     }
 
+    public ChunkPos screenToChunk(double screenX, double screenY, ClaimMapViewport viewport) {
+        return screenToChunk(screenX, screenY, viewport.x(), viewport.y(), viewport.width(), viewport.height());
+    }
+
     public ScreenRect chunkScreenRect(int chunkX, int chunkZ, int mapX, int mapY, int width, int height) {
         ensureView(0, 0, 0, width, height);
         RoadPlannerMapLayout.Rect rect = mapRect(mapX, mapY, width, height);
@@ -118,6 +131,10 @@ public final class ClaimWorldMapView implements AutoCloseable {
         int centerX = view.worldToScreenX(chunkCenterBlock(chunkX), rect);
         int centerY = view.worldToScreenZ(chunkCenterBlock(chunkZ), rect);
         return new ScreenRect(centerX - pixelSize / 2, centerY - pixelSize / 2, pixelSize, pixelSize);
+    }
+
+    public ScreenRect chunkScreenRect(int chunkX, int chunkZ, ClaimMapViewport viewport) {
+        return chunkScreenRect(chunkX, chunkZ, viewport.x(), viewport.y(), viewport.width(), viewport.height());
     }
 
     public ChunkBounds visibleChunkBounds(int mapX, int mapY, int width, int height) {
@@ -133,6 +150,10 @@ public final class ClaimWorldMapView implements AutoCloseable {
                 Math.floorDiv(minWorldZ, 16),
                 Math.floorDiv(maxWorldZ, 16)
         );
+    }
+
+    public ChunkBounds visibleChunkBounds(ClaimMapViewport viewport) {
+        return visibleChunkBounds(viewport.x(), viewport.y(), viewport.width(), viewport.height());
     }
 
     public boolean markInitialForceRenderRequested() {
@@ -168,6 +189,12 @@ public final class ClaimWorldMapView implements AutoCloseable {
                 List.of(start, destination),
                 RoadPlannerMapPreloadRequestPacket.PROTOCOL_VERSION
         );
+    }
+
+    public RoadPlannerMapPreloadRequestPacket createVisibleForceRenderRequest(String worldId,
+                                                                             String dimensionId,
+                                                                             ClaimMapViewport viewport) {
+        return createVisibleForceRenderRequest(worldId, dimensionId, viewport.x(), viewport.y(), viewport.width(), viewport.height());
     }
 
     public int applyTileSync(RoadPlannerMapTileSyncPacket packet) {

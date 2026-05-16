@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaimWorldMapViewTest {
@@ -63,5 +64,68 @@ class ClaimWorldMapViewTest {
     @Test
     void requestedLodIsAlwaysLod1() {
         assertEquals(MapLod.LOD_1, ClaimWorldMapView.RENDER_LOD);
+    }
+
+    @Test
+    void claimMapViewportAppliesScrollOnce() {
+        ClaimMapViewport viewport = ClaimMapViewport.scrolled(100, 120, 45, 160, 160);
+
+        assertEquals(100, viewport.x());
+        assertEquals(75, viewport.y());
+        assertEquals(260, viewport.right());
+        assertEquals(235, viewport.bottom());
+    }
+
+    @Test
+    void claimMapViewportIntersectionKeepsVisibleScreenRect() {
+        ClaimMapViewport viewport = ClaimMapViewport.scrolled(100, 120, 45, 160, 160);
+
+        ClaimMapViewport visible = viewport.intersection(90, 100, 240, 300);
+
+        assertEquals(100, visible.x());
+        assertEquals(100, visible.y());
+        assertEquals(240, visible.right());
+        assertEquals(235, visible.bottom());
+    }
+
+    @Test
+    void claimMapViewportIntersectionReturnsNullWhenEmpty() {
+        ClaimMapViewport viewport = ClaimMapViewport.scrolled(100, 120, 45, 160, 160);
+
+        assertNull(viewport.intersection(0, 0, 50, 50));
+    }
+
+    @Test
+    void scrolledViewportHitTestingUsesScreenRect() {
+        ClaimWorldMapView view = ClaimWorldMapView.forTest(10, -4, 4, 164, 164);
+        ClaimMapViewport viewport = ClaimMapViewport.scrolled(20, 80, 30, 164, 164);
+
+        assertEquals(10, view.screenToChunk(viewport.x() + 82, viewport.y() + 82, viewport).x);
+        assertEquals(-4, view.screenToChunk(viewport.x() + 82, viewport.y() + 82, viewport).z);
+    }
+
+    @Test
+    void forceRenderRequestUsesViewportScreenRect() {
+        ClaimWorldMapView view = ClaimWorldMapView.forTest(0, 0, 2, 160, 160);
+        ClaimMapViewport viewport = ClaimMapViewport.scrolled(10, 80, 40, 160, 160);
+
+        RoadPlannerMapPreloadRequestPacket viewportPacket = view.createVisibleForceRenderRequest(
+                "world_a",
+                "minecraft:overworld",
+                viewport
+        );
+        RoadPlannerMapPreloadRequestPacket explicitPacket = view.createVisibleForceRenderRequest(
+                "world_a",
+                "minecraft:overworld",
+                viewport.x(),
+                viewport.y(),
+                viewport.width(),
+                viewport.height()
+        );
+
+        assertEquals(explicitPacket.start(), viewportPacket.start());
+        assertEquals(explicitPacket.destination(), viewportPacket.destination());
+        assertTrue(viewportPacket.start().getX() < viewportPacket.destination().getX());
+        assertTrue(viewportPacket.start().getZ() < viewportPacket.destination().getZ());
     }
 }
