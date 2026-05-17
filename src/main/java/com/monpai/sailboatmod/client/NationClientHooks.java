@@ -40,7 +40,8 @@ public final class NationClientHooks {
             nationHomeScreen.updateData(lastSyncedData);
             return;
         }
-        if (suppressReopen) {
+        boolean tradeWindowActive = TradeClientHooks.isTradeScreenActive(minecraft);
+        if (!shouldOpenNationHomeScreen(false, suppressReopen, tradeWindowActive)) {
             return;
         }
         minecraft.setScreen(new NationHomeScreen(lastSyncedData));
@@ -158,6 +159,12 @@ public final class NationClientHooks {
         String expected = cachedOwnerId == null ? "" : cachedOwnerId.trim();
         String incoming = incomingOwnerId == null ? "" : incomingOwnerId.trim();
         return !expected.isBlank() && expected.equals(incoming);
+    }
+
+    static boolean shouldOpenNationHomeScreen(boolean currentNationHomeScreen,
+                                              boolean suppressReopen,
+                                              boolean tradeWindowActive) {
+        return !currentNationHomeScreen && !suppressReopen && !tradeWindowActive;
     }
 
     public static void showToast(String title, String message) {

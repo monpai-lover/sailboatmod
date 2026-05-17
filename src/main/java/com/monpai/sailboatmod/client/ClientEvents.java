@@ -26,15 +26,24 @@ import com.monpai.sailboatmod.client.screen.WarehouseScreen;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.registry.ModEntities;
 import com.monpai.sailboatmod.registry.ModMenus;
+import net.minecraftforge.client.event.RegisterClientReloadListenersEvent;
 import net.minecraft.client.gui.screens.MenuScreens;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.EntityRenderersEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public final class ClientEvents {
+    @SubscribeEvent
+    public static void registerClientReloadListeners(RegisterClientReloadListenersEvent event) {
+        if (shouldRegisterEmbeddedBlockUiLoader(ModList.get().isLoaded("blockui"))) {
+            event.registerReloadListener(com.ldtteam.blockui.Loader.INSTANCE);
+        }
+    }
+
     @SubscribeEvent
     public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntities.SAILBOAT.get(), SailboatEntityRenderer::new);
@@ -64,6 +73,10 @@ public final class ClientEvents {
             MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
             MenuScreens.register(ModMenus.WAREHOUSE_MENU.get(), WarehouseScreen::new);
         });
+    }
+
+    static boolean shouldRegisterEmbeddedBlockUiLoader(boolean blockUiModLoaded) {
+        return !blockUiModLoaded;
     }
 
     private ClientEvents() {

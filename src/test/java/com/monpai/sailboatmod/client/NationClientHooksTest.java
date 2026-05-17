@@ -102,6 +102,14 @@ class NationClientHooksTest {
         assertFalse(NationClientHooks.shouldApplyClaimPreviewOwner("", "nation-a"));
     }
 
+    @Test
+    void nationOverviewRefreshDoesNotReplaceActiveTradeWindow() {
+        assertFalse(NationClientHooks.shouldOpenNationHomeScreen(false, false, true));
+        assertFalse(NationClientHooks.shouldOpenNationHomeScreen(true, false, false));
+        assertFalse(NationClientHooks.shouldOpenNationHomeScreen(false, true, false));
+        assertTrue(NationClientHooks.shouldOpenNationHomeScreen(false, false, false));
+    }
+
     private static NationOverviewData nationData(String nationId,
                                                  String nationName,
                                                  boolean hasActiveWar,

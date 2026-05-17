@@ -13,6 +13,11 @@ public final class TradeClientHooks {
     private static long closedAtMillis = 0;
     private static final long REOPEN_COOLDOWN_MS = 1500;
 
+    enum OpenMode {
+        REPLACE_SCREEN,
+        LAYER
+    }
+
     public static void openOrUpdate(TradeScreenData data) {
         lastSyncedData = data == null ? TradeScreenData.empty() : data;
         Minecraft minecraft = Minecraft.getInstance();
@@ -30,7 +35,21 @@ public final class TradeClientHooks {
                     lastSyncedData.targetNationId());
             return;
         }
-        new NationTradeWindow(lastSyncedData).open();
+        OpenMode mode = openModeForCurrentScreen(minecraft.screen != null);
+        LOGGER.info("[NationTradeUI] client constructing window mode={} previousScreen={}", mode, screenName(minecraft));
+        try {
+            NationTradeWindow window = new NationTradeWindow(lastSyncedData);
+            LOGGER.info("[NationTradeUI] client opening window mode={} previousScreen={}", mode, screenName(minecraft));
+            if (mode == OpenMode.LAYER) {
+                window.openAsLayer();
+            } else {
+                window.open();
+            }
+        } catch (RuntimeException e) {
+            LOGGER.error("[NationTradeUI] failed to construct/open trade window targetNation={}",
+                    lastSyncedData.targetNationId(), e);
+        }
+        minecraft.submit(() -> LOGGER.info("[NationTradeUI] client after open submit screen={}", screenName(minecraft)));
     }
 
     public static void updateIfOpen(TradeScreenData data) {
@@ -54,11 +73,29 @@ public final class TradeClientHooks {
         lastSyncedData = TradeScreenData.empty();
     }
 
+    static OpenMode openModeForCurrentScreen(boolean hasCurrentScreen) {
+        return hasCurrentScreen ? OpenMode.LAYER : OpenMode.REPLACE_SCREEN;
+    }
+
+    static boolean isTradeScreenActive(Minecraft minecraft) {
+        return currentTradeWindow(minecraft) != null;
+    }
+
     private static NationTradeWindow currentTradeWindow(Minecraft minecraft) {
+        if (minecraft == null) {
+            return null;
+        }
         if (minecraft.screen instanceof BOScreen screen && screen.getWindow() instanceof NationTradeWindow tradeWindow) {
             return tradeWindow;
         }
         return null;
+    }
+
+    private static String screenName(Minecraft minecraft) {
+        if (minecraft == null || minecraft.screen == null) {
+            return "none";
+        }
+        return minecraft.screen.getClass().getName();
     }
 
     private TradeClientHooks() {

@@ -112,7 +112,7 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
-    void injectedPathfinderRunnerEmptyResultFailsInsteadOfInterpolating() {
+    void injectedPathfinderRunnerEmptyResultFallsBackToInterpolation() {
         RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> List.of());
 
         RoadPlannerAutoCompleteResult result = service.complete(
@@ -122,7 +122,7 @@ class RoadPlannerAutoCompleteServiceTest {
                 24
         );
 
-        assertFalse(result.success());
+        assertTrue(result.success());
     }
 
     @Test
