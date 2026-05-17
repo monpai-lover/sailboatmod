@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class TradeClientHooksTest {
     @Test
-    void tradeWindowUsesLayerWhenOpenedOverExistingScreen() {
+    void tradeWindowReplacesScreenWhenCurrentScreenIsNotBOScreen() {
         assertEquals(
-                TradeClientHooks.OpenMode.LAYER,
+                TradeClientHooks.OpenMode.REPLACE_SCREEN,
                 TradeClientHooks.openModeForCurrentScreen(true)
         );
     }

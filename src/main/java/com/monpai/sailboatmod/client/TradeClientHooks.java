@@ -74,7 +74,14 @@ public final class TradeClientHooks {
     }
 
     static OpenMode openModeForCurrentScreen(boolean hasCurrentScreen) {
-        return hasCurrentScreen ? OpenMode.LAYER : OpenMode.REPLACE_SCREEN;
+        if (!hasCurrentScreen) {
+            return OpenMode.REPLACE_SCREEN;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.screen instanceof BOScreen) {
+            return OpenMode.LAYER;
+        }
+        return OpenMode.REPLACE_SCREEN;
     }
 
     static boolean isTradeScreenActive(Minecraft minecraft) {
