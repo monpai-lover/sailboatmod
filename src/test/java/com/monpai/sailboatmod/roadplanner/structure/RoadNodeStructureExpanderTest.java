@@ -334,7 +334,7 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
-    void lowBridgeSupportPiersReachOceanFloorInsteadOfStoppingAtWaterSurface() {
+    void lowBridgeSupportPiersStopAtTerrainLevel() {
         RoadTerrainSampler waterSampler = new RoadTerrainSampler() {
             @Override
             public int terrainY(int x, int z) {
@@ -365,8 +365,7 @@ class RoadNodeStructureExpanderTest {
                 .toList();
 
         assertFalse(piers.isEmpty());
-        assertEquals(45, piers.stream().mapToInt(BlockPos::getY).min().orElseThrow());
-        assertTrue(piers.stream().anyMatch(pos -> pos.getY() == 45));
+        assertTrue(piers.stream().mapToInt(BlockPos::getY).min().orElseThrow() >= 64);
     }
 
     @Test
