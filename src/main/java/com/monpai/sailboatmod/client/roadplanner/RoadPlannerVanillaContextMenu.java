@@ -62,6 +62,15 @@ public class RoadPlannerVanillaContextMenu {
         return menu;
     }
 
+    public static RoadPlannerVanillaContextMenu forAlgorithmSelection() {
+        RoadPlannerVanillaContextMenu menu = new RoadPlannerVanillaContextMenu(new UUID(0L, 0L), Kind.PLANNED_ROUTE);
+        menu.items.add(Item.action("Basic A*", RoadPlannerContextMenuAction.ALGO_BASIC_ASTAR));
+        menu.items.add(Item.action("Bidirectional A*", RoadPlannerContextMenuAction.ALGO_BIDIRECTIONAL_ASTAR));
+        menu.items.add(Item.action("Gradient Descent", RoadPlannerContextMenuAction.ALGO_GRADIENT_DESCENT));
+        menu.items.add(Item.action("Potential Field", RoadPlannerContextMenuAction.ALGO_POTENTIAL_FIELD));
+        return menu;
+    }
+
     public void open(int x, int y) {
         this.anchorX = x;
         this.anchorY = y;

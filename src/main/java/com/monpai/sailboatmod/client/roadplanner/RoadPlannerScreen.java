@@ -1056,6 +1056,28 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (action == null) {
             return;
         }
+        if (action == RoadPlannerContextMenuAction.ALGO_BASIC_ASTAR
+                || action == RoadPlannerContextMenuAction.ALGO_BIDIRECTIONAL_ASTAR
+                || action == RoadPlannerContextMenuAction.ALGO_GRADIENT_DESCENT
+                || action == RoadPlannerContextMenuAction.ALGO_POTENTIAL_FIELD) {
+            int algoIndex = switch (action) {
+                case ALGO_BASIC_ASTAR -> 0;
+                case ALGO_BIDIRECTIONAL_ASTAR -> 1;
+                case ALGO_GRADIENT_DESCENT -> 2;
+                case ALGO_POTENTIAL_FIELD -> 3;
+                default -> 1;
+            };
+            if (!testMode && minecraft != null && minecraft.getConnection() != null) {
+                ModNetwork.CHANNEL.sendToServer(new RoadPlannerAutoCompleteRequestPacket(
+                        state.sessionId(), startTownPos, destinationTownPos, linePlan.nodes(), 24, algoIndex
+                ));
+                statusLine = "正在请求自动补全...";
+            } else {
+                RoadPlannerAutoCompleteResult result = autoCompleteService.complete(startTownPos, destinationTownPos, linePlan.nodes(), 24);
+                applyAutoCompleteResult(state.sessionId(), result.success(), result.nodes(), result.segmentTypes(), result.message());
+            }
+            return;
+        }
         if (action == RoadPlannerContextMenuAction.SET_ROAD_TYPE || action == RoadPlannerContextMenuAction.SET_BRIDGE_TYPE || action == RoadPlannerContextMenuAction.SET_TUNNEL_TYPE) {
             switch (action) {
                 case SET_ROAD_TYPE -> setSelectedEdgeType(CompiledRoadSectionType.ROAD);
@@ -1156,15 +1178,13 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return;
         }
         if (RoadPlannerTopToolbar.ACTION_AUTO_COMPLETE.equals(label)) {
-            if (!testMode && minecraft != null && minecraft.getConnection() != null) {
-                ModNetwork.CHANNEL.sendToServer(new RoadPlannerAutoCompleteRequestPacket(
-                        state.sessionId(), startTownPos, destinationTownPos, linePlan.nodes(), 24
-                ));
-                statusLine = "正在请求自动补全...";
+            if (testMode) {
+                RoadPlannerAutoCompleteResult result = autoCompleteService.complete(startTownPos, destinationTownPos, linePlan.nodes(), 24);
+                applyAutoCompleteResult(state.sessionId(), result.success(), result.nodes(), result.segmentTypes(), result.message());
                 return;
             }
-            RoadPlannerAutoCompleteResult result = autoCompleteService.complete(startTownPos, destinationTownPos, linePlan.nodes(), 24);
-            applyAutoCompleteResult(state.sessionId(), result.success(), result.nodes(), result.segmentTypes(), result.message());
+            contextMenu = RoadPlannerVanillaContextMenu.forAlgorithmSelection();
+            contextMenu.open(this.width / 2, 40);
             return;
         }
         if (RoadPlannerTopToolbar.ACTION_CONFIRM_BUILD.equals(label)) {

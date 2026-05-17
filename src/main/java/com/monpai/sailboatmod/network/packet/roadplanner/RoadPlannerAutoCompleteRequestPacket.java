@@ -21,8 +21,13 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
                                                    BlockPos start,
                                                    BlockPos destination,
                                                    List<BlockPos> manualNodes,
-                                                   int spacingBlocks) {
+                                                   int spacingBlocks,
+                                                   int algorithmIndex) {
     private static final Logger LOGGER = LogUtils.getLogger();
+
+    public RoadPlannerAutoCompleteRequestPacket(UUID sessionId, BlockPos start, BlockPos destination, List<BlockPos> manualNodes, int spacingBlocks) {
+        this(sessionId, start, destination, manualNodes, spacingBlocks, 1);
+    }
 
     public RoadPlannerAutoCompleteRequestPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
@@ -30,6 +35,16 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
         destination = destination == null ? BlockPos.ZERO : destination.immutable();
         manualNodes = manualNodes == null ? List.of() : manualNodes.stream().map(BlockPos::immutable).toList();
         spacingBlocks = Math.max(4, spacingBlocks);
+        algorithmIndex = Math.max(0, Math.min(3, algorithmIndex));
+    }
+
+    private static PathfindingConfig.Algorithm algorithmFromIndex(int index) {
+        return switch (index) {
+            case 0 -> PathfindingConfig.Algorithm.BASIC_ASTAR;
+            case 2 -> PathfindingConfig.Algorithm.GRADIENT_DESCENT;
+            case 3 -> PathfindingConfig.Algorithm.POTENTIAL_FIELD;
+            default -> PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR;
+        };
     }
 
     public static void encode(RoadPlannerAutoCompleteRequestPacket packet, FriendlyByteBuf buffer) {
@@ -38,6 +53,7 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
         buffer.writeBlockPos(packet.destination());
         RoadPlannerPacketCodec.writeBlockPosList(buffer, packet.manualNodes());
         buffer.writeVarInt(packet.spacingBlocks());
+        buffer.writeVarInt(packet.algorithmIndex());
     }
 
     public static RoadPlannerAutoCompleteRequestPacket decode(FriendlyByteBuf buffer) {
@@ -46,6 +62,7 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
                 buffer.readBlockPos(),
                 buffer.readBlockPos(),
                 RoadPlannerPacketCodec.readBlockPosList(buffer),
+                buffer.readVarInt(),
                 buffer.readVarInt()
         );
     }
@@ -59,7 +76,8 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
             }
             RoadPlannerAutoCompleteResult result;
             try {
-                RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel(), PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
+                PathfindingConfig.Algorithm algo = algorithmFromIndex(packet.algorithmIndex());
+                RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel(), algo);
                 if (service == null) {
                     service = new RoadPlannerAutoCompleteService();
                 }
