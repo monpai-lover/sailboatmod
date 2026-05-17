@@ -40,7 +40,10 @@ public final class ClientEvents {
     @SubscribeEvent
     public static void registerClientReloadListeners(RegisterClientReloadListenersEvent event) {
         if (shouldRegisterEmbeddedBlockUiLoader(ModList.get().isLoaded("blockui"))) {
-            event.registerReloadListener(com.ldtteam.blockui.Loader.INSTANCE);
+            try {
+                event.registerReloadListener((net.minecraft.server.packs.resources.PreparableReloadListener)
+                        Class.forName("com.ldtteam.blockui.Loader").getField("INSTANCE").get(null));
+            } catch (Exception ignored) {}
         }
     }
 
