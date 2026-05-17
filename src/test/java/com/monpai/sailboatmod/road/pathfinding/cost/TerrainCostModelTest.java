@@ -30,7 +30,7 @@ class TerrainCostModelTest {
         config.setNearWaterCost(0);
         TerrainCostModel model = new TerrainCostModel(config);
 
-        assertEquals(1.0 + TerrainCostModel.SLOPE_SOFT_PENALTY,
+        assertEquals(1.0 + TerrainCostModel.SLOPE_SOFT_PENALTY * 0.1,
                 model.moveCost(0, 0, 10, 0, heightCache(Map.of(0, 64, 10, 70))));
     }
 
