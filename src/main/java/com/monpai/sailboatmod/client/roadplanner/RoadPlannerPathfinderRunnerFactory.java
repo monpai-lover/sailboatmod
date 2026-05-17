@@ -21,43 +21,29 @@ public final class RoadPlannerPathfinderRunnerFactory {
     }
 
     public static RoadPlannerAutoCompleteService.PathfinderRunner serverRunner(ServerLevel level) {
-        RoadPlannerAutoCompleteService service = serverService(level);
+        RoadPlannerAutoCompleteService service = serverService(level, PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
         return service == null ? null : service::runPathfinderOnly;
     }
 
-    public static RoadPlannerAutoCompleteService serverService(ServerLevel level) {
+    public static RoadPlannerAutoCompleteService serverService(ServerLevel level, PathfindingConfig.Algorithm algorithm) {
         if (level == null) {
             return null;
         }
-        PathfindingConfig fineConfig = new PathfindingConfig();
-        fineConfig.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
-        fineConfig.setAStarStep(4);
-        fineConfig.setSamplingPrecision(PathfindingConfig.SamplingPrecision.HIGH);
-        Pathfinder finePathfinder = PathfinderFactory.create(fineConfig);
+        PathfindingConfig config = new PathfindingConfig();
+        config.setAlgorithm(algorithm);
+        Pathfinder pathfinder = PathfinderFactory.create(config);
 
         RoadPlannerObstacleMask baseMask = RoadPlannerObstacleMask.fromNationData(level, NationSavedData.get(level));
-        TerrainSamplingCache terrainCache = new TerrainSamplingCache(level, PathfindingConfig.SamplingPrecision.NORMAL);
+        TerrainSamplingCache terrainCache = new TerrainSamplingCache(level, config.getSamplingPrecision());
 
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {
             RoadPlannerObstacleMask routeMask = baseMask.withoutEndpoints(from, destination);
-
-            // Stage 1: coarse pathfinding (step=8, BIDIRECTIONAL_ASTAR)
-            PathfindingConfig coarseConfig = new PathfindingConfig();
-            coarseConfig.setAlgorithm(PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
-            Pathfinder coarsePathfinder = PathfinderFactory.create(coarseConfig);
-            TerrainSamplingCache coarseCache = new TerrainSamplingCache(level, coarseConfig.getSamplingPrecision(), routeMask.blockedColumns());
-            PathResult coarseResult = coarsePathfinder.findPath(from, destination, coarseCache);
-            if (!coarseResult.success() || routeMask.pathTouchesBlockedColumn(coarseResult.path())) {
+            TerrainSamplingCache routeCache = new TerrainSamplingCache(level, config.getSamplingPrecision(), routeMask.blockedColumns());
+            PathResult result = pathfinder.findPath(from, destination, routeCache);
+            if (!result.success() || routeMask.pathTouchesBlockedColumn(result.path())) {
                 return List.of();
             }
-
-            // Stage 2: fine pathfinding along corridor (step=4, HIGH precision, PotentialField)
-            TerrainSamplingCache fineCache = buildCorridorCache(level, coarseResult.path(), routeMask, fineConfig.getSamplingPrecision(), 32);
-            PathResult fineResult = finePathfinder.findPath(from, destination, fineCache);
-            if (fineResult.success() && !routeMask.pathTouchesBlockedColumn(fineResult.path())) {
-                return fineResult.path();
-            }
-            return coarseResult.path();
+            return result.path();
         };
 
         return new RoadPlannerAutoCompleteService(
@@ -65,45 +51,5 @@ public final class RoadPlannerPathfinderRunnerFactory {
                 new RoadPlannerTerrainSegmentClassifier(terrainCache, new RoadConfig().getBridge()),
                 (x, z) -> !terrainCache.isWater(x, z)
         );
-    }
-
-    private static TerrainSamplingCache buildCorridorCache(ServerLevel level, List<BlockPos> corridorPath,
-                                                            RoadPlannerObstacleMask mask,
-                                                            PathfindingConfig.SamplingPrecision precision,
-                                                            int radius) {
-        TerrainSamplingCache cache = new TerrainSamplingCache(
-                level,
-                precision,
-                mask.blockedColumns(),
-                corridorColumns(corridorPath, radius, 4)
-        );
-        for (BlockPos pos : corridorPath) {
-            for (int dx = -radius; dx <= radius; dx += 4) {
-                for (int dz = -radius; dz <= radius; dz += 4) {
-                    cache.getHeight(pos.getX() + dx, pos.getZ() + dz);
-                }
-            }
-        }
-        return cache;
-    }
-
-    static Set<Long> corridorColumns(List<BlockPos> corridorPath, int radius, int step) {
-        if (corridorPath == null || corridorPath.isEmpty()) {
-            return Set.of();
-        }
-        int safeRadius = Math.max(0, radius);
-        int safeStep = Math.max(1, step);
-        Set<Long> columns = new HashSet<>();
-        for (BlockPos pos : corridorPath) {
-            if (pos == null) {
-                continue;
-            }
-            for (int dx = -safeRadius; dx <= safeRadius; dx += safeStep) {
-                for (int dz = -safeRadius; dz <= safeRadius; dz += safeStep) {
-                    columns.add(RoadCoreExclusion.columnKey(pos.getX() + dx, pos.getZ() + dz));
-                }
-            }
-        }
-        return Set.copyOf(columns);
     }
 }

@@ -6,6 +6,8 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -133,6 +135,44 @@ class RoadPlannerPreviewRendererTest {
         assertEquals(1.25D, box.maxX(), 1.0E-6D);
         assertEquals(1.50D, box.maxY(), 1.0E-6D);
         assertEquals(1.75D, box.maxZ(), 1.0E-6D);
+    }
+
+    @Test
+    void slabPreviewBoxesUseHalfBlockHeight() {
+        Vec3 camera = new Vec3(9.75D, 63.50D, 19.25D);
+        BlockPos pos = new BlockPos(10, 64, 20);
+
+        RoadPlannerPreviewRenderer.PreviewBox bottom = RoadPlannerPreviewRenderer.previewBoxForTest(
+                pos,
+                Blocks.SMOOTH_STONE_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.BOTTOM),
+                camera
+        );
+        RoadPlannerPreviewRenderer.PreviewBox top = RoadPlannerPreviewRenderer.previewBoxForTest(
+                pos,
+                Blocks.SMOOTH_STONE_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.TOP),
+                camera
+        );
+
+        assertEquals(0.50D, bottom.minY(), 1.0E-6D);
+        assertEquals(1.00D, bottom.maxY(), 1.0E-6D);
+        assertEquals(1.00D, top.minY(), 1.0E-6D);
+        assertEquals(1.50D, top.maxY(), 1.0E-6D);
+    }
+
+    @Test
+    void fencePreviewBoxesUseNarrowPostShapeInsteadOfFullBlock() {
+        Vec3 camera = new Vec3(9.0D, 64.0D, 19.0D);
+        BlockPos pos = new BlockPos(10, 64, 20);
+
+        RoadPlannerPreviewRenderer.PreviewBox box = RoadPlannerPreviewRenderer.previewBoxForTest(
+                pos,
+                Blocks.OAK_FENCE.defaultBlockState(),
+                camera
+        );
+
+        assertTrue(box.maxX() - box.minX() < 0.5D);
+        assertTrue(box.maxZ() - box.minZ() < 0.5D);
+        assertTrue(box.maxY() - box.minY() >= 1.0D);
     }
 
     @Test

@@ -14,7 +14,6 @@ import com.monpai.sailboatmod.network.packet.TradeScreenActionPacket;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -110,7 +109,7 @@ public class NationTradeWindow extends AbstractSailboatWindow {
         refreshTicks++;
         if (refreshTicks >= AUTO_REFRESH_TICKS) {
             refreshTicks = 0;
-            ModNetwork.CHANNEL.send(PacketDistributor.SERVER.noArg(),
+            ModNetwork.CHANNEL.sendToServer(
                     new TradeScreenActionPacket(TradeScreenActionPacket.Action.REFRESH, data.targetNationId()));
         }
     }
@@ -350,7 +349,7 @@ public class NationTradeWindow extends AbstractSailboatWindow {
     }
 
     private void sendAction(TradeScreenActionPacket.Action action) {
-        ModNetwork.CHANNEL.send(PacketDistributor.SERVER.noArg(),
+        ModNetwork.CHANNEL.sendToServer(
                 new TradeScreenActionPacket(
                         action,
                         data.targetNationId(),

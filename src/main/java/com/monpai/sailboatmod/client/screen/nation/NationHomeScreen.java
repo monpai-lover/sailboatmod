@@ -305,9 +305,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         this.dipAcceptAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ACCEPT)).bounds(left + BODY_X + 234, top + BODY_Y + 112, 100, 18).build());
         this.dipRejectAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.reject"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_REJECT)).bounds(left + BODY_X + 340, top + BODY_Y + 112, 100, 18).build());
         this.dipBackButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.back"), b -> { this.selectedDiplomacyNationId = ""; updateButtonState(); }).bounds(left + BODY_X + 234, top + BODY_Y + 136, 206, 18).build());
-        this.dipOpenTradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.trade.open"), b -> {
-            ModNetwork.CHANNEL.send(net.minecraftforge.network.PacketDistributor.SERVER.noArg(), new NationGuiActionPacket(NationGuiActionPacket.Action.OPEN_TRADE_SCREEN, this.selectedDiplomacyNationId, true));
-        }).bounds(left + BODY_X + 234, top + BODY_Y + 160, 206, 18).build());
+        this.dipOpenTradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.trade.open"), b -> openSelectedTradeWindow()).bounds(left + BODY_X + 234, top + BODY_Y + 160, 206, 18).build());
 
         this.nationNameInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 148, 196, 18, Component.translatable("screen.sailboatmod.nation.name"));
         this.nationNameInput.setMaxLength(24);
@@ -835,6 +833,21 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         sendNationAction(new NationGuiActionPacket(action, selected.nationName(), true), Component.translatable("screen.sailboatmod.nation.status.sending"));
     }
 
+    private void openSelectedTradeWindow() {
+        NationOverviewNationEntry selected = selectedDiplomacyNation();
+        String target = tradeOpenTarget(selected);
+        if (target.isBlank() || !this.data.hasNation()) {
+            return;
+        }
+        LOGGER.info("[NationTradeUI] client request open targetId={} targetName={}",
+                selected == null ? "" : selected.nationId(),
+                selected == null ? "" : selected.nationName());
+        sendNationAction(
+                new NationGuiActionPacket(NationGuiActionPacket.Action.OPEN_TRADE_SCREEN, target, true),
+                Component.translatable("screen.sailboatmod.nation.status.sending")
+        );
+    }
+
     private static int diplomacyStatusColor(String statusId) {
         if (statusId == null || statusId.isBlank()) return 0xFF8D98A3;
         return switch (statusId) {
@@ -1104,6 +1117,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         boolean dipHasPendingAlly = dipPage && dipHasSelection && hasPendingAllianceRequest(this.selectedDiplomacyNationId);
         NationOverviewNationEntry selectedNation = selectedDiplomacyNation();
         boolean dipIsAllied = selectedNation != null && "allied".equals(selectedNation.diplomacyStatusId());
+        boolean dipCanOpenTrade = canOpenTradeWindow(dipPage, this.data.hasNation(), dipHasSelection, this.data.canDeclareWar(), this.data.canManageTreasury());
         if (this.dipAllyButton != null) { this.dipAllyButton.visible = dipPage && dipHasSelection; this.dipAllyButton.active = dipCanManage && !dipIsAllied; }
         if (this.dipTradeButton != null) { this.dipTradeButton.visible = dipPage && dipHasSelection; this.dipTradeButton.active = dipCanManage; }
         if (this.dipEnemyButton != null) { this.dipEnemyButton.visible = dipPage && dipHasSelection; this.dipEnemyButton.active = dipCanManage; }
@@ -1112,7 +1126,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         if (this.dipAcceptAllyButton != null) { this.dipAcceptAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipAcceptAllyButton.active = dipCanManage && dipHasPendingAlly; }
         if (this.dipRejectAllyButton != null) { this.dipRejectAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipRejectAllyButton.active = dipCanManage && dipHasPendingAlly; }
         if (this.dipBackButton != null) { this.dipBackButton.visible = dipPage && dipHasSelection; this.dipBackButton.active = dipPage && dipHasSelection; }
-        if (this.dipOpenTradeButton != null) { this.dipOpenTradeButton.visible = dipPage && dipHasSelection; this.dipOpenTradeButton.active = dipCanManage; }
+        if (this.dipOpenTradeButton != null) { this.dipOpenTradeButton.visible = dipPage && dipHasSelection; this.dipOpenTradeButton.active = dipCanOpenTrade; }
 
         boolean treasuryPage = this.currentPage == Page.TREASURY;
         boolean canTreasury = treasuryPage && this.data.hasNation() && this.data.canManageTreasury();
@@ -1272,6 +1286,26 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     static boolean shouldShowClaimMapProgress(ClaimPreviewMapState mapState) {
         ClaimPreviewMapState safeMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
         return safeMapState.loading() || safeMapState.hasPendingProgress();
+    }
+
+    static boolean canOpenTradeWindow(boolean diplomacyPage,
+                                      boolean hasNation,
+                                      boolean hasSelection,
+                                      boolean canDeclareWar,
+                                      boolean canManageTreasury) {
+        return diplomacyPage && hasNation && hasSelection;
+    }
+
+    private static String tradeOpenTarget(NationOverviewNationEntry selected) {
+        if (selected == null) {
+            return "";
+        }
+        String nationId = selected.nationId();
+        return nationId.isBlank() ? selected.nationName() : nationId;
+    }
+
+    static String tradeOpenTargetForTest(NationOverviewNationEntry selected) {
+        return tradeOpenTarget(selected);
     }
 
     static int claimMapProgressWidthForTest(ClaimPreviewMapState mapState, int mapWidth, boolean visibleLayer) {

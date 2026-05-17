@@ -1079,6 +1079,10 @@ public final class NationService {
         if (data == null || member == null || permission == null) {
             return false;
         }
+        NationRecord nation = data.getNation(member.nationId());
+        if (nation != null && member.playerUuid().equals(nation.leaderUuid())) {
+            return true;
+        }
         if (NationOfficeIds.LEADER.equals(member.officeId())) {
             return true;
         }

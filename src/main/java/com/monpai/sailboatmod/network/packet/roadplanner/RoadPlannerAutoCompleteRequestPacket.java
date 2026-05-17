@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteResult;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteService;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathfinderRunnerFactory;
+import com.monpai.sailboatmod.road.config.PathfindingConfig;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -58,7 +59,7 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
             }
             RoadPlannerAutoCompleteResult result;
             try {
-                RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel());
+                RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel(), PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
                 if (service == null) {
                     service = new RoadPlannerAutoCompleteService();
                 }

@@ -18,8 +18,11 @@ import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
@@ -107,6 +110,7 @@ public final class RoadPlannerPreviewRenderer {
                     poseStack,
                     lineConsumer,
                     block.pos(),
+                    block.state(),
                     cameraPos,
                     0.30F, 0.90F, 0.88F, 0.0F,
                     lineR, lineG, lineB, 0.95F
@@ -283,6 +287,7 @@ public final class RoadPlannerPreviewRenderer {
     private static void renderBlockBox(PoseStack poseStack,
                                        VertexConsumer lineConsumer,
                                        BlockPos pos,
+                                       BlockState state,
                                        Vec3 cameraPos,
                                        float fillR,
                                        float fillG,
@@ -292,7 +297,7 @@ public final class RoadPlannerPreviewRenderer {
                                        float lineG,
                                        float lineB,
                                        float lineA) {
-        PreviewBox box = previewBox(pos, cameraPos);
+        PreviewBox box = previewBox(pos, state, cameraPos);
         LevelRenderer.renderLineBox(
                 poseStack,
                 lineConsumer,
@@ -366,10 +371,37 @@ public final class RoadPlannerPreviewRenderer {
     }
 
     private static PreviewBox previewBox(BlockPos pos, Vec3 cameraPos) {
-        double minX = pos.getX() - cameraPos.x;
-        double minY = pos.getY() - cameraPos.y;
-        double minZ = pos.getZ() - cameraPos.z;
-        return new PreviewBox(minX, minY, minZ, minX + 1.0D, minY + 1.0D, minZ + 1.0D);
+        return previewBox(pos, null, cameraPos);
+    }
+
+    private static PreviewBox previewBox(BlockPos pos, BlockState state, Vec3 cameraPos) {
+        double baseX = pos.getX() - cameraPos.x;
+        double baseY = pos.getY() - cameraPos.y;
+        double baseZ = pos.getZ() - cameraPos.z;
+        AABB shapeBounds = blockShapeBounds(pos, state);
+        if (shapeBounds != null) {
+            return new PreviewBox(
+                    baseX + shapeBounds.minX,
+                    baseY + shapeBounds.minY,
+                    baseZ + shapeBounds.minZ,
+                    baseX + shapeBounds.maxX,
+                    baseY + shapeBounds.maxY,
+                    baseZ + shapeBounds.maxZ
+            );
+        }
+        return new PreviewBox(baseX, baseY, baseZ, baseX + 1.0D, baseY + 1.0D, baseZ + 1.0D);
+    }
+
+    private static AABB blockShapeBounds(BlockPos pos, BlockState state) {
+        if (state == null) {
+            return null;
+        }
+        try {
+            VoxelShape shape = state.getShape(EmptyBlockGetter.INSTANCE, pos);
+            return shape.isEmpty() ? null : shape.bounds();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private static PreviewBox highlightBox(BlockPos pos, Vec3 cameraPos, double inset) {
@@ -462,6 +494,10 @@ public final class RoadPlannerPreviewRenderer {
 
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
         return previewBox(pos, cameraPos);
+    }
+
+    static PreviewBox previewBoxForTest(BlockPos pos, BlockState state, Vec3 cameraPos) {
+        return previewBox(pos, state, cameraPos);
     }
 
     static PreviewBox highlightBoxForTest(BlockPos pos, Vec3 cameraPos, double inset) {

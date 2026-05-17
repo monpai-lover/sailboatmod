@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.screen.nation;
 import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
+import com.monpai.sailboatmod.nation.menu.NationOverviewNationEntry;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import org.junit.jupiter.api.BeforeAll;
@@ -38,6 +39,43 @@ class NationHomeScreenTest {
         assertFalse(NationHomeScreen.shouldFlushQueuedPreviewRefresh(true, 14, -6, 10, -6));
         assertFalse(NationHomeScreen.shouldFlushQueuedPreviewRefresh(false, Integer.MIN_VALUE, -6, 10, -6));
         assertFalse(NationHomeScreen.shouldFlushQueuedPreviewRefresh(false, 10, -6, 10, -6));
+    }
+
+    @Test
+    void tradeWindowEntryDoesNotRequireWarOrTreasuryPermission() {
+        assertTrue(NationHomeScreen.canOpenTradeWindow(true, true, true, false, true));
+        assertTrue(NationHomeScreen.canOpenTradeWindow(true, true, true, true, false));
+        assertFalse(NationHomeScreen.canOpenTradeWindow(true, true, false, false, true));
+    }
+
+    @Test
+    void tradeWindowOpenTargetUsesNationIdWithNameFallback() {
+        NationOverviewNationEntry entry = new NationOverviewNationEntry(
+                " nation-id ",
+                "Target Nation",
+                "TN",
+                0x112233,
+                0x445566,
+                "",
+                false,
+                4,
+                "trade"
+        );
+        NationOverviewNationEntry legacyEntryWithoutId = new NationOverviewNationEntry(
+                "",
+                "Legacy Nation",
+                "LN",
+                0x112233,
+                0x445566,
+                "",
+                false,
+                4,
+                "trade"
+        );
+
+        assertEquals("nation-id", NationHomeScreen.tradeOpenTargetForTest(entry));
+        assertEquals("Legacy Nation", NationHomeScreen.tradeOpenTargetForTest(legacyEntryWithoutId));
+        assertEquals("", NationHomeScreen.tradeOpenTargetForTest(null));
     }
 
     @Test

@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
+import com.monpai.sailboatmod.nation.menu.TradeScreenData;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationDiplomacyService;
 import com.monpai.sailboatmod.nation.service.NationFlagService;
@@ -17,11 +19,13 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.PacketDistributor;
+import org.slf4j.Logger;
 
 import java.util.UUID;
 import java.util.function.Supplier;
 
 public class NationGuiActionPacket {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private final Action action;
     private final int chunkX;
     private final int chunkZ;
@@ -167,11 +171,15 @@ public class NationGuiActionPacket {
                 case REJECT_TRADE -> com.monpai.sailboatmod.nation.service.NationTradeService.rejectTrade(player, packet.text);
                 case OPEN_TRADE_SCREEN -> {
                     try {
-                        com.monpai.sailboatmod.nation.menu.TradeScreenData tradeData =
+                        LOGGER.info("[NationTradeUI] server open request player={} target={}",
+                                player.getScoreboardName(), packet.text);
+                        TradeScreenData tradeData =
                                 com.monpai.sailboatmod.nation.service.NationTradeService.buildTradeScreenData(player, packet.text);
+                        LOGGER.info("[NationTradeUI] server built data ourNation={} targetNation={} canManageTreasury={}",
+                                tradeData.ourNationId(), tradeData.targetNationId(), tradeData.canManageTreasury());
                         ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTradeScreenPacket(tradeData));
                     } catch (Exception e) {
-                        com.mojang.logging.LogUtils.getLogger().error("Failed to open trade screen for target={}", packet.text, e);
+                        LOGGER.error("Failed to open trade screen for target={}", packet.text, e);
                     }
                     yield NationResult.success(Component.empty());
                 }
