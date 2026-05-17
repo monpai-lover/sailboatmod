@@ -143,6 +143,9 @@ public final class RoadPlannerBridgeGeometryPlanner {
             return shoreY;
         }
         int height = deckY - shoreY;
+        if (rampLen >= height * 2) {
+            return Math.min(shoreY + localIndex / 2, deckY);
+        }
         int y = shoreY + Math.round((float) localIndex * height / rampLen);
         return Math.min(y, deckY);
     }
