@@ -16,12 +16,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class NationTradeScreen extends Screen {
-    private static final int SCREEN_W = 440;
+    private static final int SCREEN_W = 360;
     private static final int SCREEN_H = 300;
     private static final int MAX_TRADE_ITEMS = TradeScreenData.MAX_TRADE_ITEMS;
     private static final int AUTO_REFRESH_TICKS = 40;
     private static final int SLOT_SIZE = 18;
     private static final int HALF_W = SCREEN_W / 2;
+    private static final int TRADE_SLOT_COLS = 5;
+    private static final int TRADE_SLOT_ROWS = (MAX_TRADE_ITEMS + TRADE_SLOT_COLS - 1) / TRADE_SLOT_COLS;
 
     private TradeScreenData data;
     private final List<ItemStack> offerSlots = new ArrayList<>(MAX_TRADE_ITEMS);
@@ -176,8 +178,11 @@ public class NationTradeScreen extends Screen {
 
     private boolean handleTradeSlotClick(double mouseX, double mouseY, int baseX, int baseY, List<ItemStack> slots) {
         for (int i = 0; i < Math.min(slots.size(), MAX_TRADE_ITEMS); i++) {
-            int slotX = baseX + i * (SLOT_SIZE + 2);
-            if (mouseX >= slotX && mouseX < slotX + SLOT_SIZE && mouseY >= baseY && mouseY < baseY + SLOT_SIZE) {
+            int col = i % TRADE_SLOT_COLS;
+            int row = i / TRADE_SLOT_COLS;
+            int slotX = baseX + col * (SLOT_SIZE + 2);
+            int slotY = baseY + row * (SLOT_SIZE + 2);
+            if (mouseX >= slotX && mouseX < slotX + SLOT_SIZE && mouseY >= slotY && mouseY < slotY + SLOT_SIZE) {
                 if (!slots.get(i).isEmpty()) {
                     slots.set(i, ItemStack.EMPTY);
                     return true;
@@ -268,13 +273,15 @@ public class NationTradeScreen extends Screen {
     private void drawTradeSlots(GuiGraphics g, int x, int y, List<ItemStack> slots) {
         int displayCount = Math.min(slots.size(), MAX_TRADE_ITEMS);
         for (int i = 0; i < displayCount; i++) {
-            int slotX = x + i * (SLOT_SIZE + 2);
-            // Slot background
-            g.fill(slotX, y, slotX + SLOT_SIZE, y + SLOT_SIZE, 0x66203037);
-            g.fill(slotX + 1, y + 1, slotX + SLOT_SIZE - 1, y + SLOT_SIZE - 1, 0x66131C23);
+            int col = i % TRADE_SLOT_COLS;
+            int row = i / TRADE_SLOT_COLS;
+            int slotX = x + col * (SLOT_SIZE + 2);
+            int slotY = y + row * (SLOT_SIZE + 2);
+            g.fill(slotX, slotY, slotX + SLOT_SIZE, slotY + SLOT_SIZE, 0x66203037);
+            g.fill(slotX + 1, slotY + 1, slotX + SLOT_SIZE - 1, slotY + SLOT_SIZE - 1, 0x66131C23);
             ItemStack item = slots.get(i);
             if (item != null && !item.isEmpty()) {
-                g.renderItem(item, slotX + 1, y + 1);
+                g.renderItem(item, slotX + 1, slotY + 1);
             }
         }
     }
