@@ -89,10 +89,13 @@ public final class BridgeStructureEmitter {
             for (BlockPos surfacePos : footprint) {
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
             }
-            // Foundation below deck/ramp on center column
+            // 1x1 support pier at intervals for LOW_BRIDGE only (not short LOW_ARCH)
             int terrainY = point.terrainY();
-            for (int fy = y - 1; fy > terrainY; fy--) {
-                steps.add(new BuildStep(order++, new BlockPos(center.getX(), fy, center.getZ()), FOUNDATION_BLOCK, BuildPhase.FOUNDATION));
+            if (!plan.profile().usesPiers() && plan.profile() == RoadPlannerBridgeProfile.LOW_BRIDGE
+                    && index % 4 == 0 && y - 1 > terrainY) {
+                for (int fy = y - 1; fy > terrainY; fy--) {
+                    steps.add(new BuildStep(order++, new BlockPos(center.getX(), fy, center.getZ()), FOUNDATION_BLOCK, BuildPhase.PIER));
+                }
             }
             // Railing support: place a deck block below each railing position
             List<BuildStep> railSteps = railings(bridgeProfile, index, center, settings, order);
