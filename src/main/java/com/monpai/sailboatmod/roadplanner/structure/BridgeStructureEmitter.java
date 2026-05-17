@@ -88,20 +88,18 @@ public final class BridgeStructureEmitter {
             List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
             for (BlockPos surfacePos : footprint) {
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
-                if (ramp) {
-                    steps.add(new BuildStep(order++, surfacePos.below(), settings.surfaceState(), BuildPhase.FOUNDATION));
-                }
             }
-            // Fill vertical gaps between adjacent ramp points
-            if (ramp && index > 0 && plannedPoints.get(index - 1).phase() == BuildPhase.RAMP) {
+            // Fill horizontal gaps: when centerline shifts diagonally, fill missing positions
+            if (index > 0) {
+                List<BlockPos> prevFootprint = RoadFootprintPlanner.surfacePositions(bridgeProfile, index - 1, settings.width());
                 int prevY = plannedPoints.get(index - 1).point().targetY();
-                if (y != prevY) {
-                    int fillFrom = Math.min(y, prevY);
-                    int fillTo = Math.max(y, prevY);
-                    for (BlockPos surfacePos : footprint) {
-                        for (int fy = fillFrom; fy < fillTo; fy++) {
-                            steps.add(new BuildStep(order++, new BlockPos(surfacePos.getX(), fy, surfacePos.getZ()), settings.surfaceState(), BuildPhase.FOUNDATION));
-                        }
+                for (BlockPos prev : prevFootprint) {
+                    boolean covered = false;
+                    for (BlockPos curr : footprint) {
+                        if (curr.getX() == prev.getX() && curr.getZ() == prev.getZ()) { covered = true; break; }
+                    }
+                    if (!covered) {
+                        steps.add(new BuildStep(order++, new BlockPos(prev.getX(), y, prev.getZ()), state, phase));
                     }
                 }
             }
@@ -136,13 +134,7 @@ public final class BridgeStructureEmitter {
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {
-        int localRampIndex = 0;
-        for (int i = 0; i < index; i++) {
-            if (points.get(i).phase() == BuildPhase.RAMP) {
-                localRampIndex++;
-            }
-        }
-        return (localRampIndex % 2 == 0) ? settings.slabBottomState() : settings.slabTopState();
+        return settings.surfaceState();
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,

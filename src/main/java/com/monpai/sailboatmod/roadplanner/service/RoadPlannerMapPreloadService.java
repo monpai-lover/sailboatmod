@@ -131,7 +131,7 @@ public final class RoadPlannerMapPreloadService {
         if (!nodes.isEmpty()) {
             return nodes;
         }
-        RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(level, com.monpai.sailboatmod.road.config.PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
+        RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(level);
         if (service == null) {
             service = new RoadPlannerAutoCompleteService();
         }
