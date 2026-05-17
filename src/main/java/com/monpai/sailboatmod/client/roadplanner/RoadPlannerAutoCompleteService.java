@@ -1,15 +1,22 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.roadplanner.postprocess.RoadPathPostProcessor;
 import net.minecraft.core.BlockPos;
+import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class RoadPlannerAutoCompleteService {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     private final PathfinderRunner pathfinderRunner;
     private final SegmentClassifier segmentClassifier;
     private final RoadPlannerBridgeRuleService.LandProbe landProbe;
+    private boolean lastCompletionUsedInterpolationFallback;
+    private int lastRawPathNodeCount;
+    private int lastProcessedPathNodeCount;
 
     public RoadPlannerAutoCompleteService() {
         this(null, null);
@@ -35,6 +42,10 @@ public class RoadPlannerAutoCompleteService {
                                                   BlockPos destination,
                                                   List<BlockPos> manualNodes,
                                                   int spacingBlocks) {
+        lastCompletionUsedInterpolationFallback = false;
+        lastRawPathNodeCount = 0;
+        lastProcessedPathNodeCount = 0;
+
         if (start == null || destination == null) {
             return RoadPlannerAutoCompleteResult.failure("缺少起点或目的地 town");
         }
@@ -43,18 +54,24 @@ public class RoadPlannerAutoCompleteService {
                 : start;
         int spacing = Math.max(4, spacingBlocks);
         List<BlockPos> suffixNodes = runPathfinder(from, destination);
+        lastRawPathNodeCount = suffixNodes.size();
         if (suffixNodes.isEmpty()) {
+            lastCompletionUsedInterpolationFallback = true;
             suffixNodes = interpolateRoadWeaverStyle(from, destination, spacing);
         }
         if (suffixNodes.size() < 2) {
+            lastProcessedPathNodeCount = suffixNodes.size();
+            logCompletionDiagnostics(from, destination, spacing);
             return RoadPlannerAutoCompleteResult.failure("自动寻路失败");
         }
         if (suffixNodes.size() >= 6) {
             suffixNodes = RoadPathPostProcessor.process(suffixNodes, detectBridgeMask(suffixNodes));
         }
+        lastProcessedPathNodeCount = suffixNodes.size();
         List<BlockPos> mergedNodes = mergeManualPrefix(manualNodes, suffixNodes);
         List<RoadPlannerSegmentType> segmentTypes = classifySegments(mergedNodes);
         RoadPlannerBridgeSegmentNormalizer.Result normalized = RoadPlannerBridgeSegmentNormalizer.normalize(mergedNodes, segmentTypes, landProbe);
+        logCompletionDiagnostics(from, destination, spacing);
         return new RoadPlannerAutoCompleteResult(true, normalized.nodes(), normalized.segmentTypes(), "自动补全完成: " + normalized.nodes().size() + " 节点");
     }
 
@@ -88,6 +105,30 @@ public class RoadPlannerAutoCompleteService {
 
     public List<BlockPos> runPathfinderOnly(BlockPos from, BlockPos destination) {
         return runPathfinder(from, destination);
+    }
+
+    boolean lastCompletionUsedInterpolationFallbackForTest() {
+        return lastCompletionUsedInterpolationFallback;
+    }
+
+    int lastRawPathNodeCountForTest() {
+        return lastRawPathNodeCount;
+    }
+
+    int lastProcessedPathNodeCountForTest() {
+        return lastProcessedPathNodeCount;
+    }
+
+    private void logCompletionDiagnostics(BlockPos from, BlockPos destination, int spacing) {
+        LOGGER.info(
+                "[RoadPlannerAutoComplete] from={} destination={} spacing={} runnerRawNodes={} interpolationFallback={} processedNodes={}",
+                from,
+                destination,
+                spacing,
+                lastRawPathNodeCount,
+                lastCompletionUsedInterpolationFallback,
+                lastProcessedPathNodeCount
+        );
     }
 
     private List<RoadPlannerSegmentType> classifySegments(List<BlockPos> nodes) {

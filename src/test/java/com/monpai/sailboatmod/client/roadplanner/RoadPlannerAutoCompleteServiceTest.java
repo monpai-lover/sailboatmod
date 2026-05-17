@@ -126,6 +126,43 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
+    void exposesWhetherInterpolationFallbackWasUsedForLastCompletion() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> List.of());
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                new BlockPos(0, 64, 0),
+                new BlockPos(96, 64, 0),
+                List.of(),
+                24
+        );
+
+        assertTrue(result.success());
+        assertTrue(service.lastCompletionUsedInterpolationFallbackForTest());
+    }
+
+    @Test
+    void exposesRunnerRawAndProcessedNodeCountsForLastCompletion() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> List.of(
+                from,
+                new BlockPos(16, 64, 8),
+                new BlockPos(32, 64, 8),
+                to
+        ));
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                new BlockPos(0, 64, 0),
+                new BlockPos(48, 64, 0),
+                List.of(),
+                8
+        );
+
+        assertTrue(result.success());
+        assertFalse(service.lastCompletionUsedInterpolationFallbackForTest());
+        assertEquals(4, service.lastRawPathNodeCountForTest());
+        assertTrue(service.lastProcessedPathNodeCountForTest() >= 2);
+    }
+
+    @Test
     void appliesInjectedBridgeThresholdClassifier() {
         RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService(
                 (from, to) -> List.of(
