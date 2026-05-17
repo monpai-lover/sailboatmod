@@ -31,7 +31,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
         }
     }
 
-    record Diagnostics(PathfindingConfig.Algorithm coarseAlgorithm,
+    record Diagnostics(PathfindingConfig.Algorithm requestedAlgorithm,
+                       PathfindingConfig.Algorithm coarseAlgorithm,
                        BlockPos originalStart,
                        BlockPos originalDestination,
                        BlockPos routeStart,
@@ -57,8 +58,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
         if (level == null) {
             return null;
         }
-        PathfindingConfig coarseConfig = new PathfindingConfig();
-        coarseConfig.setAlgorithm(algorithm == null ? PathfindingConfig.Algorithm.SEGMENTED_ADAPTIVE : algorithm);
+        PathfindingConfig.Algorithm requestedAlgorithm = normalizeRequestedAlgorithm(algorithm);
+        PathfindingConfig coarseConfig = coarseStageConfig(requestedAlgorithm);
         Pathfinder coarsePathfinder = PathfinderFactory.create(coarseConfig);
 
         PathfindingConfig fineConfig = fineStageConfig();
@@ -72,7 +73,7 @@ public final class RoadPlannerPathfinderRunnerFactory {
             RouteRun run = runTwoStagePath(
                     from,
                     destination,
-                    coarseConfig.getAlgorithm(),
+                    requestedAlgorithm,
                     baseMask,
                     coarseCache,
                     coarsePathfinder,
@@ -118,6 +119,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
                                             Pathfinder finePathfinder,
                                             BiFunction<List<BlockPos>, RoadPlannerObstacleMask, TerrainSamplingCache> fineCacheFactory) {
         RoadPlannerObstacleMask mask = baseMask == null ? RoadPlannerObstacleMask.empty() : baseMask;
+        PathfindingConfig.Algorithm requestedAlgorithm = normalizeRequestedAlgorithm(algorithm);
+        PathfindingConfig.Algorithm effectiveAlgorithm = coarseStageConfig(requestedAlgorithm).getAlgorithm();
         BlockPos originalStart = from == null ? BlockPos.ZERO : from.immutable();
         BlockPos originalDestination = destination == null ? BlockPos.ZERO : destination.immutable();
         BlockPos routeStart = adjustEndpointForObstacles(originalStart, originalDestination, mask, terrainCache);
@@ -133,7 +136,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
         if (!coarseSuccess || coarseRejected) {
             List<BlockPos> finalPath = List.of();
             return new RouteRun(finalPath, new Diagnostics(
-                    algorithm,
+                    requestedAlgorithm,
+                    effectiveAlgorithm,
                     originalStart,
                     originalDestination,
                     routeStart,
@@ -164,7 +168,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
         List<BlockPos> finalPath = fineSuccess && !fineRejected ? finePath : coarsePath;
 
         return new RouteRun(finalPath, new Diagnostics(
-                algorithm,
+                requestedAlgorithm,
+                effectiveAlgorithm,
                 originalStart,
                 originalDestination,
                 routeStart,
@@ -180,6 +185,18 @@ public final class RoadPlannerPathfinderRunnerFactory {
                 finalPath.size(),
                 maxLateralDeviation(finalPath, originalStart, originalDestination)
         ));
+    }
+
+    private static PathfindingConfig coarseStageConfig(PathfindingConfig.Algorithm requestedAlgorithm) {
+        PathfindingConfig coarseConfig = new PathfindingConfig();
+        coarseConfig.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
+        coarseConfig.setAStarStep(8);
+        coarseConfig.setSamplingPrecision(PathfindingConfig.SamplingPrecision.NORMAL);
+        return coarseConfig;
+    }
+
+    static PathfindingConfig coarseStageConfigForTest(PathfindingConfig.Algorithm requestedAlgorithm) {
+        return coarseStageConfig(requestedAlgorithm);
     }
 
     private static PathfindingConfig fineStageConfig() {
@@ -199,7 +216,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
             return;
         }
         LOGGER.info(
-                "[RoadPlannerPathfinder] algorithm={} original={} -> {} route={} -> {} coarseSuccess={} coarseNodes={} coarseRejected={} coarseReason={} fineSuccess={} fineNodes={} fineRejected={} fineReason={} finalNodes={} maxDeviation={}",
+                "[RoadPlannerPathfinder] requestedAlgorithm={} effectiveAlgorithm={} original={} -> {} route={} -> {} coarseSuccess={} coarseNodes={} coarseRejected={} coarseReason={} fineSuccess={} fineNodes={} fineRejected={} fineReason={} finalNodes={} maxDeviation={}",
+                diagnostics.requestedAlgorithm(),
                 diagnostics.coarseAlgorithm(),
                 diagnostics.originalStart(),
                 diagnostics.originalDestination(),
@@ -216,6 +234,10 @@ public final class RoadPlannerPathfinderRunnerFactory {
                 diagnostics.finalNodeCount(),
                 diagnostics.maxLateralDeviation()
         );
+    }
+
+    private static PathfindingConfig.Algorithm normalizeRequestedAlgorithm(PathfindingConfig.Algorithm algorithm) {
+        return algorithm == null ? PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR : algorithm;
     }
 
     private static TerrainSamplingCache buildCorridorCache(ServerLevel level,

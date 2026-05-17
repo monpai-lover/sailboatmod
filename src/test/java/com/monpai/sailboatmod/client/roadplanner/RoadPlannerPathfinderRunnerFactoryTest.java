@@ -78,6 +78,8 @@ class RoadPlannerPathfinderRunnerFactoryTest {
         );
 
         assertEquals(coarse, run.path());
+        assertEquals(PathfindingConfig.Algorithm.GRADIENT_DESCENT, run.diagnostics().requestedAlgorithm());
+        assertEquals(PathfindingConfig.Algorithm.POTENTIAL_FIELD, run.diagnostics().coarseAlgorithm());
         assertTrue(run.diagnostics().coarseSuccess());
         assertFalse(run.diagnostics().fineSuccess());
     }
@@ -109,6 +111,17 @@ class RoadPlannerPathfinderRunnerFactoryTest {
         assertEquals(PathfindingConfig.Algorithm.POTENTIAL_FIELD, config.getAlgorithm());
         assertEquals(4, config.getAStarStep());
         assertEquals(PathfindingConfig.SamplingPrecision.HIGH, config.getSamplingPrecision());
+    }
+
+    @Test
+    void coarseStageConfigIgnoresRequestedAlgorithmAndUsesPotentialField() {
+        PathfindingConfig config = RoadPlannerPathfinderRunnerFactory.coarseStageConfigForTest(
+                PathfindingConfig.Algorithm.BASIC_ASTAR
+        );
+
+        assertEquals(PathfindingConfig.Algorithm.POTENTIAL_FIELD, config.getAlgorithm());
+        assertEquals(8, config.getAStarStep());
+        assertEquals(PathfindingConfig.SamplingPrecision.NORMAL, config.getSamplingPrecision());
     }
 
     private static Pathfinder recordingPathfinder(List<BlockPos> path) {
