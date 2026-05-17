@@ -2,9 +2,11 @@ package com.monpai.sailboatmod.client.roadplanner;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerVanillaContextMenuTest {
@@ -37,5 +39,11 @@ class RoadPlannerVanillaContextMenuTest {
         menu.updateHover(menu.bounds().x() + 8, branchY);
 
         assertTrue(menu.click(menu.bounds().x() + 8, branchY, 0).action().isEmpty());
+    }
+
+    @Test
+    void contextMenuActionsDoNotExposePathfindingAlgorithmChoices() {
+        assertFalse(Arrays.stream(RoadPlannerContextMenuAction.values())
+                .anyMatch(action -> action.name().startsWith("ALGO_")));
     }
 }
