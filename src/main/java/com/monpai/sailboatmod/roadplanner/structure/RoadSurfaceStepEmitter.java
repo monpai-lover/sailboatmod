@@ -106,12 +106,12 @@ public final class RoadSurfaceStepEmitter {
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadCenterlinePoint> centerline, int index) {
-        int y = centerline.get(index).targetY();
-        int prevY = index > 0 ? centerline.get(index - 1).targetY() : y;
-        int nextY = index + 1 < centerline.size() ? centerline.get(index + 1).targetY() : y;
-        if (y > prevY || nextY < y) {
-            return settings.slabBottomState();
+        int localRampIndex = 0;
+        for (int i = 0; i < index; i++) {
+            if (isRamp(centerline, null, i)) {
+                localRampIndex++;
+            }
         }
-        return settings.slabTopState();
+        return (localRampIndex % 2 == 0) ? settings.slabBottomState() : settings.slabTopState();
     }
 }

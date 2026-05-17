@@ -166,9 +166,13 @@ public class NationGuiActionPacket {
                 case ACCEPT_TRADE -> com.monpai.sailboatmod.nation.service.NationTradeService.acceptTrade(player, packet.text);
                 case REJECT_TRADE -> com.monpai.sailboatmod.nation.service.NationTradeService.rejectTrade(player, packet.text);
                 case OPEN_TRADE_SCREEN -> {
-                    com.monpai.sailboatmod.nation.menu.TradeScreenData tradeData =
-                            com.monpai.sailboatmod.nation.service.NationTradeService.buildTradeScreenData(player, packet.text);
-                    ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTradeScreenPacket(tradeData));
+                    try {
+                        com.monpai.sailboatmod.nation.menu.TradeScreenData tradeData =
+                                com.monpai.sailboatmod.nation.service.NationTradeService.buildTradeScreenData(player, packet.text);
+                        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTradeScreenPacket(tradeData));
+                    } catch (Exception e) {
+                        com.mojang.logging.LogUtils.getLogger().error("Failed to open trade screen for target={}", packet.text, e);
+                    }
                     yield NationResult.success(Component.empty());
                 }
             };
@@ -180,10 +184,16 @@ public class NationGuiActionPacket {
                 }
             }
 
-            NationOverviewData data = NationOverviewService.buildFor(player);
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
+            if (shouldRefreshNationOverviewAfterAction(packet.action)) {
+                NationOverviewData data = NationOverviewService.buildFor(player);
+                ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
+            }
         });
         context.setPacketHandled(true);
+    }
+
+    static boolean shouldRefreshNationOverviewAfterAction(Action action) {
+        return action != Action.OPEN_TRADE_SCREEN;
     }
 
     private static UUID parseUuid(String raw) {

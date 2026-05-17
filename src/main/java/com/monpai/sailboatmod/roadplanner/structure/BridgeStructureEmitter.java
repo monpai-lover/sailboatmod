@@ -93,10 +93,10 @@ public final class BridgeStructureEmitter {
                 }
             }
             // 1x1 support pier at intervals for LOW_BRIDGE only (not short LOW_ARCH)
-            int terrainY = point.terrainY();
+            int terrainY = supportBottomY(point, terrainSampler);
             if (!plan.profile().usesPiers() && plan.profile() == RoadPlannerBridgeProfile.LOW_BRIDGE
                     && index % 4 == 0 && y - 1 > terrainY) {
-                for (int fy = y - 1; fy > terrainY; fy--) {
+                for (int fy = y - 1; fy >= terrainY; fy--) {
                     steps.add(new BuildStep(order++, new BlockPos(center.getX(), fy, center.getZ()), FOUNDATION_BLOCK, BuildPhase.PIER));
                 }
             }
@@ -117,14 +117,26 @@ public final class BridgeStructureEmitter {
         return List.copyOf(steps);
     }
 
-    private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {
-        int y = points.get(index).point().targetY();
-        int prevY = index > 0 ? points.get(index - 1).point().targetY() : y;
-        int nextY = index + 1 < points.size() ? points.get(index + 1).point().targetY() : y;
-        if (y > prevY || nextY < y) {
-            return settings.slabBottomState();
+    private static int supportBottomY(RoadCenterlinePoint point, RoadTerrainSampler terrainSampler) {
+        if (point == null) {
+            return 0;
         }
-        return settings.slabTopState();
+        if (terrainSampler == null) {
+            return point.terrainY();
+        }
+        int x = point.pos().getX();
+        int z = point.pos().getZ();
+        return Math.min(point.terrainY(), terrainSampler.oceanFloorY(x, z));
+    }
+
+    private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {
+        int localRampIndex = 0;
+        for (int i = 0; i < index; i++) {
+            if (points.get(i).phase() == BuildPhase.RAMP) {
+                localRampIndex++;
+            }
+        }
+        return (localRampIndex % 2 == 0) ? settings.slabBottomState() : settings.slabTopState();
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,
