@@ -27,6 +27,29 @@ class CarriageEntityMovementTest {
     }
 
     @Test
+    void carriageUsesLandVehicleTickInsteadOfVanillaBoatMovement() {
+        assertTrue(CarriageEntity.skipsVanillaBoatMovementTickForTest());
+    }
+
+    @Test
+    void carriageDoesNotUseBoatFluidSupport() {
+        assertFalse(CarriageEntity.canUseBoatFluidSupportForTest());
+    }
+
+    @Test
+    void carriageGroundSupportAcceptsPartialCollisionRoadBlocks() {
+        assertTrue(CarriageEntity.isDriveableGroundStateForTest(Blocks.STONE_BRICK_SLAB.defaultBlockState()));
+        assertTrue(CarriageEntity.isDriveableGroundStateForTest(Blocks.STONE_BRICK_STAIRS.defaultBlockState()));
+        assertFalse(CarriageEntity.isDriveableGroundStateForTest(Blocks.WATER.defaultBlockState()));
+        assertFalse(CarriageEntity.isDriveableGroundStateForTest(Blocks.AIR.defaultBlockState()));
+    }
+
+    @Test
+    void carriageUsesLandVehicleStepHeight() {
+        assertTrue(CarriageEntity.landVehicleStepHeightForTest() >= 1.0F);
+    }
+
+    @Test
     void carriageGroundSupportUsesDrawnVehicleSolverInsteadOfDirectForwardBonus() {
         Vec3 next = CarriageEntity.solveGroundMotionForTest(
                 new Vec3(0.4D, 0.0D, 0.6D),

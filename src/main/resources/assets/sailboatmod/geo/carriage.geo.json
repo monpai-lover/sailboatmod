@@ -4,82 +4,55 @@
 		{
 			"description": {
 				"identifier": "geometry.sailboatmod.carriage",
-				"texture_width": 64,
-				"texture_height": 64,
-				"visible_bounds_width": 3.8,
-				"visible_bounds_height": 3.3,
-				"visible_bounds_offset": [0, 1.35, 0]
+				"texture_width": 128,
+				"texture_height": 128,
+				"visible_bounds_width": 5,
+				"visible_bounds_height": 2.5,
+				"visible_bounds_offset": [0, 0.75, 0]
 			},
 			"bones": [
 				{
-					"name": "root",
-					"pivot": [0, 21, 0],
-					"rotation": [0, 0, 180]
-				},
-				{
 					"name": "body",
-					"parent": "root",
-					"pivot": [0, 34, 0],
+					"pivot": [0, 7, 0],
 					"cubes": [
-						{"origin": [-11, 32, -10], "size": [22, 2, 20], "uv": [0, 26]},
-						{"origin": [-10, 34, -8], "size": [20, 1, 16], "uv": [0, 30]},
-						{"origin": [-12, 28, -10], "size": [2, 6, 20], "uv": [16, 3]},
-						{"origin": [10, 28, -10], "size": [2, 6, 20], "uv": [4, 10]},
-						{"origin": [-10, 28, -12], "size": [20, 6, 2], "uv": [4, 19]},
-						{"origin": [-10, 28, 10], "size": [20, 6, 2], "uv": [20, 1]},
-						{"origin": [-4, 34, 2], "size": [8, 4, 5], "uv": [11, 20]}
+						{"origin": [-6, 5, -10], "size": [12, 1, 20], "uv": [58, 80]},
+						{"origin": [5, 6, -10], "size": [1, 6, 20], "uv": [3, 88]},
+						{"origin": [-6, 6, -10], "size": [1, 6, 20], "uv": [3, 88]},
+						{"origin": [-6, 6, -10], "size": [12, 6, 1], "uv": [44, 27]},
+						{"origin": [-6, 6, 9], "size": [12, 3, 1], "uv": [38, 18]},
+						{"origin": [-7, 12, -10], "size": [14, 1, 16], "uv": [27, 58]},
+						{"origin": [-4, 7, -5], "size": [8, 1, 6], "uv": [41, 37]}
 					]
 				},
 				{
-					"name": "axle",
-					"parent": "root",
-					"pivot": [0, 34, 0],
+					"name": "axle_front",
+					"pivot": [0, 4, 9],
 					"cubes": [
-						{"origin": [-13, 33, -1], "size": [26, 2, 2], "uv": [5, 57]}
+						{"origin": [6, 0, 7], "size": [2, 8, 4], "uv": [4, 15]},
+						{"origin": [6, 2, 5], "size": [2, 4, 8], "uv": [88, 50]},
+						{"origin": [-8, 0, 7], "size": [2, 8, 4], "uv": [4, 15]},
+						{"origin": [-8, 2, 5], "size": [2, 4, 8], "uv": [7, 45]},
+						{"origin": [-6, 3, 8], "size": [12, 2, 2], "uv": [51, 8]}
 					]
 				},
 				{
-					"name": "shaft_left",
-					"parent": "root",
-					"pivot": [4, 34, -10],
+					"name": "axle_back",
+					"pivot": [0, 4, -9],
 					"cubes": [
-						{"origin": [2, 33, -30], "size": [2, 2, 20], "uv": [0, 14]}
+						{"origin": [6, 0, -11], "size": [2, 8, 4], "uv": [4, 15]},
+						{"origin": [6, 2, -13], "size": [2, 4, 8], "uv": [88, 50]},
+						{"origin": [-8, 0, -11], "size": [2, 8, 4], "uv": [4, 15]},
+						{"origin": [-8, 2, -13], "size": [2, 4, 8], "uv": [88, 50]},
+						{"origin": [-6, 3, -10], "size": [12, 2, 2], "uv": [43, 29]}
 					]
 				},
 				{
-					"name": "shaft_right",
-					"parent": "root",
-					"pivot": [-4, 34, -10],
+					"name": "shaft",
+					"pivot": [0, 5, 14],
 					"cubes": [
-						{"origin": [-4, 33, -30], "size": [2, 2, 20], "uv": [14, 6]}
-					]
-				},
-				{
-					"name": "shaft_crossbar",
-					"parent": "root",
-					"pivot": [0, 34, -30],
-					"cubes": [
-						{"origin": [-8, 33, -31], "size": [16, 1, 2], "uv": [12, 61]}
-					]
-				},
-				{
-					"name": "left_wheel",
-					"parent": "root",
-					"pivot": [14, 34, 0],
-					"cubes": [
-						{"origin": [13, 26, -2], "size": [2, 16, 4], "uv": [48, 32]},
-						{"origin": [13, 29, -5], "size": [2, 10, 10], "uv": [13, 44]},
-						{"origin": [13, 33, -7], "size": [2, 2, 14], "uv": [14, 39]}
-					]
-				},
-				{
-					"name": "right_wheel",
-					"parent": "root",
-					"pivot": [-14, 34, 0],
-					"cubes": [
-						{"origin": [-15, 26, -2], "size": [2, 16, 4], "uv": [18, 30]},
-						{"origin": [-15, 29, -5], "size": [2, 10, 10], "uv": [12, 43]},
-						{"origin": [-15, 33, -7], "size": [2, 2, 14], "uv": [16, 44]}
+						{"origin": [1, 5, 10], "size": [1, 2, 14], "uv": [86, 25]},
+						{"origin": [-2, 5, 10], "size": [1, 2, 14], "uv": [86, 25]},
+						{"origin": [-2, 5, 24], "size": [4, 2, 1], "uv": [11, 7]}
 					]
 				}
 			]

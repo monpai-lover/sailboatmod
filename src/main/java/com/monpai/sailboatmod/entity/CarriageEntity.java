@@ -19,19 +19,28 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraftforge.fluids.FluidType;
 import org.jetbrains.annotations.Nullable;
 import software.bernie.geckolib.core.animation.AnimatableManager;
 import software.bernie.geckolib.core.animation.AnimationController;
 import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.core.object.PlayState;
 
 public class CarriageEntity extends SailboatEntity {
     private static final EntityDataAccessor<String> DATA_WOOD_TYPE =
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.STRING);
-    private static final RawAnimation CARRIAGE_IDLE_ANIMATION = RawAnimation.begin().thenLoop("idle");
-    private static final RawAnimation CARRIAGE_ROLL_ANIMATION = RawAnimation.begin().thenLoop("roll");
+    private static final RawAnimation CARRIAGE_DRIVE_ANIMATION = RawAnimation.begin().thenLoop("animation.carriage.drive");
+    private static final boolean SKIPS_VANILLA_BOAT_MOVEMENT_TICK = true;
+    private static final boolean USES_BOAT_FLUID_SUPPORT = false;
+    private static final float LAND_VEHICLE_STEP_HEIGHT = 1.0F;
+    private static final double MIN_DRIVEABLE_GROUND_HEIGHT = 0.125D;
     private static final double AIR_DRAG = 0.88D;
     private static final float ROAD_TURN_DEGREES_PER_TICK = 9.0F;
     private static final float OFFROAD_TURN_DEGREES_PER_TICK = 6.0F;
@@ -43,6 +52,7 @@ public class CarriageEntity extends SailboatEntity {
 
     public CarriageEntity(EntityType<? extends CarriageEntity> entityType, Level level) {
         super(entityType, level);
+        setMaxUpStep(LAND_VEHICLE_STEP_HEIGHT);
     }
 
     @Override
@@ -76,12 +86,38 @@ public class CarriageEntity extends SailboatEntity {
         controllers.add(new AnimationController<>(this, "carriage_state", 0, state -> {
             Vec3 motion = getDeltaMovement();
             double horizontalSpeed = motion.x * motion.x + motion.z * motion.z;
-            return state.setAndContinue(horizontalSpeed > 0.0008D ? CARRIAGE_ROLL_ANIMATION : CARRIAGE_IDLE_ANIMATION);
+            if (horizontalSpeed <= 0.0008D) {
+                return PlayState.STOP;
+            }
+            return state.setAndContinue(CARRIAGE_DRIVE_ANIMATION);
         }));
     }
 
     @Override
+    protected boolean skipsVanillaBoatMovementTick() {
+        return SKIPS_VANILLA_BOAT_MOVEMENT_TICK;
+    }
+
+    @Override
+    public void setInput(boolean inputLeft, boolean inputRight, boolean inputUp, boolean inputDown) {
+        super.setInput(false, false, false, false);
+    }
+
+    @Override
+    public boolean canBoatInFluid(FluidState state) {
+        return USES_BOAT_FLUID_SUPPORT;
+    }
+
+    @Override
+    public boolean canBoatInFluid(FluidType type) {
+        return USES_BOAT_FLUID_SUPPORT;
+    }
+
+    @Override
     public void tick() {
+        if (!level().isClientSide) {
+            setPaddleState(false, false);
+        }
         super.tick();
         if (!level().isClientSide) {
             int currentPassengerCount = getPassengers().size();
@@ -272,13 +308,24 @@ public class CarriageEntity extends SailboatEntity {
             return false;
         }
         BlockState ground = level().getBlockState(pos);
-        if (ground.isAir() || !ground.isFaceSturdy(level(), pos, Direction.UP)) {
+        if (!isDriveableGroundState(ground, level(), pos)) {
             return false;
         }
         if (!level().getFluidState(pos).isEmpty() || !level().getFluidState(pos.above()).isEmpty()) {
             return false;
         }
         return Math.abs(pos.getY() - Mth.floor(getY())) <= 6;
+    }
+
+    private static boolean isDriveableGroundState(BlockState state, BlockGetter level, BlockPos pos) {
+        if (state == null || state.isAir() || !state.getFluidState().isEmpty()) {
+            return false;
+        }
+        VoxelShape shape = state.getCollisionShape(
+                level == null ? EmptyBlockGetter.INSTANCE : level,
+                pos == null ? BlockPos.ZERO : pos
+        );
+        return !shape.isEmpty() && shape.max(Direction.Axis.Y) >= MIN_DRIVEABLE_GROUND_HEIGHT;
     }
 
     private boolean isOnFinishedRoadSurface() {
@@ -302,6 +349,22 @@ public class CarriageEntity extends SailboatEntity {
 
     public static boolean isRoadSurfaceForTest(BlockState state) {
         return isRoadSurfaceState(state);
+    }
+
+    public static boolean skipsVanillaBoatMovementTickForTest() {
+        return SKIPS_VANILLA_BOAT_MOVEMENT_TICK;
+    }
+
+    public static boolean canUseBoatFluidSupportForTest() {
+        return USES_BOAT_FLUID_SUPPORT;
+    }
+
+    public static boolean isDriveableGroundStateForTest(BlockState state) {
+        return isDriveableGroundState(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+    }
+
+    public static float landVehicleStepHeightForTest() {
+        return LAND_VEHICLE_STEP_HEIGHT;
     }
 
     static Vec3 solveGroundMotionForTest(Vec3 current,

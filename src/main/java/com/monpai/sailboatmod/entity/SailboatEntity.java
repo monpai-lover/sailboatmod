@@ -36,6 +36,7 @@ import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.vehicle.Boat;
@@ -356,7 +357,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     @Override
     public void tick() {
-        super.tick();
+        boolean skipVanillaBoatMovementTick = skipsVanillaBoatMovementTick() && !level().isClientSide;
+        if (skipVanillaBoatMovementTick) {
+            tickBaseEntityWithoutBoatMovement();
+        } else {
+            super.tick();
+        }
         cleanupSeatAssignments();
         previousSailDeployProgress = sailDeployProgress;
         float sailTarget = isSailDeployed() ? 1.0F : 0.0F;
@@ -612,9 +618,26 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                 nonWaterTicks = 0;
             }
         }
+        if (!level().isClientSide && skipVanillaBoatMovementTick) {
+            move(MoverType.SELF, getDeltaMovement());
+        }
         if (!level().isClientSide && (tickCount <= 1 || tickCount % BLUEMAP_BOAT_SYNC_INTERVAL_TICKS == 0)) {
             BlueMapIntegration.syncBoat(this);
         }
+    }
+
+    protected boolean skipsVanillaBoatMovementTick() {
+        return false;
+    }
+
+    private void tickBaseEntityWithoutBoatMovement() {
+        if (getHurtTime() > 0) {
+            setHurtTime(getHurtTime() - 1);
+        }
+        if (getDamage() > 0.0F) {
+            setDamage(getDamage() - 1.0F);
+        }
+        baseTick();
     }
 
     protected boolean usesCustomGroundDriveModel() {
