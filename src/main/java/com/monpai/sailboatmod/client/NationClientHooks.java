@@ -40,7 +40,7 @@ public final class NationClientHooks {
             nationHomeScreen.updateData(lastSyncedData);
             return;
         }
-        boolean tradeWindowActive = TradeClientHooks.isTradeScreenActive(minecraft);
+        boolean tradeWindowActive = TradeClientHooks.isTradeScreenActive();
         if (!shouldOpenNationHomeScreen(false, suppressReopen, tradeWindowActive)) {
             return;
         }

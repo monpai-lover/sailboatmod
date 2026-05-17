@@ -2,11 +2,11 @@ package com.monpai.sailboatmod.client.gui;
 
 import java.util.Objects;
 
-final class TradeWindowStatePolicy {
+public final class TradeWindowStatePolicy {
     private TradeWindowStatePolicy() {
     }
 
-    static boolean shouldReplaceDraft(String currentTargetNationId,
+    public static boolean shouldReplaceDraft(String currentTargetNationId,
                                       boolean currentHasProposal,
                                       String currentProposalId,
                                       String nextTargetNationId,
@@ -17,7 +17,7 @@ final class TradeWindowStatePolicy {
                 || !Objects.equals(normalize(currentProposalId), normalize(nextProposalId));
     }
 
-    static String filterCurrencyText(String value) {
+    public static String filterCurrencyText(String value) {
         if (value == null || value.isEmpty()) {
             return "";
         }
@@ -31,11 +31,11 @@ final class TradeWindowStatePolicy {
         return filtered.toString();
     }
 
-    static boolean isCurrencyCharacterAllowed(char c) {
+    public static boolean isCurrencyCharacterAllowed(char c) {
         return c >= '0' && c <= '9';
     }
 
-    static long parseCurrency(String value) {
+    public static long parseCurrency(String value) {
         if (value == null || value.isBlank()) {
             return 0L;
         }
