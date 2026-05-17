@@ -134,7 +134,13 @@ public final class BridgeStructureEmitter {
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {
-        return settings.surfaceState();
+        int localRampIndex = 0;
+        for (int i = 0; i < index; i++) {
+            if (points.get(i).phase() == BuildPhase.RAMP) {
+                localRampIndex++;
+            }
+        }
+        return (localRampIndex % 2 == 0) ? settings.slabBottomState() : settings.slabTopState();
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,
