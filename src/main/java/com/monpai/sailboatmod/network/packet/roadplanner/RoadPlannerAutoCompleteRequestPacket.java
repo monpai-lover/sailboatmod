@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteResult;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteService;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathfinderRunnerFactory;
@@ -9,6 +10,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkEvent;
+import org.slf4j.Logger;
 
 import java.util.List;
 import java.util.UUID;
@@ -19,6 +21,8 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
                                                    BlockPos destination,
                                                    List<BlockPos> manualNodes,
                                                    int spacingBlocks) {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     public RoadPlannerAutoCompleteRequestPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
         start = start == null ? BlockPos.ZERO : start.immutable();
@@ -52,11 +56,17 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
             if (player == null) {
                 return;
             }
-            RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel());
-            if (service == null) {
-                service = new RoadPlannerAutoCompleteService();
+            RoadPlannerAutoCompleteResult result;
+            try {
+                RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel());
+                if (service == null) {
+                    service = new RoadPlannerAutoCompleteService();
+                }
+                result = service.complete(packet.start(), packet.destination(), packet.manualNodes(), packet.spacingBlocks());
+            } catch (Exception e) {
+                LOGGER.error("Auto-complete pathfinding failed", e);
+                result = RoadPlannerAutoCompleteResult.failure("寻路异常: " + e.getMessage());
             }
-            RoadPlannerAutoCompleteResult result = service.complete(packet.start(), packet.destination(), packet.manualNodes(), packet.spacingBlocks());
             ModNetwork.CHANNEL.sendTo(
                     new RoadPlannerAutoCompleteResultPacket(packet.sessionId(), result.success(), result.nodes(), result.segmentTypes(), result.message()),
                     player.connection.connection,
