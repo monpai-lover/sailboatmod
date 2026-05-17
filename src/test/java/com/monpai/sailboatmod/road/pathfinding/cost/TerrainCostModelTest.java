@@ -21,7 +21,7 @@ class TerrainCostModelTest {
     }
 
     @Test
-    void moveCostIncludesSlopePenalty() {
+    void moveCostReturnsBaseStepWhenAllWeightsZero() {
         PathfindingConfig config = new PathfindingConfig();
         config.setElevationWeight(0);
         config.setBiomeWeight(0);
@@ -30,7 +30,7 @@ class TerrainCostModelTest {
         config.setNearWaterCost(0);
         TerrainCostModel model = new TerrainCostModel(config);
 
-        assertEquals(1.0 + TerrainCostModel.SLOPE_SOFT_PENALTY * 0.1,
+        assertEquals(1.0,
                 model.moveCost(0, 0, 10, 0, heightCache(Map.of(0, 64, 10, 70))));
     }
 
