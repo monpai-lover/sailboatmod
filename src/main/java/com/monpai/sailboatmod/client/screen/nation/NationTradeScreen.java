@@ -16,11 +16,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class NationTradeScreen extends Screen {
-    private static final int SCREEN_W = 360;
-    private static final int SCREEN_H = 280;
+    private static final int SCREEN_W = 440;
+    private static final int SCREEN_H = 300;
     private static final int MAX_TRADE_ITEMS = TradeScreenData.MAX_TRADE_ITEMS;
     private static final int AUTO_REFRESH_TICKS = 40;
     private static final int SLOT_SIZE = 18;
+    private static final int HALF_W = SCREEN_W / 2;
 
     private TradeScreenData data;
     private final List<ItemStack> offerSlots = new ArrayList<>(MAX_TRADE_ITEMS);
@@ -122,6 +123,76 @@ public class NationTradeScreen extends Screen {
             refreshTicks = 0;
             ModNetwork.CHANNEL.sendToServer(
                     new TradeScreenActionPacket(TradeScreenActionPacket.Action.REFRESH, data.targetNationId()));
+        }
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0 && !readOnly()) {
+            int left = left();
+            int top = top();
+            // Click on our treasury → add to offer slots
+            if (handleTreasuryClick(mouseX, mouseY, left + 12, top + 168, data.ourTreasuryItems(), offerSlots)) {
+                return true;
+            }
+            // Click on target treasury → add to request slots
+            if (!data.targetTreasuryItems().isEmpty() &&
+                    handleTreasuryClick(mouseX, mouseY, left + HALF_W + 12, top + 168, data.targetTreasuryItems(), requestSlots)) {
+                return true;
+            }
+            // Click on offer trade slot → remove item
+            if (handleTradeSlotClick(mouseX, mouseY, left + 12, top + 74, offerSlots)) {
+                return true;
+            }
+            // Click on request trade slot → remove item
+            if (handleTradeSlotClick(mouseX, mouseY, left + HALF_W + 12, top + 74, requestSlots)) {
+                return true;
+            }
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    private boolean handleTreasuryClick(double mouseX, double mouseY, int baseX, int baseY,
+                                         List<ItemStack> treasuryItems, List<ItemStack> targetSlots) {
+        if (treasuryItems == null || treasuryItems.isEmpty()) return false;
+        int cols = 9;
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < cols; col++) {
+                int idx = row * cols + col;
+                if (idx >= treasuryItems.size()) return false;
+                int slotX = baseX + col * (SLOT_SIZE + 1);
+                int slotY = baseY + row * (SLOT_SIZE + 1);
+                if (mouseX >= slotX && mouseX < slotX + SLOT_SIZE && mouseY >= slotY && mouseY < slotY + SLOT_SIZE) {
+                    ItemStack item = treasuryItems.get(idx);
+                    if (item != null && !item.isEmpty()) {
+                        addToFirstEmpty(targetSlots, item.copy());
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean handleTradeSlotClick(double mouseX, double mouseY, int baseX, int baseY, List<ItemStack> slots) {
+        for (int i = 0; i < Math.min(slots.size(), MAX_TRADE_ITEMS); i++) {
+            int slotX = baseX + i * (SLOT_SIZE + 2);
+            if (mouseX >= slotX && mouseX < slotX + SLOT_SIZE && mouseY >= baseY && mouseY < baseY + SLOT_SIZE) {
+                if (!slots.get(i).isEmpty()) {
+                    slots.set(i, ItemStack.EMPTY);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void addToFirstEmpty(List<ItemStack> slots, ItemStack item) {
+        for (int i = 0; i < slots.size(); i++) {
+            if (slots.get(i).isEmpty()) {
+                slots.set(i, item);
+                return;
+            }
         }
     }
 
