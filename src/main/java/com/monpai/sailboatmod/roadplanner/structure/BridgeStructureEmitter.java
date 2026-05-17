@@ -54,8 +54,6 @@ public final class BridgeStructureEmitter {
         return List.copyOf(steps);
     }
 
-    private static final BlockState FOUNDATION_BLOCK = Blocks.STONE_BRICKS.defaultBlockState();
-
     private static List<BuildStep> emitProgrammaticBridge(List<RoadCenterlinePoint> points,
                                                           RoadSpan span,
                                                           RoadPlannerBuildSettings settings,
@@ -89,35 +87,7 @@ public final class BridgeStructureEmitter {
             for (BlockPos surfacePos : footprint) {
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
             }
-            // Fill horizontal gaps: when centerline shifts diagonally, fill missing positions
-            if (index > 0) {
-                List<BlockPos> prevFootprint = RoadFootprintPlanner.surfacePositions(bridgeProfile, index - 1, settings.width());
-                int prevY = plannedPoints.get(index - 1).point().targetY();
-                for (BlockPos prev : prevFootprint) {
-                    boolean covered = false;
-                    for (BlockPos curr : footprint) {
-                        if (curr.getX() == prev.getX() && curr.getZ() == prev.getZ()) { covered = true; break; }
-                    }
-                    if (!covered) {
-                        steps.add(new BuildStep(order++, new BlockPos(prev.getX(), y, prev.getZ()), state, phase));
-                    }
-                }
-            }
-            // 1x1 support pier at intervals for LOW_BRIDGE DECK only (not on ramps)
-            int terrainY = supportBottomY(point, terrainSampler);
-            if (!plan.profile().usesPiers() && plan.profile() == RoadPlannerBridgeProfile.LOW_BRIDGE
-                    && planned.phase() == BuildPhase.DECK && index % 4 == 0 && y - 1 > terrainY) {
-                for (int fy = y - 1; fy >= terrainY; fy--) {
-                    steps.add(new BuildStep(order++, new BlockPos(center.getX(), fy, center.getZ()), FOUNDATION_BLOCK, BuildPhase.PIER));
-                }
-            }
-            // Railing support: place a deck block below each railing position
-            List<BuildStep> railSteps = railings(bridgeProfile, index, center, settings, order);
-            for (BuildStep rs : railSteps) {
-                BlockPos railBase = rs.pos().below();
-                steps.add(new BuildStep(order++, railBase, settings.surfaceState(), BuildPhase.DECK));
-            }
-            steps.addAll(railSteps);
+            steps.addAll(railings(bridgeProfile, index, center, settings, order));
             order = startOrder + steps.size();
         }
         for (RoadPlannerBridgeGeometryPlanner.Pier pier : plan.piers()) {
@@ -128,19 +98,14 @@ public final class BridgeStructureEmitter {
         return List.copyOf(steps);
     }
 
-    private static int supportBottomY(RoadCenterlinePoint point, RoadTerrainSampler terrainSampler) {
-        if (point == null) return 0;
-        return point.terrainY();
-    }
-
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {
-        int localRampIndex = 0;
-        for (int i = 0; i < index; i++) {
-            if (points.get(i).phase() == BuildPhase.RAMP) {
-                localRampIndex++;
-            }
+        int y = points.get(index).point().targetY();
+        int prevY = index > 0 ? points.get(index - 1).point().targetY() : y;
+        int nextY = index + 1 < points.size() ? points.get(index + 1).point().targetY() : y;
+        if (y > prevY || nextY < y) {
+            return settings.slabBottomState();
         }
-        return (localRampIndex % 2 == 0) ? settings.slabBottomState() : settings.slabTopState();
+        return settings.slabTopState();
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,

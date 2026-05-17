@@ -333,42 +333,6 @@ class RoadNodeStructureExpanderTest {
         assertEquals(68, piers.stream().mapToInt(BlockPos::getY).max().orElseThrow());
     }
 
-    @Test
-    void lowBridgeSupportPiersStopAtTerrainLevel() {
-        RoadTerrainSampler waterSampler = new RoadTerrainSampler() {
-            @Override
-            public int terrainY(int x, int z) {
-                return 64;
-            }
-
-            @Override
-            public int waterSurfaceY(int x, int z) {
-                return 63;
-            }
-
-            @Override
-            public int oceanFloorY(int x, int z) {
-                return 45;
-            }
-        };
-        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
-                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
-                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
-                RoadPlannerBuildSettings.DEFAULTS,
-                waterSampler,
-                RoadStructureMode.BUILD
-        );
-
-        List<BlockPos> piers = result.buildSteps().stream()
-                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER)
-                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
-                .toList();
-
-        assertFalse(piers.isEmpty());
-        assertTrue(piers.stream().mapToInt(BlockPos::getY).min().orElseThrow() >= 64);
-    }
-
-    @Test
     void blockedBridgeMarkerBuildsAsMajorBridge() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),

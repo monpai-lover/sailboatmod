@@ -135,19 +135,15 @@ public final class RoadPlannerBridgeGeometryPlanner {
         if (height <= 0) {
             return 0;
         }
-        return Math.min(height * 2, availableIntervals);
+        return Math.min(Math.max(1, height), availableIntervals);
     }
 
     private static int rampY(int shoreY, int deckY, int localIndex, int rampLen) {
         if (deckY <= shoreY || rampLen <= 0) {
             return shoreY;
         }
-        int height = deckY - shoreY;
-        if (rampLen >= height * 2) {
-            return Math.min(shoreY + localIndex / 2, deckY);
-        }
-        int y = shoreY + Math.round((float) localIndex * height / rampLen);
-        return Math.min(y, deckY);
+        double t = Math.min(1.0D, Math.max(0.0D, localIndex / (double) rampLen));
+        return (int) Math.round(shoreY + (deckY - shoreY) * t);
     }
 
     private static List<Pier> piers(List<RoadCenterlinePoint> sourcePoints,
