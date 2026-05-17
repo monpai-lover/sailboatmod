@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.roadplanner.structure;
 
 public enum RoadPlannerBridgeProfile {
-    LOW_ARCH(16, 2, 3, false),
+    LOW_ARCH(16, 3, 4, false),
     LOW_BRIDGE(32, 3, 5, false),
     PIER_BRIDGE(Integer.MAX_VALUE, 5, 8, true);
 

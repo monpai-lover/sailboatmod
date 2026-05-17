@@ -88,6 +88,9 @@ public final class BridgeStructureEmitter {
             List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
             for (BlockPos surfacePos : footprint) {
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
+                if (ramp) {
+                    steps.add(new BuildStep(order++, surfacePos.below(), settings.surfaceState(), BuildPhase.FOUNDATION));
+                }
             }
             // 1x1 support pier at intervals for LOW_BRIDGE only (not short LOW_ARCH)
             int terrainY = point.terrainY();
