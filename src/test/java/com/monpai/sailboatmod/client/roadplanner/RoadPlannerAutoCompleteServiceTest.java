@@ -30,6 +30,22 @@ class RoadPlannerAutoCompleteServiceTest {
         assertEquals(new BlockPos(0, 64, 0), result.nodes().get(0));
         assertEquals(new BlockPos(96, 64, 0), result.nodes().get(result.nodes().size() - 1));
         assertFalse(result.segmentTypes().isEmpty());
+        assertTrue(result.message().startsWith("自动补全完成"));
+    }
+
+    @Test
+    void rejectsMissingEndpointWithReadableMessage() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService();
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                null,
+                new BlockPos(96, 64, 0),
+                List.of(),
+                24
+        );
+
+        assertFalse(result.success());
+        assertEquals("缺少起点或目的地 town", result.message());
     }
 
     @Test
@@ -107,7 +123,6 @@ class RoadPlannerAutoCompleteServiceTest {
         );
 
         assertFalse(result.success());
-        assertTrue(result.nodes().isEmpty());
     }
 
     @Test

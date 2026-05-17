@@ -41,9 +41,9 @@ public final class RoadPlannerPathfinderRunnerFactory {
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {
             RoadPlannerObstacleMask routeMask = baseMask.withoutEndpoints(from, destination);
 
-            // Stage 1: coarse pathfinding (step=8, POTENTIAL_FIELD)
+            // Stage 1: coarse pathfinding (step=8, BIDIRECTIONAL_ASTAR)
             PathfindingConfig coarseConfig = new PathfindingConfig();
-            coarseConfig.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
+            coarseConfig.setAlgorithm(PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
             Pathfinder coarsePathfinder = PathfinderFactory.create(coarseConfig);
             TerrainSamplingCache coarseCache = new TerrainSamplingCache(level, coarseConfig.getSamplingPrecision(), routeMask.blockedColumns());
             PathResult coarseResult = coarsePathfinder.findPath(from, destination, coarseCache);

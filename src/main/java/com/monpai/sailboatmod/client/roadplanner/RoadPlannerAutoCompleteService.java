@@ -45,7 +45,7 @@ public class RoadPlannerAutoCompleteService {
         List<BlockPos> suffixNodes = runPathfinder(from, destination);
         if (suffixNodes.isEmpty()) {
             if (pathfinderRunner != null) {
-                return RoadPlannerAutoCompleteResult.failure("鑷姩瀵昏矾澶辫触");
+                return RoadPlannerAutoCompleteResult.failure("自动寻路失败");
             }
             suffixNodes = interpolateRoadWeaverStyle(from, destination, spacing);
         }
