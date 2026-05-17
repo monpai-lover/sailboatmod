@@ -1434,9 +1434,9 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         layoutWidget(this.joinNationInput, 12, noNationJoinY + 22, 18, noNationOverview);
         layoutWidget(this.joinNationButton, 300, noNationJoinY + 22, 18, noNationOverview);
         layoutWidget(this.nationHelpButton, 300, noNationJoinY + 50, 18, noNationOverview);
-        layoutWidget(this.previousTownButton, 300, nationTownButtonY, 18, nationOverview);
-        layoutWidget(this.nextTownButton, 358, nationTownButtonY, 18, nationOverview);
-        layoutWidget(this.openCapitalTownButton, 300, nationTownButtonY + 28, 18, nationOverview);
+        layoutWidget(this.previousTownButton, 300, nationTownButtonY + 28, 18, nationOverview);
+        layoutWidget(this.nextTownButton, 394, nationTownButtonY + 28, 18, nationOverview);
+        layoutWidget(this.openCapitalTownButton, 320, nationTownButtonY + 28, 18, nationOverview);
         layoutWidget(this.removeCoreButton, 300, nationTownButtonY + 56, 18, nationOverview);
 
         layoutWidget(this.officerTitleInput, 224, 152, 18, membersPage);
