@@ -6,7 +6,6 @@ import net.minecraft.core.BlockPos;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.List;
 
@@ -94,22 +93,48 @@ public final class RoadNodeStructureExpander {
     }
 
     private static java.util.List<BuildStep> dedupeAndReorder(java.util.List<BuildStep> steps) {
-        java.util.Set<StepKey> seen = new java.util.LinkedHashSet<>();
-        java.util.List<BuildStep> deduped = new java.util.ArrayList<>();
+        java.util.Map<BlockPos, BuildStep> selectedByPosition = new java.util.LinkedHashMap<>();
         if (steps != null) {
             for (BuildStep step : steps) {
                 if (step == null || step.pos() == null || step.state() == null || step.phase() == null) {
                     continue;
                 }
-                StepKey key = new StepKey(step.pos().immutable(), step.phase(), step.state());
-                if (seen.add(key)) {
-                    deduped.add(new BuildStep(deduped.size(), step.pos(), step.state(), step.phase()));
+                BlockPos key = step.pos().immutable();
+                BuildStep existing = selectedByPosition.get(key);
+                if (existing == null || shouldReplace(existing, step)) {
+                    selectedByPosition.put(key, new BuildStep(step.order(), key, step.state(), step.phase()));
                 }
             }
+        }
+        java.util.List<BuildStep> ordered = selectedByPosition.values().stream()
+                .sorted(java.util.Comparator.comparingInt(BuildStep::order))
+                .toList();
+        java.util.List<BuildStep> deduped = new java.util.ArrayList<>(ordered.size());
+        for (BuildStep step : ordered) {
+            deduped.add(new BuildStep(deduped.size(), step.pos(), step.state(), step.phase()));
         }
         return java.util.List.copyOf(deduped);
     }
 
-    private record StepKey(BlockPos pos, BuildPhase phase, BlockState state) {
+    private static boolean shouldReplace(BuildStep existing, BuildStep candidate) {
+        int existingPriority = finalBlockPriority(existing);
+        int candidatePriority = finalBlockPriority(candidate);
+        if (candidatePriority != existingPriority) {
+            return candidatePriority > existingPriority;
+        }
+        return candidate.order() > existing.order();
+    }
+
+    private static int finalBlockPriority(BuildStep step) {
+        if (step.state().isAir()) {
+            return 0;
+        }
+        return switch (step.phase()) {
+            case DECK, RAMP -> 70;
+            case SURFACE -> 60;
+            case RAILING, STREETLIGHT -> 50;
+            case PIER -> 30;
+            case FOUNDATION -> 20;
+        };
     }
 }

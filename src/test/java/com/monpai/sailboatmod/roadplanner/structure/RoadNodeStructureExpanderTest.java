@@ -522,6 +522,52 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void buildStepsUseUniquePositionsForPersistedRoadJobs() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(12, 64, 0),
+                        new BlockPos(36, 64, 0),
+                        new BlockPos(48, 64, 12)
+                ),
+                List.of(
+                        RoadPlannerSegmentType.ROAD,
+                        RoadPlannerSegmentType.BRIDGE_MAJOR,
+                        RoadPlannerSegmentType.ROAD
+                ),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        java.util.Map<BlockPos, List<com.monpai.sailboatmod.road.model.BuildStep>> byPos = result.buildSteps().stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        com.monpai.sailboatmod.road.model.BuildStep::pos,
+                        java.util.LinkedHashMap::new,
+                        java.util.stream.Collectors.toList()
+                ));
+        List<String> duplicates = byPos.entrySet().stream()
+                .filter(entry -> entry.getValue().size() > 1)
+                .map(entry -> entry.getKey() + " -> " + entry.getValue().stream()
+                        .map(step -> step.phase() + ":" + step.state().getBlock())
+                        .toList())
+                .toList();
+
+        assertTrue(duplicates.isEmpty(),
+                "road construction persistence validates build steps by BlockPos only: " + duplicates);
+        assertTrue(result.buildSteps().stream().anyMatch(step ->
+                        step.pos().equals(new BlockPos(36, 63, 2))
+                                && step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP
+                                && !step.state().isAir()),
+                "bridge ramp must win over overlapping clearance air");
+        assertTrue(result.buildSteps().stream().anyMatch(step ->
+                        step.pos().equals(new BlockPos(36, 64, 3))
+                                && step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING
+                                && !step.state().isAir()),
+                "bridge railing must win over overlapping clearance air");
+    }
+
+    @Test
     void blockedBridgeMarkerBuildsAsMajorBridge() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),
