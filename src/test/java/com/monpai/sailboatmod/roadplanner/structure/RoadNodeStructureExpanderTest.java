@@ -206,6 +206,33 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void roadFootprintDoesNotBleedIntoAdjacentBridgeSpan() {
+        List<RoadCenterlinePoint> mixedCenterline = List.of(
+                point(0, 64, 0, 0.0D, RoadPlannerSegmentType.ROAD),
+                point(4, 64, 0, 4.0D, RoadPlannerSegmentType.ROAD),
+                point(8, 64, 0, 8.0D, RoadPlannerSegmentType.BRIDGE_MAJOR)
+        );
+        List<com.monpai.sailboatmod.road.model.BuildStep> steps = RoadSurfaceStepEmitter.emit(
+                mixedCenterline,
+                List.of(
+                        new RoadSpan(RoadSpanType.ROAD, 0, 1, RoadPlannerSegmentType.ROAD),
+                        new RoadSpan(RoadSpanType.BRIDGE, 2, 2, RoadPlannerSegmentType.BRIDGE_MAJOR)
+                ),
+                RoadPlannerBuildSettings.DEFAULTS,
+                0
+        );
+
+        List<BlockPos> surface = steps.stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.SURFACE)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        assertTrue(surface.contains(new BlockPos(4, 64, 0)), surface.toString());
+        assertFalse(surface.contains(new BlockPos(5, 64, 0)),
+                "road surface should stop at the road span and not sweep into the bridge span");
+    }
+
+    @Test
     void smoothedSteepRoadEmitsRampSteps() {
         RoadTerrainSampler steep = (x, z) -> 64 + x * 2;
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(

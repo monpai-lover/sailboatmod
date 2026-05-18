@@ -23,7 +23,7 @@ public final class RoadSurfaceStepEmitter {
             return List.of();
         }
         RoadPlannerBuildSettings safeSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
-        List<List<BlockPos>> footprints = RoadBandRasterizer.surfacePositionsByIndex(centerline, safeSettings.width());
+        List<List<BlockPos>> footprints = roadFootprintsByIndex(centerline, spans, safeSettings.width());
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
         for (int index = 0; index < centerline.size(); index++) {
@@ -51,6 +51,30 @@ public final class RoadSurfaceStepEmitter {
         }
         order = addStreetlights(steps, centerline, spans, safeSettings, order);
         return List.copyOf(steps);
+    }
+
+    private static List<List<BlockPos>> roadFootprintsByIndex(List<RoadCenterlinePoint> centerline, List<RoadSpan> spans, int width) {
+        ArrayList<List<BlockPos>> footprints = new ArrayList<>(centerline.size());
+        for (int index = 0; index < centerline.size(); index++) {
+            footprints.add(List.of());
+        }
+        List<RoadSpan> roadSpans = spans == null
+                ? List.of(new RoadSpan(RoadSpanType.ROAD, 0, centerline.size() - 1, centerline.get(0).segmentType()))
+                : spans.stream().filter(span -> span.type() == RoadSpanType.ROAD).toList();
+        for (RoadSpan span : roadSpans) {
+            int start = Math.max(0, Math.min(centerline.size() - 1, span.startIndex()));
+            int end = Math.max(start, Math.min(centerline.size() - 1, span.endIndex()));
+            if (start == end) {
+                footprints.set(start, RoadFootprintPlanner.surfacePositions(centerline, start, width));
+                continue;
+            }
+            List<RoadCenterlinePoint> spanPoints = centerline.subList(start, end + 1);
+            List<List<BlockPos>> local = RoadBandRasterizer.surfacePositionsByIndex(spanPoints, width);
+            for (int localIndex = 0; localIndex < local.size(); localIndex++) {
+                footprints.set(start + localIndex, local.get(localIndex));
+            }
+        }
+        return List.copyOf(footprints);
     }
 
     private static int addStreetlights(List<BuildStep> steps,
