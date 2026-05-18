@@ -2,13 +2,18 @@ package com.monpai.sailboatmod.roadplanner.structure;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.road.model.BuildPhase;
+import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.state.properties.SlabType;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -566,6 +571,45 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void bridgeRampSlabsFollowLegacyAscendingAndDescendingPairs() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 63, 0), new BlockPos(48, 63, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                deepWaterSampler(),
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> centerRamp = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.RAMP)
+                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
+                .filter(step -> step.pos().getZ() == 0)
+                .sorted(Comparator.comparingInt((BuildStep step) -> step.pos().getX())
+                        .thenComparingInt(BuildStep::order))
+                .toList();
+
+        assertTrue(centerRamp.size() >= 12, "bridge should include both approach ramp runs");
+
+        BuildStep firstAscending = centerRamp.get(0);
+        BuildStep secondAscending = centerRamp.get(1);
+        assertEquals(firstAscending.pos().getY(), secondAscending.pos().getY(),
+                "ascending ramp should only move up after a bottom/top pair");
+        assertEquals(SlabType.BOTTOM, firstAscending.state().getValue(SlabBlock.TYPE),
+                "ascending ramp should start with a bottom slab");
+        assertEquals(SlabType.TOP, secondAscending.state().getValue(SlabBlock.TYPE),
+                "ascending ramp should place a top slab before moving up");
+
+        BuildStep firstDescendingFinalPair = centerRamp.get(centerRamp.size() - 2);
+        BuildStep secondDescendingFinalPair = centerRamp.get(centerRamp.size() - 1);
+        assertEquals(firstDescendingFinalPair.pos().getY(), secondDescendingFinalPair.pos().getY(),
+                "descending ramp should move down before a top/bottom pair");
+        assertEquals(SlabType.TOP, firstDescendingFinalPair.state().getValue(SlabBlock.TYPE),
+                "descending ramp should place a top slab before the final bottom slab");
+        assertEquals(SlabType.BOTTOM, secondDescendingFinalPair.state().getValue(SlabBlock.TYPE),
+                "descending ramp should end with a bottom slab");
+    }
+
+    @Test
     void buildStepsUseUniquePositionsForPersistedRoadJobs() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(
@@ -624,6 +668,25 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.canonicalSegmentTypes().contains(RoadPlannerSegmentType.BRIDGE_MAJOR));
         assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK));
         assertFalse(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.SURFACE));
+    }
+
+    private static RoadTerrainSampler deepWaterSampler() {
+        return new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
     }
 
     private static RoadCenterlinePoint point(int x, int y, int z, double distance, RoadPlannerSegmentType segmentType) {

@@ -137,13 +137,31 @@ public final class BridgeStructureEmitter {
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {
-        int y = points.get(index).point().targetY();
-        int prevY = index > 0 ? points.get(index - 1).point().targetY() : y;
-        int nextY = index + 1 < points.size() ? points.get(index + 1).point().targetY() : y;
-        boolean risingFromPrevious = y > prevY;
-        boolean fallingToNext = nextY < y;
-        boolean lowerSideOfOneBlockTransition = risingFromPrevious || fallingToNext;
-        return lowerSideOfOneBlockTransition ? settings.slabBottomState() : settings.slabTopState();
+        int start = index;
+        while (start > 0 && points.get(start - 1).phase() == BuildPhase.RAMP) {
+            start--;
+        }
+        int end = index;
+        while (end + 1 < points.size() && points.get(end + 1).phase() == BuildPhase.RAMP) {
+            end++;
+        }
+        boolean ascending = rampRunAscending(points, start, end);
+        int localRampIndex = index - start;
+        if (ascending) {
+            return (localRampIndex & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
+        }
+        return (localRampIndex & 1) == 0 ? settings.slabTopState() : settings.slabBottomState();
+    }
+
+    private static boolean rampRunAscending(List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int start, int end) {
+        int startY = points.get(start).point().targetY();
+        int endY = points.get(end).point().targetY();
+        if (startY != endY) {
+            return endY > startY;
+        }
+        int beforeY = start > 0 ? points.get(start - 1).point().targetY() : startY;
+        int afterY = end + 1 < points.size() ? points.get(end + 1).point().targetY() : endY;
+        return afterY >= beforeY;
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,

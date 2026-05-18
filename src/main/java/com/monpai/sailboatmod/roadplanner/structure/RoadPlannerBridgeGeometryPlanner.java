@@ -153,8 +153,9 @@ public final class RoadPlannerBridgeGeometryPlanner {
         if (deckY <= shoreY || rampLen <= 0) {
             return shoreY;
         }
-        double t = Math.min(1.0D, Math.max(0.0D, localIndex / (double) rampLen));
-        return (int) Math.round(shoreY + (deckY - shoreY) * t);
+        int height = deckY - shoreY;
+        int clampedIndex = Math.min(Math.max(0, localIndex), Math.max(0, rampLen - 1));
+        return shoreY + (height * clampedIndex) / rampLen;
     }
 
     private static List<Pier> piers(List<RoadCenterlinePoint> sourcePoints,
