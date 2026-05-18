@@ -1,7 +1,10 @@
 package com.monpai.sailboatmod.road.pathfinding.cache;
 
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 public final class RoadSurfaceHeuristics {
@@ -12,8 +15,11 @@ public final class RoadSurfaceHeuristics {
         if (state == null || state.isAir()) {
             return false;
         }
+        Block block = state.getBlock();
         return state.is(BlockTags.LEAVES)
                 || state.is(BlockTags.LOGS)
+                || block instanceof LeavesBlock
+                || hasNaturalNoiseName(state)
                 || state.is(BlockTags.FLOWERS)
                 || state.is(BlockTags.SAPLINGS)
                 || state.is(BlockTags.TALL_FLOWERS)
@@ -47,7 +53,24 @@ public final class RoadSurfaceHeuristics {
                 || state.is(Blocks.MANGROVE_PROPAGULE)
                 || state.is(Blocks.AZALEA)
                 || state.is(Blocks.FLOWERING_AZALEA)
+                || state.is(Blocks.KELP)
+                || state.is(Blocks.KELP_PLANT)
+                || state.is(Blocks.SEAGRASS)
+                || state.is(Blocks.TALL_SEAGRASS)
+                || state.is(Blocks.SEA_PICKLE)
                 || state.is(BlockTags.REPLACEABLE);
+    }
+
+    private static boolean hasNaturalNoiseName(BlockState state) {
+        if (state == null || state.getBlock() == null) {
+            return false;
+        }
+        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        return path.endsWith("_leaves")
+                || path.endsWith("_log")
+                || path.endsWith("_wood")
+                || path.endsWith("_stem")
+                || path.endsWith("_hyphae");
     }
 
     public static boolean isRoadBearingSurface(BlockState state) {
