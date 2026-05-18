@@ -76,6 +76,12 @@ public final class BridgeStructureEmitter {
                 .toList();
         List<List<BlockPos>> footprints = RoadBandRasterizer.surfacePositionsByIndex(bridgeProfile, settings.width());
 
+        for (RoadPlannerBridgeGeometryPlanner.Pier pier : plan.piers()) {
+            for (int pierY = pier.bottomY(); pierY <= pier.topY(); pierY++) {
+                steps.add(new BuildStep(order++, new BlockPos(pier.center().getX(), pierY, pier.center().getZ()), Blocks.STONE_BRICKS.defaultBlockState(), BuildPhase.PIER));
+            }
+        }
+
         for (int index = 0; index < plannedPoints.size(); index++) {
             RoadPlannerBridgeGeometryPlanner.PlannedPoint planned = plannedPoints.get(index);
             RoadCenterlinePoint point = planned.point();
@@ -93,11 +99,6 @@ public final class BridgeStructureEmitter {
             }
             steps.addAll(railings(bridgeProfile, index, center, settings, order));
             order = startOrder + steps.size();
-        }
-        for (RoadPlannerBridgeGeometryPlanner.Pier pier : plan.piers()) {
-            for (int pierY = pier.bottomY(); pierY <= pier.topY(); pierY++) {
-                steps.add(new BuildStep(order++, new BlockPos(pier.center().getX(), pierY, pier.center().getZ()), Blocks.STONE_BRICKS.defaultBlockState(), BuildPhase.PIER));
-            }
         }
         return List.copyOf(steps);
     }

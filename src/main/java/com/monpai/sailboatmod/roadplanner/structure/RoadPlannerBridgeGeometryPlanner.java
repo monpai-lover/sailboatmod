@@ -176,8 +176,9 @@ public final class RoadPlannerBridgeGeometryPlanner {
         int x = sourcePoint.pos().getX();
         int z = sourcePoint.pos().getZ();
         int bottomY = sampler.oceanFloorY(x, z);
-        BlockPos center = new BlockPos(x, deckY, z);
-        Pier pier = new Pier(center, bottomY, deckY);
+        int topY = Math.max(bottomY, deckY - 1);
+        BlockPos center = new BlockPos(x, topY, z);
+        Pier pier = new Pier(center, bottomY, topY);
         if (piers.stream().noneMatch(existing -> existing.center().getX() == x && existing.center().getZ() == z)) {
             piers.add(pier);
         }

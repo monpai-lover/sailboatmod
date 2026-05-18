@@ -107,6 +107,7 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.hasErrors());
         assertEquals(0, result.buildSteps().size());
         assertEquals(0, result.previewBlocks().size());
+        assertEquals("路径节点不足，至少需要两个有效节点。", result.issues().get(0).message());
     }
 
 
@@ -472,6 +473,55 @@ class RoadNodeStructureExpanderTest {
         assertTrue(piers.stream().mapToInt(BlockPos::getY).max().orElseThrow() <= 66);
     }
 
+    @Test
+    void bridgePiersStopBelowDeckToAvoidDuplicateConstructionPositions() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        List<BlockPos> deckPositions = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+        List<BlockPos> pierPositions = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        assertTrue(pierPositions.stream().noneMatch(deckPositions::contains),
+                "pier blocks must stop below deck blocks because construction progress tracks positions by BlockPos");
+    }
+
+    @Test
+    void bridgePiersAreBuiltBeforeDeckInSameColumn() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        List<com.monpai.sailboatmod.road.model.BuildStep> piers = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER)
+                .toList();
+        List<com.monpai.sailboatmod.road.model.BuildStep> deck = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK)
+                .toList();
+
+        assertTrue(piers.stream().anyMatch(pier -> deck.stream().anyMatch(surface ->
+                        surface.pos().getX() == pier.pos().getX()
+                                && surface.pos().getZ() == pier.pos().getZ()
+                                && surface.pos().getY() > pier.pos().getY()
+                                && pier.order() < surface.order())),
+                "at least one supported deck column should have its pier emitted first");
+    }
+
+    @Test
     void blockedBridgeMarkerBuildsAsMajorBridge() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),

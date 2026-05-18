@@ -65,7 +65,7 @@ class RoadPlannerBridgeGeometryPlannerTest {
 
         assertFalse(plan.piers().isEmpty());
         assertTrue(plan.piers().stream().allMatch(pier -> pier.bottomY() == 54));
-        assertTrue(plan.piers().stream().allMatch(pier -> pier.topY() == plan.deckY()));
+        assertTrue(plan.piers().stream().allMatch(pier -> pier.topY() == plan.deckY() - 1));
     }
 
     @Test
