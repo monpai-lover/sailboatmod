@@ -13,15 +13,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerBridgeGeometryPlannerTest {
     @Test
-    void deckHeightUsesActualWaterSurfacePlusConfigHeightWhenShoresDoNotRaiseIt() {
+    void ordinaryPierBridgeUsesLowerClearanceThanNavigableBridge() {
         RoadPlannerBridgeGeometryPlanner.Plan plan = RoadPlannerBridgeGeometryPlanner.plan(
-                centerline(0, 48, 63),
+                centerline(0, 48, 64),
                 new RoadSpan(RoadSpanType.BRIDGE, 0, 48, RoadPlannerSegmentType.BRIDGE_MAJOR),
                 waterSampler(63, 55),
                 new BridgeConfig()
         );
 
-        assertEquals(68, plan.deckY());
+        assertEquals(RoadPlannerBridgeProfile.PIER_BRIDGE, plan.profile());
+        assertTrue(plan.deckY() <= 66, "ordinary pier bridge should not always use water + 5 clearance");
+        assertAdjacentTargetYDeltaAtMostOne(plan);
+    }
+
+    @Test
+    void veryLongMajorBridgeCanUseNavigableClearance() {
+        RoadPlannerBridgeGeometryPlanner.Plan plan = RoadPlannerBridgeGeometryPlanner.plan(
+                centerline(0, 72, 64),
+                new RoadSpan(RoadSpanType.BRIDGE, 0, 72, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                waterSampler(63, 52),
+                new BridgeConfig()
+        );
+
+        assertEquals(RoadPlannerBridgeProfile.PIER_BRIDGE, plan.profile());
+        assertTrue(plan.deckY() >= 68, "very long major bridge may keep navigable clearance");
+        assertAdjacentTargetYDeltaAtMostOne(plan);
     }
 
     @Test
@@ -66,6 +82,21 @@ class RoadPlannerBridgeGeometryPlannerTest {
         assertTrue(plan.deckY() <= 67, "low arch should stay close to shore height");
         assertTrue(plan.points().stream().anyMatch(point -> point.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP));
         assertTrue(plan.points().stream().anyMatch(point -> point.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK));
+    }
+
+    @Test
+    void shortDeepNarrowWaterStaysLowArch() {
+        RoadPlannerBridgeGeometryPlanner.Plan plan = RoadPlannerBridgeGeometryPlanner.plan(
+                centerline(0, 10, 64),
+                new RoadSpan(RoadSpanType.BRIDGE, 0, 10, RoadPlannerSegmentType.BRIDGE_SMALL),
+                waterSampler(63, 38),
+                new BridgeConfig()
+        );
+
+        assertEquals(RoadPlannerBridgeProfile.LOW_ARCH, plan.profile());
+        assertTrue(plan.piers().isEmpty());
+        assertTrue(plan.deckY() <= 66, "deep narrow water should stay a small low bridge");
+        assertAdjacentTargetYDeltaAtMostOne(plan);
     }
 
     @Test

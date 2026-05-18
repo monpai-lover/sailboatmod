@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.roadplanner.structure;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.road.config.BridgeConfig;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import net.minecraft.core.BlockPos;
@@ -28,7 +29,7 @@ public final class RoadPlannerBridgeGeometryPlanner {
         int exitY = Math.max(points.get(points.size() - 1).targetY(), waterY);
         int spanLength = span == null ? points.size() - 1 : span.endIndex() - span.startIndex();
         RoadPlannerBridgeProfile profile = resolveProfile(RoadPlannerBridgeProfile.classify(spanLength), waterY, entryY, exitY);
-        int deckY = deckYForProfile(profile, waterY, entryY, exitY, safeConfig);
+        int deckY = deckYForProfile(profile, waterY, entryY, exitY, spanLength, span, safeConfig);
 
         List<PlannedPoint> plannedPoints = rampedDeck(points, entryY, exitY, deckY);
         List<Pier> piers = profile.usesPiers() ? piers(points, plannedPoints, deckY, safeSampler, safeConfig) : List.of();
@@ -47,12 +48,22 @@ public final class RoadPlannerBridgeGeometryPlanner {
         return max == Integer.MIN_VALUE ? SEA_LEVEL : max;
     }
 
-    private static int deckYForActualBridge(int waterY, int entryY, int exitY, BridgeConfig config) {
-        int maxRampHeight = config.getDeckHeight();
+    private static int deckYForActualBridge(int waterY, int entryY, int exitY, int spanLength, RoadSpan span, BridgeConfig config) {
+        boolean navigable = usesNavigableClearance(spanLength, span);
         int higherShore = Math.max(entryY, exitY);
-        int deckY = Math.max(waterY + config.getDeckHeight(), Math.max(entryY + 3, exitY + 3));
-        deckY = Math.min(deckY, Math.min(entryY, exitY) + maxRampHeight);
-        return Math.max(Math.max(deckY, waterY + config.getDeckHeight()), higherShore);
+        int lowerShore = Math.min(entryY, exitY);
+        int waterClearance = navigable ? config.getDeckHeight() : Math.min(3, config.getDeckHeight());
+        int shoreClearance = navigable ? 3 : 2;
+        int desired = Math.max(waterY + waterClearance, higherShore + shoreClearance);
+        int approachBudget = Math.max(2, Math.min(config.getDeckHeight(), Math.max(2, spanLength / 4)));
+        int maxReachable = lowerShore + approachBudget;
+        return Math.max(higherShore, Math.min(desired, maxReachable));
+    }
+
+    private static boolean usesNavigableClearance(int spanLength, RoadSpan span) {
+        return span != null
+                && span.sourceSegmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR
+                && spanLength >= 64;
     }
 
     private static RoadPlannerBridgeProfile resolveProfile(RoadPlannerBridgeProfile profile,
@@ -74,10 +85,12 @@ public final class RoadPlannerBridgeGeometryPlanner {
                                        int waterY,
                                        int entryY,
                                        int exitY,
+                                       int spanLength,
+                                       RoadSpan span,
                                        BridgeConfig config) {
         RoadPlannerBridgeProfile safeProfile = profile == null ? RoadPlannerBridgeProfile.PIER_BRIDGE : profile;
         if (safeProfile == RoadPlannerBridgeProfile.PIER_BRIDGE) {
-            return deckYForActualBridge(waterY, entryY, exitY, config);
+            return deckYForActualBridge(waterY, entryY, exitY, spanLength, span, config);
         }
         int lowerShore = Math.min(entryY, exitY);
         int higherShore = Math.max(entryY, exitY);
@@ -129,13 +142,11 @@ public final class RoadPlannerBridgeGeometryPlanner {
     }
 
     private static int rampLength(int height, int availableIntervals) {
-        if (availableIntervals <= 0) {
+        if (availableIntervals <= 0 || height <= 0) {
             return 0;
         }
-        if (height <= 0) {
-            return 0;
-        }
-        return Math.min(Math.max(1, height), availableIntervals);
+        int desired = Math.max(2, height * 2);
+        return Math.min(desired, availableIntervals);
     }
 
     private static int rampY(int shoreY, int deckY, int localIndex, int rampLen) {
