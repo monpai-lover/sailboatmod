@@ -27,6 +27,8 @@ class RoadSurfaceHeuristicsTest {
         assertTrue(RoadSurfaceHeuristics.isIgnoredSurfaceNoise(Blocks.BAMBOO.defaultBlockState()));
         assertTrue(RoadSurfaceHeuristics.isIgnoredSurfaceNoise(Blocks.KELP.defaultBlockState()));
         assertTrue(RoadSurfaceHeuristics.isIgnoredSurfaceNoise(Blocks.SEAGRASS.defaultBlockState()));
+        assertTrue(RoadSurfaceHeuristics.isIgnoredSurfaceNoise(Blocks.SNOW_BLOCK.defaultBlockState()));
+        assertTrue(RoadSurfaceHeuristics.isIgnoredSurfaceNoise(Blocks.LILY_PAD.defaultBlockState()));
     }
 
     @Test
@@ -34,6 +36,7 @@ class RoadSurfaceHeuristicsTest {
         assertFalse(RoadSurfaceHeuristics.isRoadBearingSurface(Blocks.OAK_LOG.defaultBlockState()));
         assertFalse(RoadSurfaceHeuristics.isRoadBearingSurface(Blocks.OAK_LEAVES.defaultBlockState()));
         assertFalse(RoadSurfaceHeuristics.isRoadBearingSurface(Blocks.KELP.defaultBlockState()));
+        assertFalse(RoadSurfaceHeuristics.isRoadBearingSurface(Blocks.SNOW_BLOCK.defaultBlockState()));
         assertTrue(RoadSurfaceHeuristics.isRoadBearingSurface(Blocks.GRASS_BLOCK.defaultBlockState()));
         assertTrue(RoadSurfaceHeuristics.isRoadBearingSurface(Blocks.STONE.defaultBlockState()));
     }

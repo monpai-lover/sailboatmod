@@ -241,6 +241,32 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void bridgeDeckEmitsOverheadClearanceLikeRoadSurface() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        List<BlockPos> bridgeSurface = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP
+                        || step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+        List<BlockPos> airClearance = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.FOUNDATION)
+                .filter(step -> step.state().isAir())
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        assertFalse(bridgeSurface.isEmpty());
+        assertTrue(bridgeSurface.stream().anyMatch(pos -> airClearance.contains(pos.above())),
+                "bridge ramp/deck footprint should clear at least one block above the surface");
+    }
+
+    @Test
     void ordinaryLongBridgeIsLowerThanOldWaterPlusFiveDeck() {
         RoadTerrainSampler waterSampler = new RoadTerrainSampler() {
             @Override

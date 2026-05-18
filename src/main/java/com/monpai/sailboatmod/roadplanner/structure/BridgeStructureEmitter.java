@@ -89,6 +89,7 @@ public final class BridgeStructureEmitter {
                     : RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
             for (BlockPos surfacePos : footprint) {
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
+                order = addOverheadClearance(steps, surfacePos, order);
             }
             steps.addAll(railings(bridgeProfile, index, center, settings, order));
             order = startOrder + steps.size();
@@ -99,6 +100,13 @@ public final class BridgeStructureEmitter {
             }
         }
         return List.copyOf(steps);
+    }
+
+    private static int addOverheadClearance(List<BuildStep> steps, BlockPos surfacePos, int order) {
+        for (int dy = 1; dy <= 4; dy++) {
+            steps.add(new BuildStep(order++, surfacePos.above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+        }
+        return order;
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points, int index) {

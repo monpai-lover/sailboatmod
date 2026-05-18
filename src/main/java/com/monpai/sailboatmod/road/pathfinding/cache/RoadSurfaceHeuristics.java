@@ -30,6 +30,7 @@ public final class RoadSurfaceHeuristics {
                 || state.is(Blocks.VINE)
                 || state.is(Blocks.DEAD_BUSH)
                 || state.is(Blocks.SNOW)
+                || state.is(Blocks.SNOW_BLOCK)
                 || state.is(Blocks.BAMBOO)
                 || state.is(Blocks.SUGAR_CANE)
                 || state.is(Blocks.SWEET_BERRY_BUSH)
@@ -58,6 +59,7 @@ public final class RoadSurfaceHeuristics {
                 || state.is(Blocks.SEAGRASS)
                 || state.is(Blocks.TALL_SEAGRASS)
                 || state.is(Blocks.SEA_PICKLE)
+                || state.is(Blocks.LILY_PAD)
                 || state.is(BlockTags.REPLACEABLE);
     }
 
