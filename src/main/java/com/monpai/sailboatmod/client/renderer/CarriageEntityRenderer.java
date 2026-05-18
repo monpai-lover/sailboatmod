@@ -46,7 +46,7 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     @Override
     protected void applyRotations(CarriageEntity entity, PoseStack poseStack, float ageInTicks, float rotationYaw, float partialTick) {
         float yaw = entity.getViewYRot(partialTick);
-        poseStack.mulPose(Axis.YP.rotationDegrees(180.0F - yaw));
+        poseStack.mulPose(Axis.YP.rotationDegrees(-yaw));
     }
 
     @Override
