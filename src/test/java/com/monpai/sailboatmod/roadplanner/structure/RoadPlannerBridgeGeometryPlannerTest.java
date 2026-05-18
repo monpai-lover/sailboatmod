@@ -83,7 +83,7 @@ class RoadPlannerBridgeGeometryPlannerTest {
     }
 
     @Test
-    void mediumCrossingUsesLowBridgeWithoutPiers() {
+    void mediumCrossingUsesLowBridgeWithPiersOnDeckOnly() {
         RoadPlannerBridgeGeometryPlanner.Plan plan = RoadPlannerBridgeGeometryPlanner.plan(
                 centerline(0, 24, 64),
                 new RoadSpan(RoadSpanType.BRIDGE, 0, 24, RoadPlannerSegmentType.BRIDGE_MAJOR),
@@ -92,7 +92,7 @@ class RoadPlannerBridgeGeometryPlannerTest {
         );
 
         assertEquals(RoadPlannerBridgeProfile.LOW_BRIDGE, plan.profile());
-        assertTrue(plan.piers().isEmpty());
+        assertFalse(plan.piers().isEmpty());
         assertTrue(plan.points().stream().anyMatch(point -> point.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP));
     }
 

@@ -154,10 +154,9 @@ public final class RoadPlannerBridgeGeometryPlanner {
         int interval = Math.max(5, config.getPierInterval());
         List<Pier> result = new ArrayList<>();
         for (int index = 0; index < plannedPoints.size(); index += interval) {
-            addPier(result, sourcePoints.get(index), deckY, sampler);
-        }
-        if (!plannedPoints.isEmpty()) {
-            addPier(result, sourcePoints.get(sourcePoints.size() - 1), deckY, sampler);
+            if (plannedPoints.get(index).phase() == BuildPhase.DECK) {
+                addPier(result, sourcePoints.get(index), deckY, sampler);
+            }
         }
         return List.copyOf(result);
     }
