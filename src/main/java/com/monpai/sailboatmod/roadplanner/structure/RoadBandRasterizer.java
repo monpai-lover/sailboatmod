@@ -41,7 +41,7 @@ final class RoadBandRasterizer {
             for (int x = minX; x <= maxX; x++) {
                 for (int z = minZ; z <= maxZ; z++) {
                     Projection projection = projectToSegment(x, z, start, end, segment);
-                    if (projection.distanceSq() > halfWidthSq) {
+                    if (!projection.withinSegment() || projection.distanceSq() > halfWidthSq) {
                         continue;
                     }
                     int ownerIndex = projection.t() < 0.5D ? segment : segment + 1;
@@ -102,14 +102,15 @@ final class RoadBandRasterizer {
         double dx = bx - ax;
         double dz = bz - az;
         double lengthSq = dx * dx + dz * dz;
-        double t = lengthSq < 1.0E-9D ? 0.0D : Math.max(0.0D, Math.min(1.0D, ((x - ax) * dx + (z - az) * dz) / lengthSq));
+        double rawT = lengthSq < 1.0E-9D ? 0.0D : ((x - ax) * dx + (z - az) * dz) / lengthSq;
+        double t = Math.max(0.0D, Math.min(1.0D, rawT));
         double px = ax + (dx * t);
         double pz = az + (dz * t);
         double distSq = ((x - px) * (x - px)) + ((z - pz) * (z - pz));
-        return new Projection(segmentIndex, t, distSq);
+        return new Projection(segmentIndex, t, distSq, rawT >= -1.0E-9D && rawT <= 1.0D + 1.0E-9D);
     }
 
-    private record Projection(int segmentIndex, double t, double distanceSq) {
+    private record Projection(int segmentIndex, double t, double distanceSq, boolean withinSegment) {
     }
 
     private record OwnedCell(BlockPos pos, int ownerIndex, double distanceSq) {

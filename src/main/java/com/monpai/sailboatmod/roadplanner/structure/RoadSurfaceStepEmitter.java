@@ -23,6 +23,7 @@ public final class RoadSurfaceStepEmitter {
             return List.of();
         }
         RoadPlannerBuildSettings safeSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
+        List<List<BlockPos>> footprints = RoadBandRasterizer.surfacePositionsByIndex(centerline, safeSettings.width());
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
         for (int index = 0; index < centerline.size(); index++) {
@@ -32,7 +33,9 @@ public final class RoadSurfaceStepEmitter {
             boolean ramp = isRamp(centerline, spans, index);
             BlockState surfaceState = ramp ? rampState(safeSettings, centerline, index) : safeSettings.surfaceState();
             BuildPhase surfacePhase = ramp ? BuildPhase.RAMP : BuildPhase.SURFACE;
-            List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width());
+            List<BlockPos> footprint = index < footprints.size()
+                    ? footprints.get(index)
+                    : RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width());
             for (BlockPos surfacePos : footprint) {
                 for (int dy = 1; dy <= 4; dy++) {
                     steps.add(new BuildStep(order++, surfacePos.above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));

@@ -74,6 +74,7 @@ public final class BridgeStructureEmitter {
         List<RoadCenterlinePoint> bridgeProfile = plannedPoints.stream()
                 .map(RoadPlannerBridgeGeometryPlanner.PlannedPoint::point)
                 .toList();
+        List<List<BlockPos>> footprints = RoadBandRasterizer.surfacePositionsByIndex(bridgeProfile, settings.width());
 
         for (int index = 0; index < plannedPoints.size(); index++) {
             RoadPlannerBridgeGeometryPlanner.PlannedPoint planned = plannedPoints.get(index);
@@ -83,7 +84,9 @@ public final class BridgeStructureEmitter {
             BlockState state = ramp ? rampState(settings, plannedPoints, index) : settings.surfaceState();
             BuildPhase phase = planned.phase();
             BlockPos center = new BlockPos(point.pos().getX(), y, point.pos().getZ());
-            List<BlockPos> footprint = RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
+            List<BlockPos> footprint = index < footprints.size()
+                    ? footprints.get(index)
+                    : RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
             for (BlockPos surfacePos : footprint) {
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
             }
@@ -102,10 +105,10 @@ public final class BridgeStructureEmitter {
         int y = points.get(index).point().targetY();
         int prevY = index > 0 ? points.get(index - 1).point().targetY() : y;
         int nextY = index + 1 < points.size() ? points.get(index + 1).point().targetY() : y;
-        if (y > prevY || nextY < y) {
-            return settings.slabBottomState();
-        }
-        return settings.slabTopState();
+        boolean risingFromPrevious = y > prevY;
+        boolean fallingToNext = nextY < y;
+        boolean lowerSideOfOneBlockTransition = risingFromPrevious || fallingToNext;
+        return lowerSideOfOneBlockTransition ? settings.slabBottomState() : settings.slabTopState();
     }
 
     private static List<BuildStep> railings(List<RoadCenterlinePoint> points,

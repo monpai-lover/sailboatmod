@@ -183,6 +183,29 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void turningRoadSurfaceFillsInsideCornerGap() {
+        List<RoadCenterlinePoint> sparseTurn = List.of(
+                point(0, 64, 0, 0.0D, RoadPlannerSegmentType.ROAD),
+                point(4, 64, 0, 4.0D, RoadPlannerSegmentType.ROAD),
+                point(4, 64, 4, 8.0D, RoadPlannerSegmentType.ROAD)
+        );
+        List<com.monpai.sailboatmod.road.model.BuildStep> steps = RoadSurfaceStepEmitter.emit(
+                sparseTurn,
+                List.of(new RoadSpan(RoadSpanType.ROAD, 0, 2, RoadPlannerSegmentType.ROAD)),
+                RoadPlannerBuildSettings.DEFAULTS,
+                0
+        );
+
+        List<BlockPos> surface = steps.stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.SURFACE)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        assertTrue(surface.contains(new BlockPos(3, 64, 1)), surface.toString());
+        assertTrue(surface.contains(new BlockPos(4, 64, 2)), surface.toString());
+    }
+
+    @Test
     void smoothedSteepRoadEmitsRampSteps() {
         RoadTerrainSampler steep = (x, z) -> 64 + x * 2;
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
@@ -215,6 +238,69 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING));
         assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER));
         assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING));
+    }
+
+    @Test
+    void ordinaryLongBridgeIsLowerThanOldWaterPlusFiveDeck() {
+        RoadTerrainSampler waterSampler = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                waterSampler,
+                RoadStructureMode.BUILD
+        );
+
+        int maxDeckY = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .mapToInt(BlockPos::getY)
+                .max()
+                .orElseThrow();
+
+        assertTrue(maxDeckY <= 66, "ordinary long bridge should be lower than the previous 68-block deck");
+    }
+
+    @Test
+    void bridgeRampDeckFootprintsRemainConnectedAcrossTurn() {
+        List<RoadCenterlinePoint> sparseTurn = List.of(
+                point(0, 64, 0, 0.0D, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                point(4, 64, 0, 4.0D, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                point(4, 64, 4, 8.0D, RoadPlannerSegmentType.BRIDGE_MAJOR)
+        );
+        List<com.monpai.sailboatmod.road.model.BuildStep> steps = BridgeStructureEmitter.emit(
+                sparseTurn,
+                List.of(new RoadSpan(RoadSpanType.BRIDGE, 0, 2, RoadPlannerSegmentType.BRIDGE_MAJOR)),
+                RoadPlannerBuildSettings.DEFAULTS,
+                BridgeTemplateProvider.empty(),
+                0,
+                RoadTerrainSampler.flat(61)
+        );
+
+        List<BlockPos> bridgeSurface = steps.stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP
+                        || step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK)
+                .map(com.monpai.sailboatmod.road.model.BuildStep::pos)
+                .toList();
+
+        assertTrue(bridgeSurface.stream().anyMatch(pos -> pos.getX() == 3 && pos.getZ() == 1), bridgeSurface.toString());
+        assertTrue(bridgeSurface.stream().anyMatch(pos -> pos.getX() == 4 && pos.getZ() == 2), bridgeSurface.toString());
     }
 
     @Test
@@ -330,7 +416,7 @@ class RoadNodeStructureExpanderTest {
 
         assertFalse(piers.isEmpty());
         assertEquals(54, piers.stream().mapToInt(BlockPos::getY).min().orElseThrow());
-        assertEquals(68, piers.stream().mapToInt(BlockPos::getY).max().orElseThrow());
+        assertTrue(piers.stream().mapToInt(BlockPos::getY).max().orElseThrow() <= 66);
     }
 
     void blockedBridgeMarkerBuildsAsMajorBridge() {
@@ -345,5 +431,16 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.canonicalSegmentTypes().contains(RoadPlannerSegmentType.BRIDGE_MAJOR));
         assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.DECK));
         assertFalse(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.SURFACE));
+    }
+
+    private static RoadCenterlinePoint point(int x, int y, int z, double distance, RoadPlannerSegmentType segmentType) {
+        return new RoadCenterlinePoint(
+                new BlockPos(x, y, z),
+                0,
+                segmentType,
+                y,
+                y,
+                distance
+        );
     }
 }
