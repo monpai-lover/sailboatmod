@@ -75,6 +75,9 @@ public final class BridgeStructureEmitter {
                 .map(RoadPlannerBridgeGeometryPlanner.PlannedPoint::point)
                 .toList();
         List<List<BlockPos>> footprints = RoadBandRasterizer.surfacePositionsByIndex(bridgeProfile, settings.width());
+        RoadTerrainSampler supportSampler = terrainSampler == null
+                ? RoadTerrainSampler.flat(points.get(0).terrainY())
+                : terrainSampler;
 
         for (RoadPlannerBridgeGeometryPlanner.Pier pier : plan.piers()) {
             for (int pierY = pier.bottomY(); pierY <= pier.topY(); pierY++) {
@@ -94,6 +97,9 @@ public final class BridgeStructureEmitter {
                     ? footprints.get(index)
                     : RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
             for (BlockPos surfacePos : footprint) {
+                if (phase == BuildPhase.RAMP && plan.profile().usesPiers()) {
+                    order = addRampSupport(steps, surfacePos, order, supportSampler);
+                }
                 steps.add(new BuildStep(order++, surfacePos, state, phase));
                 order = addOverheadClearance(steps, surfacePos, order);
             }
@@ -101,6 +107,26 @@ public final class BridgeStructureEmitter {
             order = startOrder + steps.size();
         }
         return List.copyOf(steps);
+    }
+
+    private static int addRampSupport(List<BuildStep> steps,
+                                      BlockPos surfacePos,
+                                      int order,
+                                      RoadTerrainSampler terrainSampler) {
+        if (surfacePos == null) {
+            return order;
+        }
+        int topY = surfacePos.getY() - 1;
+        if (topY < 0) {
+            return order;
+        }
+        int bottomY = terrainSampler == null
+                ? topY
+                : Math.min(topY, terrainSampler.oceanFloorY(surfacePos.getX(), surfacePos.getZ()));
+        for (int y = bottomY; y <= topY; y++) {
+            steps.add(new BuildStep(order++, new BlockPos(surfacePos.getX(), y, surfacePos.getZ()), Blocks.STONE_BRICKS.defaultBlockState(), BuildPhase.PIER));
+        }
+        return order;
     }
 
     private static int addOverheadClearance(List<BuildStep> steps, BlockPos surfacePos, int order) {

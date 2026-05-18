@@ -522,6 +522,50 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void bridgeRampFootprintIsSupportedBeforeRampBlocksOverWater() {
+        RoadTerrainSampler waterSampler = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 63, 0), new BlockPos(48, 63, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                waterSampler,
+                RoadStructureMode.BUILD
+        );
+
+        List<com.monpai.sailboatmod.road.model.BuildStep> rampBlocks = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAMP)
+                .filter(step -> !step.state().isAir())
+                .toList();
+        List<com.monpai.sailboatmod.road.model.BuildStep> supports = result.buildSteps().stream()
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER)
+                .toList();
+
+        assertFalse(rampBlocks.isEmpty());
+        assertTrue(rampBlocks.stream().allMatch(ramp -> supports.stream().anyMatch(support ->
+                        support.pos().getX() == ramp.pos().getX()
+                                && support.pos().getZ() == ramp.pos().getZ()
+                                && support.pos().getY() < ramp.pos().getY()
+                                && support.order() < ramp.order())),
+                "every bridge ramp footprint block over water needs a lower support before the ramp is placed");
+    }
+
+    @Test
     void buildStepsUseUniquePositionsForPersistedRoadJobs() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(

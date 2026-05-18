@@ -31,12 +31,21 @@ public interface RoadTerrainSampler {
         return new RoadTerrainSampler() {
             @Override
             public int terrainY(int x, int z) {
-                return level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z);
+                return RoadTerrainColumnSampler.terrainYFromColumn(
+                        level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z),
+                        level.getMinBuildHeight(),
+                        y -> level.getBlockState(new BlockPos(x, y, z))
+                );
             }
 
             @Override
             public int waterSurfaceY(int x, int z) {
-                return level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z) - 1;
+                return RoadTerrainColumnSampler.waterSurfaceYFromColumn(
+                        level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, x, z),
+                        Math.max(level.getMinBuildHeight(), level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z)),
+                        level.getSeaLevel(),
+                        y -> level.getBlockState(new BlockPos(x, y, z))
+                );
             }
 
             @Override
