@@ -254,6 +254,37 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.FOUNDATION && !step.state().isAir()));
     }
 
+    @Test
+    void roadCrestRampSlabsUseLocalSlopeDirection() {
+        List<RoadCenterlinePoint> crest = List.of(
+                point(0, 64, 0, 0.0D, RoadPlannerSegmentType.ROAD),
+                point(1, 65, 0, 1.0D, RoadPlannerSegmentType.ROAD),
+                point(2, 64, 0, 2.0D, RoadPlannerSegmentType.ROAD)
+        );
+
+        List<BuildStep> centerRamp = RoadSurfaceStepEmitter.emit(
+                        crest,
+                        List.of(new RoadSpan(RoadSpanType.ROAD, 0, 2, RoadPlannerSegmentType.ROAD)),
+                        RoadPlannerBuildSettings.DEFAULTS,
+                        0
+                ).stream()
+                .filter(step -> step.phase() == BuildPhase.RAMP)
+                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
+                .filter(step -> step.pos().getZ() == 0)
+                .filter(step -> step.pos().getX() >= 0 && step.pos().getX() <= 2)
+                .sorted(Comparator.comparingInt((BuildStep step) -> step.pos().getX())
+                        .thenComparingInt(BuildStep::order))
+                .toList();
+
+        assertEquals(3, centerRamp.size(), centerRamp.toString());
+        assertEquals(SlabType.TOP, centerRamp.get(0).state().getValue(SlabBlock.TYPE),
+                "the lower block before an uphill step must use a top slab");
+        assertEquals(SlabType.BOTTOM, centerRamp.get(1).state().getValue(SlabBlock.TYPE),
+                "the higher crest block must use a bottom slab before the downhill side");
+        assertEquals(SlabType.TOP, centerRamp.get(2).state().getValue(SlabBlock.TYPE),
+                "the lower block after a downhill step must use a top slab");
+    }
+
 
     @Test
     void bridgeSpanEmitsRampDeckPierAndRailingPhases() {
@@ -271,6 +302,30 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.buildSteps().stream().anyMatch(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING));
         assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER));
         assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == com.monpai.sailboatmod.road.model.BuildPhase.RAILING));
+    }
+
+    @Test
+    void bridgeDeckEmitsStreetlightsAtIntervals() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> streetlights = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.STREETLIGHT)
+                .toList();
+        long deckColumns = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.DECK)
+                .map(step -> step.pos().getX() + ":" + step.pos().getZ())
+                .distinct()
+                .count();
+
+        assertFalse(streetlights.isEmpty(), "bridge railings should receive interval streetlights");
+        assertTrue(streetlights.size() < deckColumns, "streetlights should be spaced out instead of replacing every railing");
+        assertTrue(result.previewBlocks().stream().anyMatch(block -> block.phase() == BuildPhase.STREETLIGHT));
     }
 
     @Test
@@ -407,12 +462,128 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
+    void lowArchBridgeRampSlabsHaveUnderfillAtTerrainContact() {
+        RoadTerrainSampler narrowWater = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 64;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_SMALL),
+                RoadPlannerBuildSettings.DEFAULTS,
+                narrowWater,
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> rampSlabs = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.RAMP)
+                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
+                .toList();
+        List<BuildStep> underfill = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.FOUNDATION || step.phase() == BuildPhase.PIER)
+                .filter(step -> !step.state().isAir())
+                .toList();
+
+        assertFalse(rampSlabs.isEmpty());
+        assertTrue(rampSlabs.stream().allMatch(ramp -> underfill.stream().anyMatch(support ->
+                        support.pos().getX() == ramp.pos().getX()
+                                && support.pos().getZ() == ramp.pos().getZ()
+                                && support.pos().getY() == ramp.pos().getY() - 1
+                                && support.order() < ramp.order())),
+                "short arch bridge ramp slabs must be backed by an underfill block so the approach touches terrain/water");
+    }
+
+    @Test
+    void bridgeRampStartsAtLegacyPlatformHeight() {
+        RoadTerrainSampler shoreAndWater = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 64;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(12, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_SMALL),
+                RoadPlannerBuildSettings.DEFAULTS,
+                shoreAndWater,
+                RoadStructureMode.BUILD
+        );
+
+        BuildStep firstCenterRamp = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.RAMP)
+                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
+                .filter(step -> step.pos().getZ() == 0)
+                .min(Comparator.comparingInt((BuildStep step) -> step.pos().getX())
+                        .thenComparingInt(BuildStep::order))
+                .orElseThrow();
+
+        assertEquals(64, firstCenterRamp.pos().getY(),
+                "bridge ramp should start at the legacy platform height instead of being globally raised");
+        assertEquals(SlabType.BOTTOM, firstCenterRamp.state().getValue(SlabBlock.TYPE),
+                "ascending bridge ramp should still start with a bottom slab at the platform height");
+    }
+
+    @Test
     void bridgeRampProfileDoesNotJumpMoreThanOneBlockPerSample() {
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
                 List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
                 RoadPlannerBuildSettings.DEFAULTS,
                 RoadTerrainSampler.flat(60),
+                RoadStructureMode.BUILD
+        );
+
+        assertBridgeCenterlineDoesNotJumpMoreThanOneBlock(result);
+    }
+
+    @Test
+    void shortBridgeWithHighShoreStillEmitsContinuousLegacyRampSteps() {
+        RoadTerrainSampler highExitShore = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return x >= 8 ? 70 : 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 63, 0), new BlockPos(8, 70, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                highExitShore,
                 RoadStructureMode.BUILD
         );
 
@@ -558,7 +729,9 @@ class RoadNodeStructureExpanderTest {
                 .filter(step -> !step.state().isAir())
                 .toList();
         List<com.monpai.sailboatmod.road.model.BuildStep> supports = result.buildSteps().stream()
-                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER)
+                .filter(step -> step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.FOUNDATION
+                        || step.phase() == com.monpai.sailboatmod.road.model.BuildPhase.PIER)
+                .filter(step -> !step.state().isAir())
                 .toList();
 
         assertFalse(rampBlocks.isEmpty());
@@ -568,6 +741,80 @@ class RoadNodeStructureExpanderTest {
                                 && support.pos().getY() < ramp.pos().getY()
                                 && support.order() < ramp.order())),
                 "every bridge ramp footprint block over water needs a lower support before the ramp is placed");
+    }
+
+    @Test
+    void bridgeRampSupportsAreFoundationSoPreviewKeepsSlopeSurfaceClean() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 63, 0), new BlockPos(48, 63, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                deepWaterSampler(),
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> rampBlocks = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.RAMP)
+                .filter(step -> !step.state().isAir())
+                .toList();
+        List<BuildStep> visibleRampPiers = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.PIER)
+                .filter(step -> rampBlocks.stream().anyMatch(ramp ->
+                        ramp.pos().getX() == step.pos().getX()
+                                && ramp.pos().getZ() == step.pos().getZ()
+                                && step.pos().getY() < ramp.pos().getY()))
+                .toList();
+        List<BuildStep> hiddenRampSupports = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.FOUNDATION)
+                .filter(step -> !step.state().isAir())
+                .filter(step -> rampBlocks.stream().anyMatch(ramp ->
+                        ramp.pos().getX() == step.pos().getX()
+                                && ramp.pos().getZ() == step.pos().getZ()
+                                && step.pos().getY() < ramp.pos().getY()
+                                && step.order() < ramp.order()))
+                .toList();
+
+        assertFalse(rampBlocks.isEmpty());
+        assertTrue(visibleRampPiers.isEmpty(), "ramp backing should not show as pier markers in the preview");
+        assertFalse(hiddenRampSupports.isEmpty(), "ramp backing still needs hidden build support below the slope");
+    }
+
+    @Test
+    void ascendingBridgeRampFootprintKeepsEachLegacyStepAtOneHeight() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 63, 0), new BlockPos(48, 63, 24)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                deepWaterSampler(),
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> rampSlabs = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.RAMP)
+                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
+                .sorted(Comparator.comparingInt(BuildStep::order))
+                .toList();
+
+        assertFalse(rampSlabs.isEmpty());
+        SlabType currentType = rampSlabs.get(0).state().getValue(SlabBlock.TYPE);
+        int currentMinY = rampSlabs.get(0).pos().getY();
+        int currentMaxY = currentMinY;
+        for (int index = 1; index < rampSlabs.size(); index++) {
+            BuildStep step = rampSlabs.get(index);
+            SlabType type = step.state().getValue(SlabBlock.TYPE);
+            if (type != currentType) {
+                assertEquals(currentMinY, currentMaxY,
+                        "one legacy half-step footprint must not contain both the old and next Y levels");
+                currentType = type;
+                currentMinY = step.pos().getY();
+                currentMaxY = currentMinY;
+                continue;
+            }
+            currentMinY = Math.min(currentMinY, step.pos().getY());
+            currentMaxY = Math.max(currentMaxY, step.pos().getY());
+        }
+        assertEquals(currentMinY, currentMaxY,
+                "one legacy half-step footprint must not contain both the old and next Y levels");
     }
 
     @Test
@@ -588,25 +835,197 @@ class RoadNodeStructureExpanderTest {
                         .thenComparingInt(BuildStep::order))
                 .toList();
 
-        assertTrue(centerRamp.size() >= 12, "bridge should include both approach ramp runs");
+        assertEquals(12, centerRamp.size(), "three-block bridge rise should emit six legacy slab steps per approach");
 
-        BuildStep firstAscending = centerRamp.get(0);
-        BuildStep secondAscending = centerRamp.get(1);
-        assertEquals(firstAscending.pos().getY(), secondAscending.pos().getY(),
-                "ascending ramp should only move up after a bottom/top pair");
-        assertEquals(SlabType.BOTTOM, firstAscending.state().getValue(SlabBlock.TYPE),
-                "ascending ramp should start with a bottom slab");
-        assertEquals(SlabType.TOP, secondAscending.state().getValue(SlabBlock.TYPE),
-                "ascending ramp should place a top slab before moving up");
+        int[] ascendingY = {63, 63, 64, 64, 65, 65};
+        SlabType[] ascendingSlabs = {
+                SlabType.BOTTOM, SlabType.TOP,
+                SlabType.BOTTOM, SlabType.TOP,
+                SlabType.BOTTOM, SlabType.TOP
+        };
+        for (int i = 0; i < ascendingY.length; i++) {
+            BuildStep step = centerRamp.get(i);
+            assertEquals(ascendingY[i], step.pos().getY(),
+                    "ascending ramp should only move up after each bottom/top pair at index " + i);
+            assertEquals(ascendingSlabs[i], step.state().getValue(SlabBlock.TYPE),
+                    "ascending ramp should use the legacy bottom/top alternation at index " + i);
+        }
 
-        BuildStep firstDescendingFinalPair = centerRamp.get(centerRamp.size() - 2);
-        BuildStep secondDescendingFinalPair = centerRamp.get(centerRamp.size() - 1);
-        assertEquals(firstDescendingFinalPair.pos().getY(), secondDescendingFinalPair.pos().getY(),
-                "descending ramp should move down before a top/bottom pair");
-        assertEquals(SlabType.TOP, firstDescendingFinalPair.state().getValue(SlabBlock.TYPE),
-                "descending ramp should place a top slab before the final bottom slab");
-        assertEquals(SlabType.BOTTOM, secondDescendingFinalPair.state().getValue(SlabBlock.TYPE),
-                "descending ramp should end with a bottom slab");
+        int[] descendingY = {65, 65, 64, 64, 63, 63};
+        SlabType[] descendingSlabs = {
+                SlabType.TOP, SlabType.BOTTOM,
+                SlabType.TOP, SlabType.BOTTOM,
+                SlabType.TOP, SlabType.BOTTOM
+        };
+        for (int i = 0; i < descendingY.length; i++) {
+            BuildStep step = centerRamp.get(centerRamp.size() - descendingY.length + i);
+            assertEquals(descendingY[i], step.pos().getY(),
+                    "descending ramp should move down before each top/bottom pair at index " + i);
+            assertEquals(descendingSlabs[i], step.state().getValue(SlabBlock.TYPE),
+                    "descending ramp should use the legacy top/bottom alternation at index " + i);
+        }
+    }
+
+    @Test
+    void bridgeDeckBoundaryUsesBottomSlabToCompleteRampHalfStep() {
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 63, 0), new BlockPos(48, 63, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                deepWaterSampler(),
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> centerDeck = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.DECK)
+                .filter(step -> step.pos().getZ() == 0)
+                .sorted(Comparator.comparingInt((BuildStep step) -> step.pos().getX())
+                        .thenComparingInt(BuildStep::order))
+                .toList();
+
+        assertFalse(centerDeck.isEmpty());
+        BuildStep firstDeck = centerDeck.get(0);
+        BuildStep lastDeck = centerDeck.get(centerDeck.size() - 1);
+
+        assertTrue(firstDeck.state().hasProperty(SlabBlock.TYPE),
+                "the first bridge deck block after the ascending ramp must be a half slab, not a full block");
+        assertEquals(SlabType.BOTTOM, firstDeck.state().getValue(SlabBlock.TYPE));
+        assertTrue(lastDeck.state().hasProperty(SlabBlock.TYPE),
+                "the last bridge deck block before the descending ramp must be a half slab, not a full block");
+        assertEquals(SlabType.BOTTOM, lastDeck.state().getValue(SlabBlock.TYPE));
+    }
+
+    @Test
+    void bridgeRampConsumesRoadApproachSoUphillStartsAtRoadSurface() {
+        RoadTerrainSampler approachHigherThanWater = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return x <= 0 ? 66 : 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 66, -4), new BlockPos(0, 66, 0), new BlockPos(8, 63, 0)),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                approachHigherThanWater,
+                RoadStructureMode.BUILD
+        );
+
+        int minBridgeHeadSurfaceY = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.SURFACE
+                        || step.phase() == BuildPhase.RAMP
+                        || step.phase() == BuildPhase.DECK)
+                .filter(step -> !step.state().isAir())
+                .filter(step -> step.pos().getZ() == 0)
+                .filter(step -> step.pos().getX() == 1)
+                .mapToInt(step -> step.pos().getY())
+                .min()
+                .orElseThrow();
+
+        assertEquals(66, minBridgeHeadSurfaceY,
+                "bridge transition should start at the adjacent road surface height instead of sinking below it");
+    }
+
+    @Test
+    void bridgeTransitionColumnsDoNotKeepSeparateRoadSurfaceBelowOrAboveRamp() {
+        RoadTerrainSampler shoreAndWater = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return x <= 0 ? 66 : 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 66, -4), new BlockPos(0, 66, 0), new BlockPos(8, 63, 0)),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS,
+                shoreAndWater,
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> usableAtBridgeHead = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.SURFACE
+                        || step.phase() == BuildPhase.RAMP
+                        || step.phase() == BuildPhase.DECK)
+                .filter(step -> !step.state().isAir())
+                .filter(step -> step.pos().getX() == 1 && step.pos().getZ() == 0)
+                .toList();
+
+        assertEquals(1, usableAtBridgeHead.size(),
+                "road and bridge must not leave two usable surfaces in the same transition X/Z column");
+        assertEquals(BuildPhase.RAMP, usableAtBridgeHead.get(0).phase());
+    }
+
+    @Test
+    void bridgeTransitionKeepsLegacyHalfStepRampContinuityWhenExtraRoadSamplesFit() {
+        RoadTerrainSampler flatWater = new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
+
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(
+                        new BlockPos(-2, 63, 0),
+                        new BlockPos(0, 63, 0),
+                        new BlockPos(8, 63, 0),
+                        new BlockPos(10, 63, 0)
+                ),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR, RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                flatWater,
+                RoadStructureMode.BUILD
+        );
+
+        List<BuildStep> centerRamp = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.RAMP)
+                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
+                .filter(step -> step.pos().getZ() == 0)
+                .sorted(Comparator.comparingInt((BuildStep step) -> step.pos().getX())
+                        .thenComparingInt(BuildStep::order))
+                .toList();
+
+        assertFalse(centerRamp.isEmpty());
+        for (int index = 1; index < centerRamp.size(); index++) {
+            BuildStep previous = centerRamp.get(index - 1);
+            BuildStep current = centerRamp.get(index);
+            assertTrue(Math.abs(current.pos().getY() - previous.pos().getY()) <= 1,
+                    "bridge ramp Y must remain continuous at " + previous.pos() + " -> " + current.pos());
+        }
+        assertTrue(centerRamp.stream().anyMatch(step -> step.state().getValue(SlabBlock.TYPE) == SlabType.BOTTOM));
+        assertTrue(centerRamp.stream().anyMatch(step -> step.state().getValue(SlabBlock.TYPE) == SlabType.TOP));
     }
 
     @Test
