@@ -7,12 +7,16 @@ import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LanternBlock;
+import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.SlabType;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class BridgeStructureEmitter {
@@ -66,7 +70,15 @@ public final class BridgeStructureEmitter {
                 order += templateSteps.size();
                 continue;
             }
-            List<BuildStep> programmatic = emitProgrammaticBridge(bridgePoints, span, safeSettings, order, terrainSampler);
+            List<BuildStep> programmatic = emitProgrammaticBridge(
+                    bridgePoints,
+                    span,
+                    safeSettings,
+                    order,
+                    terrainSampler,
+                    transition.originalStartOffset(),
+                    transition.originalEndExclusive()
+            );
             steps.addAll(programmatic);
             addBridgeSurfaceColumns(bridgeSurfaceColumns, programmatic);
             order += programmatic.size();
@@ -92,7 +104,9 @@ public final class BridgeStructureEmitter {
                                                           RoadSpan span,
                                                           RoadPlannerBuildSettings settings,
                                                           int startOrder,
-                                                          RoadTerrainSampler terrainSampler) {
+                                                          RoadTerrainSampler terrainSampler,
+                                                          int originalStartOffset,
+                                                          int originalEndExclusive) {
         if (points.size() < 2) {
             return List.of();
         }
@@ -107,9 +121,13 @@ public final class BridgeStructureEmitter {
         );
         List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> plannedPoints = plan.points();
         List<RoadCenterlinePoint> bridgeProfile = legacyRampEmissionProfile(plannedPoints);
-        List<List<BlockPos>> footprints = alignFootprintsToProfileY(
-                RoadBandRasterizer.surfacePositionsByIndex(bridgeProfile, settings.width()),
-                bridgeProfile
+        List<List<BlockPos>> footprints = bridgeFootprints(
+                bridgeProfile,
+                plannedPoints,
+                settings,
+                settings.width(),
+                originalStartOffset,
+                originalEndExclusive
         );
         RoadTerrainSampler supportSampler = terrainSampler == null
                 ? RoadTerrainSampler.flat(points.get(0).terrainY())
@@ -126,7 +144,7 @@ public final class BridgeStructureEmitter {
             RoadPlannerBridgeGeometryPlanner.PlannedPoint planned = plannedPoints.get(index);
             RoadCenterlinePoint point = bridgeProfile.get(index);
             int y = point.targetY();
-            BlockState state = bridgeSurfaceState(settings, plannedPoints, bridgeProfile, index);
+            BlockState state = bridgeSurfaceState(settings, plannedPoints, bridgeProfile, index, originalStartOffset, originalEndExclusive);
             BuildPhase phase = planned.phase();
             BlockPos center = new BlockPos(point.pos().getX(), y, point.pos().getZ());
             List<BlockPos> footprint = index < footprints.size()
@@ -152,6 +170,157 @@ public final class BridgeStructureEmitter {
             }
         }
         return List.copyOf(steps);
+    }
+
+    private static List<List<BlockPos>> bridgeFootprints(List<RoadCenterlinePoint> profile,
+                                                         List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> plannedPoints,
+                                                         RoadPlannerBuildSettings settings,
+                                                         int width,
+                                                         int originalStartOffset,
+                                                         int originalEndExclusive) {
+        if (profile == null || profile.isEmpty()) {
+            return List.of();
+        }
+        List<List<BlockPos>> rasterized = alignFootprintsToProfileY(
+                RoadBandRasterizer.surfacePositionsByIndex(profile, width),
+                profile
+        );
+        ArrayList<List<BlockPos>> footprints = new ArrayList<>(profile.size());
+        for (int index = 0; index < profile.size(); index++) {
+            footprints.add(index < rasterized.size() ? rasterized.get(index) : List.of());
+        }
+
+        int index = 0;
+        while (index < profile.size()) {
+            if (plannedPoints == null || index >= plannedPoints.size()
+                    || plannedPoints.get(index).phase() != BuildPhase.RAMP) {
+                index++;
+                continue;
+            }
+            int start = index;
+            int end = index;
+            while (end + 1 < profile.size()
+                    && end + 1 < plannedPoints.size()
+                    && plannedPoints.get(end + 1).phase() == BuildPhase.RAMP) {
+                end++;
+            }
+            replaceRampRunFootprints(footprints, profile, plannedPoints, settings, start, end, width, originalStartOffset, originalEndExclusive);
+            index = end + 1;
+        }
+        return List.copyOf(footprints);
+    }
+
+    private static void replaceRampRunFootprints(ArrayList<List<BlockPos>> footprints,
+                                                 List<RoadCenterlinePoint> profile,
+                                                 List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> plannedPoints,
+                                                 RoadPlannerBuildSettings settings,
+                                                 int start,
+                                                 int end,
+                                                 int width,
+                                                 int originalStartOffset,
+                                                 int originalEndExclusive) {
+        for (int index = start; index <= end; index++) {
+            footprints.set(index, List.of());
+        }
+        Map<Long, RampCell> cellsByColumn = new LinkedHashMap<>();
+        for (int index = start; index <= end; index++) {
+            RoadCenterlinePoint point = profile.get(index);
+            RampBasis basis = rampBasisAt(profile, start, end, index);
+            int surfaceHeight = rampSurfaceTopHalfUnits(settings, plannedPoints, profile, index, originalStartOffset, originalEndExclusive);
+            for (BlockPos pos : fixedWidthStrip(point, basis, width)) {
+                long key = BridgeTransitionProfile.columnKey(pos.getX(), pos.getZ());
+                RampCell candidate = new RampCell(index, pos, surfaceHeight);
+                RampCell existing = cellsByColumn.get(key);
+                if (existing == null || candidate.surfaceTopHalfUnits() >= existing.surfaceTopHalfUnits()) {
+                    cellsByColumn.put(key, candidate);
+                }
+            }
+        }
+        ArrayList<LinkedHashSet<BlockPos>> byIndex = new ArrayList<>(profile.size());
+        for (int index = 0; index < profile.size(); index++) {
+            byIndex.add(new LinkedHashSet<>());
+        }
+        for (RampCell cell : cellsByColumn.values()) {
+            byIndex.get(cell.index()).add(cell.pos());
+        }
+        for (int index = start; index <= end; index++) {
+            if (byIndex.get(index).isEmpty()) {
+                RoadCenterlinePoint point = profile.get(index);
+                RampBasis basis = rampBasisAt(profile, start, end, index);
+                for (BlockPos pos : fixedWidthStrip(point, basis, width)) {
+                    byIndex.get(index).add(pos);
+                }
+            }
+            footprints.set(index, List.copyOf(byIndex.get(index)));
+        }
+    }
+
+    private static List<BlockPos> fixedWidthStrip(RoadCenterlinePoint point, RampBasis basis, int width) {
+        if (point == null || basis == null) {
+            return List.of();
+        }
+        int halfWidth = Math.max(1, width / 2);
+        BlockPos center = new BlockPos(point.pos().getX(), point.targetY(), point.pos().getZ());
+        ArrayList<BlockPos> strip = new ArrayList<>(halfWidth * 2 + 1);
+        for (int offset = -halfWidth; offset <= halfWidth; offset++) {
+            strip.add(center.offset(basis.normalX() * offset, 0, basis.normalZ() * offset));
+        }
+        return List.copyOf(strip);
+    }
+
+    private static int rampSurfaceTopHalfUnits(RoadPlannerBuildSettings settings,
+                                               List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> plannedPoints,
+                                               List<RoadCenterlinePoint> profile,
+                                               int index,
+                                               int originalStartOffset,
+                                               int originalEndExclusive) {
+        BlockState state = bridgeSurfaceState(settings, plannedPoints, profile, index, originalStartOffset, originalEndExclusive);
+        int y = profile.get(index).targetY();
+        if (state.hasProperty(SlabBlock.TYPE)) {
+            return (y * 2) + (state.getValue(SlabBlock.TYPE) == SlabType.TOP ? 2 : 1);
+        }
+        return (y * 2) + 2;
+    }
+
+    private static RampBasis rampBasisAt(List<RoadCenterlinePoint> profile, int start, int end, int index) {
+        BlockPos current = profile.get(index).pos();
+        int dx = 0;
+        int dz = 0;
+        if (index + 1 <= end) {
+            BlockPos next = profile.get(index + 1).pos();
+            dx = next.getX() - current.getX();
+            dz = next.getZ() - current.getZ();
+        }
+        if (dx == 0 && dz == 0 && index > start) {
+            BlockPos previous = profile.get(index - 1).pos();
+            dx = current.getX() - previous.getX();
+            dz = current.getZ() - previous.getZ();
+        }
+        if (dx == 0 && dz == 0 && index + 1 < profile.size()) {
+            BlockPos next = profile.get(index + 1).pos();
+            dx = next.getX() - current.getX();
+            dz = next.getZ() - current.getZ();
+        }
+        if (dx == 0 && dz == 0 && index > 0) {
+            BlockPos previous = profile.get(index - 1).pos();
+            dx = current.getX() - previous.getX();
+            dz = current.getZ() - previous.getZ();
+        }
+        return cardinalRampBasis(dx, dz);
+    }
+
+    private static RampBasis cardinalRampBasis(int deltaX, int deltaZ) {
+        if (Math.abs(deltaX) >= Math.abs(deltaZ)) {
+            int directionX = Integer.compare(deltaX, 0);
+            if (directionX != 0) {
+                return new RampBasis(0, directionX);
+            }
+        }
+        int directionZ = Integer.compare(deltaZ, 0);
+        if (directionZ != 0) {
+            return new RampBasis(-directionZ, 0);
+        }
+        return new RampBasis(0, 1);
     }
 
     private static List<List<BlockPos>> alignFootprintsToProfileY(List<List<BlockPos>> footprints,
@@ -305,15 +474,17 @@ public final class BridgeStructureEmitter {
     private static BlockState bridgeSurfaceState(RoadPlannerBuildSettings settings,
                                                  List<RoadPlannerBridgeGeometryPlanner.PlannedPoint> points,
                                                  List<RoadCenterlinePoint> profile,
-                                                 int index) {
+                                                 int index,
+                                                 int originalStartOffset,
+                                                 int originalEndExclusive) {
         if (points.get(index).phase() == BuildPhase.RAMP) {
             int start = rampRunStart(points, index);
             int end = rampRunEnd(points, index);
             boolean ascending = rampRunAscending(points, start, end);
             if (!canUseLegacyRampProfile(points, start, end, ascending)) {
-                return profileRampState(settings, profile, index);
+                return roadTransitionRampState(settings, profileRampState(settings, profile, index), index, originalStartOffset, originalEndExclusive);
             }
-            return rampState(settings, points, index);
+            return roadTransitionRampState(settings, rampState(settings, points, index), index, originalStartOffset, originalEndExclusive);
         }
         if (isDeckRampTransition(points, index)) {
             return settings.slabBottomState();
@@ -367,6 +538,17 @@ public final class BridgeStructureEmitter {
             return (localRampIndex & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
         }
         return (localRampIndex & 1) == 0 ? settings.slabTopState() : settings.slabBottomState();
+    }
+
+    private static BlockState roadTransitionRampState(RoadPlannerBuildSettings settings,
+                                                      BlockState state,
+                                                      int index,
+                                                      int originalStartOffset,
+                                                      int originalEndExclusive) {
+        if (index >= originalStartOffset && index < originalEndExclusive) {
+            return state;
+        }
+        return settings.slabTopState();
     }
 
     private static BlockState profileRampState(RoadPlannerBuildSettings settings, List<RoadCenterlinePoint> profile, int index) {
@@ -441,5 +623,11 @@ public final class BridgeStructureEmitter {
             steps.add(new BuildStep(startOrder + steps.size(), pos, rail, BuildPhase.RAILING));
         }
         return List.copyOf(steps);
+    }
+
+    private record RampBasis(int normalX, int normalZ) {
+    }
+
+    private record RampCell(int index, BlockPos pos, int surfaceTopHalfUnits) {
     }
 }
