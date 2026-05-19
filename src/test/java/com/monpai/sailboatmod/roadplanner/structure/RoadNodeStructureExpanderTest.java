@@ -974,7 +974,9 @@ class RoadNodeStructureExpanderTest {
 
         assertEquals(1, usableAtBridgeHead.size(),
                 "road and bridge must not leave two usable surfaces in the same transition X/Z column");
-        assertEquals(BuildPhase.RAMP, usableAtBridgeHead.get(0).phase());
+        assertTrue(usableAtBridgeHead.get(0).phase() == BuildPhase.RAMP
+                        || usableAtBridgeHead.get(0).phase() == BuildPhase.DECK,
+                "the remaining transition surface should belong to the bridge");
     }
 
     @Test

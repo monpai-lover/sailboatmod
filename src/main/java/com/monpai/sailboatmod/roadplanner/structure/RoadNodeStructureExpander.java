@@ -55,8 +55,17 @@ public final class RoadNodeStructureExpander {
         }
         java.util.List<BuildStep> steps = new java.util.ArrayList<>();
         steps.addAll(RoadSurfaceStepEmitter.emit(allCenterline, allSpans, settings, steps.size()));
-        steps.addAll(BridgeStructureEmitter.emit(allCenterline, allSpans, settings, BridgeTemplateProvider.empty(), steps.size(), terrainSampler));
-        java.util.List<BuildStep> dedupedSteps = dedupeAndReorder(steps);
+        int bridgeStartOrder = steps.size();
+        BridgeEmissionResult bridgeEmission = BridgeStructureEmitter.emitWithTransitions(
+                allCenterline,
+                allSpans,
+                settings,
+                BridgeTemplateProvider.empty(),
+                bridgeStartOrder,
+                terrainSampler
+        );
+        steps.addAll(bridgeEmission.steps());
+        java.util.List<BuildStep> dedupedSteps = dedupeAndReorder(steps, bridgeEmission.transitionColumns(), bridgeStartOrder);
         java.util.List<RoadPreviewBlock> previewBlocks = previewBlocksFromSteps(dedupedSteps);
         return new RoadNodeExpansionResult(
                 canonicalNodes,
@@ -93,10 +102,19 @@ public final class RoadNodeStructureExpander {
     }
 
     private static java.util.List<BuildStep> dedupeAndReorder(java.util.List<BuildStep> steps) {
+        return dedupeAndReorder(steps, java.util.Set.of(), Integer.MAX_VALUE);
+    }
+
+    private static java.util.List<BuildStep> dedupeAndReorder(java.util.List<BuildStep> steps,
+                                                              java.util.Set<Long> bridgeSurfaceColumns,
+                                                              int bridgeStartOrder) {
         java.util.Map<BlockPos, BuildStep> selectedByPosition = new java.util.LinkedHashMap<>();
         if (steps != null) {
             for (BuildStep step : steps) {
                 if (step == null || step.pos() == null || step.state() == null || step.phase() == null) {
+                    continue;
+                }
+                if (isRoadSurfaceCoveredByBridge(step, bridgeSurfaceColumns, bridgeStartOrder)) {
                     continue;
                 }
                 BlockPos key = step.pos().immutable();
@@ -114,6 +132,22 @@ public final class RoadNodeStructureExpander {
             deduped.add(new BuildStep(deduped.size(), step.pos(), step.state(), step.phase()));
         }
         return java.util.List.copyOf(deduped);
+    }
+
+    private static boolean isRoadSurfaceCoveredByBridge(BuildStep step,
+                                                        java.util.Set<Long> bridgeSurfaceColumns,
+                                                        int bridgeStartOrder) {
+        if (bridgeSurfaceColumns == null || bridgeSurfaceColumns.isEmpty() || step.order() >= bridgeStartOrder) {
+            return false;
+        }
+        if (step.phase() != BuildPhase.SURFACE && step.phase() != BuildPhase.RAMP) {
+            return false;
+        }
+        return bridgeSurfaceColumns.contains(columnKey(step.pos()));
+    }
+
+    private static long columnKey(BlockPos pos) {
+        return (((long) pos.getX()) << 32) ^ (pos.getZ() & 0xffffffffL);
     }
 
     private static boolean shouldReplace(BuildStep existing, BuildStep candidate) {
