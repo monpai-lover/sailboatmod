@@ -145,6 +145,7 @@ public class RoadPlannerBuildControlService {
                 queue.complete();
                 if (level != null) {
                     RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, queue.getSteps());
+                    resendAffectedChunks(level, queue.getSteps());
                 }
                 completedJobs.add(entry.getKey());
             }
@@ -350,6 +351,29 @@ public class RoadPlannerBuildControlService {
                 queue.executeStep(step, level);
             }
             count++;
+        }
+    }
+
+    private static void resendAffectedChunks(ServerLevel level, List<BuildStep> steps) {
+        if (level == null || steps == null || steps.isEmpty()) {
+            return;
+        }
+        java.util.Set<Long> chunkKeys = new java.util.HashSet<>();
+        for (BuildStep step : steps) {
+            if (step != null && step.pos() != null) {
+                chunkKeys.add(net.minecraft.world.level.ChunkPos.asLong(step.pos().getX() >> 4, step.pos().getZ() >> 4));
+            }
+        }
+        for (long key : chunkKeys) {
+            int cx = net.minecraft.world.level.ChunkPos.getX(key);
+            int cz = net.minecraft.world.level.ChunkPos.getZ(key);
+            net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
+            if (chunk != null) {
+                level.getChunkSource().chunkMap.getPlayers(new net.minecraft.world.level.ChunkPos(cx, cz), false)
+                        .forEach(player -> player.connection.send(
+                                new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(
+                                        chunk, level.getLightEngine(), null, null)));
+            }
         }
     }
 
