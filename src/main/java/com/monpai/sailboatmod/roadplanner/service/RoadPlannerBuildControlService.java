@@ -12,8 +12,10 @@ import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
 import com.monpai.sailboatmod.roadplanner.structure.RoadStructureMode;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.network.NetworkDirection;
 
@@ -89,7 +91,8 @@ public class RoadPlannerBuildControlService {
         PreviewSnapshot snapshot = previews.remove(previewId);
         ConstructionQueue queue = new ConstructionQueue(jobId.toString(), buildSteps(snapshot, level));
         buildQueues.put(jobId, queue);
-        buildMetadata.put(jobId, BuildMetadata.from(playerId, jobId, snapshot, queue));
+        ResourceKey<Level> dim = level != null ? level.dimension() : Level.OVERWORLD;
+        buildMetadata.put(jobId, BuildMetadata.from(playerId, jobId, snapshot, queue, dim));
         activeBuilds.put(playerId, jobId);
         return Optional.of(jobId);
     }
@@ -127,12 +130,22 @@ public class RoadPlannerBuildControlService {
     }
 
     public void tick(ServerLevel level) {
+        ResourceKey<Level> currentDim = level != null ? level.dimension() : null;
         List<UUID> completedJobs = new java.util.ArrayList<>();
         for (java.util.Map.Entry<UUID, ConstructionQueue> entry : buildQueues.entrySet()) {
+            if (currentDim != null) {
+                BuildMetadata metadata = buildMetadata.get(entry.getKey());
+                if (metadata == null || !currentDim.equals(metadata.dimension())) {
+                    continue;
+                }
+            }
             ConstructionQueue queue = entry.getValue();
             executeSteps(queue, level, STEPS_PER_TICK);
             if (!queue.hasNext()) {
                 queue.complete();
+                if (level != null) {
+                    RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, queue.getSteps());
+                }
                 completedJobs.add(entry.getKey());
             }
         }
@@ -344,21 +357,21 @@ public class RoadPlannerBuildControlService {
         return requestedId == null || requestedId.equals(new UUID(0L, 0L)) || requestedId.equals(actualId);
     }
 
-    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos) {
+    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension) {
         private BuildMetadata {
             sourceTownName = sourceTownName == null ? "" : sourceTownName;
             targetTownName = targetTownName == null ? "" : targetTownName;
             focusPos = focusPos == null ? BlockPos.ZERO : focusPos.immutable();
         }
 
-        static BuildMetadata from(UUID ownerId, UUID jobId, PreviewSnapshot snapshot, ConstructionQueue queue) {
+        static BuildMetadata from(UUID ownerId, UUID jobId, PreviewSnapshot snapshot, ConstructionQueue queue, ResourceKey<Level> dimension) {
             BlockPos focusPos = BlockPos.ZERO;
             if (snapshot != null && !snapshot.nodes().isEmpty()) {
                 focusPos = snapshot.nodes().get(0);
             } else if (queue != null && !queue.getSteps().isEmpty()) {
                 focusPos = queue.getSteps().get(0).pos();
             }
-            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos);
+            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos, dimension);
         }
     }
 
