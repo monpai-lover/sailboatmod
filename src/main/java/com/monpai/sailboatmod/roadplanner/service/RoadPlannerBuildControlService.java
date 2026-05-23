@@ -28,6 +28,7 @@ import java.util.concurrent.ConcurrentMap;
 public class RoadPlannerBuildControlService {
     private static final RoadPlannerBuildControlService GLOBAL = new RoadPlannerBuildControlService();
 
+    private final CompletedRoadRegistrar completedRoadRegistrar;
     private final ConcurrentMap<UUID, UUID> activePreviews = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, UUID> activeBuilds = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, PreviewSnapshot> previews = new ConcurrentHashMap<>();
@@ -35,6 +36,16 @@ public class RoadPlannerBuildControlService {
 
     private final ConcurrentMap<UUID, ConstructionQueue> buildQueues = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, BuildMetadata> buildMetadata = new ConcurrentHashMap<>();
+
+    public RoadPlannerBuildControlService() {
+        this(RoadPlannerBuiltRoadRegistry::register);
+    }
+
+    RoadPlannerBuildControlService(CompletedRoadRegistrar completedRoadRegistrar) {
+        this.completedRoadRegistrar = completedRoadRegistrar == null
+                ? (level, road) -> { }
+                : completedRoadRegistrar;
+    }
 
     public static RoadPlannerBuildControlService global() {
         return GLOBAL;
@@ -143,6 +154,8 @@ public class RoadPlannerBuildControlService {
             executeSteps(queue, level, STEPS_PER_TICK);
             if (!queue.hasNext()) {
                 queue.complete();
+                BuildMetadata metadata = buildMetadata.get(entry.getKey());
+                completedRoadRegistrar.register(level, completedRoadBuild(metadata, queue));
                 if (level != null) {
                     RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, queue.getSteps());
                     resendAffectedChunks(level, queue.getSteps());
@@ -286,13 +299,24 @@ public class RoadPlannerBuildControlService {
             BlockPos pos = elevatedCenterline.get(i);
             BlockState state;
             if (isRamp[i]) {
-                int prevY = i > 0 ? elevatedCenterline.get(i - 1).getY() : pos.getY();
-                if (pos.getY() > prevY) {
-                    state = slabBottom;
-                } else if (pos.getY() == prevY && i > 0 && elevatedCenterline.get(i - 1).getY() < pos.getY()) {
-                    state = slabTop;
+                boolean isFirstRampPoint = (i == 0) || (i == totalLen - exitRampLen && exitRampLen > 0);
+                boolean isLastRampPoint = (i == totalLen - 1) || (i == entryRampLen - 1 && entryRampLen > 0);
+                if (isFirstRampPoint || isLastRampPoint) {
+                    state = deckState;
                 } else {
-                    state = (i % 2 == 0) ? slabBottom : slabTop;
+                    int prevY = elevatedCenterline.get(i - 1).getY();
+                    int nextY = i + 1 < totalLen ? elevatedCenterline.get(i + 1).getY() : pos.getY();
+                    if (pos.getY() > prevY) {
+                        state = slabBottom;
+                    } else if (pos.getY() < prevY) {
+                        state = slabTop;
+                    } else if (nextY > pos.getY()) {
+                        state = slabBottom;
+                    } else if (nextY < pos.getY()) {
+                        state = slabTop;
+                    } else {
+                        state = deckState;
+                    }
                 }
             } else {
                 state = deckState;
@@ -381,11 +405,52 @@ public class RoadPlannerBuildControlService {
         return requestedId == null || requestedId.equals(new UUID(0L, 0L)) || requestedId.equals(actualId);
     }
 
-    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension) {
+    private static CompletedRoadBuild completedRoadBuild(BuildMetadata metadata, ConstructionQueue queue) {
+        if (metadata == null) {
+            return new CompletedRoadBuild("", null, List.of(), List.of(), List.of(), Level.OVERWORLD);
+        }
+        return new CompletedRoadBuild(
+                metadata.roadId(),
+                metadata.ownerId(),
+                metadata.centerPath(),
+                queue == null ? List.of() : queue.getSteps(),
+                queue == null ? List.of() : queue.getRollbackEntries(),
+                metadata.dimension()
+        );
+    }
+
+    @FunctionalInterface
+    interface CompletedRoadRegistrar {
+        void register(ServerLevel level, CompletedRoadBuild road);
+    }
+
+    public record CompletedRoadBuild(String roadId,
+                                     UUID ownerId,
+                                     List<BlockPos> centerPath,
+                                     List<BuildStep> buildSteps,
+                                     List<ConstructionQueue.RollbackEntry> rollbackEntries,
+                                     ResourceKey<Level> dimension) {
+        public CompletedRoadBuild {
+            roadId = roadId == null ? "" : roadId.trim();
+            centerPath = centerPath == null ? List.of() : centerPath.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(BlockPos::immutable)
+                    .toList();
+            buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
+            rollbackEntries = rollbackEntries == null ? List.of() : List.copyOf(rollbackEntries);
+            dimension = dimension == null ? Level.OVERWORLD : dimension;
+        }
+    }
+
+    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath) {
         private BuildMetadata {
             sourceTownName = sourceTownName == null ? "" : sourceTownName;
             targetTownName = targetTownName == null ? "" : targetTownName;
             focusPos = focusPos == null ? BlockPos.ZERO : focusPos.immutable();
+            centerPath = centerPath == null ? List.of() : centerPath.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(BlockPos::immutable)
+                    .toList();
         }
 
         static BuildMetadata from(UUID ownerId, UUID jobId, PreviewSnapshot snapshot, ConstructionQueue queue, ResourceKey<Level> dimension) {
@@ -395,8 +460,26 @@ public class RoadPlannerBuildControlService {
             } else if (queue != null && !queue.getSteps().isEmpty()) {
                 focusPos = queue.getSteps().get(0).pos();
             }
-            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos, dimension);
+            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos, dimension, resolveCenterPath(snapshot, queue));
         }
+    }
+
+    private static List<BlockPos> resolveCenterPath(PreviewSnapshot snapshot, ConstructionQueue queue) {
+        if (snapshot != null && snapshot.nodes().size() >= 2) {
+            List<BlockPos> centers = RoadPlannerPathCompiler.interpolateCenters(snapshot.nodes());
+            if (centers.size() >= 2) {
+                return centers;
+            }
+        }
+        if (queue == null || queue.getSteps().isEmpty()) {
+            return List.of();
+        }
+        return queue.getSteps().stream()
+                .filter(step -> step != null && step.pos() != null && step.phase() != BuildPhase.FOUNDATION)
+                .sorted(java.util.Comparator.comparingInt(BuildStep::order))
+                .map(BuildStep::pos)
+                .distinct()
+                .toList();
     }
 
     public record PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings) {
