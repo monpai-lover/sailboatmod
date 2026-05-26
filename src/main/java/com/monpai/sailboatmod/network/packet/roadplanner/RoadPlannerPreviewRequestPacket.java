@@ -23,6 +23,7 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 public record RoadPlannerPreviewRequestPacket(String startTownName,
@@ -120,12 +121,26 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
         if (player == null || nodes.isEmpty()) {
             return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none());
         }
+        return withValidatedMerge((probe, radius, selection, finalSegmentType) -> RoadPlannerRoadMergeService.validateSelection(
+                player,
+                probe,
+                radius,
+                selection,
+                finalSegmentType));
+    }
+
+    RoadPlannerPreviewRequestPacket withValidatedMerge(MergeSelectionValidator validator) {
+        if (!mergeSelection.present()) {
+            return this;
+        }
+        if (nodes.isEmpty() || validator == null) {
+            return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none());
+        }
         RoadPlannerSegmentType finalSegmentType = segmentTypes.isEmpty()
                 ? RoadPlannerSegmentType.ROAD
                 : segmentTypes.get(segmentTypes.size() - 1);
         BlockPos submittedEnd = nodes.get(nodes.size() - 1);
-        return RoadPlannerRoadMergeService.validateSelection(
-                        player,
+        return validator.validate(
                         submittedEnd,
                         RoadPlannerMergeCandidateRequestPacket.MAX_RADIUS,
                         mergeSelection,
@@ -142,6 +157,14 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                     return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, snappedNodes, segmentTypes, settings, canonicalSelection);
                 })
                 .orElseGet(() -> new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none()));
+    }
+
+    @FunctionalInterface
+    interface MergeSelectionValidator {
+        Optional<RoadPlannerRoadMergeService.Candidate> validate(BlockPos probe,
+                                                                 int radius,
+                                                                 RoadPlannerMergeSelection selection,
+                                                                 RoadPlannerSegmentType finalSegmentType);
     }
 
     public SyncRoadPlannerPreviewPacket toPreviewPacketForTest() {

@@ -2,9 +2,11 @@ package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.nation.service.RoadPlannerRoadMergeService;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
@@ -26,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -98,6 +102,80 @@ class RoadPlannerPreviewRequestPacketTest {
         RoadPlannerPreviewRequestPacket decoded = RoadPlannerPreviewRequestPacket.decode(new FriendlyByteBuf(buffer.copy()));
 
         assertEquals(RoadPlannerMergeSelection.none(), decoded.mergeSelection());
+    }
+
+    @Test
+    void validatedMergeSnapsFinalNodeAndCanonicalizesSelection() {
+        List<BlockPos> nodes = List.of(BlockPos.ZERO, new BlockPos(15, 64, 0));
+        RoadPlannerMergeSelection submittedSelection = new RoadPlannerMergeSelection(
+                "existing-road",
+                3,
+                new BlockPos(15, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        BlockPos canonicalAnchor = new BlockPos(16, 64, 0);
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                nodes,
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                submittedSelection
+        );
+
+        RoadPlannerPreviewRequestPacket safePacket = packet.withValidatedMerge((probe, radius, selection, segmentType) ->
+                Optional.of(candidate("canonical-road", canonicalAnchor, 4)));
+
+        assertEquals(List.of(BlockPos.ZERO, canonicalAnchor), safePacket.nodes());
+        assertEquals(new RoadPlannerMergeSelection(
+                "canonical-road",
+                4,
+                canonicalAnchor,
+                RoadPlannerMergeScope.OWN_NATION
+        ), safePacket.mergeSelection());
+    }
+
+    @Test
+    void invalidValidatedMergeClearsSelectionAndKeepsSubmittedNodes() {
+        List<BlockPos> nodes = List.of(BlockPos.ZERO, new BlockPos(15, 64, 0));
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                nodes,
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                new RoadPlannerMergeSelection("existing-road", 3, new BlockPos(15, 64, 0), RoadPlannerMergeScope.OWN_NATION)
+        );
+
+        RoadPlannerPreviewRequestPacket safePacket = packet.withValidatedMerge((probe, radius, selection, segmentType) -> Optional.empty());
+
+        assertEquals(nodes, safePacket.nodes());
+        assertEquals(RoadPlannerMergeSelection.none(), safePacket.mergeSelection());
+    }
+
+    @Test
+    void validatedMergeUsesFinalSegmentTypeSoBridgeEndpointDoesNotMerge() {
+        List<BlockPos> nodes = List.of(BlockPos.ZERO, new BlockPos(8, 64, 0), new BlockPos(16, 64, 0));
+        AtomicReference<RoadPlannerSegmentType> validatedSegmentType = new AtomicReference<>();
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                nodes,
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_SMALL),
+                RoadPlannerBuildSettings.DEFAULTS,
+                new RoadPlannerMergeSelection("existing-road", 4, new BlockPos(16, 64, 0), RoadPlannerMergeScope.OWN_NATION)
+        );
+
+        RoadPlannerPreviewRequestPacket safePacket = packet.withValidatedMerge((probe, radius, selection, segmentType) -> {
+            validatedSegmentType.set(segmentType);
+            return segmentType == RoadPlannerSegmentType.ROAD
+                    ? Optional.of(candidate("existing-road", new BlockPos(16, 64, 0), 4))
+                    : Optional.empty();
+        });
+
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, validatedSegmentType.get());
+        assertEquals(nodes, safePacket.nodes());
+        assertEquals(RoadPlannerMergeSelection.none(), safePacket.mergeSelection());
     }
 
     @Test
@@ -241,6 +319,19 @@ class RoadPlannerPreviewRequestPacketTest {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         SyncRoadPlannerPreviewPacket.encode(packet, buffer);
         return SyncRoadPlannerPreviewPacket.decode(new FriendlyByteBuf(buffer.copy()));
+    }
+
+    private static RoadPlannerRoadMergeService.Candidate candidate(String roadId, BlockPos anchorPos, int pathIndex) {
+        return new RoadPlannerRoadMergeService.Candidate(
+                roadId,
+                anchorPos,
+                pathIndex,
+                0,
+                "Source",
+                "Target",
+                "nation-a",
+                RoadPlannerMergeRelationship.OWN
+        );
     }
 
     private static RoadTerrainSampler deepWaterSampler() {
