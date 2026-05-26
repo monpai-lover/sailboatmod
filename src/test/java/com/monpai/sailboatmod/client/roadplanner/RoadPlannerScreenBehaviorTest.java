@@ -476,6 +476,32 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void roadOverlayTooltipReportsHoveredBuiltRoadMetadata() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        screen.applyRoadOverlays(screen.state().sessionId(), List.of(
+                new RoadPlannerRoadOverlaySyncPacket.Entry(
+                        "road-tooltip",
+                        RoadPlannerMergeRelationship.OWN,
+                        List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                        "Alpha - Beta",
+                        8,
+                        "Builder",
+                        "uuid-a",
+                        1234L,
+                        false)));
+
+        RoadPlannerScreen.RoadOverlayTooltipForTest tooltip = screen.roadOverlayTooltipForTest(
+                map.x() + map.width() / 2 + 8,
+                map.y() + map.height() / 2 + 2);
+
+        assertEquals("road-tooltip", tooltip.roadId());
+        assertEquals("Alpha - Beta", tooltip.displayName());
+        assertTrue(tooltip.lines().contains("Length: 8 blocks"));
+        assertTrue(tooltip.lines().contains("Creator: Builder"));
+    }
+
+    @Test
     void delayedSameSessionMergeCandidateResponseIsIgnoredAfterNewRequest() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();

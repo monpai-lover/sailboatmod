@@ -33,6 +33,9 @@ import net.minecraft.world.level.material.Fluids;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -41,6 +44,11 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private static final int OWN_ROAD_OVERLAY_COLOR = 0xCC8BD3FF;
     private static final int SHARED_ROAD_OVERLAY_COLOR = 0xCCB18CFF;
     private static final int SELECTED_MERGE_ANCHOR_COLOR = 0xFFFFF176;
+    private static final int HOVERED_ROAD_OVERLAY_COLOR = 0xEEFFFFFF;
+    private static final double ROAD_OVERLAY_HOVER_THRESHOLD = 5.0D;
+    private static final DateTimeFormatter ROAD_OVERLAY_TIME_FORMAT = DateTimeFormatter
+            .ofPattern("yyyy-MM-dd HH:mm")
+            .withZone(ZoneId.systemDefault());
     private static final List<RoadToolType> TOOLS = List.of(
             RoadToolType.SELECT,
             RoadToolType.ROAD,
@@ -374,6 +382,17 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                     isSelectedMergeAnchor(overlay, selectedMerge)));
         }
         return List.copyOf(states);
+    }
+
+    public RoadOverlayTooltipForTest roadOverlayTooltipForTest(int mouseX, int mouseY) {
+        RoadPlannerRoadOverlayHitTester.Result hit = hoveredRoadOverlay(mouseX, mouseY);
+        if (!hit.hit()) {
+            return null;
+        }
+        List<String> lines = roadOverlayTooltipLines(hit.entry()).stream()
+                .map(Component::getString)
+                .toList();
+        return new RoadOverlayTooltipForTest(hit.entry().roadId(), hit.entry().displayName(), lines);
     }
 
     public RoadPlannerMergeScope mergeScopeForTest() {
@@ -888,7 +907,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         renderBackground(graphics);
         canvas.render(graphics, font);
         claimOverlayRenderer.render(graphics, mapView, mapLayout.map());
-        renderRoadOverlay(graphics);
+        renderRoadOverlay(graphics, mouseX, mouseY);
         renderToolbar(graphics, mouseX, mouseY);
         renderInspector(graphics);
         renderStatusBar(graphics);
@@ -897,6 +916,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         if (canvas.contains(mouseX, mouseY)) {
             claimOverlayRenderer.renderTooltip(graphics, font, mapView, mapLayout.map(), mouseX, mouseY);
+            RoadPlannerRoadOverlayHitTester.Result roadHit = hoveredRoadOverlay(mouseX, mouseY);
+            if (roadHit.hit()) {
+                graphics.renderComponentTooltip(font, roadOverlayTooltipLines(roadHit.entry()), mouseX, mouseY);
+            }
         }
     }
 
@@ -947,9 +970,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         return true;
     }
 
-    private void renderRoadOverlay(GuiGraphics graphics) {
+    private void renderRoadOverlay(GuiGraphics graphics, int mouseX, int mouseY) {
         RoadPlannerMapLayout.Rect map = mapLayout.map();
-        renderSyncedRoadOverlays(graphics, map);
+        renderSyncedRoadOverlays(graphics, map, hoveredRoadOverlay(mouseX, mouseY));
         List<BlockPos> nodes = linePlan.nodes();
         List<RoadPlannerSegmentType> segments = linePlan.segments();
         for (int index = 1; index < nodes.size(); index++) {
@@ -991,25 +1014,77 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         renderForceRenderSelection(graphics, map);
     }
 
-    private void renderSyncedRoadOverlays(GuiGraphics graphics, RoadPlannerMapLayout.Rect map) {
+    private void renderSyncedRoadOverlays(GuiGraphics graphics,
+                                          RoadPlannerMapLayout.Rect map,
+                                          RoadPlannerRoadOverlayHitTester.Result hoveredRoad) {
         if (!mergeScope.enabled()) {
             return;
         }
         RoadPlannerMergeSelection selectedMerge = selectedMergeSelection();
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : roadOverlays) {
-            List<BlockPos> path = overlay.path();
-            for (int index = 1; index < path.size(); index++) {
-                BlockPos previous = path.get(index - 1);
-                BlockPos current = path.get(index);
-                drawMapLine(graphics, map,
-                        mapView.worldToScreenX(previous.getX(), map), mapView.worldToScreenZ(previous.getZ(), map),
-                        mapView.worldToScreenX(current.getX(), map), mapView.worldToScreenZ(current.getZ(), map),
-                        roadOverlayColor(overlay.relationship()), 3);
+            drawRoadOverlayPath(graphics, map, overlay, roadOverlayColor(overlay.relationship()), 3);
+            if (hoveredRoad != null && hoveredRoad.hit() && hoveredRoad.entry().roadId().equals(overlay.roadId())) {
+                drawRoadOverlayPath(graphics, map, overlay, HOVERED_ROAD_OVERLAY_COLOR, 5);
             }
             if (isSelectedMergeAnchor(overlay, selectedMerge)) {
                 drawSelectedMergeAnchor(graphics, map, selectedMerge.anchorPos());
             }
         }
+    }
+
+    private void drawRoadOverlayPath(GuiGraphics graphics,
+                                     RoadPlannerMapLayout.Rect map,
+                                     RoadPlannerRoadOverlaySyncPacket.Entry overlay,
+                                     int color,
+                                     int thickness) {
+        if (overlay == null || overlay.path().size() < 2) {
+            return;
+        }
+        List<BlockPos> path = overlay.path();
+        for (int index = 1; index < path.size(); index++) {
+            BlockPos previous = path.get(index - 1);
+            BlockPos current = path.get(index);
+            drawMapLine(graphics, map,
+                    mapView.worldToScreenX(previous.getX(), map), mapView.worldToScreenZ(previous.getZ(), map),
+                    mapView.worldToScreenX(current.getX(), map), mapView.worldToScreenZ(current.getZ(), map),
+                    color, thickness);
+        }
+    }
+
+    private RoadPlannerRoadOverlayHitTester.Result hoveredRoadOverlay(int mouseX, int mouseY) {
+        RoadPlannerMapLayout.Rect map = mapLayout.map();
+        if (!map.contains(mouseX, mouseY)) {
+            return RoadPlannerRoadOverlayHitTester.Result.miss();
+        }
+        return RoadPlannerRoadOverlayHitTester.find(
+                mouseX,
+                mouseY,
+                roadOverlays,
+                pos -> mapView.worldToScreenX(pos.getX(), map),
+                pos -> mapView.worldToScreenZ(pos.getZ(), map),
+                selectedMergeSelection(),
+                ROAD_OVERLAY_HOVER_THRESHOLD);
+    }
+
+    private List<Component> roadOverlayTooltipLines(RoadPlannerRoadOverlaySyncPacket.Entry entry) {
+        if (entry == null) {
+            return List.of();
+        }
+        return List.of(
+                Component.literal(entry.displayName()),
+                Component.literal("Length: " + entry.lengthBlocks() + " blocks"),
+                Component.literal("Creator: " + (entry.creatorName().isBlank() ? "Unknown" : entry.creatorName())),
+                Component.literal("Created: " + roadOverlayCreatedText(entry)));
+    }
+
+    private String roadOverlayCreatedText(RoadPlannerRoadOverlaySyncPacket.Entry entry) {
+        if (entry == null || entry.createdAt() <= 0L) {
+            return "Unknown";
+        }
+        if (entry.legacyMetadata()) {
+            return "Old road data";
+        }
+        return ROAD_OVERLAY_TIME_FORMAT.format(Instant.ofEpochMilli(entry.createdAt()));
     }
 
     private void drawSelectedMergeAnchor(GuiGraphics graphics, RoadPlannerMapLayout.Rect map, BlockPos anchor) {
@@ -1840,6 +1915,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                                                 RoadPlannerMergeRelationship relationship,
                                                 int color,
                                                 boolean selectedMergeAnchor) {
+    }
+
+    public record RoadOverlayTooltipForTest(String roadId, String displayName, List<String> lines) {
     }
 
     private record MapProgressView(int percent, String summary) {
