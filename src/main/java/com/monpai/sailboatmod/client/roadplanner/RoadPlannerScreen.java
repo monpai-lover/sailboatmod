@@ -375,7 +375,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public void applyMapTileSync(RoadPlannerMapTileSyncPacket packet) {
-        if (packet == null || !state.sessionId().equals(packet.sessionId())) {
+        if (packet == null) {
             return;
         }
         if (packet.purpose() == RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH) {
@@ -386,6 +386,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                     mapStatusLine = "\u5730\u56fe: \u5df2\u5237\u65b0\u5df2\u5efa\u9053\u8def\u533a\u5757";
                 }
             }
+            return;
+        }
+        if (!state.sessionId().equals(packet.sessionId())) {
             return;
         }
         if (!routePreloadScheduler.acceptsResponse(packet.sessionId(), packet.requestId(), packet.purpose(), packet.worldId(), packet.dimensionId())) {

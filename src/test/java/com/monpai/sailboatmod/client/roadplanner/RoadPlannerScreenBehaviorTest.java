@@ -168,7 +168,7 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
-    void builtRoadRefreshTileSyncIgnoresWrongSession() {
+    void builtRoadRefreshTileSyncAcceptsMatchingWorldEvenWithDifferentSession() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         screen.setTileManagerForTest(RoadPlannerTileManager.forTest(
                 new File("roadplanner_tile_test"),
@@ -189,7 +189,7 @@ class RoadPlannerScreenBehaviorTest {
                 1,
                 new int[]{0xFF00AA00}));
 
-        assertEquals(before, screen.mapStatusLineForTest());
+        assertNotEquals(before, screen.mapStatusLineForTest());
     }
 
     @Test
