@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
+import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
@@ -12,6 +13,7 @@ import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -271,6 +273,53 @@ class RoadPlannerRoadMergeServiceTest {
                 data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 4096, RoadPlannerMergeScope.OWN_NATION);
 
         assertTrue(overlays.isEmpty());
+    }
+
+    @Test
+    void visibleOverlaysExposeRoadTooltipMetadata() {
+        NationSavedData data = new NationSavedData();
+        UUID mayor = UUID.randomUUID();
+        data.putTown(new TownRecord("alpha-town", "alpha", "Alpha", mayor, 1L, "", TownRecord.noCorePos(), "", "european"));
+        data.putTown(new TownRecord("beta-town", "alpha", "Beta", mayor, 1L, "", TownRecord.noCorePos(), "", "european"));
+        data.putRoadNetwork(new RoadNetworkRecord(
+                "tooltip-road",
+                "alpha",
+                "alpha-town",
+                OVERWORLD,
+                "town:alpha-town",
+                "town:beta-town",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(3, 64, 4)),
+                2345L,
+                1234L,
+                "creator-uuid",
+                "Builder",
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+        ));
+
+        RoadPlannerRoadMergeService.RoadOverlay overlay = RoadPlannerRoadMergeService.visibleRoadOverlaysForTest(
+                data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 32, RoadPlannerMergeScope.OWN_NATION)
+                .get(0);
+
+        assertEquals("Alpha - Beta", overlay.displayName());
+        assertEquals(5, overlay.lengthBlocks());
+        assertEquals("Builder", overlay.creatorName());
+        assertEquals("creator-uuid", overlay.creatorUuid());
+        assertEquals(1234L, overlay.createdAt());
+        assertFalse(overlay.legacyMetadata());
+    }
+
+    @Test
+    void visibleOverlaysMarkOldRoadRecordsAsLegacyMetadata() {
+        NationSavedData data = new NationSavedData();
+        data.putRoadNetwork(road("legacy-road", "alpha", OVERWORLD, new BlockPos(0, 64, 0), new BlockPos(3, 64, 4)));
+
+        RoadPlannerRoadMergeService.RoadOverlay overlay = RoadPlannerRoadMergeService.visibleRoadOverlaysForTest(
+                data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 32, RoadPlannerMergeScope.OWN_NATION)
+                .get(0);
+
+        assertEquals(1L, overlay.createdAt());
+        assertTrue(overlay.legacyMetadata());
+        assertEquals("", overlay.creatorName());
     }
 
     @Test

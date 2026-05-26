@@ -191,9 +191,61 @@ public final class RoadPlannerRoadMergeService {
             if (relationship == null || visiblePath.isEmpty()) {
                 continue;
             }
-            overlays.add(new RoadOverlay(road.roadId(), relationship, visiblePath));
+            overlays.add(new RoadOverlay(
+                    road.roadId(),
+                    relationship,
+                    visiblePath,
+                    displayName(data, road),
+                    lengthBlocks(road.path()),
+                    road.creatorName(),
+                    road.creatorUuid(),
+                    road.createdAt(),
+                    road.creatorUuid().isBlank() && road.creatorName().isBlank() && road.createdAt() == road.updatedAt()));
         }
         return List.copyOf(overlays);
+    }
+
+    private static String displayName(NationSavedData data, RoadNetworkRecord road) {
+        if (road == null) {
+            return "";
+        }
+        String left = endpointName(data, road.structureAId());
+        String right = endpointName(data, road.structureBId());
+        if (!left.isBlank() && !right.isBlank() && !left.equals(right)) {
+            return left + " - " + right;
+        }
+        return road.roadId();
+    }
+
+    private static String endpointName(NationSavedData data, String endpoint) {
+        String value = endpoint == null ? "" : endpoint.trim();
+        if (value.startsWith("town:")) {
+            String townId = value.substring("town:".length());
+            TownRecord town = data == null ? null : data.getTown(townId);
+            return town == null || town.name().isBlank() ? townId : town.name();
+        }
+        if (value.startsWith("roadnode:")) {
+            return "Road Link";
+        }
+        if (value.startsWith("planner:")) {
+            return "Planner";
+        }
+        return value;
+    }
+
+    private static int lengthBlocks(List<BlockPos> path) {
+        if (path == null || path.size() < 2) {
+            return 0;
+        }
+        double length = 0.0D;
+        for (int index = 1; index < path.size(); index++) {
+            BlockPos previous = path.get(index - 1);
+            BlockPos current = path.get(index);
+            if (previous != null && current != null) {
+                length += Math.sqrt(previous.distSqr(current));
+            }
+        }
+        return (int) Math.round(length);
     }
 
     private static List<Candidate> findCandidates(NationSavedData data,
@@ -497,7 +549,15 @@ public final class RoadPlannerRoadMergeService {
                             RoadPlannerMergeRelationship relationship) {
     }
 
-    public record RoadOverlay(String roadId, RoadPlannerMergeRelationship relationship, List<BlockPos> path) {
+    public record RoadOverlay(String roadId,
+                              RoadPlannerMergeRelationship relationship,
+                              List<BlockPos> path,
+                              String displayName,
+                              int lengthBlocks,
+                              String creatorName,
+                              String creatorUuid,
+                              long createdAt,
+                              boolean legacyMetadata) {
         public RoadOverlay {
             roadId = roadId == null ? "" : roadId;
             relationship = relationship == null ? RoadPlannerMergeRelationship.OWN : relationship;
@@ -506,6 +566,11 @@ public final class RoadPlannerRoadMergeService {
                     .limit(MAX_OVERLAY_PATH_POINTS)
                     .map(BlockPos::immutable)
                     .toList();
+            displayName = displayName == null || displayName.isBlank() ? roadId : displayName.trim();
+            lengthBlocks = Math.max(0, lengthBlocks);
+            creatorName = creatorName == null ? "" : creatorName.trim();
+            creatorUuid = creatorUuid == null ? "" : creatorUuid.trim();
+            createdAt = Math.max(0L, createdAt);
         }
     }
 
