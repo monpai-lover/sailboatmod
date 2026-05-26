@@ -198,6 +198,17 @@ class RoadPlannerRoadMergeServiceTest {
         assertEquals(List.of(new BlockPos(8, 64, 0), new BlockPos(12, 64, 0)), overlays.get(0).path());
     }
 
+    @Test
+    void visibleOverlaysClampHugeRegionSize() {
+        NationSavedData data = new NationSavedData();
+        data.putRoadNetwork(road("far-road", "alpha", OVERWORLD, new BlockPos(300, 64, 0)));
+
+        List<RoadPlannerRoadMergeService.RoadOverlay> overlays = RoadPlannerRoadMergeService.visibleRoadOverlaysForTest(
+                data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 4096, RoadPlannerMergeScope.OWN_NATION);
+
+        assertTrue(overlays.isEmpty());
+    }
+
     private static List<RoadPlannerRoadMergeService.Candidate> find(NationSavedData data,
                                                                     String actorNationId,
                                                                     boolean canManageOwnRoads,

@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayRequestPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
@@ -122,7 +123,8 @@ public final class RoadPlannerRoadMergeService {
                 || normalizedDimension.isBlank() || regionCenter == null || !safeScope.enabled()) {
             return List.of();
         }
-        int halfSize = Math.max(0, regionSize / 2);
+        int safeRegionSize = RoadPlannerRoadOverlayRequestPacket.normalizeRegionSize(regionSize);
+        int halfSize = safeRegionSize / 2;
         int minX = regionCenter.getX() - halfSize;
         int maxX = regionCenter.getX() + halfSize;
         int minZ = regionCenter.getZ() - halfSize;
@@ -266,22 +268,6 @@ public final class RoadPlannerRoadMergeService {
 
     private static boolean isBridgeSegment(RoadPlannerSegmentType segmentType) {
         return segmentType == RoadPlannerSegmentType.BRIDGE_SMALL || segmentType == RoadPlannerSegmentType.BRIDGE_MAJOR;
-    }
-
-    private static boolean hasNodeInRegion(List<BlockPos> path, int minX, int maxX, int minZ, int maxZ) {
-        if (path == null || path.isEmpty()) {
-            return false;
-        }
-        for (BlockPos pos : path) {
-            if (pos != null
-                    && pos.getX() >= minX
-                    && pos.getX() <= maxX
-                    && pos.getZ() >= minZ
-                    && pos.getZ() <= maxZ) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static List<BlockPos> visiblePathInRegion(List<BlockPos> path, int minX, int maxX, int minZ, int maxZ) {

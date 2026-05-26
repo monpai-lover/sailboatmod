@@ -239,6 +239,24 @@ class RoadPlannerPacketRoundTripTest {
     }
 
     @Test
+    void roadOverlayRequestClampsHugeRegionSize() {
+        RoadPlannerRoadOverlayRequestPacket packet = new RoadPlannerRoadOverlayRequestPacket(
+                UUID.randomUUID(),
+                "world_a",
+                "minecraft:overworld",
+                new BlockPos(0, 64, 0),
+                4096,
+                RoadPlannerMergeScope.OWN_NATION);
+
+        RoadPlannerRoadOverlayRequestPacket decoded = roundTrip(
+                packet,
+                RoadPlannerRoadOverlayRequestPacket::encode,
+                RoadPlannerRoadOverlayRequestPacket::decode);
+
+        assertEquals(512, decoded.regionSize());
+    }
+
+    @Test
     void roadOverlaySyncDecodeCapsPathPointsAndConsumesExtras() {
         UUID sessionId = UUID.randomUUID();
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
