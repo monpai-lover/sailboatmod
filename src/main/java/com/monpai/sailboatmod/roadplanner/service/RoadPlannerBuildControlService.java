@@ -466,6 +466,7 @@ public class RoadPlannerBuildControlService {
             return RoadPlannerMergeSelection.none();
         }
         return RoadPlannerRoadMergeService.validateSelection(
+                        level,
                         owner,
                         probe,
                         RoadPlannerMergeCandidateRequestPacket.MAX_RADIUS,

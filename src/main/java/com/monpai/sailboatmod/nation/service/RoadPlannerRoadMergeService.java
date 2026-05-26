@@ -50,16 +50,49 @@ public final class RoadPlannerRoadMergeService {
                 scope, currentSegmentType, bridgeClassifier);
     }
 
+    public static Optional<Candidate> validateSelectionForTest(NationSavedData data,
+                                                               String actorNationId,
+                                                               boolean canManageOwnRoads,
+                                                               String dimensionId,
+                                                               BlockPos probe,
+                                                               int radius,
+                                                               RoadPlannerMergeSelection selection,
+                                                               RoadPlannerSegmentType currentSegmentType,
+                                                               BridgeAnchorClassifier bridgeClassifier) {
+        return validateSelection(
+                data,
+                normalize(actorNationId),
+                road -> canManageOwnRoads,
+                dimensionId,
+                probe,
+                radius,
+                selection,
+                currentSegmentType,
+                bridgeClassifier);
+    }
+
     public static List<Candidate> findCandidates(ServerPlayer player, BlockPos probe, int radius,
                                                  RoadPlannerMergeScope scope, RoadPlannerSegmentType currentSegmentType) {
         if (player == null || !(player.level() instanceof ServerLevel level)) {
             return List.of();
         }
+        return findCandidates(level, player, probe, radius, scope, currentSegmentType);
+    }
+
+    public static List<Candidate> findCandidates(ServerLevel level,
+                                                 ServerPlayer actor,
+                                                 BlockPos probe,
+                                                 int radius,
+                                                 RoadPlannerMergeScope scope,
+                                                 RoadPlannerSegmentType currentSegmentType) {
+        if (level == null || actor == null) {
+            return List.of();
+        }
         NationSavedData data = NationSavedData.get(level);
-        NationRecord actorNation = NationService.getPlayerNation(level, player.getUUID());
+        NationRecord actorNation = NationService.getPlayerNation(level, actor.getUUID());
         String actorNationId = actorNation == null ? "" : actorNation.nationId();
         String dimensionId = level.dimension().location().toString();
-        return findCandidates(data, actorNationId, road -> canManageRoad(player, data, road), dimensionId, probe, radius, scope,
+        return findCandidates(data, actorNationId, road -> canManageRoad(level, actor, data, road), dimensionId, probe, radius, scope,
                 currentSegmentType, bridgeAnchorClassifier(level));
     }
 
@@ -69,7 +102,22 @@ public final class RoadPlannerRoadMergeService {
         if (selection == null || !selection.present()) {
             return Optional.empty();
         }
-        return findCandidates(player, probe, radius, selection.scope(), currentSegmentType).stream()
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return Optional.empty();
+        }
+        return validateSelection(level, player, probe, radius, selection, currentSegmentType);
+    }
+
+    public static Optional<Candidate> validateSelection(ServerLevel level,
+                                                        ServerPlayer actor,
+                                                        BlockPos probe,
+                                                        int radius,
+                                                        RoadPlannerMergeSelection selection,
+                                                        RoadPlannerSegmentType currentSegmentType) {
+        if (selection == null || !selection.present()) {
+            return Optional.empty();
+        }
+        return findCandidates(level, actor, probe, radius, selection.scope(), currentSegmentType).stream()
                 .filter(candidate -> candidate.roadId().equals(selection.roadId()))
                 .filter(candidate -> candidate.pathIndex() == selection.pathIndex())
                 .filter(candidate -> candidate.anchorPos().equals(selection.anchorPos()))
@@ -96,7 +144,7 @@ public final class RoadPlannerRoadMergeService {
         NationSavedData data = NationSavedData.get(level);
         NationRecord actorNation = NationService.getPlayerNation(level, player.getUUID());
         String actorNationId = actorNation == null ? "" : normalize(actorNation.nationId());
-        return visibleRoadOverlays(data, actorNationId, road -> canManageRoad(player, data, road), normalizedDimension,
+        return visibleRoadOverlays(data, actorNationId, road -> canManageRoad(level, player, data, road), normalizedDimension,
                 regionCenter, regionSize, scope);
     }
 
@@ -196,6 +244,26 @@ public final class RoadPlannerRoadMergeService {
         return candidates.stream().map(CandidateWithDistance::candidate).toList();
     }
 
+    private static Optional<Candidate> validateSelection(NationSavedData data,
+                                                         String actorNationId,
+                                                         OwnRoadPermission ownRoadPermission,
+                                                         String dimensionId,
+                                                         BlockPos probe,
+                                                         int radius,
+                                                         RoadPlannerMergeSelection selection,
+                                                         RoadPlannerSegmentType currentSegmentType,
+                                                         BridgeAnchorClassifier bridgeClassifier) {
+        if (selection == null || !selection.present()) {
+            return Optional.empty();
+        }
+        return findCandidates(data, actorNationId, ownRoadPermission, dimensionId, probe, radius,
+                selection.scope(), currentSegmentType, bridgeClassifier).stream()
+                .filter(candidate -> candidate.roadId().equals(selection.roadId()))
+                .filter(candidate -> candidate.pathIndex() == selection.pathIndex())
+                .filter(candidate -> candidate.anchorPos().equals(selection.anchorPos()))
+                .findFirst();
+    }
+
     private static void addCandidate(List<CandidateWithDistance> candidates, CandidateWithDistance candidate) {
         candidates.add(candidate);
         candidates.sort(CANDIDATE_ORDER);
@@ -250,16 +318,19 @@ public final class RoadPlannerRoadMergeService {
         };
     }
 
-    private static boolean canManageRoad(ServerPlayer player, NationSavedData data, RoadNetworkRecord road) {
+    private static boolean canManageRoad(ServerLevel level, ServerPlayer player, NationSavedData data, RoadNetworkRecord road) {
         if (player == null || data == null || road == null) {
             return false;
         }
         if (player.hasPermissions(2)) {
             return true;
         }
-        NationRecord nation = NationService.getPlayerNation(player.level(), player.getUUID());
+        if (level == null) {
+            return false;
+        }
+        NationRecord nation = NationService.getPlayerNation(level, player.getUUID());
         if (nation != null && nation.nationId().equalsIgnoreCase(road.nationId())
-                && NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_CLAIMS)) {
+                && NationService.hasPermission(level, player.getUUID(), NationPermission.MANAGE_CLAIMS)) {
             return true;
         }
         TownRecord town = data.getTown(road.townId());

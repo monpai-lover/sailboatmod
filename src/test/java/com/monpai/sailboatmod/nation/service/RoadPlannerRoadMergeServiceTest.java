@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import net.minecraft.core.BlockPos;
@@ -210,6 +211,42 @@ class RoadPlannerRoadMergeServiceTest {
                 data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 4096, RoadPlannerMergeScope.OWN_NATION);
 
         assertTrue(overlays.isEmpty());
+    }
+
+    @Test
+    void validateSelectionUsesSuppliedBuildDimensionContext() {
+        NationSavedData data = new NationSavedData();
+        BlockPos overworldAnchor = new BlockPos(4, 64, 0);
+        BlockPos netherAnchor = new BlockPos(4, 64, 0);
+        data.putRoadNetwork(road("overworld-road", "alpha", OVERWORLD, overworldAnchor));
+        data.putRoadNetwork(road("nether-road", "alpha", NETHER, netherAnchor));
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "overworld-road",
+                0,
+                overworldAnchor,
+                RoadPlannerMergeScope.OWN_NATION
+        );
+
+        assertTrue(RoadPlannerRoadMergeService.validateSelectionForTest(
+                data,
+                "alpha",
+                true,
+                OVERWORLD,
+                overworldAnchor,
+                8,
+                selection,
+                RoadPlannerSegmentType.ROAD,
+                RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge()).isPresent());
+        assertTrue(RoadPlannerRoadMergeService.validateSelectionForTest(
+                data,
+                "alpha",
+                true,
+                NETHER,
+                overworldAnchor,
+                8,
+                selection,
+                RoadPlannerSegmentType.ROAD,
+                RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge()).isEmpty());
     }
 
     private static List<RoadPlannerRoadMergeService.Candidate> find(NationSavedData data,
