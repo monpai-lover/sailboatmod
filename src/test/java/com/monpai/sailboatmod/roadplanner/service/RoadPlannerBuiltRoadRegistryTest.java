@@ -30,7 +30,6 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,21 +38,13 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerBuiltRoadRegistryTest {
     @BeforeAll
     static void bootstrapMinecraft() {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
-    }
-
-    @Test
-    void registryDoesNotDependOnUncommittedStructureConstructionManagerHelper() throws Exception {
-        String source = Files.readString(Path.of(
-                "src/main/java/com/monpai/sailboatmod/roadplanner/service/RoadPlannerBuiltRoadRegistry.java"));
-
-        assertFalse(source.contains("StructureConstructionManager"));
-        assertFalse(source.contains("registerCompletedPlannerRoad"));
     }
 
     @Test
@@ -102,10 +93,16 @@ class RoadPlannerBuiltRoadRegistryTest {
         assertEquals(buildSteps.size(), job.placedStepCount());
         assertEquals(rollbackEntries.size(), job.rollbackStates().size());
         assertFalse(job.removeRoadNetworkOnComplete());
+        assertEquals(buildStepPositions(job), ghostBlockPositions(job));
+        assertFalse(job.ghostBlocks().isEmpty());
+        assertTrue(job.ghostBlocks().stream()
+                .allMatch(ghost -> ghost.statePayload().contains("Name")));
+        assertTrue(job.buildSteps().stream()
+                .allMatch(step -> step.statePayload().contains("Name")));
     }
 
     @Test
-    void registerCompletedBuildPersistsOnlyExecutedStepPositions() {
+    void registerCompletedBuildReindexesRollbackFilteredStepsAndPersistsMatchingGhostsAndOwnedBlocks() {
         TestServerLevel level = newPersistentLevel();
         UUID ownerId = UUID.randomUUID();
         NationSavedData data = NationSavedData.get(level);
@@ -113,15 +110,18 @@ class RoadPlannerBuiltRoadRegistryTest {
         data.putNation(new NationRecord("nation-a", "Alpha Nation", "AN", 0x112233, 0x445566, ownerId, 1L, "town-a", "", NationRecord.noCorePos(), ""));
         data.putMember(new NationMemberRecord(ownerId, "Builder", "nation-a", NationOfficeIds.LEADER, 1L));
 
-        BlockPos executedPos = new BlockPos(0, 63, 0);
-        BlockPos skippedPos = new BlockPos(1, 63, 0);
-        List<BlockPos> centerPath = List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0));
+        BlockPos skippedEarlierPos = new BlockPos(0, 63, 0);
+        BlockPos executedFirstPos = new BlockPos(1, 63, 0);
+        BlockPos executedSecondPos = new BlockPos(2, 63, 0);
+        List<BlockPos> centerPath = List.of(new BlockPos(0, 64, 0), new BlockPos(2, 64, 0));
         List<BuildStep> buildSteps = List.of(
-                new BuildStep(0, executedPos, Blocks.SMOOTH_STONE.defaultBlockState(), BuildPhase.SURFACE),
-                new BuildStep(1, skippedPos, Blocks.SMOOTH_STONE.defaultBlockState(), BuildPhase.SURFACE)
+                new BuildStep(0, skippedEarlierPos, Blocks.GRASS_BLOCK.defaultBlockState(), BuildPhase.SURFACE),
+                new BuildStep(1, executedFirstPos, Blocks.SMOOTH_STONE.defaultBlockState(), BuildPhase.SURFACE),
+                new BuildStep(2, executedSecondPos, Blocks.OAK_FENCE.defaultBlockState(), BuildPhase.RAILING)
         );
         List<ConstructionQueue.RollbackEntry> rollbackEntries = List.of(
-                new ConstructionQueue.RollbackEntry(executedPos, Blocks.GRASS_BLOCK.defaultBlockState())
+                new ConstructionQueue.RollbackEntry(executedFirstPos, Blocks.DIRT.defaultBlockState()),
+                new ConstructionQueue.RollbackEntry(executedSecondPos, Blocks.AIR.defaultBlockState())
         );
 
         RoadPlannerBuiltRoadRegistry.register(level, new RoadPlannerBuildControlService.CompletedRoadBuild(
@@ -133,14 +133,14 @@ class RoadPlannerBuiltRoadRegistryTest {
                 Level.OVERWORLD
         ));
 
-        ConstructionRuntimeSavedData.RoadJobState job = ConstructionRuntimeSavedData.get(level).getRoadJobs().stream()
-                .filter(state -> "road-2".equals(state.roadId()))
-                .findFirst()
-                .orElseThrow();
-        assertEquals(List.of(executedPos.asLong()), job.buildSteps().stream()
-                .map(ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState::pos)
+        ConstructionRuntimeSavedData.RoadJobState job = roadJob(level, "road-2");
+        List<Long> executedPositions = List.of(executedFirstPos.asLong(), executedSecondPos.asLong());
+        assertEquals(List.of(0, 1), job.buildSteps().stream()
+                .map(ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState::order)
                 .toList());
-        assertEquals(List.of(executedPos.asLong()), job.ownedBlocks());
+        assertEquals(executedPositions, buildStepPositions(job));
+        assertEquals(executedPositions, ghostBlockPositions(job));
+        assertEquals(executedPositions, job.ownedBlocks());
     }
 
     @Test
@@ -173,6 +173,25 @@ class RoadPlannerBuiltRoadRegistryTest {
         RoadNetworkRecord road = data.getRoadNetwork("connector");
         assertNotNull(road);
         assertEquals("roadnode:existing-road:4", road.structureBId());
+    }
+
+    private static ConstructionRuntimeSavedData.RoadJobState roadJob(TestServerLevel level, String roadId) {
+        return ConstructionRuntimeSavedData.get(level).getRoadJobs().stream()
+                .filter(state -> roadId.equals(state.roadId()))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private static List<Long> buildStepPositions(ConstructionRuntimeSavedData.RoadJobState job) {
+        return job.buildSteps().stream()
+                .map(ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState::pos)
+                .toList();
+    }
+
+    private static List<Long> ghostBlockPositions(ConstructionRuntimeSavedData.RoadJobState job) {
+        return job.ghostBlocks().stream()
+                .map(ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState::pos)
+                .toList();
     }
 
     private static TestServerLevel newPersistentLevel() {

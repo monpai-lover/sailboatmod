@@ -13,6 +13,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtUtils;
 import net.minecraft.server.level.ServerLevel;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -53,7 +54,7 @@ final class RoadPlannerBuiltRoadRegistry {
                 level.dimension().location().toString(),
                 build.ownerId() == null ? "" : build.ownerId().toString(),
                 toLongList(road.path()),
-                List.of(),
+                serializeGhostBlocks(executedSteps),
                 serializeBuildSteps(executedSteps),
                 rollbackStatesFromQueueEntries(build.rollbackEntries()),
                 ownedBlocks(executedSteps),
@@ -95,10 +96,27 @@ final class RoadPlannerBuiltRoadRegistry {
         if (buildSteps == null || buildSteps.isEmpty()) {
             return List.of();
         }
+        ArrayList<ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState> serialized = new ArrayList<>(buildSteps.size());
+        for (BuildStep step : buildSteps) {
+            if (step == null || step.pos() == null) {
+                continue;
+            }
+            serialized.add(new ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState(
+                    serialized.size(),
+                    step.pos().asLong(),
+                    blockStatePayload(step.state())
+            ));
+        }
+        return serialized.isEmpty() ? List.of() : List.copyOf(serialized);
+    }
+
+    private static List<ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState> serializeGhostBlocks(List<BuildStep> buildSteps) {
+        if (buildSteps == null || buildSteps.isEmpty()) {
+            return List.of();
+        }
         return buildSteps.stream()
                 .filter(step -> step != null && step.pos() != null)
-                .map(step -> new ConstructionRuntimeSavedData.RoadJobState.RoadBuildStepState(
-                        step.order(),
+                .map(step -> new ConstructionRuntimeSavedData.RoadJobState.RoadGhostBlockState(
                         step.pos().asLong(),
                         blockStatePayload(step.state())))
                 .toList();
