@@ -267,7 +267,9 @@ public final class RoadPlannerRoadMergeService {
     }
 
     private static boolean isBridgeSegment(RoadPlannerSegmentType segmentType) {
-        return segmentType == RoadPlannerSegmentType.BRIDGE_SMALL || segmentType == RoadPlannerSegmentType.BRIDGE_MAJOR;
+        return segmentType == RoadPlannerSegmentType.BRIDGE_SMALL
+                || segmentType == RoadPlannerSegmentType.BRIDGE_MAJOR
+                || segmentType == RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE;
     }
 
     private static List<BlockPos> visiblePathInRegion(List<BlockPos> path, int minX, int maxX, int minZ, int maxZ) {

@@ -137,6 +137,9 @@ class RoadPlannerRoadMergeServiceTest {
         assertTrue(RoadPlannerRoadMergeService.findCandidatesForTest(data, "alpha", true, OVERWORLD,
                 roadAnchor, 4, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.BRIDGE_SMALL,
                 RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge()).isEmpty());
+        assertTrue(RoadPlannerRoadMergeService.findCandidatesForTest(data, "alpha", true, OVERWORLD,
+                roadAnchor, 4, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE,
+                RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge()).isEmpty());
 
         List<RoadPlannerRoadMergeService.Candidate> candidates = find(data, "alpha", true,
                 roadAnchor, 4, RoadPlannerMergeScope.OWN_NATION, pos -> pos.equals(bridgeAnchor));
