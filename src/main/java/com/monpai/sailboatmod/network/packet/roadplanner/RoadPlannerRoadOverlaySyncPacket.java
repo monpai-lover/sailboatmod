@@ -8,6 +8,7 @@ import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.NetworkEvent;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -43,9 +44,22 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId, List<Entry> roads
             roads.add(new Entry(
                     buffer.readUtf(128),
                     buffer.readEnum(RoadPlannerMergeRelationship.class),
-                    RoadPlannerPacketCodec.readBlockPosList(buffer)));
+                    readCappedBlockPosList(buffer)));
         }
         return new RoadPlannerRoadOverlaySyncPacket(sessionId, roads);
+    }
+
+    private static List<BlockPos> readCappedBlockPosList(FriendlyByteBuf buffer) {
+        int advertisedCount = Math.max(0, buffer.readVarInt());
+        int keptCount = Math.min(MAX_PATH_POINTS, advertisedCount);
+        List<BlockPos> positions = new ArrayList<>(keptCount);
+        for (int index = 0; index < advertisedCount; index++) {
+            BlockPos pos = buffer.readBlockPos();
+            if (index < MAX_PATH_POINTS) {
+                positions.add(pos);
+            }
+        }
+        return List.copyOf(positions);
     }
 
     public static void handle(RoadPlannerRoadOverlaySyncPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {

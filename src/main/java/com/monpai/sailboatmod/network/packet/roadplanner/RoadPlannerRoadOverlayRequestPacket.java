@@ -19,9 +19,6 @@ public record RoadPlannerRoadOverlayRequestPacket(UUID sessionId,
                                                   BlockPos regionCenter,
                                                   int regionSize,
                                                   RoadPlannerMergeScope scope) {
-    public static final int MIN_REGION_SIZE = 128;
-    public static final int MAX_REGION_SIZE = 512;
-
     public RoadPlannerRoadOverlayRequestPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
         worldId = worldId == null ? "" : worldId;
@@ -78,6 +75,6 @@ public record RoadPlannerRoadOverlayRequestPacket(UUID sessionId,
     }
 
     public static int normalizeRegionSize(int requestedSize) {
-        return Math.max(MIN_REGION_SIZE, Math.min(MAX_REGION_SIZE, requestedSize));
+        return Math.max(1, requestedSize);
     }
 }

@@ -187,6 +187,45 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals(overlayRequest, roundTrip(overlayRequest, RoadPlannerRoadOverlayRequestPacket::encode, RoadPlannerRoadOverlayRequestPacket::decode));
         assertEquals(overlaySync, roundTrip(overlaySync, RoadPlannerRoadOverlaySyncPacket::encode, RoadPlannerRoadOverlaySyncPacket::decode));
     }
+    @Test
+    void roadOverlayRequestPreservesSmallPositiveRegionSize() {
+        RoadPlannerRoadOverlayRequestPacket packet = new RoadPlannerRoadOverlayRequestPacket(
+                UUID.randomUUID(),
+                "world_a",
+                "minecraft:overworld",
+                new BlockPos(0, 64, 0),
+                64,
+                RoadPlannerMergeScope.OWN_NATION);
+
+        RoadPlannerRoadOverlayRequestPacket decoded = roundTrip(
+                packet,
+                RoadPlannerRoadOverlayRequestPacket::encode,
+                RoadPlannerRoadOverlayRequestPacket::decode);
+
+        assertEquals(64, decoded.regionSize());
+    }
+
+    @Test
+    void roadOverlaySyncDecodeCapsPathPointsAndConsumesExtras() {
+        UUID sessionId = UUID.randomUUID();
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerPacketCodec.writeUuid(buffer, sessionId);
+        buffer.writeVarInt(1);
+        RoadPlannerPacketCodec.writeString(buffer, "road_a", 128);
+        buffer.writeEnum(RoadPlannerMergeRelationship.TRADE);
+        buffer.writeVarInt(130);
+        for (int index = 0; index < 130; index++) {
+            buffer.writeBlockPos(new BlockPos(index, 64, 0));
+        }
+        buffer.writeVarInt(99);
+
+        RoadPlannerRoadOverlaySyncPacket decoded = RoadPlannerRoadOverlaySyncPacket.decode(buffer);
+
+        assertEquals(1, decoded.roads().size());
+        assertEquals(128, decoded.roads().get(0).path().size());
+        assertEquals(new BlockPos(127, 64, 0), decoded.roads().get(0).path().get(127));
+        assertEquals(99, buffer.readVarInt());
+    }
     private <T> T roundTrip(T packet, PacketEncoder<T> encoder, PacketDecoder<T> decoder) {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         encoder.encode(packet, buffer);
