@@ -377,6 +377,43 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void sameSessionRoadOverlayResponseForSupersededViewportIsIgnored() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.setTileManagerForTest(RoadPlannerTileManager.forTest(
+                new File("roadplanner_tile_test"),
+                "world_a",
+                "minecraft:overworld"));
+        screen.init();
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        RoadPlannerRoadOverlayRequestPacket firstRequest = screen.lastRoadOverlayRequestForTest();
+
+        screen.mouseClicked(map.x() + 220, map.y() + 220, 2);
+        screen.mouseDragged(map.x() + 320, map.y() + 260, 2, 100, 40);
+        screen.mouseReleased(map.x() + 320, map.y() + 260, 2);
+        RoadPlannerRoadOverlayRequestPacket secondRequest = screen.lastRoadOverlayRequestForTest();
+
+        screen.applyRoadOverlays(
+                screen.state().sessionId(),
+                firstRequest.regionCenter(),
+                firstRequest.regionSize(),
+                firstRequest.scope(),
+                List.of(roadOverlay("stale_road", RoadPlannerMergeRelationship.TRADE, BlockPos.ZERO, new BlockPos(8, 64, 0))));
+
+        assertEquals(0, screen.roadOverlayCountForTest());
+
+        screen.applyRoadOverlays(
+                screen.state().sessionId(),
+                secondRequest.regionCenter(),
+                secondRequest.regionSize(),
+                secondRequest.scope(),
+                List.of(roadOverlay("latest_road", RoadPlannerMergeRelationship.OWN, BlockPos.ZERO, new BlockPos(8, 64, 0))));
+
+        List<RoadPlannerScreen.RoadOverlayRenderStateForTest> states = screen.roadOverlayRenderStateForTest();
+        assertEquals(1, states.size());
+        assertEquals("latest_road", states.get(0).roadId());
+    }
+
+    @Test
     void selectedMergeAnchorIsReportedForRoadOverlayRendering() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();

@@ -71,7 +71,12 @@ public record RoadPlannerRoadOverlayRequestPacket(UUID sessionId,
                         overlay.relationship(),
                         overlay.path()))
                 .toList();
-        ModNetwork.CHANNEL.sendTo(new RoadPlannerRoadOverlaySyncPacket(packet.sessionId(), entries),
+        ModNetwork.CHANNEL.sendTo(new RoadPlannerRoadOverlaySyncPacket(
+                        packet.sessionId(),
+                        packet.regionCenter(),
+                        packet.regionSize(),
+                        packet.scope(),
+                        entries),
                 sender.connection.connection,
                 NetworkDirection.PLAY_TO_CLIENT);
     }

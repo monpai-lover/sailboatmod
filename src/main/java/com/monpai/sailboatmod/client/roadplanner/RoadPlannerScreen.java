@@ -650,11 +650,38 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public void applyRoadOverlays(UUID sessionId, List<RoadPlannerRoadOverlaySyncPacket.Entry> roads) {
+        RoadPlannerRoadOverlayRequestPacket request = lastRoadOverlayRequest;
+        if (request != null) {
+            applyRoadOverlays(sessionId, request.regionCenter(), request.regionSize(), request.scope(), roads);
+            return;
+        }
         if (!state.sessionId().equals(sessionId)) {
             return;
         }
         if (!mergeScope.enabled()) {
             roadOverlays = List.of();
+            return;
+        }
+        roadOverlays = roads == null ? List.of() : List.copyOf(roads);
+    }
+
+    public void applyRoadOverlays(UUID sessionId,
+                                  BlockPos regionCenter,
+                                  int regionSize,
+                                  RoadPlannerMergeScope scope,
+                                  List<RoadPlannerRoadOverlaySyncPacket.Entry> roads) {
+        if (!state.sessionId().equals(sessionId)) {
+            return;
+        }
+        if (!mergeScope.enabled()) {
+            roadOverlays = List.of();
+            return;
+        }
+        RoadPlannerRoadOverlayRequestPacket request = lastRoadOverlayRequest;
+        if (request == null
+                || !request.regionCenter().equals(regionCenter)
+                || request.regionSize() != RoadPlannerRoadOverlayRequestPacket.normalizeRegionSize(regionSize)
+                || request.scope() != scope) {
             return;
         }
         roadOverlays = roads == null ? List.of() : List.copyOf(roads);

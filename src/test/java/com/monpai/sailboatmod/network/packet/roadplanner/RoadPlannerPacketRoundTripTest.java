@@ -179,7 +179,12 @@ class RoadPlannerPacketRoundTripTest {
                 sessionId, requestId, new BlockPos(8, 64, 1), 12, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.ROAD);
         RoadPlannerRoadOverlayRequestPacket overlayRequest = new RoadPlannerRoadOverlayRequestPacket(
                 sessionId, "world_a", "minecraft:overworld", new BlockPos(0, 64, 0), 256, RoadPlannerMergeScope.ALLIED_OR_TRADE);
-        RoadPlannerRoadOverlaySyncPacket overlaySync = new RoadPlannerRoadOverlaySyncPacket(sessionId, List.of(
+        RoadPlannerRoadOverlaySyncPacket overlaySync = new RoadPlannerRoadOverlaySyncPacket(
+                sessionId,
+                overlayRequest.regionCenter(),
+                overlayRequest.regionSize(),
+                overlayRequest.scope(),
+                List.of(
                 new RoadPlannerRoadOverlaySyncPacket.Entry("road_a", RoadPlannerMergeRelationship.TRADE,
                         List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)))
         ));
@@ -219,6 +224,9 @@ class RoadPlannerPacketRoundTripTest {
     void roadOverlaySyncRejectsOversizeAdvertisedRoadCount() {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         RoadPlannerPacketCodec.writeUuid(buffer, UUID.randomUUID());
+        buffer.writeBlockPos(BlockPos.ZERO);
+        buffer.writeVarInt(128);
+        buffer.writeEnum(RoadPlannerMergeScope.OWN_NATION);
         buffer.writeVarInt(129);
 
         assertThrows(IllegalArgumentException.class, () -> RoadPlannerRoadOverlaySyncPacket.decode(buffer));
@@ -265,6 +273,9 @@ class RoadPlannerPacketRoundTripTest {
         UUID sessionId = UUID.randomUUID();
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         RoadPlannerPacketCodec.writeUuid(buffer, sessionId);
+        buffer.writeBlockPos(BlockPos.ZERO);
+        buffer.writeVarInt(128);
+        buffer.writeEnum(RoadPlannerMergeScope.OWN_NATION);
         buffer.writeVarInt(1);
         RoadPlannerPacketCodec.writeString(buffer, "road_a", 128);
         buffer.writeEnum(RoadPlannerMergeRelationship.TRADE);
