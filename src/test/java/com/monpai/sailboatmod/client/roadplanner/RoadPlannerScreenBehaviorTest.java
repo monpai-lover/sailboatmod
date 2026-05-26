@@ -414,6 +414,43 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void sameSessionRoadOverlayResponseForSupersededMergeScopeIsIgnored() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.setTileManagerForTest(RoadPlannerTileManager.forTest(
+                new File("roadplanner_tile_test"),
+                "world_a",
+                "minecraft:overworld"));
+        screen.init();
+        RoadPlannerRoadOverlayRequestPacket firstRequest = screen.lastRoadOverlayRequestForTest();
+
+        screen.applyRoadOverlays(
+                screen.state().sessionId(),
+                firstRequest.regionCenter(),
+                firstRequest.regionSize(),
+                firstRequest.scope(),
+                List.of(roadOverlay("current_road", RoadPlannerMergeRelationship.OWN, BlockPos.ZERO, new BlockPos(8, 64, 0))));
+
+        clickToolbarAction(screen, RoadPlannerTopToolbar.Group.ROUTE, RoadPlannerTopToolbar.ACTION_MERGE_SCOPE);
+        RoadPlannerRoadOverlayRequestPacket scopeRequest = screen.lastRoadOverlayRequestForTest();
+        assertEquals(RoadPlannerMergeScope.ALLIED_OR_TRADE, scopeRequest.scope());
+        assertEquals(firstRequest.regionCenter(), scopeRequest.regionCenter());
+        assertEquals(firstRequest.regionSize(), scopeRequest.regionSize());
+
+        screen.applyRoadOverlays(
+                screen.state().sessionId(),
+                firstRequest.regionCenter(),
+                firstRequest.regionSize(),
+                firstRequest.scope(),
+                List.of(roadOverlay("stale_scope_road", RoadPlannerMergeRelationship.TRADE, new BlockPos(32, 64, 0), new BlockPos(48, 64, 0))));
+
+        List<RoadPlannerScreen.RoadOverlayRenderStateForTest> states = screen.roadOverlayRenderStateForTest();
+        assertEquals(1, screen.roadOverlayCountForTest());
+        assertEquals(1, states.size());
+        assertEquals("current_road", states.get(0).roadId());
+        assertEquals(RoadPlannerMergeRelationship.OWN, states.get(0).relationship());
+    }
+
+    @Test
     void selectedMergeAnchorIsReportedForRoadOverlayRendering() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
