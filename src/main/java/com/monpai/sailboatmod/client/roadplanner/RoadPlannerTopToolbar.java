@@ -12,6 +12,8 @@ public record RoadPlannerTopToolbar(List<Item> items, RoadPlannerMapLayout.Rect 
     public static final String ACTION_UNDO = "\u64a4\u9500";
     public static final String ACTION_CLEAR = "\u6e05\u9664";
     public static final String ACTION_AUTO_COMPLETE = "\u81ea\u52a8\u8865\u5168";
+    public static final String ACTION_MERGE_SCOPE = "\u5438\u9644\u8303\u56f4";
+    public static final String ACTION_NEXT_MERGE = "\u5207\u6362\u5e76\u5165";
     public static final String ACTION_CONFIRM_BUILD = "\u786e\u8ba4\u5efa\u9020";
     public static final String ACTION_CANCEL = "\u53d6\u6d88";
 
@@ -51,6 +53,8 @@ public record RoadPlannerTopToolbar(List<Item> items, RoadPlannerMapLayout.Rect 
             addAction(items, ACTION_CLEAR, startX, row += 24);
         } else if (group == Group.ROUTE) {
             addAction(items, ACTION_AUTO_COMPLETE, startX, row);
+            addAction(items, ACTION_MERGE_SCOPE, startX, row += 24);
+            addAction(items, ACTION_NEXT_MERGE, startX, row += 24);
             addAction(items, ACTION_CONFIRM_BUILD, startX, row += 24);
             addAction(items, ACTION_CANCEL, startX, row += 24);
         }
@@ -70,7 +74,7 @@ public record RoadPlannerTopToolbar(List<Item> items, RoadPlannerMapLayout.Rect 
         return switch (group) {
             case TOOLS -> 9 * 24 + 2;
             case EDIT -> 2 * 24 + 2;
-            case ROUTE -> 3 * 24 + 2;
+            case ROUTE -> 5 * 24 + 2;
             case NONE -> 0;
         };
     }

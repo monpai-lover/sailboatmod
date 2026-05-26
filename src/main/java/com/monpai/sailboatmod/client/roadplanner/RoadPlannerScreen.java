@@ -9,12 +9,15 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCa
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMergeCandidateRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
 import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
 import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapRegion;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapViewport;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -88,6 +91,11 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private RoadPlannerMapPreloadRequestPacket lastMapPreloadRequest;
     private RoadPlannerMapPreloadProgressPacket lastMapPreloadProgress;
     private RoadPlannerMapPreloadCancelPacket lastMapPreloadCancel;
+    private RoadPlannerMergeScope mergeScope = RoadPlannerMergeScope.OWN_NATION;
+    private List<OpenRoadMergeCandidatesPacket.Entry> mergeCandidates = List.of();
+    private int selectedMergeCandidateIndex = -1;
+    private RoadPlannerMergeCandidateRequestPacket lastMergeCandidateRequest;
+    private List<RoadPlannerRoadOverlaySyncPacket.Entry> roadOverlays = List.of();
     private boolean panning;
     private double lastMouseX;
     private double lastMouseY;
@@ -333,6 +341,22 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         return lastMapPreloadCancel;
     }
 
+    public RoadPlannerMergeCandidateRequestPacket lastMergeCandidateRequestForTest() {
+        return lastMergeCandidateRequest;
+    }
+
+    public RoadPlannerMergeScope mergeScopeForTest() {
+        return mergeScope;
+    }
+
+    public int mergeCandidateCountForTest() {
+        return mergeCandidates.size();
+    }
+
+    public RoadPlannerMergeSelection selectedMergeSelectionForTest() {
+        return selectedMergeSelection();
+    }
+
     public void applyMapPreloadProgress(RoadPlannerMapPreloadProgressPacket packet) {
         if (packet == null || !state.sessionId().equals(packet.sessionId())) {
             return;
@@ -347,6 +371,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public void applyMapTileSync(RoadPlannerMapTileSyncPacket packet) {
+        if (packet != null && packet.purpose() == RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH) {
+            if (tileManager != null) {
+                tileManager.applyTileSync(packet);
+                tileRenderScheduler.clear();
+                mapStatusLine = "\u5730\u56fe: \u5df2\u5237\u65b0\u5df2\u5efa\u9053\u8def\u533a\u5757";
+            }
+            return;
+        }
         if (packet == null || !state.sessionId().equals(packet.sessionId())) {
             return;
         }
@@ -407,6 +439,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             case ENTER_PLANNER_PRELOAD -> "地图: 进入规划器预热中";
             case ROUTE_PRELOAD -> "地图: 路线预热中";
             case FORCE_RENDER -> "地图: 强制渲染预热中";
+            case BUILT_ROAD_REFRESH -> "地图: 已建道路刷新中";
         };
         if (testMode || minecraft == null || minecraft.getConnection() == null) {
             return;
@@ -424,6 +457,75 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return;
         }
         ModNetwork.CHANNEL.sendToServer(lastMapPreloadCancel);
+    }
+
+    private void requestMergeCandidates(BlockPos probe, RoadPlannerSegmentType segmentType) {
+        RoadPlannerSegmentType safeSegmentType = segmentType == null ? RoadPlannerSegmentType.ROAD : segmentType;
+        if (probe == null || !mergeScope.enabled()) {
+            return;
+        }
+        if (state.activeTool() == RoadToolType.BRIDGE || state.activeTool() == RoadToolType.WATER_CROSSING) {
+            return;
+        }
+        if (safeSegmentType == RoadPlannerSegmentType.BRIDGE_SMALL
+                || safeSegmentType == RoadPlannerSegmentType.BRIDGE_MAJOR
+                || safeSegmentType == RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE) {
+            return;
+        }
+        RoadPlannerMergeCandidateRequestPacket request = new RoadPlannerMergeCandidateRequestPacket(
+                state.sessionId(),
+                probe,
+                RoadPlannerMergeCandidateRequestPacket.MAX_RADIUS,
+                mergeScope,
+                safeSegmentType
+        );
+        lastMergeCandidateRequest = request;
+        if (testMode || minecraft == null || minecraft.getConnection() == null) {
+            return;
+        }
+        ModNetwork.CHANNEL.sendToServer(request);
+    }
+
+    private RoadPlannerMergeSelection selectedMergeSelection() {
+        if (!mergeScope.enabled() || selectedMergeCandidateIndex < 0 || selectedMergeCandidateIndex >= mergeCandidates.size()) {
+            return RoadPlannerMergeSelection.none();
+        }
+        OpenRoadMergeCandidatesPacket.Entry candidate = mergeCandidates.get(selectedMergeCandidateIndex);
+        return new RoadPlannerMergeSelection(candidate.roadId(), candidate.pathIndex(), candidate.anchorPos(), mergeScope);
+    }
+
+    private void cycleMergeScope() {
+        mergeScope = switch (mergeScope) {
+            case OWN_NATION -> RoadPlannerMergeScope.ALLIED_OR_TRADE;
+            case ALLIED_OR_TRADE -> RoadPlannerMergeScope.DISABLED;
+            case DISABLED -> RoadPlannerMergeScope.OWN_NATION;
+        };
+        if (!mergeScope.enabled()) {
+            mergeCandidates = List.of();
+            selectedMergeCandidateIndex = -1;
+        }
+        statusLine = "\u5438\u9644\u8303\u56f4: " + mergeScope.name();
+    }
+
+    private void cycleMergeCandidate() {
+        if (mergeCandidates.isEmpty()) {
+            selectedMergeCandidateIndex = -1;
+            statusLine = "\u6682\u65e0\u53ef\u5e76\u5165\u9053\u8def";
+            return;
+        }
+        selectedMergeCandidateIndex = selectedMergeCandidateIndex < 0
+                ? 0
+                : (selectedMergeCandidateIndex + 1) % mergeCandidates.size();
+        OpenRoadMergeCandidatesPacket.Entry candidate = mergeCandidates.get(selectedMergeCandidateIndex);
+        statusLine = "\u5e76\u5165: " + candidate.sourceName() + " -> " + candidate.targetName();
+    }
+
+    private BlockPos lastNode() {
+        return linePlan.nodeCount() == 0 ? null : linePlan.nodes().get(linePlan.nodeCount() - 1);
+    }
+
+    private RoadPlannerSegmentType lastSegmentType() {
+        return linePlan.segmentCount() == 0 ? RoadPlannerSegmentType.ROAD : linePlan.segments().get(linePlan.segmentCount() - 1);
     }
 
     public void applyMapSnapshot(RoadMapSnapshotSyncPacket packet) {
@@ -463,13 +565,23 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             forceRenderQueue.enqueueCorridor(expanded.nodes().get(0), expanded.nodes().get(expanded.nodes().size() - 1), 64, "\u81ea\u52a8\u8def\u7ebf\u7f13\u5b58");
         }
         requestRoutePreload(expanded.nodes());
+        requestMergeCandidates(lastNode(), lastSegmentType());
         statusLine = message == null || message.isBlank() ? "\u81ea\u52a8\u8865\u5168\u5b8c\u6210" : message;
     }
 
     public void applyRoadMergeCandidates(UUID sessionId, List<OpenRoadMergeCandidatesPacket.Entry> candidates) {
+        if (!state.sessionId().equals(sessionId)) {
+            return;
+        }
+        mergeCandidates = candidates == null ? List.of() : List.copyOf(candidates);
+        selectedMergeCandidateIndex = mergeCandidates.isEmpty() ? -1 : 0;
     }
 
     public void applyRoadOverlays(UUID sessionId, List<RoadPlannerRoadOverlaySyncPacket.Entry> roads) {
+        if (!state.sessionId().equals(sessionId)) {
+            return;
+        }
+        roadOverlays = roads == null ? List.of() : List.copyOf(roads);
     }
 
     public void setGraphForTest(RoadNetworkGraph graph) {
@@ -960,6 +1072,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                     normalizeCurrentBridgeSegments();
                     selectedNode = null;
                     saveDraft();
+                    requestMergeCandidates(lastNode(), lastSegmentType());
                     statusLine = "已添加贝塞尔曲线节点: " + linePlan.nodeCount();
                     return true;
                 }
@@ -967,6 +1080,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 normalizeCurrentBridgeSegments();
                 selectedNode = null;
                 saveDraft();
+                requestMergeCandidates(lastNode(), lastSegmentType());
                 statusLine = "已添加节点 " + linePlan.nodeCount();
                 return true;
             }
@@ -1177,6 +1291,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             }
             return;
         }
+        if (RoadPlannerTopToolbar.ACTION_MERGE_SCOPE.equals(label)) {
+            cycleMergeScope();
+            return;
+        }
+        if (RoadPlannerTopToolbar.ACTION_NEXT_MERGE.equals(label)) {
+            cycleMergeCandidate();
+            return;
+        }
         if (RoadPlannerTopToolbar.ACTION_CONFIRM_BUILD.equals(label)) {
             if (!linePlan.canConfirm()) {
                 statusLine = linePlan.hasUnresolvedBridgeBlocker() ? "路线存在未解决的桥梁跨越" : "至少需要起点和终点";
@@ -1205,10 +1327,11 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             statusLine = "\u6865\u6881\u7f3a\u5c11\u9646\u5730\u951a\u70b9\u6216\u8def\u7ebf\u8282\u70b9\u4e0d\u8db3\uff0c\u8bf7\u68c0\u67e5\u8def\u7ebf";
             return;
         }
-        linePlan.replaceWith(expanded.nodes(), expanded.segmentTypes());
         saveDraft();
-        if (RoadPlannerGhostPreviewBridge.submitPreview(startTownName, destinationTownName, expanded.nodes(), expanded.segmentTypes(), buildSettings)) {
-            onClose();
+        if (RoadPlannerGhostPreviewBridge.submitPreview(startTownName, destinationTownName, expanded.nodes(), expanded.segmentTypes(), buildSettings, selectedMergeSelection())) {
+            if (minecraft != null) {
+                onClose();
+            }
         }
     }
 
