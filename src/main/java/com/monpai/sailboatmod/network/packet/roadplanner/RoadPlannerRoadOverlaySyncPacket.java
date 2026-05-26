@@ -51,13 +51,18 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId, List<Entry> roads
 
     private static List<BlockPos> readCappedBlockPosList(FriendlyByteBuf buffer) {
         int advertisedCount = Math.max(0, buffer.readVarInt());
-        int keptCount = Math.min(MAX_PATH_POINTS, advertisedCount);
-        List<BlockPos> positions = new ArrayList<>(keptCount);
-        for (int index = 0; index < advertisedCount; index++) {
-            BlockPos pos = buffer.readBlockPos();
-            if (index < MAX_PATH_POINTS) {
-                positions.add(pos);
+        int readCount = Math.min(MAX_PATH_POINTS, advertisedCount);
+        List<BlockPos> positions = new ArrayList<>(readCount);
+        for (int index = 0; index < readCount; index++) {
+            positions.add(buffer.readBlockPos());
+        }
+        int extra = advertisedCount - readCount;
+        if (extra > 0) {
+            long bytesToSkip = (long) extra * Long.BYTES;
+            if (bytesToSkip > Integer.MAX_VALUE || bytesToSkip > buffer.readableBytes()) {
+                throw new IndexOutOfBoundsException("Overlay path advertises more BlockPos data than is readable");
             }
+            buffer.skipBytes((int) bytesToSkip);
         }
         return List.copyOf(positions);
     }
