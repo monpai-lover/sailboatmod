@@ -100,8 +100,10 @@ class RoadPlannerPacketRoundTripTest {
         SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest();
 
         assertFalse(preview.ghostBlocks().isEmpty());
-        assertEquals(2, preview.pathNodes().size());
-        assertEquals(2, preview.pathNodeCount());
+        assertEquals(9, preview.pathNodes().size());
+        assertEquals(9, preview.pathNodeCount());
+        assertEquals(new BlockPos(0, 64, 0), preview.pathNodes().get(0));
+        assertEquals(new BlockPos(8, 64, 0), preview.pathNodes().get(preview.pathNodes().size() - 1));
     }
 
     @Test
@@ -159,12 +161,18 @@ class RoadPlannerPacketRoundTripTest {
                 sessionId,
                 17L,
                 RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER);
+        OpenRoadDemolitionSelectionPacket demolitionList = new OpenRoadDemolitionSelectionPacket(List.of(
+                new OpenRoadDemolitionSelectionPacket.Entry("road_a", "Alpha", "Beta", "MANUAL", 12, 128)
+        ));
+        RoadPlannerSelectDemolitionRoadPacket demolitionSelection = new RoadPlannerSelectDemolitionRoadPacket("road_a");
 
         assertEquals(request, roundTrip(request, RoadPlannerMapPreloadRequestPacket::encode, RoadPlannerMapPreloadRequestPacket::decode));
         assertEquals(tile, roundTrip(tile, RoadPlannerMapTileSyncPacket::encode, RoadPlannerMapTileSyncPacket::decode));
         assertArrayEquals(coverageMask, roundTrip(maskedTile, RoadPlannerMapTileSyncPacket::encode, RoadPlannerMapTileSyncPacket::decode).coverageMask());
         assertEquals(progress, roundTrip(progress, RoadPlannerMapPreloadProgressPacket::encode, RoadPlannerMapPreloadProgressPacket::decode));
         assertEquals(cancel, roundTrip(cancel, RoadPlannerMapPreloadCancelPacket::encode, RoadPlannerMapPreloadCancelPacket::decode));
+        assertEquals(demolitionList, roundTrip(demolitionList, OpenRoadDemolitionSelectionPacket::encode, OpenRoadDemolitionSelectionPacket::decode));
+        assertEquals(demolitionSelection, roundTrip(demolitionSelection, RoadPlannerSelectDemolitionRoadPacket::encode, RoadPlannerSelectDemolitionRoadPacket::decode));
     }
 
     @Test
@@ -186,7 +194,13 @@ class RoadPlannerPacketRoundTripTest {
                 overlayRequest.scope(),
                 List.of(
                 new RoadPlannerRoadOverlaySyncPacket.Entry("road_a", RoadPlannerMergeRelationship.TRADE,
-                        List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)))
+                        List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                        "Alpha - Beta",
+                        8,
+                        "Builder",
+                        "uuid-a",
+                        1234L,
+                        false)
         ));
 
         assertEquals(candidatePacket, roundTrip(candidatePacket, OpenRoadMergeCandidatesPacket::encode, OpenRoadMergeCandidatesPacket::decode));
@@ -195,6 +209,16 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals(requestId, roundTrip(candidateRequest, RoadPlannerMergeCandidateRequestPacket::encode, RoadPlannerMergeCandidateRequestPacket::decode).requestId());
         assertEquals(overlayRequest, roundTrip(overlayRequest, RoadPlannerRoadOverlayRequestPacket::encode, RoadPlannerRoadOverlayRequestPacket::decode));
         assertEquals(overlaySync, roundTrip(overlaySync, RoadPlannerRoadOverlaySyncPacket::encode, RoadPlannerRoadOverlaySyncPacket::decode));
+        RoadPlannerRoadOverlaySyncPacket.Entry decodedOverlay = roundTrip(
+                overlaySync,
+                RoadPlannerRoadOverlaySyncPacket::encode,
+                RoadPlannerRoadOverlaySyncPacket::decode).roads().get(0);
+        assertEquals("Alpha - Beta", decodedOverlay.displayName());
+        assertEquals(8, decodedOverlay.lengthBlocks());
+        assertEquals("Builder", decodedOverlay.creatorName());
+        assertEquals("uuid-a", decodedOverlay.creatorUuid());
+        assertEquals(1234L, decodedOverlay.createdAt());
+        assertFalse(decodedOverlay.legacyMetadata());
     }
 
     @Test
@@ -283,6 +307,12 @@ class RoadPlannerPacketRoundTripTest {
         for (int index = 0; index < 130; index++) {
             buffer.writeBlockPos(new BlockPos(index, 64, 0));
         }
+        RoadPlannerPacketCodec.writeString(buffer, "Alpha - Beta", 128);
+        buffer.writeVarInt(130);
+        RoadPlannerPacketCodec.writeString(buffer, "Builder", 64);
+        RoadPlannerPacketCodec.writeString(buffer, "uuid-a", 64);
+        buffer.writeLong(1234L);
+        buffer.writeBoolean(false);
         buffer.writeVarInt(99);
 
         RoadPlannerRoadOverlaySyncPacket decoded = RoadPlannerRoadOverlaySyncPacket.decode(buffer);
@@ -290,8 +320,11 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals(1, decoded.roads().size());
         assertEquals(128, decoded.roads().get(0).path().size());
         assertEquals(new BlockPos(127, 64, 0), decoded.roads().get(0).path().get(127));
+        assertEquals("Alpha - Beta", decoded.roads().get(0).displayName());
+        assertEquals(130, decoded.roads().get(0).lengthBlocks());
         assertEquals(99, buffer.readVarInt());
     }
+
     private <T> T roundTrip(T packet, PacketEncoder<T> encoder, PacketDecoder<T> decoder) {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         encoder.encode(packet, buffer);

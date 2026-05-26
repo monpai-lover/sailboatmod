@@ -48,6 +48,12 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId,
             RoadPlannerPacketCodec.writeString(buffer, entry.roadId(), 128);
             buffer.writeEnum(entry.relationship());
             RoadPlannerPacketCodec.writeBlockPosList(buffer, entry.path());
+            RoadPlannerPacketCodec.writeString(buffer, entry.displayName(), 128);
+            buffer.writeVarInt(entry.lengthBlocks());
+            RoadPlannerPacketCodec.writeString(buffer, entry.creatorName(), 64);
+            RoadPlannerPacketCodec.writeString(buffer, entry.creatorUuid(), 64);
+            buffer.writeLong(entry.createdAt());
+            buffer.writeBoolean(entry.legacyMetadata());
         }
     }
 
@@ -65,7 +71,13 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId,
             roads.add(new Entry(
                     buffer.readUtf(128),
                     buffer.readEnum(RoadPlannerMergeRelationship.class),
-                    readCappedBlockPosList(buffer)));
+                    readCappedBlockPosList(buffer),
+                    buffer.readUtf(128),
+                    buffer.readVarInt(),
+                    buffer.readUtf(64),
+                    buffer.readUtf(64),
+                    buffer.readLong(),
+                    buffer.readBoolean()));
         }
         return new RoadPlannerRoadOverlaySyncPacket(sessionId, regionCenter, regionSize, scope, roads);
     }
@@ -99,7 +111,19 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId,
         contextSupplier.get().setPacketHandled(true);
     }
 
-    public record Entry(String roadId, RoadPlannerMergeRelationship relationship, List<BlockPos> path) {
+    public record Entry(String roadId,
+                        RoadPlannerMergeRelationship relationship,
+                        List<BlockPos> path,
+                        String displayName,
+                        int lengthBlocks,
+                        String creatorName,
+                        String creatorUuid,
+                        long createdAt,
+                        boolean legacyMetadata) {
+        public Entry(String roadId, RoadPlannerMergeRelationship relationship, List<BlockPos> path) {
+            this(roadId, relationship, path, roadId, 0, "", "", 0L, true);
+        }
+
         public Entry {
             roadId = roadId == null ? "" : roadId;
             relationship = relationship == null ? RoadPlannerMergeRelationship.OWN : relationship;
@@ -108,6 +132,11 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId,
                     .limit(MAX_PATH_POINTS)
                     .map(BlockPos::immutable)
                     .toList();
+            displayName = displayName == null || displayName.isBlank() ? roadId : displayName.trim();
+            lengthBlocks = Math.max(0, lengthBlocks);
+            creatorName = creatorName == null ? "" : creatorName.trim();
+            creatorUuid = creatorUuid == null ? "" : creatorUuid.trim();
+            createdAt = Math.max(0L, createdAt);
         }
     }
 }
