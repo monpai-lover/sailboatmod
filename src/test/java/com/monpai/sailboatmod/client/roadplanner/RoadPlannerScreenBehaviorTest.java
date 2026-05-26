@@ -516,6 +516,31 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void viewportPanRefreshesRoadOverlayRequestForNewCenter() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.setTileManagerForTest(RoadPlannerTileManager.forTest(
+                new File("roadplanner_tile_test"),
+                "world_a",
+                "minecraft:overworld"));
+        screen.init();
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        RoadPlannerRoadOverlayRequestPacket initialRequest = screen.lastRoadOverlayRequestForTest();
+
+        screen.mouseClicked(map.x() + 220, map.y() + 220, 2);
+        screen.mouseDragged(map.x() + 320, map.y() + 260, 2, 100, 40);
+        screen.mouseReleased(map.x() + 320, map.y() + 260, 2);
+
+        RoadPlannerRoadOverlayRequestPacket viewportRequest = screen.lastRoadOverlayRequestForTest();
+        assertTrue(viewportRequest != null);
+        assertEquals(screen.state().sessionId(), viewportRequest.sessionId());
+        assertEquals("world_a", viewportRequest.worldId());
+        assertEquals("minecraft:overworld", viewportRequest.dimensionId());
+        assertEquals(RoadPlannerMergeScope.OWN_NATION, viewportRequest.scope());
+        assertNotEquals(initialRequest.regionCenter(), viewportRequest.regionCenter());
+        assertEquals(initialRequest.regionSize(), viewportRequest.regionSize());
+    }
+
+    @Test
     void bridgeToolDoesNotRequestMergeCandidates() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
