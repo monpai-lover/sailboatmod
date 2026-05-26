@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.service.RoadPlannerRoadMergeService;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.road.model.BuildPhase;
@@ -179,6 +181,58 @@ class RoadPlannerPreviewRequestPacketTest {
     }
 
     @Test
+    void waterCrossingExpandedBridgeOutputClearsMergeBeforePreviewStorage() {
+        List<BlockPos> expandedNodes = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(16, 64, 0),
+                new BlockPos(24, 64, 0)
+        );
+        List<RoadPlannerSegmentType> expandedSegments = List.of(
+                RoadPlannerSegmentType.BRIDGE_SMALL,
+                RoadPlannerSegmentType.BRIDGE_SMALL,
+                RoadPlannerSegmentType.BRIDGE_SMALL
+        );
+        NationSavedData data = new NationSavedData();
+        data.putRoadNetwork(road("existing-road", "alpha", "minecraft:overworld", expandedNodes.get(3)));
+        RoadPlannerMergeSelection submittedSelection = new RoadPlannerMergeSelection(
+                "existing-road",
+                0,
+                expandedNodes.get(3),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                expandedNodes,
+                expandedSegments,
+                RoadPlannerBuildSettings.DEFAULTS,
+                submittedSelection
+        );
+
+        RoadPlannerPreviewRequestPacket safePacket = packet.withValidatedMerge((probe, radius, selection, segmentType) ->
+                RoadPlannerRoadMergeService.findCandidatesForTest(
+                                data,
+                                "alpha",
+                                true,
+                                "minecraft:overworld",
+                                probe,
+                                radius,
+                                selection.scope(),
+                                segmentType,
+                                RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge())
+                        .stream()
+                        .filter(candidate -> candidate.roadId().equals(selection.roadId()))
+                        .filter(candidate -> candidate.pathIndex() == selection.pathIndex())
+                        .filter(candidate -> candidate.anchorPos().equals(selection.anchorPos()))
+                        .findFirst());
+
+        assertEquals(expandedNodes, safePacket.nodes());
+        assertEquals(expandedSegments, safePacket.segmentTypes());
+        assertEquals(RoadPlannerMergeSelection.none(), safePacket.mergeSelection());
+    }
+
+    @Test
     void padsMissingSegmentTypesAsRoad() {
         RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
                 "A",
@@ -332,6 +386,11 @@ class RoadPlannerPreviewRequestPacketTest {
                 "nation-a",
                 RoadPlannerMergeRelationship.OWN
         );
+    }
+
+    private static RoadNetworkRecord road(String roadId, String nationId, String dimensionId, BlockPos... path) {
+        return new RoadNetworkRecord(roadId, nationId, "", dimensionId, "planner:start:0,64,0",
+                "planner:end:10,64,0", List.of(path), 1L, RoadNetworkRecord.SOURCE_TYPE_MANUAL);
     }
 
     private static RoadTerrainSampler deepWaterSampler() {
