@@ -365,13 +365,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public int roadOverlayCountForTest() {
-        return mergeScope.enabled() ? roadOverlays.size() : 0;
+        return roadOverlays.size();
     }
 
     public List<RoadOverlayRenderStateForTest> roadOverlayRenderStateForTest() {
-        if (!mergeScope.enabled()) {
-            return List.of();
-        }
         RoadPlannerMergeSelection selectedMerge = selectedMergeSelection();
         List<RoadOverlayRenderStateForTest> states = new ArrayList<>(roadOverlays.size());
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : roadOverlays) {
@@ -560,11 +557,6 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         lastMergeCandidateRequest = null;
     }
 
-    private void clearRoadOverlayState() {
-        roadOverlays = List.of();
-        lastRoadOverlayRequest = null;
-    }
-
     private void clearAndRequestMergeCandidates() {
         clearMergeCandidateState();
         requestMergeCandidates(lastNode(), lastSegmentType());
@@ -677,10 +669,6 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (!state.sessionId().equals(sessionId)) {
             return;
         }
-        if (!mergeScope.enabled()) {
-            roadOverlays = List.of();
-            return;
-        }
         roadOverlays = roads == null ? List.of() : List.copyOf(roads);
     }
 
@@ -690,10 +678,6 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                                   RoadPlannerMergeScope scope,
                                   List<RoadPlannerRoadOverlaySyncPacket.Entry> roads) {
         if (!state.sessionId().equals(sessionId)) {
-            return;
-        }
-        if (!mergeScope.enabled()) {
-            roadOverlays = List.of();
             return;
         }
         RoadPlannerRoadOverlayRequestPacket request = lastRoadOverlayRequest;
@@ -791,23 +775,23 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     private void requestRoadOverlays() {
-        if (!mergeScope.enabled()) {
-            clearRoadOverlayState();
-            return;
-        }
         RoadPlannerRoadOverlayRequestPacket request = new RoadPlannerRoadOverlayRequestPacket(
                 state.sessionId(),
                 tileManager == null ? "" : tileManager.worldId(),
                 tileManager == null ? "" : tileManager.dimensionId(),
                 currentMapRegionCenter(),
                 currentMapRegionSize(),
-                mergeScope
+                roadOverlayRequestScope()
         );
         lastRoadOverlayRequest = request;
         if (testMode || minecraft == null || minecraft.getConnection() == null) {
             return;
         }
         ModNetwork.CHANNEL.sendToServer(request);
+    }
+
+    private RoadPlannerMergeScope roadOverlayRequestScope() {
+        return mergeScope.enabled() ? mergeScope : RoadPlannerMergeScope.OWN_NATION;
     }
 
     private BlockPos currentMapRegionCenter() {
@@ -1017,9 +1001,6 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private void renderSyncedRoadOverlays(GuiGraphics graphics,
                                           RoadPlannerMapLayout.Rect map,
                                           RoadPlannerRoadOverlayHitTester.Result hoveredRoad) {
-        if (!mergeScope.enabled()) {
-            return;
-        }
         RoadPlannerMergeSelection selectedMerge = selectedMergeSelection();
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : roadOverlays) {
             drawRoadOverlayPath(graphics, map, overlay, roadOverlayColor(overlay.relationship()), 3);

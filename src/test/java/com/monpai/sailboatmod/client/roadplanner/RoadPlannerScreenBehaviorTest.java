@@ -580,8 +580,14 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
-    void disabledMergeScopeClearsAndSuppressesRoadOverlays() {
+    void disabledMergeScopeKeepsOwnRoadOverlaysVisibleWithoutSnapSelection() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.setTileManagerForTest(RoadPlannerTileManager.forTest(
+                new File("roadplanner_tile_test"),
+                "world_a",
+                "minecraft:overworld"));
+        screen.init();
+
         screen.applyRoadOverlays(screen.state().sessionId(), List.of(
                 roadOverlay("own_road", RoadPlannerMergeRelationship.OWN, BlockPos.ZERO, new BlockPos(8, 64, 0))));
 
@@ -589,9 +595,18 @@ class RoadPlannerScreenBehaviorTest {
         clickToolbarAction(screen, RoadPlannerTopToolbar.Group.ROUTE, RoadPlannerTopToolbar.ACTION_MERGE_SCOPE);
 
         assertEquals(RoadPlannerMergeScope.DISABLED, screen.mergeScopeForTest());
-        assertEquals(0, screen.roadOverlayCountForTest());
-        assertTrue(screen.roadOverlayRenderStateForTest().isEmpty());
-        assertNull(screen.lastRoadOverlayRequestForTest());
+        assertEquals(RoadPlannerMergeScope.OWN_NATION, screen.lastRoadOverlayRequestForTest().scope());
+
+        screen.applyRoadOverlays(
+                screen.state().sessionId(),
+                screen.lastRoadOverlayRequestForTest().regionCenter(),
+                screen.lastRoadOverlayRequestForTest().regionSize(),
+                screen.lastRoadOverlayRequestForTest().scope(),
+                List.of(roadOverlay("visible_own_road", RoadPlannerMergeRelationship.OWN, BlockPos.ZERO, new BlockPos(8, 64, 0))));
+
+        assertEquals(RoadPlannerMergeSelection.none(), screen.selectedMergeSelectionForTest());
+        assertEquals(1, screen.roadOverlayCountForTest());
+        assertEquals("visible_own_road", screen.roadOverlayRenderStateForTest().get(0).roadId());
     }
 
     @Test
