@@ -84,6 +84,9 @@ class RoadPlannerBuiltRoadRegistryTest {
         assertEquals(level.dimension().location().toString(), road.dimensionId());
         assertEquals(RoadNetworkRecord.SOURCE_TYPE_MANUAL, road.sourceType());
         assertEquals(centerPath, road.path());
+        assertEquals(ownerId.toString(), road.creatorUuid());
+        assertEquals("Builder", road.creatorName());
+        assertTrue(road.createdAt() > 0L);
 
         List<ConstructionRuntimeSavedData.RoadJobState> roadJobs = ConstructionRuntimeSavedData.get(level).getRoadJobs().stream().toList();
         assertEquals(1, roadJobs.size());

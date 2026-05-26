@@ -18,6 +18,9 @@ public record RoadNetworkRecord(
         String structureBId,
         List<BlockPos> path,
         long updatedAt,
+        long createdAt,
+        String creatorUuid,
+        String creatorName,
         String sourceType
 ) {
     public static final String SOURCE_TYPE_AUTO = "AUTO";
@@ -31,7 +34,23 @@ public record RoadNetworkRecord(
         structureAId = structureAId == null ? "" : structureAId.trim();
         structureBId = structureBId == null ? "" : structureBId.trim();
         path = path == null ? List.of() : List.copyOf(path);
+        createdAt = createdAt <= 0L ? updatedAt : createdAt;
+        creatorUuid = creatorUuid == null ? "" : creatorUuid.trim();
+        creatorName = creatorName == null ? "" : creatorName.trim();
         sourceType = sourceType == null || sourceType.isBlank() ? SOURCE_TYPE_AUTO : sourceType.trim().toUpperCase(Locale.ROOT);
+    }
+
+    public RoadNetworkRecord(String roadId,
+                             String nationId,
+                             String townId,
+                             String dimensionId,
+                             String structureAId,
+                             String structureBId,
+                             List<BlockPos> path,
+                             long updatedAt,
+                             String sourceType) {
+        this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path,
+                updatedAt, updatedAt, "", "", sourceType);
     }
 
     public static String edgeKey(String leftStructureId, String rightStructureId) {
@@ -73,6 +92,9 @@ public record RoadNetworkRecord(
         tag.putString("A", structureAId);
         tag.putString("B", structureBId);
         tag.putLong("UpdatedAt", updatedAt);
+        tag.putLong("CreatedAt", createdAt);
+        tag.putString("CreatorUuid", creatorUuid);
+        tag.putString("CreatorName", creatorName);
         tag.putString("SourceType", sourceType);
         ListTag pathTag = new ListTag();
         for (BlockPos pos : path) {
@@ -93,6 +115,8 @@ public record RoadNetworkRecord(
         String structureA = tag.getString("A");
         String structureB = tag.getString("B");
         String roadId = tag.contains("Id") ? tag.getString("Id") : edgeKey(structureA, structureB);
+        long updatedAt = tag.getLong("UpdatedAt");
+        long createdAt = tag.contains("CreatedAt") ? tag.getLong("CreatedAt") : updatedAt;
         return new RoadNetworkRecord(
                 roadId,
                 tag.getString("NationId"),
@@ -101,7 +125,10 @@ public record RoadNetworkRecord(
                 structureA,
                 structureB,
                 path,
-                tag.getLong("UpdatedAt"),
+                updatedAt,
+                createdAt,
+                tag.contains("CreatorUuid") ? tag.getString("CreatorUuid") : "",
+                tag.contains("CreatorName") ? tag.getString("CreatorName") : "",
                 tag.contains("SourceType") ? tag.getString("SourceType") : SOURCE_TYPE_AUTO
         );
     }

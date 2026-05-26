@@ -30,6 +30,9 @@ final class RoadPlannerBuiltRoadRegistry {
         NationSavedData data = NationSavedData.get(level);
         RoadScope scope = resolveScope(data, build.ownerId());
         List<BlockPos> path = build.centerPath();
+        long now = System.currentTimeMillis();
+        String creatorUuid = build.ownerId() == null ? "" : build.ownerId().toString();
+        String creatorName = creatorName(data, build.ownerId());
         String endAnchor = build.mergeSelection().present()
                 ? "roadnode:" + build.mergeSelection().roadId() + ":" + build.mergeSelection().pathIndex()
                 : plannerAnchorId("end", path.get(path.size() - 1));
@@ -41,7 +44,10 @@ final class RoadPlannerBuiltRoadRegistry {
                 plannerAnchorId("start", path.get(0)),
                 endAnchor,
                 path,
-                System.currentTimeMillis(),
+                now,
+                now,
+                creatorUuid,
+                creatorName,
                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
         );
         List<BuildStep> executedSteps = executedPlannerSteps(build.buildSteps(), build.rollbackEntries());
@@ -180,6 +186,14 @@ final class RoadPlannerBuiltRoadRegistry {
                 ? town.nationId()
                 : member == null ? "" : member.nationId();
         return new RoadScope(nationId, townId);
+    }
+
+    private static String creatorName(NationSavedData data, UUID ownerId) {
+        if (data == null || ownerId == null) {
+            return "";
+        }
+        NationMemberRecord member = data.getMember(ownerId);
+        return member == null || member.lastKnownName() == null ? "" : member.lastKnownName();
     }
 
     private static String plannerAnchorId(String kind, BlockPos pos) {
