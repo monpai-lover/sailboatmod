@@ -357,6 +357,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         return selectedMergeSelection();
     }
 
+    public void setTileManagerForTest(RoadPlannerTileManager tileManager) {
+        this.tileManager = tileManager;
+    }
+
     public void applyMapPreloadProgress(RoadPlannerMapPreloadProgressPacket packet) {
         if (packet == null || !state.sessionId().equals(packet.sessionId())) {
             return;
@@ -371,15 +375,17 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public void applyMapTileSync(RoadPlannerMapTileSyncPacket packet) {
-        if (packet != null && packet.purpose() == RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH) {
-            if (tileManager != null) {
-                tileManager.applyTileSync(packet);
-                tileRenderScheduler.clear();
-                mapStatusLine = "\u5730\u56fe: \u5df2\u5237\u65b0\u5df2\u5efa\u9053\u8def\u533a\u5757";
-            }
+        if (packet == null || !state.sessionId().equals(packet.sessionId())) {
             return;
         }
-        if (packet == null || !state.sessionId().equals(packet.sessionId())) {
+        if (packet.purpose() == RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH) {
+            if (tileManager != null && matchesTileManagerWorld(packet)) {
+                int applied = tileManager.applyTileSync(packet);
+                tileRenderScheduler.clear();
+                if (applied > 0) {
+                    mapStatusLine = "\u5730\u56fe: \u5df2\u5237\u65b0\u5df2\u5efa\u9053\u8def\u533a\u5757";
+                }
+            }
             return;
         }
         if (!routePreloadScheduler.acceptsResponse(packet.sessionId(), packet.requestId(), packet.purpose(), packet.worldId(), packet.dimensionId())) {
@@ -389,6 +395,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             tileManager.applyTileSync(packet);
             mapStatusLine = "地图: 已接收预加载切片";
         }
+    }
+
+    private boolean matchesTileManagerWorld(RoadPlannerMapTileSyncPacket packet) {
+        if (tileManager == null || packet == null) {
+            return false;
+        }
+        return (packet.worldId().isBlank() || packet.worldId().equals(tileManager.worldId()))
+                && (packet.dimensionId().isBlank() || packet.dimensionId().equals(tileManager.dimensionId()));
     }
 
     private void requestEnterPlannerPreload() {
@@ -474,6 +488,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         RoadPlannerMergeCandidateRequestPacket request = new RoadPlannerMergeCandidateRequestPacket(
                 state.sessionId(),
+                UUID.randomUUID(),
                 probe,
                 RoadPlannerMergeCandidateRequestPacket.MAX_RADIUS,
                 mergeScope,
@@ -484,6 +499,17 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return;
         }
         ModNetwork.CHANNEL.sendToServer(request);
+    }
+
+    private void clearMergeCandidateState() {
+        mergeCandidates = List.of();
+        selectedMergeCandidateIndex = -1;
+        lastMergeCandidateRequest = null;
+    }
+
+    private void clearAndRequestMergeCandidates() {
+        clearMergeCandidateState();
+        requestMergeCandidates(lastNode(), lastSegmentType());
     }
 
     private RoadPlannerMergeSelection selectedMergeSelection() {
@@ -500,9 +526,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             case ALLIED_OR_TRADE -> RoadPlannerMergeScope.DISABLED;
             case DISABLED -> RoadPlannerMergeScope.OWN_NATION;
         };
-        if (!mergeScope.enabled()) {
-            mergeCandidates = List.of();
-            selectedMergeCandidateIndex = -1;
+        clearMergeCandidateState();
+        if (mergeScope.enabled()) {
+            requestMergeCandidates(lastNode(), lastSegmentType());
         }
         statusLine = "\u5438\u9644\u8303\u56f4: " + mergeScope.name();
     }
@@ -558,6 +584,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             statusLine = message == null || message.isBlank() ? "\u81ea\u52a8\u8865\u5168\u5931\u8d25" : message;
             return;
         }
+        clearMergeCandidateState();
         RoadPlannerRouteExpander.Result expanded = expandRoute(nodes, segmentTypes);
         linePlan.replaceWith(expanded.nodes(), expanded.segmentTypes());
         saveDraft();
@@ -570,7 +597,12 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public void applyRoadMergeCandidates(UUID sessionId, List<OpenRoadMergeCandidatesPacket.Entry> candidates) {
-        if (!state.sessionId().equals(sessionId)) {
+        applyRoadMergeCandidates(sessionId, new UUID(0L, 0L), candidates);
+    }
+
+    public void applyRoadMergeCandidates(UUID sessionId, UUID requestId, List<OpenRoadMergeCandidatesPacket.Entry> candidates) {
+        if (!state.sessionId().equals(sessionId) || lastMergeCandidateRequest == null
+                || !lastMergeCandidateRequest.requestId().equals(requestId)) {
             return;
         }
         mergeCandidates = candidates == null ? List.of() : List.copyOf(candidates);
@@ -1072,7 +1104,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                     normalizeCurrentBridgeSegments();
                     selectedNode = null;
                     saveDraft();
-                    requestMergeCandidates(lastNode(), lastSegmentType());
+                    clearAndRequestMergeCandidates();
                     statusLine = "已添加贝塞尔曲线节点: " + linePlan.nodeCount();
                     return true;
                 }
@@ -1080,7 +1112,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 normalizeCurrentBridgeSegments();
                 selectedNode = null;
                 saveDraft();
-                requestMergeCandidates(lastNode(), lastSegmentType());
+                clearAndRequestMergeCandidates();
                 statusLine = "已添加节点 " + linePlan.nodeCount();
                 return true;
             }
@@ -1246,6 +1278,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         };
         linePlan.setSegmentTypeFromNode(segIndex, segType);
         saveDraft();
+        clearAndRequestMergeCandidates();
         statusLine = "\u5df2\u5c06\u8be5\u6bb5\u8bbe\u4e3a: " + editableTypeLabel(type);
     }
 
@@ -1268,12 +1301,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             linePlan.removeLastNode();
             restoreStartNodeIfNeeded();
             saveDraft();
+            clearAndRequestMergeCandidates();
             statusLine = "已撤销";
             return;
         }
         if (RoadPlannerTopToolbar.ACTION_CLEAR.equals(label)) {
             resetLineToStartNode();
             saveDraft();
+            clearMergeCandidateState();
             statusLine = "已清除当前路线";
             return;
         }
@@ -1418,6 +1453,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         selectedNode = null;
         saveDraft();
+        clearAndRequestMergeCandidates();
         statusLine = "已擦除节点 #" + hit.nodeIndex();
         return true;
     }
@@ -1443,6 +1479,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             }
             selectedNode = null;
             saveDraft();
+            clearAndRequestMergeCandidates();
             return true;
         }
         if (RoadPlannerEndpointRules.isInRoleClaim(claimOverlayRenderer, target, RoadPlannerClaimOverlay.Role.START)) {
@@ -1450,6 +1487,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             linePlan.setStartNode(target);
             selectedNode = null;
             saveDraft();
+            clearAndRequestMergeCandidates();
             statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u8d77\u70b9";
             return true;
         }
@@ -1461,6 +1499,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             destinationTownPos = target.immutable();
             selectedNode = null;
             saveDraft();
+            clearAndRequestMergeCandidates();
             statusLine = "\u5df2\u8bbe\u7f6e\u9053\u8def\u7ec8\u70b9\uff0c\u672a\u81ea\u52a8\u8fde\u63a5";
             return true;
         }

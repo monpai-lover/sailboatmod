@@ -170,12 +170,13 @@ class RoadPlannerPacketRoundTripTest {
     @Test
     void mergeCandidateAndOverlayPacketsRoundTrip() {
         UUID sessionId = UUID.randomUUID();
-        OpenRoadMergeCandidatesPacket candidatePacket = new OpenRoadMergeCandidatesPacket(sessionId, List.of(
+        UUID requestId = UUID.randomUUID();
+        OpenRoadMergeCandidatesPacket candidatePacket = new OpenRoadMergeCandidatesPacket(sessionId, requestId, List.of(
                 new OpenRoadMergeCandidatesPacket.Entry("road_a", new BlockPos(8, 64, 0), 3, 5,
                         "Alpha", "Beta", "nation-a", RoadPlannerMergeRelationship.OWN)
         ));
         RoadPlannerMergeCandidateRequestPacket candidateRequest = new RoadPlannerMergeCandidateRequestPacket(
-                sessionId, new BlockPos(8, 64, 1), 12, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.ROAD);
+                sessionId, requestId, new BlockPos(8, 64, 1), 12, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.ROAD);
         RoadPlannerRoadOverlayRequestPacket overlayRequest = new RoadPlannerRoadOverlayRequestPacket(
                 sessionId, "world_a", "minecraft:overworld", new BlockPos(0, 64, 0), 256, RoadPlannerMergeScope.ALLIED_OR_TRADE);
         RoadPlannerRoadOverlaySyncPacket overlaySync = new RoadPlannerRoadOverlaySyncPacket(sessionId, List.of(
@@ -185,6 +186,8 @@ class RoadPlannerPacketRoundTripTest {
 
         assertEquals(candidatePacket, roundTrip(candidatePacket, OpenRoadMergeCandidatesPacket::encode, OpenRoadMergeCandidatesPacket::decode));
         assertEquals(candidateRequest, roundTrip(candidateRequest, RoadPlannerMergeCandidateRequestPacket::encode, RoadPlannerMergeCandidateRequestPacket::decode));
+        assertEquals(requestId, roundTrip(candidatePacket, OpenRoadMergeCandidatesPacket::encode, OpenRoadMergeCandidatesPacket::decode).requestId());
+        assertEquals(requestId, roundTrip(candidateRequest, RoadPlannerMergeCandidateRequestPacket::encode, RoadPlannerMergeCandidateRequestPacket::decode).requestId());
         assertEquals(overlayRequest, roundTrip(overlayRequest, RoadPlannerRoadOverlayRequestPacket::encode, RoadPlannerRoadOverlayRequestPacket::decode));
         assertEquals(overlaySync, roundTrip(overlaySync, RoadPlannerRoadOverlaySyncPacket::encode, RoadPlannerRoadOverlaySyncPacket::decode));
     }
@@ -205,6 +208,7 @@ class RoadPlannerPacketRoundTripTest {
     @Test
     void openMergeCandidatesRejectsOversizeAdvertisedCount() {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerPacketCodec.writeUuid(buffer, UUID.randomUUID());
         RoadPlannerPacketCodec.writeUuid(buffer, UUID.randomUUID());
         buffer.writeVarInt(17);
 

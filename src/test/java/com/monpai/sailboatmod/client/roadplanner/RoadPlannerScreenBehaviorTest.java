@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestP
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPreviewRequestPacket;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
@@ -18,18 +19,27 @@ import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
 import com.monpai.sailboatmod.roadplanner.graph.RoadRouteMetadata;
 import gg.essential.elementa.WindowScreen;
 import net.minecraft.core.BlockPos;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerScreenBehaviorTest {
+    @BeforeEach
+    void clearPreviewBridgeTestState() {
+        RoadPlannerGhostPreviewBridge.clearLastPreviewRequestForTest();
+    }
+
     @Test
     void screenIsVanillaAndHandlesEscapeLayers() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
@@ -120,6 +130,7 @@ class RoadPlannerScreenBehaviorTest {
         assertEquals(end, screen.lastMergeCandidateRequestForTest().probe());
         assertEquals(RoadPlannerMergeScope.OWN_NATION, screen.lastMergeCandidateRequestForTest().scope());
         assertEquals(RoadPlannerSegmentType.ROAD, screen.lastMergeCandidateRequestForTest().currentSegmentType());
+        assertNotEquals(new UUID(0L, 0L), screen.lastMergeCandidateRequestForTest().requestId());
     }
 
     @Test
@@ -154,6 +165,56 @@ class RoadPlannerScreenBehaviorTest {
                 "sampling"));
 
         assertTrue(screen.mapStatusLineForTest().contains("sampling"));
+    }
+
+    @Test
+    void builtRoadRefreshTileSyncIgnoresWrongSession() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.setTileManagerForTest(RoadPlannerTileManager.forTest(
+                new File("roadplanner_tile_test"),
+                "world_a",
+                "minecraft:overworld"));
+        String before = screen.mapStatusLineForTest();
+
+        screen.applyMapTileSync(new RoadPlannerMapTileSyncPacket(
+                UUID.randomUUID(),
+                99L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_1,
+                0,
+                0,
+                1,
+                1,
+                new int[]{0xFF00AA00}));
+
+        assertEquals(before, screen.mapStatusLineForTest());
+    }
+
+    @Test
+    void builtRoadRefreshTileSyncIgnoresWrongWorldContext() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        screen.setTileManagerForTest(RoadPlannerTileManager.forTest(
+                new File("roadplanner_tile_test"),
+                "world_a",
+                "minecraft:overworld"));
+        String before = screen.mapStatusLineForTest();
+
+        screen.applyMapTileSync(new RoadPlannerMapTileSyncPacket(
+                screen.state().sessionId(),
+                99L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                "world_b",
+                "minecraft:the_nether",
+                MapLod.LOD_1,
+                0,
+                0,
+                1,
+                1,
+                new int[]{0xFF00AA00}));
+
+        assertEquals(before, screen.mapStatusLineForTest());
     }
 
     @Test
@@ -234,12 +295,15 @@ class RoadPlannerScreenBehaviorTest {
     @Test
     void mergeCandidatePacketSelectsNearestAndCyclesCandidates() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
         List<OpenRoadMergeCandidatesPacket.Entry> candidates = List.of(
                 mergeCandidate("road_a", new BlockPos(8, 64, 0), 2),
                 mergeCandidate("road_b", new BlockPos(16, 64, 0), 5)
         );
 
-        screen.applyRoadMergeCandidates(screen.state().sessionId(), candidates);
+        applyLatestMergeCandidates(screen, candidates);
 
         assertEquals(new RoadPlannerMergeSelection("road_a", 2, new BlockPos(8, 64, 0), RoadPlannerMergeScope.OWN_NATION),
                 screen.selectedMergeSelectionForTest());
@@ -258,8 +322,11 @@ class RoadPlannerScreenBehaviorTest {
     @Test
     void staleMergeCandidatePacketIsIgnored() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
 
-        screen.applyRoadMergeCandidates(screen.state().sessionId(), List.of(
+        applyLatestMergeCandidates(screen, List.of(
                 mergeCandidate("road_a", new BlockPos(8, 64, 0), 2)));
         screen.applyRoadMergeCandidates(UUID.randomUUID(), List.of(
                 mergeCandidate("road_b", new BlockPos(16, 64, 0), 5)));
@@ -269,21 +336,81 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void delayedSameSessionMergeCandidateResponseIsIgnoredAfterNewRequest() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
+        UUID firstRequestId = screen.lastMergeCandidateRequestForTest().requestId();
+
+        screen.mouseClicked(map.x() + 180, map.y() + 120, 0);
+        UUID secondRequestId = screen.lastMergeCandidateRequestForTest().requestId();
+        screen.applyRoadMergeCandidates(screen.state().sessionId(), firstRequestId, List.of(
+                mergeCandidate("road_a", new BlockPos(8, 64, 0), 2)));
+
+        assertEquals(0, screen.mergeCandidateCountForTest());
+        assertEquals(RoadPlannerMergeSelection.none(), screen.selectedMergeSelectionForTest());
+
+        screen.applyRoadMergeCandidates(screen.state().sessionId(), secondRequestId, List.of(
+                mergeCandidate("road_b", new BlockPos(16, 64, 0), 5)));
+
+        assertEquals(new RoadPlannerMergeSelection("road_b", 5, new BlockPos(16, 64, 0), RoadPlannerMergeScope.OWN_NATION),
+                screen.selectedMergeSelectionForTest());
+    }
+
+    @Test
+    void routeMutationClearsCandidatesAndRefreshesPendingMergeRequest() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
+        UUID firstRequestId = screen.lastMergeCandidateRequestForTest().requestId();
+        applyLatestMergeCandidates(screen, List.of(
+                mergeCandidate("road_a", new BlockPos(8, 64, 0), 2)));
+
+        screen.mouseClicked(map.x() + 180, map.y() + 120, 0);
+
+        assertEquals(0, screen.mergeCandidateCountForTest());
+        assertEquals(RoadPlannerMergeSelection.none(), screen.selectedMergeSelectionForTest());
+        assertNotEquals(firstRequestId, screen.lastMergeCandidateRequestForTest().requestId());
+    }
+
+    @Test
+    void enabledMergeScopeChangeClearsCandidatesAndRefetchesCurrentEndpoint() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
+        UUID firstRequestId = screen.lastMergeCandidateRequestForTest().requestId();
+        applyLatestMergeCandidates(screen, List.of(
+                mergeCandidate("road_a", new BlockPos(8, 64, 0), 2)));
+
+        clickToolbarAction(screen, RoadPlannerTopToolbar.Group.ROUTE, RoadPlannerTopToolbar.ACTION_MERGE_SCOPE);
+
+        assertEquals(RoadPlannerMergeScope.ALLIED_OR_TRADE, screen.mergeScopeForTest());
+        assertEquals(0, screen.mergeCandidateCountForTest());
+        assertEquals(RoadPlannerMergeSelection.none(), screen.selectedMergeSelectionForTest());
+        assertNotEquals(firstRequestId, screen.lastMergeCandidateRequestForTest().requestId());
+        assertEquals(RoadPlannerMergeScope.ALLIED_OR_TRADE, screen.lastMergeCandidateRequestForTest().scope());
+    }
+
+    @Test
     void disabledMergeScopeClearsCandidatesAndSuppressesRequests() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
-        screen.applyRoadMergeCandidates(screen.state().sessionId(), List.of(
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
+        applyLatestMergeCandidates(screen, List.of(
                 mergeCandidate("road_a", new BlockPos(8, 64, 0), 2)));
 
         clickToolbarAction(screen, RoadPlannerTopToolbar.Group.ROUTE, RoadPlannerTopToolbar.ACTION_MERGE_SCOPE);
         clickToolbarAction(screen, RoadPlannerTopToolbar.Group.ROUTE, RoadPlannerTopToolbar.ACTION_MERGE_SCOPE);
-        clickToolbarTool(screen, RoadToolType.ROAD);
-        screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
+        screen.mouseClicked(map.x() + 180, map.y() + 120, 0);
 
         assertEquals(RoadPlannerMergeScope.DISABLED, screen.mergeScopeForTest());
         assertEquals(RoadPlannerMergeSelection.none(), screen.selectedMergeSelectionForTest());
         assertEquals(0, screen.mergeCandidateCountForTest());
-        assertEquals(null, screen.lastMergeCandidateRequestForTest());
+        assertNull(screen.lastMergeCandidateRequestForTest());
     }
 
     @Test
@@ -294,7 +421,7 @@ class RoadPlannerScreenBehaviorTest {
         clickToolbarTool(screen, RoadToolType.BRIDGE);
         screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
 
-        assertEquals(null, screen.lastMergeCandidateRequestForTest());
+        assertNull(screen.lastMergeCandidateRequestForTest());
     }
 
     @Test
@@ -387,7 +514,7 @@ class RoadPlannerScreenBehaviorTest {
         clickToolbarTool(screen, RoadToolType.ROAD);
         screen.mouseClicked(map.x() + 120, map.y() + 120, 0);
         screen.mouseClicked(map.x() + 180, map.y() + 120, 0);
-        screen.applyRoadMergeCandidates(screen.state().sessionId(), List.of(
+        applyLatestMergeCandidates(screen, List.of(
                 mergeCandidate("road_a", new BlockPos(8, 64, 0), 2)));
 
         invokeSubmitPreview(screen);
@@ -495,6 +622,13 @@ class RoadPlannerScreenBehaviorTest {
                 "nation-a",
                 RoadPlannerMergeRelationship.OWN
         );
+    }
+
+    private void applyLatestMergeCandidates(RoadPlannerScreen screen, List<OpenRoadMergeCandidatesPacket.Entry> candidates) {
+        screen.applyRoadMergeCandidates(
+                screen.state().sessionId(),
+                screen.lastMergeCandidateRequestForTest().requestId(),
+                candidates);
     }
 
     private void clickToolbarTool(RoadPlannerScreen screen, RoadToolType toolType) {

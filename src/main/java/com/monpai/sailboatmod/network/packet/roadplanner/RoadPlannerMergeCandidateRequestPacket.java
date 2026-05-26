@@ -15,6 +15,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 public record RoadPlannerMergeCandidateRequestPacket(UUID sessionId,
+                                                     UUID requestId,
                                                      BlockPos probe,
                                                      int radius,
                                                      RoadPlannerMergeScope scope,
@@ -23,14 +24,24 @@ public record RoadPlannerMergeCandidateRequestPacket(UUID sessionId,
 
     public RoadPlannerMergeCandidateRequestPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
+        requestId = requestId == null ? UUID.randomUUID() : requestId;
         probe = probe == null ? BlockPos.ZERO : probe.immutable();
         radius = Math.max(1, Math.min(MAX_RADIUS, radius));
         scope = scope == null ? RoadPlannerMergeScope.DISABLED : scope;
         currentSegmentType = currentSegmentType == null ? RoadPlannerSegmentType.ROAD : currentSegmentType;
     }
 
+    public RoadPlannerMergeCandidateRequestPacket(UUID sessionId,
+                                                  BlockPos probe,
+                                                  int radius,
+                                                  RoadPlannerMergeScope scope,
+                                                  RoadPlannerSegmentType currentSegmentType) {
+        this(sessionId, UUID.randomUUID(), probe, radius, scope, currentSegmentType);
+    }
+
     public static void encode(RoadPlannerMergeCandidateRequestPacket packet, FriendlyByteBuf buffer) {
         RoadPlannerPacketCodec.writeUuid(buffer, packet.sessionId());
+        RoadPlannerPacketCodec.writeUuid(buffer, packet.requestId());
         buffer.writeBlockPos(packet.probe());
         buffer.writeVarInt(packet.radius());
         buffer.writeEnum(packet.scope());
@@ -39,6 +50,7 @@ public record RoadPlannerMergeCandidateRequestPacket(UUID sessionId,
 
     public static RoadPlannerMergeCandidateRequestPacket decode(FriendlyByteBuf buffer) {
         return new RoadPlannerMergeCandidateRequestPacket(
+                RoadPlannerPacketCodec.readUuid(buffer),
                 RoadPlannerPacketCodec.readUuid(buffer),
                 buffer.readBlockPos(),
                 buffer.readVarInt(),
@@ -73,7 +85,7 @@ public record RoadPlannerMergeCandidateRequestPacket(UUID sessionId,
                         candidate.ownerNationId(),
                         candidate.relationship()))
                 .toList();
-        ModNetwork.CHANNEL.sendTo(new OpenRoadMergeCandidatesPacket(packet.sessionId(), entries),
+        ModNetwork.CHANNEL.sendTo(new OpenRoadMergeCandidatesPacket(packet.sessionId(), packet.requestId(), entries),
                 sender.connection.connection,
                 NetworkDirection.PLAY_TO_CLIENT);
     }

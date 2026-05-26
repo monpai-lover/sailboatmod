@@ -12,19 +12,25 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-public record OpenRoadMergeCandidatesPacket(UUID sessionId, List<Entry> candidates) {
+public record OpenRoadMergeCandidatesPacket(UUID sessionId, UUID requestId, List<Entry> candidates) {
     private static final int MAX_CANDIDATES = 16;
 
     public OpenRoadMergeCandidatesPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
+        requestId = requestId == null ? new UUID(0L, 0L) : requestId;
         candidates = candidates == null ? List.of() : candidates.stream()
                 .filter(java.util.Objects::nonNull)
                 .limit(MAX_CANDIDATES)
                 .toList();
     }
 
+    public OpenRoadMergeCandidatesPacket(UUID sessionId, List<Entry> candidates) {
+        this(sessionId, new UUID(0L, 0L), candidates);
+    }
+
     public static void encode(OpenRoadMergeCandidatesPacket packet, FriendlyByteBuf buffer) {
         RoadPlannerPacketCodec.writeUuid(buffer, packet.sessionId());
+        RoadPlannerPacketCodec.writeUuid(buffer, packet.requestId());
         List<Entry> candidates = packet.candidates();
         buffer.writeVarInt(Math.min(MAX_CANDIDATES, candidates.size()));
         for (Entry entry : candidates) {
@@ -41,6 +47,7 @@ public record OpenRoadMergeCandidatesPacket(UUID sessionId, List<Entry> candidat
 
     public static OpenRoadMergeCandidatesPacket decode(FriendlyByteBuf buffer) {
         UUID sessionId = RoadPlannerPacketCodec.readUuid(buffer);
+        UUID requestId = RoadPlannerPacketCodec.readUuid(buffer);
         int count = buffer.readVarInt();
         if (count < 0 || count > MAX_CANDIDATES) {
             throw new IllegalArgumentException("Road merge candidate count out of bounds: " + count);
@@ -57,12 +64,12 @@ public record OpenRoadMergeCandidatesPacket(UUID sessionId, List<Entry> candidat
                     buffer.readUtf(64),
                     buffer.readEnum(RoadPlannerMergeRelationship.class)));
         }
-        return new OpenRoadMergeCandidatesPacket(sessionId, candidates);
+        return new OpenRoadMergeCandidatesPacket(sessionId, requestId, candidates);
     }
 
     public static void handle(OpenRoadMergeCandidatesPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         contextSupplier.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
-                RoadPlannerClientHooks.applyRoadMergeCandidates(packet.sessionId(), packet.candidates())));
+                RoadPlannerClientHooks.applyRoadMergeCandidates(packet.sessionId(), packet.requestId(), packet.candidates())));
         contextSupplier.get().setPacketHandled(true);
     }
 

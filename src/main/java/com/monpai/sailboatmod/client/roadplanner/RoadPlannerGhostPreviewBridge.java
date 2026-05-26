@@ -1,6 +1,5 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
-import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPreviewRequestPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
@@ -46,35 +45,20 @@ public final class RoadPlannerGhostPreviewBridge {
         RoadPlannerBuildSettings safeSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
         RoadPlannerMergeSelection safeMergeSelection = mergeSelection == null ? RoadPlannerMergeSelection.none() : mergeSelection;
         RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, safeSettings, safeMergeSelection);
-        lastPreviewRequestForTest = packet;
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft != null && minecraft.getConnection() != null) {
             ModNetwork.CHANNEL.sendToServer(packet);
             return true;
         }
-        try {
-            RoadPlannerClientHooks.updatePreview(new RoadPlannerClientHooks.PreviewState(
-                    startTownName == null ? "" : startTownName,
-                    destinationTownName == null ? "" : destinationTownName,
-                    packet.toPreviewPacketForTest().ghostBlocks().stream()
-                            .map(block -> new RoadPlannerClientHooks.PreviewGhostBlock(block.pos(), block.state()))
-                            .toList(),
-                    nodes,
-                    nodes.size(),
-                    nodes.get(0),
-                    nodes.get(nodes.size() - 1),
-                    nodes.get(nodes.size() - 1),
-                    true,
-                    List.of(),
-                    "",
-                    List.of()
-            ));
-        } catch (ExceptionInInitializerError | NoClassDefFoundError | IllegalArgumentException ignored) {
-        }
+        lastPreviewRequestForTest = packet;
         return true;
     }
 
     static RoadPlannerPreviewRequestPacket lastPreviewRequestForTest() {
         return lastPreviewRequestForTest;
+    }
+
+    static void clearLastPreviewRequestForTest() {
+        lastPreviewRequestForTest = null;
     }
 }

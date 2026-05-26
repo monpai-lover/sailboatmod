@@ -205,6 +205,13 @@ public final class RoadPlannerClientHooks {
         }
     }
 
+    public static void applyRoadMergeCandidates(UUID sessionId, UUID requestId, List<OpenRoadMergeCandidatesPacket.Entry> candidates) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof RoadPlannerScreen screen) {
+            screen.applyRoadMergeCandidates(sessionId, requestId, candidates);
+        }
+    }
+
     public static void applyRoadOverlays(UUID sessionId, List<RoadPlannerRoadOverlaySyncPacket.Entry> roads) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof RoadPlannerScreen screen) {
