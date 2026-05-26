@@ -3,8 +3,10 @@ package com.monpai.sailboatmod.roadplanner.service;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathCompiler;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.nation.service.RoadPlannerRoadMergeService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMergeCandidateRequestPacket;
 import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
@@ -30,6 +32,7 @@ public class RoadPlannerBuildControlService {
     private static final RoadPlannerBuildControlService GLOBAL = new RoadPlannerBuildControlService();
 
     private final CompletedRoadRegistrar completedRoadRegistrar;
+    private final CompletionMergeRevalidator completionMergeRevalidator;
     private final ConcurrentMap<UUID, UUID> activePreviews = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, UUID> activeBuilds = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, PreviewSnapshot> previews = new ConcurrentHashMap<>();
@@ -43,9 +46,17 @@ public class RoadPlannerBuildControlService {
     }
 
     RoadPlannerBuildControlService(CompletedRoadRegistrar completedRoadRegistrar) {
+        this(completedRoadRegistrar, RoadPlannerBuildControlService::revalidateCompletedMergeSelection);
+    }
+
+    RoadPlannerBuildControlService(CompletedRoadRegistrar completedRoadRegistrar,
+                                   CompletionMergeRevalidator completionMergeRevalidator) {
         this.completedRoadRegistrar = completedRoadRegistrar == null
                 ? (level, road) -> { }
                 : completedRoadRegistrar;
+        this.completionMergeRevalidator = completionMergeRevalidator == null
+                ? RoadPlannerBuildControlService::revalidateCompletedMergeSelection
+                : completionMergeRevalidator;
     }
 
     public static RoadPlannerBuildControlService global() {
@@ -164,7 +175,7 @@ public class RoadPlannerBuildControlService {
             if (!queue.hasNext()) {
                 queue.complete();
                 BuildMetadata metadata = buildMetadata.get(entry.getKey());
-                completedRoadRegistrar.register(level, completedRoadBuild(metadata, queue));
+                completedRoadRegistrar.register(level, completedRoadBuild(level, metadata, queue));
                 if (level != null) {
                     RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, queue.getSteps());
                     resendAffectedChunks(level, queue.getSteps());
@@ -414,10 +425,17 @@ public class RoadPlannerBuildControlService {
         return requestedId == null || requestedId.equals(new UUID(0L, 0L)) || requestedId.equals(actualId);
     }
 
-    private static CompletedRoadBuild completedRoadBuild(BuildMetadata metadata, ConstructionQueue queue) {
+    private CompletedRoadBuild completedRoadBuild(ServerLevel level, BuildMetadata metadata, ConstructionQueue queue) {
         if (metadata == null) {
             return new CompletedRoadBuild("", null, List.of(), List.of(), List.of(), Level.OVERWORLD);
         }
+        RoadPlannerMergeSelection mergeSelection = completionMergeRevalidator.revalidate(
+                level,
+                metadata.ownerId(),
+                metadata.centerPath().isEmpty() ? BlockPos.ZERO : metadata.centerPath().get(metadata.centerPath().size() - 1),
+                metadata.mergeSelection(),
+                metadata.finalSegmentType()
+        );
         return new CompletedRoadBuild(
                 metadata.roadId(),
                 metadata.ownerId(),
@@ -425,13 +443,54 @@ public class RoadPlannerBuildControlService {
                 queue == null ? List.of() : queue.getSteps(),
                 queue == null ? List.of() : queue.getRollbackEntries(),
                 metadata.dimension(),
-                metadata.mergeSelection()
+                mergeSelection
         );
+    }
+
+    private static RoadPlannerMergeSelection revalidateCompletedMergeSelection(ServerLevel level,
+                                                                               UUID ownerId,
+                                                                               BlockPos probe,
+                                                                               RoadPlannerMergeSelection selection,
+                                                                               RoadPlannerSegmentType finalSegmentType) {
+        if (selection == null || !selection.present()) {
+            return RoadPlannerMergeSelection.none();
+        }
+        if (level == null) {
+            return selection;
+        }
+        if (level.getServer() == null || ownerId == null) {
+            return RoadPlannerMergeSelection.none();
+        }
+        ServerPlayer owner = level.getServer().getPlayerList().getPlayer(ownerId);
+        if (owner == null) {
+            return RoadPlannerMergeSelection.none();
+        }
+        return RoadPlannerRoadMergeService.validateSelection(
+                        owner,
+                        probe,
+                        RoadPlannerMergeCandidateRequestPacket.MAX_RADIUS,
+                        selection,
+                        finalSegmentType)
+                .map(candidate -> new RoadPlannerMergeSelection(
+                        candidate.roadId(),
+                        candidate.pathIndex(),
+                        candidate.anchorPos(),
+                        selection.scope()))
+                .orElseGet(RoadPlannerMergeSelection::none);
     }
 
     @FunctionalInterface
     interface CompletedRoadRegistrar {
         void register(ServerLevel level, CompletedRoadBuild road);
+    }
+
+    @FunctionalInterface
+    interface CompletionMergeRevalidator {
+        RoadPlannerMergeSelection revalidate(ServerLevel level,
+                                             UUID ownerId,
+                                             BlockPos probe,
+                                             RoadPlannerMergeSelection selection,
+                                             RoadPlannerSegmentType finalSegmentType);
     }
 
     public record CompletedRoadBuild(String roadId,
@@ -463,7 +522,7 @@ public class RoadPlannerBuildControlService {
         }
     }
 
-    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath, RoadPlannerMergeSelection mergeSelection) {
+    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath, RoadPlannerMergeSelection mergeSelection, RoadPlannerSegmentType finalSegmentType) {
         private BuildMetadata {
             sourceTownName = sourceTownName == null ? "" : sourceTownName;
             targetTownName = targetTownName == null ? "" : targetTownName;
@@ -473,6 +532,7 @@ public class RoadPlannerBuildControlService {
                     .map(BlockPos::immutable)
                     .toList();
             mergeSelection = mergeSelection == null ? RoadPlannerMergeSelection.none() : mergeSelection;
+            finalSegmentType = finalSegmentType == null ? RoadPlannerSegmentType.ROAD : finalSegmentType;
         }
 
         static BuildMetadata from(UUID ownerId, UUID jobId, PreviewSnapshot snapshot, ConstructionQueue queue, ResourceKey<Level> dimension) {
@@ -483,7 +543,10 @@ public class RoadPlannerBuildControlService {
                 focusPos = queue.getSteps().get(0).pos();
             }
             RoadPlannerMergeSelection mergeSelection = snapshot == null ? RoadPlannerMergeSelection.none() : snapshot.mergeSelection();
-            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos, dimension, resolveCenterPath(snapshot, queue), mergeSelection);
+            RoadPlannerSegmentType finalSegmentType = snapshot == null || snapshot.segmentTypes().isEmpty()
+                    ? RoadPlannerSegmentType.ROAD
+                    : snapshot.segmentTypes().get(snapshot.segmentTypes().size() - 1);
+            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos, dimension, resolveCenterPath(snapshot, queue), mergeSelection, finalSegmentType);
         }
     }
 

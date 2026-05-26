@@ -337,6 +337,26 @@ class RoadPlannerPreviewRequestPacketTest {
         assertTrue(decoded.ghostBlocks().stream().anyMatch(block -> isSlabType(block.state(), SlabType.TOP)));
     }
 
+    @Test
+    void bridgeRangesCoverExpandedPreviewPathSegments() {
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
+                List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+
+        SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest();
+
+        assertTrue(preview.pathNodes().size() > 2, "bridge preview should expose expanded centerline nodes");
+        assertEquals(1, preview.bridgeRanges().size());
+        SyncRoadPlannerPreviewPacket.BridgeRange range = preview.bridgeRanges().get(0);
+        assertEquals(0, range.startIndex());
+        assertEquals(preview.pathNodes().size() - 2, range.endIndex());
+        assertTrue(range.endIndex() > 1, "bridge range must use expanded preview segment indexes");
+    }
+
     private static Map<BlockPos, BlockState> ghostStatesByPos(List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks) {
         Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
         for (SyncRoadPlannerPreviewPacket.GhostBlock block : ghostBlocks) {

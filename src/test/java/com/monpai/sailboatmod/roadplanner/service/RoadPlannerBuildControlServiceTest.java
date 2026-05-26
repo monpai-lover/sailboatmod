@@ -278,6 +278,38 @@ class RoadPlannerBuildControlServiceTest {
         assertEquals(selection, completedRoads.get(0).mergeSelection());
     }
 
+    @Test
+    void completedBuildClearsMergeSelectionWhenCompletionRevalidationRejectsIt() {
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService(
+                (level, road) -> completedRoads.add(road),
+                (level, ownerId, probe, selection, finalSegmentType) -> RoadPlannerMergeSelection.none()
+        );
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection staleSelection = new RoadPlannerMergeSelection(
+                "existing-road",
+                4,
+                new BlockPos(16, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                staleSelection
+        );
+
+        UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
+        int maxTicks = service.buildQueueForTest(jobId).orElseThrow().getTotalSteps() + 1;
+        for (int i = 0; i < maxTicks && service.buildQueueForTest(jobId).isPresent(); i++) {
+            service.tick(null);
+        }
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
+    }
+
 
     @Test
     void confirmedLongBridgePreviewQueuesRampPierAndRailingSteps() {

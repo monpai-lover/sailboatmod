@@ -12,6 +12,8 @@ import com.monpai.sailboatmod.roadplanner.structure.RoadCenterlinePoint;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
 import com.monpai.sailboatmod.roadplanner.structure.RoadPreviewBlock;
+import com.monpai.sailboatmod.roadplanner.structure.RoadSpan;
+import com.monpai.sailboatmod.roadplanner.structure.RoadSpanType;
 import com.monpai.sailboatmod.roadplanner.structure.RoadStructureMode;
 import com.monpai.sailboatmod.roadplanner.structure.RoadTerrainSampler;
 import net.minecraft.core.BlockPos;
@@ -191,7 +193,8 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 RoadStructureMode.PREVIEW
         );
         List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks = ghostBlocksFromBuildSteps(expansion);
-        List<BlockPos> previewPathNodes = previewPathNodes(expansion);
+        SampledPreviewPath previewPath = previewPathNodes(expansion);
+        List<BlockPos> previewPathNodes = previewPath.nodes();
         BlockPos startHighlight = previewPathNodes.isEmpty() ? nodes.get(0) : previewPathNodes.get(0);
         BlockPos endHighlight = previewPathNodes.isEmpty() ? nodes.get(nodes.size() - 1) : previewPathNodes.get(previewPathNodes.size() - 1);
         return new SyncRoadPlannerPreviewPacket(
@@ -206,7 +209,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 true,
                 List.of(),
                 "",
-                bridgeRangesFromSegments()
+                bridgeRangesFromSpans(expansion, previewPath)
         );
     }
 
@@ -218,49 +221,71 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
         return List.copyOf(ghostBlocks);
     }
 
-    private static List<BlockPos> previewPathNodes(RoadNodeExpansionResult expansion) {
+    private static SampledPreviewPath previewPathNodes(RoadNodeExpansionResult expansion) {
         if (expansion == null || expansion.centerline().isEmpty()) {
-            return List.of();
+            return new SampledPreviewPath(List.of(), List.of());
         }
         List<RoadCenterlinePoint> centerline = expansion.centerline();
         if (centerline.size() <= 64) {
-            return centerline.stream()
-                    .map(RoadPlannerPreviewRequestPacket::targetPos)
-                    .toList();
+            List<BlockPos> nodes = new ArrayList<>(centerline.size());
+            List<Integer> indexes = new ArrayList<>(centerline.size());
+            for (int index = 0; index < centerline.size(); index++) {
+                nodes.add(targetPos(centerline.get(index)));
+                indexes.add(index);
+            }
+            return new SampledPreviewPath(List.copyOf(nodes), List.copyOf(indexes));
         }
         List<BlockPos> sampled = new ArrayList<>();
+        List<Integer> indexes = new ArrayList<>();
         sampled.add(targetPos(centerline.get(0)));
+        indexes.add(0);
         int step = Math.max(1, centerline.size() / 62);
         for (int index = step; index < centerline.size() - 1; index += step) {
             sampled.add(targetPos(centerline.get(index)));
+            indexes.add(index);
         }
         sampled.add(targetPos(centerline.get(centerline.size() - 1)));
-        return List.copyOf(sampled);
+        indexes.add(centerline.size() - 1);
+        return new SampledPreviewPath(List.copyOf(sampled), List.copyOf(indexes));
     }
 
     private static BlockPos targetPos(RoadCenterlinePoint point) {
         return new BlockPos(point.pos().getX(), point.targetY(), point.pos().getZ());
     }
 
-    private List<SyncRoadPlannerPreviewPacket.BridgeRange> bridgeRangesFromSegments() {
+    private static List<SyncRoadPlannerPreviewPacket.BridgeRange> bridgeRangesFromSpans(RoadNodeExpansionResult expansion,
+                                                                                        SampledPreviewPath previewPath) {
+        if (expansion == null || expansion.spans().isEmpty() || previewPath == null || previewPath.nodes().size() < 2) {
+            return List.of();
+        }
         List<SyncRoadPlannerPreviewPacket.BridgeRange> ranges = new ArrayList<>();
-        int index = 0;
-        while (index < segmentTypes.size()) {
-            if (!isBridgeType(segmentTypes.get(index))) {
-                index++;
-                continue;
+        int rangeStart = -1;
+        for (int segmentIndex = 0; segmentIndex < previewPath.nodes().size() - 1; segmentIndex++) {
+            int centerStart = previewPath.centerlineIndexes().get(segmentIndex);
+            int centerEnd = previewPath.centerlineIndexes().get(segmentIndex + 1);
+            boolean bridge = expansion.spans().stream()
+                    .filter(span -> span.type() == RoadSpanType.BRIDGE)
+                    .anyMatch(span -> overlaps(centerStart, centerEnd, span));
+            if (bridge && rangeStart < 0) {
+                rangeStart = segmentIndex;
+            } else if (!bridge && rangeStart >= 0) {
+                ranges.add(new SyncRoadPlannerPreviewPacket.BridgeRange(rangeStart, segmentIndex - 1));
+                rangeStart = -1;
             }
-            int start = index;
-            while (index < segmentTypes.size() && isBridgeType(segmentTypes.get(index))) {
-                index++;
-            }
-            ranges.add(new SyncRoadPlannerPreviewPacket.BridgeRange(start, index));
+        }
+        if (rangeStart >= 0) {
+            ranges.add(new SyncRoadPlannerPreviewPacket.BridgeRange(rangeStart, previewPath.nodes().size() - 2));
         }
         return List.copyOf(ranges);
     }
 
-    private static boolean isBridgeType(RoadPlannerSegmentType type) {
-        return type == RoadPlannerSegmentType.BRIDGE_SMALL || type == RoadPlannerSegmentType.BRIDGE_MAJOR;
+    private static boolean overlaps(int centerStart, int centerEnd, RoadSpan span) {
+        int min = Math.min(centerStart, centerEnd);
+        int max = Math.max(centerStart, centerEnd);
+        return min <= span.endIndex() && max >= span.startIndex();
+    }
+
+    private record SampledPreviewPath(List<BlockPos> nodes, List<Integer> centerlineIndexes) {
     }
 
     private static List<RoadPlannerSegmentType> normalizeSegments(List<RoadPlannerSegmentType> segmentTypes, int nodeCount) {
