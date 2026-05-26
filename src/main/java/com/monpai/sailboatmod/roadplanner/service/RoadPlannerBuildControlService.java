@@ -119,7 +119,7 @@ public class RoadPlannerBuildControlService {
         }
         activePreviews.remove(playerId);
         UUID jobId = UUID.randomUUID();
-        PreviewSnapshot snapshot = previews.remove(previewId);
+        PreviewSnapshot snapshot = revalidatedSnapshot(level, playerId, previews.remove(previewId));
         ConstructionQueue queue = new ConstructionQueue(jobId.toString(), buildSteps(snapshot, level));
         buildQueues.put(jobId, queue);
         ResourceKey<Level> dim = level != null ? level.dimension() : Level.OVERWORLD;
@@ -253,6 +253,29 @@ public class RoadPlannerBuildControlService {
             return List.of();
         }
         return RoadPlannerBuildStepCompiler.compile(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), level);
+    }
+
+    private PreviewSnapshot revalidatedSnapshot(ServerLevel level, UUID ownerId, PreviewSnapshot snapshot) {
+        if (snapshot == null || snapshot.mergeSelection() == null || !snapshot.mergeSelection().present()) {
+            return snapshot;
+        }
+        BlockPos probe = snapshot.nodes().isEmpty()
+                ? BlockPos.ZERO
+                : snapshot.nodes().get(snapshot.nodes().size() - 1);
+        RoadPlannerSegmentType finalSegmentType = snapshot.segmentTypes().isEmpty()
+                ? RoadPlannerSegmentType.ROAD
+                : snapshot.segmentTypes().get(snapshot.segmentTypes().size() - 1);
+        RoadPlannerMergeSelection revalidated = completionMergeRevalidator.revalidate(
+                level,
+                ownerId,
+                probe,
+                snapshot.mergeSelection(),
+                finalSegmentType
+        );
+        if (revalidated == snapshot.mergeSelection() || revalidated.equals(snapshot.mergeSelection())) {
+            return snapshot;
+        }
+        return new PreviewSnapshot(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), revalidated);
     }
 
     static List<BuildStep> nodeAnchoredBridgeStepsForCompiler(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus, com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings settings) {
@@ -459,11 +482,11 @@ public class RoadPlannerBuildControlService {
             return selection;
         }
         if (level.getServer() == null || ownerId == null) {
-            return RoadPlannerMergeSelection.none();
+            return selection;
         }
         ServerPlayer owner = level.getServer().getPlayerList().getPlayer(ownerId);
         if (owner == null) {
-            return RoadPlannerMergeSelection.none();
+            return selection;
         }
         return RoadPlannerRoadMergeService.validateSelection(
                         level,

@@ -229,9 +229,10 @@ public final class RoadPlannerRoadMergeService {
                 continue;
             }
             List<BlockPos> path = road.path();
+            boolean[] bridgeLikeAnchors = bridgeLikeAnchorMask(path, safeBridgeClassifier);
             for (int index = 0; index < path.size(); index++) {
                 BlockPos anchor = path.get(index);
-                if (anchor == null || safeBridgeClassifier.isBridgeAnchor(anchor)) {
+                if (anchor == null || bridgeLikeAnchors[index]) {
                     continue;
                 }
                 double distanceSqr = anchor.distSqr(probe);
@@ -242,6 +243,75 @@ public final class RoadPlannerRoadMergeService {
             }
         }
         return candidates.stream().map(CandidateWithDistance::candidate).toList();
+    }
+
+    private static boolean[] bridgeLikeAnchorMask(List<BlockPos> path, BridgeAnchorClassifier bridgeClassifier) {
+        int size = path == null ? 0 : path.size();
+        boolean[] bridgeLike = new boolean[size];
+        if (size == 0 || bridgeClassifier == null) {
+            return bridgeLike;
+        }
+        int peakBridgeY = Integer.MIN_VALUE;
+        for (int index = 0; index < size; index++) {
+            BlockPos anchor = path.get(index);
+            if (anchor != null && bridgeClassifier.isBridgeAnchor(anchor)) {
+                bridgeLike[index] = true;
+                peakBridgeY = Math.max(peakBridgeY, anchor.getY());
+            }
+        }
+        if (peakBridgeY == Integer.MIN_VALUE) {
+            return bridgeLike;
+        }
+        boolean gradedPath = hasAnyVerticalGrade(path);
+        int minimumRunY = peakBridgeY - 1;
+        for (int index = 0; index < size; index++) {
+            if (!bridgeLike[index]) {
+                continue;
+            }
+            for (int left = index - 1; left >= 0 && isBridgeRunGeometryNode(path, left, minimumRunY, peakBridgeY, gradedPath); left--) {
+                bridgeLike[left] = true;
+            }
+            for (int right = index + 1; right < size && isBridgeRunGeometryNode(path, right, minimumRunY, peakBridgeY, gradedPath); right++) {
+                bridgeLike[right] = true;
+            }
+        }
+        return bridgeLike;
+    }
+
+    private static boolean isBridgeRunGeometryNode(List<BlockPos> path, int index, int minimumRunY, int peakBridgeY, boolean gradedPath) {
+        if (path == null || index < 0 || index >= path.size()) {
+            return false;
+        }
+        BlockPos anchor = path.get(index);
+        if (!gradedPath || anchor == null || anchor.getY() < minimumRunY) {
+            return false;
+        }
+        return anchor.getY() >= peakBridgeY || hasVerticalGrade(path, index);
+    }
+
+    private static boolean hasAnyVerticalGrade(List<BlockPos> path) {
+        if (path == null || path.size() < 2) {
+            return false;
+        }
+        for (int index = 0; index + 1 < path.size(); index++) {
+            BlockPos left = path.get(index);
+            BlockPos right = path.get(index + 1);
+            if (left != null && right != null && left.getY() != right.getY()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasVerticalGrade(List<BlockPos> path, int index) {
+        BlockPos anchor = path.get(index);
+        if (anchor == null) {
+            return false;
+        }
+        BlockPos previous = index > 0 ? path.get(index - 1) : null;
+        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : null;
+        return (previous != null && previous.getY() != anchor.getY())
+                || (next != null && next.getY() != anchor.getY());
     }
 
     private static Optional<Candidate> validateSelection(NationSavedData data,
@@ -369,10 +439,16 @@ public final class RoadPlannerRoadMergeService {
                 return false;
             }
             BlockState current = level.getBlockState(anchorPos);
-            BlockState below = level.getBlockState(anchorPos.below());
-            return !current.getFluidState().isEmpty()
-                    || below.isAir()
-                    || !below.getFluidState().isEmpty();
+            if (!current.getFluidState().isEmpty()) {
+                return true;
+            }
+            for (int depth = 1; depth <= 5; depth++) {
+                BlockState below = level.getBlockState(anchorPos.below(depth));
+                if (below.isAir() || !below.getFluidState().isEmpty()) {
+                    return true;
+                }
+            }
+            return false;
         };
     }
 

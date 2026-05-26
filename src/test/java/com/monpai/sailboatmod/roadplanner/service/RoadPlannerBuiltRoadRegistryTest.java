@@ -30,6 +30,7 @@ import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,15 @@ class RoadPlannerBuiltRoadRegistryTest {
     static void bootstrapMinecraft() {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
+    }
+
+    @Test
+    void registryDoesNotDependOnUncommittedStructureConstructionManagerHelper() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/monpai/sailboatmod/roadplanner/service/RoadPlannerBuiltRoadRegistry.java"));
+
+        assertFalse(source.contains("StructureConstructionManager"));
+        assertFalse(source.contains("registerCompletedPlannerRoad"));
     }
 
     @Test

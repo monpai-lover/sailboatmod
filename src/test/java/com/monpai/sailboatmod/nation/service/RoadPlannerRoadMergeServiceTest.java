@@ -150,6 +150,23 @@ class RoadPlannerRoadMergeServiceTest {
     }
 
     @Test
+    void bridgeLikeRunExcludesRampAndDeckAnchorsButKeepsNearbyLandAnchor() {
+        NationSavedData data = new NationSavedData();
+        BlockPos landStart = new BlockPos(0, 64, 0);
+        BlockPos rampStart = new BlockPos(1, 65, 0);
+        BlockPos underfilledDeck = new BlockPos(2, 66, 0);
+        BlockPos rampEnd = new BlockPos(3, 65, 0);
+        BlockPos landEnd = new BlockPos(4, 64, 0);
+        data.putRoadNetwork(road("own", "alpha", OVERWORLD, landStart, rampStart, underfilledDeck, rampEnd, landEnd));
+
+        List<RoadPlannerRoadMergeService.Candidate> candidates = find(data, "alpha", true,
+                underfilledDeck, 4, RoadPlannerMergeScope.OWN_NATION, pos -> pos.equals(underfilledDeck));
+
+        assertEquals(List.of(landStart, landEnd),
+                candidates.stream().map(RoadPlannerRoadMergeService.Candidate::anchorPos).toList());
+    }
+
+    @Test
     void outputIsCappedAtSixteenCandidates() {
         NationSavedData data = new NationSavedData();
         for (int i = 0; i < 20; i++) {

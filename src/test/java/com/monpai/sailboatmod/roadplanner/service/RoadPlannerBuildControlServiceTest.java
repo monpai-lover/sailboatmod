@@ -9,14 +9,21 @@ import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.structure.RoadPreviewBlock;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import sun.misc.Unsafe;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -310,6 +317,68 @@ class RoadPlannerBuildControlServiceTest {
         assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
     }
 
+    @Test
+    void confirmPreviewRevalidatesAndClearsStaleMergeSelectionBeforeQueueStarts() {
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        AtomicInteger revalidationCalls = new AtomicInteger();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService(
+                (level, road) -> completedRoads.add(road),
+                (level, ownerId, probe, selection, finalSegmentType) -> revalidationCalls.incrementAndGet() == 1
+                        ? RoadPlannerMergeSelection.none()
+                        : selection
+        );
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection staleSelection = new RoadPlannerMergeSelection(
+                "existing-road",
+                4,
+                new BlockPos(16, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                staleSelection
+        );
+
+        UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
+
+        assertEquals(1, revalidationCalls.get());
+        int maxTicks = service.buildQueueForTest(jobId).orElseThrow().getTotalSteps() + 1;
+        for (int i = 0; i < maxTicks && service.buildQueueForTest(jobId).isPresent(); i++) {
+            service.tick(null);
+        }
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
+    }
+
+    @Test
+    void completedBuildPreservesMergeSelectionWhenOwnerIsUnavailableAtCompletion() {
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((level, road) -> completedRoads.add(road));
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "existing-road",
+                4,
+                new BlockPos(16, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                selection
+        );
+
+        service.confirmPreview(playerId, previewId).orElseThrow();
+        service.tick(newOfflineOwnerLevel());
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(selection, completedRoads.get(0).mergeSelection());
+    }
 
     @Test
     void confirmedLongBridgePreviewQueuesRampPierAndRailingSteps() {
@@ -339,5 +408,43 @@ class RoadPlannerBuildControlServiceTest {
             case SURFACE, RAMP, DECK, PIER, RAILING, STREETLIGHT -> true;
             case FOUNDATION -> false;
         };
+    }
+
+    private static TestServerLevel newOfflineOwnerLevel() {
+        TestServerLevel level = allocate(TestServerLevel.class);
+        level.dimensionKey = Level.OVERWORLD;
+        level.server = null;
+        return level;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T allocate(Class<T> type) {
+        try {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            Unsafe unsafe = (Unsafe) field.get(null);
+            return (T) unsafe.allocateInstance(type);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static final class TestServerLevel extends ServerLevel {
+        private ResourceKey<Level> dimensionKey;
+        private MinecraftServer server;
+
+        private TestServerLevel() {
+            super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
+        }
+
+        @Override
+        public ResourceKey<Level> dimension() {
+            return dimensionKey == null ? Level.OVERWORLD : dimensionKey;
+        }
+
+        @Override
+        public MinecraftServer getServer() {
+            return server;
+        }
     }
 }
