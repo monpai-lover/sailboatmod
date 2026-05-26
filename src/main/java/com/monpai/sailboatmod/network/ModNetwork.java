@@ -66,6 +66,7 @@ import com.monpai.sailboatmod.network.packet.UploadNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.UploadTownFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerActionMenuPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCancelPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
@@ -78,9 +79,12 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerConfirmBuild
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerDemolishRoadPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerGraphSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMenuActionPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMergeCandidateRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPreviewRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRegionNavigationPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRenameRoadPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkRegistry;
@@ -674,6 +678,36 @@ public final class ModNetwork {
                 RoadPlannerGraphSyncPacket::encode,
                 RoadPlannerGraphSyncPacket::decode,
                 RoadPlannerGraphSyncPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerMergeCandidateRequestPacket.class,
+                RoadPlannerMergeCandidateRequestPacket::encode,
+                RoadPlannerMergeCandidateRequestPacket::decode,
+                RoadPlannerMergeCandidateRequestPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenRoadMergeCandidatesPacket.class,
+                OpenRoadMergeCandidatesPacket::encode,
+                OpenRoadMergeCandidatesPacket::decode,
+                OpenRoadMergeCandidatesPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerRoadOverlayRequestPacket.class,
+                RoadPlannerRoadOverlayRequestPacket::encode,
+                RoadPlannerRoadOverlayRequestPacket::decode,
+                RoadPlannerRoadOverlayRequestPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerRoadOverlaySyncPacket.class,
+                RoadPlannerRoadOverlaySyncPacket::encode,
+                RoadPlannerRoadOverlaySyncPacket::decode,
+                RoadPlannerRoadOverlaySyncPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
     }

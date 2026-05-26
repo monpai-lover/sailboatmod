@@ -5,6 +5,8 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlan;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import io.netty.buffer.Unpooled;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -164,6 +166,27 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals(cancel, roundTrip(cancel, RoadPlannerMapPreloadCancelPacket::encode, RoadPlannerMapPreloadCancelPacket::decode));
     }
 
+    @Test
+    void mergeCandidateAndOverlayPacketsRoundTrip() {
+        UUID sessionId = UUID.randomUUID();
+        OpenRoadMergeCandidatesPacket candidatePacket = new OpenRoadMergeCandidatesPacket(sessionId, List.of(
+                new OpenRoadMergeCandidatesPacket.Entry("road_a", new BlockPos(8, 64, 0), 3, 5,
+                        "Alpha", "Beta", "nation-a", RoadPlannerMergeRelationship.OWN)
+        ));
+        RoadPlannerMergeCandidateRequestPacket candidateRequest = new RoadPlannerMergeCandidateRequestPacket(
+                sessionId, new BlockPos(8, 64, 1), 12, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.ROAD);
+        RoadPlannerRoadOverlayRequestPacket overlayRequest = new RoadPlannerRoadOverlayRequestPacket(
+                sessionId, "world_a", "minecraft:overworld", new BlockPos(0, 64, 0), 256, RoadPlannerMergeScope.ALLIED_OR_TRADE);
+        RoadPlannerRoadOverlaySyncPacket overlaySync = new RoadPlannerRoadOverlaySyncPacket(sessionId, List.of(
+                new RoadPlannerRoadOverlaySyncPacket.Entry("road_a", RoadPlannerMergeRelationship.TRADE,
+                        List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)))
+        ));
+
+        assertEquals(candidatePacket, roundTrip(candidatePacket, OpenRoadMergeCandidatesPacket::encode, OpenRoadMergeCandidatesPacket::decode));
+        assertEquals(candidateRequest, roundTrip(candidateRequest, RoadPlannerMergeCandidateRequestPacket::encode, RoadPlannerMergeCandidateRequestPacket::decode));
+        assertEquals(overlayRequest, roundTrip(overlayRequest, RoadPlannerRoadOverlayRequestPacket::encode, RoadPlannerRoadOverlayRequestPacket::decode));
+        assertEquals(overlaySync, roundTrip(overlaySync, RoadPlannerRoadOverlaySyncPacket::encode, RoadPlannerRoadOverlaySyncPacket::decode));
+    }
     private <T> T roundTrip(T packet, PacketEncoder<T> encoder, PacketDecoder<T> decoder) {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         encoder.encode(packet, buffer);

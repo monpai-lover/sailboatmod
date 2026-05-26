@@ -24,6 +24,8 @@ import java.util.Optional;
 
 public final class RoadPlannerRoadMergeService {
     private static final int MAX_CANDIDATES = 16;
+    private static final int MAX_OVERLAY_ROADS = 128;
+    private static final int MAX_OVERLAY_PATH_POINTS = 128;
 
     private RoadPlannerRoadMergeService() {
     }
@@ -65,6 +67,52 @@ public final class RoadPlannerRoadMergeService {
                 .filter(candidate -> candidate.pathIndex() == selection.pathIndex())
                 .filter(candidate -> candidate.anchorPos().equals(selection.anchorPos()))
                 .findFirst();
+    }
+
+    public static List<RoadOverlay> visibleRoadOverlays(ServerPlayer player,
+                                                        String dimensionId,
+                                                        BlockPos regionCenter,
+                                                        int regionSize,
+                                                        RoadPlannerMergeScope scope) {
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return List.of();
+        }
+        RoadPlannerMergeScope safeScope = scope == null ? RoadPlannerMergeScope.DISABLED : scope;
+        String normalizedDimension = normalize(dimensionId);
+        if (!safeScope.enabled() || normalizedDimension.isBlank() || regionCenter == null) {
+            return List.of();
+        }
+        String levelDimension = normalize(level.dimension().location().toString());
+        if (!normalizedDimension.equals(levelDimension)) {
+            return List.of();
+        }
+        NationSavedData data = NationSavedData.get(level);
+        NationRecord actorNation = NationService.getPlayerNation(level, player.getUUID());
+        String actorNationId = actorNation == null ? "" : normalize(actorNation.nationId());
+        if (actorNationId.isBlank()) {
+            return List.of();
+        }
+        int halfSize = Math.max(0, regionSize / 2);
+        int minX = regionCenter.getX() - halfSize;
+        int maxX = regionCenter.getX() + halfSize;
+        int minZ = regionCenter.getZ() - halfSize;
+        int maxZ = regionCenter.getZ() + halfSize;
+        List<RoadOverlay> overlays = new ArrayList<>();
+        for (RoadNetworkRecord road : data.getRoadNetworks()) {
+            if (overlays.size() >= MAX_OVERLAY_ROADS) {
+                break;
+            }
+            if (road == null || !normalizedDimension.equals(normalize(road.dimensionId()))) {
+                continue;
+            }
+            RoadPlannerMergeRelationship relationship = relationshipFor(data, actorNationId,
+                    candidate -> canManageRoad(player, data, candidate), road, safeScope);
+            if (relationship == null || !hasNodeInRegion(road.path(), minX, maxX, minZ, maxZ)) {
+                continue;
+            }
+            overlays.add(new RoadOverlay(road.roadId(), relationship, road.path()));
+        }
+        return List.copyOf(overlays);
     }
 
     private static List<Candidate> findCandidates(NationSavedData data,
@@ -188,6 +236,22 @@ public final class RoadPlannerRoadMergeService {
         return segmentType == RoadPlannerSegmentType.BRIDGE_SMALL || segmentType == RoadPlannerSegmentType.BRIDGE_MAJOR;
     }
 
+    private static boolean hasNodeInRegion(List<BlockPos> path, int minX, int maxX, int minZ, int maxZ) {
+        if (path == null || path.isEmpty()) {
+            return false;
+        }
+        for (BlockPos pos : path) {
+            if (pos != null
+                    && pos.getX() >= minX
+                    && pos.getX() <= maxX
+                    && pos.getZ() >= minZ
+                    && pos.getZ() <= maxZ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static BridgeAnchorClassifier bridgeAnchorClassifier(ServerLevel level) {
         return anchorPos -> {
             if (level == null || anchorPos == null) {
@@ -241,6 +305,18 @@ public final class RoadPlannerRoadMergeService {
                             String targetName,
                             String ownerNationId,
                             RoadPlannerMergeRelationship relationship) {
+    }
+
+    public record RoadOverlay(String roadId, RoadPlannerMergeRelationship relationship, List<BlockPos> path) {
+        public RoadOverlay {
+            roadId = roadId == null ? "" : roadId;
+            relationship = relationship == null ? RoadPlannerMergeRelationship.OWN : relationship;
+            path = path == null ? List.of() : path.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .limit(MAX_OVERLAY_PATH_POINTS)
+                    .map(BlockPos::immutable)
+                    .toList();
+        }
     }
 
     private record CandidateWithDistance(Candidate candidate, double distanceSqr) {

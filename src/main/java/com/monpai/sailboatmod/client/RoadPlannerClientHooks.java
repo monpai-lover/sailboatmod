@@ -8,7 +8,9 @@ import com.monpai.sailboatmod.client.screen.RoadPlannerActionMenuScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerOptionSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
 import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerActionMenuMode;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -193,6 +195,20 @@ public final class RoadPlannerClientHooks {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof RoadPlannerScreen screen) {
             screen.applyAutoCompleteResult(sessionId, success, nodes, segmentTypes, message);
+        }
+    }
+
+    public static void applyRoadMergeCandidates(UUID sessionId, List<OpenRoadMergeCandidatesPacket.Entry> candidates) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof RoadPlannerScreen screen) {
+            screen.applyRoadMergeCandidates(sessionId, candidates);
+        }
+    }
+
+    public static void applyRoadOverlays(UUID sessionId, List<RoadPlannerRoadOverlaySyncPacket.Entry> roads) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof RoadPlannerScreen screen) {
+            screen.applyRoadOverlays(sessionId, roads);
         }
     }
 

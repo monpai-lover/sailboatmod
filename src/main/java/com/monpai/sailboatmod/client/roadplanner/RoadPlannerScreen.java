@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteRequestPacket;
@@ -8,6 +9,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCa
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
 import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
 import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
@@ -462,6 +464,12 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         requestRoutePreload(expanded.nodes());
         statusLine = message == null || message.isBlank() ? "\u81ea\u52a8\u8865\u5168\u5b8c\u6210" : message;
+    }
+
+    public void applyRoadMergeCandidates(UUID sessionId, List<OpenRoadMergeCandidatesPacket.Entry> candidates) {
+    }
+
+    public void applyRoadOverlays(UUID sessionId, List<RoadPlannerRoadOverlaySyncPacket.Entry> roads) {
     }
 
     public void setGraphForTest(RoadNetworkGraph graph) {
