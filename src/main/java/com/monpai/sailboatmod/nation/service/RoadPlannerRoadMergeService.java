@@ -262,56 +262,59 @@ public final class RoadPlannerRoadMergeService {
         if (peakBridgeY == Integer.MIN_VALUE) {
             return bridgeLike;
         }
-        boolean gradedPath = hasAnyVerticalGrade(path);
-        int minimumRunY = peakBridgeY - 1;
         for (int index = 0; index < size; index++) {
             if (!bridgeLike[index]) {
                 continue;
             }
-            for (int left = index - 1; left >= 0 && isBridgeRunGeometryNode(path, left, minimumRunY, peakBridgeY, gradedPath); left--) {
+            int bridgeY = path.get(index).getY();
+            for (int left = index - 1; left >= 0 && isLeftBridgeRunContinuation(path, left, bridgeY); left--) {
                 bridgeLike[left] = true;
             }
-            for (int right = index + 1; right < size && isBridgeRunGeometryNode(path, right, minimumRunY, peakBridgeY, gradedPath); right++) {
+            for (int right = index + 1; right < size && isRightBridgeRunContinuation(path, right, bridgeY); right++) {
                 bridgeLike[right] = true;
             }
         }
         return bridgeLike;
     }
 
-    private static boolean isBridgeRunGeometryNode(List<BlockPos> path, int index, int minimumRunY, int peakBridgeY, boolean gradedPath) {
+    private static boolean isLeftBridgeRunContinuation(List<BlockPos> path, int index, int bridgeY) {
         if (path == null || index < 0 || index >= path.size()) {
             return false;
         }
         BlockPos anchor = path.get(index);
-        if (!gradedPath || anchor == null || anchor.getY() < minimumRunY) {
+        BlockPos towardBridge = index + 1 < path.size() ? path.get(index + 1) : null;
+        if (anchor == null || towardBridge == null) {
             return false;
         }
-        return anchor.getY() >= peakBridgeY || hasVerticalGrade(path, index);
+        BlockPos awayFromBridge = index > 0 ? path.get(index - 1) : null;
+        return isBridgeRunContinuation(anchor, towardBridge, awayFromBridge, bridgeY);
     }
 
-    private static boolean hasAnyVerticalGrade(List<BlockPos> path) {
-        if (path == null || path.size() < 2) {
+    private static boolean isRightBridgeRunContinuation(List<BlockPos> path, int index, int bridgeY) {
+        if (path == null || index < 0 || index >= path.size()) {
             return false;
         }
-        for (int index = 0; index + 1 < path.size(); index++) {
-            BlockPos left = path.get(index);
-            BlockPos right = path.get(index + 1);
-            if (left != null && right != null && left.getY() != right.getY()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasVerticalGrade(List<BlockPos> path, int index) {
         BlockPos anchor = path.get(index);
-        if (anchor == null) {
+        BlockPos towardBridge = index > 0 ? path.get(index - 1) : null;
+        if (anchor == null || towardBridge == null) {
             return false;
         }
-        BlockPos previous = index > 0 ? path.get(index - 1) : null;
-        BlockPos next = index + 1 < path.size() ? path.get(index + 1) : null;
-        return (previous != null && previous.getY() != anchor.getY())
-                || (next != null && next.getY() != anchor.getY());
+        BlockPos awayFromBridge = index + 1 < path.size() ? path.get(index + 1) : null;
+        return isBridgeRunContinuation(anchor, towardBridge, awayFromBridge, bridgeY);
+    }
+
+    private static boolean isBridgeRunContinuation(BlockPos anchor, BlockPos towardBridge, BlockPos awayFromBridge,
+                                                   int bridgeY) {
+        int anchorY = anchor.getY();
+        int towardBridgeY = towardBridge.getY();
+        int awayY = awayFromBridge == null ? anchorY : awayFromBridge.getY();
+        if (anchorY < towardBridgeY && awayY == anchorY) {
+            return false;
+        }
+        if (anchorY == towardBridgeY) {
+            return anchorY >= bridgeY && awayFromBridge != null && awayY < anchorY;
+        }
+        return awayY != anchorY;
     }
 
     private static Optional<Candidate> validateSelection(NationSavedData data,

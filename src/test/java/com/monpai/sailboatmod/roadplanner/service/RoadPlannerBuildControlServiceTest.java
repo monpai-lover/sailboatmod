@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.roadplanner.service;
 
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.road.model.BuildPhase;
@@ -9,18 +11,25 @@ import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.structure.RoadPreviewBlock;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.storage.DimensionDataStorage;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import sun.misc.Unsafe;
 
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -355,7 +364,7 @@ class RoadPlannerBuildControlServiceTest {
     }
 
     @Test
-    void completedBuildPreservesMergeSelectionWhenOwnerIsUnavailableAtCompletion() {
+    void completedBuildPreservesMergeSelectionWhenLevelIsUnavailableAtCompletion() {
         List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
         RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((level, road) -> completedRoads.add(road));
         UUID playerId = UUID.randomUUID();
@@ -374,10 +383,165 @@ class RoadPlannerBuildControlServiceTest {
         );
 
         service.confirmPreview(playerId, previewId).orElseThrow();
-        service.tick(newOfflineOwnerLevel());
+        service.tick(null);
 
         assertEquals(1, completedRoads.size());
         assertEquals(selection, completedRoads.get(0).mergeSelection());
+    }
+
+    @Test
+    void completedBuildPreservesMergeSelectionWhenOwnerUnavailableAndPersistedTargetStillMatches() {
+        TestServerLevel level = newPersistentOfflineOwnerLevel();
+        BlockPos anchor = new BlockPos(16, 64, 0);
+        NationSavedData.get(level).putRoadNetwork(road("existing-road", Level.OVERWORLD, new BlockPos(0, 64, 0), anchor));
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((ignored, road) -> completedRoads.add(road));
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "existing-road",
+                1,
+                anchor,
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                selection
+        );
+
+        service.confirmPreview(playerId, previewId).orElseThrow();
+        service.tick(level);
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(selection, completedRoads.get(0).mergeSelection());
+    }
+
+    @Test
+    void completedBuildClearsMergeSelectionWhenOwnerUnavailableAndPersistedTargetWasDeleted() {
+        TestServerLevel level = newPersistentOfflineOwnerLevel();
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((ignored, road) -> completedRoads.add(road));
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "deleted-road",
+                1,
+                new BlockPos(16, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                selection
+        );
+
+        service.confirmPreview(playerId, previewId).orElseThrow();
+        service.tick(level);
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
+    }
+
+    @Test
+    void completedBuildClearsMergeSelectionWhenOwnerUnavailableAndPersistedTargetAnchorChanged() {
+        TestServerLevel level = newPersistentOfflineOwnerLevel();
+        NationSavedData.get(level).putRoadNetwork(road(
+                "existing-road",
+                Level.OVERWORLD,
+                new BlockPos(0, 64, 0),
+                new BlockPos(17, 64, 0)
+        ));
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((ignored, road) -> completedRoads.add(road));
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "existing-road",
+                1,
+                new BlockPos(16, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                selection
+        );
+
+        service.confirmPreview(playerId, previewId).orElseThrow();
+        service.tick(level);
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
+    }
+
+    @Test
+    void completedBuildClearsMergeSelectionWhenOwnerUnavailableAndPersistedTargetIndexIsOutOfBounds() {
+        TestServerLevel level = newPersistentOfflineOwnerLevel();
+        NationSavedData.get(level).putRoadNetwork(road(
+                "existing-road",
+                Level.OVERWORLD,
+                new BlockPos(0, 64, 0)
+        ));
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((ignored, road) -> completedRoads.add(road));
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "existing-road",
+                1,
+                new BlockPos(16, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                selection
+        );
+
+        service.confirmPreview(playerId, previewId).orElseThrow();
+        service.tick(level);
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
+    }
+
+    @Test
+    void completedBuildClearsMergeSelectionWhenOwnerUnavailableAndPersistedTargetIsInAnotherDimension() {
+        TestServerLevel level = newPersistentOfflineOwnerLevel();
+        BlockPos anchor = new BlockPos(16, 64, 0);
+        NationSavedData.get(level).putRoadNetwork(road(
+                "existing-road",
+                Level.NETHER,
+                new BlockPos(0, 64, 0),
+                anchor
+        ));
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((ignored, road) -> completedRoads.add(road));
+        UUID playerId = UUID.randomUUID();
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "existing-road",
+                1,
+                anchor,
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        UUID previewId = service.startPreview(
+                playerId,
+                List.of(),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                selection
+        );
+
+        service.confirmPreview(playerId, previewId).orElseThrow();
+        service.tick(level);
+
+        assertEquals(1, completedRoads.size());
+        assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
     }
 
     @Test
@@ -417,6 +581,36 @@ class RoadPlannerBuildControlServiceTest {
         return level;
     }
 
+    private static TestServerLevel newPersistentOfflineOwnerLevel() {
+        try {
+            TestServerLevel level = allocate(TestServerLevel.class);
+            level.dimensionKey = Level.OVERWORLD;
+            level.dataStorage = new DimensionDataStorage(Files.createTempDirectory("roadplanner-build-control-test").toFile(), null);
+            level.registryAccess = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
+            TestMinecraftServer server = allocate(TestMinecraftServer.class);
+            setField(MinecraftServer.class, server, "levels", new LinkedHashMap<>(Map.of(Level.OVERWORLD, level)));
+            level.server = server;
+            return level;
+        } catch (Exception ex) {
+            throw new AssertionError("Unable to create persistent offline-owner test level", ex);
+        }
+    }
+
+    private static RoadNetworkRecord road(String roadId, ResourceKey<Level> dimension, BlockPos... path) {
+        return new RoadNetworkRecord(roadId, "alpha", "", dimension.location().toString(), "planner:start:0,64,0",
+                "planner:end:10,64,0", List.of(path), 1L, RoadNetworkRecord.SOURCE_TYPE_MANUAL);
+    }
+
+    private static void setField(Class<?> owner, Object target, String name, Object value) {
+        try {
+            Field field = owner.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(target, value);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Unable to set field " + owner.getSimpleName() + "." + name, ex);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> type) {
         try {
@@ -432,6 +626,8 @@ class RoadPlannerBuildControlServiceTest {
     private static final class TestServerLevel extends ServerLevel {
         private ResourceKey<Level> dimensionKey;
         private MinecraftServer server;
+        private DimensionDataStorage dataStorage;
+        private RegistryAccess registryAccess;
 
         private TestServerLevel() {
             super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
@@ -445,6 +641,89 @@ class RoadPlannerBuildControlServiceTest {
         @Override
         public MinecraftServer getServer() {
             return server;
+        }
+
+        @Override
+        public DimensionDataStorage getDataStorage() {
+            return dataStorage;
+        }
+
+        @Override
+        public RegistryAccess registryAccess() {
+            return registryAccess == null
+                    ? RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY)
+                    : registryAccess;
+        }
+
+        @Override
+        public <T> HolderLookup<T> holderLookup(ResourceKey<? extends net.minecraft.core.Registry<? extends T>> registryKey) {
+            return registryAccess().lookupOrThrow(registryKey);
+        }
+    }
+
+    private static final class TestMinecraftServer extends MinecraftServer {
+        private TestMinecraftServer() {
+            super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        protected boolean initServer() {
+            return false;
+        }
+
+        @Override
+        public int getOperatorUserPermissionLevel() {
+            return 0;
+        }
+
+        @Override
+        public int getFunctionCompilationLevel() {
+            return 0;
+        }
+
+        @Override
+        public boolean shouldRconBroadcast() {
+            return false;
+        }
+
+        @Override
+        public net.minecraft.SystemReport fillServerSystemReport(net.minecraft.SystemReport report) {
+            return report;
+        }
+
+        @Override
+        public boolean isDedicatedServer() {
+            return false;
+        }
+
+        @Override
+        public int getRateLimitPacketsPerSecond() {
+            return 0;
+        }
+
+        @Override
+        public boolean isEpollEnabled() {
+            return false;
+        }
+
+        @Override
+        public boolean isCommandBlockEnabled() {
+            return false;
+        }
+
+        @Override
+        public boolean isPublished() {
+            return false;
+        }
+
+        @Override
+        public boolean shouldInformAdmins() {
+            return false;
+        }
+
+        @Override
+        public boolean isSingleplayerOwner(com.mojang.authlib.GameProfile profile) {
+            return false;
         }
     }
 }

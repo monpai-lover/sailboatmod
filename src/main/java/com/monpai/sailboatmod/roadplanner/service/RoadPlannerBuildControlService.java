@@ -3,6 +3,8 @@ package com.monpai.sailboatmod.roadplanner.service;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathCompiler;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.service.RoadPlannerRoadMergeService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
@@ -481,7 +483,10 @@ public class RoadPlannerBuildControlService {
         if (level == null) {
             return selection;
         }
-        if (level.getServer() == null || ownerId == null) {
+        if (!targetRoadAnchorStillExists(level, selection)) {
+            return RoadPlannerMergeSelection.none();
+        }
+        if (level.getServer() == null || level.getServer().getPlayerList() == null || ownerId == null) {
             return selection;
         }
         ServerPlayer owner = level.getServer().getPlayerList().getPlayer(ownerId);
@@ -501,6 +506,22 @@ public class RoadPlannerBuildControlService {
                         candidate.anchorPos(),
                         selection.scope()))
                 .orElseGet(RoadPlannerMergeSelection::none);
+    }
+
+    private static boolean targetRoadAnchorStillExists(ServerLevel level, RoadPlannerMergeSelection selection) {
+        if (level == null || selection == null || !selection.present()) {
+            return false;
+        }
+        RoadNetworkRecord road = NationSavedData.get(level).getRoadNetwork(selection.roadId());
+        if (road == null || road.dimensionId() == null
+                || !road.dimensionId().equals(level.dimension().location().toString())) {
+            return false;
+        }
+        List<BlockPos> path = road.path();
+        int pathIndex = selection.pathIndex();
+        return pathIndex >= 0
+                && pathIndex < path.size()
+                && selection.anchorPos().equals(path.get(pathIndex));
     }
 
     @FunctionalInterface

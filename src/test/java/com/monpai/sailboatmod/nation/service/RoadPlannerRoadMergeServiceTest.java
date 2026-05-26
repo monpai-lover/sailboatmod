@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerRoadMergeServiceTest {
@@ -164,6 +165,48 @@ class RoadPlannerRoadMergeServiceTest {
 
         assertEquals(List.of(landStart, landEnd),
                 candidates.stream().map(RoadPlannerRoadMergeService.Candidate::anchorPos).toList());
+    }
+
+    @Test
+    void bridgeLikeTallGradedRunExcludesLowerRampAnchorsButKeepsStableLandAnchors() {
+        NationSavedData data = new NationSavedData();
+        BlockPos landApproach = new BlockPos(-1, 64, 0);
+        BlockPos rampOne = new BlockPos(0, 65, 0);
+        BlockPos rampTwo = new BlockPos(1, 66, 0);
+        BlockPos rampThree = new BlockPos(2, 67, 0);
+        BlockPos bridgeDeck = new BlockPos(3, 70, 0);
+        BlockPos rampDownOne = new BlockPos(4, 67, 0);
+        BlockPos rampDownTwo = new BlockPos(5, 66, 0);
+        BlockPos rampDownThree = new BlockPos(6, 65, 0);
+        BlockPos landExit = new BlockPos(7, 64, 0);
+        data.putRoadNetwork(road("own", "alpha", OVERWORLD,
+                new BlockPos(-2, 64, 0),
+                landApproach,
+                rampOne,
+                rampTwo,
+                rampThree,
+                bridgeDeck,
+                rampDownOne,
+                rampDownTwo,
+                rampDownThree,
+                landExit,
+                new BlockPos(8, 64, 0)
+        ));
+
+        List<BlockPos> anchors = find(data, "alpha", true,
+                bridgeDeck, 12, RoadPlannerMergeScope.OWN_NATION, pos -> pos.equals(bridgeDeck)).stream()
+                .map(RoadPlannerRoadMergeService.Candidate::anchorPos)
+                .toList();
+
+        assertTrue(anchors.contains(landApproach));
+        assertTrue(anchors.contains(landExit));
+        assertFalse(anchors.contains(rampOne));
+        assertFalse(anchors.contains(rampTwo));
+        assertFalse(anchors.contains(rampThree));
+        assertFalse(anchors.contains(rampDownOne));
+        assertFalse(anchors.contains(rampDownTwo));
+        assertFalse(anchors.contains(rampDownThree));
+        assertFalse(anchors.contains(bridgeDeck));
     }
 
     @Test
