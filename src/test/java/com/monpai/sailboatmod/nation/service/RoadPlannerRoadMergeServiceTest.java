@@ -161,6 +161,43 @@ class RoadPlannerRoadMergeServiceTest {
         assertEquals("road-15", candidates.get(15).roadId());
     }
 
+    @Test
+    void outputCapKeepsBestSixteenCandidatesFromLargeSearch() {
+        NationSavedData data = new NationSavedData();
+        for (int i = 0; i < 40; i++) {
+            data.putRoadNetwork(road(String.format("far-%02d", i), "alpha", OVERWORLD, new BlockPos(1000 + i, 64, 0)));
+        }
+        for (int i = 0; i < 20; i++) {
+            data.putRoadNetwork(road(String.format("near-%02d", i), "alpha", OVERWORLD, new BlockPos(i, 64, 0)));
+        }
+
+        List<RoadPlannerRoadMergeService.Candidate> candidates = find(data, "alpha", true,
+                new BlockPos(0, 64, 0), 5000, RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge());
+
+        assertEquals(16, candidates.size());
+        assertEquals("near-00", candidates.get(0).roadId());
+        assertEquals("near-15", candidates.get(15).roadId());
+    }
+
+    @Test
+    void visibleOverlaysContainRegionPathPointsInsteadOfFirstFullRoadPoints() {
+        NationSavedData data = new NationSavedData();
+        java.util.ArrayList<BlockPos> path = new java.util.ArrayList<>();
+        for (int i = 0; i < 128; i++) {
+            path.add(new BlockPos(-1000 - i, 64, 0));
+        }
+        path.add(new BlockPos(8, 64, 0));
+        path.add(new BlockPos(12, 64, 0));
+        data.putRoadNetwork(road("long-road", "alpha", OVERWORLD, path.toArray(BlockPos[]::new)));
+
+        List<RoadPlannerRoadMergeService.RoadOverlay> overlays = RoadPlannerRoadMergeService.visibleRoadOverlaysForTest(
+                data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 32, RoadPlannerMergeScope.OWN_NATION);
+
+        assertEquals(1, overlays.size());
+        assertEquals(List.of(new BlockPos(8, 64, 0), new BlockPos(12, 64, 0)), overlays.get(0).path());
+    }
+
     private static List<RoadPlannerRoadMergeService.Candidate> find(NationSavedData data,
                                                                     String actorNationId,
                                                                     boolean canManageOwnRoads,

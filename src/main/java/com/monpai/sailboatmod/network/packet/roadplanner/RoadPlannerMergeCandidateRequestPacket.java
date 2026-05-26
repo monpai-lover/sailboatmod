@@ -19,10 +19,12 @@ public record RoadPlannerMergeCandidateRequestPacket(UUID sessionId,
                                                      int radius,
                                                      RoadPlannerMergeScope scope,
                                                      RoadPlannerSegmentType currentSegmentType) {
+    public static final int MAX_RADIUS = 64;
+
     public RoadPlannerMergeCandidateRequestPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
         probe = probe == null ? BlockPos.ZERO : probe.immutable();
-        radius = Math.max(0, radius);
+        radius = Math.max(1, Math.min(MAX_RADIUS, radius));
         scope = scope == null ? RoadPlannerMergeScope.DISABLED : scope;
         currentSegmentType = currentSegmentType == null ? RoadPlannerSegmentType.ROAD : currentSegmentType;
     }

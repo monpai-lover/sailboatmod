@@ -685,7 +685,8 @@ public final class ModNetwork {
                 RoadPlannerMergeCandidateRequestPacket.class,
                 RoadPlannerMergeCandidateRequestPacket::encode,
                 RoadPlannerMergeCandidateRequestPacket::decode,
-                RoadPlannerMergeCandidateRequestPacket::handle
+                RoadPlannerMergeCandidateRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -700,7 +701,8 @@ public final class ModNetwork {
                 RoadPlannerRoadOverlayRequestPacket.class,
                 RoadPlannerRoadOverlayRequestPacket::encode,
                 RoadPlannerRoadOverlayRequestPacket::decode,
-                RoadPlannerRoadOverlayRequestPacket::handle
+                RoadPlannerRoadOverlayRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,

@@ -41,7 +41,10 @@ public record OpenRoadMergeCandidatesPacket(UUID sessionId, List<Entry> candidat
 
     public static OpenRoadMergeCandidatesPacket decode(FriendlyByteBuf buffer) {
         UUID sessionId = RoadPlannerPacketCodec.readUuid(buffer);
-        int count = Math.min(MAX_CANDIDATES, Math.max(0, buffer.readVarInt()));
+        int count = buffer.readVarInt();
+        if (count < 0 || count > MAX_CANDIDATES) {
+            throw new IllegalArgumentException("Road merge candidate count out of bounds: " + count);
+        }
         java.util.ArrayList<Entry> candidates = new java.util.ArrayList<>(count);
         for (int index = 0; index < count; index++) {
             candidates.add(new Entry(

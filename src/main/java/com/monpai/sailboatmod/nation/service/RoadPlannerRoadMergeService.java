@@ -24,8 +24,14 @@ import java.util.Optional;
 
 public final class RoadPlannerRoadMergeService {
     private static final int MAX_CANDIDATES = 16;
+    private static final int MAX_CANDIDATE_RADIUS = 64;
     private static final int MAX_OVERLAY_ROADS = 128;
     private static final int MAX_OVERLAY_PATH_POINTS = 128;
+    private static final Comparator<CandidateWithDistance> CANDIDATE_ORDER = Comparator
+            .comparingDouble(CandidateWithDistance::distanceSqr)
+            .thenComparing(candidate -> candidate.candidate().relationship() == RoadPlannerMergeRelationship.OWN ? 0 : 1)
+            .thenComparing(candidate -> candidate.candidate().roadId())
+            .thenComparingInt(candidate -> candidate.candidate().pathIndex());
 
     private RoadPlannerRoadMergeService() {
     }
@@ -89,7 +95,31 @@ public final class RoadPlannerRoadMergeService {
         NationSavedData data = NationSavedData.get(level);
         NationRecord actorNation = NationService.getPlayerNation(level, player.getUUID());
         String actorNationId = actorNation == null ? "" : normalize(actorNation.nationId());
-        if (actorNationId.isBlank()) {
+        return visibleRoadOverlays(data, actorNationId, road -> canManageRoad(player, data, road), normalizedDimension,
+                regionCenter, regionSize, scope);
+    }
+
+    public static List<RoadOverlay> visibleRoadOverlaysForTest(NationSavedData data,
+                                                               String actorNationId,
+                                                               boolean canManageOwnRoads,
+                                                               String dimensionId,
+                                                               BlockPos regionCenter,
+                                                               int regionSize,
+                                                               RoadPlannerMergeScope scope) {
+        return visibleRoadOverlays(data, normalize(actorNationId), road -> canManageOwnRoads, normalize(dimensionId),
+                regionCenter, regionSize, scope);
+    }
+
+    private static List<RoadOverlay> visibleRoadOverlays(NationSavedData data,
+                                                         String actorNationId,
+                                                         OwnRoadPermission ownRoadPermission,
+                                                         String normalizedDimension,
+                                                         BlockPos regionCenter,
+                                                         int regionSize,
+                                                         RoadPlannerMergeScope scope) {
+        RoadPlannerMergeScope safeScope = scope == null ? RoadPlannerMergeScope.DISABLED : scope;
+        if (data == null || actorNationId == null || actorNationId.isBlank() || normalizedDimension == null
+                || normalizedDimension.isBlank() || regionCenter == null || !safeScope.enabled()) {
             return List.of();
         }
         int halfSize = Math.max(0, regionSize / 2);
@@ -106,11 +136,12 @@ public final class RoadPlannerRoadMergeService {
                 continue;
             }
             RoadPlannerMergeRelationship relationship = relationshipFor(data, actorNationId,
-                    candidate -> canManageRoad(player, data, candidate), road, safeScope);
-            if (relationship == null || !hasNodeInRegion(road.path(), minX, maxX, minZ, maxZ)) {
+                    ownRoadPermission, road, safeScope);
+            List<BlockPos> visiblePath = visiblePathInRegion(road.path(), minX, maxX, minZ, maxZ);
+            if (relationship == null || visiblePath.isEmpty()) {
                 continue;
             }
-            overlays.add(new RoadOverlay(road.roadId(), relationship, road.path()));
+            overlays.add(new RoadOverlay(road.roadId(), relationship, visiblePath));
         }
         return List.copyOf(overlays);
     }
@@ -135,7 +166,7 @@ public final class RoadPlannerRoadMergeService {
         BridgeAnchorClassifier safeBridgeClassifier = bridgeClassifier == null
                 ? BridgeAnchorClassifier.neverBridge()
                 : bridgeClassifier;
-        int safeRadius = Math.max(0, radius);
+        int safeRadius = Math.max(1, Math.min(MAX_CANDIDATE_RADIUS, radius));
         long radiusSqr = (long) safeRadius * (long) safeRadius;
         List<CandidateWithDistance> candidates = new ArrayList<>();
         for (RoadNetworkRecord road : data.getRoadNetworks()) {
@@ -157,17 +188,18 @@ public final class RoadPlannerRoadMergeService {
                 if (distanceSqr > radiusSqr) {
                     continue;
                 }
-                candidates.add(candidateWithDistance(road, anchor, index, distanceSqr, data, relationship));
+                addCandidate(candidates, candidateWithDistance(road, anchor, index, distanceSqr, data, relationship));
             }
         }
-        candidates.sort(Comparator.comparingDouble(CandidateWithDistance::distanceSqr)
-                .thenComparing(candidate -> candidate.candidate().relationship() == RoadPlannerMergeRelationship.OWN ? 0 : 1)
-                .thenComparing(candidate -> candidate.candidate().roadId())
-                .thenComparingInt(candidate -> candidate.candidate().pathIndex()));
-        if (candidates.size() <= MAX_CANDIDATES) {
-            return candidates.stream().map(CandidateWithDistance::candidate).toList();
+        return candidates.stream().map(CandidateWithDistance::candidate).toList();
+    }
+
+    private static void addCandidate(List<CandidateWithDistance> candidates, CandidateWithDistance candidate) {
+        candidates.add(candidate);
+        candidates.sort(CANDIDATE_ORDER);
+        if (candidates.size() > MAX_CANDIDATES) {
+            candidates.remove(candidates.size() - 1);
         }
-        return candidates.subList(0, MAX_CANDIDATES).stream().map(CandidateWithDistance::candidate).toList();
     }
 
     private static CandidateWithDistance candidateWithDistance(RoadNetworkRecord road,
@@ -250,6 +282,26 @@ public final class RoadPlannerRoadMergeService {
             }
         }
         return false;
+    }
+
+    private static List<BlockPos> visiblePathInRegion(List<BlockPos> path, int minX, int maxX, int minZ, int maxZ) {
+        if (path == null || path.isEmpty()) {
+            return List.of();
+        }
+        List<BlockPos> visible = new ArrayList<>();
+        for (BlockPos pos : path) {
+            if (pos != null
+                    && pos.getX() >= minX
+                    && pos.getX() <= maxX
+                    && pos.getZ() >= minZ
+                    && pos.getZ() <= maxZ) {
+                visible.add(pos.immutable());
+                if (visible.size() >= MAX_OVERLAY_PATH_POINTS) {
+                    break;
+                }
+            }
+        }
+        return visible.isEmpty() ? List.of() : List.copyOf(visible);
     }
 
     private static BridgeAnchorClassifier bridgeAnchorClassifier(ServerLevel level) {

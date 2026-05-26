@@ -21,6 +21,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class RoadPlannerPacketRoundTripTest {
     @BeforeAll
@@ -187,6 +188,38 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals(overlayRequest, roundTrip(overlayRequest, RoadPlannerRoadOverlayRequestPacket::encode, RoadPlannerRoadOverlayRequestPacket::decode));
         assertEquals(overlaySync, roundTrip(overlaySync, RoadPlannerRoadOverlaySyncPacket::encode, RoadPlannerRoadOverlaySyncPacket::decode));
     }
+
+    @Test
+    void mergeCandidateRequestNormalizesRadiusToBounds() {
+        UUID sessionId = UUID.randomUUID();
+        RoadPlannerMergeCandidateRequestPacket huge = new RoadPlannerMergeCandidateRequestPacket(
+                sessionId, new BlockPos(0, 64, 0), 4096, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.ROAD);
+        RoadPlannerMergeCandidateRequestPacket zero = new RoadPlannerMergeCandidateRequestPacket(
+                sessionId, new BlockPos(0, 64, 0), 0, RoadPlannerMergeScope.OWN_NATION, RoadPlannerSegmentType.ROAD);
+
+        assertEquals(64, huge.radius());
+        assertEquals(64, roundTrip(huge, RoadPlannerMergeCandidateRequestPacket::encode, RoadPlannerMergeCandidateRequestPacket::decode).radius());
+        assertEquals(1, zero.radius());
+    }
+
+    @Test
+    void openMergeCandidatesRejectsOversizeAdvertisedCount() {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerPacketCodec.writeUuid(buffer, UUID.randomUUID());
+        buffer.writeVarInt(17);
+
+        assertThrows(IllegalArgumentException.class, () -> OpenRoadMergeCandidatesPacket.decode(buffer));
+    }
+
+    @Test
+    void roadOverlaySyncRejectsOversizeAdvertisedRoadCount() {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerPacketCodec.writeUuid(buffer, UUID.randomUUID());
+        buffer.writeVarInt(129);
+
+        assertThrows(IllegalArgumentException.class, () -> RoadPlannerRoadOverlaySyncPacket.decode(buffer));
+    }
+
     @Test
     void roadOverlayRequestPreservesSmallPositiveRegionSize() {
         RoadPlannerRoadOverlayRequestPacket packet = new RoadPlannerRoadOverlayRequestPacket(

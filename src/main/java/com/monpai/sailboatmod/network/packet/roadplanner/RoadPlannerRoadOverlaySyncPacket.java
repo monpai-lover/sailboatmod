@@ -38,7 +38,10 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId, List<Entry> roads
 
     public static RoadPlannerRoadOverlaySyncPacket decode(FriendlyByteBuf buffer) {
         UUID sessionId = RoadPlannerPacketCodec.readUuid(buffer);
-        int count = Math.min(MAX_ROADS, Math.max(0, buffer.readVarInt()));
+        int count = buffer.readVarInt();
+        if (count < 0 || count > MAX_ROADS) {
+            throw new IllegalArgumentException("Road overlay count out of bounds: " + count);
+        }
         java.util.ArrayList<Entry> roads = new java.util.ArrayList<>(count);
         for (int index = 0; index < count; index++) {
             roads.add(new Entry(
