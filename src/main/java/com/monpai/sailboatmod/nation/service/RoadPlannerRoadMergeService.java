@@ -89,7 +89,7 @@ public final class RoadPlannerRoadMergeService {
                 : bridgeClassifier;
         int safeRadius = Math.max(0, radius);
         long radiusSqr = (long) safeRadius * (long) safeRadius;
-        List<Candidate> candidates = new ArrayList<>();
+        List<CandidateWithDistance> candidates = new ArrayList<>();
         for (RoadNetworkRecord road : data.getRoadNetworks()) {
             if (road == null || !normalizedDimension.equals(normalize(road.dimensionId()))) {
                 continue;
@@ -109,25 +109,36 @@ public final class RoadPlannerRoadMergeService {
                 if (distanceSqr > radiusSqr) {
                     continue;
                 }
-                candidates.add(new Candidate(
+                candidates.add(candidateWithDistance(road, anchor, index, distanceSqr, data, relationship));
+            }
+        }
+        candidates.sort(Comparator.comparingDouble(CandidateWithDistance::distanceSqr)
+                .thenComparing(candidate -> candidate.candidate().relationship() == RoadPlannerMergeRelationship.OWN ? 0 : 1)
+                .thenComparing(candidate -> candidate.candidate().roadId())
+                .thenComparingInt(candidate -> candidate.candidate().pathIndex()));
+        if (candidates.size() <= MAX_CANDIDATES) {
+            return candidates.stream().map(CandidateWithDistance::candidate).toList();
+        }
+        return candidates.subList(0, MAX_CANDIDATES).stream().map(CandidateWithDistance::candidate).toList();
+    }
+
+    private static CandidateWithDistance candidateWithDistance(RoadNetworkRecord road,
+                                                               BlockPos anchor,
+                                                               int pathIndex,
+                                                               double distanceSqr,
+                                                               NationSavedData data,
+                                                               RoadPlannerMergeRelationship relationship) {
+        return new CandidateWithDistance(
+                new Candidate(
                         road.roadId(),
                         anchor.immutable(),
-                        index,
+                        pathIndex,
                         (int) Math.round(Math.sqrt(distanceSqr)),
                         structureName(data, road.structureAId()),
                         structureName(data, road.structureBId()),
                         road.nationId(),
-                        relationship));
-            }
-        }
-        candidates.sort(Comparator.comparingInt(Candidate::distanceBlocks)
-                .thenComparing(candidate -> candidate.relationship() == RoadPlannerMergeRelationship.OWN ? 0 : 1)
-                .thenComparing(Candidate::roadId)
-                .thenComparingInt(Candidate::pathIndex));
-        if (candidates.size() <= MAX_CANDIDATES) {
-            return List.copyOf(candidates);
-        }
-        return List.copyOf(candidates.subList(0, MAX_CANDIDATES));
+                        relationship),
+                distanceSqr);
     }
 
     private static RoadPlannerMergeRelationship relationshipFor(NationSavedData data,
@@ -230,6 +241,9 @@ public final class RoadPlannerRoadMergeService {
                             String targetName,
                             String ownerNationId,
                             RoadPlannerMergeRelationship relationship) {
+    }
+
+    private record CandidateWithDistance(Candidate candidate, double distanceSqr) {
     }
 
     @FunctionalInterface

@@ -78,6 +78,24 @@ class RoadPlannerRoadMergeServiceTest {
     }
 
     @Test
+    void exactDistanceSortsBeforeOwnRelationshipTieBreaker() {
+        NationSavedData data = new NationSavedData();
+        data.putRoadNetwork(road("own-farther", "alpha", OVERWORLD, new BlockPos(2, 64, 1)));
+        data.putRoadNetwork(road("trade-closer", "gamma", OVERWORLD, new BlockPos(2, 64, 0)));
+        data.putDiplomacy(new NationDiplomacyRecord("alpha", "gamma", NationDiplomacyStatus.TRADE.id(), 1L));
+
+        List<RoadPlannerRoadMergeService.Candidate> candidates = find(data, "alpha", true,
+                new BlockPos(0, 64, 0), 4, RoadPlannerMergeScope.ALLIED_OR_TRADE,
+                RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge());
+
+        assertEquals(2, candidates.size());
+        assertEquals("trade-closer", candidates.get(0).roadId());
+        assertEquals("own-farther", candidates.get(1).roadId());
+        assertEquals(2, candidates.get(0).distanceBlocks());
+        assertEquals(2, candidates.get(1).distanceBlocks());
+    }
+
+    @Test
     void enemyNeutralAndNoRelationRoadsAreRejected() {
         NationSavedData data = new NationSavedData();
         data.putRoadNetwork(road("enemy", "beta", OVERWORLD, new BlockPos(1, 64, 0)));
