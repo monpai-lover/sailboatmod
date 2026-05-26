@@ -3,16 +3,29 @@ package com.monpai.sailboatmod.network.packet.roadplanner;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.road.model.BuildPhase;
+import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
+import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
+import com.monpai.sailboatmod.roadplanner.structure.RoadStructureMode;
+import com.monpai.sailboatmod.roadplanner.structure.RoadTerrainSampler;
 import io.netty.buffer.Unpooled;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.SlabType;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +60,47 @@ class RoadPlannerPreviewRequestPacketTest {
     }
 
     @Test
+    void roundTripPreservesMergeSelection() {
+        RoadPlannerMergeSelection selection = new RoadPlannerMergeSelection(
+                "Existing-Road",
+                4,
+                new BlockPos(16, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION
+        );
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                List.of(BlockPos.ZERO, new BlockPos(16, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                selection
+        );
+
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerPreviewRequestPacket.encode(packet, buffer);
+        RoadPlannerPreviewRequestPacket decoded = RoadPlannerPreviewRequestPacket.decode(new FriendlyByteBuf(buffer.copy()));
+
+        assertEquals(selection, decoded.mergeSelection());
+    }
+
+    @Test
+    void oldPreviewRequestWithoutMergeSelectionDecodesAsNoMerge() {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerPacketCodec.writeString(buffer, "A", 64);
+        RoadPlannerPacketCodec.writeString(buffer, "B", 64);
+        RoadPlannerPacketCodec.writeBlockPosList(buffer, List.of(BlockPos.ZERO, new BlockPos(8, 64, 0)));
+        buffer.writeVarInt(1);
+        buffer.writeEnum(RoadPlannerSegmentType.ROAD);
+        buffer.writeVarInt(RoadPlannerBuildSettings.DEFAULTS.width());
+        RoadPlannerPacketCodec.writeString(buffer, RoadPlannerBuildSettings.DEFAULTS.materialPreset(), 32);
+        buffer.writeBoolean(RoadPlannerBuildSettings.DEFAULTS.streetlightsEnabled());
+
+        RoadPlannerPreviewRequestPacket decoded = RoadPlannerPreviewRequestPacket.decode(new FriendlyByteBuf(buffer.copy()));
+
+        assertEquals(RoadPlannerMergeSelection.none(), decoded.mergeSelection());
+    }
+
+    @Test
     void padsMissingSegmentTypesAsRoad() {
         RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
                 "A",
@@ -75,6 +129,137 @@ class RoadPlannerPreviewRequestPacketTest {
         assertTrue(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.OAK_FENCE));
         assertFalse(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.DIRT));
         assertFalse(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.COBBLESTONE));
+    }
+
+    @Test
+    void previewHighlightsUseSampledSurfaceInsteadOfRawTreeTopNodeHeight() {
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                List.of(new BlockPos(0, 90, 0), new BlockPos(8, 90, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+        RoadTerrainSampler groundSampler = (x, z) -> 64;
+
+        SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest(groundSampler);
+
+        assertEquals(64, preview.startHighlightPos().getY());
+        assertEquals(64, preview.endHighlightPos().getY());
+        assertEquals(64, preview.focusPos().getY());
+        assertTrue(preview.pathNodes().stream().allMatch(pos -> pos.getY() == 64));
+    }
+
+    @Test
+    void previewGhostBlocksMatchActualVisibleBuildStepsForBridgeRamp() {
+        List<BlockPos> nodes = List.of(
+                new BlockPos(0, 63, -4),
+                new BlockPos(0, 63, 0),
+                new BlockPos(12, 63, 0)
+        );
+        List<RoadPlannerSegmentType> segmentTypes = List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR);
+        RoadTerrainSampler terrainSampler = deepWaterSampler();
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                nodes,
+                segmentTypes,
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+
+        SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest(terrainSampler);
+        RoadNodeExpansionResult actualBuild = RoadNodeStructureExpander.expand(
+                nodes,
+                segmentTypes,
+                RoadPlannerBuildSettings.DEFAULTS,
+                terrainSampler,
+                RoadStructureMode.BUILD
+        );
+
+        Map<BlockPos, BlockState> previewStates = ghostStatesByPos(preview.ghostBlocks());
+        Map<BlockPos, BlockState> actualVisibleStates = visibleBuildStatesByPos(actualBuild.buildSteps());
+
+        assertFalse(previewStates.isEmpty());
+        assertEquals(actualVisibleStates, previewStates);
+    }
+
+    @Test
+    void previewPacketRoundTripPreservesBridgeSlabStates() {
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "B",
+                List.of(
+                        new BlockPos(0, 63, -4),
+                        new BlockPos(0, 63, 0),
+                        new BlockPos(12, 63, 0)
+                ),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+        SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest(deepWaterSampler());
+
+        SyncRoadPlannerPreviewPacket decoded = roundTripPreview(preview);
+
+        assertEquals(ghostStatesByPos(preview.ghostBlocks()), ghostStatesByPos(decoded.ghostBlocks()));
+        assertTrue(decoded.ghostBlocks().stream().anyMatch(block -> isSlabType(block.state(), SlabType.BOTTOM)));
+        assertTrue(decoded.ghostBlocks().stream().anyMatch(block -> isSlabType(block.state(), SlabType.TOP)));
+    }
+
+    private static Map<BlockPos, BlockState> ghostStatesByPos(List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks) {
+        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
+        for (SyncRoadPlannerPreviewPacket.GhostBlock block : ghostBlocks) {
+            statesByPos.put(block.pos(), block.state());
+        }
+        return statesByPos;
+    }
+
+    private static Map<BlockPos, BlockState> visibleBuildStatesByPos(List<BuildStep> buildSteps) {
+        Map<BlockPos, BlockState> statesByPos = new LinkedHashMap<>();
+        for (BuildStep step : buildSteps) {
+            if (isVisiblePreviewStep(step)) {
+                statesByPos.put(step.pos(), step.state());
+            }
+        }
+        return statesByPos;
+    }
+
+    private static boolean isVisiblePreviewStep(BuildStep step) {
+        if (step == null || step.pos() == null || step.state() == null || step.phase() == null || step.state().isAir()) {
+            return false;
+        }
+        return switch (step.phase()) {
+            case SURFACE, RAMP, DECK, PIER, RAILING, STREETLIGHT -> true;
+            case FOUNDATION -> false;
+        };
+    }
+
+    private static boolean isSlabType(BlockState state, SlabType type) {
+        return state != null && state.hasProperty(SlabBlock.TYPE) && state.getValue(SlabBlock.TYPE) == type;
+    }
+
+    private static SyncRoadPlannerPreviewPacket roundTripPreview(SyncRoadPlannerPreviewPacket packet) {
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        SyncRoadPlannerPreviewPacket.encode(packet, buffer);
+        return SyncRoadPlannerPreviewPacket.decode(new FriendlyByteBuf(buffer.copy()));
+    }
+
+    private static RoadTerrainSampler deepWaterSampler() {
+        return new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return 54;
+            }
+        };
     }
 
 }

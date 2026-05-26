@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
 import com.monpai.sailboatmod.roadplanner.structure.RoadStructureMode;
@@ -60,9 +61,17 @@ public class RoadPlannerBuildControlService {
     }
 
     public UUID startPreview(UUID playerId, List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings) {
+        return startPreview(playerId, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none());
+    }
+
+    public UUID startPreview(UUID playerId,
+                             List<BlockPos> nodes,
+                             List<RoadPlannerSegmentType> segmentTypes,
+                             RoadPlannerBuildSettings settings,
+                             RoadPlannerMergeSelection mergeSelection) {
         UUID previewId = UUID.randomUUID();
         activePreviews.put(playerId, previewId);
-        previews.put(previewId, new PreviewSnapshot(nodes, segmentTypes, settings));
+        previews.put(previewId, new PreviewSnapshot(nodes, segmentTypes, settings, mergeSelection));
         return previewId;
     }
 
@@ -415,7 +424,8 @@ public class RoadPlannerBuildControlService {
                 metadata.centerPath(),
                 queue == null ? List.of() : queue.getSteps(),
                 queue == null ? List.of() : queue.getRollbackEntries(),
-                metadata.dimension()
+                metadata.dimension(),
+                metadata.mergeSelection()
         );
     }
 
@@ -429,7 +439,8 @@ public class RoadPlannerBuildControlService {
                                      List<BlockPos> centerPath,
                                      List<BuildStep> buildSteps,
                                      List<ConstructionQueue.RollbackEntry> rollbackEntries,
-                                     ResourceKey<Level> dimension) {
+                                     ResourceKey<Level> dimension,
+                                     RoadPlannerMergeSelection mergeSelection) {
         public CompletedRoadBuild {
             roadId = roadId == null ? "" : roadId.trim();
             centerPath = centerPath == null ? List.of() : centerPath.stream()
@@ -439,10 +450,20 @@ public class RoadPlannerBuildControlService {
             buildSteps = buildSteps == null ? List.of() : List.copyOf(buildSteps);
             rollbackEntries = rollbackEntries == null ? List.of() : List.copyOf(rollbackEntries);
             dimension = dimension == null ? Level.OVERWORLD : dimension;
+            mergeSelection = mergeSelection == null ? RoadPlannerMergeSelection.none() : mergeSelection;
+        }
+
+        public CompletedRoadBuild(String roadId,
+                                  UUID ownerId,
+                                  List<BlockPos> centerPath,
+                                  List<BuildStep> buildSteps,
+                                  List<ConstructionQueue.RollbackEntry> rollbackEntries,
+                                  ResourceKey<Level> dimension) {
+            this(roadId, ownerId, centerPath, buildSteps, rollbackEntries, dimension, RoadPlannerMergeSelection.none());
         }
     }
 
-    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath) {
+    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath, RoadPlannerMergeSelection mergeSelection) {
         private BuildMetadata {
             sourceTownName = sourceTownName == null ? "" : sourceTownName;
             targetTownName = targetTownName == null ? "" : targetTownName;
@@ -451,6 +472,7 @@ public class RoadPlannerBuildControlService {
                     .filter(java.util.Objects::nonNull)
                     .map(BlockPos::immutable)
                     .toList();
+            mergeSelection = mergeSelection == null ? RoadPlannerMergeSelection.none() : mergeSelection;
         }
 
         static BuildMetadata from(UUID ownerId, UUID jobId, PreviewSnapshot snapshot, ConstructionQueue queue, ResourceKey<Level> dimension) {
@@ -460,7 +482,8 @@ public class RoadPlannerBuildControlService {
             } else if (queue != null && !queue.getSteps().isEmpty()) {
                 focusPos = queue.getSteps().get(0).pos();
             }
-            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos, dimension, resolveCenterPath(snapshot, queue));
+            RoadPlannerMergeSelection mergeSelection = snapshot == null ? RoadPlannerMergeSelection.none() : snapshot.mergeSelection();
+            return new BuildMetadata(ownerId, jobId.toString(), "", "", focusPos, dimension, resolveCenterPath(snapshot, queue), mergeSelection);
         }
     }
 
@@ -482,11 +505,16 @@ public class RoadPlannerBuildControlService {
                 .toList();
     }
 
-    public record PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings) {
+    public record PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings, RoadPlannerMergeSelection mergeSelection) {
         public PreviewSnapshot {
             nodes = nodes == null ? List.of() : nodes.stream().map(BlockPos::immutable).toList();
             segmentTypes = segmentTypes == null ? List.of() : List.copyOf(segmentTypes);
             settings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
+            mergeSelection = mergeSelection == null ? RoadPlannerMergeSelection.none() : mergeSelection;
+        }
+
+        public PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings) {
+            this(nodes, segmentTypes, settings, RoadPlannerMergeSelection.none());
         }
     }
 }
