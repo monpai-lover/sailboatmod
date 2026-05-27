@@ -52,6 +52,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private static final List<RoadToolType> TOOLS = List.of(
             RoadToolType.SELECT,
             RoadToolType.ROAD,
+            RoadToolType.MERGE,
             RoadToolType.BRIDGE,
             RoadToolType.TUNNEL,
             RoadToolType.ERASE,
@@ -60,7 +61,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             RoadToolType.ENDPOINT,
             RoadToolType.FORCE_RENDER
     );
-    private static final List<String> TOOL_LABELS = List.of("\u9009\u62e9", "\u9053\u8def", "\u6865\u6881", "\u96a7\u9053", "\u64e6\u9664", "\u8de8\u6c34", "\u8d1d\u585e\u5c14", "\u7aef\u70b9", "\u5f3a\u5236\u6e32\u67d3");
+    private static final List<String> TOOL_LABELS = List.of("\u9009\u62e9", "\u9053\u8def", "\u5e76\u5165", "\u6865\u6881", "\u96a7\u9053", "\u64e6\u9664", "\u8de8\u6c34", "\u8d1d\u585e\u5c14", "\u7aef\u70b9", "\u5f3a\u5236\u6e32\u67d3");
     private static final List<String> ACTION_LABELS = List.of(
             RoadPlannerTopToolbar.ACTION_UNDO,
             RoadPlannerTopToolbar.ACTION_CLEAR,
@@ -111,6 +112,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private RoadPlannerMergeCandidateRequestPacket lastMergeCandidateRequest;
     private List<RoadPlannerRoadOverlaySyncPacket.Entry> roadOverlays = List.of();
     private RoadPlannerRoadOverlayRequestPacket lastRoadOverlayRequest;
+    private RoadPlannerRoadOverlaySyncPacket.Entry selectedMergeOverlay;
     private boolean panning;
     private double lastMouseX;
     private double lastMouseY;
@@ -300,6 +302,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         return linePlan.nodeCount();
     }
 
+    public BlockPos plannedNodeForTest(int nodeIndex) {
+        return linePlan.nodes().get(nodeIndex);
+    }
+
+    public List<BlockPos> plannedNodesForTest() {
+        return linePlan.nodes();
+    }
+
     public RoadPlannerSegmentType segmentTypeForTest(int segmentIndex) {
         return linePlan.segments().get(segmentIndex);
     }
@@ -376,6 +386,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                     overlay.roadId(),
                     overlay.relationship(),
                     roadOverlayColor(overlay.relationship()),
+                    overlay.path().size(),
                     isSelectedMergeAnchor(overlay, selectedMerge)));
         }
         return List.copyOf(states);
@@ -531,9 +542,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (state.activeTool() == RoadToolType.BRIDGE || state.activeTool() == RoadToolType.WATER_CROSSING) {
             return;
         }
-        if (safeSegmentType == RoadPlannerSegmentType.BRIDGE_SMALL
-                || safeSegmentType == RoadPlannerSegmentType.BRIDGE_MAJOR
-                || safeSegmentType == RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE) {
+        if (isBridgeLikeSegment(safeSegmentType)) {
             return;
         }
         RoadPlannerMergeCandidateRequestPacket request = new RoadPlannerMergeCandidateRequestPacket(
@@ -555,11 +564,126 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         mergeCandidates = List.of();
         selectedMergeCandidateIndex = -1;
         lastMergeCandidateRequest = null;
+        selectedMergeOverlay = null;
     }
 
     private void clearAndRequestMergeCandidates() {
         clearMergeCandidateState();
         requestMergeCandidates(lastNode(), lastSegmentType());
+    }
+
+    private boolean selectMergeAnchorAt(double mouseX, double mouseY) {
+        if (!mergeScope.enabled()) {
+            clearMergeCandidateState();
+            statusLine = "\u5438\u9644\u8303\u56f4\u5df2\u5173\u95ed";
+            return true;
+        }
+        BlockPos currentEndpoint = lastNode();
+        if (currentEndpoint == null) {
+            clearMergeCandidateState();
+            statusLine = "\u8bf7\u5148\u653e\u7f6e\u89c4\u5212\u9053\u8def\u8282\u70b9";
+            return true;
+        }
+        if (isBridgeLikeSegment(lastSegmentType())) {
+            clearMergeCandidateState();
+            statusLine = "\u6865\u6881\u6bb5\u7981\u6b62\u5e76\u5165\u73b0\u6709\u9053\u8def";
+            return true;
+        }
+        RoadPlannerRoadOverlayHitTester.Result hit = hoveredRoadOverlay((int) Math.round(mouseX), (int) Math.round(mouseY));
+        if (hit == null || !hit.hit()) {
+            clearMergeCandidateState();
+            statusLine = "\u672a\u9009\u4e2d\u53ef\u5e76\u5165\u9053\u8def";
+            return true;
+        }
+        OverlayAnchor anchor = nearestOverlayAnchor(hit.entry(), currentEndpoint);
+        if (anchor == null) {
+            clearMergeCandidateState();
+            statusLine = "\u73b0\u6709\u9053\u8def\u6ca1\u6709\u53ef\u7528\u8282\u70b9";
+            return true;
+        }
+        String[] routeNames = routeNamesFromDisplayName(hit.entry().displayName());
+        mergeCandidates = List.of(new OpenRoadMergeCandidatesPacket.Entry(
+                hit.entry().roadId(),
+                anchor.pos(),
+                anchor.index(),
+                horizontalDistanceBlocks(currentEndpoint, anchor.pos()),
+                routeNames[0],
+                routeNames[1],
+                "",
+                hit.entry().relationship()));
+        selectedMergeCandidateIndex = 0;
+        selectedMergeOverlay = hit.entry();
+        statusLine = "\u5df2\u9009\u62e9\u5e76\u5165: " + hit.entry().displayName() + "\uff0c\u8bf7\u70b9\u51fb\u786e\u8ba4\u5e76\u5165";
+        return true;
+    }
+
+    private void confirmSelectedMergeAnchor() {
+        RoadPlannerMergeSelection selection = selectedMergeSelection();
+        if (!selection.present()) {
+            statusLine = "\u6682\u65e0\u53ef\u786e\u8ba4\u5e76\u5165\u9053\u8def";
+            return;
+        }
+        if (lastNode() == null) {
+            clearMergeCandidateState();
+            statusLine = "\u8bf7\u5148\u653e\u7f6e\u89c4\u5212\u9053\u8def\u8282\u70b9";
+            return;
+        }
+        if (isBridgeLikeSegment(lastSegmentType())) {
+            clearMergeCandidateState();
+            statusLine = "\u6865\u6881\u6bb5\u7981\u6b62\u5e76\u5165\u73b0\u6709\u9053\u8def";
+            return;
+        }
+        OpenRoadMergeCandidatesPacket.Entry candidate = mergeCandidates.get(selectedMergeCandidateIndex);
+        BlockPos anchor = selection.anchorPos();
+        if (!anchor.equals(lastNode())) {
+            linePlan.addClickNode(anchor, RoadPlannerSegmentType.ROAD);
+        }
+        int appendedTailNodes = appendSharedMergeTail(selection);
+        selectedNode = null;
+        saveDraft();
+        requestRoutePreload(linePlan.nodes());
+        statusLine = "\u5df2\u786e\u8ba4\u5e76\u5165: " + candidate.sourceName() + " -> " + candidate.targetName();
+    }
+
+    private int appendSharedMergeTail(RoadPlannerMergeSelection selection) {
+        if (selection == null || !selection.present()) {
+            return 0;
+        }
+        RoadPlannerRoadOverlaySyncPacket.Entry overlay = selectedMergeOverlay;
+        if (overlay == null || !overlay.roadId().equals(selection.roadId())) {
+            overlay = roadOverlays.stream()
+                    .filter(entry -> entry != null && entry.roadId().equals(selection.roadId()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (overlay == null || overlay.path().isEmpty()) {
+            return 0;
+        }
+        List<BlockPos> path = overlay.path();
+        int anchorIndex = selection.pathIndex();
+        if (anchorIndex < 0 || anchorIndex >= path.size() || !selection.anchorPos().equals(path.get(anchorIndex))) {
+            anchorIndex = indexOfNode(path, selection.anchorPos());
+        }
+        if (anchorIndex < 0) {
+            return 0;
+        }
+        int targetIndex = nearestPathNodeIndex(path, destinationTownPos);
+        if (targetIndex < 0 || targetIndex == anchorIndex) {
+            return 0;
+        }
+        int step = targetIndex > anchorIndex ? 1 : -1;
+        int appended = 0;
+        for (int index = anchorIndex + step; ; index += step) {
+            BlockPos node = path.get(index);
+            if (!node.equals(lastNode())) {
+                linePlan.addClickNode(node, RoadPlannerSegmentType.ROAD);
+                appended++;
+            }
+            if (index == targetIndex) {
+                break;
+            }
+        }
+        return appended;
     }
 
     private RoadPlannerMergeSelection selectedMergeSelection() {
@@ -603,6 +727,89 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     private RoadPlannerSegmentType lastSegmentType() {
         return linePlan.segmentCount() == 0 ? RoadPlannerSegmentType.ROAD : linePlan.segments().get(linePlan.segmentCount() - 1);
+    }
+
+    private OverlayAnchor nearestOverlayAnchor(RoadPlannerRoadOverlaySyncPacket.Entry overlay, BlockPos probe) {
+        if (overlay == null || overlay.path().isEmpty() || probe == null) {
+            return null;
+        }
+        int bestIndex = -1;
+        BlockPos bestPos = null;
+        long bestDistance = Long.MAX_VALUE;
+        List<BlockPos> path = overlay.path();
+        for (int index = 0; index < path.size(); index++) {
+            BlockPos pos = path.get(index);
+            long dx = (long) pos.getX() - probe.getX();
+            long dz = (long) pos.getZ() - probe.getZ();
+            long distance = dx * dx + dz * dz;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = index;
+                bestPos = pos;
+            }
+        }
+        return bestPos == null ? null : new OverlayAnchor(bestIndex, bestPos);
+    }
+
+    private int horizontalDistanceBlocks(BlockPos from, BlockPos to) {
+        if (from == null || to == null) {
+            return 0;
+        }
+        long dx = (long) to.getX() - from.getX();
+        long dz = (long) to.getZ() - from.getZ();
+        return (int) Math.max(0, Math.round(Math.sqrt(dx * dx + dz * dz)));
+    }
+
+    private int nearestPathNodeIndex(List<BlockPos> path, BlockPos target) {
+        if (path == null || path.isEmpty() || target == null) {
+            return -1;
+        }
+        int bestIndex = -1;
+        long bestDistance = Long.MAX_VALUE;
+        for (int index = 0; index < path.size(); index++) {
+            BlockPos pos = path.get(index);
+            if (pos == null) {
+                continue;
+            }
+            long dx = (long) pos.getX() - target.getX();
+            long dz = (long) pos.getZ() - target.getZ();
+            long distance = dx * dx + dz * dz;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = index;
+            }
+        }
+        return bestIndex;
+    }
+
+    private int indexOfNode(List<BlockPos> path, BlockPos target) {
+        if (path == null || target == null) {
+            return -1;
+        }
+        for (int index = 0; index < path.size(); index++) {
+            if (target.equals(path.get(index))) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private String[] routeNamesFromDisplayName(String displayName) {
+        String safeName = displayName == null ? "" : displayName.trim();
+        int separator = safeName.indexOf(" - ");
+        if (separator > 0 && separator + 3 < safeName.length()) {
+            return new String[] {
+                    safeName.substring(0, separator).trim(),
+                    safeName.substring(separator + 3).trim()
+            };
+        }
+        return new String[] { safeName.isBlank() ? "-" : safeName, "-" };
+    }
+
+    private boolean isBridgeLikeSegment(RoadPlannerSegmentType segmentType) {
+        return segmentType == RoadPlannerSegmentType.BRIDGE_SMALL
+                || segmentType == RoadPlannerSegmentType.BRIDGE_MAJOR
+                || segmentType == RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE;
     }
 
     public void applyMapSnapshot(RoadMapSnapshotSyncPacket packet) {
@@ -1004,8 +1211,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         RoadPlannerMergeSelection selectedMerge = selectedMergeSelection();
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : roadOverlays) {
             drawRoadOverlayPath(graphics, map, overlay, roadOverlayColor(overlay.relationship()), 3);
+            drawRoadOverlayNodes(graphics, map, overlay, roadOverlayColor(overlay.relationship()));
             if (hoveredRoad != null && hoveredRoad.hit() && hoveredRoad.entry().roadId().equals(overlay.roadId())) {
                 drawRoadOverlayPath(graphics, map, overlay, HOVERED_ROAD_OVERLAY_COLOR, 5);
+                drawRoadOverlayNodes(graphics, map, overlay, HOVERED_ROAD_OVERLAY_COLOR);
             }
             if (isSelectedMergeAnchor(overlay, selectedMerge)) {
                 drawSelectedMergeAnchor(graphics, map, selectedMerge.anchorPos());
@@ -1029,6 +1238,24 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                     mapView.worldToScreenX(previous.getX(), map), mapView.worldToScreenZ(previous.getZ(), map),
                     mapView.worldToScreenX(current.getX(), map), mapView.worldToScreenZ(current.getZ(), map),
                     color, thickness);
+        }
+    }
+
+    private void drawRoadOverlayNodes(GuiGraphics graphics,
+                                      RoadPlannerMapLayout.Rect map,
+                                      RoadPlannerRoadOverlaySyncPacket.Entry overlay,
+                                      int color) {
+        if (overlay == null || overlay.path().isEmpty()) {
+            return;
+        }
+        for (BlockPos node : overlay.path()) {
+            int x = mapView.worldToScreenX(node.getX(), map);
+            int y = mapView.worldToScreenZ(node.getZ(), map);
+            if (!map.contains(x, y)) {
+                continue;
+            }
+            graphics.fill(x - 2, y - 2, x + 3, y + 3, color);
+            graphics.fill(x - 1, y - 1, x + 2, y + 2, 0xEE101418);
         }
     }
 
@@ -1293,6 +1520,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             }
             if (button == 0 && state.activeTool() == RoadToolType.ERASE) {
                 return eraseNodeAt(mouseX, mouseY);
+            }
+            if (button == 0 && state.activeTool() == RoadToolType.MERGE) {
+                return selectMergeAnchorAt(mouseX, mouseY);
             }
             if (button == 0) {
                 RoadPlannerSegmentType segmentType = segmentTypeForActiveTool();
@@ -1565,7 +1795,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return;
         }
         if (RoadPlannerTopToolbar.ACTION_NEXT_MERGE.equals(label)) {
-            cycleMergeCandidate();
+            confirmSelectedMergeAnchor();
             return;
         }
         if (RoadPlannerTopToolbar.ACTION_CONFIRM_BUILD.equals(label)) {
@@ -1591,7 +1821,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     private void submitPreviewWithSettings(RoadPlannerBuildSettings settings) {
         buildSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
-        RoadPlannerRouteExpander.Result expanded = expandRoute(linePlan.nodes(), linePlan.segments());
+        List<BlockPos> previewNodes = nodesForPreviewSubmission();
+        List<RoadPlannerSegmentType> previewSegments = segmentTypesForPreviewSubmission(previewNodes);
+        RoadPlannerRouteExpander.Result expanded = expandRoute(previewNodes, previewSegments);
         if (!expanded.success()) {
             statusLine = "\u6865\u6881\u7f3a\u5c11\u9646\u5730\u951a\u70b9\u6216\u8def\u7ebf\u8282\u70b9\u4e0d\u8db3\uff0c\u8bf7\u68c0\u67e5\u8def\u7ebf";
             return;
@@ -1604,6 +1836,28 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
     }
 
+
+    private List<BlockPos> nodesForPreviewSubmission() {
+        RoadPlannerMergeSelection selection = selectedMergeSelection();
+        List<BlockPos> nodes = linePlan.nodes();
+        if (!selection.present()) {
+            return nodes;
+        }
+        int anchorIndex = indexOfNode(nodes, selection.anchorPos());
+        if (anchorIndex < 1) {
+            return nodes;
+        }
+        return List.copyOf(nodes.subList(0, anchorIndex + 1));
+    }
+
+    private List<RoadPlannerSegmentType> segmentTypesForPreviewSubmission(List<BlockPos> previewNodes) {
+        List<RoadPlannerSegmentType> segments = linePlan.segments();
+        int segmentCount = Math.max(0, (previewNodes == null ? 0 : previewNodes.size()) - 1);
+        if (segmentCount <= 0) {
+            return List.of();
+        }
+        return List.copyOf(segments.subList(0, Math.min(segmentCount, segments.size())));
+    }
 
     private RoadPlannerRouteExpander.Result expandRoute(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
         return RoadPlannerRouteExpander.expand(
@@ -1775,6 +2029,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private boolean showsHoverPreviewLine() {
         return state.activeTool() != RoadToolType.SELECT
                 && state.activeTool() != RoadToolType.ERASE
+                && state.activeTool() != RoadToolType.MERGE
                 && state.activeTool() != RoadToolType.ENDPOINT
                 && state.activeTool() != RoadToolType.FORCE_RENDER;
     }
@@ -1895,10 +2150,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     public record RoadOverlayRenderStateForTest(String roadId,
                                                 RoadPlannerMergeRelationship relationship,
                                                 int color,
+                                                int nodeCount,
                                                 boolean selectedMergeAnchor) {
     }
 
     public record RoadOverlayTooltipForTest(String roadId, String displayName, List<String> lines) {
+    }
+
+    private record OverlayAnchor(int index, BlockPos pos) {
     }
 
     private record MapProgressView(int percent, String summary) {

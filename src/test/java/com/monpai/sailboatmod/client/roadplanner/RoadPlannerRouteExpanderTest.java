@@ -142,6 +142,30 @@ class RoadPlannerRouteExpanderTest {
         assertFalse(expanded.segmentTypes().stream().anyMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR));
     }
 
+    @Test
+    void separateWaterCrossingsKeepLongLandConnectorAsRoad() {
+        RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(144, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                (x, z) -> x < 20 || (x > 40 && x < 100) || x > 120,
+                (x, z) -> 64,
+                (x, z) -> (x >= 20 && x <= 40) || (x >= 100 && x <= 120) ? 2 : 0
+        );
+
+        assertTrue(expanded.success());
+        boolean foundLongLandRoad = false;
+        for (int index = 0; index < expanded.segmentTypes().size(); index++) {
+            BlockPos from = expanded.nodes().get(index);
+            BlockPos to = expanded.nodes().get(index + 1);
+            int span = Math.abs(to.getX() - from.getX()) + Math.abs(to.getZ() - from.getZ());
+            if (span >= 40 && from.getX() > 40 && to.getX() < 100) {
+                assertEquals(RoadPlannerSegmentType.ROAD, expanded.segmentTypes().get(index));
+                foundLongLandRoad = true;
+            }
+        }
+        assertTrue(foundLongLandRoad, expanded.nodes().toString());
+    }
+
     private static boolean isBridge(RoadPlannerSegmentType type) {
         return type == RoadPlannerSegmentType.BRIDGE_MAJOR || type == RoadPlannerSegmentType.BRIDGE_SMALL;
     }

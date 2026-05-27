@@ -43,183 +43,109 @@ class RoadPlannerBridgeSegmentNormalizerTest {
     }
 
     @Test
-    void internalRoadSegmentBetweenBridgeSegmentsIsPromotedBackToBridge() {
-        BlockPos a = new BlockPos(0, 64, 0);
-        BlockPos b = new BlockPos(8, 65, 0);
-        BlockPos c = new BlockPos(16, 65, 0);
-        BlockPos d = new BlockPos(24, 65, 0);
-        BlockPos e = new BlockPos(32, 64, 0);
+    void waterSurfaceNodeForcesAdjacentRoadSegmentsToBridge() {
+        BlockPos landBefore = new BlockPos(0, 64, 0);
+        BlockPos waterSurface = new BlockPos(8, 63, 0);
+        BlockPos landAfter = new BlockPos(16, 64, 0);
 
         RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
-                List.of(a, b, c, d, e),
-                List.of(
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD
-                ),
-                (x, z) -> x == 0 || x == 32 || x == 16
-        );
-
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(0));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(1));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(2));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(3));
-        assertEquals(1, result.bridgeRanges().size());
-        assertEquals(0, result.bridgeRanges().get(0).startSegmentIndex());
-        assertEquals(4, result.bridgeRanges().get(0).endSegmentIndexExclusive());
-    }
-
-    @Test
-    void multipleInternalRoadSegmentsBetweenBridgeSegmentsArePromotedBackToBridge() {
-        BlockPos a = new BlockPos(0, 64, 0);
-        BlockPos b = new BlockPos(8, 65, 0);
-        BlockPos c = new BlockPos(16, 65, 0);
-        BlockPos d = new BlockPos(24, 65, 0);
-        BlockPos e = new BlockPos(32, 65, 0);
-        BlockPos f = new BlockPos(40, 64, 0);
-
-        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
-                List.of(a, b, c, d, e, f),
-                List.of(
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD
-                ),
-                (x, z) -> x == 0 || x == 16 || x == 24 || x == 40
-        );
-
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(0));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(1));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(2));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(3));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(4));
-        assertEquals(1, result.bridgeRanges().size());
-        assertEquals(0, result.bridgeRanges().get(0).startSegmentIndex());
-        assertEquals(5, result.bridgeRanges().get(0).endSegmentIndexExclusive());
-    }
-
-    @Test
-    void fourInternalRoadSegmentsBetweenBridgeSegmentsArePromotedBackToBridge() {
-        List<BlockPos> nodes = List.of(
-                new BlockPos(0, 64, 0),
-                new BlockPos(8, 65, 0),
-                new BlockPos(16, 65, 0),
-                new BlockPos(24, 65, 0),
-                new BlockPos(32, 65, 0),
-                new BlockPos(40, 65, 0),
-                new BlockPos(48, 64, 0)
-        );
-
-        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
-                nodes,
-                List.of(
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.BRIDGE_SMALL
-                ),
-                (x, z) -> true
-        );
-
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(0));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(1));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(2));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(3));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(4));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(5));
-        assertEquals(1, result.bridgeRanges().size());
-    }
-
-    @Test
-    void longRoadGapBetweenBridgeSegmentsStaysRoadAndSplitsBridgeRanges() {
-        List<BlockPos> nodes = List.of(
-                new BlockPos(0, 64, 0),
-                new BlockPos(8, 65, 0),
-                new BlockPos(16, 65, 0),
-                new BlockPos(24, 65, 0),
-                new BlockPos(32, 65, 0),
-                new BlockPos(40, 65, 0),
-                new BlockPos(48, 65, 0),
-                new BlockPos(56, 65, 0),
-                new BlockPos(64, 64, 0)
-        );
-
-        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
-                nodes,
-                List.of(
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD
-                ),
-                (x, z) -> true
-        );
-
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(0));
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(1));
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(2));
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(3));
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(4));
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(5));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(6));
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(7));
-        assertEquals(2, result.bridgeRanges().size());
-    }
-
-    @Test
-    void mixedSmallAndMajorBridgeRangeNormalizesToMajor() {
-        BlockPos a = new BlockPos(0, 64, 0);
-        BlockPos b = new BlockPos(8, 65, 0);
-        BlockPos c = new BlockPos(16, 65, 0);
-        BlockPos d = new BlockPos(24, 65, 0);
-
-        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
-                List.of(a, b, c, d),
-                List.of(
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.BRIDGE_MAJOR,
-                        RoadPlannerSegmentType.BRIDGE_SMALL
-                ),
-                (x, z) -> true
+                List.of(landBefore, waterSurface, landAfter),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.ROAD),
+                (x, z) -> x != 8
         );
 
         assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(0));
         assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(1));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(2));
+        assertEquals(1, result.bridgeRanges().size());
+        assertEquals(0, result.bridgeRanges().get(0).startSegmentIndex());
+        assertEquals(2, result.bridgeRanges().get(0).endSegmentIndexExclusive());
+    }
+
+    @Test
+    void smallBridgeRangeIsNormalizedWithLandAnchors() {
+        BlockPos landBefore = new BlockPos(0, 64, 0);
+        BlockPos bridgeStart = new BlockPos(8, 65, 0);
+        BlockPos bridgeEnd = new BlockPos(16, 65, 0);
+        BlockPos landAfter = new BlockPos(24, 64, 0);
+
+        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
+                List.of(landBefore, bridgeStart, bridgeEnd, landAfter),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_SMALL, RoadPlannerSegmentType.ROAD),
+                (x, z) -> x == 0 || x == 24
+        );
+
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(0));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(1));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(2));
         assertEquals(1, result.bridgeRanges().size());
     }
 
     @Test
-    void endpointRoadSegmentsOutsideBridgeRangeStayRoad() {
-        BlockPos a = new BlockPos(-8, 64, 0);
-        BlockPos b = new BlockPos(0, 64, 0);
-        BlockPos c = new BlockPos(8, 66, 0);
-        BlockPos d = new BlockPos(16, 64, 0);
-        BlockPos e = new BlockPos(24, 64, 0);
-
+    void longLandConnectorBetweenBridgeSpansStaysRoad() {
         RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
-                List.of(a, b, c, d, e),
                 List.of(
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.BRIDGE_SMALL,
-                        RoadPlannerSegmentType.ROAD
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(16, 64, 0),
+                        new BlockPos(48, 64, 0),
+                        new BlockPos(80, 64, 0),
+                        new BlockPos(96, 64, 0)
                 ),
-                (x, z) -> x <= 0 || x >= 16
+                List.of(
+                        RoadPlannerSegmentType.BRIDGE_MAJOR,
+                        RoadPlannerSegmentType.ROAD,
+                        RoadPlannerSegmentType.ROAD,
+                        RoadPlannerSegmentType.BRIDGE_MAJOR
+                ),
+                (x, z) -> true
         );
 
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(0));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(1));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, result.segmentTypes().get(2));
-        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(3));
+        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(1));
+        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(2));
+    }
+
+    @Test
+    void pollutedLongLandConnectorInsideBridgeRunIsRestoredToRoad() {
+        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(20, 64, 0),
+                        new BlockPos(41, 64, 0),
+                        new BlockPos(99, 64, 0),
+                        new BlockPos(120, 64, 0),
+                        new BlockPos(144, 64, 0)
+                ),
+                List.of(
+                        RoadPlannerSegmentType.BRIDGE_MAJOR,
+                        RoadPlannerSegmentType.BRIDGE_MAJOR,
+                        RoadPlannerSegmentType.BRIDGE_MAJOR,
+                        RoadPlannerSegmentType.BRIDGE_MAJOR,
+                        RoadPlannerSegmentType.BRIDGE_MAJOR
+                ),
+                (x, z) -> x < 20 || (x > 40 && x < 100) || x > 120
+        );
+
+        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(1));
+        assertEquals(RoadPlannerSegmentType.ROAD, result.segmentTypes().get(2));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(3));
+    }
+
+    @Test
+    void tinyInternalLandIslandBetweenBridgeSpansStaysBridge() {
+        RoadPlannerBridgeSegmentNormalizer.Result result = RoadPlannerBridgeSegmentNormalizer.normalize(
+                List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(16, 64, 0),
+                        new BlockPos(18, 64, 0),
+                        new BlockPos(32, 64, 0)
+                ),
+                List.of(
+                        RoadPlannerSegmentType.BRIDGE_MAJOR,
+                        RoadPlannerSegmentType.ROAD,
+                        RoadPlannerSegmentType.BRIDGE_MAJOR
+                ),
+                (x, z) -> true
+        );
+
+        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(1));
     }
 }

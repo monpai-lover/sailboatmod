@@ -14,7 +14,11 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
@@ -155,7 +159,7 @@ public final class ConstructionGhostPreviewRenderer {
             if (block == null || block.pos() == null) {
                 continue;
             }
-            PreviewBox box = previewBox(block.pos(), cameraPos);
+            PreviewBox box = previewBox(block.pos(), block.state(), cameraPos);
             float minX = (float) box.minX();
             float minY = (float) box.minY();
             float minZ = (float) box.minZ();
@@ -178,14 +182,45 @@ public final class ConstructionGhostPreviewRenderer {
     }
 
     private static PreviewBox previewBox(BlockPos pos, Vec3 cameraPos) {
+        return previewBox(pos, null, cameraPos);
+    }
+
+    private static PreviewBox previewBox(BlockPos pos, BlockState state, Vec3 cameraPos) {
         double minX = pos.getX() - cameraPos.x;
         double minY = pos.getY() - cameraPos.y;
         double minZ = pos.getZ() - cameraPos.z;
+        AABB shapeBounds = blockShapeBounds(pos, state);
+        if (shapeBounds != null) {
+            return new PreviewBox(
+                    minX + shapeBounds.minX,
+                    minY + shapeBounds.minY,
+                    minZ + shapeBounds.minZ,
+                    minX + shapeBounds.maxX,
+                    minY + shapeBounds.maxY,
+                    minZ + shapeBounds.maxZ
+            );
+        }
         return new PreviewBox(minX, minY, minZ, minX + 1.0D, minY + 1.0D, minZ + 1.0D);
+    }
+
+    private static AABB blockShapeBounds(BlockPos pos, BlockState state) {
+        if (state == null) {
+            return null;
+        }
+        try {
+            VoxelShape shape = state.getShape(EmptyBlockGetter.INSTANCE, pos);
+            return shape.isEmpty() ? null : shape.bounds();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {
         return previewBox(pos, cameraPos);
+    }
+
+    static PreviewBox previewBoxForTest(BlockPos pos, BlockState state, Vec3 cameraPos) {
+        return previewBox(pos, state, cameraPos);
     }
 
     static boolean rendersFilledBoxesForTest() {

@@ -13,7 +13,6 @@ public final class PathfinderFactory {
             case BIDIRECTIONAL_ASTAR -> new BidirectionalAStarPathfinder(config);
             case GRADIENT_DESCENT -> new GradientDescentPathfinder(config);
             case POTENTIAL_FIELD -> new PotentialFieldPathfinder(config);
-            case SEGMENTED_ADAPTIVE -> new SegmentedAdaptivePathfinder(config);
         };
     }
 

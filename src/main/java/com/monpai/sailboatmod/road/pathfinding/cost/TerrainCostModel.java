@@ -28,9 +28,6 @@ public class TerrainCostModel {
     }
 
     public double moveCost(int fromX, int fromZ, int toX, int toZ, TerrainSamplingCache cache) {
-        if (cache.isBlocked(toX, toZ)) {
-            return Double.POSITIVE_INFINITY;
-        }
         boolean diagonal = (fromX != toX) && (fromZ != toZ);
         double stepCost = diagonal ? DIAG_STEP : ORTHO_STEP;
 

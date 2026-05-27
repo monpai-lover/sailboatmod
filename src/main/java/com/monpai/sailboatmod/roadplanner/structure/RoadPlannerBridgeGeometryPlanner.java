@@ -23,8 +23,7 @@ public final class RoadPlannerBridgeGeometryPlanner {
             return new Plan(List.of(), List.of(), SEA_LEVEL + safeConfig.getDeckHeight(), RoadPlannerBridgeProfile.PIER_BRIDGE);
         }
         RoadTerrainSampler safeSampler = terrainSampler == null ? RoadTerrainSampler.flat(points.get(0).terrainY()) : terrainSampler;
-        int waterSurfaceY = bridgeWaterSurfaceY(points, safeSampler);
-        int waterY = Math.max(waterSurfaceY, SEA_LEVEL);
+        int waterY = bridgeWaterReferenceY(points, safeSampler);
         int entryY = Math.max(points.get(0).targetY(), waterY);
         int exitY = Math.max(points.get(points.size() - 1).targetY(), waterY);
         int spanLength = span == null ? points.size() - 1 : span.endIndex() - span.startIndex();
@@ -40,12 +39,22 @@ public final class RoadPlannerBridgeGeometryPlanner {
         return config == null ? new BridgeConfig() : config;
     }
 
-    private static int bridgeWaterSurfaceY(List<RoadCenterlinePoint> points, RoadTerrainSampler sampler) {
+    private static int bridgeWaterReferenceY(List<RoadCenterlinePoint> points, RoadTerrainSampler sampler) {
         int max = Integer.MIN_VALUE;
+        int dryFallback = Integer.MAX_VALUE;
         for (RoadCenterlinePoint point : points) {
-            max = Math.max(max, sampler.waterSurfaceY(point.pos().getX(), point.pos().getZ()));
+            int x = point.pos().getX();
+            int z = point.pos().getZ();
+            int sampledWaterY = sampler.waterSurfaceY(x, z);
+            dryFallback = Math.min(dryFallback, point.targetY() - 1);
+            if (sampledWaterY <= point.targetY() || sampler.isWater(x, sampledWaterY, z)) {
+                max = Math.max(max, sampledWaterY);
+            }
         }
-        return max == Integer.MIN_VALUE ? SEA_LEVEL : max;
+        if (max != Integer.MIN_VALUE) {
+            return max;
+        }
+        return dryFallback == Integer.MAX_VALUE ? SEA_LEVEL : dryFallback;
     }
 
     private static int deckYForActualBridge(int waterY, int entryY, int exitY, int spanLength, RoadSpan span, BridgeConfig config) {
@@ -96,7 +105,8 @@ public final class RoadPlannerBridgeGeometryPlanner {
         int higherShore = Math.max(entryY, exitY);
         int clearanceDeck = waterY + safeProfile.waterClearance();
         int shoreDeck = higherShore + 1;
-        int maxLowDeck = lowerShore + safeProfile.maxRiseFromLowerShore();
+        int approachBudget = Math.max(1, Math.min(safeProfile.maxRiseFromLowerShore(), Math.max(1, spanLength / 4)));
+        int maxLowDeck = lowerShore + approachBudget;
         return Math.max(higherShore, Math.min(Math.max(clearanceDeck, shoreDeck), maxLowDeck));
     }
 

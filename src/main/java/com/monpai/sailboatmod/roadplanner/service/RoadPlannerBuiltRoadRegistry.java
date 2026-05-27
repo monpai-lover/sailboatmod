@@ -48,7 +48,9 @@ final class RoadPlannerBuiltRoadRegistry {
                 now,
                 creatorUuid,
                 creatorName,
-                RoadNetworkRecord.SOURCE_TYPE_MANUAL
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL,
+                build.sourceTownName(),
+                build.targetTownName()
         );
         List<BuildStep> executedSteps = executedPlannerSteps(build.buildSteps(), build.rollbackEntries());
         if (executedSteps.isEmpty()) {

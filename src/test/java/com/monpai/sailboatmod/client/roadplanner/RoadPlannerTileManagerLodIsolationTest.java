@@ -114,4 +114,78 @@ class RoadPlannerTileManagerLodIsolationTest {
             assertEquals(0xFF00AA00, image.getPixelRGBA(32, 32));
         }
     }
+
+    @Test
+    void builtRoadRefreshOverwritesOldBlackLodCache() throws IOException {
+        File rootDir = tempDir.toFile();
+        RoadPlannerTileManager manager = RoadPlannerTileManager.forTest(rootDir, "world_a", "minecraft:overworld");
+        int[] blackPixels = new int[RoadPlannerTile.TILE_PIXEL_SIZE * RoadPlannerTile.TILE_PIXEL_SIZE];
+        Arrays.fill(blackPixels, 0xFF000000);
+        manager.applyTileSync(new RoadPlannerMapTileSyncPacket(
+                UUID.randomUUID(),
+                42L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_4,
+                2,
+                -3,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                blackPixels));
+
+        int[] refreshedPixels = new int[RoadPlannerTile.TILE_PIXEL_SIZE * RoadPlannerTile.TILE_PIXEL_SIZE];
+        Arrays.fill(refreshedPixels, 0xFF556677);
+        manager.applyTileSync(new RoadPlannerMapTileSyncPacket(
+                UUID.randomUUID(),
+                43L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_4,
+                2,
+                -3,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                refreshedPixels));
+
+        var file = rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("2_-3.png").toFile();
+        try (var image = com.mojang.blaze3d.platform.NativeImage.read(java.nio.file.Files.readAllBytes(file.toPath()))) {
+            assertEquals(0xFF556677, image.getPixelRGBA(0, 0));
+            assertEquals(0xFF556677, image.getPixelRGBA(128, 128));
+        }
+    }
+
+    @Test
+    void builtRoadRefreshDoesNotCreatePartialPlaceholderTileWhenBaseCacheIsMissing() {
+        File rootDir = tempDir.toFile();
+        RoadPlannerTileManager manager = RoadPlannerTileManager.forTest(rootDir, "world_a", "minecraft:overworld");
+        int[] refreshedPixels = new int[RoadPlannerTile.TILE_PIXEL_SIZE * RoadPlannerTile.TILE_PIXEL_SIZE];
+        Arrays.fill(refreshedPixels, 0xFF000000);
+        boolean[] coverageMask = new boolean[refreshedPixels.length];
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                coverageMask[y * RoadPlannerTile.TILE_PIXEL_SIZE + x] = true;
+                refreshedPixels[y * RoadPlannerTile.TILE_PIXEL_SIZE + x] = 0xFF556677;
+            }
+        }
+
+        int applied = manager.applyTileSync(new RoadPlannerMapTileSyncPacket(
+                UUID.randomUUID(),
+                43L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_4,
+                2,
+                -3,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                refreshedPixels,
+                coverageMask));
+
+        assertEquals(0, applied);
+        assertEquals(0, manager.loadedTileCount());
+        assertFalse(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("2_-3.png").toFile().exists());
+    }
 }

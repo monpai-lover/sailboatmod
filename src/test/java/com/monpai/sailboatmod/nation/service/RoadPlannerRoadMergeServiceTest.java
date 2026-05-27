@@ -309,6 +309,86 @@ class RoadPlannerRoadMergeServiceTest {
     }
 
     @Test
+    void visibleOverlaysPreferPlannerRouteNamesOverPlannerAnchorIds() {
+        NationSavedData data = new NationSavedData();
+        data.putRoadNetwork(new RoadNetworkRecord(
+                "planner-built-road",
+                "alpha",
+                "",
+                OVERWORLD,
+                "planner:start:0,64,0",
+                "planner:end:16,64,0",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),
+                2345L,
+                1234L,
+                "creator-uuid",
+                "Builder",
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL,
+                "Alpha",
+                "Beta"
+        ));
+
+        RoadPlannerRoadMergeService.RoadOverlay overlay = RoadPlannerRoadMergeService.visibleRoadOverlaysForTest(
+                data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 64, RoadPlannerMergeScope.OWN_NATION)
+                .get(0);
+
+        assertEquals("Alpha - Beta", overlay.displayName());
+    }
+
+    @Test
+    void mergeCandidatesPreferPlannerRouteNamesOverPlannerAnchorIds() {
+        NationSavedData data = new NationSavedData();
+        data.putRoadNetwork(new RoadNetworkRecord(
+                "planner-built-road",
+                "alpha",
+                "",
+                OVERWORLD,
+                "planner:start:0,64,0",
+                "planner:end:16,64,0",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),
+                2345L,
+                1234L,
+                "creator-uuid",
+                "Builder",
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL,
+                "Alpha",
+                "Beta"
+        ));
+
+        RoadPlannerRoadMergeService.Candidate candidate = find(data, "alpha", true,
+                new BlockPos(0, 64, 0), 8, RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerRoadMergeService.BridgeAnchorClassifier.neverBridge()).get(0);
+
+        assertEquals("Alpha", candidate.sourceName());
+        assertEquals("Beta", candidate.targetName());
+    }
+
+    @Test
+    void roadNetworkRecordPersistsPlannerRouteNames() {
+        RoadNetworkRecord road = new RoadNetworkRecord(
+                "planner-built-road",
+                "alpha",
+                "",
+                OVERWORLD,
+                "planner:start:0,64,0",
+                "planner:end:16,64,0",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),
+                2345L,
+                1234L,
+                "creator-uuid",
+                "Builder",
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL,
+                "Alpha",
+                "Beta"
+        );
+
+        RoadNetworkRecord loaded = RoadNetworkRecord.load(road.save());
+
+        assertEquals("Alpha", loaded.routeSourceName());
+        assertEquals("Beta", loaded.routeTargetName());
+    }
+
+    @Test
     void visibleOverlaysMarkOldRoadRecordsAsLegacyMetadata() {
         NationSavedData data = new NationSavedData();
         data.putRoadNetwork(road("legacy-road", "alpha", OVERWORLD, new BlockPos(0, 64, 0), new BlockPos(3, 64, 4)));

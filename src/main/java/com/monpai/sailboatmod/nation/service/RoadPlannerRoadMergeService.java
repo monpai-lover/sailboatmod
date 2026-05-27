@@ -209,8 +209,8 @@ public final class RoadPlannerRoadMergeService {
         if (road == null) {
             return "";
         }
-        String left = endpointName(data, road.structureAId());
-        String right = endpointName(data, road.structureBId());
+        String left = routeSourceName(data, road);
+        String right = routeTargetName(data, road);
         if (!left.isBlank() && !right.isBlank() && !left.equals(right)) {
             return left + " - " + right;
         }
@@ -409,11 +409,31 @@ public final class RoadPlannerRoadMergeService {
                         anchor.immutable(),
                         pathIndex,
                         (int) Math.round(Math.sqrt(distanceSqr)),
-                        structureName(data, road.structureAId()),
-                        structureName(data, road.structureBId()),
+                        routeSourceName(data, road),
+                        routeTargetName(data, road),
                         road.nationId(),
                         relationship),
                 distanceSqr);
+    }
+
+    private static String routeSourceName(NationSavedData data, RoadNetworkRecord road) {
+        if (road == null) {
+            return "";
+        }
+        if (!road.routeSourceName().isBlank()) {
+            return road.routeSourceName();
+        }
+        return structureName(data, road.structureAId());
+    }
+
+    private static String routeTargetName(NationSavedData data, RoadNetworkRecord road) {
+        if (road == null) {
+            return "";
+        }
+        if (!road.routeTargetName().isBlank()) {
+            return road.routeTargetName();
+        }
+        return structureName(data, road.structureBId());
     }
 
     private static RoadPlannerMergeRelationship relationshipFor(NationSavedData data,

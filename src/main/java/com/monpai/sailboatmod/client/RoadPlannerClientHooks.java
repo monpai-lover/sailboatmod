@@ -5,14 +5,16 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerClaimOverlay;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.client.screen.RoadPlannerConfigScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerActionMenuScreen;
+import com.monpai.sailboatmod.client.screen.RoadPlannerDemolitionSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerOptionSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
 import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerActionMenuMode;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
-import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
+import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
@@ -151,6 +153,10 @@ public final class RoadPlannerClientHooks {
 
     public static void openActionMenu(RoadPlannerActionMenuMode mode, UUID sessionId) {
         Minecraft.getInstance().setScreen(new RoadPlannerActionMenuScreen(mode, sessionId));
+    }
+
+    public static void openDemolitionSelection(List<OpenRoadDemolitionSelectionPacket.Entry> roads) {
+        Minecraft.getInstance().setScreen(new RoadPlannerDemolitionSelectionScreen(roads));
     }
 
     public static void openNewPlannerEntry(UUID sessionId,

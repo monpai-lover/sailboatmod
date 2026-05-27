@@ -4,6 +4,10 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -31,6 +35,24 @@ class ConstructionGhostPreviewRendererTest {
         assertEquals(1.60D, box.maxX(), 1.0E-6D);
         assertEquals(1.90D, box.maxY(), 1.0E-6D);
         assertEquals(1.80D, box.maxZ(), 1.0E-6D);
+    }
+
+    @Test
+    void constructionGhostBoxesUseBlockStateShapeForSlabs() {
+        BlockPos pos = new BlockPos(32, 70, -5);
+        Vec3 camera = new Vec3(31.40D, 69.10D, -5.80D);
+        BlockState bottomSlab = Blocks.OAK_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.BOTTOM);
+        BlockState topSlab = Blocks.OAK_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.TOP);
+
+        ConstructionGhostPreviewRenderer.PreviewBox bottomBox =
+                ConstructionGhostPreviewRenderer.previewBoxForTest(pos, bottomSlab, camera);
+        ConstructionGhostPreviewRenderer.PreviewBox topBox =
+                ConstructionGhostPreviewRenderer.previewBoxForTest(pos, topSlab, camera);
+
+        assertEquals(0.90D, bottomBox.minY(), 1.0E-6D);
+        assertEquals(1.40D, bottomBox.maxY(), 1.0E-6D);
+        assertEquals(1.40D, topBox.minY(), 1.0E-6D);
+        assertEquals(1.90D, topBox.maxY(), 1.0E-6D);
     }
 
     @Test

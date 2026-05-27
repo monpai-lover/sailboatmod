@@ -121,8 +121,8 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
-    void usesSmallBridgeThresholdThatKeepsShortSpansWithoutPiers() {
-        assertFalse(RoadPlannerBridgeThresholds.requiresMajorBridge(32));
-        assertTrue(RoadPlannerBridgeThresholds.requiresMajorBridge(33));
+    void usesOldMajorBridgeThreshold() {
+        assertFalse(RoadPlannerBridgeThresholds.requiresMajorBridge(8));
+        assertTrue(RoadPlannerBridgeThresholds.requiresMajorBridge(9));
     }
 }

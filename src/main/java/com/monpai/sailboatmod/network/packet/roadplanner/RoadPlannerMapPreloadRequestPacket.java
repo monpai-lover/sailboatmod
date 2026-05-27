@@ -73,6 +73,7 @@ public record RoadPlannerMapPreloadRequestPacket(UUID sessionId,
     public enum Purpose {
         ENTER_PLANNER_PRELOAD,
         ROUTE_PRELOAD,
-        FORCE_RENDER
+        FORCE_RENDER,
+        BUILT_ROAD_REFRESH
     }
 }

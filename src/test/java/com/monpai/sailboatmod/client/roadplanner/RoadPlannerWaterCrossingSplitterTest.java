@@ -3,7 +3,6 @@ package com.monpai.sailboatmod.client.roadplanner;
 import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -16,7 +15,7 @@ class RoadPlannerWaterCrossingSplitterTest {
     }
 
     @Test
-    void fourToThirtyTwoBlockWaterSpanCreatesSmallBridge() {
+    void fourToTwentyFourBlockWaterSpanCreatesSmallBridge() {
         RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(6, 13, 1);
 
         assertTrue(result.didSplit());
@@ -25,73 +24,32 @@ class RoadPlannerWaterCrossingSplitterTest {
     }
 
     @Test
-    void thirtyTwoBlockWaterSpanCreatesSmallBridge() {
-        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(4, 35, 1);
-
-        assertTrue(result.didSplit());
-        assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL));
-        assertFalse(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
-    }
-
-    @Test
-    void thirtyThreeBlockWaterSpanCreatesMajorBridge() {
-        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(3, 35, 1);
+    void wideWaterSpanCreatesMajorBridge() {
+        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(4, 32, 1);
 
         assertTrue(result.didSplit());
         assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
     }
 
     @Test
-    void waterCrossingNearDestinationUsesTrailingDrySamplesAsExitShore() {
-        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(10, 36, 1);
+    void wideWaterSpanKeepsBridgeControlNodesSparse() {
+        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(4, 32, 1);
 
-        assertTrue(result.didSplit());
-        assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL));
-    }
-
-    @Test
-    void narrowDeepWaterSpanCreatesSmallBridgeBecauseDepthDoesNotForcePiers() {
-        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(8, 13, 12);
-
-        assertTrue(result.didSplit());
-        assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL));
-        assertFalse(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
-    }
-
-    @Test
-    void oneBlockLandIslandInsideWaterCrossingStaysOneBridgeRange() {
-        RoadPlannerBridgeRuleService.LandProbe landProbe = (x, z) -> x < 6 || x > 18 || x == 12;
-        RoadPlannerHeightSampler heightSampler = (x, z) -> 64;
-        RoadPlannerWaterDepthProbe depthProbe = (x, z) -> landProbe.isLand(x, z) ? 0 : 2;
-
-        RoadPlannerWaterCrossingSplitter.SplitResult result = RoadPlannerWaterCrossingSplitter.split(
-                new BlockPos(0, 64, 0),
-                new BlockPos(24, 64, 0),
-                landProbe,
-                heightSampler,
-                depthProbe
-        );
-
-        assertTrue(result.didSplit());
-        long bridgeNodeCount = result.nodes().stream()
-                .filter(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL)
+        long bridgeNodes = result.nodes().stream()
+                .filter(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR)
                 .count();
-        assertTrue(bridgeNodeCount >= 2, "bridge nodes should continue across the one-block island");
-        assertEquals(1, countSmallBridgeRuns(result), "one-block island should not split the bridge range");
-        assertFalse(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
+
+        assertTrue(bridgeNodes <= 3, "wide bridge split should not add dense redundant control nodes: " + result.nodes());
+        assertTrue(result.nodes().size() <= 6, "split node list should stay sparse enough for manual editing: " + result.nodes());
     }
 
-    private static int countSmallBridgeRuns(RoadPlannerWaterCrossingSplitter.SplitResult result) {
-        int bridgeRuns = 0;
-        boolean wasInBridgeRun = false;
-        for (RoadPlannerWaterCrossingSplitter.SplitNode node : result.nodes()) {
-            boolean isInBridgeRun = node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL;
-            if (isInBridgeRun && !wasInBridgeRun) {
-                bridgeRuns++;
-            }
-            wasInBridgeRun = isInBridgeRun;
-        }
-        return bridgeRuns;
+    @Test
+    void narrowDeepWaterSpanCreatesSmallBridge() {
+        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(8, 13, 3);
+
+        assertTrue(result.didSplit());
+        assertTrue(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_SMALL));
+        assertFalse(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
     }
 
     private static RoadPlannerWaterCrossingSplitter.SplitResult splitAcrossWater(int waterStartX, int waterEndX, int waterDepth) {

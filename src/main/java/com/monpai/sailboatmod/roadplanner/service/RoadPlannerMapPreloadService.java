@@ -26,6 +26,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkDirection;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +71,59 @@ public final class RoadPlannerMapPreloadService {
                 packet.dimensionId(),
                 plan)));
         sendProgress(player, jobs.get(key).job.progress());
+    }
+
+    public void enqueueBuiltRoadRefresh(ServerLevel level, Collection<net.minecraft.world.level.ChunkPos> chunks) {
+        if (level == null || chunks == null || chunks.isEmpty()) {
+            return;
+        }
+        MinecraftServer activeServer = server == null ? level.getServer() : server;
+        if (activeServer == null) {
+            return;
+        }
+        if (server == null) {
+            server = activeServer;
+        }
+        LinkedHashSet<net.minecraft.world.level.ChunkPos> orderedChunks = new LinkedHashSet<>();
+        for (net.minecraft.world.level.ChunkPos chunk : chunks) {
+            if (chunk != null) {
+                orderedChunks.add(chunk);
+            }
+        }
+        if (orderedChunks.isEmpty()) {
+            return;
+        }
+        RoadMapRoutePreloadPlan plan = new RoadMapRoutePreloadPlan(
+                RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY,
+                List.copyOf(orderedChunks),
+                orderedChunks.size(),
+                orderedChunks.size());
+        String dimensionId = level.dimension().location().toString();
+        long requestId = Math.max(1L, level.getGameTime());
+        for (ServerPlayer player : activeServer.getPlayerList().getPlayers()) {
+            if (player == null || !(player.level() instanceof ServerLevel playerLevel)
+                    || !Objects.equals(playerLevel.dimension(), level.dimension())) {
+                continue;
+            }
+            UUID sessionId = UUID.randomUUID();
+            ActiveJob activeJob = new ActiveJob(
+                    player.getUUID(),
+                    sessionId,
+                    requestId,
+                    RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                    "",
+                    dimensionId,
+                    new RoadPlannerMapPreloadJob(
+                            sessionId,
+                            requestId,
+                            RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                            "",
+                            dimensionId,
+                            plan));
+            JobKey key = new JobKey(sessionId, RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH);
+            jobs.put(key, activeJob);
+            sendProgress(player, activeJob.job.progress());
+        }
     }
 
     public void cancel(ServerPlayer player, RoadPlannerMapPreloadCancelPacket packet) {

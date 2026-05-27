@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.construction;
 
+import com.monpai.sailboatmod.block.NationCoreBlock;
+import com.monpai.sailboatmod.block.TownCoreBlock;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Blocks;
@@ -39,6 +41,22 @@ public final class ConstructionStateMatchers {
                 || state.is(Blocks.BAMBOO_SAPLING)
                 || state.is(Blocks.SUGAR_CANE)
                 || state.is(Blocks.LILY_PAD);
+    }
+
+    public static boolean isProtectedCoreBlock(BlockState state) {
+        return state != null
+                && state.getBlock() != null
+                && isProtectedCoreBlockClass(state.getBlock().getClass());
+    }
+
+    static boolean isProtectedCoreBlockClassForTest(Class<?> blockClass) {
+        return isProtectedCoreBlockClass(blockClass);
+    }
+
+    private static boolean isProtectedCoreBlockClass(Class<?> blockClass) {
+        return blockClass != null
+                && (TownCoreBlock.class.isAssignableFrom(blockClass)
+                || NationCoreBlock.class.isAssignableFrom(blockClass));
     }
 
     static boolean isEquivalentRoadDeck(BlockState existing, BlockState target) {

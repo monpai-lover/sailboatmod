@@ -21,7 +21,9 @@ public record RoadNetworkRecord(
         long createdAt,
         String creatorUuid,
         String creatorName,
-        String sourceType
+        String sourceType,
+        String routeSourceName,
+        String routeTargetName
 ) {
     public static final String SOURCE_TYPE_AUTO = "AUTO";
     public static final String SOURCE_TYPE_MANUAL = "MANUAL";
@@ -38,6 +40,24 @@ public record RoadNetworkRecord(
         creatorUuid = creatorUuid == null ? "" : creatorUuid.trim();
         creatorName = creatorName == null ? "" : creatorName.trim();
         sourceType = sourceType == null || sourceType.isBlank() ? SOURCE_TYPE_AUTO : sourceType.trim().toUpperCase(Locale.ROOT);
+        routeSourceName = routeSourceName == null ? "" : routeSourceName.trim();
+        routeTargetName = routeTargetName == null ? "" : routeTargetName.trim();
+    }
+
+    public RoadNetworkRecord(String roadId,
+                             String nationId,
+                             String townId,
+                             String dimensionId,
+                             String structureAId,
+                             String structureBId,
+                             List<BlockPos> path,
+                             long updatedAt,
+                             long createdAt,
+                             String creatorUuid,
+                             String creatorName,
+                             String sourceType) {
+        this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path,
+                updatedAt, createdAt, creatorUuid, creatorName, sourceType, "", "");
     }
 
     public RoadNetworkRecord(String roadId,
@@ -50,7 +70,7 @@ public record RoadNetworkRecord(
                              long updatedAt,
                              String sourceType) {
         this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path,
-                updatedAt, updatedAt, "", "", sourceType);
+                updatedAt, updatedAt, "", "", sourceType, "", "");
     }
 
     public static String edgeKey(String leftStructureId, String rightStructureId) {
@@ -96,6 +116,8 @@ public record RoadNetworkRecord(
         tag.putString("CreatorUuid", creatorUuid);
         tag.putString("CreatorName", creatorName);
         tag.putString("SourceType", sourceType);
+        tag.putString("RouteSourceName", routeSourceName);
+        tag.putString("RouteTargetName", routeTargetName);
         ListTag pathTag = new ListTag();
         for (BlockPos pos : path) {
             CompoundTag entry = new CompoundTag();
@@ -129,7 +151,9 @@ public record RoadNetworkRecord(
                 createdAt,
                 tag.contains("CreatorUuid") ? tag.getString("CreatorUuid") : "",
                 tag.contains("CreatorName") ? tag.getString("CreatorName") : "",
-                tag.contains("SourceType") ? tag.getString("SourceType") : SOURCE_TYPE_AUTO
+                tag.contains("SourceType") ? tag.getString("SourceType") : SOURCE_TYPE_AUTO,
+                tag.contains("RouteSourceName") ? tag.getString("RouteSourceName") : "",
+                tag.contains("RouteTargetName") ? tag.getString("RouteTargetName") : ""
         );
     }
 }

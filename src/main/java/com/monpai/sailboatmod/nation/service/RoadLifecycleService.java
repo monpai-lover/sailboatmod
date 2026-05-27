@@ -64,6 +64,10 @@ public final class RoadLifecycleService {
         return true;
     }
 
+    public static boolean demolishPersistedRoad(ServerLevel level, String roadId) {
+        return StructureConstructionManager.demolishRoadById(level, roadId);
+    }
+
     static List<BlockPos> ownedBlocksRemovalOrderForTest(List<BlockPos> ownedBlocks) {
         return removalOrder(ownedBlocks);
     }

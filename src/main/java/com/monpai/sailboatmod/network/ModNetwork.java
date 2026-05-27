@@ -66,6 +66,7 @@ import com.monpai.sailboatmod.network.packet.UploadNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.UploadTownFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerActionMenuPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCancelPacket;
@@ -85,6 +86,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRegionNaviga
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRenameRoadPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerSelectDemolitionRoadPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkRegistry;
@@ -679,6 +681,21 @@ public final class ModNetwork {
                 RoadPlannerGraphSyncPacket::decode,
                 RoadPlannerGraphSyncPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenRoadDemolitionSelectionPacket.class,
+                OpenRoadDemolitionSelectionPacket::encode,
+                OpenRoadDemolitionSelectionPacket::decode,
+                OpenRoadDemolitionSelectionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerSelectDemolitionRoadPacket.class,
+                RoadPlannerSelectDemolitionRoadPacket::encode,
+                RoadPlannerSelectDemolitionRoadPacket::decode,
+                RoadPlannerSelectDemolitionRoadPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,

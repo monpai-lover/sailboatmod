@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.roadplanner.service.RoadPlannerDestinationService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerClaimOverlayService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerSessionService;
+import com.monpai.sailboatmod.nation.service.RoadPlannerRoadDemolitionService;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -42,7 +43,16 @@ public record RoadPlannerMenuActionPacket(Action action) {
                 return;
             }
             if (packet.action() == Action.OPEN_DEMOLITION_PLANNER) {
-                sender.sendSystemMessage(Component.literal("已进入道路拆除入口：请在道路规划地图中使用选择工具选中道路后执行拆除。"));
+                List<OpenRoadDemolitionSelectionPacket.Entry> roads = RoadPlannerRoadDemolitionService.listDemolishableRoads(sender);
+                if (roads.isEmpty()) {
+                    sender.sendSystemMessage(Component.literal("No built roads available for demolition."));
+                    return;
+                }
+                ModNetwork.CHANNEL.sendTo(
+                        new OpenRoadDemolitionSelectionPacket(roads),
+                        sender.connection.connection,
+                        NetworkDirection.PLAY_TO_CLIENT
+                );
                 return;
             }
             if (packet.action() == Action.RETURN_TO_PLANNER) {

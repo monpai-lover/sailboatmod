@@ -181,6 +181,21 @@ class RoadPlannerBridgeGeometryPlannerTest {
         assertEquals(RoadPlannerBridgeProfile.PIER_BRIDGE, RoadPlannerBridgeProfile.classify(33));
     }
 
+    @Test
+    void superflatNoWaterFallbackDoesNotLiftBridgeToSeaLevel() {
+        RoadPlannerBridgeGeometryPlanner.Plan plan = RoadPlannerBridgeGeometryPlanner.plan(
+                centerline(0, 16, 4),
+                new RoadSpan(RoadSpanType.BRIDGE, 0, 16, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                noWaterSeaLevelFallbackSampler(4),
+                new BridgeConfig()
+        );
+
+        assertTrue(plan.deckY() <= 8,
+                "a bridge over dry superflat terrain should stay near the sampled terrain instead of jumping to sea level: deckY="
+                        + plan.deckY());
+        assertAdjacentTargetYDeltaAtMostOne(plan);
+    }
+
     private static List<RoadCenterlinePoint> centerline(int startX, int endX, int y) {
         return centerline(startX, endX, y, y);
     }
@@ -218,6 +233,30 @@ class RoadPlannerBridgeGeometryPlannerTest {
             @Override
             public int oceanFloorY(int x, int z) {
                 return oceanFloorY;
+            }
+        };
+    }
+
+    private static RoadTerrainSampler noWaterSeaLevelFallbackSampler(int terrainY) {
+        return new RoadTerrainSampler() {
+            @Override
+            public int terrainY(int x, int z) {
+                return terrainY;
+            }
+
+            @Override
+            public int waterSurfaceY(int x, int z) {
+                return 63;
+            }
+
+            @Override
+            public int oceanFloorY(int x, int z) {
+                return terrainY - 1;
+            }
+
+            @Override
+            public boolean isWater(int x, int y, int z) {
+                return false;
             }
         };
     }

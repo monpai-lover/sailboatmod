@@ -18,6 +18,14 @@ public final class RoadTravelHelper {
         return state.is(Blocks.STONE_BRICK_SLAB)
                 || state.is(Blocks.STONE_BRICK_STAIRS)
                 || state.is(Blocks.STONE_BRICKS)
+                || state.is(Blocks.SMOOTH_STONE_SLAB)
+                || state.is(Blocks.SMOOTH_STONE)
+                || state.is(Blocks.COBBLESTONE_SLAB)
+                || state.is(Blocks.COBBLESTONE_STAIRS)
+                || state.is(Blocks.COBBLESTONE)
+                || state.is(Blocks.OAK_SLAB)
+                || state.is(Blocks.OAK_STAIRS)
+                || state.is(Blocks.OAK_PLANKS)
                 || state.is(Blocks.SMOOTH_SANDSTONE_SLAB)
                 || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS)
                 || state.is(Blocks.SANDSTONE)
@@ -25,6 +33,7 @@ public final class RoadTravelHelper {
                 || state.is(Blocks.MUD_BRICK_STAIRS)
                 || state.is(Blocks.MUD_BRICKS)
                 || state.is(Blocks.SPRUCE_SLAB)
-                || state.is(Blocks.SPRUCE_STAIRS);
+                || state.is(Blocks.SPRUCE_STAIRS)
+                || state.is(Blocks.SPRUCE_PLANKS);
     }
 }

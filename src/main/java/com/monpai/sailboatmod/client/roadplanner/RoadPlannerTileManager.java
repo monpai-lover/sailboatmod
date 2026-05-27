@@ -196,10 +196,42 @@ public class RoadPlannerTileManager implements AutoCloseable {
         if (!packet.dimensionId().isBlank() && !packet.dimensionId().equals(dimensionId)) {
             return 0;
         }
-        RoadPlannerTile tile = getOrCreateTile(packet.tileX(), packet.tileZ(), packet.lod());
+        RoadPlannerTileKey key = new RoadPlannerTileKey(worldId, dimensionId, packet.lod(), packet.tileX(), packet.tileZ());
+        RoadPlannerTile loaded = loadedTiles.get(key);
+        if (shouldSkipMissingBaseTileRefresh(packet, key, loaded)) {
+            return 0;
+        }
+        RoadPlannerTile tile = loaded == null ? getOrCreateTile(packet.tileX(), packet.tileZ(), packet.lod()) : loaded;
         tile.mergePixels(packet.argbPixels(), packet.coverageMask());
         saveTile(tile);
         return 1;
+    }
+
+    private boolean shouldSkipMissingBaseTileRefresh(RoadPlannerMapTileSyncPacket packet,
+                                                     RoadPlannerTileKey key,
+                                                     RoadPlannerTile loaded) {
+        if (packet.purpose() != com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH) {
+            return false;
+        }
+        if (!hasPartialCoverage(packet.coverageMask())) {
+            return false;
+        }
+        if (loaded != null) {
+            return loaded.isLoadingImage();
+        }
+        return !tileFile(key).exists();
+    }
+
+    private static boolean hasPartialCoverage(boolean[] coverageMask) {
+        if (coverageMask == null || coverageMask.length == 0) {
+            return false;
+        }
+        for (boolean covered : coverageMask) {
+            if (!covered) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public void forceRenderChunk(ChunkPos chunkPos) {

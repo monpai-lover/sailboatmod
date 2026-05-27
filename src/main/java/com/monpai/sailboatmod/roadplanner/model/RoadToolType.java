@@ -6,6 +6,7 @@ public enum RoadToolType {
     TUNNEL,
     ERASE,
     SELECT,
+    MERGE,
     WATER_CROSSING,
     BEZIER,
     ENDPOINT,

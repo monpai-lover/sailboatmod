@@ -25,6 +25,9 @@ public final class ConstructionStepSatisfactionService {
         if (existing == null || existing.isAir()) {
             return StepDecision.PLACE_NOW;
         }
+        if (ConstructionStateMatchers.isProtectedCoreBlock(existing)) {
+            return StepDecision.BLOCKED;
+        }
         if (target != null && (existing.equals(target) || isEquivalent(existing, target, kind))) {
             return StepDecision.SATISFIED;
         }

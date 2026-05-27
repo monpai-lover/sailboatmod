@@ -71,6 +71,30 @@ class RoadPlannerMapPreloadJobTest {
         assertEquals(false, mask[16 * RoadMapTileSpec.TILE_PIXELS]);
     }
 
+    @Test
+    void builtRoadRefreshJobEmitsAllLodsWithRefreshPurpose() {
+        RoadMapRoutePreloadPlan plan = new RoadMapRoutePreloadPlan(
+                RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY,
+                List.of(new ChunkPos(0, 0), new ChunkPos(1, 0)),
+                2,
+                2);
+        RoadPlannerMapPreloadJob job = new RoadPlannerMapPreloadJob(
+                UUID.randomUUID(),
+                7L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                "",
+                "minecraft:overworld",
+                plan);
+        List<RoadPlannerMapTileSyncPacket> packets = new ArrayList<>();
+
+        int processed = job.advance(1, this::loadSnapshot, packets::add);
+
+        assertEquals(1, processed);
+        assertEquals(List.of(MapLod.LOD_1, MapLod.LOD_2, MapLod.LOD_4, MapLod.LOD_8),
+                packets.stream().map(RoadPlannerMapTileSyncPacket::lod).toList());
+        assertEquals(RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH, packets.get(0).purpose());
+    }
+
     private RoadMapSnapshot loadSnapshot(RoadPlannerTileKey key) {
         return new RoadMapSnapshot(
                 1L,

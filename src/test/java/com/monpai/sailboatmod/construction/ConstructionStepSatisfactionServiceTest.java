@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.construction;
 
+import com.monpai.sailboatmod.block.NationCoreBlock;
+import com.monpai.sailboatmod.block.TownCoreBlock;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
@@ -40,5 +42,17 @@ class ConstructionStepSatisfactionServiceTest {
                 );
 
         assertEquals(ConstructionStepSatisfactionService.StepDecision.SATISFIED, decision);
+    }
+
+    @Test
+    void townAndNationCoreClassesAreProtectedFromConstructionReplacement() {
+        assertEquals(
+                true,
+                ConstructionStateMatchers.isProtectedCoreBlockClassForTest(TownCoreBlock.class)
+        );
+        assertEquals(
+                true,
+                ConstructionStateMatchers.isProtectedCoreBlockClassForTest(NationCoreBlock.class)
+        );
     }
 }

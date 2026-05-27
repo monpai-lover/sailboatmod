@@ -1,8 +1,10 @@
 package com.monpai.sailboatmod.road.construction.execution;
 
+import com.monpai.sailboatmod.construction.ConstructionStateMatchers;
 import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
@@ -43,8 +45,19 @@ public class ConstructionQueue {
 
     public void executeStep(BuildStep step, ServerLevel level) {
         BlockState prev = level.getBlockState(step.pos());
+        if (ConstructionStateMatchers.isProtectedCoreBlock(prev)) {
+            return;
+        }
         rollbackEntries.add(new RollbackEntry(step.pos(), prev));
-        level.setBlock(step.pos(), step.state(), 3);
+        level.setBlock(step.pos(), step.state(), blockUpdateFlags(step.state()));
+        ConstructionStepEffects.playPlacementEffect(level, step);
+    }
+
+    private static int blockUpdateFlags(BlockState state) {
+        if (state != null && state.isAir()) {
+            return Block.UPDATE_NEIGHBORS | Block.UPDATE_CLIENTS | Block.UPDATE_SUPPRESS_DROPS;
+        }
+        return Block.UPDATE_ALL;
     }
 
     public double progress() {
@@ -88,4 +101,5 @@ public class ConstructionQueue {
     public int getTotalSteps() { return steps.size(); }
     public int getCompletedSteps() { return currentIndex; }
     public List<BuildStep> getSteps() { return List.copyOf(steps); }
+    public List<RollbackEntry> getRollbackEntries() { return List.copyOf(rollbackEntries); }
 }

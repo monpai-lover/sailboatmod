@@ -4,8 +4,11 @@ import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
@@ -313,7 +316,7 @@ public class SyncRoadPlannerPreviewPacket {
         buf.writeVarInt(safeBlocks.size());
         for (GhostBlock block : safeBlocks) {
             buf.writeBlockPos(block.pos());
-            buf.writeVarInt(Block.getId(block.state()));
+            buf.writeNbt(NbtUtils.writeBlockState(block.state()));
         }
     }
 
@@ -338,7 +341,12 @@ public class SyncRoadPlannerPreviewPacket {
         int size = buf.readVarInt();
         List<GhostBlock> blocks = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            blocks.add(new GhostBlock(buf.readBlockPos(), Block.stateById(buf.readVarInt())));
+            BlockPos pos = buf.readBlockPos();
+            CompoundTag statePayload = buf.readNbt();
+            BlockState state = statePayload == null
+                    ? Blocks.AIR.defaultBlockState()
+                    : NbtUtils.readBlockState(BuiltInRegistries.BLOCK.asLookup(), statePayload);
+            blocks.add(new GhostBlock(pos, state));
         }
         return List.copyOf(blocks);
     }

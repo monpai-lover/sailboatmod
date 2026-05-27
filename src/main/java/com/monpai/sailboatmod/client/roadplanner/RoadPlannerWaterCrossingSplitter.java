@@ -7,10 +7,9 @@ import java.util.List;
 
 public final class RoadPlannerWaterCrossingSplitter {
     private static final int SAMPLE_SPACING = 1;
+    private static final int BRIDGE_CONTROL_NODE_SPACING_BLOCKS = 8;
     private static final int MIN_BRIDGE_WATER_BLOCKS = 4;
-    private static final int LOW_ARCH_MAX_WATER_BLOCKS = 16;
-    private static final int LOW_BRIDGE_MAX_WATER_BLOCKS = RoadPlannerBridgeThresholds.SHORT_SPAN_WITHOUT_PIERS_LIMIT;
-    private static final int MAX_INTERNAL_LAND_INTERRUPTION_BLOCKS = 4;
+    private static final int SMALL_BRIDGE_MAX_BLOCKS = 24;
 
     private RoadPlannerWaterCrossingSplitter() {
     }
@@ -61,61 +60,29 @@ public final class RoadPlannerWaterCrossingSplitter {
 
     private static List<WaterSpan> detectWaterSpans(List<SamplePoint> samples, RoadPlannerWaterDepthProbe waterDepthProbe) {
         List<WaterSpan> spans = new ArrayList<>();
-        int index = 0;
-        while (index < samples.size()) {
-            while (index < samples.size() && samples.get(index).land()) {
-                index++;
-            }
-            if (index >= samples.size()) {
-                break;
-            }
-
-            int spanStart = index;
-            int spanEnd = index;
-            int waterSamples = 0;
-            int maxDepth = 0;
-            int dryRun = 0;
-
-            while (index < samples.size()) {
-                SamplePoint sample = samples.get(index);
-                if (sample.land()) {
-                    dryRun++;
-                    if (dryRun > MAX_INTERNAL_LAND_INTERRUPTION_BLOCKS) {
-                        break;
-                    }
-                    spanEnd = index;
-                    index++;
-                    continue;
+        int i = 0;
+        while (i < samples.size()) {
+            if (!samples.get(i).land()) {
+                int spanStart = i;
+                int maxDepth = 0;
+                while (i < samples.size() && !samples.get(i).land()) {
+                    SamplePoint sample = samples.get(i);
+                    maxDepth = Math.max(maxDepth, Math.max(0, waterDepthProbe.waterDepthAt(sample.x(), sample.z())));
+                    i++;
                 }
-
-                dryRun = 0;
-                waterSamples++;
-                maxDepth = Math.max(maxDepth, Math.max(0, waterDepthProbe.waterDepthAt(sample.x(), sample.z())));
-                spanEnd = index;
-                index++;
-            }
-
-            if (dryRun > 0) {
-                spanEnd -= Math.min(dryRun, MAX_INTERNAL_LAND_INTERRUPTION_BLOCKS);
-            }
-
-            int spanBlocks = Math.max(1, waterSamples) * SAMPLE_SPACING;
-            if (spanBlocks >= MIN_BRIDGE_WATER_BLOCKS) {
-                spans.add(new WaterSpan(spanStart, spanEnd, spanBlocks, maxDepth, bridgeTypeForWaterSpan(spanBlocks)));
+                int spanEnd = i - 1;
+                int spanBlocks = Math.max(1, spanEnd - spanStart + 1) * SAMPLE_SPACING;
+                if (spanBlocks >= MIN_BRIDGE_WATER_BLOCKS) {
+                    RoadPlannerSegmentType bridgeType = spanBlocks > SMALL_BRIDGE_MAX_BLOCKS
+                            ? RoadPlannerSegmentType.BRIDGE_MAJOR
+                            : RoadPlannerSegmentType.BRIDGE_SMALL;
+                    spans.add(new WaterSpan(spanStart, spanEnd, spanBlocks, maxDepth, bridgeType));
+                }
+            } else {
+                i++;
             }
         }
         return spans;
-    }
-
-    private static RoadPlannerSegmentType bridgeTypeForWaterSpan(int spanBlocks) {
-        // Task 3 will split low arch and low bridge geometry profiles.
-        if (spanBlocks <= LOW_ARCH_MAX_WATER_BLOCKS) {
-            return RoadPlannerSegmentType.BRIDGE_SMALL;
-        }
-        if (spanBlocks <= LOW_BRIDGE_MAX_WATER_BLOCKS) {
-            return RoadPlannerSegmentType.BRIDGE_SMALL;
-        }
-        return RoadPlannerSegmentType.BRIDGE_MAJOR;
     }
 
     private static SplitResult buildSplitFromSpans(BlockPos from, BlockPos to,
@@ -130,16 +97,15 @@ public final class RoadPlannerWaterCrossingSplitter {
 
         for (WaterSpan span : spans) {
             int shoreStartIdx = span.startSampleIndex() - 1;
-            while (shoreStartIdx >= 0 && !samples.get(shoreStartIdx).land()) {
+            while (shoreStartIdx > 0 && !samples.get(shoreStartIdx).land()) {
                 shoreStartIdx--;
             }
+            shoreStartIdx = Math.max(0, shoreStartIdx);
             int shoreEndIdx = span.endSampleIndex() + 1;
-            while (shoreEndIdx < samples.size() && !samples.get(shoreEndIdx).land()) {
+            while (shoreEndIdx < samples.size() - 1 && !samples.get(shoreEndIdx).land()) {
                 shoreEndIdx++;
             }
-            if (shoreStartIdx < 0 || shoreEndIdx >= samples.size()) {
-                return SplitResult.noSplit();
-            }
+            shoreEndIdx = Math.min(samples.size() - 1, shoreEndIdx);
             SamplePoint shoreStart = samples.get(shoreStartIdx);
             SamplePoint shoreEnd = samples.get(shoreEndIdx);
 
@@ -152,8 +118,7 @@ public final class RoadPlannerWaterCrossingSplitter {
                 nodes.add(new SplitNode(landEntry, RoadPlannerSegmentType.ROAD));
             }
 
-            int crossingSamples = Math.max(1, shoreEndIdx - shoreStartIdx);
-            int bridgeSamples = Math.max(2, crossingSamples / 4);
+            int bridgeSamples = bridgeControlNodeCount(landEntry, landExit);
             for (int b = 1; b <= bridgeSamples; b++) {
                 double bt = shoreStart.t() + (shoreEnd.t() - shoreStart.t()) * b / (bridgeSamples + 1);
                 BlockPos bridgeNode = posAt(from, dx, dy, dz, bt, heightSampler);
@@ -168,6 +133,17 @@ public final class RoadPlannerWaterCrossingSplitter {
             nodes.add(new SplitNode(to, RoadPlannerSegmentType.ROAD));
         }
         return new SplitResult(true, nodes);
+    }
+
+    private static int bridgeControlNodeCount(BlockPos landEntry, BlockPos landExit) {
+        if (landEntry == null || landExit == null) {
+            return 1;
+        }
+        int dx = landExit.getX() - landEntry.getX();
+        int dz = landExit.getZ() - landEntry.getZ();
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        int intervals = Math.max(1, (int) Math.ceil(distance / BRIDGE_CONTROL_NODE_SPACING_BLOCKS));
+        return Math.max(1, intervals - 1);
     }
 
     private static BlockPos posAt(BlockPos from, int dx, int dy, int dz, double t,

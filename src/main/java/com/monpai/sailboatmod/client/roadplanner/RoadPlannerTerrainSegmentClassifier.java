@@ -30,7 +30,7 @@ public class RoadPlannerTerrainSegmentClassifier implements RoadPlannerAutoCompl
 
         List<BridgeSpan> spans = bridgeDetector.detect(nodes, cache);
         for (BridgeSpan span : spans) {
-            RoadPlannerSegmentType bridgeType = RoadPlannerBridgeThresholds.requiresMajorBridge(inclusiveWaterSampleCount(span))
+            RoadPlannerSegmentType bridgeType = RoadPlannerBridgeThresholds.requiresMajorBridge(span.length())
                     ? RoadPlannerSegmentType.BRIDGE_MAJOR
                     : RoadPlannerSegmentType.BRIDGE_SMALL;
             int start = Math.max(0, span.startIndex());
@@ -40,9 +40,5 @@ public class RoadPlannerTerrainSegmentClassifier implements RoadPlannerAutoCompl
             }
         }
         return types;
-    }
-
-    private static int inclusiveWaterSampleCount(BridgeSpan span) {
-        return Math.max(0, span.endIndex() - span.startIndex() + 1);
     }
 }

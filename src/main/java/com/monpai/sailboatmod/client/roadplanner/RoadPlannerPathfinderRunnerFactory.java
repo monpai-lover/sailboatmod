@@ -24,7 +24,8 @@ public final class RoadPlannerPathfinderRunnerFactory {
         if (level == null) {
             return null;
         }
-        PathfindingConfig config = serverPathfindingConfig();
+        PathfindingConfig config = new PathfindingConfig();
+        config.setAlgorithm(PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
         Pathfinder pathfinder = PathfinderFactory.create(config);
         TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getSamplingPrecision());
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {
@@ -35,17 +36,5 @@ public final class RoadPlannerPathfinderRunnerFactory {
                 runner,
                 new RoadPlannerTerrainSegmentClassifier(cache, new RoadConfig().getBridge())
         );
-    }
-
-    private static PathfindingConfig serverPathfindingConfig() {
-        PathfindingConfig config = new PathfindingConfig();
-        config.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
-        config.setAStarStep(8);
-        config.setSamplingPrecision(PathfindingConfig.SamplingPrecision.NORMAL);
-        return config;
-    }
-
-    static PathfindingConfig serverPathfindingConfigForTest() {
-        return serverPathfindingConfig();
     }
 }

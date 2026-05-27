@@ -6,22 +6,32 @@ import java.util.List;
 import java.util.Set;
 
 final class BridgeTransitionProfile {
-    private static final int MAX_TRANSITION_SAMPLES_PER_SIDE = 2;
+    private static final int DEFAULT_TRANSITION_SAMPLES_PER_SIDE = 2;
 
     private BridgeTransitionProfile() {
     }
 
     static Result build(List<RoadCenterlinePoint> centerline, List<RoadSpan> spans, RoadSpan bridgeSpan) {
+        return build(centerline, spans, bridgeSpan, DEFAULT_TRANSITION_SAMPLES_PER_SIDE, DEFAULT_TRANSITION_SAMPLES_PER_SIDE);
+    }
+
+    static Result build(List<RoadCenterlinePoint> centerline,
+                        List<RoadSpan> spans,
+                        RoadSpan bridgeSpan,
+                        int maxLeftTransitionSamples,
+                        int maxRightTransitionSamples) {
         if (centerline == null || centerline.isEmpty() || bridgeSpan == null) {
-            return new Result(List.of(), Set.of(), 0);
+            return new Result(List.of(), Set.of(), 0, 0);
         }
+        int safeLeftSamples = Math.max(0, maxLeftTransitionSamples);
+        int safeRightSamples = Math.max(0, maxRightTransitionSamples);
         int start = Math.max(0, Math.min(centerline.size() - 1, bridgeSpan.startIndex()));
         int end = Math.max(start, Math.min(centerline.size() - 1, bridgeSpan.endIndex()));
         List<RoadCenterlinePoint> expanded = new ArrayList<>();
         Set<Long> transitionColumns = new HashSet<>();
 
         int leftStart = start;
-        for (int index = start - 1; index >= 0 && start - index <= MAX_TRANSITION_SAMPLES_PER_SIDE; index--) {
+        for (int index = start - 1; index >= 0 && start - index <= safeLeftSamples; index--) {
             if (!isRoadIndex(spans, index) || duplicateOrReversed(centerline, index, leftStart)) {
                 break;
             }
@@ -39,7 +49,7 @@ final class BridgeTransitionProfile {
         }
 
         int rightEnd = end;
-        for (int index = end + 1; index < centerline.size() && index - end <= MAX_TRANSITION_SAMPLES_PER_SIDE; index++) {
+        for (int index = end + 1; index < centerline.size() && index - end <= safeRightSamples; index++) {
             if (!isRoadIndex(spans, index) || duplicateOrReversed(centerline, rightEnd, index)) {
                 break;
             }
@@ -49,7 +59,7 @@ final class BridgeTransitionProfile {
             transitionColumns.add(columnKey(transition));
         }
 
-        return new Result(expanded, transitionColumns, originalStartOffset);
+        return new Result(expanded, transitionColumns, originalStartOffset, originalStartOffset + (end - start + 1));
     }
 
     private static boolean isRoadIndex(List<RoadSpan> spans, int index) {
@@ -73,10 +83,15 @@ final class BridgeTransitionProfile {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
-    record Result(List<RoadCenterlinePoint> points, Set<Long> transitionColumns, int originalStartOffset) {
+    record Result(List<RoadCenterlinePoint> points,
+                  Set<Long> transitionColumns,
+                  int originalStartOffset,
+                  int originalEndExclusive) {
         Result {
             points = points == null ? List.of() : List.copyOf(points);
             transitionColumns = transitionColumns == null ? Set.of() : Set.copyOf(transitionColumns);
+            originalStartOffset = Math.max(0, Math.min(originalStartOffset, points.size()));
+            originalEndExclusive = Math.max(originalStartOffset, Math.min(originalEndExclusive, points.size()));
         }
     }
 }

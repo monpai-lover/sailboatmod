@@ -63,9 +63,6 @@ public class GradientDescentPathfinder implements Pathfinder {
             for (int[] dir : DIRECTIONS) {
                 int nx = current.x + dir[0] * step;
                 int nz = current.z + dir[1] * step;
-                if (cache.isBlocked(nx, nz)) {
-                    continue;
-                }
 
                 // Squared elevation cost
                 int fromH = cache.getHeight(current.x, current.z);

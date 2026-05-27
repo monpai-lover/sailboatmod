@@ -110,7 +110,14 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 return;
             }
             RoadPlannerPreviewRequestPacket safePacket = packet.withServerValidatedMerge(player);
-            RoadPlannerBuildControlService.global().startPreview(player.getUUID(), safePacket.nodes(), safePacket.segmentTypes(), safePacket.settings(), safePacket.mergeSelection());
+            RoadPlannerBuildControlService.global().startPreview(
+                    player.getUUID(),
+                    safePacket.startTownName(),
+                    safePacket.destinationTownName(),
+                    safePacket.nodes(),
+                    safePacket.segmentTypes(),
+                    safePacket.settings(),
+                    safePacket.mergeSelection());
             ModNetwork.CHANNEL.sendTo(safePacket.toSafePreview(player.serverLevel()), player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
         });
         context.setPacketHandled(true);

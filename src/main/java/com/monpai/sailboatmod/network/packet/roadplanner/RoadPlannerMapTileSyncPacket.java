@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerClientMapTileCache;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import net.minecraft.client.Minecraft;
@@ -156,6 +157,7 @@ public record RoadPlannerMapTileSyncPacket(UUID sessionId,
 
     private static void handleOnClient(RoadPlannerMapTileSyncPacket packet) {
         Minecraft minecraft = Minecraft.getInstance();
+        RoadPlannerClientMapTileCache.applyToDefaultCache(packet);
         RoadPlannerTileSyncReceiver.dispatch(minecraft.screen, packet);
     }
 }

@@ -74,7 +74,10 @@ class RoadPlannerBuiltRoadRegistryTest {
                 centerPath,
                 buildSteps,
                 rollbackEntries,
-                Level.OVERWORLD
+                Level.OVERWORLD,
+                RoadPlannerMergeSelection.none(),
+                "Alpha",
+                "Beta"
         ));
 
         RoadNetworkRecord road = data.getRoadNetwork("road-1");
@@ -87,6 +90,8 @@ class RoadPlannerBuiltRoadRegistryTest {
         assertEquals(ownerId.toString(), road.creatorUuid());
         assertEquals("Builder", road.creatorName());
         assertTrue(road.createdAt() > 0L);
+        assertEquals("Alpha", road.routeSourceName());
+        assertEquals("Beta", road.routeTargetName());
 
         List<ConstructionRuntimeSavedData.RoadJobState> roadJobs = ConstructionRuntimeSavedData.get(level).getRoadJobs().stream().toList();
         assertEquals(1, roadJobs.size());

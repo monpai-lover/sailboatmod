@@ -266,6 +266,32 @@ class RoadPlannerBuildControlServiceTest {
     }
 
     @Test
+    void completedQueueCarriesPreviewRouteNamesForBuiltRoadTooltips() {
+        List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((level, road) -> completedRoads.add(road));
+        UUID playerId = UUID.randomUUID();
+        UUID previewId = service.startPreview(
+                playerId,
+                "Alpha",
+                "Beta",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(3, 64, 0)),
+                List.of(),
+                RoadPlannerBuildSettings.DEFAULTS
+        );
+
+        UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
+        int maxTicks = service.buildQueueForTest(jobId).orElseThrow().getTotalSteps() + 1;
+        for (int i = 0; i < maxTicks && service.buildQueueForTest(jobId).isPresent(); i++) {
+            service.tick(null);
+        }
+
+        assertEquals(1, completedRoads.size());
+        RoadPlannerBuildControlService.CompletedRoadBuild road = completedRoads.get(0);
+        assertEquals("Alpha", road.sourceTownName());
+        assertEquals("Beta", road.targetTownName());
+    }
+
+    @Test
     void confirmedBuildPreservesMergeSelection() {
         List<RoadPlannerBuildControlService.CompletedRoadBuild> completedRoads = new ArrayList<>();
         RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((level, road) -> completedRoads.add(road));

@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class RoadSurfaceStepEmitter {
+    private static final int CLEARANCE_HEIGHT = 6;
+
     private RoadSurfaceStepEmitter() {
     }
 
@@ -37,16 +39,18 @@ public final class RoadSurfaceStepEmitter {
                     ? footprints.get(index)
                     : RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width());
             for (BlockPos surfacePos : footprint) {
-                for (int dy = 1; dy <= 4; dy++) {
-                    steps.add(new BuildStep(order++, surfacePos.above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
+                BlockPos placementPos = roadSurfacePlacementPos(surfacePos, ramp);
+                for (int dy = 1; dy <= CLEARANCE_HEIGHT; dy++) {
+                    steps.add(new BuildStep(order++, placementPos.above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
                 }
                 int terrainY = RoadFootprintPlanner.interpolateTerrainY(surfacePos.getX(), surfacePos.getZ(), centerline);
-                int bottomY = Math.min(terrainY, surfacePos.getY()) - 3;
-                for (int y = surfacePos.getY() - 1; y >= bottomY; y--) {
+                int terrainSurfaceY = terrainY - 1;
+                int bottomY = Math.min(ramp ? terrainY : terrainSurfaceY, placementPos.getY()) - 3;
+                for (int y = placementPos.getY() - 1; y >= bottomY; y--) {
                     BlockState foundation = y == bottomY ? Blocks.COBBLESTONE.defaultBlockState() : Blocks.DIRT.defaultBlockState();
-                    steps.add(new BuildStep(order++, new BlockPos(surfacePos.getX(), y, surfacePos.getZ()), foundation, BuildPhase.FOUNDATION));
+                    steps.add(new BuildStep(order++, new BlockPos(placementPos.getX(), y, placementPos.getZ()), foundation, BuildPhase.FOUNDATION));
                 }
-                steps.add(new BuildStep(order++, surfacePos, surfaceState, surfacePhase));
+                steps.add(new BuildStep(order++, placementPos, surfaceState, surfacePhase));
             }
         }
         order = addStreetlights(steps, centerline, spans, safeSettings, order);
@@ -92,7 +96,11 @@ public final class RoadSurfaceStepEmitter {
             }
             boolean place = index == 0 || index == centerline.size() - 1 || distance >= 24;
             if (place) {
-                BlockPos center = new BlockPos(centerline.get(index).pos().getX(), centerline.get(index).targetY(), centerline.get(index).pos().getZ());
+                boolean ramp = isRamp(centerline, spans, index);
+                BlockPos center = roadSurfacePlacementPos(
+                        new BlockPos(centerline.get(index).pos().getX(), centerline.get(index).targetY(), centerline.get(index).pos().getZ()),
+                        ramp
+                );
                 int dx = 0;
                 int dz = 0;
                 if (index + 1 < centerline.size()) {
@@ -118,6 +126,10 @@ public final class RoadSurfaceStepEmitter {
         return order;
     }
 
+    private static BlockPos roadSurfacePlacementPos(BlockPos generatedSurfacePos, boolean ramp) {
+        return generatedSurfacePos.below();
+    }
+
     private static boolean isRoadIndex(List<RoadSpan> spans, int index) {
         return spans == null || spans.stream().anyMatch(span -> span.type() == RoadSpanType.ROAD && span.contains(index));
     }
@@ -133,40 +145,12 @@ public final class RoadSurfaceStepEmitter {
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadCenterlinePoint> centerline, int index) {
-        int start = index;
-        while (start > 0 && isRampAt(centerline, start - 1)) {
-            start--;
-        }
-        int end = index;
-        while (end + 1 < centerline.size() && isRampAt(centerline, end + 1)) {
-            end++;
-        }
-        boolean ascending = rampRunAscending(centerline, start, end);
-        int localIndex = index - start;
-        if (ascending) {
-            return (localIndex & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
-        }
-        return (localIndex & 1) == 0 ? settings.slabTopState() : settings.slabBottomState();
-    }
-
-    private static boolean isRampAt(List<RoadCenterlinePoint> centerline, int index) {
-        if (index < 0 || index >= centerline.size()) {
-            return false;
-        }
         int y = centerline.get(index).targetY();
         int prevY = index > 0 ? centerline.get(index - 1).targetY() : y;
         int nextY = index + 1 < centerline.size() ? centerline.get(index + 1).targetY() : y;
-        return y != prevY || y != nextY;
-    }
-
-    private static boolean rampRunAscending(List<RoadCenterlinePoint> centerline, int start, int end) {
-        int startY = centerline.get(start).targetY();
-        int endY = centerline.get(end).targetY();
-        if (startY != endY) {
-            return endY > startY;
+        if (y > prevY || nextY < y) {
+            return settings.slabBottomState();
         }
-        int beforeY = start > 0 ? centerline.get(start - 1).targetY() : startY;
-        int afterY = end + 1 < centerline.size() ? centerline.get(end + 1).targetY() : endY;
-        return afterY >= beforeY;
+        return settings.slabTopState();
     }
 }

@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.nation;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.Blocks;
@@ -34,6 +35,24 @@ class RoadTravelHelperTest {
                 Blocks.AIR.defaultBlockState(),
                 Blocks.SMOOTH_SANDSTONE_SLAB.defaultBlockState()
         ));
+    }
+
+    @Test
+    void grantsRoadSpeedForAllRoadPlannerMaterialPresets() {
+        for (String preset : new String[]{
+                "smooth_stone",
+                "cobblestone",
+                "oak_planks",
+                "spruce_planks",
+                "stone_bricks"
+        }) {
+            assertTrue(RoadTravelHelper.isWalkableRoadSurface(
+                    RoadPlannerBuildSettings.blockFor(preset).defaultBlockState()
+            ), "road planner surface preset should be walkable: " + preset);
+            assertTrue(RoadTravelHelper.isWalkableRoadSurface(
+                    RoadPlannerBuildSettings.slabFor(preset).defaultBlockState()
+            ), "road planner slab preset should be walkable: " + preset);
+        }
     }
 
     @Test
