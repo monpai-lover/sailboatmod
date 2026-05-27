@@ -54,6 +54,40 @@ public final class RoadPlannerRoadOverlayHitTester {
         return best;
     }
 
+    public static NodeResult findNode(double mouseX,
+                                      double mouseY,
+                                      List<RoadPlannerRoadOverlaySyncPacket.Entry> overlays,
+                                      ToIntFunction<BlockPos> screenX,
+                                      ToIntFunction<BlockPos> screenY,
+                                      RoadPlannerMergeSelection selectedMerge,
+                                      double thresholdPixels) {
+        if (overlays == null || overlays.isEmpty() || screenX == null || screenY == null || thresholdPixels < 0.0D) {
+            return NodeResult.miss();
+        }
+        NodeResult best = NodeResult.miss();
+        for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : overlays) {
+            if (overlay == null || overlay.path().isEmpty()) {
+                continue;
+            }
+            List<BlockPos> path = overlay.path();
+            for (int index = 0; index < path.size(); index++) {
+                BlockPos node = path.get(index);
+                if (node == null) {
+                    continue;
+                }
+                double distance = Math.hypot(mouseX - screenX.applyAsInt(node), mouseY - screenY.applyAsInt(node));
+                if (distance > thresholdPixels) {
+                    continue;
+                }
+                NodeResult candidate = new NodeResult(overlay, index, node, distance);
+                if (isBetter(candidate.asSegmentResult(), best.asSegmentResult(), selectedMerge)) {
+                    best = candidate;
+                }
+            }
+        }
+        return best;
+    }
+
     private static boolean isBetter(Result candidate, Result current, RoadPlannerMergeSelection selectedMerge) {
         if (candidate == null || !candidate.hit()) {
             return false;
@@ -114,6 +148,23 @@ public final class RoadPlannerRoadOverlayHitTester {
 
         public static Result miss() {
             return new Result(null, -1, Double.POSITIVE_INFINITY);
+        }
+    }
+
+    public record NodeResult(RoadPlannerRoadOverlaySyncPacket.Entry entry,
+                             int pathIndex,
+                             BlockPos pos,
+                             double distancePixels) {
+        public boolean hit() {
+            return entry != null && pos != null && pathIndex >= 0;
+        }
+
+        private Result asSegmentResult() {
+            return hit() ? new Result(entry, pathIndex, distancePixels) : Result.miss();
+        }
+
+        public static NodeResult miss() {
+            return new NodeResult(null, -1, null, Double.POSITIVE_INFINITY);
         }
     }
 }

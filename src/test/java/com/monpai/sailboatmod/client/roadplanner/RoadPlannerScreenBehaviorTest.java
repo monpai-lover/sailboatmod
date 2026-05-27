@@ -13,6 +13,7 @@ import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
 import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphEdge;
@@ -576,8 +577,106 @@ class RoadPlannerScreenBehaviorTest {
 
         RoadPlannerPreviewRequestPacket packet = RoadPlannerGhostPreviewBridge.lastPreviewRequestForTest();
         assertEquals(List.of(new BlockPos(36, 64, 0), new BlockPos(40, 64, 0)), packet.nodes());
+        assertEquals(screen.plannedNodesForTest(), packet.logicalNodes());
         assertEquals(new RoadPlannerMergeSelection("road-a", 1, new BlockPos(40, 64, 0), RoadPlannerMergeScope.OWN_NATION),
                 packet.mergeSelection());
+        assertEquals(List.of(new RoadPlannerSharedRoadSpan(
+                "road-a",
+                1,
+                4,
+                new BlockPos(40, 64, 0),
+                new BlockPos(160, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.END_MERGE)), packet.sharedSpans());
+    }
+
+    @Test
+    void rightClickBuiltRoadNodeContinuesPlanningFromExistingRoadAndBuildsOnlyNewTail() throws Exception {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        screen.applyRoadOverlays(screen.state().sessionId(), List.of(
+                new RoadPlannerRoadOverlaySyncPacket.Entry(
+                        "road-a",
+                        RoadPlannerMergeRelationship.OWN,
+                        List.of(
+                                new BlockPos(0, 64, 0),
+                                new BlockPos(40, 64, 0),
+                                new BlockPos(80, 64, 0)),
+                        "Alpha - Beta",
+                        80,
+                        "Builder",
+                        "uuid-a",
+                        1234L,
+                        false)));
+
+        assertTrue(screen.rightClickMapForTest(40, 0, screenXFromWorld(map, 40), screenZFromWorld(map, 0)));
+        assertEquals(RoadPlannerVanillaContextMenu.Kind.BUILT_ROAD_NODE, screen.contextMenuForTest().kind());
+        screen.handleContextActionForTest(RoadPlannerContextMenuAction.CONTINUE_FROM_BUILT_ROAD_NODE);
+
+        assertEquals(List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)), screen.plannedNodesForTest());
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(screenXFromWorld(map, 120), screenZFromWorld(map, 0), 0);
+
+        invokeSubmitPreview(screen);
+
+        RoadPlannerPreviewRequestPacket packet = RoadPlannerGhostPreviewBridge.lastPreviewRequestForTest();
+        assertEquals(new BlockPos(40, 64, 0), packet.nodes().get(0));
+        assertEquals(new BlockPos(120, 64, 0), packet.nodes().get(packet.nodes().size() - 1));
+        assertFalse(packet.nodes().contains(new BlockPos(0, 64, 0)));
+        assertEquals(List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0), new BlockPos(120, 64, 0)), packet.logicalNodes());
+        assertEquals(List.of(new RoadPlannerSharedRoadSpan(
+                "road-a",
+                0,
+                1,
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.START_REUSE)), packet.sharedSpans());
+    }
+
+    @Test
+    void previewSubmissionAutomaticallyReusesBuiltRoadPrefixWhenPlannedRouteOverlapsExistingPath() throws Exception {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        screen.applyRoadOverlays(screen.state().sessionId(), List.of(
+                new RoadPlannerRoadOverlaySyncPacket.Entry(
+                        "road-a",
+                        RoadPlannerMergeRelationship.OWN,
+                        List.of(
+                                new BlockPos(0, 64, 0),
+                                new BlockPos(40, 64, 0),
+                                new BlockPos(80, 64, 0)),
+                        "Alpha - Beta",
+                        80,
+                        "Builder",
+                        "uuid-a",
+                        1234L,
+                        false)));
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(screenXFromWorld(map, 0), screenZFromWorld(map, 0), 0);
+        screen.mouseClicked(screenXFromWorld(map, 40), screenZFromWorld(map, 0), 0);
+        screen.mouseClicked(screenXFromWorld(map, 80), screenZFromWorld(map, 0), 0);
+        screen.mouseClicked(screenXFromWorld(map, 120), screenZFromWorld(map, 0), 0);
+
+        invokeSubmitPreview(screen);
+
+        RoadPlannerPreviewRequestPacket packet = RoadPlannerGhostPreviewBridge.lastPreviewRequestForTest();
+        assertEquals(new BlockPos(80, 64, 0), packet.nodes().get(0));
+        assertEquals(new BlockPos(120, 64, 0), packet.nodes().get(packet.nodes().size() - 1));
+        assertFalse(packet.nodes().contains(new BlockPos(0, 64, 0)));
+        assertEquals(List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 64, 0),
+                new BlockPos(80, 64, 0),
+                new BlockPos(120, 64, 0)), packet.logicalNodes());
+        assertEquals(List.of(new RoadPlannerSharedRoadSpan(
+                "road-a",
+                0,
+                2,
+                new BlockPos(0, 64, 0),
+                new BlockPos(80, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.START_REUSE)), packet.sharedSpans());
     }
 
     @Test

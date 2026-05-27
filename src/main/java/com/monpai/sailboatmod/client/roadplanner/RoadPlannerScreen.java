@@ -20,6 +20,7 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapViewport;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -113,6 +114,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private List<RoadPlannerRoadOverlaySyncPacket.Entry> roadOverlays = List.of();
     private RoadPlannerRoadOverlayRequestPacket lastRoadOverlayRequest;
     private RoadPlannerRoadOverlaySyncPacket.Entry selectedMergeOverlay;
+    private RoadPlannerRoadOverlaySyncPacket.Entry selectedBuiltRoadOverlay;
+    private int selectedBuiltRoadNodeIndex = -1;
+    private RoadPlannerSharedRoadSpan startReuseSpan = RoadPlannerSharedRoadSpan.none();
     private boolean panning;
     private double lastMouseX;
     private double lastMouseY;
@@ -380,6 +384,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     public List<RoadOverlayRenderStateForTest> roadOverlayRenderStateForTest() {
         RoadPlannerMergeSelection selectedMerge = selectedMergeSelection();
+        List<RoadPlannerSharedRoadSpan> activeSharedSpans = sharedSpansForSubmission(selectedMerge);
         List<RoadOverlayRenderStateForTest> states = new ArrayList<>(roadOverlays.size());
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : roadOverlays) {
             states.add(new RoadOverlayRenderStateForTest(
@@ -387,7 +392,8 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                     overlay.relationship(),
                     roadOverlayColor(overlay.relationship()),
                     overlay.path().size(),
-                    isSelectedMergeAnchor(overlay, selectedMerge)));
+                    isSelectedMergeAnchor(overlay, selectedMerge),
+                    sharedSpanNodeCount(overlay, activeSharedSpans)));
         }
         return List.copyOf(states);
     }
@@ -567,6 +573,16 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         selectedMergeOverlay = null;
     }
 
+    private void clearBuiltRoadNodeSelection() {
+        selectedBuiltRoadOverlay = null;
+        selectedBuiltRoadNodeIndex = -1;
+    }
+
+    private void clearStartReuseSpan() {
+        startReuseSpan = RoadPlannerSharedRoadSpan.none();
+        clearBuiltRoadNodeSelection();
+    }
+
     private void clearAndRequestMergeCandidates() {
         clearMergeCandidateState();
         requestMergeCandidates(lastNode(), lastSegmentType());
@@ -684,6 +700,51 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             }
         }
         return appended;
+    }
+
+    private void continuePlanningFromBuiltRoadNode() {
+        RoadPlannerRoadOverlaySyncPacket.Entry overlay = selectedBuiltRoadOverlay;
+        if (overlay == null || overlay.path().isEmpty() || selectedBuiltRoadNodeIndex < 0 || selectedBuiltRoadNodeIndex >= overlay.path().size()) {
+            statusLine = "\u672a\u9009\u4e2d\u53ef\u590d\u7528\u7684\u5df2\u5efa\u9053\u8def\u8282\u70b9";
+            clearBuiltRoadNodeSelection();
+            return;
+        }
+        List<BlockPos> path = overlay.path();
+        int startIndex = nearestPathNodeIndex(path, startTownPos);
+        if (startIndex < 0 || startIndex == selectedBuiltRoadNodeIndex) {
+            statusLine = "\u5df2\u5efa\u9053\u8def\u590d\u7528\u6bb5\u8fc7\u77ed";
+            return;
+        }
+        int step = selectedBuiltRoadNodeIndex > startIndex ? 1 : -1;
+        List<BlockPos> reusedNodes = new ArrayList<>();
+        for (int index = startIndex; ; index += step) {
+            reusedNodes.add(path.get(index));
+            if (index == selectedBuiltRoadNodeIndex) {
+                break;
+            }
+        }
+        List<RoadPlannerSegmentType> reusedSegments = new ArrayList<>();
+        for (int index = 1; index < reusedNodes.size(); index++) {
+            reusedSegments.add(RoadPlannerSegmentType.ROAD);
+        }
+        linePlan.replaceWith(reusedNodes, reusedSegments);
+        startReuseSpan = new RoadPlannerSharedRoadSpan(
+                overlay.roadId(),
+                startIndex,
+                selectedBuiltRoadNodeIndex,
+                path.get(startIndex),
+                path.get(selectedBuiltRoadNodeIndex),
+                mergeScope.enabled() ? mergeScope : RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.START_REUSE);
+        selectedNode = null;
+        clearMergeCandidateState();
+        saveDraft();
+        requestRoutePreload(linePlan.nodes());
+        requestMergeCandidates(lastNode(), lastSegmentType());
+        if (contextMenu != null) {
+            contextMenu.close();
+        }
+        statusLine = "\u5df2\u590d\u7528\u5df2\u5efa\u9053\u8def: " + overlay.displayName() + "\uff0c\u53ef\u4ece\u8be5\u8282\u70b9\u7ee7\u7eed\u89c4\u5212";
     }
 
     private RoadPlannerMergeSelection selectedMergeSelection() {
@@ -843,6 +904,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return;
         }
         clearMergeCandidateState();
+        clearStartReuseSpan();
         RoadPlannerRouteExpander.Result expanded = expandRoute(nodes, segmentTypes);
         linePlan.replaceWith(expanded.nodes(), expanded.segmentTypes());
         saveDraft();
@@ -1209,6 +1271,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                                           RoadPlannerMapLayout.Rect map,
                                           RoadPlannerRoadOverlayHitTester.Result hoveredRoad) {
         RoadPlannerMergeSelection selectedMerge = selectedMergeSelection();
+        List<RoadPlannerSharedRoadSpan> activeSharedSpans = sharedSpansForSubmission(selectedMerge);
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : roadOverlays) {
             drawRoadOverlayPath(graphics, map, overlay, roadOverlayColor(overlay.relationship()), 3);
             drawRoadOverlayNodes(graphics, map, overlay, roadOverlayColor(overlay.relationship()));
@@ -1219,6 +1282,63 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             if (isSelectedMergeAnchor(overlay, selectedMerge)) {
                 drawSelectedMergeAnchor(graphics, map, selectedMerge.anchorPos());
             }
+            drawSharedSpansForOverlay(graphics, map, overlay, activeSharedSpans);
+        }
+    }
+
+    private int sharedSpanNodeCount(RoadPlannerRoadOverlaySyncPacket.Entry overlay, List<RoadPlannerSharedRoadSpan> spans) {
+        if (overlay == null || spans == null || spans.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (RoadPlannerSharedRoadSpan span : spans) {
+            if (span != null && span.present() && overlay.roadId().equals(span.roadId())) {
+                count += Math.abs(span.toPathIndex() - span.fromPathIndex()) + 1;
+            }
+        }
+        return count;
+    }
+
+    private void drawSharedSpansForOverlay(GuiGraphics graphics,
+                                           RoadPlannerMapLayout.Rect map,
+                                           RoadPlannerRoadOverlaySyncPacket.Entry overlay,
+                                           List<RoadPlannerSharedRoadSpan> spans) {
+        if (overlay == null || overlay.path().size() < 2 || spans == null || spans.isEmpty()) {
+            return;
+        }
+        for (RoadPlannerSharedRoadSpan span : spans) {
+            if (span == null || !span.present() || !overlay.roadId().equals(span.roadId())) {
+                continue;
+            }
+            drawRoadOverlaySpan(graphics, map, overlay, span.fromPathIndex(), span.toPathIndex(), SELECTED_MERGE_ANCHOR_COLOR, 6);
+        }
+    }
+
+    private void drawRoadOverlaySpan(GuiGraphics graphics,
+                                     RoadPlannerMapLayout.Rect map,
+                                     RoadPlannerRoadOverlaySyncPacket.Entry overlay,
+                                     int fromIndex,
+                                     int toIndex,
+                                     int color,
+                                     int thickness) {
+        List<BlockPos> path = overlay.path();
+        if (path.size() < 2) {
+            return;
+        }
+        int start = Math.max(0, Math.min(path.size() - 1, fromIndex));
+        int end = Math.max(0, Math.min(path.size() - 1, toIndex));
+        if (start == end) {
+            drawSelectedMergeAnchor(graphics, map, path.get(start));
+            return;
+        }
+        int step = end > start ? 1 : -1;
+        for (int index = start; index != end; index += step) {
+            BlockPos previous = path.get(index);
+            BlockPos current = path.get(index + step);
+            drawMapLine(graphics, map,
+                    mapView.worldToScreenX(previous.getX(), map), mapView.worldToScreenZ(previous.getZ(), map),
+                    mapView.worldToScreenX(current.getX(), map), mapView.worldToScreenZ(current.getZ(), map),
+                    color, thickness);
         }
     }
 
@@ -1272,6 +1392,21 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 pos -> mapView.worldToScreenZ(pos.getZ(), map),
                 selectedMergeSelection(),
                 ROAD_OVERLAY_HOVER_THRESHOLD);
+    }
+
+    private RoadPlannerRoadOverlayHitTester.NodeResult hoveredRoadOverlayNode(int mouseX, int mouseY) {
+        RoadPlannerMapLayout.Rect map = mapLayout.map();
+        if (!map.contains(mouseX, mouseY)) {
+            return RoadPlannerRoadOverlayHitTester.NodeResult.miss();
+        }
+        return RoadPlannerRoadOverlayHitTester.findNode(
+                mouseX,
+                mouseY,
+                roadOverlays,
+                pos -> mapView.worldToScreenX(pos.getX(), map),
+                pos -> mapView.worldToScreenZ(pos.getZ(), map),
+                selectedMergeSelection(),
+                ROAD_OVERLAY_HOVER_THRESHOLD + 2.0D);
     }
 
     private List<Component> roadOverlayTooltipLines(RoadPlannerRoadOverlaySyncPacket.Entry entry) {
@@ -1655,7 +1790,24 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (openContextMenuForPlannedRoute(worldX, worldZ, mouseX, mouseY)) {
             return true;
         }
+        if (openContextMenuForBuiltRoadNode(mouseX, mouseY)) {
+            return true;
+        }
         return openContextMenuForGraph(worldX, worldZ, mouseX, mouseY);
+    }
+
+    private boolean openContextMenuForBuiltRoadNode(int mouseX, int mouseY) {
+        RoadPlannerRoadOverlayHitTester.NodeResult hit = hoveredRoadOverlayNode(mouseX, mouseY);
+        if (hit == null || !hit.hit()) {
+            clearBuiltRoadNodeSelection();
+            return false;
+        }
+        selectedBuiltRoadOverlay = hit.entry();
+        selectedBuiltRoadNodeIndex = hit.pathIndex();
+        state = state.withSelectedRoadEdge(null);
+        contextMenu = RoadPlannerVanillaContextMenu.forBuiltRoadNode();
+        contextMenu.open(mouseX, mouseY);
+        return true;
     }
 
     private boolean openContextMenuForPlannedRoute(double worldX, double worldZ, int mouseX, int mouseY) {
@@ -1681,6 +1833,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 case SET_TUNNEL_TYPE -> setSelectedEdgeType(CompiledRoadSectionType.TUNNEL);
                 default -> {}
             }
+            return;
+        }
+        if (action == RoadPlannerContextMenuAction.CONTINUE_FROM_BUILT_ROAD_NODE) {
+            continuePlanningFromBuiltRoadNode();
             return;
         }
         if (state.selectedRoadEdgeId() == null) {
@@ -1821,15 +1977,26 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     private void submitPreviewWithSettings(RoadPlannerBuildSettings settings) {
         buildSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
-        List<BlockPos> previewNodes = nodesForPreviewSubmission();
-        List<RoadPlannerSegmentType> previewSegments = segmentTypesForPreviewSubmission(previewNodes);
-        RoadPlannerRouteExpander.Result expanded = expandRoute(previewNodes, previewSegments);
+        PreviewSubmission submission = previewSubmission();
+        if (submission.buildNodes().size() < 2) {
+            statusLine = "\u5df2\u5efa\u9053\u8def\u590d\u7528\u6bb5\u4e0d\u9700\u8981\u91cd\u590d\u5efa\u9020";
+            return;
+        }
+        RoadPlannerRouteExpander.Result expanded = expandRoute(submission.buildNodes(), submission.buildSegments());
         if (!expanded.success()) {
             statusLine = "\u6865\u6881\u7f3a\u5c11\u9646\u5730\u951a\u70b9\u6216\u8def\u7ebf\u8282\u70b9\u4e0d\u8db3\uff0c\u8bf7\u68c0\u67e5\u8def\u7ebf";
             return;
         }
         saveDraft();
-        if (RoadPlannerGhostPreviewBridge.submitPreview(startTownName, destinationTownName, expanded.nodes(), expanded.segmentTypes(), buildSettings, selectedMergeSelection())) {
+        if (RoadPlannerGhostPreviewBridge.submitPreview(
+                startTownName,
+                destinationTownName,
+                expanded.nodes(),
+                expanded.segmentTypes(),
+                buildSettings,
+                submission.mergeSelection(),
+                submission.logicalNodes(),
+                submission.sharedSpans())) {
             if (minecraft != null) {
                 onClose();
             }
@@ -1838,25 +2005,201 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
 
     private List<BlockPos> nodesForPreviewSubmission() {
-        RoadPlannerMergeSelection selection = selectedMergeSelection();
-        List<BlockPos> nodes = linePlan.nodes();
-        if (!selection.present()) {
-            return nodes;
-        }
-        int anchorIndex = indexOfNode(nodes, selection.anchorPos());
-        if (anchorIndex < 1) {
-            return nodes;
-        }
-        return List.copyOf(nodes.subList(0, anchorIndex + 1));
+        return previewSubmission().buildNodes();
     }
 
     private List<RoadPlannerSegmentType> segmentTypesForPreviewSubmission(List<BlockPos> previewNodes) {
+        return previewSubmission().buildSegments();
+    }
+
+    private PreviewSubmission previewSubmission() {
+        List<BlockPos> nodes = linePlan.nodes();
         List<RoadPlannerSegmentType> segments = linePlan.segments();
-        int segmentCount = Math.max(0, (previewNodes == null ? 0 : previewNodes.size()) - 1);
-        if (segmentCount <= 0) {
-            return List.of();
+        RoadPlannerMergeSelection selection = selectedMergeSelection();
+        DetectedStartReuse startReuse = startReuseForSubmission(nodes, segments);
+        int buildStartIndex = startReuse.lineNodeIndex();
+        if (buildStartIndex < 0) {
+            buildStartIndex = 0;
         }
-        return List.copyOf(segments.subList(0, Math.min(segmentCount, segments.size())));
+        int buildEndIndex = nodes.size() - 1;
+        if (selection.present()) {
+            int anchorIndex = indexOfNode(nodes, selection.anchorPos());
+            if (anchorIndex >= buildStartIndex) {
+                buildEndIndex = anchorIndex;
+            }
+        }
+        List<BlockPos> buildNodes = buildEndIndex >= buildStartIndex && !nodes.isEmpty()
+                ? List.copyOf(nodes.subList(buildStartIndex, buildEndIndex + 1))
+                : List.of();
+        int segmentStart = Math.max(0, buildStartIndex);
+        int segmentEndExclusive = Math.min(segments.size(), buildEndIndex);
+        List<RoadPlannerSegmentType> buildSegments = segmentEndExclusive > segmentStart
+                ? List.copyOf(segments.subList(segmentStart, segmentEndExclusive))
+                : List.of();
+        List<RoadPlannerSharedRoadSpan> sharedSpans = sharedSpansForSubmission(selection, startReuse.span());
+        return new PreviewSubmission(buildNodes, buildSegments, nodes, selection, sharedSpans);
+    }
+
+    private List<RoadPlannerSharedRoadSpan> sharedSpansForSubmission(RoadPlannerMergeSelection selection) {
+        DetectedStartReuse startReuse = startReuseForSubmission(linePlan.nodes(), linePlan.segments());
+        return sharedSpansForSubmission(selection, startReuse.span());
+    }
+
+    private List<RoadPlannerSharedRoadSpan> sharedSpansForSubmission(RoadPlannerMergeSelection selection,
+                                                                     RoadPlannerSharedRoadSpan startSpan) {
+        List<RoadPlannerSharedRoadSpan> spans = new ArrayList<>();
+        if (startSpan != null && startSpan.present()) {
+            spans.add(startSpan);
+        }
+        RoadPlannerSharedRoadSpan endSpan = endMergeSpan(selection);
+        if (endSpan.present()) {
+            spans.add(endSpan);
+        }
+        return List.copyOf(spans);
+    }
+
+    private DetectedStartReuse startReuseForSubmission(List<BlockPos> nodes, List<RoadPlannerSegmentType> segments) {
+        if (startReuseSpan.present()) {
+            int nodeIndex = indexOfNode(nodes, startReuseSpan.toPos());
+            if (nodeIndex > 0) {
+                return new DetectedStartReuse(startReuseSpan, nodeIndex);
+            }
+        }
+        return detectStartReusePrefix(nodes, segments);
+    }
+
+    private DetectedStartReuse detectStartReusePrefix(List<BlockPos> nodes, List<RoadPlannerSegmentType> segments) {
+        if (nodes == null || nodes.size() < 2 || roadOverlays.isEmpty() || !mergeScope.enabled()) {
+            return DetectedStartReuse.none();
+        }
+        double threshold = Math.max(6.0D, state.selectedWidth() + 2.0D);
+        double thresholdSqr = threshold * threshold;
+        DetectedStartReuse best = DetectedStartReuse.none();
+        for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : roadOverlays) {
+            if (overlay == null || overlay.path().size() < 2 || !mergeScopeAllowsOverlay(overlay)) {
+                continue;
+            }
+            DetectedStartReuse forward = detectStartReusePrefixInDirection(overlay, nodes, segments, 1, thresholdSqr);
+            if (forward.lineNodeIndex() > best.lineNodeIndex()) {
+                best = forward;
+            }
+            DetectedStartReuse backward = detectStartReusePrefixInDirection(overlay, nodes, segments, -1, thresholdSqr);
+            if (backward.lineNodeIndex() > best.lineNodeIndex()) {
+                best = backward;
+            }
+        }
+        return best.lineNodeIndex() > 0 ? best : DetectedStartReuse.none();
+    }
+
+    private boolean mergeScopeAllowsOverlay(RoadPlannerRoadOverlaySyncPacket.Entry overlay) {
+        if (overlay == null) {
+            return false;
+        }
+        if (overlay.relationship() == RoadPlannerMergeRelationship.OWN) {
+            return true;
+        }
+        return mergeScope.allowsExternalRoads();
+    }
+
+    private DetectedStartReuse detectStartReusePrefixInDirection(RoadPlannerRoadOverlaySyncPacket.Entry overlay,
+                                                                 List<BlockPos> nodes,
+                                                                 List<RoadPlannerSegmentType> segments,
+                                                                 int direction,
+                                                                 double thresholdSqr) {
+        List<BlockPos> path = overlay.path();
+        RoadPlannerSharedRoadSpan bestSpan = RoadPlannerSharedRoadSpan.none();
+        int bestLineIndex = -1;
+        for (int pathStart = 0; pathStart < path.size(); pathStart++) {
+            if (horizontalDistanceSqr(path.get(pathStart), nodes.get(0)) > thresholdSqr) {
+                continue;
+            }
+            int currentPathIndex = pathStart;
+            int matchedLineIndex = 0;
+            for (int lineIndex = 1; lineIndex < nodes.size(); lineIndex++) {
+                if (lineIndex - 1 < segments.size() && isBridgeLikeSegment(segments.get(lineIndex - 1))) {
+                    break;
+                }
+                int nextPathIndex = nearestPathIndexInDirection(path, nodes.get(lineIndex), currentPathIndex, direction, thresholdSqr);
+                if (nextPathIndex < 0) {
+                    break;
+                }
+                currentPathIndex = nextPathIndex;
+                matchedLineIndex = lineIndex;
+            }
+            if (matchedLineIndex > bestLineIndex) {
+                bestLineIndex = matchedLineIndex;
+                bestSpan = new RoadPlannerSharedRoadSpan(
+                        overlay.roadId(),
+                        pathStart,
+                        currentPathIndex,
+                        path.get(pathStart),
+                        path.get(currentPathIndex),
+                        mergeScope,
+                        RoadPlannerSharedRoadSpan.Role.START_REUSE);
+            }
+        }
+        return bestLineIndex > 0 ? new DetectedStartReuse(bestSpan, bestLineIndex) : DetectedStartReuse.none();
+    }
+
+    private int nearestPathIndexInDirection(List<BlockPos> path,
+                                            BlockPos target,
+                                            int fromIndex,
+                                            int direction,
+                                            double thresholdSqr) {
+        int start = fromIndex + direction;
+        int endExclusive = direction > 0 ? path.size() : -1;
+        int bestIndex = -1;
+        double bestDistance = Double.MAX_VALUE;
+        for (int index = start; index != endExclusive; index += direction) {
+            double distance = horizontalDistanceSqr(path.get(index), target);
+            if (distance <= thresholdSqr && distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = index;
+            }
+        }
+        return bestIndex;
+    }
+
+    private double horizontalDistanceSqr(BlockPos left, BlockPos right) {
+        if (left == null || right == null) {
+            return Double.MAX_VALUE;
+        }
+        long dx = (long) left.getX() - right.getX();
+        long dz = (long) left.getZ() - right.getZ();
+        return dx * dx + dz * dz;
+    }
+
+    private RoadPlannerSharedRoadSpan endMergeSpan(RoadPlannerMergeSelection selection) {
+        if (selection == null || !selection.present()) {
+            return RoadPlannerSharedRoadSpan.none();
+        }
+        RoadPlannerRoadOverlaySyncPacket.Entry overlay = selectedMergeOverlay;
+        if (overlay == null || !overlay.roadId().equals(selection.roadId())) {
+            overlay = roadOverlays.stream()
+                    .filter(entry -> entry != null && entry.roadId().equals(selection.roadId()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (overlay == null || overlay.path().isEmpty()) {
+            return RoadPlannerSharedRoadSpan.none();
+        }
+        List<BlockPos> path = overlay.path();
+        int anchorIndex = selection.pathIndex();
+        if (anchorIndex < 0 || anchorIndex >= path.size() || !selection.anchorPos().equals(path.get(anchorIndex))) {
+            anchorIndex = indexOfNode(path, selection.anchorPos());
+        }
+        int targetIndex = nearestPathNodeIndex(path, destinationTownPos);
+        if (anchorIndex < 0 || targetIndex < 0 || anchorIndex == targetIndex) {
+            return RoadPlannerSharedRoadSpan.none();
+        }
+        return new RoadPlannerSharedRoadSpan(
+                selection.roadId(),
+                anchorIndex,
+                targetIndex,
+                path.get(anchorIndex),
+                path.get(targetIndex),
+                selection.scope(),
+                RoadPlannerSharedRoadSpan.Role.END_MERGE);
     }
 
     private RoadPlannerRouteExpander.Result expandRoute(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
@@ -1871,6 +2214,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     private void addNodeWithWaterSplit(BlockPos target, RoadPlannerSegmentType segmentType) {
         if (linePlan.nodeCount() == 0) {
+            clearStartReuseSpan();
             linePlan.addClickNode(target, segmentType);
             return;
         }
@@ -1906,6 +2250,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private void resetLineToStartNode() {
         linePlan.clear();
         selectedNode = null;
+        clearStartReuseSpan();
     }
 
     private void saveDraft() {
@@ -2151,13 +2496,41 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                                                 RoadPlannerMergeRelationship relationship,
                                                 int color,
                                                 int nodeCount,
-                                                boolean selectedMergeAnchor) {
+                                                boolean selectedMergeAnchor,
+                                                int sharedSpanNodeCount) {
     }
 
     public record RoadOverlayTooltipForTest(String roadId, String displayName, List<String> lines) {
     }
 
     private record OverlayAnchor(int index, BlockPos pos) {
+    }
+
+    private record PreviewSubmission(List<BlockPos> buildNodes,
+                                     List<RoadPlannerSegmentType> buildSegments,
+                                     List<BlockPos> logicalNodes,
+                                     RoadPlannerMergeSelection mergeSelection,
+                                     List<RoadPlannerSharedRoadSpan> sharedSpans) {
+        private PreviewSubmission {
+            buildNodes = buildNodes == null ? List.of() : buildNodes.stream().map(BlockPos::immutable).toList();
+            buildSegments = buildSegments == null ? List.of() : List.copyOf(buildSegments);
+            logicalNodes = logicalNodes == null || logicalNodes.isEmpty()
+                    ? buildNodes
+                    : logicalNodes.stream().map(BlockPos::immutable).toList();
+            mergeSelection = mergeSelection == null ? RoadPlannerMergeSelection.none() : mergeSelection;
+            sharedSpans = sharedSpans == null ? List.of() : List.copyOf(sharedSpans);
+        }
+    }
+
+    private record DetectedStartReuse(RoadPlannerSharedRoadSpan span, int lineNodeIndex) {
+        private DetectedStartReuse {
+            span = span == null ? RoadPlannerSharedRoadSpan.none() : span;
+            lineNodeIndex = Math.max(-1, lineNodeIndex);
+        }
+
+        static DetectedStartReuse none() {
+            return new DetectedStartReuse(RoadPlannerSharedRoadSpan.none(), -1);
+        }
     }
 
     private record MapProgressView(int percent, String summary) {

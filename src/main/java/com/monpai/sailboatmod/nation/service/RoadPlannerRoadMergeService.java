@@ -27,7 +27,7 @@ public final class RoadPlannerRoadMergeService {
     private static final int MAX_CANDIDATES = 16;
     private static final int MAX_CANDIDATE_RADIUS = 64;
     private static final int MAX_OVERLAY_ROADS = 128;
-    private static final int MAX_OVERLAY_PATH_POINTS = 128;
+    private static final int MAX_OVERLAY_PATH_POINTS = RoadPlannerRoadOverlayRequestPacket.MAX_REGION_SIZE * 8;
     private static final Comparator<CandidateWithDistance> CANDIDATE_ORDER = Comparator
             .comparingDouble(CandidateWithDistance::distanceSqr)
             .thenComparing(candidate -> candidate.candidate().relationship() == RoadPlannerMergeRelationship.OWN ? 0 : 1)

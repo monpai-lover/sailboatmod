@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
 import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtUtils;
@@ -33,15 +34,14 @@ final class RoadPlannerBuiltRoadRegistry {
         long now = System.currentTimeMillis();
         String creatorUuid = build.ownerId() == null ? "" : build.ownerId().toString();
         String creatorName = creatorName(data, build.ownerId());
-        String endAnchor = build.mergeSelection().present()
-                ? "roadnode:" + build.mergeSelection().roadId() + ":" + build.mergeSelection().pathIndex()
-                : plannerAnchorId("end", path.get(path.size() - 1));
+        String startAnchor = startAnchorId(build, path);
+        String endAnchor = endAnchorId(build, path);
         RoadNetworkRecord road = new RoadNetworkRecord(
                 build.roadId(),
                 scope.nationId(),
                 scope.townId(),
                 level.dimension().location().toString(),
-                plannerAnchorId("start", path.get(0)),
+                startAnchor,
                 endAnchor,
                 path,
                 now,
@@ -203,6 +203,36 @@ final class RoadPlannerBuiltRoadRegistry {
             return "planner:" + kind;
         }
         return "planner:" + kind + ":" + pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    }
+
+    private static String startAnchorId(RoadPlannerBuildControlService.CompletedRoadBuild build, List<BlockPos> path) {
+        RoadPlannerSharedRoadSpan span = sharedSpan(build, RoadPlannerSharedRoadSpan.Role.START_REUSE);
+        if (span != null) {
+            return "roadnode:" + span.roadId() + ":" + span.toPathIndex();
+        }
+        return plannerAnchorId("start", path.get(0));
+    }
+
+    private static String endAnchorId(RoadPlannerBuildControlService.CompletedRoadBuild build, List<BlockPos> path) {
+        RoadPlannerSharedRoadSpan span = sharedSpan(build, RoadPlannerSharedRoadSpan.Role.END_MERGE);
+        if (span != null) {
+            return "roadnode:" + span.roadId() + ":" + span.fromPathIndex();
+        }
+        if (build.mergeSelection().present()) {
+            return "roadnode:" + build.mergeSelection().roadId() + ":" + build.mergeSelection().pathIndex();
+        }
+        return plannerAnchorId("end", path.get(path.size() - 1));
+    }
+
+    private static RoadPlannerSharedRoadSpan sharedSpan(RoadPlannerBuildControlService.CompletedRoadBuild build,
+                                                        RoadPlannerSharedRoadSpan.Role role) {
+        if (build == null || build.sharedSpans() == null || role == null) {
+            return null;
+        }
+        return build.sharedSpans().stream()
+                .filter(span -> span != null && span.present() && span.role() == role)
+                .findFirst()
+                .orElse(null);
     }
 
     private record RoadScope(String nationId, String townId) {

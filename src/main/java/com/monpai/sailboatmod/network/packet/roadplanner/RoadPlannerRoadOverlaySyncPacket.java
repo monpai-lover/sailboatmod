@@ -20,7 +20,7 @@ public record RoadPlannerRoadOverlaySyncPacket(UUID sessionId,
                                                RoadPlannerMergeScope scope,
                                                List<Entry> roads) {
     private static final int MAX_ROADS = 128;
-    private static final int MAX_PATH_POINTS = 128;
+    private static final int MAX_PATH_POINTS = RoadPlannerRoadOverlayRequestPacket.MAX_REGION_SIZE * 8;
 
     public RoadPlannerRoadOverlaySyncPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;

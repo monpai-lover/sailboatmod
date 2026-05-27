@@ -303,12 +303,14 @@ class RoadPlannerPacketRoundTripTest {
         buffer.writeVarInt(1);
         RoadPlannerPacketCodec.writeString(buffer, "road_a", 128);
         buffer.writeEnum(RoadPlannerMergeRelationship.TRADE);
-        buffer.writeVarInt(130);
-        for (int index = 0; index < 130; index++) {
+        int maxVisiblePathPoints = RoadPlannerRoadOverlayRequestPacket.MAX_REGION_SIZE * 8;
+        int advertisedPathPoints = maxVisiblePathPoints + 4;
+        buffer.writeVarInt(advertisedPathPoints);
+        for (int index = 0; index < advertisedPathPoints; index++) {
             buffer.writeBlockPos(new BlockPos(index, 64, 0));
         }
         RoadPlannerPacketCodec.writeString(buffer, "Alpha - Beta", 128);
-        buffer.writeVarInt(130);
+        buffer.writeVarInt(advertisedPathPoints);
         RoadPlannerPacketCodec.writeString(buffer, "Builder", 64);
         RoadPlannerPacketCodec.writeString(buffer, "uuid-a", 64);
         buffer.writeLong(1234L);
@@ -318,10 +320,10 @@ class RoadPlannerPacketRoundTripTest {
         RoadPlannerRoadOverlaySyncPacket decoded = RoadPlannerRoadOverlaySyncPacket.decode(buffer);
 
         assertEquals(1, decoded.roads().size());
-        assertEquals(128, decoded.roads().get(0).path().size());
-        assertEquals(new BlockPos(127, 64, 0), decoded.roads().get(0).path().get(127));
+        assertEquals(maxVisiblePathPoints, decoded.roads().get(0).path().size());
+        assertEquals(new BlockPos(maxVisiblePathPoints - 1, 64, 0), decoded.roads().get(0).path().get(maxVisiblePathPoints - 1));
         assertEquals("Alpha - Beta", decoded.roads().get(0).displayName());
-        assertEquals(130, decoded.roads().get(0).lengthBlocks());
+        assertEquals(advertisedPathPoints, decoded.roads().get(0).lengthBlocks());
         assertEquals(99, buffer.readVarInt());
     }
 

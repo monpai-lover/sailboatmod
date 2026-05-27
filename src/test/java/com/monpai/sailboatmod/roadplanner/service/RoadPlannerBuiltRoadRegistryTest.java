@@ -12,6 +12,7 @@ import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -181,6 +182,51 @@ class RoadPlannerBuiltRoadRegistryTest {
         RoadNetworkRecord road = data.getRoadNetwork("connector");
         assertNotNull(road);
         assertEquals("roadnode:existing-road:4", road.structureBId());
+    }
+
+    @Test
+    void registerCompletedBuildStoresLogicalPathAndSharedStartAnchorWithoutOwningReusedBlocks() {
+        TestServerLevel level = newPersistentLevel();
+        UUID ownerId = UUID.randomUUID();
+        NationSavedData data = NationSavedData.get(level);
+        data.putTown(new TownRecord("town-a", "nation-a", "Alpha", ownerId, 1L, "", TownRecord.noCorePos(), "", "european"));
+        data.putNation(new NationRecord("nation-a", "Alpha Nation", "AN", 0x112233, 0x445566, ownerId, 1L, "town-a", "", NationRecord.noCorePos(), ""));
+        data.putMember(new NationMemberRecord(ownerId, "Builder", "nation-a", NationOfficeIds.LEADER, 1L));
+        List<BlockPos> logicalPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 64, 0),
+                new BlockPos(80, 64, 0));
+        List<BuildStep> newTailSteps = List.of(
+                new BuildStep(0, new BlockPos(40, 63, 0), Blocks.SMOOTH_STONE.defaultBlockState(), BuildPhase.SURFACE),
+                new BuildStep(1, new BlockPos(80, 63, 0), Blocks.SMOOTH_STONE.defaultBlockState(), BuildPhase.SURFACE));
+        RoadPlannerSharedRoadSpan startReuse = new RoadPlannerSharedRoadSpan(
+                "existing-road",
+                0,
+                1,
+                logicalPath.get(0),
+                logicalPath.get(1),
+                RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.START_REUSE);
+
+        RoadPlannerBuiltRoadRegistry.register(level, new RoadPlannerBuildControlService.CompletedRoadBuild(
+                "road-ac",
+                ownerId,
+                logicalPath,
+                newTailSteps,
+                List.of(),
+                Level.OVERWORLD,
+                RoadPlannerMergeSelection.none(),
+                List.of(startReuse),
+                "Alpha",
+                "Gamma"
+        ));
+
+        RoadNetworkRecord road = data.getRoadNetwork("road-ac");
+        assertNotNull(road);
+        assertEquals(logicalPath, road.path());
+        assertEquals("roadnode:existing-road:1", road.structureAId());
+        assertEquals("planner:end:80,64,0", road.structureBId());
+        assertEquals(newTailSteps.stream().map(step -> step.pos().asLong()).toList(), roadJob(level, "road-ac").ownedBlocks());
     }
 
     private static ConstructionRuntimeSavedData.RoadJobState roadJob(TestServerLevel level, String roadId) {

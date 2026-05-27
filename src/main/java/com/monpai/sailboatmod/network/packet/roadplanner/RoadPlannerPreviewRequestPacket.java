@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import com.monpai.sailboatmod.roadplanner.structure.RoadCenterlinePoint;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
@@ -33,7 +34,9 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                                               List<BlockPos> nodes,
                                               List<RoadPlannerSegmentType> segmentTypes,
                                               RoadPlannerBuildSettings settings,
-                                              RoadPlannerMergeSelection mergeSelection) {
+                                              RoadPlannerMergeSelection mergeSelection,
+                                              List<BlockPos> logicalNodes,
+                                              List<RoadPlannerSharedRoadSpan> sharedSpans) {
     public RoadPlannerPreviewRequestPacket {
         startTownName = startTownName == null ? "" : startTownName;
         destinationTownName = destinationTownName == null ? "" : destinationTownName;
@@ -41,6 +44,22 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
         segmentTypes = normalizeSegments(segmentTypes, nodes.size());
         settings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
         mergeSelection = mergeSelection == null ? RoadPlannerMergeSelection.none() : mergeSelection;
+        logicalNodes = logicalNodes == null || logicalNodes.isEmpty()
+                ? nodes
+                : logicalNodes.stream().map(BlockPos::immutable).toList();
+        sharedSpans = sharedSpans == null ? List.of() : sharedSpans.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(RoadPlannerSharedRoadSpan::present)
+                .toList();
+    }
+
+    public RoadPlannerPreviewRequestPacket(String startTownName,
+                                           String destinationTownName,
+                                           List<BlockPos> nodes,
+                                           List<RoadPlannerSegmentType> segmentTypes,
+                                           RoadPlannerBuildSettings settings,
+                                           RoadPlannerMergeSelection mergeSelection) {
+        this(startTownName, destinationTownName, nodes, segmentTypes, settings, mergeSelection, nodes, List.of());
     }
 
     public RoadPlannerPreviewRequestPacket(String startTownName,
@@ -76,6 +95,17 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
             buffer.writeBlockPos(packet.mergeSelection().anchorPos());
             buffer.writeEnum(packet.mergeSelection().scope());
         }
+        RoadPlannerPacketCodec.writeBlockPosList(buffer, packet.logicalNodes());
+        buffer.writeVarInt(packet.sharedSpans().size());
+        for (RoadPlannerSharedRoadSpan span : packet.sharedSpans()) {
+            RoadPlannerPacketCodec.writeString(buffer, span.roadId(), 128);
+            buffer.writeVarInt(span.fromPathIndex());
+            buffer.writeVarInt(span.toPathIndex());
+            buffer.writeBlockPos(span.fromPos());
+            buffer.writeBlockPos(span.toPos());
+            buffer.writeEnum(span.scope());
+            buffer.writeEnum(span.role());
+        }
     }
 
     public static RoadPlannerPreviewRequestPacket decode(FriendlyByteBuf buffer) {
@@ -99,7 +129,27 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                     buffer.readEnum(RoadPlannerMergeScope.class)
             );
         }
-        return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, mergeSelection);
+        List<BlockPos> logicalNodes = buffer.isReadable() ? RoadPlannerPacketCodec.readBlockPosList(buffer) : nodes;
+        List<RoadPlannerSharedRoadSpan> sharedSpans = List.of();
+        if (buffer.isReadable()) {
+            int count = buffer.readVarInt();
+            if (count < 0 || count > 32) {
+                throw new IllegalArgumentException("Shared road span count out of bounds: " + count);
+            }
+            List<RoadPlannerSharedRoadSpan> spans = new ArrayList<>(count);
+            for (int index = 0; index < count; index++) {
+                spans.add(new RoadPlannerSharedRoadSpan(
+                        buffer.readUtf(128),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readBlockPos(),
+                        buffer.readBlockPos(),
+                        buffer.readEnum(RoadPlannerMergeScope.class),
+                        buffer.readEnum(RoadPlannerSharedRoadSpan.Role.class)));
+            }
+            sharedSpans = List.copyOf(spans);
+        }
+        return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, mergeSelection, logicalNodes, sharedSpans);
     }
 
     public static void handle(RoadPlannerPreviewRequestPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -117,7 +167,9 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                     safePacket.nodes(),
                     safePacket.segmentTypes(),
                     safePacket.settings(),
-                    safePacket.mergeSelection());
+                    safePacket.mergeSelection(),
+                    safePacket.logicalNodes(),
+                    safePacket.sharedSpans());
             ModNetwork.CHANNEL.sendTo(safePacket.toSafePreview(player.serverLevel()), player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
         });
         context.setPacketHandled(true);
@@ -128,7 +180,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
             return this;
         }
         if (player == null || nodes.isEmpty()) {
-            return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none());
+            return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none(), logicalNodes, sharedSpans);
         }
         return withValidatedMerge((probe, radius, selection, finalSegmentType) -> RoadPlannerRoadMergeService.validateSelection(
                 player,
@@ -143,7 +195,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
             return this;
         }
         if (nodes.isEmpty() || validator == null) {
-            return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none());
+            return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none(), logicalNodes, sharedSpans);
         }
         RoadPlannerSegmentType finalSegmentType = segmentTypes.isEmpty()
                 ? RoadPlannerSegmentType.ROAD
@@ -163,9 +215,60 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                             candidate.anchorPos(),
                             mergeSelection.scope()
                     );
-                    return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, snappedNodes, segmentTypes, settings, canonicalSelection);
+                    List<BlockPos> snappedLogicalNodes = snapLogicalAnchor(logicalNodes, mergeSelection.anchorPos(), candidate.anchorPos());
+                    List<RoadPlannerSharedRoadSpan> snappedSpans = snapSharedSpanAnchor(sharedSpans, mergeSelection.anchorPos(), candidate.anchorPos(), candidate.roadId(), candidate.pathIndex());
+                    return new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, snappedNodes, segmentTypes, settings, canonicalSelection, snappedLogicalNodes, snappedSpans);
                 })
-                .orElseGet(() -> new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none()));
+                .orElseGet(() -> new RoadPlannerPreviewRequestPacket(startTownName, destinationTownName, nodes, segmentTypes, settings, RoadPlannerMergeSelection.none(), logicalNodes, sharedSpansWithoutEndMerge()));
+    }
+
+    private List<RoadPlannerSharedRoadSpan> sharedSpansWithoutEndMerge() {
+        if (sharedSpans.isEmpty()) {
+            return List.of();
+        }
+        return sharedSpans.stream()
+                .filter(span -> span.role() != RoadPlannerSharedRoadSpan.Role.END_MERGE)
+                .toList();
+    }
+
+    private static List<BlockPos> snapLogicalAnchor(List<BlockPos> logicalNodes, BlockPos submittedAnchor, BlockPos canonicalAnchor) {
+        if (logicalNodes == null || logicalNodes.isEmpty() || submittedAnchor == null || canonicalAnchor == null || submittedAnchor.equals(canonicalAnchor)) {
+            return logicalNodes == null ? List.of() : logicalNodes;
+        }
+        List<BlockPos> snapped = new ArrayList<>(logicalNodes);
+        for (int index = 0; index < snapped.size(); index++) {
+            if (submittedAnchor.equals(snapped.get(index))) {
+                snapped.set(index, canonicalAnchor.immutable());
+                break;
+            }
+        }
+        return List.copyOf(snapped);
+    }
+
+    private static List<RoadPlannerSharedRoadSpan> snapSharedSpanAnchor(List<RoadPlannerSharedRoadSpan> spans,
+                                                                        BlockPos submittedAnchor,
+                                                                        BlockPos canonicalAnchor,
+                                                                        String canonicalRoadId,
+                                                                        int canonicalPathIndex) {
+        if (spans == null || spans.isEmpty() || submittedAnchor == null || canonicalAnchor == null) {
+            return spans == null ? List.of() : spans;
+        }
+        List<RoadPlannerSharedRoadSpan> snapped = new ArrayList<>(spans.size());
+        for (RoadPlannerSharedRoadSpan span : spans) {
+            if (span.role() == RoadPlannerSharedRoadSpan.Role.END_MERGE && submittedAnchor.equals(span.fromPos())) {
+                snapped.add(new RoadPlannerSharedRoadSpan(
+                        canonicalRoadId,
+                        canonicalPathIndex,
+                        span.toPathIndex(),
+                        canonicalAnchor,
+                        span.toPos(),
+                        span.scope(),
+                        span.role()));
+            } else {
+                snapped.add(span);
+            }
+        }
+        return List.copyOf(snapped);
     }
 
     @FunctionalInterface

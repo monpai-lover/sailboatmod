@@ -276,6 +276,22 @@ class RoadPlannerRoadMergeServiceTest {
     }
 
     @Test
+    void visibleOverlaysKeepFullLongRoadInsidePlanningRegion() {
+        NationSavedData data = new NationSavedData();
+        java.util.ArrayList<BlockPos> path = new java.util.ArrayList<>();
+        for (int x = -180; x <= 180; x++) {
+            path.add(new BlockPos(x, 64, 0));
+        }
+        data.putRoadNetwork(road("long-visible-road", "alpha", OVERWORLD, path.toArray(BlockPos[]::new)));
+
+        List<RoadPlannerRoadMergeService.RoadOverlay> overlays = RoadPlannerRoadMergeService.visibleRoadOverlaysForTest(
+                data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 512, RoadPlannerMergeScope.OWN_NATION);
+
+        assertEquals(1, overlays.size());
+        assertEquals(path, overlays.get(0).path());
+    }
+
+    @Test
     void visibleOverlaysExposeRoadTooltipMetadata() {
         NationSavedData data = new NationSavedData();
         UUID mayor = UUID.randomUUID();

@@ -7,6 +7,7 @@ public enum RoadPlannerContextMenuAction {
     SET_TUNNEL_TYPE,
     DEMOLISH_EDGE,
     DEMOLISH_BRANCH,
+    CONTINUE_FROM_BUILT_ROAD_NODE,
     CONNECT_TOWN,
     VIEW_LEDGER
 }

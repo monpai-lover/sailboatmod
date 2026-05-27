@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.road.model.BuildStep;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
 import com.monpai.sailboatmod.roadplanner.structure.RoadStructureMode;
@@ -87,6 +88,79 @@ class RoadPlannerPreviewRequestPacketTest {
         RoadPlannerPreviewRequestPacket decoded = RoadPlannerPreviewRequestPacket.decode(new FriendlyByteBuf(buffer.copy()));
 
         assertEquals(selection, decoded.mergeSelection());
+    }
+
+    @Test
+    void roundTripPreservesLogicalRouteAndSharedRoadSpans() {
+        List<BlockPos> buildNodes = List.of(new BlockPos(40, 64, 0), new BlockPos(80, 64, 0));
+        List<BlockPos> logicalNodes = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 64, 0),
+                new BlockPos(80, 64, 0),
+                new BlockPos(120, 64, 0));
+        RoadPlannerSharedRoadSpan startReuse = new RoadPlannerSharedRoadSpan(
+                "Existing-Road",
+                0,
+                1,
+                logicalNodes.get(0),
+                logicalNodes.get(1),
+                RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.START_REUSE);
+        RoadPlannerSharedRoadSpan endMerge = new RoadPlannerSharedRoadSpan(
+                "Tail-Road",
+                2,
+                3,
+                logicalNodes.get(2),
+                logicalNodes.get(3),
+                RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.END_MERGE);
+        RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
+                "A",
+                "C",
+                buildNodes,
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadPlannerMergeSelection.none(),
+                logicalNodes,
+                List.of(startReuse, endMerge));
+
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerPreviewRequestPacket.encode(packet, buffer);
+        RoadPlannerPreviewRequestPacket decoded = RoadPlannerPreviewRequestPacket.decode(new FriendlyByteBuf(buffer.copy()));
+
+        assertEquals(buildNodes, decoded.nodes());
+        assertEquals(logicalNodes, decoded.logicalNodes());
+        assertEquals(List.of(startReuse, endMerge), decoded.sharedSpans());
+    }
+
+    @Test
+    void roadOverlaySyncKeepsLongVisibleRoadPath() {
+        java.util.ArrayList<BlockPos> path = new java.util.ArrayList<>();
+        for (int x = -180; x <= 180; x++) {
+            path.add(new BlockPos(x, 64, 0));
+        }
+        RoadPlannerRoadOverlaySyncPacket packet = new RoadPlannerRoadOverlaySyncPacket(
+                new java.util.UUID(1L, 2L),
+                BlockPos.ZERO,
+                512,
+                RoadPlannerMergeScope.OWN_NATION,
+                List.of(new RoadPlannerRoadOverlaySyncPacket.Entry(
+                        "long-visible-road",
+                        RoadPlannerMergeRelationship.OWN,
+                        path,
+                        "Alpha - Beta",
+                        path.size() - 1,
+                        "Builder",
+                        "uuid",
+                        1234L,
+                        false)));
+
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        RoadPlannerRoadOverlaySyncPacket.encode(packet, buffer);
+        RoadPlannerRoadOverlaySyncPacket decoded = RoadPlannerRoadOverlaySyncPacket.decode(new FriendlyByteBuf(buffer.copy()));
+
+        assertEquals(1, decoded.roads().size());
+        assertEquals(path, decoded.roads().get(0).path());
     }
 
     @Test

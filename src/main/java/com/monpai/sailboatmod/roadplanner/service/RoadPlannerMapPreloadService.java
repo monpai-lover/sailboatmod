@@ -209,7 +209,7 @@ public final class RoadPlannerMapPreloadService {
         RoadMapColumnSampler sampler = (worldX, worldZ) -> {
             int chunkX = Math.floorDiv(worldX, 16);
             int chunkZ = Math.floorDiv(worldZ, 16);
-            if (job != null && !job.coversChunk(chunkX, chunkZ)) {
+            if (job != null && !job.coversFullTile() && !job.coversChunk(chunkX, chunkZ)) {
                 return RoadMapServerColumnSampler.unavailableSampleForTest(worldX, worldZ);
             }
             return delegate.sample(worldX, worldZ);
@@ -224,7 +224,7 @@ public final class RoadPlannerMapPreloadService {
             for (int localX = 0; localX < 16; localX++) {
                 int chunkX = startChunkX + localX;
                 int chunkZ = startChunkZ + localZ;
-                if (job == null || job.coversChunk(chunkX, chunkZ)) {
+                if (job == null || job.coversFullTile() || job.coversChunk(chunkX, chunkZ)) {
                     level.getChunk(chunkX, chunkZ);
                 }
             }

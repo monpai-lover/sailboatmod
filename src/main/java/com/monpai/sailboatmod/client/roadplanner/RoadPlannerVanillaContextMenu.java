@@ -12,7 +12,8 @@ import java.util.function.ToIntFunction;
 public class RoadPlannerVanillaContextMenu {
     public enum Kind {
         ROAD_EDGE,
-        PLANNED_ROUTE
+        PLANNED_ROUTE,
+        BUILT_ROAD_NODE
     }
 
     public static final int PADDING = 6;
@@ -59,6 +60,12 @@ public class RoadPlannerVanillaContextMenu {
         menu.items.add(Item.action("\u8bbe\u4e3a\u9053\u8def", RoadPlannerContextMenuAction.SET_ROAD_TYPE));
         menu.items.add(Item.action("\u8bbe\u4e3a\u6865\u6881", RoadPlannerContextMenuAction.SET_BRIDGE_TYPE));
         menu.items.add(Item.action("\u8bbe\u4e3a\u96a7\u9053", RoadPlannerContextMenuAction.SET_TUNNEL_TYPE));
+        return menu;
+    }
+
+    public static RoadPlannerVanillaContextMenu forBuiltRoadNode() {
+        RoadPlannerVanillaContextMenu menu = new RoadPlannerVanillaContextMenu(new UUID(0L, 0L), Kind.BUILT_ROAD_NODE);
+        menu.items.add(Item.action("\u4ece\u6b64\u8282\u70b9\u7ee7\u7eed\u89c4\u5212", RoadPlannerContextMenuAction.CONTINUE_FROM_BUILT_ROAD_NODE));
         return menu;
     }
 
