@@ -229,6 +229,10 @@ public class RoadPlannerBuildControlService {
                 completedRoadRegistrar.register(level, completedRoadBuild(level, metadata, queue));
                 if (level != null) {
                     RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, queue.getSteps());
+                    if (metadata != null && metadata.reusePlan() != null) {
+                        RoadPlannerBuiltRoadMapRefresh.enqueueGraphPlacementRefresh(level,
+                                metadata.reusePlan().plannedPlacements());
+                    }
                     resendAffectedChunks(level, queue.getSteps());
                 }
                 completedJobs.add(entry.getKey());
