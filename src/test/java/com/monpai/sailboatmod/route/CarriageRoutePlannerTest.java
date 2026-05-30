@@ -76,6 +76,21 @@ class CarriageRoutePlannerTest {
         ), plan.segments().stream().map(CarriageRoutePlan.Segment::kind).toList());
     }
 
+    @Test
+    void findRoadRouteUsesGraphRoadsAndIgnoresLegacyRoadRecords() {
+        TestServerLevel level = newPersistentLevel();
+        seedFlatGround(level, 0, 20, -1, 1, 64);
+        seedRoad(level, new BlockPos(2, 64, 0), new BlockPos(7, 64, 0));
+
+        assertTrue(RoadAutoRouteService.findRoadRoute(level, new BlockPos(0, 64, 0), new BlockPos(9, 64, 0)).isEmpty());
+
+        seedGraphRoad(level, new BlockPos(2, 64, 0), new BlockPos(7, 64, 0));
+
+        List<BlockPos> graphRoute = RoadAutoRouteService.findRoadRoute(level, new BlockPos(0, 64, 0), new BlockPos(9, 64, 0));
+        assertTrue(graphRoute.contains(new BlockPos(2, 64, 0)));
+        assertTrue(graphRoute.contains(new BlockPos(7, 64, 0)));
+    }
+
     private static long columnKey(int x, int z) {
         return BlockPos.asLong(x, 0, z);
     }
