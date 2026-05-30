@@ -1,8 +1,6 @@
 package com.monpai.sailboatmod.route;
 
-import com.monpai.sailboatmod.nation.data.NationSavedData;
-import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
-import com.monpai.sailboatmod.nation.service.RoadHybridRouteResolver;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
@@ -11,7 +9,6 @@ import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 public final class CarriageRoutePlanner {
     private CarriageRoutePlanner() {
@@ -43,34 +40,27 @@ public final class CarriageRoutePlanner {
         if (level == null || path == null || path.size() < 2) {
             return CarriageRoutePlan.empty();
         }
-        Set<BlockPos> networkNodes = collectNetworkNodes(level);
-        List<CarriageRoutePlan.Segment> segments = splitIntoSegments(path, networkNodes);
+        RoadGraphRoutingService graph = new RoadGraphRoutingService(RoadGraphRepository.forLevel(level));
+        List<CarriageRoutePlan.Segment> segments = splitIntoSegments(level.dimension().location().toString(), path, graph);
         return segments.isEmpty() ? CarriageRoutePlan.empty() : new CarriageRoutePlan(segments);
     }
 
-    private static Set<BlockPos> collectNetworkNodes(ServerLevel level) {
-        List<RoadNetworkRecord> roads = NationSavedData.get(level).getRoadNetworks().stream()
-                .filter(road -> road != null
-                        && level.dimension().location().toString().equals(road.dimensionId())
-                        && road.path().size() >= 2)
-                .toList();
-        return RoadHybridRouteResolver.collectNetworkNodes(roads);
-    }
-
-    private static List<CarriageRoutePlan.Segment> splitIntoSegments(List<BlockPos> path, Set<BlockPos> networkNodes) {
+    private static List<CarriageRoutePlan.Segment> splitIntoSegments(String dimensionId,
+                                                                     List<BlockPos> path,
+                                                                     RoadGraphRoutingService graph) {
         List<CarriageRoutePlan.Segment> segments = new ArrayList<>();
         if (path == null || path.size() < 2) {
             return segments;
         }
 
-        CarriageRoutePlan.SegmentKind currentKind = classify(path.get(0), networkNodes);
+        CarriageRoutePlan.SegmentKind currentKind = classify(dimensionId, path.get(0), graph);
         List<BlockPos> currentPath = new ArrayList<>();
         currentPath.add(path.get(0).immutable());
 
         for (int i = 1; i < path.size(); i++) {
             BlockPos previous = path.get(i - 1);
             BlockPos current = path.get(i);
-            CarriageRoutePlan.SegmentKind nextKind = classify(current, networkNodes);
+            CarriageRoutePlan.SegmentKind nextKind = classify(dimensionId, current, graph);
             if (nextKind != currentKind) {
                 currentPath.add(current.immutable());
                 addSegmentIfUsable(segments, currentKind, currentPath);
@@ -104,8 +94,8 @@ public final class CarriageRoutePlanner {
         }
     }
 
-    private static CarriageRoutePlan.SegmentKind classify(BlockPos pos, Set<BlockPos> networkNodes) {
-        return pos != null && networkNodes != null && networkNodes.contains(pos)
+    private static CarriageRoutePlan.SegmentKind classify(String dimensionId, BlockPos pos, RoadGraphRoutingService graph) {
+        return graph != null && graph.isRoadCorridor(dimensionId, pos, 1)
                 ? CarriageRoutePlan.SegmentKind.ROAD_CORRIDOR
                 : CarriageRoutePlan.SegmentKind.TERRAIN_CONNECTOR;
     }

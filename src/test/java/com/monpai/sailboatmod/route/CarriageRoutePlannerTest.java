@@ -2,6 +2,11 @@ package com.monpai.sailboatmod.route;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
+import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphEdgeRecord;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphNodeRecord;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphSegmentPlacement;
+import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraphSavedData;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -28,6 +33,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,13 +46,27 @@ class CarriageRoutePlannerTest {
     }
 
     @Test
-    void planReturnsConnectorRoadConnectorSegments() {
+    void legacyRoadRecordsDoNotCreateCarriageRoadCorridorSegments() {
         TestServerLevel level = newPersistentLevel();
-
         seedFlatGround(level, 0, 9, -1, 1, 64);
         seedRoad(level, new BlockPos(2, 64, 0), new BlockPos(7, 64, 0));
 
-        CarriageRoutePlan plan = CarriageRoutePlanner.plan(level, new BlockPos(0, 64, 0), new BlockPos(9, 64, 0));
+        CarriageRoutePlan plan = CarriageRoutePlanner.planFromPath(level,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(2, 64, 0), new BlockPos(7, 64, 0), new BlockPos(9, 64, 0)));
+
+        assertTrue(plan.found());
+        assertEquals(List.of(CarriageRoutePlan.SegmentKind.TERRAIN_CONNECTOR),
+                plan.segments().stream().map(CarriageRoutePlan.Segment::kind).distinct().toList());
+    }
+
+    @Test
+    void graphRoadsCreateCarriageRoadCorridorSegments() {
+        TestServerLevel level = newPersistentLevel();
+        seedFlatGround(level, 0, 9, -1, 1, 64);
+        seedGraphRoad(level, new BlockPos(2, 64, 0), new BlockPos(7, 64, 0));
+
+        CarriageRoutePlan plan = CarriageRoutePlanner.planFromPath(level,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(2, 64, 0), new BlockPos(7, 64, 0), new BlockPos(9, 64, 0)));
 
         assertTrue(plan.found());
         assertEquals(List.of(
@@ -96,6 +116,23 @@ class CarriageRoutePlannerTest {
                 1L,
                 RoadNetworkRecord.SOURCE_TYPE_MANUAL
         ));
+    }
+
+    private static void seedGraphRoad(TestServerLevel level, BlockPos from, BlockPos to) {
+        List<BlockPos> path = buildStraightPath(from, to);
+        RoadNetworkGraphSavedData graph = RoadNetworkGraphSavedData.get(level);
+        RoadGraphNodeRecord a = new RoadGraphNodeRecord(UUID.randomUUID(), level.dimension().location().toString(), from,
+                RoadGraphNodeRecord.Kind.NORMAL, "nation", "town", "", 1L, 1L);
+        RoadGraphNodeRecord b = new RoadGraphNodeRecord(UUID.randomUUID(), level.dimension().location().toString(), to,
+                RoadGraphNodeRecord.Kind.NORMAL, "nation", "town", "", 1L, 1L);
+        graph.putNode(a);
+        graph.putNode(b);
+        graph.putEdge(new RoadGraphEdgeRecord(UUID.randomUUID(), a.nodeId(), b.nodeId(), level.dimension().location().toString(),
+                "nation", "town", "", "", "", "", "graph-road", 3,
+                CompiledRoadSectionType.ROAD,
+                RoadGraphEdgeRecord.Status.BUILT, path, List.of(from, to),
+                path.stream().map(pos -> new RoadGraphSegmentPlacement(pos, List.of(pos, pos.north(), pos.south()))).toList(),
+                List.of(), List.of(), 1L, 1L));
     }
 
     private static List<BlockPos> buildStraightPath(BlockPos from, BlockPos to) {
