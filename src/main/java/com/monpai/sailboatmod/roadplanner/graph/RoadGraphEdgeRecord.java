@@ -111,6 +111,10 @@ public record RoadGraphEdgeRecord(UUID edgeId,
                 tag.getLong("UpdatedAt"));
     }
 
+    public boolean built() {
+        return status == Status.BUILT;
+    }
+
     private static List<BlockPos> copyPositions(List<BlockPos> positions) {
         return positions == null ? List.of() : positions.stream()
                 .filter(Objects::nonNull)

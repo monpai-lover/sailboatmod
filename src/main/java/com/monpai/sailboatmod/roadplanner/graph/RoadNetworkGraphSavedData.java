@@ -10,6 +10,7 @@ import net.minecraft.world.level.saveddata.SavedData;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -78,6 +79,16 @@ public class RoadNetworkGraphSavedData extends SavedData {
         return List.copyOf(edges.values());
     }
 
+    public Collection<RoadGraphEdgeRecord> edgesForDimension(String dimensionId) {
+        String normalized = normalizeDimension(dimensionId);
+        if (normalized.isBlank()) {
+            return List.of();
+        }
+        return edges.values().stream()
+                .filter(edge -> normalized.equals(normalizeDimension(edge.dimensionId())))
+                .toList();
+    }
+
     public Optional<RoadGraphNodeRecord> getNode(UUID nodeId) {
         return Optional.ofNullable(nodes.get(nodeId));
     }
@@ -102,6 +113,17 @@ public class RoadNetworkGraphSavedData extends SavedData {
         setDirty();
     }
 
+    public boolean removeEdge(UUID edgeId) {
+        if (edgeId == null) {
+            return false;
+        }
+        boolean removed = edges.remove(edgeId) != null;
+        if (removed) {
+            setDirty();
+        }
+        return removed;
+    }
+
     RoadNetworkGraphSavedData withEdgeForTest(RoadGraphEdgeRecord edge) {
         if (edge != null) {
             edges.put(edge.edgeId(), edge);
@@ -111,5 +133,9 @@ public class RoadNetworkGraphSavedData extends SavedData {
 
     boolean isDirtyForTest() {
         return isDirty();
+    }
+
+    private static String normalizeDimension(String dimensionId) {
+        return dimensionId == null ? "" : dimensionId.trim().toLowerCase(Locale.ROOT);
     }
 }
