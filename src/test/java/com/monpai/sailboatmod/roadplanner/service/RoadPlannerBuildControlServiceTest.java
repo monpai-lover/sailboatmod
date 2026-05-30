@@ -6,6 +6,9 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphReuseSpan;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphSegmentPlacement;
+import com.monpai.sailboatmod.roadplanner.graph.RoadReusePlan;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.structure.RoadPreviewBlock;
@@ -33,6 +36,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -568,6 +572,61 @@ class RoadPlannerBuildControlServiceTest {
 
         assertEquals(1, completedRoads.size());
         assertEquals(RoadPlannerMergeSelection.none(), completedRoads.get(0).mergeSelection());
+    }
+
+    @Test
+    void previewSnapshotCarriesReusePlanIntoCompletedBuild() {
+        AtomicReference<RoadPlannerBuildControlService.CompletedRoadBuild> completed = new AtomicReference<>();
+        RoadPlannerBuildControlService service = new RoadPlannerBuildControlService((level, road) -> completed.set(road));
+        UUID playerId = UUID.randomUUID();
+        RoadGraphReuseSpan span = new RoadGraphReuseSpan(UUID.randomUUID(), 0, 3, 0, 3,
+                new BlockPos(0, 64, 0), new BlockPos(3, 64, 0), RoadGraphReuseSpan.Relationship.OWN);
+        RoadReusePlan reusePlan = new RoadReusePlan(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(3, 64, 0), new BlockPos(6, 64, 0)),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(6, 64, 0)),
+                List.of(),
+                List.of(new RoadReusePlan.Range(4, 6)),
+                List.of(span),
+                List.of());
+        UUID previewId = service.startPreview(playerId, "", "",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(6, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                RoadPlannerMergeSelection.none(),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(6, 64, 0)),
+                List.of(),
+                reusePlan);
+
+        service.confirmPreview(playerId, previewId, null);
+        service.tick(null);
+
+        assertEquals(List.of(span), completed.get().reusePlan().reuseSpans());
+    }
+
+    @Test
+    void reusedFootprintPositionsAreRemovedFromBuildSteps() {
+        RoadGraphSegmentPlacement reused = new RoadGraphSegmentPlacement(
+                new BlockPos(0, 64, 0),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(0, 64, 1)));
+        RoadGraphSegmentPlacement owned = new RoadGraphSegmentPlacement(
+                new BlockPos(4, 64, 0),
+                List.of(new BlockPos(4, 64, 0), new BlockPos(4, 64, 1)));
+        RoadGraphReuseSpan span = new RoadGraphReuseSpan(UUID.randomUUID(), 0, 1, 0, 1,
+                reused.middlePos(), owned.middlePos(), RoadGraphReuseSpan.Relationship.OWN);
+        RoadReusePlan reusePlan = new RoadReusePlan(
+                List.of(reused.middlePos(), owned.middlePos()),
+                List.of(reused.middlePos(), owned.middlePos()),
+                List.of(reused, owned),
+                List.of(new RoadReusePlan.Range(1, 1)),
+                List.of(span),
+                List.of());
+        List<BuildStep> steps = List.of(
+                new BuildStep(0, new BlockPos(0, 64, 0), Blocks.GRASS_BLOCK.defaultBlockState(), BuildPhase.SURFACE),
+                new BuildStep(1, new BlockPos(4, 64, 0), Blocks.GRASS_BLOCK.defaultBlockState(), BuildPhase.SURFACE));
+
+        List<BuildStep> filtered = RoadPlannerBuildControlService.filterOwnedBuildStepsForTest(steps, reusePlan);
+
+        assertEquals(List.of(new BlockPos(4, 64, 0)), filtered.stream().map(BuildStep::pos).toList());
     }
 
     @Test
