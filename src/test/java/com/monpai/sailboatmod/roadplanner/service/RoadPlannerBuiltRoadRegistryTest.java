@@ -10,6 +10,11 @@ import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphEdgeRecord;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphReuseSpan;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphSegmentPlacement;
+import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraphSavedData;
+import com.monpai.sailboatmod.roadplanner.graph.RoadReusePlan;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
@@ -229,11 +234,53 @@ class RoadPlannerBuiltRoadRegistryTest {
         assertEquals(newTailSteps.stream().map(step -> step.pos().asLong()).toList(), roadJob(level, "road-ac").ownedBlocks());
     }
 
+    @Test
+    void completedManualRoadRegistersGraphEdgeWithReuseSpansAndOwnedBlocks() {
+        TestServerLevel level = newPersistentLevel();
+        UUID owner = UUID.randomUUID();
+        RoadGraphReuseSpan span = new RoadGraphReuseSpan(UUID.randomUUID(), 0, 4, 0, 4,
+                new BlockPos(0, 64, 0), new BlockPos(4, 64, 0), RoadGraphReuseSpan.Relationship.OWN);
+        RoadReusePlan reusePlan = new RoadReusePlan(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(new RoadGraphSegmentPlacement(new BlockPos(8, 64, 0), List.of(new BlockPos(8, 64, 0)))),
+                List.of(new RoadReusePlan.Range(5, 8)),
+                List.of(span),
+                List.of());
+        List<BuildStep> steps = List.of(new BuildStep(0, new BlockPos(8, 64, 0), Blocks.GRASS_BLOCK.defaultBlockState(), BuildPhase.SURFACE));
+
+        RoadPlannerBuiltRoadRegistry.register(level, new RoadPlannerBuildControlService.CompletedRoadBuild(
+                "graph-road",
+                owner,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                steps,
+                rollbackEntriesFor(steps),
+                Level.OVERWORLD,
+                RoadPlannerMergeSelection.none(),
+                List.of(),
+                "Town A",
+                "Town B",
+                reusePlan));
+
+        RoadNetworkGraphSavedData graph = RoadNetworkGraphSavedData.get(level);
+        RoadGraphEdgeRecord edge = graph.edges().iterator().next();
+        assertEquals("graph-road", edge.roadName());
+        assertEquals(List.of(span), edge.reuseSpans());
+        assertEquals(List.of(new BlockPos(8, 64, 0)), edge.ownedBlockPositions());
+    }
+
     private static ConstructionRuntimeSavedData.RoadJobState roadJob(TestServerLevel level, String roadId) {
         return ConstructionRuntimeSavedData.get(level).getRoadJobs().stream()
                 .filter(state -> roadId.equals(state.roadId()))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    private static List<ConstructionQueue.RollbackEntry> rollbackEntriesFor(List<BuildStep> steps) {
+        return steps.stream()
+                .map(step -> new ConstructionQueue.RollbackEntry(step.pos(), Blocks.AIR.defaultBlockState()))
+                .toList();
     }
 
     private static List<Long> buildStepPositions(ConstructionRuntimeSavedData.RoadJobState job) {

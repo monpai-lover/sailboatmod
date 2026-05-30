@@ -559,6 +559,9 @@ public class RoadPlannerBuildControlService {
                 metadata.roadId(),
                 metadata.ownerId(),
                 metadata.centerPath(),
+                metadata.reusePlan() == null || metadata.reusePlan().displayPath().isEmpty()
+                        ? metadata.centerPath()
+                        : metadata.reusePlan().displayPath(),
                 queue == null ? List.of() : queue.getSteps(),
                 queue == null ? List.of() : queue.getRollbackEntries(),
                 metadata.dimension(),
@@ -639,6 +642,7 @@ public class RoadPlannerBuildControlService {
     public record CompletedRoadBuild(String roadId,
                                      UUID ownerId,
                                      List<BlockPos> centerPath,
+                                     List<BlockPos> displayPath,
                                      List<BuildStep> buildSteps,
                                      List<ConstructionQueue.RollbackEntry> rollbackEntries,
                                      ResourceKey<Level> dimension,
@@ -650,6 +654,12 @@ public class RoadPlannerBuildControlService {
         public CompletedRoadBuild {
             roadId = roadId == null ? "" : roadId.trim();
             centerPath = centerPath == null ? List.of() : centerPath.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(BlockPos::immutable)
+                    .toList();
+            displayPath = displayPath == null || displayPath.isEmpty()
+                    ? centerPath
+                    : displayPath.stream()
                     .filter(java.util.Objects::nonNull)
                     .map(BlockPos::immutable)
                     .toList();
@@ -673,7 +683,7 @@ public class RoadPlannerBuildControlService {
                                   List<ConstructionQueue.RollbackEntry> rollbackEntries,
                                   ResourceKey<Level> dimension,
                                   RoadPlannerMergeSelection mergeSelection) {
-            this(roadId, ownerId, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, List.of(), "", "",
+            this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, List.of(), "", "",
                     RoadReusePlan.noReuse(List.of(), centerPath));
         }
 
@@ -686,7 +696,7 @@ public class RoadPlannerBuildControlService {
                                   RoadPlannerMergeSelection mergeSelection,
                                   String sourceTownName,
                                   String targetTownName) {
-            this(roadId, ownerId, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, List.of(), sourceTownName, targetTownName,
+            this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, List.of(), sourceTownName, targetTownName,
                     RoadReusePlan.noReuse(List.of(), centerPath));
         }
 
@@ -699,8 +709,23 @@ public class RoadPlannerBuildControlService {
                                   RoadPlannerMergeSelection mergeSelection,
                                   List<RoadPlannerSharedRoadSpan> sharedSpans,
                                   String sourceTownName,
+                                  String targetTownName,
+                                  RoadReusePlan reusePlan) {
+            this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection,
+                    sharedSpans, sourceTownName, targetTownName, reusePlan);
+        }
+
+        public CompletedRoadBuild(String roadId,
+                                  UUID ownerId,
+                                  List<BlockPos> centerPath,
+                                  List<BuildStep> buildSteps,
+                                  List<ConstructionQueue.RollbackEntry> rollbackEntries,
+                                  ResourceKey<Level> dimension,
+                                  RoadPlannerMergeSelection mergeSelection,
+                                  List<RoadPlannerSharedRoadSpan> sharedSpans,
+                                  String sourceTownName,
                                   String targetTownName) {
-            this(roadId, ownerId, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, sharedSpans, sourceTownName, targetTownName,
+            this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, sharedSpans, sourceTownName, targetTownName,
                     RoadReusePlan.noReuse(List.of(), centerPath));
         }
 

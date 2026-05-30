@@ -8,6 +8,9 @@ import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.road.construction.execution.ConstructionQueue;
 import com.monpai.sailboatmod.road.model.BuildStep;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphEdgeRecord;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphNodeRecord;
+import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraphSavedData;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -74,6 +77,66 @@ final class RoadPlannerBuiltRoadRegistry {
                 false,
                 ownedBlocks(executedSteps)
         ));
+        registerGraphRoad(level, build, scope, creatorUuid, creatorName, executedSteps);
+    }
+
+    private static void registerGraphRoad(ServerLevel level,
+                                          RoadPlannerBuildControlService.CompletedRoadBuild build,
+                                          RoadScope scope,
+                                          String creatorUuid,
+                                          String creatorName,
+                                          List<BuildStep> executedSteps) {
+        if (level == null || build == null || build.centerPath().size() < 2) {
+            return;
+        }
+        RoadNetworkGraphSavedData graph = RoadNetworkGraphSavedData.get(level);
+        long now = System.currentTimeMillis();
+        UUID fromNodeId = UUID.randomUUID();
+        UUID toNodeId = UUID.randomUUID();
+        String dimensionId = level.dimension().location().toString();
+        List<BlockPos> centerPath = build.reusePlan() == null || build.reusePlan().logicalCenterline().isEmpty()
+                ? build.centerPath()
+                : build.reusePlan().logicalCenterline();
+        List<BlockPos> displayPath = build.reusePlan() == null || build.reusePlan().displayPath().isEmpty()
+                ? build.displayPath()
+                : build.reusePlan().displayPath();
+        graph.putNode(new RoadGraphNodeRecord(fromNodeId, dimensionId, centerPath.get(0),
+                RoadGraphNodeRecord.Kind.NORMAL, scope.nationId(), scope.townId(), "", now, now));
+        graph.putNode(new RoadGraphNodeRecord(toNodeId, dimensionId, centerPath.get(centerPath.size() - 1),
+                RoadGraphNodeRecord.Kind.NORMAL, scope.nationId(), scope.townId(), "", now, now));
+        graph.putEdge(new RoadGraphEdgeRecord(
+                UUID.nameUUIDFromBytes(("road-graph-edge:" + build.roadId()).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                fromNodeId,
+                toNodeId,
+                dimensionId,
+                scope.nationId(),
+                scope.townId(),
+                creatorUuid,
+                creatorName,
+                build.sourceTownName(),
+                build.targetTownName(),
+                build.roadId(),
+                3,
+                com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType.ROAD,
+                RoadGraphEdgeRecord.Status.BUILT,
+                centerPath,
+                displayPath,
+                build.reusePlan() == null ? List.of() : build.reusePlan().plannedPlacements(),
+                ownedBlocksAsPositions(executedSteps),
+                build.reusePlan() == null ? List.of() : build.reusePlan().reuseSpans(),
+                now,
+                now));
+    }
+
+    private static List<BlockPos> ownedBlocksAsPositions(List<BuildStep> buildSteps) {
+        if (buildSteps == null || buildSteps.isEmpty()) {
+            return List.of();
+        }
+        return buildSteps.stream()
+                .filter(step -> step != null && step.pos() != null)
+                .map(step -> step.pos().immutable())
+                .distinct()
+                .toList();
     }
 
     private static List<BuildStep> executedPlannerSteps(List<BuildStep> plannerSteps,
