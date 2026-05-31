@@ -92,11 +92,13 @@ public class RoadPlannerTile implements AutoCloseable {
         NativeImage chunk = chunkImage.image();
         int startX = chunkXInTile * 16;
         int startZ = chunkZInTile * 16;
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                image.setPixelRGBA(startX + x, startZ + z, chunk.getPixelRGBA(x, z));
-            }
+        int[] current = tilePixels();
+        boolean applied = RoadPlannerTileMergeRules.mergeSubregion(current, TILE_PIXEL_SIZE, TILE_PIXEL_SIZE,
+                chunkPixels(chunk), 16, 16, startX, startZ);
+        if (!applied) {
+            return;
         }
+        writeTilePixels(current);
         if (texture != null) {
             texture.upload();
         }
@@ -110,11 +112,13 @@ public class RoadPlannerTile implements AutoCloseable {
         NativeImage chunk = chunkImage.image();
         int startX = chunkXInTile * 16;
         int startZ = chunkZInTile * 16;
-        for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
-                image.setPixelRGBA(startX + x, startZ + z, chunk.getPixelRGBA(x, z));
-            }
+        int[] current = tilePixels();
+        boolean applied = RoadPlannerTileMergeRules.mergeSubregion(current, TILE_PIXEL_SIZE, TILE_PIXEL_SIZE,
+                chunkPixels(chunk), 16, 16, startX, startZ);
+        if (!applied) {
+            return;
         }
+        writeTilePixels(current);
         dirty = true;
     }
 
@@ -204,6 +208,37 @@ public class RoadPlannerTile implements AutoCloseable {
         }
         loading.untrack();
         return loading;
+    }
+
+    private int[] tilePixels() {
+        int[] pixels = new int[TILE_PIXEL_SIZE * TILE_PIXEL_SIZE];
+        for (int y = 0; y < TILE_PIXEL_SIZE; y++) {
+            for (int x = 0; x < TILE_PIXEL_SIZE; x++) {
+                pixels[y * TILE_PIXEL_SIZE + x] = image.getPixelRGBA(x, y);
+            }
+        }
+        return pixels;
+    }
+
+    private void writeTilePixels(int[] pixels) {
+        if (pixels == null || pixels.length < TILE_PIXEL_SIZE * TILE_PIXEL_SIZE) {
+            return;
+        }
+        for (int y = 0; y < TILE_PIXEL_SIZE; y++) {
+            for (int x = 0; x < TILE_PIXEL_SIZE; x++) {
+                image.setPixelRGBA(x, y, pixels[y * TILE_PIXEL_SIZE + x]);
+            }
+        }
+    }
+
+    private static int[] chunkPixels(NativeImage chunk) {
+        int[] pixels = new int[16 * 16];
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                pixels[y * 16 + x] = chunk.getPixelRGBA(x, y);
+            }
+        }
+        return pixels;
     }
 
     private boolean looksLikePlaceholder(NativeImage candidate) {

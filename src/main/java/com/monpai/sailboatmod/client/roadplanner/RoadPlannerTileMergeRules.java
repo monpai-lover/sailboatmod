@@ -33,8 +33,55 @@ public final class RoadPlannerTileMergeRules {
         return applied;
     }
 
+    public static boolean mergeSubregion(int[] targetArgb,
+                                         int targetWidth,
+                                         int targetHeight,
+                                         int[] incomingArgb,
+                                         int incomingWidth,
+                                         int incomingHeight,
+                                         int startX,
+                                         int startY) {
+        if (targetArgb == null || incomingArgb == null || targetWidth <= 0 || targetHeight <= 0
+                || incomingWidth <= 0 || incomingHeight <= 0
+                || targetArgb.length < targetWidth * targetHeight
+                || incomingArgb.length < incomingWidth * incomingHeight) {
+            return false;
+        }
+        boolean[] known = knownMask(incomingArgb);
+        boolean applied = false;
+        for (int y = 0; y < incomingHeight; y++) {
+            int targetY = startY + y;
+            if (targetY < 0 || targetY >= targetHeight) {
+                continue;
+            }
+            for (int x = 0; x < incomingWidth; x++) {
+                int targetX = startX + x;
+                if (targetX < 0 || targetX >= targetWidth) {
+                    continue;
+                }
+                int sourceIndex = y * incomingWidth + x;
+                if (known[sourceIndex]) {
+                    targetArgb[targetY * targetWidth + targetX] = incomingArgb[sourceIndex];
+                    applied = true;
+                }
+            }
+        }
+        return applied;
+    }
+
     private static boolean isUnsafeSample(int argb) {
+        int alpha = (argb >>> 24) & 0xFF;
+        if (alpha == 0) {
+            return true;
+        }
         int rgb = argb & 0x00FFFFFF;
-        return rgb == 0x000000 || rgb == 0x2A2A2A || rgb == 0x3A3A3A;
+        return rgb == 0x000000 || rgb == 0x2A2A2A || rgb == 0x3A3A3A || isDarkNeutralUnknown(rgb);
+    }
+
+    private static boolean isDarkNeutralUnknown(int rgb) {
+        int red = (rgb >>> 16) & 0xFF;
+        int green = (rgb >>> 8) & 0xFF;
+        int blue = rgb & 0xFF;
+        return red == green && green == blue && red <= 0x3A;
     }
 }

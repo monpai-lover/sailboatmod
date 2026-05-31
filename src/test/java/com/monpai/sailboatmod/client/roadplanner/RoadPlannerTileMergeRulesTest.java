@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.roadplanner;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -54,5 +55,23 @@ class RoadPlannerTileMergeRulesTest {
                         0xFF3A3A3A,
                         0xFF778899
                 }));
+    }
+
+    @Test
+    void chunkSubregionMergePreservesBaseForTransparentAndColorizedUnknownPixels() {
+        int[] base = new int[16];
+        java.util.Arrays.fill(base, 0xFF00AA00);
+        int[] chunk = {
+                0x00000000, 0xFF88CCEE,
+                0xFF1D1D1D, 0xFF556677
+        };
+
+        boolean applied = RoadPlannerTileMergeRules.mergeSubregion(base, 4, 4, chunk, 2, 2, 1, 1);
+
+        assertTrue(applied);
+        assertEquals(0xFF00AA00, base[1 + 1 * 4]);
+        assertEquals(0xFF88CCEE, base[2 + 1 * 4]);
+        assertEquals(0xFF00AA00, base[1 + 2 * 4]);
+        assertEquals(0xFF556677, base[2 + 2 * 4]);
     }
 }
