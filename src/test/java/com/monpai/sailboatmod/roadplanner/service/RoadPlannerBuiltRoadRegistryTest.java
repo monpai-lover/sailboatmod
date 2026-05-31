@@ -229,6 +229,8 @@ class RoadPlannerBuiltRoadRegistryTest {
         RoadNetworkRecord road = data.getRoadNetwork("road-ac");
         assertNotNull(road);
         assertEquals(logicalPath, road.path());
+        assertEquals(logicalPath, road.displayPath());
+        assertEquals(List.of(startReuse), road.sharedSpans());
         assertEquals("roadnode:existing-road:1", road.structureAId());
         assertEquals("planner:end:80,64,0", road.structureBId());
         assertEquals(newTailSteps.stream().map(step -> step.pos().asLong()).toList(), roadJob(level, "road-ac").ownedBlocks());

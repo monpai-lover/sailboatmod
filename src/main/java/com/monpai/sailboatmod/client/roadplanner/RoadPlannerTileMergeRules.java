@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
+
 public final class RoadPlannerTileMergeRules {
     private RoadPlannerTileMergeRules() {
     }
@@ -67,6 +69,25 @@ public final class RoadPlannerTileMergeRules {
             }
         }
         return applied;
+    }
+
+    public static boolean safeFullTileReplacement(int[] incomingArgb,
+                                                  RoadPlannerMapPreloadRequestPacket.Purpose purpose) {
+        if (purpose != RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH) {
+            return true;
+        }
+        if (incomingArgb == null || incomingArgb.length == 0) {
+            return false;
+        }
+        boolean[] known = knownMask(incomingArgb);
+        int knownCount = 0;
+        for (boolean value : known) {
+            if (value) {
+                knownCount++;
+            }
+        }
+        int minimumKnown = Math.max(64, incomingArgb.length / 4);
+        return knownCount >= minimumKnown;
     }
 
     private static boolean isUnsafeSample(int argb) {

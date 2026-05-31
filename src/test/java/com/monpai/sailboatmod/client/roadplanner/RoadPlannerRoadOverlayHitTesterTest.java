@@ -84,6 +84,34 @@ class RoadPlannerRoadOverlayHitTesterTest {
         assertEquals("own-road", hit.entry().roadId());
     }
 
+    @Test
+    void nodeHitTestingUsesSparseDisplayPathInsteadOfDenseCanonicalPath() {
+        RoadPlannerRoadOverlaySyncPacket.Entry overlay = new RoadPlannerRoadOverlaySyncPacket.Entry(
+                "road-a",
+                RoadPlannerMergeRelationship.OWN,
+                List.of(point(0, 0), point(50, 0), point(100, 0)),
+                List.of(point(0, 0), point(100, 0)),
+                List.of(0, 2),
+                List.of(),
+                "Alpha - Beta",
+                100,
+                "Builder",
+                "uuid-a",
+                1L,
+                false);
+
+        RoadPlannerRoadOverlayHitTester.NodeResult hit = RoadPlannerRoadOverlayHitTester.findNode(
+                50,
+                0,
+                List.of(overlay),
+                BlockPos::getX,
+                BlockPos::getZ,
+                RoadPlannerMergeSelection.none(),
+                5.0D);
+
+        assertFalse(hit.hit());
+    }
+
     private static RoadPlannerRoadOverlaySyncPacket.Entry overlay(String roadId,
                                                                  RoadPlannerMergeRelationship relationship,
                                                                  BlockPos... path) {

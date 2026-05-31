@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPack
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRouteSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPreviewRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
@@ -189,6 +190,8 @@ class RoadPlannerScreenBehaviorTest {
                 "world_a",
                 "minecraft:overworld"));
         String before = screen.mapStatusLineForTest();
+        int[] terrainPixels = new int[RoadPlannerTile.TILE_PIXEL_SIZE * RoadPlannerTile.TILE_PIXEL_SIZE];
+        java.util.Arrays.fill(terrainPixels, 0xFF00AA00);
 
         screen.applyMapTileSync(new RoadPlannerMapTileSyncPacket(
                 UUID.randomUUID(),
@@ -199,9 +202,9 @@ class RoadPlannerScreenBehaviorTest {
                 MapLod.LOD_1,
                 0,
                 0,
-                1,
-                1,
-                new int[]{0xFF00AA00}));
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                terrainPixels));
 
         assertNotEquals(before, screen.mapStatusLineForTest());
     }
@@ -539,6 +542,112 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void selectingMergeToolRequestsAutoMergeRouteToDestination() {
+        UUID sessionId = UUID.randomUUID();
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(sessionId, 1280, 720,
+                new BlockPos(0, 64, 0), new BlockPos(120, 64, 0),
+                List.of(
+                        new RoadPlannerClaimOverlay(0, 0, "start", "Start", "", "", RoadPlannerClaimOverlay.Role.START, 0, 0),
+                        new RoadPlannerClaimOverlay(7, 0, "end", "End", "", "", RoadPlannerClaimOverlay.Role.DESTINATION, 0, 0)));
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(screenXFromWorldCentered(map, 60, 0), screenZFromWorldCentered(map, 0, 0), 0);
+        screen.mouseClicked(screenXFromWorldCentered(map, 60, 36), screenZFromWorldCentered(map, 0, 0), 0);
+
+        clickToolbarTool(screen, RoadToolType.MERGE);
+
+        assertEquals(sessionId, screen.lastAutoMergeRouteRequestForTest().sessionId());
+        assertEquals(new BlockPos(36, 64, 0), screen.lastAutoMergeRouteRequestForTest().routeNodes().get(1));
+        assertEquals(new BlockPos(120, 64, 0), screen.lastAutoMergeRouteRequestForTest().destinationPos());
+        assertEquals(RoadPlannerMergeScope.OWN_NATION, screen.lastAutoMergeRouteRequestForTest().scope());
+    }
+
+    @Test
+    void autoMergeResultHighlightsAndConfirmsExistingRouteWithoutManualClicks() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(sessionId, 1280, 720,
+                new BlockPos(0, 64, 0), new BlockPos(120, 64, 0),
+                List.of(
+                        new RoadPlannerClaimOverlay(0, 0, "start", "Start", "", "", RoadPlannerClaimOverlay.Role.START, 0, 0),
+                        new RoadPlannerClaimOverlay(7, 0, "end", "End", "", "", RoadPlannerClaimOverlay.Role.DESTINATION, 0, 0)));
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        screen.applyRoadOverlays(sessionId, List.of(
+                roadOverlay("road-a", RoadPlannerMergeRelationship.OWN, new BlockPos(40, 64, 0), new BlockPos(80, 64, 0), new BlockPos(120, 64, 0)),
+                roadOverlay("road-b", RoadPlannerMergeRelationship.OWN, new BlockPos(0, 64, 40), new BlockPos(120, 64, 40))));
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(screenXFromWorldCentered(map, 60, 0), screenZFromWorldCentered(map, 0, 0), 0);
+        screen.mouseClicked(screenXFromWorldCentered(map, 60, 36), screenZFromWorldCentered(map, 0, 0), 0);
+        clickToolbarTool(screen, RoadToolType.MERGE);
+
+        UUID requestId = screen.lastAutoMergeRouteRequestForTest().requestId();
+        screen.applyAutoMergeRoute(new RoadPlannerAutoMergeRouteSyncPacket(
+                sessionId,
+                requestId,
+                RoadPlannerAutoMergeRouteSyncPacket.Status.FOUND,
+                new RoadPlannerMergeSelection("road-a", 0, new BlockPos(40, 64, 0), RoadPlannerMergeScope.OWN_NATION),
+                List.of(new BlockPos(40, 64, 0), new BlockPos(80, 64, 0), new BlockPos(120, 64, 0)),
+                List.of(new RoadPlannerSharedRoadSpan("road-a", 0, 2,
+                        new BlockPos(40, 64, 0), new BlockPos(120, 64, 0),
+                        RoadPlannerMergeScope.OWN_NATION, RoadPlannerSharedRoadSpan.Role.END_MERGE)),
+                List.of("road-a"),
+                "found"));
+
+        List<RoadPlannerScreen.RoadOverlayRenderStateForTest> states = screen.roadOverlayRenderStateForTest();
+        assertTrue(states.stream().anyMatch(state -> state.roadId().equals("road-a") && state.sharedSpanNodeCount() > 0));
+        assertTrue(states.stream().anyMatch(state -> state.roadId().equals("road-b") && state.sharedSpanNodeCount() == 0));
+
+        clickToolbarAction(screen, RoadPlannerTopToolbar.Group.ROUTE, RoadPlannerTopToolbar.ACTION_NEXT_MERGE);
+        assertEquals(List.of(
+                        new BlockPos(0, 64, 0),
+                        new BlockPos(36, 64, 0),
+                        new BlockPos(40, 64, 0),
+                        new BlockPos(80, 64, 0),
+                        new BlockPos(120, 64, 0)),
+                screen.plannedNodesForTest());
+
+        invokeSubmitPreview(screen);
+        RoadPlannerPreviewRequestPacket packet = RoadPlannerGhostPreviewBridge.lastPreviewRequestForTest();
+        assertEquals(new BlockPos(0, 64, 0), packet.nodes().get(0));
+        assertEquals(new BlockPos(40, 64, 0), packet.nodes().get(packet.nodes().size() - 1));
+        assertFalse(packet.nodes().contains(new BlockPos(80, 64, 0)));
+        assertFalse(packet.nodes().contains(new BlockPos(120, 64, 0)));
+        assertEquals(screen.plannedNodesForTest(), packet.logicalNodes());
+        assertEquals(1, packet.sharedSpans().size());
+    }
+
+    @Test
+    void autoMergeNotFoundKeepsManualMergeFallbackAvailable() {
+        UUID sessionId = UUID.randomUUID();
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(sessionId, 1280, 720,
+                new BlockPos(0, 64, 0), new BlockPos(120, 64, 0),
+                List.of(
+                        new RoadPlannerClaimOverlay(0, 0, "start", "Start", "", "", RoadPlannerClaimOverlay.Role.START, 0, 0),
+                        new RoadPlannerClaimOverlay(7, 0, "end", "End", "", "", RoadPlannerClaimOverlay.Role.DESTINATION, 0, 0)));
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+        screen.applyRoadOverlays(sessionId, List.of(
+                roadOverlay("road-a", RoadPlannerMergeRelationship.OWN, new BlockPos(40, 64, 0), new BlockPos(120, 64, 0))));
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(screenXFromWorldCentered(map, 60, 0), screenZFromWorldCentered(map, 0, 0), 0);
+        screen.mouseClicked(screenXFromWorldCentered(map, 60, 36), screenZFromWorldCentered(map, 0, 0), 0);
+        clickToolbarTool(screen, RoadToolType.MERGE);
+        UUID requestId = screen.lastAutoMergeRouteRequestForTest().requestId();
+
+        screen.applyAutoMergeRoute(new RoadPlannerAutoMergeRouteSyncPacket(
+                sessionId,
+                requestId,
+                RoadPlannerAutoMergeRouteSyncPacket.Status.NOT_FOUND,
+                RoadPlannerMergeSelection.none(),
+                List.of(),
+                List.of(),
+                List.of(),
+                "not found"));
+        screen.mouseClicked(screenXFromWorld(map, 40), screenZFromWorld(map, 0), 0);
+
+        assertEquals(new RoadPlannerMergeSelection("road-a", 0, new BlockPos(40, 64, 0), RoadPlannerMergeScope.OWN_NATION),
+                screen.selectedMergeSelectionForTest());
+    }
+
+    @Test
     void mergeConfirmationAppendsExistingRoadTailTowardDestinationButPreviewBuildsOnlyConnector() throws Exception {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
@@ -550,10 +659,21 @@ class RoadPlannerScreenBehaviorTest {
                         RoadPlannerMergeRelationship.OWN,
                         List.of(
                                 new BlockPos(0, 64, 0),
+                                new BlockPos(10, 64, 0),
+                                new BlockPos(20, 64, 0),
+                                new BlockPos(30, 64, 0),
                                 new BlockPos(40, 64, 0),
                                 new BlockPos(80, 64, 0),
                                 new BlockPos(120, 64, 0),
                                 new BlockPos(160, 64, 0)),
+                        List.of(
+                                new BlockPos(0, 64, 0),
+                                new BlockPos(40, 64, 0),
+                                new BlockPos(80, 64, 0),
+                                new BlockPos(120, 64, 0),
+                                new BlockPos(160, 64, 0)),
+                        List.of(0, 4, 5, 6, 7),
+                        List.of(),
                         "Alpha - Beta",
                         160,
                         "Builder",
@@ -578,12 +698,12 @@ class RoadPlannerScreenBehaviorTest {
         RoadPlannerPreviewRequestPacket packet = RoadPlannerGhostPreviewBridge.lastPreviewRequestForTest();
         assertEquals(List.of(new BlockPos(36, 64, 0), new BlockPos(40, 64, 0)), packet.nodes());
         assertEquals(screen.plannedNodesForTest(), packet.logicalNodes());
-        assertEquals(new RoadPlannerMergeSelection("road-a", 1, new BlockPos(40, 64, 0), RoadPlannerMergeScope.OWN_NATION),
+        assertEquals(new RoadPlannerMergeSelection("road-a", 4, new BlockPos(40, 64, 0), RoadPlannerMergeScope.OWN_NATION),
                 packet.mergeSelection());
         assertEquals(List.of(new RoadPlannerSharedRoadSpan(
                 "road-a",
-                1,
                 4,
+                7,
                 new BlockPos(40, 64, 0),
                 new BlockPos(160, 64, 0),
                 RoadPlannerMergeScope.OWN_NATION,
@@ -1137,6 +1257,14 @@ class RoadPlannerScreenBehaviorTest {
 
     private int screenZFromWorld(RoadPlannerMapLayout.Rect map, int worldZ) {
         return (int) Math.round(map.y() + map.height() / 2.0D + worldZ * 2.0D);
+    }
+
+    private int screenXFromWorldCentered(RoadPlannerMapLayout.Rect map, int centerX, int worldX) {
+        return (int) Math.round(map.x() + map.width() / 2.0D + (worldX - centerX) * 2.0D);
+    }
+
+    private int screenZFromWorldCentered(RoadPlannerMapLayout.Rect map, int centerZ, int worldZ) {
+        return (int) Math.round(map.y() + map.height() / 2.0D + (worldZ - centerZ) * 2.0D);
     }
 
     private void invokeSubmitPreview(RoadPlannerScreen screen) throws Exception {

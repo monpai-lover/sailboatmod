@@ -75,6 +75,8 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRe
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoCompleteResultPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRouteRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRouteSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerConfirmBuildPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerDemolishRoadPacket;
@@ -711,6 +713,22 @@ public final class ModNetwork {
                 OpenRoadMergeCandidatesPacket::encode,
                 OpenRoadMergeCandidatesPacket::decode,
                 OpenRoadMergeCandidatesPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerAutoMergeRouteRequestPacket.class,
+                RoadPlannerAutoMergeRouteRequestPacket::encode,
+                RoadPlannerAutoMergeRouteRequestPacket::decode,
+                RoadPlannerAutoMergeRouteRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerAutoMergeRouteSyncPacket.class,
+                RoadPlannerAutoMergeRouteSyncPacket::encode,
+                RoadPlannerAutoMergeRouteSyncPacket::decode,
+                RoadPlannerAutoMergeRouteSyncPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(

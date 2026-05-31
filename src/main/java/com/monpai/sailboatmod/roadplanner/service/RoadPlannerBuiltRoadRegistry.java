@@ -47,6 +47,8 @@ final class RoadPlannerBuiltRoadRegistry {
                 startAnchor,
                 endAnchor,
                 path,
+                build.displayPath(),
+                build.sharedSpans(),
                 now,
                 now,
                 creatorUuid,

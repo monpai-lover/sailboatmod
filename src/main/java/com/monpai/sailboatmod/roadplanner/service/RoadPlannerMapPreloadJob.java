@@ -164,10 +164,6 @@ public final class RoadPlannerMapPreloadJob {
         return coveredChunks.contains(ChunkPos.asLong(chunkX, chunkZ));
     }
 
-    public boolean coversFullTile() {
-        return purpose == RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH;
-    }
-
     private void emitTile(RoadPlannerTileKey key,
                           RoadMapSnapshot snapshot,
                           MapLod lod,
@@ -205,10 +201,6 @@ public final class RoadPlannerMapPreloadJob {
             return new boolean[0];
         }
         boolean[] mask = new boolean[width * height];
-        if (coversFullTile()) {
-            java.util.Arrays.fill(mask, true);
-            return mask;
-        }
         int blockOriginX = key.tileX() * RoadMapTileSpec.TILE_BLOCKS;
         int blockOriginZ = key.tileZ() * RoadMapTileSpec.TILE_BLOCKS;
         for (int y = 0; y < height; y++) {

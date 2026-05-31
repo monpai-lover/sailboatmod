@@ -266,6 +266,7 @@ class RoadPlannerBuildControlServiceTest {
                 new BlockPos(2, 64, 0),
                 new BlockPos(3, 64, 0)
         ), road.centerPath());
+        assertEquals(nodes, road.displayPath());
         assertFalse(road.buildSteps().isEmpty());
     }
 

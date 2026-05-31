@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
@@ -289,6 +290,54 @@ class RoadPlannerRoadMergeServiceTest {
 
         assertEquals(1, overlays.size());
         assertEquals(path, overlays.get(0).path());
+    }
+
+    @Test
+    void visibleOverlaysExposeSparseDisplayPathWithDensePathIndicesAndSharedSpans() {
+        NationSavedData data = new NationSavedData();
+        List<BlockPos> densePath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0));
+        List<BlockPos> displayPath = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(4, 64, 0));
+        RoadPlannerSharedRoadSpan span = new RoadPlannerSharedRoadSpan(
+                "existing-road",
+                0,
+                4,
+                densePath.get(0),
+                densePath.get(4),
+                RoadPlannerMergeScope.OWN_NATION,
+                RoadPlannerSharedRoadSpan.Role.START_REUSE);
+        data.putRoadNetwork(new RoadNetworkRecord(
+                "road-with-display-path",
+                "alpha",
+                "",
+                OVERWORLD,
+                "planner:start:0,64,0",
+                "planner:end:4,64,0",
+                densePath,
+                displayPath,
+                List.of(span),
+                2L,
+                1L,
+                "",
+                "",
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL,
+                "Alpha",
+                "Beta"));
+
+        RoadPlannerRoadMergeService.RoadOverlay overlay = RoadPlannerRoadMergeService.visibleRoadOverlaysForTest(
+                data, "alpha", true, OVERWORLD, new BlockPos(0, 64, 0), 32, RoadPlannerMergeScope.OWN_NATION)
+                .get(0);
+
+        assertEquals(densePath, overlay.path());
+        assertEquals(displayPath, overlay.displayPath());
+        assertEquals(List.of(0, 4), overlay.displayPathPathIndices());
+        assertEquals(List.of(span), overlay.sharedSpans());
     }
 
     @Test

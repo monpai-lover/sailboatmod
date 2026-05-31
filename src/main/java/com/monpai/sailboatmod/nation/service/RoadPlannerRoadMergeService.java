@@ -14,6 +14,7 @@ import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -197,10 +198,14 @@ public final class RoadPlannerRoadMergeService {
             if (relationship == null || visiblePath.isEmpty()) {
                 continue;
             }
+            DisplayPathSlice displayPath = visibleDisplayPathInRegion(road.displayPath(), road.path(), visiblePath, minX, maxX, minZ, maxZ);
             overlays.add(new RoadOverlay(
                     road.roadId(),
                     relationship,
                     visiblePath,
+                    displayPath.path(),
+                    displayPath.pathIndices(),
+                    road.sharedSpans(),
                     displayName(data, road),
                     lengthBlocks(road.path()),
                     road.creatorName(),
@@ -533,6 +538,103 @@ public final class RoadPlannerRoadMergeService {
         return visible.isEmpty() ? List.of() : List.copyOf(visible);
     }
 
+    private static DisplayPathSlice visibleDisplayPathInRegion(List<BlockPos> displayPath,
+                                                               List<BlockPos> fullPath,
+                                                               List<BlockPos> visiblePath,
+                                                               int minX,
+                                                               int maxX,
+                                                               int minZ,
+                                                               int maxZ) {
+        List<BlockPos> safeDisplayPath = displayPath == null || displayPath.isEmpty() ? fullPath : displayPath;
+        List<BlockPos> visibleDisplayPath = new ArrayList<>();
+        List<Integer> visibleDisplayIndices = new ArrayList<>();
+        if (safeDisplayPath != null) {
+            for (BlockPos pos : safeDisplayPath) {
+                if (pos == null || !insideRegion(pos, minX, maxX, minZ, maxZ)) {
+                    continue;
+                }
+                visibleDisplayPath.add(pos.immutable());
+                visibleDisplayIndices.add(nearestPathIndex(fullPath, pos));
+                if (visibleDisplayPath.size() >= MAX_OVERLAY_PATH_POINTS) {
+                    break;
+                }
+            }
+        }
+        if (visibleDisplayPath.size() >= 2) {
+            return new DisplayPathSlice(visibleDisplayPath, visibleDisplayIndices);
+        }
+        List<BlockPos> fallback = simplifyOverlayDisplayPath(visiblePath);
+        List<Integer> fallbackIndices = fallback.stream()
+                .map(pos -> nearestPathIndex(fullPath, pos))
+                .toList();
+        return new DisplayPathSlice(fallback, fallbackIndices);
+    }
+
+    private static List<BlockPos> simplifyOverlayDisplayPath(List<BlockPos> path) {
+        if (path == null || path.isEmpty()) {
+            return List.of();
+        }
+        if (path.size() <= 2) {
+            return path.stream().map(BlockPos::immutable).toList();
+        }
+        List<BlockPos> simplified = new ArrayList<>();
+        simplified.add(path.get(0).immutable());
+        for (int index = 1; index < path.size() - 1; index++) {
+            BlockPos previous = path.get(index - 1);
+            BlockPos current = path.get(index);
+            BlockPos next = path.get(index + 1);
+            if (previous == null || current == null || next == null) {
+                continue;
+            }
+            boolean heightChanges = current.getY() != previous.getY() || current.getY() != next.getY();
+            int previousDx = Integer.compare(current.getX() - previous.getX(), 0);
+            int previousDz = Integer.compare(current.getZ() - previous.getZ(), 0);
+            int nextDx = Integer.compare(next.getX() - current.getX(), 0);
+            int nextDz = Integer.compare(next.getZ() - current.getZ(), 0);
+            boolean directionChanges = previousDx != nextDx || previousDz != nextDz;
+            if (heightChanges || directionChanges) {
+                simplified.add(current.immutable());
+            }
+        }
+        simplified.add(path.get(path.size() - 1).immutable());
+        return List.copyOf(simplified);
+    }
+
+    private static boolean insideRegion(BlockPos pos, int minX, int maxX, int minZ, int maxZ) {
+        return pos != null
+                && pos.getX() >= minX
+                && pos.getX() <= maxX
+                && pos.getZ() >= minZ
+                && pos.getZ() <= maxZ;
+    }
+
+    private static int nearestPathIndex(List<BlockPos> path, BlockPos target) {
+        if (path == null || path.isEmpty() || target == null) {
+            return -1;
+        }
+        int exact = path.indexOf(target);
+        if (exact >= 0) {
+            return exact;
+        }
+        int bestIndex = -1;
+        long bestDistance = Long.MAX_VALUE;
+        for (int index = 0; index < path.size(); index++) {
+            BlockPos pos = path.get(index);
+            if (pos == null) {
+                continue;
+            }
+            long dx = (long) pos.getX() - target.getX();
+            long dy = (long) pos.getY() - target.getY();
+            long dz = (long) pos.getZ() - target.getZ();
+            long distance = dx * dx + dy * dy + dz * dz;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = index;
+            }
+        }
+        return bestIndex;
+    }
+
     private static BridgeAnchorClassifier bridgeAnchorClassifier(ServerLevel level) {
         return anchorPos -> {
             if (level == null || anchorPos == null) {
@@ -597,6 +699,9 @@ public final class RoadPlannerRoadMergeService {
     public record RoadOverlay(String roadId,
                               RoadPlannerMergeRelationship relationship,
                               List<BlockPos> path,
+                              List<BlockPos> displayPath,
+                              List<Integer> displayPathPathIndices,
+                              List<RoadPlannerSharedRoadSpan> sharedSpans,
                               String displayName,
                               int lengthBlocks,
                               String creatorName,
@@ -611,6 +716,29 @@ public final class RoadPlannerRoadMergeService {
                     .limit(MAX_OVERLAY_PATH_POINTS)
                     .map(BlockPos::immutable)
                     .toList();
+            displayPath = displayPath == null || displayPath.isEmpty()
+                    ? path
+                    : displayPath.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .limit(MAX_OVERLAY_PATH_POINTS)
+                    .map(BlockPos::immutable)
+                    .toList();
+            if (displayPathPathIndices == null || displayPathPathIndices.size() != displayPath.size()) {
+                List<Integer> generated = new ArrayList<>(displayPath.size());
+                for (BlockPos pos : displayPath) {
+                    generated.add(nearestPathIndex(path, pos));
+                }
+                displayPathPathIndices = generated;
+            } else {
+                displayPathPathIndices = displayPathPathIndices.stream()
+                        .limit(MAX_OVERLAY_PATH_POINTS)
+                        .map(index -> index == null ? -1 : Math.max(-1, index))
+                        .toList();
+            }
+            sharedSpans = sharedSpans == null ? List.of() : sharedSpans.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .filter(RoadPlannerSharedRoadSpan::present)
+                    .toList();
             displayName = displayName == null || displayName.isBlank() ? roadId : displayName.trim();
             lengthBlocks = Math.max(0, lengthBlocks);
             creatorName = creatorName == null ? "" : creatorName.trim();
@@ -620,6 +748,27 @@ public final class RoadPlannerRoadMergeService {
     }
 
     private record CandidateWithDistance(Candidate candidate, double distanceSqr) {
+    }
+
+    private record DisplayPathSlice(List<BlockPos> path, List<Integer> pathIndices) {
+        private DisplayPathSlice {
+            path = path == null ? List.of() : path.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .limit(MAX_OVERLAY_PATH_POINTS)
+                    .map(BlockPos::immutable)
+                    .toList();
+            pathIndices = pathIndices == null ? List.of() : pathIndices.stream()
+                    .limit(MAX_OVERLAY_PATH_POINTS)
+                    .map(index -> index == null ? -1 : Math.max(-1, index))
+                    .toList();
+            if (pathIndices.size() != path.size()) {
+                List<Integer> generated = new ArrayList<>(path.size());
+                for (int index = 0; index < path.size(); index++) {
+                    generated.add(index);
+                }
+                pathIndices = List.copyOf(generated);
+            }
+        }
     }
 
     @FunctionalInterface

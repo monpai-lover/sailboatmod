@@ -7,6 +7,8 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
+import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import io.netty.buffer.Unpooled;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -194,7 +196,17 @@ class RoadPlannerPacketRoundTripTest {
                 overlayRequest.scope(),
                 List.of(
                 new RoadPlannerRoadOverlaySyncPacket.Entry("road_a", RoadPlannerMergeRelationship.TRADE,
+                        List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0), new BlockPos(8, 64, 0)),
                         List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                        List.of(0, 2),
+                        List.of(new RoadPlannerSharedRoadSpan(
+                                "road_a",
+                                0,
+                                2,
+                                new BlockPos(0, 64, 0),
+                                new BlockPos(8, 64, 0),
+                                RoadPlannerMergeScope.ALLIED_OR_TRADE,
+                                RoadPlannerSharedRoadSpan.Role.END_MERGE)),
                         "Alpha - Beta",
                         8,
                         "Builder",
@@ -219,6 +231,46 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals("uuid-a", decodedOverlay.creatorUuid());
         assertEquals(1234L, decodedOverlay.createdAt());
         assertFalse(decodedOverlay.legacyMetadata());
+        assertEquals(List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)), decodedOverlay.displayPath());
+        assertEquals(List.of(0, 2), decodedOverlay.displayPathPathIndices());
+        assertEquals(1, decodedOverlay.sharedSpans().size());
+        assertEquals(2, decodedOverlay.sharedSpans().get(0).toPathIndex());
+    }
+
+    @Test
+    void autoMergeRoutePacketsRoundTrip() {
+        UUID sessionId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        RoadPlannerAutoMergeRouteRequestPacket request = new RoadPlannerAutoMergeRouteRequestPacket(
+                sessionId,
+                requestId,
+                "minecraft:overworld",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(36, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                new BlockPos(120, 64, 0),
+                RoadPlannerMergeScope.OWN_NATION,
+                "road-a",
+                4);
+        RoadPlannerAutoMergeRouteSyncPacket sync = new RoadPlannerAutoMergeRouteSyncPacket(
+                sessionId,
+                requestId,
+                RoadPlannerAutoMergeRouteSyncPacket.Status.FOUND,
+                new RoadPlannerMergeSelection("road-a", 4, new BlockPos(40, 64, 0), RoadPlannerMergeScope.OWN_NATION),
+                List.of(new BlockPos(40, 64, 0), new BlockPos(80, 64, 0), new BlockPos(120, 64, 0)),
+                List.of(new RoadPlannerSharedRoadSpan(
+                        "road-a",
+                        4,
+                        8,
+                        new BlockPos(40, 64, 0),
+                        new BlockPos(120, 64, 0),
+                        RoadPlannerMergeScope.OWN_NATION,
+                        RoadPlannerSharedRoadSpan.Role.END_MERGE)),
+                List.of("road-a"),
+                "found");
+
+        assertEquals(request, roundTrip(request, RoadPlannerAutoMergeRouteRequestPacket::encode, RoadPlannerAutoMergeRouteRequestPacket::decode));
+        assertEquals(sync, roundTrip(sync, RoadPlannerAutoMergeRouteSyncPacket::encode, RoadPlannerAutoMergeRouteSyncPacket::decode));
+        assertEquals(1, roundTrip(sync, RoadPlannerAutoMergeRouteSyncPacket::encode, RoadPlannerAutoMergeRouteSyncPacket::decode).sharedSpans().size());
     }
 
     @Test

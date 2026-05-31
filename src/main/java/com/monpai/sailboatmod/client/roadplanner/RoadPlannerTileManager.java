@@ -198,11 +198,17 @@ public class RoadPlannerTileManager implements AutoCloseable {
         }
         RoadPlannerTileKey key = new RoadPlannerTileKey(worldId, dimensionId, packet.lod(), packet.tileX(), packet.tileZ());
         RoadPlannerTile loaded = loadedTiles.get(key);
+        if (!hasPartialCoverage(packet.coverageMask())
+                && !RoadPlannerTileMergeRules.safeFullTileReplacement(packet.argbPixels(), packet.purpose())) {
+            return 0;
+        }
         if (shouldSkipMissingBaseTileRefresh(packet, key, loaded)) {
             return 0;
         }
         RoadPlannerTile tile = loaded == null ? getOrCreateTile(packet.tileX(), packet.tileZ(), packet.lod()) : loaded;
-        tile.mergePixels(packet.argbPixels(), packet.coverageMask());
+        if (!tile.mergePixels(packet.argbPixels(), packet.coverageMask())) {
+            return 0;
+        }
         saveTile(tile);
         return 1;
     }

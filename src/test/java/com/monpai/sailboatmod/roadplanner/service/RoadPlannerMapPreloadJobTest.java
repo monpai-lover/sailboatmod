@@ -97,7 +97,7 @@ class RoadPlannerMapPreloadJobTest {
     }
 
     @Test
-    void builtRoadRefreshMarksEntireTileCoveredSoStaleBlackPixelsAreReplaced() {
+    void builtRoadRefreshMarksOnlyRoadChunksCoveredSoTerrainBackgroundIsNotReplaced() {
         RoadMapRoutePreloadPlan plan = new RoadMapRoutePreloadPlan(
                 RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY,
                 List.of(new ChunkPos(0, 0)),
@@ -118,9 +118,11 @@ class RoadPlannerMapPreloadJobTest {
         boolean[] lod4Mask = packets.get(2).coverageMask();
         assertEquals(RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS, lod1Mask.length);
         assertEquals(true, lod1Mask[0]);
-        assertEquals(true, lod1Mask[lod1Mask.length - 1]);
+        assertEquals(true, lod1Mask[15 * RoadMapTileSpec.TILE_PIXELS + 15]);
+        assertEquals(false, lod1Mask[16]);
+        assertEquals(false, lod1Mask[16 * RoadMapTileSpec.TILE_PIXELS]);
         assertEquals(true, lod4Mask[0]);
-        assertEquals(true, lod4Mask[lod4Mask.length - 1]);
+        assertEquals(false, lod4Mask[lod4Mask.length - 1]);
     }
 
     @Test

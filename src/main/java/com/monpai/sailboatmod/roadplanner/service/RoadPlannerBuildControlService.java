@@ -559,13 +559,14 @@ public class RoadPlannerBuildControlService {
                 metadata.mergeSelection(),
                 metadata.finalSegmentType()
         );
+        List<BlockPos> displayPath = metadata.reusePlan() == null || metadata.reusePlan().displayPath().isEmpty()
+                ? metadata.displayPath()
+                : metadata.reusePlan().displayPath();
         return new CompletedRoadBuild(
                 metadata.roadId(),
                 metadata.ownerId(),
                 metadata.centerPath(),
-                metadata.reusePlan() == null || metadata.reusePlan().displayPath().isEmpty()
-                        ? metadata.centerPath()
-                        : metadata.reusePlan().displayPath(),
+                displayPath,
                 queue == null ? List.of() : queue.getSteps(),
                 queue == null ? List.of() : queue.getRollbackEntries(),
                 metadata.dimension(),
@@ -743,12 +744,22 @@ public class RoadPlannerBuildControlService {
         }
     }
 
-    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName, BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath, RoadPlannerMergeSelection mergeSelection, List<RoadPlannerSharedRoadSpan> sharedSpans, RoadPlannerSegmentType finalSegmentType, RoadReusePlan reusePlan) {
+    private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName,
+                                 BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath,
+                                 List<BlockPos> displayPath, RoadPlannerMergeSelection mergeSelection,
+                                 List<RoadPlannerSharedRoadSpan> sharedSpans,
+                                 RoadPlannerSegmentType finalSegmentType, RoadReusePlan reusePlan) {
         private BuildMetadata {
             sourceTownName = sourceTownName == null ? "" : sourceTownName;
             targetTownName = targetTownName == null ? "" : targetTownName;
             focusPos = focusPos == null ? BlockPos.ZERO : focusPos.immutable();
             centerPath = centerPath == null ? List.of() : centerPath.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(BlockPos::immutable)
+                    .toList();
+            displayPath = displayPath == null || displayPath.isEmpty()
+                    ? centerPath
+                    : displayPath.stream()
                     .filter(java.util.Objects::nonNull)
                     .map(BlockPos::immutable)
                     .toList();
@@ -772,12 +783,14 @@ public class RoadPlannerBuildControlService {
             RoadPlannerSegmentType finalSegmentType = snapshot == null || snapshot.segmentTypes().isEmpty()
                     ? RoadPlannerSegmentType.ROAD
                     : snapshot.segmentTypes().get(snapshot.segmentTypes().size() - 1);
+            List<BlockPos> centerPath = resolveCenterPath(snapshot, queue);
+            List<BlockPos> displayPath = resolveDisplayPath(snapshot, centerPath);
             return new BuildMetadata(ownerId, jobId.toString(),
                     snapshot == null ? "" : snapshot.sourceTownName(),
                     snapshot == null ? "" : snapshot.targetTownName(),
-                    focusPos, dimension, resolveCenterPath(snapshot, queue), mergeSelection,
+                    focusPos, dimension, centerPath, displayPath, mergeSelection,
                     snapshot == null ? List.of() : snapshot.sharedSpans(), finalSegmentType,
-                    snapshot == null ? RoadReusePlan.noReuse(List.of(), List.of()) : snapshot.reusePlan());
+                    snapshot == null ? RoadReusePlan.noReuse(List.of(), displayPath) : snapshot.reusePlan());
         }
     }
 
@@ -803,6 +816,16 @@ public class RoadPlannerBuildControlService {
                 .map(BuildStep::pos)
                 .distinct()
                 .toList();
+    }
+
+    private static List<BlockPos> resolveDisplayPath(PreviewSnapshot snapshot, List<BlockPos> centerPath) {
+        if (snapshot != null && snapshot.logicalNodes().size() >= 2) {
+            return snapshot.logicalNodes();
+        }
+        if (snapshot != null && snapshot.nodes().size() >= 2) {
+            return snapshot.nodes();
+        }
+        return centerPath == null ? List.of() : centerPath;
     }
 
     public record PreviewSnapshot(List<BlockPos> nodes,

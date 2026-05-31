@@ -25,10 +25,10 @@ public final class RoadPlannerRoadOverlayHitTester {
         Result best = Result.miss();
         double threshold = thresholdPixels;
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : overlays) {
-            if (overlay == null || overlay.path().size() < 2) {
+            if (overlay == null || overlay.displayPath().size() < 2) {
                 continue;
             }
-            List<BlockPos> path = overlay.path();
+            List<BlockPos> path = overlay.displayPath();
             for (int index = 1; index < path.size(); index++) {
                 BlockPos previous = path.get(index - 1);
                 BlockPos current = path.get(index);
@@ -66,10 +66,10 @@ public final class RoadPlannerRoadOverlayHitTester {
         }
         NodeResult best = NodeResult.miss();
         for (RoadPlannerRoadOverlaySyncPacket.Entry overlay : overlays) {
-            if (overlay == null || overlay.path().isEmpty()) {
+            if (overlay == null || overlay.displayPath().isEmpty()) {
                 continue;
             }
-            List<BlockPos> path = overlay.path();
+            List<BlockPos> path = overlay.displayPath();
             for (int index = 0; index < path.size(); index++) {
                 BlockPos node = path.get(index);
                 if (node == null) {

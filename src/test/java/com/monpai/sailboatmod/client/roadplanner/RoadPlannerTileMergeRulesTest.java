@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -73,5 +74,35 @@ class RoadPlannerTileMergeRulesTest {
         assertEquals(0xFF88CCEE, base[2 + 1 * 4]);
         assertEquals(0xFF00AA00, base[1 + 2 * 4]);
         assertEquals(0xFF556677, base[2 + 2 * 4]);
+    }
+
+    @Test
+    void builtRoadRefreshRejectsFullBlackReplacementTile() {
+        int[] pixels = new int[256 * 256];
+        java.util.Arrays.fill(pixels, 0xFF000000);
+
+        assertFalse(RoadPlannerTileMergeRules.safeFullTileReplacement(
+                pixels,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH));
+    }
+
+    @Test
+    void routePreloadCanStillAcceptFullBlackIfServerExplicitlySendsIt() {
+        int[] pixels = new int[256 * 256];
+        java.util.Arrays.fill(pixels, 0xFF000000);
+
+        assertTrue(RoadPlannerTileMergeRules.safeFullTileReplacement(
+                pixels,
+                RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD));
+    }
+
+    @Test
+    void builtRoadRefreshAcceptsTerrainLikeReplacementTile() {
+        int[] pixels = new int[256 * 256];
+        java.util.Arrays.fill(pixels, 0xFF3F8F37);
+
+        assertTrue(RoadPlannerTileMergeRules.safeFullTileReplacement(
+                pixels,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH));
     }
 }

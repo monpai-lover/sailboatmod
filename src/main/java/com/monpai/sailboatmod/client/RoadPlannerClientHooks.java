@@ -12,6 +12,7 @@ import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerActionMenuMode;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRouteSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
@@ -234,6 +235,13 @@ public final class RoadPlannerClientHooks {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof RoadPlannerScreen screen) {
             screen.applyRoadOverlays(sessionId, regionCenter, regionSize, scope, roads);
+        }
+    }
+
+    public static void applyAutoMergeRoute(RoadPlannerAutoMergeRouteSyncPacket packet) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof RoadPlannerScreen screen) {
+            screen.applyAutoMergeRoute(packet);
         }
     }
 

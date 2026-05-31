@@ -151,9 +151,9 @@ public class RoadPlannerTile implements AutoCloseable {
         }
     }
 
-    public synchronized void mergePixels(int[] argbPixels, boolean[] coverageMask) {
+    public synchronized boolean mergePixels(int[] argbPixels, boolean[] coverageMask) {
         if (image == null || argbPixels == null || argbPixels.length != RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS) {
-            return;
+            return false;
         }
         int[] current = new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS];
         for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
@@ -164,7 +164,7 @@ public class RoadPlannerTile implements AutoCloseable {
         boolean applied = RoadPlannerTileMergeRules.merge(current, argbPixels, coverageMask,
                 RoadPlannerTileMergeRules.knownMask(argbPixels));
         if (!applied) {
-            return;
+            return false;
         }
         for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
             for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
@@ -177,6 +177,7 @@ public class RoadPlannerTile implements AutoCloseable {
             texture.upload();
             dirty = false;
         }
+        return true;
     }
 
     public synchronized void render(GuiGraphics graphics, int x, int y, int size) {
