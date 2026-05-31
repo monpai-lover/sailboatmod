@@ -9,6 +9,8 @@ import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayRequestPacket;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphOverlayService;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
@@ -92,6 +94,10 @@ public final class RoadPlannerRoadMergeService {
         NationRecord actorNation = NationService.getPlayerNation(level, actor.getUUID());
         String actorNationId = actorNation == null ? "" : actorNation.nationId();
         String dimensionId = level.dimension().location().toString();
+        List<Candidate> graph = graphCandidates(level, data, probe, radius, scope, currentSegmentType);
+        if (!graph.isEmpty()) {
+            return graph.size() > MAX_CANDIDATES ? graph.subList(0, MAX_CANDIDATES) : graph;
+        }
         return findCandidates(data, actorNationId, road -> canManageRoad(level, actor, data, road), dimensionId, probe, radius, scope,
                 currentSegmentType, bridgeAnchorClassifier(level));
     }
@@ -295,6 +301,25 @@ public final class RoadPlannerRoadMergeService {
             }
         }
         return candidates.stream().map(CandidateWithDistance::candidate).toList();
+    }
+
+    private static List<Candidate> graphCandidates(ServerLevel level,
+                                                   NationSavedData data,
+                                                   BlockPos probe,
+                                                   int radius,
+                                                   RoadPlannerMergeScope scope,
+                                                   RoadPlannerSegmentType currentSegmentType) {
+        if (level == null || data == null || probe == null || scope == null || !scope.enabled() || isBridgeSegment(currentSegmentType)) {
+            return List.of();
+        }
+        RoadGraphOverlayService overlayService = new RoadGraphOverlayService(
+                RoadGraphRepository.forLevel(level),
+                data);
+        return overlayService.candidatesNear(level.dimension().location().toString(), probe, radius).stream()
+                .map(candidate -> new Candidate(candidate.edgeId().toString(), candidate.anchorPos(), candidate.segmentIndex(),
+                        (int) Math.round(Math.sqrt(candidate.anchorPos().distSqr(probe))),
+                        candidate.displayName(), candidate.displayName(), "", RoadPlannerMergeRelationship.OWN))
+                .toList();
     }
 
     private static boolean[] bridgeLikeAnchorMask(List<BlockPos> path, BridgeAnchorClassifier bridgeClassifier) {

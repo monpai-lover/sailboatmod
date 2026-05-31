@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.service.RoadHybridRouteResolver;
 import com.monpai.sailboatmod.nation.service.RoadPathfinder;
 import com.monpai.sailboatmod.nation.service.SegmentedRoadPathOrchestrator;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -66,27 +67,9 @@ public final class RoadAutoRouteService {
         if (level == null || start == null || end == null) {
             return List.of();
         }
-        Graph graph = buildGraph(level);
-        if (graph.adjacency().isEmpty()) {
-            return List.of();
-        }
-
-        BlockPos startRoad = nearestRoadNode(start, graph.nodes(), STATION_CONNECT_RADIUS);
-        BlockPos endRoad = nearestRoadNode(end, graph.nodes(), STATION_CONNECT_RADIUS);
-        if (startRoad == null || endRoad == null) {
-            return List.of();
-        }
-
-        List<BlockPos> roadPath = dijkstra(startRoad, endRoad, graph.adjacency());
-        if (roadPath.isEmpty()) {
-            return List.of();
-        }
-
-        LinkedHashSet<BlockPos> out = new LinkedHashSet<>();
-        out.add(start.immutable());
-        out.addAll(roadPath);
-        out.add(end.immutable());
-        return new ArrayList<>(out);
+        RoadGraphRoutingService graphRouting = new RoadGraphRoutingService(RoadGraphRepository.forLevel(level));
+        List<BlockPos> route = graphRouting.route(level.dimension().location().toString(), start, end, (int) STATION_CONNECT_RADIUS);
+        return route.size() >= 2 ? route : List.of();
     }
 
     public static RouteResolution resolveAutoRoute(ServerLevel level, DockBlockEntity startDock, DockBlockEntity endDock) {
@@ -203,11 +186,13 @@ public final class RoadAutoRouteService {
             return RouteResolution.none();
         }
 
-        Graph graph = buildGraph(level);
-        if (!graph.nodes().isEmpty()) {
-            return resolveRoadFirstRoute(level, start, end, graph);
+        RoadGraphRoutingService graphRouting = new RoadGraphRoutingService(RoadGraphRepository.forLevel(level));
+        List<BlockPos> graphRoute = graphRouting.route(level.dimension().location().toString(), start, end, CARRIAGE_CONNECTOR_MAX_MANHATTAN);
+        if (graphRoute.size() >= 2) {
+            return new RouteResolution(PathSource.ROAD_NETWORK, graphRoute);
         }
 
+        Graph graph = new Graph(Set.of(), Map.of());
         return resolveTerrainFallbackRoute(level, start, end, graph);
     }
 

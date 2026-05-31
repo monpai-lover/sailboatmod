@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerMapPreloadJobTest {
     @Test
@@ -120,6 +121,32 @@ class RoadPlannerMapPreloadJobTest {
         assertEquals(true, lod1Mask[lod1Mask.length - 1]);
         assertEquals(true, lod4Mask[0]);
         assertEquals(true, lod4Mask[lod4Mask.length - 1]);
+    }
+
+    @Test
+    void builtRoadRefreshDoesNotEmitTileWhenSnapshotPixelsAreTooShort() {
+        RoadMapRoutePreloadPlan plan = new RoadMapRoutePreloadPlan(
+                RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY,
+                List.of(new ChunkPos(0, 0)),
+                1,
+                1);
+        RoadPlannerMapPreloadJob job = new RoadPlannerMapPreloadJob(
+                UUID.randomUUID(),
+                9L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH,
+                "",
+                "minecraft:overworld",
+                plan);
+        List<RoadPlannerMapTileSyncPacket> packets = new ArrayList<>();
+
+        int processed = job.advance(1, key -> new RoadMapSnapshot(
+                1L,
+                RoadMapRegion.centeredOn(new BlockPos(128, 0, 128), RoadMapTileSpec.TILE_BLOCKS, MapLod.LOD_1),
+                List.of(),
+                new int[1]), packets::add);
+
+        assertEquals(0, processed);
+        assertTrue(packets.isEmpty());
     }
 
     private RoadMapSnapshot loadSnapshot(RoadPlannerTileKey key) {

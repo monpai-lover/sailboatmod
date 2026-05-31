@@ -151,19 +151,21 @@ public class RoadPlannerTile implements AutoCloseable {
         if (image == null || argbPixels == null || argbPixels.length != RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS) {
             return;
         }
-        boolean fullCoverage = coverageMask == null || coverageMask.length != argbPixels.length;
-        boolean applied = false;
+        int[] current = new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS];
         for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
             for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
-                int index = y * RoadMapTileSpec.TILE_PIXELS + x;
-                if (fullCoverage || coverageMask[index]) {
-                    image.setPixelRGBA(x, y, argbPixels[index]);
-                    applied = true;
-                }
+                current[y * RoadMapTileSpec.TILE_PIXELS + x] = image.getPixelRGBA(x, y);
             }
         }
+        boolean applied = RoadPlannerTileMergeRules.merge(current, argbPixels, coverageMask,
+                RoadPlannerTileMergeRules.knownMask(argbPixels));
         if (!applied) {
             return;
+        }
+        for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
+            for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
+                image.setPixelRGBA(x, y, current[y * RoadMapTileSpec.TILE_PIXELS + x]);
+            }
         }
         loadedFromCache = true;
         dirty = true;
