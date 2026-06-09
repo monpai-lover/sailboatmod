@@ -4,10 +4,12 @@ import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.item.PostRouteBookItem;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
+import com.monpai.sailboatmod.nation.service.DockTownResolver;
 import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.registry.ModSounds;
 import com.monpai.sailboatmod.route.CarriageRoutePlan;
 import com.monpai.sailboatmod.route.CarriageRoutePlanner;
+import com.monpai.sailboatmod.route.LandTransportNetworkService;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
 import net.minecraft.core.BlockPos;
@@ -66,6 +68,25 @@ import java.util.Set;
 import java.util.UUID;
 
 public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, TransportEntity {
+    public enum TransportTaskKind {
+        NONE,
+        DISPATCH,
+        MARKET_ORDER,
+        RETURN,
+        RECALL
+    }
+
+    public record LandTaskSnapshot(@Nullable BlockPos homeStationPos,
+                                   @Nullable BlockPos destinationStationPos,
+                                   String destinationTownId,
+                                   boolean autoReturnOnArrival,
+                                   TransportTaskKind taskKind) {
+        public LandTaskSnapshot {
+            destinationTownId = destinationTownId == null ? "" : destinationTownId.trim();
+            taskKind = taskKind == null ? TransportTaskKind.NONE : taskKind;
+        }
+    }
+
     private static final EntityDataAccessor<String> DATA_WOOD_TYPE =
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.STRING);
     private static final EntityDataAccessor<Boolean> DATA_AUTOPILOT_ACTIVE =
@@ -151,6 +172,16 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private String pendingShipperName = "";
     private String ownerName = "";
     private String ownerUuid = "";
+    @Nullable
+    private BlockPos homeStationPos;
+    @Nullable
+    private BlockPos destinationStationPos;
+    private String destinationTownId = "";
+    @Nullable
+    private BlockPos dockedStationPos;
+    private String dockedTownId = "";
+    private boolean autoReturnOnArrival = true;
+    private TransportTaskKind transportTaskKind = TransportTaskKind.NONE;
     private int rentalPrice = SailboatEntity.DEFAULT_RENTAL_PRICE;
     private int lastPassengerCount = 0;
     private boolean passengerSoundStateInitialized = false;
@@ -246,6 +277,13 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (routeDockPos != null) {
             tag.putLong("RouteDockPos", routeDockPos.asLong());
         }
+        writeNullableBlockPos(tag, "HomeStationPos", homeStationPos);
+        writeNullableBlockPos(tag, "DestinationStationPos", destinationStationPos);
+        writeNullableBlockPos(tag, "DockedStationPos", dockedStationPos);
+        tag.putString("DestinationTownId", destinationTownId == null ? "" : destinationTownId);
+        tag.putString("DockedTownId", dockedTownId == null ? "" : dockedTownId);
+        tag.putBoolean("AutoReturnOnArrival", autoReturnOnArrival);
+        tag.putString("TransportTaskKind", transportTaskKind.name());
         RouteNbtUtil.writeRoutes(tag, "RouteCatalog", routeCatalog);
 
         ListTag seats = new ListTag();
@@ -270,6 +308,13 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         routeCatalog.addAll(RouteNbtUtil.readRoutes(tag, "RouteCatalog"));
         selectedRouteIndex = routeCatalog.isEmpty() ? 0 : Mth.clamp(tag.getInt("SelectedRouteIndex"), 0, routeCatalog.size() - 1);
         routeDockPos = tag.contains("RouteDockPos") ? BlockPos.of(tag.getLong("RouteDockPos")) : null;
+        homeStationPos = readNullableBlockPos(tag, "HomeStationPos");
+        destinationStationPos = readNullableBlockPos(tag, "DestinationStationPos");
+        dockedStationPos = readNullableBlockPos(tag, "DockedStationPos");
+        destinationTownId = tag.getString("DestinationTownId");
+        dockedTownId = tag.getString("DockedTownId");
+        autoReturnOnArrival = !tag.contains("AutoReturnOnArrival") || tag.getBoolean("AutoReturnOnArrival");
+        transportTaskKind = parseTaskKind(tag.getString("TransportTaskKind"));
 
         seatAssignments.clear();
         ListTag seats = tag.getList("SeatAssignments", Tag.TAG_COMPOUND);
@@ -325,9 +370,13 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         setYRot(driveState.yaw());
         setYHeadRot(driveState.yaw());
         setYBodyRot(driveState.yaw());
-        setDeltaMovement(driveState.deltaMovement());
-        move(MoverType.SELF, getDeltaMovement());
-        setDeltaMovement(getDeltaMovement().multiply(onGround() ? 0.80D : 0.98D, 0.98D, onGround() ? 0.80D : 0.98D));
+        setDeltaMovement(getDeltaMovement().add(0.0D, -0.08D, 0.0D));
+        move(MoverType.SELF, getDeltaMovement().add(vehicleMotionX, 0.0D, vehicleMotionZ));
+        if (onGround()) {
+            setDeltaMovement(getDeltaMovement().multiply(0.8D, 0.98D, 0.8D));
+        } else {
+            setDeltaMovement(getDeltaMovement().multiply(0.98D, 0.98D, 0.98D));
+        }
         entityData.set(DATA_CURRENT_SPEED, currentSpeed);
         checkInsideBlocks();
 
@@ -769,6 +818,20 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     @Override
+    public void setLandTransportTask(LandTransportNetworkService.LandRoutePlan plan, boolean autoReturn, TransportTaskKind kind) {
+        if (plan == null) {
+            return;
+        }
+        homeStationPos = plan.sourceStation() == null ? null : plan.sourceStation().pos();
+        destinationStationPos = plan.targetStationPos();
+        destinationTownId = plan.targetTownId();
+        dockedStationPos = null;
+        dockedTownId = "";
+        autoReturnOnArrival = autoReturn;
+        transportTaskKind = kind == null ? TransportTaskKind.DISPATCH : kind;
+    }
+
+    @Override
     public boolean startAutopilotFromRouteStart() {
         return startAutopilot();
     }
@@ -897,6 +960,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     public void setAllowNonOrderAutoReturn(boolean allow) {
+        autoReturnOnArrival = allow;
     }
 
     @Override
@@ -965,6 +1029,34 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     public float getCurrentSpeedForHud() {
         return currentSpeed;
+    }
+
+    static CompoundTag saveLandTaskStateForTest(BlockPos home,
+                                                BlockPos destination,
+                                                String townId,
+                                                boolean autoReturn,
+                                                TransportTaskKind kind) {
+        CompoundTag tag = new CompoundTag();
+        writeNullableBlockPos(tag, "HomeStationPos", home);
+        writeNullableBlockPos(tag, "DestinationStationPos", destination);
+        tag.putString("DestinationTownId", townId == null ? "" : townId);
+        tag.putBoolean("AutoReturnOnArrival", autoReturn);
+        tag.putString("TransportTaskKind", kind == null ? TransportTaskKind.NONE.name() : kind.name());
+        return tag;
+    }
+
+    static LandTaskSnapshot loadLandTaskStateForTest(CompoundTag tag) {
+        return new LandTaskSnapshot(
+                readNullableBlockPos(tag, "HomeStationPos"),
+                readNullableBlockPos(tag, "DestinationStationPos"),
+                tag.getString("DestinationTownId"),
+                !tag.contains("AutoReturnOnArrival") || tag.getBoolean("AutoReturnOnArrival"),
+                parseTaskKind(tag.getString("TransportTaskKind"))
+        );
+    }
+
+    static boolean defaultAutoReturnForTaskForTest(TransportTaskKind kind) {
+        return kind == TransportTaskKind.DISPATCH || kind == TransportTaskKind.MARKET_ORDER;
     }
 
     static boolean isRoadSurfaceForTest(BlockState state) {
@@ -1120,15 +1212,106 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     private void finishAutopilot() {
-        DockBlockEntity destination = findTransportHubZoneContains(position()) == null
-                ? null
-                : getTransportHub(findTransportHubZoneContains(position()));
-        List<ItemStack> cargo = unloadAllCargo();
-        if (destination != null && !cargo.isEmpty()) {
-            destination.receiveShipment(this, getAutopilotRouteName(), pendingShipperName, "-", destination.getDockName(),
-                    System.currentTimeMillis(), 0L, 0.0D, cargo, getPendingShipmentManifest());
+        BlockPos destinationPos = findTransportHubZoneContains(position());
+        DockBlockEntity destination = destinationPos == null ? null : getTransportHub(destinationPos);
+        if (destination != null) {
+            dockedStationPos = destination.getBlockPos().immutable();
+            dockedTownId = DockTownResolver.resolveTownForArrival(level(), destination.getBlockPos());
+            List<ItemStack> cargo = unloadAllCargo();
+            if (!cargo.isEmpty()) {
+                destination.receiveShipment(this, getAutopilotRouteName(), pendingShipperName, "-", destination.getDockName(),
+                        System.currentTimeMillis(), 0L, 0.0D, cargo, getPendingShipmentManifest());
+            }
         }
-        stopAutopilot();
+        boolean startedReturn = destination instanceof PostStationBlockEntity station
+                && transportTaskKind != TransportTaskKind.RETURN
+                && transportTaskKind != TransportTaskKind.RECALL
+                && autoReturnOnArrival
+                && tryStartLandReturnTrip(station);
+        if (!startedReturn) {
+            transportTaskKind = TransportTaskKind.NONE;
+            stopAutopilot();
+        }
+    }
+
+    private boolean tryStartLandReturnTrip(PostStationBlockEntity currentStation) {
+        if (!(level() instanceof ServerLevel serverLevel) || homeStationPos == null) {
+            return false;
+        }
+        if (!(level().getBlockEntity(homeStationPos) instanceof PostStationBlockEntity homeStation)) {
+            return false;
+        }
+        LandTransportNetworkService service = new LandTransportNetworkService();
+        LandTransportNetworkService.RouteAvailability availability = service.planRouteBetweenStations(
+                serverLevel,
+                service.stationRef(level(), currentStation),
+                service.stationRef(level(), homeStation),
+                true
+        );
+        if (!availability.reachable() || availability.plan() == null) {
+            return false;
+        }
+        setRouteCatalog(List.of(availability.plan().route()), 0, currentStation.getBlockPos());
+        setLandTransportTask(availability.plan(), false, TransportTaskKind.RETURN);
+        return startAutopilot();
+    }
+
+    public boolean canBeRecalledTo(PostStationBlockEntity targetStation, @Nullable Player player) {
+        if (targetStation == null || !isAlive() || isAutopilotActive() || hasManualControlPassenger()) {
+            return false;
+        }
+        if (player != null && !isOwnedBy(player) && !isAvailableForRent()) {
+            return false;
+        }
+        return dockedStationPos != null || !dockedTownId.isBlank();
+    }
+
+    public boolean hasActiveManualControlPassenger() {
+        return hasManualControlPassenger();
+    }
+
+    public boolean startRecallTo(PostStationBlockEntity targetStation, @Nullable Player player) {
+        if (!(level() instanceof ServerLevel serverLevel) || targetStation == null || dockedStationPos == null) {
+            return false;
+        }
+        if (!(level().getBlockEntity(dockedStationPos) instanceof PostStationBlockEntity sourceStation)) {
+            return false;
+        }
+        LandTransportNetworkService service = new LandTransportNetworkService();
+        LandTransportNetworkService.RouteAvailability availability = service.planRouteBetweenStations(
+                serverLevel,
+                service.stationRef(level(), sourceStation),
+                service.stationRef(level(), targetStation),
+                true
+        );
+        if (!availability.reachable() || availability.plan() == null) {
+            return false;
+        }
+        setRouteCatalog(List.of(availability.plan().route()), 0, sourceStation.getBlockPos());
+        setLandTransportTask(availability.plan(), false, TransportTaskKind.RECALL);
+        return startAutopilot();
+    }
+
+    private static void writeNullableBlockPos(CompoundTag tag, String key, @Nullable BlockPos pos) {
+        if (pos != null) {
+            tag.putLong(key, pos.asLong());
+        }
+    }
+
+    @Nullable
+    private static BlockPos readNullableBlockPos(CompoundTag tag, String key) {
+        return tag != null && tag.contains(key) ? BlockPos.of(tag.getLong(key)) : null;
+    }
+
+    private static TransportTaskKind parseTaskKind(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return TransportTaskKind.NONE;
+        }
+        try {
+            return TransportTaskKind.valueOf(raw);
+        } catch (IllegalArgumentException ignored) {
+            return TransportTaskKind.NONE;
+        }
     }
 
     private void updateRouteSyncData() {
