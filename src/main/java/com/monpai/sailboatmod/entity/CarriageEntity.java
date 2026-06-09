@@ -63,10 +63,14 @@ import software.bernie.geckolib.core.animation.RawAnimation;
 import software.bernie.geckolib.core.object.PlayState;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -158,6 +162,12 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.FLOAT);
     private static final EntityDataAccessor<Integer> DATA_ARRIVAL_NOTICE_UNTIL_TICK =
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<String> DATA_ARRIVAL_NOTICE_STATION_NAME =
+            SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.STRING);
+    private static final EntityDataAccessor<Integer> DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS =
+            SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<String> DATA_ARRIVAL_NOTICE_DATE_TEXT =
+            SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.STRING);
 
     private static final RawAnimation CARRIAGE_DRIVE_ANIMATION = RawAnimation.begin().thenLoop("animation.carriage.drive");
     private static final int INVENTORY_SIZE = 27;
@@ -166,6 +176,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private static final String NBT_PENDING_RETURN_DELAY_TICKS = "PendingReturnDelayTicks";
     private static final String NBT_PENDING_RETURN_COMPLETED_ROUTE = "PendingReturnCompletedRoute";
     private static final String NBT_ARRIVAL_NOTICE_TICKS = "ArrivalNoticeTicks";
+    private static final String NBT_ACTIVE_TRIP_START_GAME_TIME = "ActiveTripStartGameTime";
     private static final boolean ALLOW_TERRAIN_FALLBACK_FOR_LAND_RETURN = false;
     private static final float LAND_VEHICLE_STEP_HEIGHT = 1.0F;
     private static final double MIN_DRIVEABLE_GROUND_HEIGHT = 0.125D;
@@ -190,6 +201,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private static final int MOVEMENT_SOUND_SURFACE_SCAN_BLOCKS = 2;
     private static final int ARRIVAL_NOTICE_TICKS = 100;
     private static final int ARRIVAL_RETURN_DELAY_TICKS = 100;
+    private static final DateTimeFormatter ARRIVAL_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final double AUTOPILOT_ARRIVAL_RADIUS = 3.2D;
     private static final double AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS = 7.5D;
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
@@ -248,6 +261,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private int lastPassengerCount = 0;
     private boolean passengerSoundStateInitialized = false;
     private int movementSoundCooldownTicks = 0;
+    private long activeTripStartGameTime = -1L;
     private int lerpSteps;
     private double lerpX;
     private double lerpY;
@@ -334,6 +348,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         this.entityData.define(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
         this.entityData.define(DATA_TARGET_TURN_ANGLE, 0.0F);
         this.entityData.define(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
+        this.entityData.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
+        this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
+        this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
     }
 
     @Override
@@ -354,6 +371,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         tag.putString("DockedTownId", dockedTownId == null ? "" : dockedTownId);
         tag.putBoolean("AutoReturnOnArrival", autoReturnOnArrival);
         tag.putString("TransportTaskKind", transportTaskKind.name());
+        if (activeTripStartGameTime >= 0L) {
+            tag.putLong(NBT_ACTIVE_TRIP_START_GAME_TIME, activeTripStartGameTime);
+        }
         writeArrivalHoldState(tag, pendingReturnStationPos, pendingReturnDelayTicks, getArrivalNoticeTicks(), pendingReturnCompletedRoute);
         RouteNbtUtil.writeRoutes(tag, "RouteCatalog", routeCatalog);
 
@@ -386,6 +406,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         dockedTownId = tag.getString("DockedTownId");
         autoReturnOnArrival = !tag.contains("AutoReturnOnArrival") || tag.getBoolean("AutoReturnOnArrival");
         transportTaskKind = parseTaskKind(tag.getString("TransportTaskKind"));
+        activeTripStartGameTime = tag.contains(NBT_ACTIVE_TRIP_START_GAME_TIME)
+                ? Math.max(-1L, tag.getLong(NBT_ACTIVE_TRIP_START_GAME_TIME))
+                : -1L;
         ArrivalHoldSnapshot arrivalHold = readArrivalHoldState(tag);
         pendingReturnStationPos = arrivalHold.pendingReturnStationPos();
         pendingReturnDelayTicks = arrivalHold.pendingReturnDelayTicks();
@@ -1202,6 +1225,18 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return Math.max(0, entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK) - tickCount);
     }
 
+    public String getArrivalNoticeStationName() {
+        return entityData.get(DATA_ARRIVAL_NOTICE_STATION_NAME);
+    }
+
+    public String getArrivalNoticeElapsedText() {
+        return formatArrivalElapsedSeconds(entityData.get(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS));
+    }
+
+    public String getArrivalNoticeDateText() {
+        return entityData.get(DATA_ARRIVAL_NOTICE_DATE_TEXT);
+    }
+
     public int getRouteCount() {
         return entityData.get(DATA_ROUTE_COUNT);
     }
@@ -1280,6 +1315,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
         autopilotTargetIndex = 1;
         autopilotRouteName = route.name() == null || route.name().isBlank() ? "Route-" + (selectedRouteIndex + 1) : route.name();
+        activeTripStartGameTime = level().getGameTime();
         entityData.set(DATA_AUTOPILOT_ACTIVE, true);
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
         updateRouteSyncData();
@@ -1296,6 +1332,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         autopilotRoute.clear();
         autopilotTargetIndex = 0;
         autopilotRouteName = getSelectedRouteName();
+        activeTripStartGameTime = -1L;
     }
 
     public void pauseAutopilot() {
@@ -1500,6 +1537,18 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     static boolean arrivalNoticeVisibleForTest(int remainingTicks) {
         return arrivalNoticeVisible(remainingTicks);
+    }
+
+    static int arrivalElapsedSecondsFromTicksForTest(int ticks) {
+        return arrivalElapsedSecondsFromTicks(ticks);
+    }
+
+    static String formatArrivalElapsedSecondsForTest(int seconds) {
+        return formatArrivalElapsedSeconds(seconds);
+    }
+
+    static String formatArrivalDateForTest(long epochMillis, ZoneId zoneId) {
+        return formatArrivalDate(epochMillis, zoneId);
     }
 
     static boolean shouldDelayReturnAfterArrivalForTest(boolean autoReturn, TransportTaskKind kind, boolean hasDestinationStation) {
@@ -1850,9 +1899,20 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return autopilotGearForSegmentForTest(segment);
     }
 
-    private void beginArrivalFeedback() {
+    private void beginArrivalFeedback(@Nullable DockBlockEntity destination) {
+        entityData.set(DATA_ARRIVAL_NOTICE_STATION_NAME, arrivalStationName(destination));
+        entityData.set(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, arrivalElapsedSecondsFromTicks(activeTripElapsedTicks()));
+        entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT, formatArrivalDate(System.currentTimeMillis(), ZoneId.systemDefault()));
         setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
         level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+    }
+
+    private int activeTripElapsedTicks() {
+        if (activeTripStartGameTime < 0L) {
+            return 0;
+        }
+        long elapsed = Math.max(0L, level().getGameTime() - activeTripStartGameTime);
+        return elapsed > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) elapsed;
     }
 
     private void beginDelayedAutoReturn(PostStationBlockEntity station) {
@@ -1917,6 +1977,34 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return remainingTicks > 0;
     }
 
+    private static int arrivalElapsedSecondsFromTicks(int ticks) {
+        return ticks <= 0 ? 0 : (ticks + 19) / 20;
+    }
+
+    private static String formatArrivalElapsedSeconds(int seconds) {
+        int safeSeconds = Math.max(0, seconds);
+        int hours = safeSeconds / 3600;
+        int minutes = (safeSeconds % 3600) / 60;
+        int remainingSeconds = safeSeconds % 60;
+        if (hours > 0) {
+            return String.format(Locale.ROOT, "%02d:%02d:%02d", hours, minutes, remainingSeconds);
+        }
+        return String.format(Locale.ROOT, "%02d:%02d", minutes, remainingSeconds);
+    }
+
+    private static String formatArrivalDate(long epochMillis, @Nullable ZoneId zoneId) {
+        ZoneId safeZone = zoneId == null ? ZoneId.systemDefault() : zoneId;
+        return ARRIVAL_DATE_FORMATTER.format(Instant.ofEpochMilli(epochMillis).atZone(safeZone));
+    }
+
+    private static String arrivalStationName(@Nullable DockBlockEntity destination) {
+        if (destination == null) {
+            return "Post Station";
+        }
+        String name = destination.getDockName();
+        return name == null || name.isBlank() ? "Post Station" : name.trim();
+    }
+
     private static boolean shouldDelayReturnAfterArrival(boolean autoReturn,
                                                          @Nullable TransportTaskKind kind,
                                                          boolean hasDestinationStation) {
@@ -1944,7 +2032,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             }
         }
         if (destination != null) {
-            beginArrivalFeedback();
+            beginArrivalFeedback(destination);
         }
         if (destination instanceof PostStationBlockEntity station
                 && shouldDelayReturnAfterArrival(autoReturnOnArrival, transportTaskKind, true)) {

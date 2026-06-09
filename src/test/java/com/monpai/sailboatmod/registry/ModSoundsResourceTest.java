@@ -40,6 +40,12 @@ class ModSoundsResourceTest {
         assertTrue(json.contains("\"entity.carriage.move.ground\""));
         assertFalse(json.contains("minecraft:block.wood.step"));
         assertFalse(json.contains("minecraft:entity.horse.step_wood"));
+        assertFalse(json.contains("minecraft:block.wood.place"));
+        assertFalse(json.contains("minecraft:entity.horse.saddle"));
+        assertFalse(json.contains("minecraft:entity.leash_knot.break"));
+        assertTrue(json.contains("minecraft:step/wood1"));
+        assertTrue(json.contains("minecraft:mob/horse/leather"));
+        assertTrue(json.contains("minecraft:random/break"));
 
         Path soundDir = Path.of("src/main/resources/assets/sailboatmod/sounds/entity/carriage");
         assertTrue(Files.exists(soundDir.resolve("horse_gallop_blocky.ogg")));
@@ -48,6 +54,8 @@ class ModSoundsResourceTest {
         assertTrue(Files.exists(soundDir.resolve("horse_gallop_ground.ogg")));
         assertTrue(Files.exists(soundDir.resolve("horse_gallop_hall.ogg")));
         assertTrue(Files.exists(soundDir.resolve("horse_gallop_muffled.ogg")));
+        assertFalse(Files.exists(Path.of("src/main/resources/assets/sailboatmod/sounds/THIRD_PARTY_NOTICES.txt")));
+        assertTrue(Files.exists(Path.of("src/main/resources/assets/sailboatmod/third_party_notices.txt")));
     }
 
     @Test

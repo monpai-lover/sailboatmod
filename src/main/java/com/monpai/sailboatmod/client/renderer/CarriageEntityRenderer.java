@@ -68,14 +68,27 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         }
         Minecraft minecraft = Minecraft.getInstance();
         Font font = minecraft.font;
-        String label = Component.translatable("entity.sailboatmod.carriage.arrived").getString();
+        String stationName = entity.getArrivalNoticeStationName();
+        String elapsedText = entity.getArrivalNoticeElapsedText();
+        String dateText = entity.getArrivalNoticeDateText();
+        String[] lines = new String[] {
+                Component.translatable("entity.sailboatmod.carriage.arrived").getString(),
+                Component.translatable("entity.sailboatmod.carriage.arrival.station", stationName == null || stationName.isBlank() ? "-" : stationName).getString(),
+                Component.translatable("entity.sailboatmod.carriage.arrival.elapsed", elapsedText == null || elapsedText.isBlank() ? "00:00" : elapsedText).getString(),
+                Component.translatable("entity.sailboatmod.carriage.arrival.date", dateText == null || dateText.isBlank() ? "-" : dateText).getString()
+        };
         poseStack.pushPose();
-        poseStack.translate(0.0D, entity.getBbHeight() + 0.85D, 0.0D);
+        poseStack.translate(0.0D, entity.getBbHeight() + 1.15D, 0.0D);
         poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
         poseStack.scale(-ARRIVAL_HOLOGRAM_SCALE, -ARRIVAL_HOLOGRAM_SCALE, ARRIVAL_HOLOGRAM_SCALE);
-        float x = -font.width(label) / 2.0F;
-        font.drawInBatch(label, x, 0.0F, ARRIVAL_HOLOGRAM_COLOR, false, poseStack.last().pose(), bufferSource,
-                Font.DisplayMode.SEE_THROUGH, ARRIVAL_HOLOGRAM_BACKGROUND, 0xF000F0);
+        float lineHeight = 10.0F;
+        float startY = -((lines.length - 1) * lineHeight) / 2.0F;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            float x = -font.width(line) / 2.0F;
+            font.drawInBatch(line, x, startY + i * lineHeight, ARRIVAL_HOLOGRAM_COLOR, false, poseStack.last().pose(), bufferSource,
+                    Font.DisplayMode.SEE_THROUGH, ARRIVAL_HOLOGRAM_BACKGROUND, 0xF000F0);
+        }
         poseStack.popPose();
     }
 

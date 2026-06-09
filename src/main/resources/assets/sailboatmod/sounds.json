@@ -2,19 +2,20 @@
   "entity.carriage.place": {
     "subtitle": "entity.sailboatmod.carriage",
     "sounds": [
-      "minecraft:block.wood.place"
+      "minecraft:step/wood1",
+      "minecraft:step/wood2"
     ]
   },
   "entity.carriage.attach": {
     "subtitle": "entity.sailboatmod.carriage",
     "sounds": [
-      "minecraft:entity.horse.saddle"
+      "minecraft:mob/horse/leather"
     ]
   },
   "entity.carriage.detach": {
     "subtitle": "entity.sailboatmod.carriage",
     "sounds": [
-      "minecraft:entity.leash_knot.break"
+      "minecraft:random/break"
     ]
   },
   "entity.carriage.move": {

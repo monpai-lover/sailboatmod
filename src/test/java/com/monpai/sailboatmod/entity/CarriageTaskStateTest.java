@@ -8,6 +8,8 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,6 +59,22 @@ class CarriageTaskStateTest {
         assertEquals(100, CarriageEntity.arrivalNoticeTicksForTest());
         assertTrue(CarriageEntity.arrivalNoticeVisibleForTest(1));
         assertFalse(CarriageEntity.arrivalNoticeVisibleForTest(0));
+    }
+
+    @Test
+    void arrivalHologramDetailsFormatElapsedTimeAndDate() {
+        assertEquals(0, CarriageEntity.arrivalElapsedSecondsFromTicksForTest(0));
+        assertEquals(1, CarriageEntity.arrivalElapsedSecondsFromTicksForTest(1));
+        assertEquals(6, CarriageEntity.arrivalElapsedSecondsFromTicksForTest(120));
+        assertEquals("01:01", CarriageEntity.formatArrivalElapsedSecondsForTest(61));
+        assertEquals("01:01:01", CarriageEntity.formatArrivalElapsedSecondsForTest(3661));
+        assertEquals(
+                "2026-06-10 00:53:55",
+                CarriageEntity.formatArrivalDateForTest(
+                        Instant.parse("2026-06-09T16:53:55Z").toEpochMilli(),
+                        ZoneId.of("Asia/Shanghai")
+                )
+        );
     }
 
     @Test
