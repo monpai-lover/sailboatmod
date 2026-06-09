@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
-import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.entity.TransportEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
@@ -19,8 +19,8 @@ public class OpenSailboatStoragePacket {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> {
             ServerPlayer player = context.getSender();
-            if (player != null && player.getVehicle() instanceof SailboatEntity sailboat) {
-                sailboat.openStorage(player);
+            if (player != null && player.getVehicle() instanceof TransportEntity transport) {
+                transport.openStorage(player);
             }
         });
         context.setPacketHandled(true);

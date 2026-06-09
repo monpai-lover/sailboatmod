@@ -7,7 +7,6 @@ import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
-import com.monpai.sailboatmod.item.PostRouteBookItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.registry.ModItems;
@@ -65,7 +64,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
+public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, TransportEntity {
     private static final RawAnimation SAIL_DOWN_ANIMATION = RawAnimation.begin().thenPlayAndHold("sail down");
     private static final RawAnimation SAIL_UP_ANIMATION = RawAnimation.begin().thenPlayAndHold("sail up");
     private static final EntityDataAccessor<Boolean> DATA_SAIL_DEPLOYED =
@@ -314,9 +313,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     @Override
     public InteractionResult interact(Player player, InteractionHand hand) {
         ItemStack held = player.getItemInHand(hand);
-        if (held.getItem() instanceof PostRouteBookItem postRouteBookItem && this instanceof CarriageEntity carriage) {
-            return postRouteBookItem.useOnCarriage(player, hand, carriage);
-        }
         if (held.getItem() instanceof RouteBookItem routeBookItem) {
             return routeBookItem.useOnSailboat(player, hand, this);
         }
@@ -459,7 +455,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
                     wantsReverse = playerWantsReverse;
                     wantsTurn = playerWantsTurn;
                     turnInput = captainPlayer.xxa;
-                    updateGearFromInput(wantsForward, wantsReverse);
+                    if (usesHoldToDriveControls()) {
+                        entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
+                        forwardPressedLastTick = false;
+                        reversePressedLastTick = false;
+                    } else {
+                        updateGearFromInput(wantsForward, wantsReverse);
+                    }
                     if (autopilotControl && hasManualInput) {
                         stopAutopilot();
                     }
@@ -494,7 +496,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
             EngineGear gear = getEngineGear();
             if (usesCustomGroundDriveModel()) {
-                applyCustomGroundDriveModel(new GroundDriveContext(autopilotControl, hasManualInput, wantsTurn, turnInput, gear));
+                applyCustomGroundDriveModel(new GroundDriveContext(autopilotControl, hasManualInput, wantsForward, wantsReverse, wantsTurn, turnInput, gear));
             } else {
                 boolean gearDriving = gear != EngineGear.STOP;
                 double drag = gearDriving ? GEAR_DRIVE_DRAG : GEAR_COASTING_DRAG;
@@ -630,7 +632,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         return false;
     }
 
-    private void tickBaseEntityWithoutBoatMovement() {
+    protected void tickBaseEntityWithoutBoatMovement() {
         if (getHurtTime() > 0) {
             setHurtTime(getHurtTime() - 1);
         }
@@ -641,6 +643,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
     }
 
     protected boolean usesCustomGroundDriveModel() {
+        return false;
+    }
+
+    protected boolean usesHoldToDriveControls() {
         return false;
     }
 
@@ -1469,7 +1475,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         return -1;
     }
 
-    private void cleanupSeatAssignments() {
+    protected void cleanupSeatAssignments() {
         Set<UUID> currentPassengers = new HashSet<>();
         for (Entity passenger : getPassengers()) {
             currentPassengers.add(passenger.getUUID());
@@ -1490,7 +1496,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         reversePressedLastTick = reversePressed;
     }
 
-    private AutopilotCommand computeAutopilotCommand() {
+    protected AutopilotCommand computeAutopilotCommand() {
         if (!hasAutopilotRoute()) {
             stopAutopilot();
             return AutopilotCommand.inactive();
@@ -1742,7 +1748,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         return lateralDistance <= AUTOPILOT_PASSED_LATERAL_THRESHOLD;
     }
 
-    private boolean hasAutopilotRoute() {
+    protected boolean hasAutopilotRoute() {
         return !autopilotRoute.isEmpty();
     }
 
@@ -2433,7 +2439,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
         forcedAutopilotChunks.clear();
     }
 
-    private record AutopilotCommand(boolean active, boolean wantsTurn, float turnInput, float yawStep, EngineGear gear) {
+    protected record AutopilotCommand(boolean active, boolean wantsTurn, float turnInput, float yawStep, EngineGear gear) {
         private static AutopilotCommand inactive() {
             return new AutopilotCommand(false, false, 0.0F, 0.0F, EngineGear.STOP);
         }
@@ -2441,6 +2447,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider {
 
     protected record GroundDriveContext(boolean autopilotControl,
                                         boolean hasManualInput,
+                                        boolean wantsForward,
+                                        boolean wantsReverse,
                                         boolean wantsTurn,
                                         float turnInput,
                                         EngineGear gear) {

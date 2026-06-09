@@ -69,7 +69,11 @@ public final class RoadAutoRouteService {
         }
         RoadGraphRoutingService graphRouting = new RoadGraphRoutingService(RoadGraphRepository.forLevel(level));
         List<BlockPos> route = graphRouting.route(level.dimension().location().toString(), start, end, (int) STATION_CONNECT_RADIUS);
-        return route.size() >= 2 ? route : List.of();
+        if (route.size() >= 2) {
+            return route;
+        }
+        List<BlockPos> surfaceRoute = RoadSurfaceRouteService.route(level, start, end);
+        return surfaceRoute.size() >= 2 ? surfaceRoute : List.of();
     }
 
     public static RouteResolution resolveAutoRoute(ServerLevel level, DockBlockEntity startDock, DockBlockEntity endDock) {
@@ -190,6 +194,11 @@ public final class RoadAutoRouteService {
         List<BlockPos> graphRoute = graphRouting.route(level.dimension().location().toString(), start, end, CARRIAGE_CONNECTOR_MAX_MANHATTAN);
         if (graphRoute.size() >= 2) {
             return new RouteResolution(PathSource.ROAD_NETWORK, graphRoute);
+        }
+
+        List<BlockPos> surfaceRoute = RoadSurfaceRouteService.route(level, start, end);
+        if (surfaceRoute.size() >= 2) {
+            return new RouteResolution(PathSource.ROAD_NETWORK, surfaceRoute);
         }
 
         Graph graph = new Graph(Set.of(), Map.of());

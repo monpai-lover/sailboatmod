@@ -50,6 +50,29 @@ class RoadGraphRoutingServiceTest {
         assertTrue(service.isRoadCorridor("minecraft:overworld", new BlockPos(5, 64, 1), 1));
     }
 
+    @Test
+    void routesCanAttachToRoadEdgeMiddleWhenNoEndpointNodeIsNearby() {
+        RoadNetworkGraphSavedData data = new RoadNetworkGraphSavedData();
+        RoadGraphNodeRecord a = node(new BlockPos(0, 64, 0));
+        RoadGraphNodeRecord b = node(new BlockPos(100, 64, 0));
+        data.putNode(a);
+        data.putNode(b);
+        data.putEdge(edge(a, b));
+        RoadGraphRoutingService service = new RoadGraphRoutingService(new RoadGraphRepository(data));
+
+        List<BlockPos> path = service.route(
+                "minecraft:overworld",
+                new BlockPos(50, 64, 2),
+                new BlockPos(90, 64, 2),
+                4
+        );
+
+        assertEquals(new BlockPos(50, 64, 2), path.get(0));
+        assertEquals(new BlockPos(90, 64, 2), path.get(path.size() - 1));
+        assertTrue(path.contains(new BlockPos(50, 64, 0)));
+        assertTrue(path.contains(new BlockPos(90, 64, 0)));
+    }
+
     private static RoadGraphNodeRecord node(BlockPos pos) {
         return new RoadGraphNodeRecord(UUID.randomUUID(), "minecraft:overworld", pos,
                 RoadGraphNodeRecord.Kind.NORMAL, "alpha", "", "", 1L, 1L);

@@ -3365,10 +3365,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             rebuildUi();
             return;
         }
+        MarketOverviewData.ListingEntry listing = selectedListing();
+        if (listing == null) {
+            return;
+        }
         rememberScrollState();
         ModNetwork.CHANNEL.sendToServer(new PurchaseMarketListingPacket(
                 data.marketPos(),
-                selectedListingIndex,
+                listing.listingId(),
                 parsePositive(buyQtyValue, 1)
         ));
     }
@@ -3379,16 +3383,24 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void cancelListing() {
+        MarketOverviewData.ListingEntry listing = selectedListing();
+        if (listing == null) {
+            return;
+        }
         rememberScrollState();
-        ModNetwork.CHANNEL.sendToServer(new CancelMarketListingPacket(data.marketPos(), selectedListingIndex));
+        ModNetwork.CHANNEL.sendToServer(new CancelMarketListingPacket(data.marketPos(), listing.listingId()));
     }
 
     private void dispatchSelectedOrder() {
+        MarketOverviewData.OrderEntry order = selectedOrder();
+        if (order == null) {
+            return;
+        }
         rememberScrollState();
         MarketOverviewData.DispatchOption option = selectedShipping();
         ModNetwork.CHANNEL.sendToServer(new DispatchMarketOrderPacket(
                 data.marketPos(),
-                selectedOrderIndex,
+                order.orderId(),
                 option == null ? TransportTerminalKind.AUTO : TransportTerminalKind.fromName(option.terminalKind())
         ));
     }

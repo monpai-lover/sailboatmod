@@ -3,12 +3,16 @@ package com.monpai.sailboatmod.client;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.screen.CarriageInfoScreen;
 import com.monpai.sailboatmod.client.screen.SailboatInfoScreen;
+import com.monpai.sailboatmod.entity.CarriageDriveInput;
+import com.monpai.sailboatmod.entity.CarriageLandDriveModel;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.entity.TransportEntity;
 import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.CarriageControlInputPacket;
 import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
 import net.minecraft.client.Minecraft;
@@ -24,6 +28,8 @@ import net.minecraftforge.fml.common.Mod;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class ClientInputHandler {
+    private static float carriageTurnAngle = 0.0F;
+
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.START) {
@@ -32,7 +38,11 @@ public final class ClientInputHandler {
 
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
-        if (player == null || minecraft.screen != null) {
+        if (player == null) {
+            return;
+        }
+        syncCarriageControls(minecraft, player);
+        if (minecraft.screen != null) {
             return;
         }
 
@@ -42,14 +52,16 @@ public final class ClientInputHandler {
             return;
         }
 
-        if (player.getVehicle() instanceof SailboatEntity && minecraft.options.keyInventory.consumeClick()) {
+        if (player.getVehicle() instanceof TransportEntity && minecraft.options.keyInventory.consumeClick()) {
             ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket());
         }
 
-        if (player.getVehicle() instanceof SailboatEntity sailboat && ClientKeyMappings.OPEN_SAILBOAT_INFO.consumeClick()) {
-            minecraft.setScreen(sailboat instanceof CarriageEntity carriage
-                    ? new CarriageInfoScreen(carriage)
-                    : new SailboatInfoScreen(sailboat));
+        if (ClientKeyMappings.OPEN_SAILBOAT_INFO.consumeClick()) {
+            if (player.getVehicle() instanceof CarriageEntity carriage) {
+                minecraft.setScreen(new CarriageInfoScreen(carriage));
+            } else if (player.getVehicle() instanceof SailboatEntity sailboat) {
+                minecraft.setScreen(new SailboatInfoScreen(sailboat));
+            }
         }
     }
 
@@ -103,5 +115,80 @@ public final class ClientInputHandler {
     }
 
     private ClientInputHandler() {
+    }
+
+    private static void syncCarriageControls(Minecraft minecraft, LocalPlayer player) {
+        if (!(player.getVehicle() instanceof CarriageEntity carriage)) {
+            carriageTurnAngle = 0.0F;
+            return;
+        }
+        boolean controlsEnabled = minecraft.screen == null;
+        double yawRad = carriage.getYRot() * (Math.PI / 180.0D);
+        double dirX = -Math.sin(yawRad);
+        double dirZ = Math.cos(yawRad);
+        float currentSpeed = (float) ((carriage.getDeltaMovement().x * dirX + carriage.getDeltaMovement().z * dirZ) * 20.0D);
+        CarriageDriveInput input = createCarriageControlInput(
+                controlsEnabled,
+                minecraft.options.keyUp.isDown(),
+                minecraft.options.keyDown.isDown(),
+                minecraft.options.keyLeft.isDown(),
+                minecraft.options.keyRight.isDown(),
+                carriageTurnAngle,
+                currentSpeed
+        );
+        carriageTurnAngle = input.targetTurnAngle();
+        carriage.applyClientControlInput(input);
+        ModNetwork.CHANNEL.sendToServer(new CarriageControlInputPacket(
+                input.acceleration(),
+                input.turn(),
+                input.targetTurnAngle(),
+                input.power()
+        ));
+    }
+
+    private static CarriageDriveInput createCarriageControlInput(boolean controlsEnabled,
+                                                                boolean forwardDown,
+                                                                boolean backDown,
+                                                                boolean leftDown,
+                                                                boolean rightDown,
+                                                                float previousTurnAngle,
+                                                                float currentSpeed) {
+        CarriageDriveInput.AccelerationDirection acceleration = CarriageDriveInput.AccelerationDirection.NONE;
+        if (controlsEnabled && forwardDown && backDown) {
+            acceleration = CarriageDriveInput.AccelerationDirection.CHARGING;
+        } else if (controlsEnabled && forwardDown) {
+            acceleration = CarriageDriveInput.AccelerationDirection.FORWARD;
+        } else if (controlsEnabled && backDown) {
+            acceleration = CarriageDriveInput.AccelerationDirection.REVERSE;
+        }
+
+        CarriageDriveInput.TurnDirection turn = CarriageDriveInput.TurnDirection.FORWARD;
+        if (controlsEnabled && leftDown && !rightDown) {
+            turn = CarriageDriveInput.TurnDirection.LEFT;
+        } else if (controlsEnabled && rightDown && !leftDown) {
+            turn = CarriageDriveInput.TurnDirection.RIGHT;
+        }
+
+        float targetTurnAngle = CarriageLandDriveModel.targetTurnAngle(previousTurnAngle, turn, currentSpeed, false);
+        float power = controlsEnabled && acceleration != CarriageDriveInput.AccelerationDirection.NONE ? 1.0F : 0.0F;
+        return new CarriageDriveInput(acceleration, turn, targetTurnAngle, power);
+    }
+
+    static CarriageDriveInput carriageControlInputForTest(boolean controlsEnabled,
+                                                         boolean forwardDown,
+                                                         boolean backDown,
+                                                         boolean leftDown,
+                                                         boolean rightDown,
+                                                         float previousTurnAngle,
+                                                         float currentSpeed) {
+        return createCarriageControlInput(
+                controlsEnabled,
+                forwardDown,
+                backDown,
+                leftDown,
+                rightDown,
+                previousTurnAngle,
+                currentSpeed
+        );
     }
 }

@@ -69,12 +69,23 @@ public final class RoadPlannerRoadOverlayRenderModel {
                                           Set<String> selectedReuseRoadIds,
                                           BlockPos hoveredNode,
                                           boolean showAllNodes) {
+        return keyNodes(overlay, selectedMerge, selectedReuseRoadIds, hoveredNode, showAllNodes, 1);
+    }
+
+    public static List<BlockPos> keyNodes(RoadPlannerRoadOverlaySyncPacket.Entry overlay,
+                                          RoadPlannerMergeSelection selectedMerge,
+                                          Set<String> selectedReuseRoadIds,
+                                          BlockPos hoveredNode,
+                                          boolean showAllNodes,
+                                          int lodStepBlocks) {
         if (overlay == null) {
             return List.of();
         }
         ArrayList<BlockPos> nodes = new ArrayList<>();
-        if (showAllNodes) {
-            nodes.addAll(overlay.displayPath());
+        boolean selectedRoad = (selectedMerge != null && selectedMerge.present() && overlay.roadId().equals(selectedMerge.roadId()))
+                || (selectedReuseRoadIds != null && selectedReuseRoadIds.contains(overlay.roadId()));
+        if (showAllNodes || selectedRoad) {
+            nodes.addAll(RoadPlannerOverlayLod.simplify(overlay.displayPath(), Math.max(1, lodStepBlocks)));
         }
         if (selectedMerge != null && selectedMerge.present() && overlay.roadId().equals(selectedMerge.roadId())) {
             nodes.add(selectedMerge.anchorPos());

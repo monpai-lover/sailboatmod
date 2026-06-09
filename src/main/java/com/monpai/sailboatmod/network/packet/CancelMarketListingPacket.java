@@ -13,20 +13,20 @@ import java.util.function.Supplier;
 
 public class CancelMarketListingPacket {
     private final BlockPos marketPos;
-    private final int listingIndex;
+    private final String listingId;
 
-    public CancelMarketListingPacket(BlockPos marketPos, int listingIndex) {
+    public CancelMarketListingPacket(BlockPos marketPos, String listingId) {
         this.marketPos = marketPos;
-        this.listingIndex = listingIndex;
+        this.listingId = listingId == null ? "" : listingId;
     }
 
     public static void encode(CancelMarketListingPacket packet, FriendlyByteBuf buffer) {
         buffer.writeBlockPos(packet.marketPos);
-        buffer.writeVarInt(packet.listingIndex);
+        PacketStringCodec.writeUtfSafe(buffer, packet.listingId, 64);
     }
 
     public static CancelMarketListingPacket decode(FriendlyByteBuf buffer) {
-        return new CancelMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt());
+        return new CancelMarketListingPacket(buffer.readBlockPos(), buffer.readUtf(64));
     }
 
     public static void handle(CancelMarketListingPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -39,7 +39,7 @@ public class CancelMarketListingPacket {
             if (!(player.level().getBlockEntity(packet.marketPos) instanceof MarketBlockEntity market)) {
                 return;
             }
-            MarketBlockEntity.CancelListingResult result = market.cancelListingResult(player, packet.listingIndex);
+            MarketBlockEntity.CancelListingResult result = market.cancelListingResultById(player.getUUID().toString(), packet.listingId);
             String messageKey = result.messageKey();
             if (!messageKey.isBlank()) {
                 ModNetwork.CHANNEL.send(

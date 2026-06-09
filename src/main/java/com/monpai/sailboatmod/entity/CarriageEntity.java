@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.entity;
 
+import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.item.PostRouteBookItem;
@@ -26,6 +27,8 @@ import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
@@ -45,6 +48,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -76,6 +80,26 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         RECALL
     }
 
+    private enum MovementSoundSurfaceType {
+        NONE(""),
+        STONE("entity.carriage.move.stone"),
+        GRASS("entity.carriage.move.grass"),
+        SAND("entity.carriage.move.sand"),
+        SNOW("entity.carriage.move.snow"),
+        WOOD("entity.carriage.move.wood"),
+        GROUND("entity.carriage.move.ground");
+
+        private final String path;
+
+        MovementSoundSurfaceType(String path) {
+            this.path = path;
+        }
+
+        String fullPath() {
+            return path.isBlank() ? "" : SailboatMod.MODID + ":" + path;
+        }
+    }
+
     public record LandTaskSnapshot(@Nullable BlockPos homeStationPos,
                                    @Nullable BlockPos destinationStationPos,
                                    String destinationTownId,
@@ -84,6 +108,19 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         public LandTaskSnapshot {
             destinationTownId = destinationTownId == null ? "" : destinationTownId.trim();
             taskKind = taskKind == null ? TransportTaskKind.NONE : taskKind;
+        }
+    }
+
+    public record ArrivalHoldSnapshot(@Nullable BlockPos pendingReturnStationPos,
+                                      int pendingReturnDelayTicks,
+                                      int arrivalNoticeTicks,
+                                      List<Vec3> completedRouteWaypoints) {
+        public ArrivalHoldSnapshot {
+            pendingReturnDelayTicks = Math.max(0, pendingReturnDelayTicks);
+            arrivalNoticeTicks = Math.max(0, arrivalNoticeTicks);
+            completedRouteWaypoints = completedRouteWaypoints == null
+                    ? List.of()
+                    : List.copyOf(completedRouteWaypoints);
         }
     }
 
@@ -119,10 +156,17 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Float> DATA_TARGET_TURN_ANGLE =
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.FLOAT);
+    private static final EntityDataAccessor<Integer> DATA_ARRIVAL_NOTICE_UNTIL_TICK =
+            SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.INT);
 
     private static final RawAnimation CARRIAGE_DRIVE_ANIMATION = RawAnimation.begin().thenLoop("animation.carriage.drive");
     private static final int INVENTORY_SIZE = 27;
     private static final int SEAT_COUNT = 5;
+    private static final String NBT_PENDING_RETURN_STATION_POS = "PendingReturnStationPos";
+    private static final String NBT_PENDING_RETURN_DELAY_TICKS = "PendingReturnDelayTicks";
+    private static final String NBT_PENDING_RETURN_COMPLETED_ROUTE = "PendingReturnCompletedRoute";
+    private static final String NBT_ARRIVAL_NOTICE_TICKS = "ArrivalNoticeTicks";
+    private static final boolean ALLOW_TERRAIN_FALLBACK_FOR_LAND_RETURN = false;
     private static final float LAND_VEHICLE_STEP_HEIGHT = 1.0F;
     private static final double MIN_DRIVEABLE_GROUND_HEIGHT = 0.125D;
     private static final float MAX_FORWARD_SPEED = 10.5F;
@@ -135,11 +179,25 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private static final float ROAD_SURFACE_MODIFIER = 1.0F;
     private static final float OFFROAD_SURFACE_MODIFIER = 0.62F;
     private static final double GRAVITY = -0.08D;
+    private static final float MOVEMENT_SOUND_MIN_SPEED = 0.25F;
+    private static final int MOVEMENT_SOUND_SLOW_INTERVAL_TICKS = 16;
+    private static final int MOVEMENT_SOUND_FAST_INTERVAL_TICKS = 7;
+    private static final float MOVEMENT_SOUND_MIN_VOLUME = 0.22F;
+    private static final float MOVEMENT_SOUND_MAX_VOLUME = 0.58F;
+    private static final float MOVEMENT_SOUND_MIN_PITCH = 0.78F;
+    private static final float MOVEMENT_SOUND_MAX_PITCH = 1.12F;
+    private static final double MOVEMENT_SOUND_SURFACE_SAMPLE_DEPTH = 0.15D;
+    private static final int MOVEMENT_SOUND_SURFACE_SCAN_BLOCKS = 2;
+    private static final int ARRIVAL_NOTICE_TICKS = 100;
+    private static final int ARRIVAL_RETURN_DELAY_TICKS = 100;
     private static final double AUTOPILOT_ARRIVAL_RADIUS = 3.2D;
     private static final double AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS = 7.5D;
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
+    private static final double AUTOPILOT_RAIL_STEP_DISTANCE = 0.36D;
+    private static final float AUTOPILOT_RAIL_YAW_LERP = 0.35F;
     private static final float AUTOPILOT_TURN_IN_PLACE_DEGREES = 95.0F;
     private static final float AUTOPILOT_SLOW_TURN_DEGREES = 55.0F;
+    private static final int NETWORK_LERP_STEPS = 10;
     private static final Vec3[] PASSENGER_OFFSETS = new Vec3[] {
             new Vec3(0.0D, 0.65D, 0.15D),
             new Vec3(-0.75D, 0.65D, -0.25D),
@@ -153,6 +211,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private final Map<UUID, Integer> seatAssignments = new HashMap<>();
     private final List<RouteDefinition> routeCatalog = new ArrayList<>();
     private final List<Vec3> autopilotRoute = new ArrayList<>();
+    private final List<Vec3> pendingReturnCompletedRoute = new ArrayList<>();
     private final List<ShipmentManifestEntry> pendingShipmentManifest = new ArrayList<>();
     private final CarriageManualInputState manualInputState = new CarriageManualInputState();
 
@@ -179,12 +238,22 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private String destinationTownId = "";
     @Nullable
     private BlockPos dockedStationPos;
+    @Nullable
+    private BlockPos pendingReturnStationPos;
     private String dockedTownId = "";
     private boolean autoReturnOnArrival = true;
     private TransportTaskKind transportTaskKind = TransportTaskKind.NONE;
+    private int pendingReturnDelayTicks = 0;
     private int rentalPrice = SailboatEntity.DEFAULT_RENTAL_PRICE;
     private int lastPassengerCount = 0;
     private boolean passengerSoundStateInitialized = false;
+    private int movementSoundCooldownTicks = 0;
+    private int lerpSteps;
+    private double lerpX;
+    private double lerpY;
+    private double lerpZ;
+    private double lerpYaw;
+    private double lerpPitch;
 
     private final Container container = new Container() {
         @Override
@@ -264,6 +333,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         this.entityData.define(DATA_ACCELERATION, CarriageDriveInput.AccelerationDirection.NONE.ordinal());
         this.entityData.define(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
         this.entityData.define(DATA_TARGET_TURN_ANGLE, 0.0F);
+        this.entityData.define(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
     }
 
     @Override
@@ -284,6 +354,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         tag.putString("DockedTownId", dockedTownId == null ? "" : dockedTownId);
         tag.putBoolean("AutoReturnOnArrival", autoReturnOnArrival);
         tag.putString("TransportTaskKind", transportTaskKind.name());
+        writeArrivalHoldState(tag, pendingReturnStationPos, pendingReturnDelayTicks, getArrivalNoticeTicks(), pendingReturnCompletedRoute);
         RouteNbtUtil.writeRoutes(tag, "RouteCatalog", routeCatalog);
 
         ListTag seats = new ListTag();
@@ -315,6 +386,12 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         dockedTownId = tag.getString("DockedTownId");
         autoReturnOnArrival = !tag.contains("AutoReturnOnArrival") || tag.getBoolean("AutoReturnOnArrival");
         transportTaskKind = parseTaskKind(tag.getString("TransportTaskKind"));
+        ArrivalHoldSnapshot arrivalHold = readArrivalHoldState(tag);
+        pendingReturnStationPos = arrivalHold.pendingReturnStationPos();
+        pendingReturnDelayTicks = arrivalHold.pendingReturnDelayTicks();
+        pendingReturnCompletedRoute.clear();
+        pendingReturnCompletedRoute.addAll(arrivalHold.completedRouteWaypoints());
+        setArrivalNoticeTicks(arrivalHold.arrivalNoticeTicks());
 
         seatAssignments.clear();
         ListTag seats = tag.getList("SeatAssignments", Tag.TAG_COMPOUND);
@@ -332,24 +409,45 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         this.vehicleMotionZ = 0.0F;
         this.driveState = CarriageLandDriveModel.State.idle(getYRot());
         this.lastClientInput = CarriageDriveInput.idle();
+        if (isWaitingForDelayedAutoReturn()) {
+            entityData.set(DATA_AUTOPILOT_ACTIVE, true);
+            entityData.set(DATA_AUTOPILOT_PAUSED, true);
+        }
     }
 
     @Override
     public void tick() {
         super.tick();
+        tickNetworkLerp();
         cleanupSeatAssignments();
         if (level().isClientSide) {
+            if (shouldRunClientLandDrive(isAutopilotActive())) {
+                tickLandDrive();
+            }
+            spawnMovementParticles();
             return;
         }
 
-        if (!hasManualControlPassenger()) {
+        if (!hasManualControlPassenger() && !isAutopilotActive()) {
             manualInputState.clear();
-            lastClientInput = CarriageDriveInput.idle();
             entityData.set(DATA_ACCELERATION, CarriageDriveInput.AccelerationDirection.NONE.ordinal());
             entityData.set(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
             entityData.set(DATA_TARGET_TURN_ANGLE, 0.0F);
         }
 
+        tickLandDrive();
+    }
+
+    private void tickLandDrive() {
+        if (!level().isClientSide && isWaitingForDelayedAutoReturn()) {
+            tickDelayedAutoReturnHold();
+            return;
+        }
+        if (!level().isClientSide && shouldUseRailAutopilot()) {
+            tickRailAutopilotDrive();
+            tickMovementSoundCue();
+            return;
+        }
         CarriageDriveInput input = createDriveInputForTick();
         driveState = CarriageLandDriveModel.step(
                 new CarriageLandDriveModel.State(
@@ -365,13 +463,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         currentSpeed = driveState.currentSpeed();
         turnAngle = driveState.turnAngle();
         wheelAngle = driveState.wheelAngle();
-        vehicleMotionX = (float) driveState.deltaMovement().x;
-        vehicleMotionZ = (float) driveState.deltaMovement().z;
+        Vec3 appliedMotion = appliedLandDriveMotion(getDeltaMovement(), driveState.deltaMovement());
+        vehicleMotionX = (float) appliedMotion.x;
+        vehicleMotionZ = (float) appliedMotion.z;
         setYRot(driveState.yaw());
         setYHeadRot(driveState.yaw());
         setYBodyRot(driveState.yaw());
-        setDeltaMovement(getDeltaMovement().add(0.0D, -0.08D, 0.0D));
-        move(MoverType.SELF, getDeltaMovement().add(vehicleMotionX, 0.0D, vehicleMotionZ));
+        setDeltaMovement(appliedMotion);
+        move(MoverType.SELF, appliedMotion);
         if (onGround()) {
             setDeltaMovement(getDeltaMovement().multiply(0.8D, 0.98D, 0.8D));
         } else {
@@ -380,15 +479,322 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         entityData.set(DATA_CURRENT_SPEED, currentSpeed);
         checkInsideBlocks();
 
+        tickMovementSoundCue();
+        tickPassengerSoundCue();
+    }
+
+    private void tickRailAutopilotDrive() {
+        CarriageRailPathFollower.StepResult step = railAutopilotStep(autopilotRoute, position(), autopilotTargetIndex);
+        autopilotTargetIndex = step.targetIndex();
+        if (step.finished()) {
+            applyRailAutopilotPose(step.position(), step.yaw(), step.position().subtract(position()));
+            finishAutopilot();
+            return;
+        }
+        if (!step.active()) {
+            applyRailAutopilotPose(position(), getYRot(), Vec3.ZERO);
+            stopAutopilot();
+            return;
+        }
+        applyRailAutopilotPose(step.position(), step.yaw(), step.deltaMovement());
+        checkInsideBlocks();
+        tickPassengerSoundCue();
+    }
+
+    private void applyRailAutopilotPose(Vec3 nextPosition, float yaw, Vec3 delta) {
+        Vec3 safePosition = nextPosition == null ? position() : nextPosition;
+        Vec3 safeDelta = delta == null ? Vec3.ZERO : delta;
+        float poseYaw = railAutopilotPoseYaw(getYRot(), yaw, safeDelta);
+        setYRot(poseYaw);
+        setYHeadRot(poseYaw);
+        setYBodyRot(poseYaw);
+        yRotO = poseYaw;
+        setPos(safePosition.x, safePosition.y, safePosition.z);
+        setDeltaMovement(safeDelta);
+        currentSpeed = (float) Mth.clamp(horizontalDistance(Vec3.ZERO, safeDelta) * 20.0D, 0.0D, CarriageLandDriveModel.MAX_FORWARD_SPEED);
+        turnAngle = 0.0F;
+        wheelAngle = 0.0F;
+        vehicleMotionX = (float) safeDelta.x;
+        vehicleMotionZ = (float) safeDelta.z;
+        driveState = new CarriageLandDriveModel.State(currentSpeed, turnAngle, wheelAngle, poseYaw, safeDelta);
+        entityData.set(DATA_CURRENT_SPEED, currentSpeed);
+        entityData.set(DATA_ACCELERATION, safeDelta.lengthSqr() > 1.0E-8D
+                ? CarriageDriveInput.AccelerationDirection.FORWARD.ordinal()
+                : CarriageDriveInput.AccelerationDirection.NONE.ordinal());
+        entityData.set(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
+        entityData.set(DATA_TARGET_TURN_ANGLE, 0.0F);
+    }
+
+    private static float railAutopilotPoseYaw(float currentYaw, float routeYaw, Vec3 delta) {
+        Vec3 safeDelta = delta == null ? Vec3.ZERO : delta;
+        if (horizontalDistance(Vec3.ZERO, safeDelta) <= 1.0E-6D) {
+            return routeYaw;
+        }
+        return yawFromHorizontalDelta(safeDelta);
+    }
+
+    private static float yawFromHorizontalDelta(Vec3 delta) {
+        Vec3 safeDelta = delta == null ? Vec3.ZERO : delta;
+        if (Math.abs(safeDelta.x) <= 1.0E-6D && Math.abs(safeDelta.z) <= 1.0E-6D) {
+            return 0.0F;
+        }
+        return (float) (Mth.atan2(-safeDelta.x, safeDelta.z) * (180.0D / Math.PI));
+    }
+
+    private static float smoothRailAutopilotYaw(float currentYaw, float desiredYaw) {
+        return Mth.rotLerp(AUTOPILOT_RAIL_YAW_LERP, currentYaw, desiredYaw);
+    }
+
+    private void tickMovementSoundCue() {
+        if (level().isClientSide) {
+            return;
+        }
+        MovementSoundCue cue = movementSoundCue(currentSpeed, movementSoundCooldownTicks);
+        movementSoundCooldownTicks = cue.nextCooldownTicks();
+        if (cue.play()) {
+            BlockState surfaceState = movementSoundSurfaceState();
+            SoundEvent soundEvent = movementSoundEventForSurface(surfaceState);
+            if (soundEvent == null) {
+                return;
+            }
+            level().playSound(
+                    null,
+                    blockPosition(),
+                    soundEvent,
+                    SoundSource.NEUTRAL,
+                    cue.volume(),
+                    cue.pitch()
+            );
+        }
+    }
+
+    private static MovementSoundCue movementSoundCue(float speedMetersPerSecond, int cooldownTicks) {
+        float speed = Math.abs(speedMetersPerSecond);
+        if (speed < MOVEMENT_SOUND_MIN_SPEED) {
+            return MovementSoundCue.silent(0);
+        }
+        if (cooldownTicks > 0) {
+            return MovementSoundCue.silent(cooldownTicks - 1);
+        }
+        float factor = Mth.clamp(speed / MAX_FORWARD_SPEED, 0.0F, 1.0F);
+        int interval = Math.max(
+                MOVEMENT_SOUND_FAST_INTERVAL_TICKS,
+                Math.round(Mth.lerp(factor, MOVEMENT_SOUND_SLOW_INTERVAL_TICKS, MOVEMENT_SOUND_FAST_INTERVAL_TICKS))
+        );
+        float volume = Mth.lerp(factor, MOVEMENT_SOUND_MIN_VOLUME, MOVEMENT_SOUND_MAX_VOLUME);
+        float pitch = Mth.lerp(factor, MOVEMENT_SOUND_MIN_PITCH, MOVEMENT_SOUND_MAX_PITCH);
+        return new MovementSoundCue(true, interval, volume, pitch);
+    }
+
+    @Nullable
+    private BlockState movementSoundSurfaceState() {
+        if (level() == null) {
+            return null;
+        }
+        BlockPos start = movementSoundSurfacePos(getX(), getBoundingBox().minY, getZ(), onGround(), blockPosition());
+        for (int offset = 0; offset <= MOVEMENT_SOUND_SURFACE_SCAN_BLOCKS; offset++) {
+            BlockPos pos = start.below(offset);
+            BlockState state = level().getBlockState(pos);
+            if (isMovementSoundSurfaceState(state, level(), pos)) {
+                return state;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static SoundEvent movementSoundEventForSurface(@Nullable BlockState state) {
+        return switch (movementSoundSurfaceType(state)) {
+            case STONE -> ModSounds.CARRIAGE_MOVE_STONE.get();
+            case GRASS -> ModSounds.CARRIAGE_MOVE_GRASS.get();
+            case SAND -> ModSounds.CARRIAGE_MOVE_SAND.get();
+            case SNOW -> ModSounds.CARRIAGE_MOVE_SNOW.get();
+            case WOOD -> ModSounds.CARRIAGE_MOVE_WOOD.get();
+            case GROUND -> ModSounds.CARRIAGE_MOVE_GROUND.get();
+            case NONE -> null;
+        };
+    }
+
+    private static BlockPos movementSoundSurfacePos(double x,
+                                                    double minY,
+                                                    double z,
+                                                    boolean onGround,
+                                                    BlockPos blockPosition) {
+        return BlockPos.containing(x, minY - MOVEMENT_SOUND_SURFACE_SAMPLE_DEPTH, z);
+    }
+
+    private static MovementSoundSurfaceType movementSoundSurfaceType(@Nullable BlockState state) {
+        if (!isMovementSoundSurfaceState(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO)) {
+            return MovementSoundSurfaceType.NONE;
+        }
+        if (isSnowMovementSurface(state)) {
+            return MovementSoundSurfaceType.SNOW;
+        }
+        if (isSandMovementSurface(state)) {
+            return MovementSoundSurfaceType.SAND;
+        }
+        if (isWoodMovementSurface(state)) {
+            return MovementSoundSurfaceType.WOOD;
+        }
+        if (isGrassMovementSurface(state)) {
+            return MovementSoundSurfaceType.GRASS;
+        }
+        if (isGroundMovementSurface(state)) {
+            return MovementSoundSurfaceType.GROUND;
+        }
+        if (isStoneMovementSurface(state)) {
+            return MovementSoundSurfaceType.STONE;
+        }
+        return MovementSoundSurfaceType.GROUND;
+    }
+
+    private static boolean isStoneMovementSurface(BlockState state) {
+        return state.is(Blocks.STONE)
+                || state.is(Blocks.SMOOTH_STONE)
+                || state.is(Blocks.SMOOTH_STONE_SLAB)
+                || state.is(Blocks.COBBLESTONE)
+                || state.is(Blocks.COBBLESTONE_SLAB)
+                || state.is(Blocks.COBBLESTONE_STAIRS)
+                || state.is(Blocks.STONE_BRICKS)
+                || state.is(Blocks.STONE_BRICK_SLAB)
+                || state.is(Blocks.STONE_BRICK_STAIRS)
+                || state.is(Blocks.DEEPSLATE)
+                || state.is(Blocks.COBBLED_DEEPSLATE)
+                || state.is(Blocks.POLISHED_DEEPSLATE);
+    }
+
+    private static boolean isGrassMovementSurface(BlockState state) {
+        return state.is(Blocks.GRASS_BLOCK)
+                || state.is(Blocks.PODZOL)
+                || state.is(Blocks.MYCELIUM)
+                || state.is(Blocks.MOSS_BLOCK);
+    }
+
+    private static boolean isSandMovementSurface(BlockState state) {
+        return state.is(Blocks.SAND)
+                || state.is(Blocks.RED_SAND)
+                || state.is(Blocks.SANDSTONE)
+                || state.is(Blocks.SANDSTONE_SLAB)
+                || state.is(Blocks.SANDSTONE_STAIRS)
+                || state.is(Blocks.SMOOTH_SANDSTONE)
+                || state.is(Blocks.SMOOTH_SANDSTONE_SLAB)
+                || state.is(Blocks.SMOOTH_SANDSTONE_STAIRS);
+    }
+
+    private static boolean isSnowMovementSurface(BlockState state) {
+        return state.is(Blocks.SNOW)
+                || state.is(Blocks.SNOW_BLOCK)
+                || state.is(Blocks.POWDER_SNOW)
+                || state.is(Blocks.ICE)
+                || state.is(Blocks.PACKED_ICE)
+                || state.is(Blocks.BLUE_ICE);
+    }
+
+    private static boolean isWoodMovementSurface(BlockState state) {
+        return state.is(Blocks.OAK_PLANKS)
+                || state.is(Blocks.OAK_SLAB)
+                || state.is(Blocks.OAK_STAIRS)
+                || state.is(Blocks.SPRUCE_PLANKS)
+                || state.is(Blocks.SPRUCE_SLAB)
+                || state.is(Blocks.SPRUCE_STAIRS)
+                || state.is(Blocks.BIRCH_PLANKS)
+                || state.is(Blocks.BIRCH_SLAB)
+                || state.is(Blocks.BIRCH_STAIRS)
+                || state.is(Blocks.JUNGLE_PLANKS)
+                || state.is(Blocks.JUNGLE_SLAB)
+                || state.is(Blocks.JUNGLE_STAIRS)
+                || state.is(Blocks.ACACIA_PLANKS)
+                || state.is(Blocks.ACACIA_SLAB)
+                || state.is(Blocks.ACACIA_STAIRS)
+                || state.is(Blocks.DARK_OAK_PLANKS)
+                || state.is(Blocks.DARK_OAK_SLAB)
+                || state.is(Blocks.DARK_OAK_STAIRS)
+                || state.is(Blocks.MANGROVE_PLANKS)
+                || state.is(Blocks.MANGROVE_SLAB)
+                || state.is(Blocks.MANGROVE_STAIRS)
+                || state.is(Blocks.CHERRY_PLANKS)
+                || state.is(Blocks.CHERRY_SLAB)
+                || state.is(Blocks.CHERRY_STAIRS)
+                || state.is(Blocks.BAMBOO_PLANKS)
+                || state.is(Blocks.BAMBOO_SLAB)
+                || state.is(Blocks.BAMBOO_STAIRS);
+    }
+
+    private static boolean isGroundMovementSurface(BlockState state) {
+        return state.is(Blocks.DIRT)
+                || state.is(Blocks.COARSE_DIRT)
+                || state.is(Blocks.ROOTED_DIRT)
+                || state.is(Blocks.DIRT_PATH)
+                || state.is(Blocks.MUD)
+                || state.is(Blocks.MUD_BRICKS)
+                || state.is(Blocks.MUD_BRICK_SLAB)
+                || state.is(Blocks.MUD_BRICK_STAIRS)
+                || state.is(Blocks.CLAY)
+                || state.is(Blocks.GRAVEL);
+    }
+
+    private static boolean isMovementSoundSurfaceState(@Nullable BlockState state, BlockGetter level, BlockPos pos) {
+        return state != null
+                && !state.isAir()
+                && state.getFluidState().isEmpty()
+                && isDriveableGroundState(state, level, pos);
+    }
+
+    private boolean shouldUseRailAutopilot() {
+        return isAutopilotActive() && !isAutopilotPaused() && hasAutopilotRoute();
+    }
+
+    private static CarriageRailPathFollower.StepResult railAutopilotStep(List<Vec3> route, Vec3 position, int targetIndex) {
+        return CarriageRailPathFollower.step(route, position, targetIndex, AUTOPILOT_RAIL_STEP_DISTANCE);
+    }
+
+    private void tickPassengerSoundCue() {
         int currentPassengerCount = getPassengers().size();
-        PassengerSoundCue cue = passengerSoundCueForTick(passengerSoundStateInitialized, lastPassengerCount, currentPassengerCount);
-        if (cue == PassengerSoundCue.ATTACH) {
-            level().playSound(null, blockPosition(), ModSounds.CARRIAGE_ATTACH.get(), SoundSource.NEUTRAL, 0.85F, 1.0F);
-        } else if (cue == PassengerSoundCue.DETACH) {
-            level().playSound(null, blockPosition(), ModSounds.CARRIAGE_DETACH.get(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+        if (!level().isClientSide) {
+            PassengerSoundCue cue = passengerSoundCueForTick(passengerSoundStateInitialized, lastPassengerCount, currentPassengerCount);
+            if (cue == PassengerSoundCue.ATTACH) {
+                level().playSound(null, blockPosition(), ModSounds.CARRIAGE_ATTACH.get(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+            } else if (cue == PassengerSoundCue.DETACH) {
+                level().playSound(null, blockPosition(), ModSounds.CARRIAGE_DETACH.get(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+            }
         }
         lastPassengerCount = currentPassengerCount;
         passengerSoundStateInitialized = true;
+    }
+
+    private void tickNetworkLerp() {
+        if (isControlledByLocalInstance()) {
+            lerpSteps = lerpStepsAfterLocalControl(lerpSteps);
+            syncPacketPositionCodec(getX(), getY(), getZ());
+        }
+
+        if (lerpSteps > 0) {
+            double nextX = getX() + (lerpX - getX()) / (double) lerpSteps;
+            double nextY = getY() + (lerpY - getY()) / (double) lerpSteps;
+            double nextZ = getZ() + (lerpZ - getZ()) / (double) lerpSteps;
+            double nextYawDelta = Mth.wrapDegrees(lerpYaw - (double) getYRot());
+            setYRot((float) ((double) getYRot() + nextYawDelta / (double) lerpSteps));
+            setXRot((float) ((double) getXRot() + (lerpPitch - (double) getXRot()) / (double) lerpSteps));
+            --lerpSteps;
+            setPos(nextX, nextY, nextZ);
+            setRot(getYRot(), getXRot());
+        }
+    }
+
+    @Override
+    public void lerpTo(double x,
+                       double y,
+                       double z,
+                       float yRot,
+                       float xRot,
+                       int posRotationIncrements,
+                       boolean teleport) {
+        lerpX = x;
+        lerpY = y;
+        lerpZ = z;
+        lerpYaw = yRot;
+        lerpPitch = xRot;
+        lerpSteps = networkLerpSteps(posRotationIncrements, isAutopilotActive());
     }
 
     private void resolveInputForTick() {
@@ -665,13 +1071,24 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (player == null || level().isClientSide || !isManualControlPassenger(player) || !canPlayerOperate(player)) {
             return;
         }
+        applyControlInputState(input);
+        if (lastClientInput.hasThrottle() || lastClientInput.turn() != CarriageDriveInput.TurnDirection.FORWARD) {
+            stopAutopilot();
+        }
+    }
+
+    public void applyClientControlInput(CarriageDriveInput input) {
+        if (!level().isClientSide) {
+            return;
+        }
+        applyControlInputState(input);
+    }
+
+    private void applyControlInputState(CarriageDriveInput input) {
         lastClientInput = input == null ? CarriageDriveInput.idle() : input;
         entityData.set(DATA_ACCELERATION, lastClientInput.acceleration().ordinal());
         entityData.set(DATA_TURN_DIRECTION, lastClientInput.turn().ordinal());
         entityData.set(DATA_TARGET_TURN_ANGLE, lastClientInput.targetTurnAngle());
-        if (lastClientInput.hasThrottle() || lastClientInput.turn() != CarriageDriveInput.TurnDirection.FORWARD) {
-            stopAutopilot();
-        }
     }
 
     public void applyManualControlInput(Player player, boolean left, boolean right, boolean forward, boolean back) {
@@ -781,6 +1198,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return entityData.get(DATA_AUTOPILOT_PAUSED);
     }
 
+    public int getArrivalNoticeTicks() {
+        return Math.max(0, entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK) - tickCount);
+    }
+
     public int getRouteCount() {
         return entityData.get(DATA_ROUTE_COUNT);
     }
@@ -847,10 +1268,15 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return false;
         }
         autopilotRoute.clear();
-        autopilotRoute.addAll(route.waypoints());
+        autopilotRoute.addAll(autopilotRouteWithCurrentStart(route.waypoints(), position(), routeDockPos));
         if (autopilotRoute.size() < 2) {
             stopAutopilot();
             return false;
+        }
+        Vec3 snappedStart = railAutopilotStartPosition(autopilotRoute, position(), routeDockPos);
+        if (snappedStart != null && horizontalDistance(position(), snappedStart) > 1.0E-6D) {
+            setPos(snappedStart.x, snappedStart.y, snappedStart.z);
+            setDeltaMovement(Vec3.ZERO);
         }
         autopilotTargetIndex = 1;
         autopilotRouteName = route.name() == null || route.name().isBlank() ? "Route-" + (selectedRouteIndex + 1) : route.name();
@@ -864,6 +1290,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (level().isClientSide) {
             return;
         }
+        clearDelayedAutoReturn();
         entityData.set(DATA_AUTOPILOT_ACTIVE, false);
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
         autopilotRoute.clear();
@@ -878,7 +1305,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     public void resumeAutopilot() {
-        if (!level().isClientSide && isAutopilotActive()) {
+        if (!level().isClientSide && isAutopilotActive() && !isWaitingForDelayedAutoReturn()) {
             entityData.set(DATA_AUTOPILOT_PAUSED, false);
         }
     }
@@ -1028,7 +1455,15 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     public float getCurrentSpeedForHud() {
-        return currentSpeed;
+        return currentSpeedForHud(currentSpeed, entityData.get(DATA_CURRENT_SPEED));
+    }
+
+    private static float currentSpeedForHud(float localCurrentSpeed, float syncedCurrentSpeed) {
+        return syncedCurrentSpeed;
+    }
+
+    static float currentSpeedForHudForTest(float localCurrentSpeed, float syncedCurrentSpeed) {
+        return currentSpeedForHud(localCurrentSpeed, syncedCurrentSpeed);
     }
 
     static CompoundTag saveLandTaskStateForTest(BlockPos home,
@@ -1055,8 +1490,53 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         );
     }
 
+    static int arrivalReturnDelayTicksForTest() {
+        return ARRIVAL_RETURN_DELAY_TICKS;
+    }
+
+    static int arrivalNoticeTicksForTest() {
+        return ARRIVAL_NOTICE_TICKS;
+    }
+
+    static boolean arrivalNoticeVisibleForTest(int remainingTicks) {
+        return arrivalNoticeVisible(remainingTicks);
+    }
+
+    static boolean shouldDelayReturnAfterArrivalForTest(boolean autoReturn, TransportTaskKind kind, boolean hasDestinationStation) {
+        return shouldDelayReturnAfterArrival(autoReturn, kind, hasDestinationStation);
+    }
+
+    static CompoundTag saveArrivalHoldStateForTest(@Nullable BlockPos pendingReturnStationPos,
+                                                   int pendingReturnDelayTicks,
+                                                   int arrivalNoticeTicks,
+                                                   List<Vec3> completedRouteWaypoints) {
+        CompoundTag tag = new CompoundTag();
+        writeArrivalHoldState(tag, pendingReturnStationPos, pendingReturnDelayTicks, arrivalNoticeTicks, completedRouteWaypoints);
+        return tag;
+    }
+
+    static ArrivalHoldSnapshot loadArrivalHoldStateForTest(CompoundTag tag) {
+        return readArrivalHoldState(tag);
+    }
+
+    public static SoundEvent arrivalSoundEventForTest() {
+        return arrivalSoundEvent();
+    }
+
     static boolean defaultAutoReturnForTaskForTest(TransportTaskKind kind) {
         return kind == TransportTaskKind.DISPATCH || kind == TransportTaskKind.MARKET_ORDER;
+    }
+
+    static boolean allowTerrainFallbackForLandReturnForTest() {
+        return ALLOW_TERRAIN_FALLBACK_FOR_LAND_RETURN;
+    }
+
+    static RouteDefinition reverseCompletedRouteForReturnForTest(List<Vec3> completedRoute, String currentStationName) {
+        RouteDefinition route = reverseCompletedRouteForReturn(completedRoute, currentStationName);
+        if (route == null) {
+            throw new IllegalArgumentException("completed route must contain at least two waypoints");
+        }
+        return route;
     }
 
     static boolean isRoadSurfaceForTest(BlockState state) {
@@ -1081,6 +1561,30 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     public static boolean usesServerAuthoritativeRiderMovementForTest() {
         return true;
+    }
+
+    public static boolean simulatesLandDriveOnClientForTest() {
+        return simulatesLandDriveOnClient();
+    }
+
+    public static boolean shouldRunClientLandDriveForTest(boolean autopilotActive) {
+        return shouldRunClientLandDrive(autopilotActive);
+    }
+
+    public static boolean appliesClientInputLocallyForTest() {
+        return true;
+    }
+
+    public static int networkLerpStepsForTest(int posRotationIncrements) {
+        return networkLerpSteps(posRotationIncrements);
+    }
+
+    public static int networkLerpStepsForAutopilotForTest(int posRotationIncrements) {
+        return networkLerpSteps(posRotationIncrements, true);
+    }
+
+    public static int lerpStepsAfterLocalControlForTest(int currentLerpSteps) {
+        return lerpStepsAfterLocalControl(currentLerpSteps);
     }
 
     public static boolean isDriveableGroundStateForTest(BlockState state) {
@@ -1117,6 +1621,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return CarriageLandDriveModel.step(state, input, new CarriageLandDriveModel.Environment(onGround, onRoad)).deltaMovement();
     }
 
+    private static Vec3 appliedLandDriveMotion(Vec3 previousVelocity, Vec3 driveDelta) {
+        return driveDelta == null ? Vec3.ZERO : driveDelta;
+    }
+
+    static Vec3 appliedLandDriveMotionForTest(Vec3 previousVelocity, Vec3 driveDelta) {
+        return appliedLandDriveMotion(previousVelocity, driveDelta);
+    }
+
     static double targetSpeedForTest(SailboatEntity.EngineGear gear) {
         if (gear == null || gear == SailboatEntity.EngineGear.STOP) {
             return 0.0D;
@@ -1129,6 +1641,86 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return segment != null && segment.kind() == CarriageRoutePlan.SegmentKind.ROAD_CORRIDOR
                 ? SailboatEntity.EngineGear.TWO_THIRDS_AHEAD
                 : SailboatEntity.EngineGear.ONE_THIRD_AHEAD;
+    }
+
+    static SailboatEntity.EngineGear autopilotGearForHeadingForTest(boolean finalTarget, double dist, float absYawError) {
+        return selectAutopilotGearForHeading(finalTarget, dist, absYawError, null);
+    }
+
+    static CarriageDriveInput.TurnDirection autopilotTurnDirectionForTargetForTest(Vec3 position, float yaw, Vec3 target) {
+        return autopilotTurnDirectionForTarget(position, yaw, target);
+    }
+
+    static int advanceAutopilotTargetIndexForTest(List<Vec3> route, Vec3 position, int targetIndex) {
+        return advanceAutopilotTargetIndex(route, position, targetIndex);
+    }
+
+    @Nullable
+    static Vec3 routeStartValidationPointForTest(RouteDefinition route, @Nullable BlockPos dockPos) {
+        return routeStartValidationPoint(route, dockPos);
+    }
+
+    static List<Vec3> autopilotRouteWithCurrentStartForTest(List<Vec3> route, Vec3 currentPosition) {
+        return autopilotRouteWithCurrentStart(route, currentPosition, null);
+    }
+
+    static List<Vec3> autopilotRouteWithCurrentStartForTest(List<Vec3> route,
+                                                            Vec3 currentPosition,
+                                                            @Nullable BlockPos dockPos) {
+        return autopilotRouteWithCurrentStart(route, currentPosition, dockPos);
+    }
+
+    static Vec3 railAutopilotStartPositionForTest(List<Vec3> route, Vec3 currentPosition, @Nullable BlockPos dockPos) {
+        return railAutopilotStartPosition(route, currentPosition, dockPos);
+    }
+
+    static CarriageRailPathFollower.StepResult autopilotRailStepForTest(List<Vec3> route, Vec3 position, int targetIndex) {
+        return railAutopilotStep(route, position, targetIndex);
+    }
+
+    static float railAutopilotPoseYawForTest(float currentYaw, float routeYaw, Vec3 delta) {
+        return railAutopilotPoseYaw(currentYaw, routeYaw, delta);
+    }
+
+    static float smoothRailAutopilotYawForTest(float currentYaw, float desiredYaw) {
+        return smoothRailAutopilotYaw(currentYaw, desiredYaw);
+    }
+
+    static MovementSoundCue movementSoundCueForTest(float speedMetersPerSecond, int cooldownTicks) {
+        return movementSoundCue(speedMetersPerSecond, cooldownTicks);
+    }
+
+    static BlockPos movementSoundSurfacePosForTest(double x,
+                                                   double minY,
+                                                   double z,
+                                                   boolean onGround,
+                                                   BlockPos blockPosition) {
+        return movementSoundSurfacePos(x, minY, z, onGround, blockPosition);
+    }
+
+    @Nullable
+    static SoundEvent movementSoundEventForSurfaceForTest(BlockState state) {
+        return movementSoundEventForSurface(state);
+    }
+
+    static String movementSoundEventPathForSurfaceForTest(BlockState state) {
+        return movementSoundSurfaceType(state).fullPath();
+    }
+
+    static boolean hasMovementSoundSurfaceForTest(BlockState state) {
+        return isMovementSoundSurfaceState(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+    }
+
+    record MovementSoundCue(boolean play, int nextCooldownTicks, float volume, float pitch) {
+        MovementSoundCue {
+            nextCooldownTicks = Math.max(0, nextCooldownTicks);
+            volume = Math.max(0.0F, volume);
+            pitch = Math.max(0.0F, pitch);
+        }
+
+        static MovementSoundCue silent(int nextCooldownTicks) {
+            return new MovementSoundCue(false, nextCooldownTicks, 0.0F, 0.0F);
+        }
     }
 
     public static PassengerSoundCue passengerSoundCueForTest(int previousCount, int currentCount) {
@@ -1159,7 +1751,11 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                 return new CarriageDriveInput(command.acceleration(), command.turnDirection(), nextTurnAngle, power);
             }
         }
-        return lastClientInput;
+        CarriageDriveInput.AccelerationDirection accel = getAccelerationDirection();
+        CarriageDriveInput.TurnDirection turn = getTurnDirectionEnum();
+        float targetAngle = entityData.get(DATA_TARGET_TURN_ANGLE);
+        float power = (accel != CarriageDriveInput.AccelerationDirection.NONE) ? 1.0F : 0.0F;
+        return new CarriageDriveInput(accel, turn, targetAngle, power);
     }
 
     private AutopilotCommand computeAutopilotCommand() {
@@ -1168,30 +1764,20 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return AutopilotCommand.inactive();
         }
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
+        autopilotTargetIndex = advanceAutopilotTargetIndex(autopilotRoute, position(), autopilotTargetIndex);
         Vec3 target = autopilotRoute.get(autopilotTargetIndex);
         double dx = target.x - getX();
         double dz = target.z - getZ();
         double dist = Math.sqrt(dx * dx + dz * dz);
-        double arrivalRadius = autopilotTargetIndex == 0
-                ? Math.max(AUTOPILOT_ARRIVAL_RADIUS, AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS)
-                : AUTOPILOT_ARRIVAL_RADIUS;
-        if (dist <= arrivalRadius) {
-            if (autopilotTargetIndex >= autopilotRoute.size() - 1) {
-                finishAutopilot();
-                return AutopilotCommand.inactive();
-            }
-            autopilotTargetIndex++;
-            target = autopilotRoute.get(autopilotTargetIndex);
-            dx = target.x - getX();
-            dz = target.z - getZ();
-            dist = Math.sqrt(dx * dx + dz * dz);
+        if (autopilotTargetIndex >= autopilotRoute.size() - 1
+                && dist <= arrivalRadiusForTargetIndex(autopilotTargetIndex)) {
+            finishAutopilot();
+            return AutopilotCommand.inactive();
         }
         float desiredYaw = (float) (Mth.atan2(-dx, dz) * (180.0D / Math.PI));
         float yawError = Mth.wrapDegrees(desiredYaw - getYRot());
         float absYawError = Math.abs(yawError);
-        CarriageDriveInput.TurnDirection turnDirection = yawError > 1.5F
-                ? CarriageDriveInput.TurnDirection.LEFT
-                : yawError < -1.5F ? CarriageDriveInput.TurnDirection.RIGHT : CarriageDriveInput.TurnDirection.FORWARD;
+        CarriageDriveInput.TurnDirection turnDirection = autopilotTurnDirectionForYawError(yawError);
         SailboatEntity.EngineGear gear = selectAutopilotGear(autopilotTargetIndex >= autopilotRoute.size() - 1, dist, absYawError);
         CarriageDriveInput.AccelerationDirection acceleration = gear == SailboatEntity.EngineGear.STOP
                 ? CarriageDriveInput.AccelerationDirection.NONE
@@ -1199,16 +1785,150 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return new AutopilotCommand(true, acceleration, turnDirection, gear);
     }
 
+    private static CarriageDriveInput.TurnDirection autopilotTurnDirectionForTarget(Vec3 position, float yaw, Vec3 target) {
+        if (position == null || target == null) {
+            return CarriageDriveInput.TurnDirection.FORWARD;
+        }
+        double dx = target.x - position.x;
+        double dz = target.z - position.z;
+        float desiredYaw = (float) (Mth.atan2(-dx, dz) * (180.0D / Math.PI));
+        float yawError = Mth.wrapDegrees(desiredYaw - yaw);
+        return autopilotTurnDirectionForYawError(yawError);
+    }
+
+    private static CarriageDriveInput.TurnDirection autopilotTurnDirectionForYawError(float yawError) {
+        return yawError > 1.5F
+                ? CarriageDriveInput.TurnDirection.RIGHT
+                : yawError < -1.5F ? CarriageDriveInput.TurnDirection.LEFT : CarriageDriveInput.TurnDirection.FORWARD;
+    }
+
+    private static int advanceAutopilotTargetIndex(List<Vec3> route, Vec3 position, int targetIndex) {
+        if (route == null || route.isEmpty() || position == null) {
+            return 0;
+        }
+        int index = Mth.clamp(targetIndex, 0, route.size() - 1);
+        int guard = 0;
+        while (index < route.size() - 1 && guard < 32) {
+            Vec3 target = route.get(index);
+            if (target == null || horizontalDistance(position, target) > arrivalRadiusForTargetIndex(index)) {
+                break;
+            }
+            index++;
+            guard++;
+        }
+        return index;
+    }
+
+    private static double arrivalRadiusForTargetIndex(int targetIndex) {
+        return targetIndex == 0
+                ? Math.max(AUTOPILOT_ARRIVAL_RADIUS, AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS)
+                : AUTOPILOT_ARRIVAL_RADIUS;
+    }
+
+    private static double horizontalDistance(Vec3 left, Vec3 right) {
+        double dx = right.x - left.x;
+        double dz = right.z - left.z;
+        return Math.sqrt(dx * dx + dz * dz);
+    }
+
     private SailboatEntity.EngineGear selectAutopilotGear(boolean finalTarget, double dist, float absYawError) {
+        ensureActiveRoutePlan();
+        CarriageRoutePlan.Segment segment = activeRoutePlan.segmentForWaypointIndex(autopilotTargetIndex);
+        return selectAutopilotGearForHeading(finalTarget, dist, absYawError, segment);
+    }
+
+    private static SailboatEntity.EngineGear selectAutopilotGearForHeading(boolean finalTarget,
+                                                                           double dist,
+                                                                           float absYawError,
+                                                                           @Nullable CarriageRoutePlan.Segment segment) {
         if (absYawError > AUTOPILOT_TURN_IN_PLACE_DEGREES) {
-            return SailboatEntity.EngineGear.STOP;
+            return SailboatEntity.EngineGear.ONE_THIRD_AHEAD;
         }
         if (absYawError > AUTOPILOT_SLOW_TURN_DEGREES || dist < AUTOPILOT_SLOWDOWN_RADIUS || finalTarget) {
             return SailboatEntity.EngineGear.ONE_THIRD_AHEAD;
         }
-        ensureActiveRoutePlan();
-        CarriageRoutePlan.Segment segment = activeRoutePlan.segmentForWaypointIndex(autopilotTargetIndex);
         return autopilotGearForSegmentForTest(segment);
+    }
+
+    private void beginArrivalFeedback() {
+        setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
+        level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+    }
+
+    private void beginDelayedAutoReturn(PostStationBlockEntity station) {
+        pendingReturnStationPos = station.getBlockPos().immutable();
+        pendingReturnDelayTicks = ARRIVAL_RETURN_DELAY_TICKS;
+        pendingReturnCompletedRoute.clear();
+        pendingReturnCompletedRoute.addAll(copyVec3List(autopilotRoute));
+        entityData.set(DATA_AUTOPILOT_ACTIVE, true);
+        entityData.set(DATA_AUTOPILOT_PAUSED, true);
+        freezeDelayedAutoReturnHold();
+    }
+
+    private void tickDelayedAutoReturnHold() {
+        freezeDelayedAutoReturnHold();
+        pendingReturnDelayTicks = Math.max(0, pendingReturnDelayTicks - 1);
+        if (pendingReturnDelayTicks > 0) {
+            return;
+        }
+        BlockPos stationPos = pendingReturnStationPos;
+        List<Vec3> completedRoute = copyVec3List(pendingReturnCompletedRoute);
+        clearDelayedAutoReturn();
+        boolean startedReturn = false;
+        if (stationPos != null && level().getBlockEntity(stationPos) instanceof PostStationBlockEntity station) {
+            startedReturn = tryStartLandReturnTrip(station, completedRoute);
+        }
+        if (!startedReturn) {
+            transportTaskKind = TransportTaskKind.NONE;
+            stopAutopilot();
+        }
+    }
+
+    private void freezeDelayedAutoReturnHold() {
+        setDeltaMovement(Vec3.ZERO);
+        currentSpeed = 0.0F;
+        turnAngle = 0.0F;
+        wheelAngle = 0.0F;
+        vehicleMotionX = 0.0F;
+        vehicleMotionZ = 0.0F;
+        driveState = CarriageLandDriveModel.State.idle(getYRot());
+        entityData.set(DATA_CURRENT_SPEED, 0.0F);
+        entityData.set(DATA_ACCELERATION, CarriageDriveInput.AccelerationDirection.NONE.ordinal());
+        entityData.set(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
+        entityData.set(DATA_TARGET_TURN_ANGLE, 0.0F);
+    }
+
+    public boolean isWaitingForDelayedAutoReturn() {
+        return pendingReturnStationPos != null && pendingReturnDelayTicks > 0;
+    }
+
+    private void clearDelayedAutoReturn() {
+        pendingReturnStationPos = null;
+        pendingReturnDelayTicks = 0;
+        pendingReturnCompletedRoute.clear();
+    }
+
+    private void setArrivalNoticeTicks(int ticks) {
+        int clamped = Mth.clamp(ticks, 0, ARRIVAL_NOTICE_TICKS);
+        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped <= 0 ? 0 : tickCount + clamped);
+    }
+
+    private static boolean arrivalNoticeVisible(int remainingTicks) {
+        return remainingTicks > 0;
+    }
+
+    private static boolean shouldDelayReturnAfterArrival(boolean autoReturn,
+                                                         @Nullable TransportTaskKind kind,
+                                                         boolean hasDestinationStation) {
+        TransportTaskKind safeKind = kind == null ? TransportTaskKind.NONE : kind;
+        return hasDestinationStation
+                && autoReturn
+                && safeKind != TransportTaskKind.RETURN
+                && safeKind != TransportTaskKind.RECALL;
+    }
+
+    private static SoundEvent arrivalSoundEvent() {
+        return SoundEvents.PLAYER_LEVELUP;
     }
 
     private void finishAutopilot() {
@@ -1223,19 +1943,30 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                         System.currentTimeMillis(), 0L, 0.0D, cargo, getPendingShipmentManifest());
             }
         }
-        boolean startedReturn = destination instanceof PostStationBlockEntity station
-                && transportTaskKind != TransportTaskKind.RETURN
-                && transportTaskKind != TransportTaskKind.RECALL
-                && autoReturnOnArrival
-                && tryStartLandReturnTrip(station);
-        if (!startedReturn) {
+        if (destination != null) {
+            beginArrivalFeedback();
+        }
+        if (destination instanceof PostStationBlockEntity station
+                && shouldDelayReturnAfterArrival(autoReturnOnArrival, transportTaskKind, true)) {
+            beginDelayedAutoReturn(station);
+        } else {
             transportTaskKind = TransportTaskKind.NONE;
             stopAutopilot();
         }
     }
 
     private boolean tryStartLandReturnTrip(PostStationBlockEntity currentStation) {
-        if (!(level() instanceof ServerLevel serverLevel) || homeStationPos == null) {
+        return tryStartLandReturnTrip(currentStation, null);
+    }
+
+    private boolean tryStartLandReturnTrip(PostStationBlockEntity currentStation, @Nullable List<Vec3> completedRoute) {
+        if (homeStationPos == null || currentStation == null) {
+            return false;
+        }
+        if (tryStartReversedCompletedLandReturnTrip(currentStation, completedRoute)) {
+            return true;
+        }
+        if (!(level() instanceof ServerLevel serverLevel)) {
             return false;
         }
         if (!(level().getBlockEntity(homeStationPos) instanceof PostStationBlockEntity homeStation)) {
@@ -1246,7 +1977,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                 serverLevel,
                 service.stationRef(level(), currentStation),
                 service.stationRef(level(), homeStation),
-                true
+                ALLOW_TERRAIN_FALLBACK_FOR_LAND_RETURN
         );
         if (!availability.reachable() || availability.plan() == null) {
             return false;
@@ -1254,6 +1985,59 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         setRouteCatalog(List.of(availability.plan().route()), 0, currentStation.getBlockPos());
         setLandTransportTask(availability.plan(), false, TransportTaskKind.RETURN);
         return startAutopilot();
+    }
+
+    private boolean tryStartReversedCompletedLandReturnTrip(PostStationBlockEntity currentStation) {
+        return tryStartReversedCompletedLandReturnTrip(currentStation, null);
+    }
+
+    private boolean tryStartReversedCompletedLandReturnTrip(PostStationBlockEntity currentStation, @Nullable List<Vec3> completedRoute) {
+        List<Vec3> sourceRoute = completedRoute == null || completedRoute.isEmpty() ? autopilotRoute : completedRoute;
+        RouteDefinition returnRoute = reverseCompletedRouteForReturn(sourceRoute, currentStation.getDockName());
+        if (returnRoute == null) {
+            return false;
+        }
+        BlockPos originalHome = homeStationPos.immutable();
+        setRouteCatalog(List.of(returnRoute), 0, currentStation.getBlockPos());
+        if (!startAutopilot()) {
+            return false;
+        }
+        homeStationPos = currentStation.getBlockPos().immutable();
+        destinationStationPos = originalHome;
+        destinationTownId = "";
+        dockedStationPos = null;
+        dockedTownId = "";
+        autoReturnOnArrival = false;
+        transportTaskKind = TransportTaskKind.RETURN;
+        return true;
+    }
+
+    @Nullable
+    private static RouteDefinition reverseCompletedRouteForReturn(List<Vec3> completedRoute, String currentStationName) {
+        if (completedRoute == null || completedRoute.size() < 2) {
+            return null;
+        }
+        List<Vec3> reversed = new ArrayList<>();
+        for (int i = completedRoute.size() - 1; i >= 0; i--) {
+            Vec3 waypoint = completedRoute.get(i);
+            if (waypoint != null) {
+                reversed.add(waypoint);
+            }
+        }
+        if (reversed.size() < 2) {
+            return null;
+        }
+        String stationName = currentStationName == null || currentStationName.isBlank() ? "Post Station" : currentStationName.trim();
+        return new RouteDefinition(
+                "Return: " + stationName,
+                reversed,
+                "System",
+                "",
+                System.currentTimeMillis(),
+                LandTransportNetworkService.routeLength(reversed),
+                stationName,
+                "Home"
+        );
     }
 
     public boolean canBeRecalledTo(PostStationBlockEntity targetStation, @Nullable Player player) {
@@ -1282,7 +2066,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                 serverLevel,
                 service.stationRef(level(), sourceStation),
                 service.stationRef(level(), targetStation),
-                true
+                ALLOW_TERRAIN_FALLBACK_FOR_LAND_RETURN
         );
         if (!availability.reachable() || availability.plan() == null) {
             return false;
@@ -1290,6 +2074,86 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         setRouteCatalog(List.of(availability.plan().route()), 0, sourceStation.getBlockPos());
         setLandTransportTask(availability.plan(), false, TransportTaskKind.RECALL);
         return startAutopilot();
+    }
+
+    private static void writeArrivalHoldState(CompoundTag tag,
+                                              @Nullable BlockPos pendingReturnStationPos,
+                                              int pendingReturnDelayTicks,
+                                              int arrivalNoticeTicks,
+                                              List<Vec3> completedRouteWaypoints) {
+        if (pendingReturnStationPos != null && pendingReturnDelayTicks > 0) {
+            tag.putLong(NBT_PENDING_RETURN_STATION_POS, pendingReturnStationPos.asLong());
+            tag.putInt(NBT_PENDING_RETURN_DELAY_TICKS, pendingReturnDelayTicks);
+            writeVec3List(tag, NBT_PENDING_RETURN_COMPLETED_ROUTE, completedRouteWaypoints);
+        }
+        if (arrivalNoticeTicks > 0) {
+            tag.putInt(NBT_ARRIVAL_NOTICE_TICKS, arrivalNoticeTicks);
+        }
+    }
+
+    private static ArrivalHoldSnapshot readArrivalHoldState(CompoundTag tag) {
+        if (tag == null) {
+            return new ArrivalHoldSnapshot(null, 0, 0, List.of());
+        }
+        BlockPos pendingPos = readNullableBlockPos(tag, NBT_PENDING_RETURN_STATION_POS);
+        int delay = tag.contains(NBT_PENDING_RETURN_DELAY_TICKS)
+                ? Math.max(0, tag.getInt(NBT_PENDING_RETURN_DELAY_TICKS))
+                : 0;
+        int noticeTicks = tag.contains(NBT_ARRIVAL_NOTICE_TICKS)
+                ? Mth.clamp(tag.getInt(NBT_ARRIVAL_NOTICE_TICKS), 0, ARRIVAL_NOTICE_TICKS)
+                : 0;
+        List<Vec3> completedRoute = readVec3List(tag, NBT_PENDING_RETURN_COMPLETED_ROUTE);
+        if (pendingPos == null || delay <= 0) {
+            return new ArrivalHoldSnapshot(null, 0, noticeTicks, List.of());
+        }
+        return new ArrivalHoldSnapshot(pendingPos, delay, noticeTicks, completedRoute);
+    }
+
+    private static void writeVec3List(CompoundTag tag, String key, List<Vec3> points) {
+        if (tag == null || points == null || points.isEmpty()) {
+            return;
+        }
+        ListTag list = new ListTag();
+        for (Vec3 point : points) {
+            if (point == null) {
+                continue;
+            }
+            CompoundTag entry = new CompoundTag();
+            entry.putDouble("X", point.x);
+            entry.putDouble("Y", point.y);
+            entry.putDouble("Z", point.z);
+            list.add(entry);
+        }
+        if (!list.isEmpty()) {
+            tag.put(key, list);
+        }
+    }
+
+    private static List<Vec3> readVec3List(CompoundTag tag, String key) {
+        if (tag == null || !tag.contains(key)) {
+            return List.of();
+        }
+        List<Vec3> points = new ArrayList<>();
+        ListTag list = tag.getList(key, Tag.TAG_COMPOUND);
+        for (Tag raw : list) {
+            if (raw instanceof CompoundTag entry) {
+                points.add(new Vec3(entry.getDouble("X"), entry.getDouble("Y"), entry.getDouble("Z")));
+            }
+        }
+        return List.copyOf(points);
+    }
+
+    private static List<Vec3> copyVec3List(List<Vec3> points) {
+        if (points == null || points.isEmpty()) {
+            return List.of();
+        }
+        List<Vec3> copy = new ArrayList<>();
+        for (Vec3 point : points) {
+            if (point != null) {
+                copy.add(point);
+            }
+        }
+        return List.copyOf(copy);
     }
 
     private static void writeNullableBlockPos(CompoundTag tag, String key, @Nullable BlockPos pos) {
@@ -1335,12 +2199,111 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     private boolean isInsideRouteStartWaitingZone(RouteDefinition route) {
-        if (route == null || route.waypoints().isEmpty()) {
+        Vec3 validationPoint = routeStartValidationPoint(route, routeDockPos);
+        if (validationPoint == null) {
             return false;
         }
-        BlockPos startDockPos = findTransportHubZoneContains(route.waypoints().get(0));
+
+        if (routeDockPos != null) {
+            DockBlockEntity dock = getTransportHub(routeDockPos);
+            return dock != null && dock.isInsideDockZone(position());
+        }
+
+        BlockPos startDockPos = findTransportHubZoneContains(validationPoint);
         DockBlockEntity dock = startDockPos == null ? null : getTransportHub(startDockPos);
         return dock != null && dock.isInsideDockZone(position());
+    }
+
+    @Nullable
+    private static Vec3 routeStartValidationPoint(@Nullable RouteDefinition route, @Nullable BlockPos dockPos) {
+        if (dockPos != null) {
+            return Vec3.atCenterOf(dockPos);
+        }
+        if (route == null || route.waypoints().isEmpty()) {
+            return null;
+        }
+        return route.waypoints().get(0);
+    }
+
+    private static List<Vec3> autopilotRouteWithCurrentStart(List<Vec3> route,
+                                                             @Nullable Vec3 currentPosition,
+                                                             @Nullable BlockPos dockPos) {
+        List<Vec3> routeCopy = withoutLeadingDockWaypoints(copyVec3List(route), dockPos);
+        if (routeCopy.isEmpty() || currentPosition == null) {
+            return routeCopy;
+        }
+        if (dockPos != null) {
+            return routeCopy;
+        }
+        Vec3 first = routeCopy.get(0);
+        if (horizontalDistance(currentPosition, first) <= 1.0E-6D) {
+            return routeCopy;
+        }
+        List<Vec3> runtimeRoute = new ArrayList<>(routeCopy.size() + 1);
+        runtimeRoute.add(currentPosition);
+        runtimeRoute.addAll(routeCopy);
+        return List.copyOf(runtimeRoute);
+    }
+
+    private static Vec3 railAutopilotStartPosition(List<Vec3> route,
+                                                   @Nullable Vec3 currentPosition,
+                                                   @Nullable BlockPos dockPos) {
+        if (currentPosition == null) {
+            return Vec3.ZERO;
+        }
+        if (dockPos == null || route == null || route.isEmpty()) {
+            return currentPosition;
+        }
+        if (route.size() == 1 || route.get(1) == null) {
+            Vec3 first = route.get(0);
+            return first == null ? currentPosition : first;
+        }
+        Vec3 first = route.get(0);
+        Vec3 second = route.get(1);
+        if (first == null || second == null) {
+            return currentPosition;
+        }
+        return projectOntoSegmentXZ(currentPosition, first, second);
+    }
+
+    private static Vec3 projectOntoSegmentXZ(Vec3 point, Vec3 from, Vec3 to) {
+        Vec3 safePoint = point == null ? Vec3.ZERO : point;
+        if (from == null || to == null) {
+            return safePoint;
+        }
+        double dx = to.x - from.x;
+        double dz = to.z - from.z;
+        double lengthSqr = dx * dx + dz * dz;
+        if (lengthSqr <= 1.0E-6D) {
+            return from;
+        }
+        double t = ((safePoint.x - from.x) * dx + (safePoint.z - from.z) * dz) / lengthSqr;
+        t = Mth.clamp(t, 0.0D, 1.0D);
+        return new Vec3(
+                from.x + dx * t,
+                from.y + (to.y - from.y) * t,
+                from.z + dz * t
+        );
+    }
+
+    private static List<Vec3> withoutLeadingDockWaypoints(List<Vec3> route, @Nullable BlockPos dockPos) {
+        if (route == null || route.isEmpty() || dockPos == null) {
+            return route == null ? List.of() : route;
+        }
+        int firstUsable = 0;
+        while (firstUsable < route.size() && waypointMatchesDockPos(route.get(firstUsable), dockPos)) {
+            firstUsable++;
+        }
+        return firstUsable == 0 ? route : List.copyOf(route.subList(firstUsable, route.size()));
+    }
+
+    private static boolean waypointMatchesDockPos(@Nullable Vec3 waypoint, BlockPos dockPos) {
+        if (waypoint == null || dockPos == null) {
+            return false;
+        }
+        BlockPos direct = BlockPos.containing(waypoint.x, waypoint.y, waypoint.z);
+        BlockPos roadSurface = BlockPos.containing(waypoint.x, waypoint.y - 1.0D, waypoint.z);
+        return direct.equals(dockPos) || roadSurface.equals(dockPos);
     }
 
     private void ensureActiveRoutePlan() {
@@ -1373,6 +2336,61 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     private boolean isManualControlPassenger(Player player) {
         return player.getVehicle() == this && hasPassenger(player) && getControllingPassenger() == player;
+    }
+
+    private static boolean simulatesLandDriveOnClient() {
+        return true;
+    }
+
+    private static boolean shouldRunClientLandDrive(boolean autopilotActive) {
+        return simulatesLandDriveOnClient() && !autopilotActive;
+    }
+
+    private static int networkLerpSteps(int posRotationIncrements) {
+        return networkLerpSteps(posRotationIncrements, false);
+    }
+
+    private static int networkLerpSteps(int posRotationIncrements, boolean autopilotActive) {
+        if (autopilotActive) {
+            return 1;
+        }
+        return NETWORK_LERP_STEPS;
+    }
+
+    private static int lerpStepsAfterLocalControl(int currentLerpSteps) {
+        return 0;
+    }
+
+    private void spawnMovementParticles() {
+        double hSpeed = getDeltaMovement().x * getDeltaMovement().x + getDeltaMovement().z * getDeltaMovement().z;
+        float syncedSpeed = entityData.get(DATA_CURRENT_SPEED);
+        if (Math.abs(syncedSpeed) < 1.0F && hSpeed < 0.001D) {
+            return;
+        }
+        float yawRad = getYRot() * ((float) Math.PI / 180.0F);
+        float sin = Mth.sin(yawRad);
+        float cos = Mth.cos(yawRad);
+        double[][] wheelOffsets = {
+                {-0.9D, 0.0D, -0.8D},
+                { 0.9D, 0.0D, -0.8D}
+        };
+        for (double[] offset : wheelOffsets) {
+            double wx = getX() + offset[0] * cos - offset[2] * sin;
+            double wz = getZ() + offset[0] * sin + offset[2] * cos;
+            double wy = getY() + offset[1];
+            int bx = Mth.floor(wx);
+            int by = Mth.floor(wy - 0.2D);
+            int bz = Mth.floor(wz);
+            BlockPos pos = new BlockPos(bx, by, bz);
+            BlockState state = level().getBlockState(pos);
+            if (!state.isAir() && state.isSolidRender(level(), pos)) {
+                level().addParticle(
+                        new net.minecraft.core.particles.BlockParticleOption(net.minecraft.core.particles.ParticleTypes.BLOCK, state),
+                        wx, wy + 0.1D, wz,
+                        -getDeltaMovement().x * 0.5D, 0.15D, -getDeltaMovement().z * 0.5D
+                );
+            }
+        }
     }
 
     private boolean isPrimaryTravelMedium() {
@@ -1416,8 +2434,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     private static boolean isRoadSurfaceState(BlockState state) {
-        String path = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
-        return path.contains("stone_brick") || path.contains("road");
+        return com.monpai.sailboatmod.nation.RoadTravelHelper.isWalkableRoadSurface(state);
     }
 
     private void mergeIntoInventory(ItemStack remaining, NonNullList<ItemStack> targetInventory) {

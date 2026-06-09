@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
-import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.entity.TransportEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -33,16 +33,16 @@ public class SetSailboatRentalPricePacket {
             if (player == null) {
                 return;
             }
-            if (!(player.level().getEntity(packet.sailboatId) instanceof SailboatEntity sailboat)) {
+            if (!(player.level().getEntity(packet.sailboatId) instanceof TransportEntity transport)) {
                 return;
             }
-            if (!sailboat.isOwnedBy(player)) {
+            if (!transport.isOwnedBy(player)) {
                 player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_owner_only"), true);
                 return;
             }
-            sailboat.setRentalPrice(packet.rentalPrice);
-            if (sailboat.isAvailableForRent()) {
-                player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_price_saved", sailboat.getRentalPrice()), true);
+            transport.setRentalPrice(packet.rentalPrice);
+            if (transport.isAvailableForRent()) {
+                player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_price_saved", transport.getRentalPrice()), true);
             } else {
                 player.displayClientMessage(Component.translatable("screen.sailboatmod.rent_price_saved_disabled"), true);
             }

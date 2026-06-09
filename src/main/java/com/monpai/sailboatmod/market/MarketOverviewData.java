@@ -141,12 +141,12 @@ public record MarketOverviewData(
                                String detail, String category, int rarity) {
     }
 
-    public record ListingEntry(String label, String commodityKey, String itemName, int availableCount, int reservedCount,
+    public record ListingEntry(String listingId, String label, String commodityKey, String itemName, int availableCount, int reservedCount,
                                int unitPrice, String sellerName, String sellerUuid, String sourceDockName, String nationId, String sellerNote,
                                String category, int rarity) {
     }
 
-    public record OrderEntry(String label, String sourceDockName, String targetDockName, int quantity, String status,
+    public record OrderEntry(String orderId, String label, String sourceDockName, String targetDockName, int quantity, String status,
                              List<DispatchOption> dispatchOptions) {
         public OrderEntry {
             dispatchOptions = dispatchOptions == null ? List.of() : List.copyOf(dispatchOptions);

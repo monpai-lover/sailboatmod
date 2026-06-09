@@ -1437,7 +1437,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 drawSelectedMergeAnchor(graphics, map, selectedMerge.anchorPos());
             }
             drawSharedSpansForOverlay(graphics, map, overlay, activeSharedSpans);
-            for (BlockPos node : RoadPlannerRoadOverlayRenderModel.keyNodes(overlay, selectedMerge, selectedReuseRoadIds, null, false)) {
+            for (BlockPos node : RoadPlannerRoadOverlayRenderModel.keyNodes(overlay, selectedMerge, selectedReuseRoadIds, null, true, lodStep)) {
                 drawRoadOverlayNode(graphics, map, node, roadOverlayColor(overlay.relationship()));
             }
         }

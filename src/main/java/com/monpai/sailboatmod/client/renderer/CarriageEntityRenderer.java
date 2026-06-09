@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HorseModel;
 import net.minecraft.client.model.geom.ModelLayers;
@@ -12,6 +13,7 @@ import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityType;
@@ -21,6 +23,9 @@ import software.bernie.geckolib.renderer.GeoEntityRenderer;
 
 public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     private static final ResourceLocation HORSE_TEXTURE = new ResourceLocation("textures/entity/horse/horse_brown.png");
+    private static final int ARRIVAL_HOLOGRAM_COLOR = 0xF8E7A0;
+    private static final int ARRIVAL_HOLOGRAM_BACKGROUND = 0x66000000;
+    private static final float ARRIVAL_HOLOGRAM_SCALE = 0.025F;
 
     private final HorseModel<Horse> horseModel;
     @Nullable
@@ -38,21 +43,40 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
                           com.mojang.blaze3d.vertex.VertexConsumer buffer,
                           boolean isReRender, float partialTick, int packedLight, int packedOverlay,
                           float red, float green, float blue, float alpha) {
-        poseStack.translate(0.0F, 0.92F, 0.0F);
-        poseStack.scale(1.04F, 1.04F, 1.04F);
+        poseStack.translate(0.0F, CarriageVisualRig.carriageModelYOffset(), 0.0F);
+        float modelScale = CarriageVisualRig.carriageModelScale();
+        poseStack.scale(modelScale, modelScale, modelScale);
         super.preRender(poseStack, animatable, model, bufferSource, buffer, isReRender, partialTick, packedLight, packedOverlay, red, green, blue, alpha);
     }
 
     @Override
     protected void applyRotations(CarriageEntity entity, PoseStack poseStack, float ageInTicks, float rotationYaw, float partialTick) {
         float yaw = entity.getViewYRot(partialTick);
-        poseStack.mulPose(Axis.YP.rotationDegrees(-yaw));
+        poseStack.mulPose(Axis.YP.rotationDegrees(CarriageVisualRig.localYawRotation(yaw)));
     }
 
     @Override
     public void render(CarriageEntity entity, float entityYaw, float partialTick, PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {
         super.render(entity, entityYaw, partialTick, poseStack, bufferSource, packedLight);
         renderAttachedHorse(entity, partialTick, poseStack, bufferSource, packedLight);
+        renderArrivalHologram(entity, poseStack, bufferSource);
+    }
+
+    private void renderArrivalHologram(CarriageEntity entity, PoseStack poseStack, MultiBufferSource bufferSource) {
+        if (entity.getArrivalNoticeTicks() <= 0) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        Font font = minecraft.font;
+        String label = Component.translatable("entity.sailboatmod.carriage.arrived").getString();
+        poseStack.pushPose();
+        poseStack.translate(0.0D, entity.getBbHeight() + 0.85D, 0.0D);
+        poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
+        poseStack.scale(-ARRIVAL_HOLOGRAM_SCALE, -ARRIVAL_HOLOGRAM_SCALE, ARRIVAL_HOLOGRAM_SCALE);
+        float x = -font.width(label) / 2.0F;
+        font.drawInBatch(label, x, 0.0F, ARRIVAL_HOLOGRAM_COLOR, false, poseStack.last().pose(), bufferSource,
+                Font.DisplayMode.SEE_THROUGH, ARRIVAL_HOLOGRAM_BACKGROUND, 0xF000F0);
+        poseStack.popPose();
     }
 
     private void renderAttachedHorse(CarriageEntity entity, float partialTick, PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {
@@ -67,18 +91,21 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         float limbSwingAmount = Mth.clamp((float) (speed * 8.0D), 0.0F, 1.15F);
         float limbSwing = animationTime * (0.8F + limbSwingAmount * 2.2F);
 
-        horse.setYRot(yaw);
-        horse.setYBodyRot(yaw);
-        horse.yBodyRotO = yaw;
-        horse.yHeadRot = yaw;
-        horse.yHeadRotO = yaw;
+        horse.setYRot(0.0F);
+        horse.setYBodyRot(0.0F);
+        horse.yBodyRotO = 0.0F;
+        horse.yHeadRot = 0.0F;
+        horse.yHeadRotO = 0.0F;
         horse.setXRot(0.0F);
         horse.xRotO = 0.0F;
 
+        double bob = Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount;
+        CarriageVisualRig.HorseAttachmentPose attachment = CarriageVisualRig.horseAttachmentPose(yaw, bob);
+
         poseStack.pushPose();
-        poseStack.mulPose(Axis.YP.rotationDegrees(180.0F - yaw));
-        poseStack.translate(0.0D, 1.42D + Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount, -1.78D);
-        poseStack.scale(-0.96F, -0.96F, 0.96F);
+        poseStack.mulPose(Axis.YP.rotationDegrees(CarriageVisualRig.horseRootYawRotation(yaw)));
+        poseStack.translate(attachment.localOffset().x, attachment.localOffset().y, attachment.localOffset().z);
+        poseStack.scale(-attachment.scale(), -attachment.scale(), attachment.scale());
 
         horseModel.prepareMobModel(horse, limbSwing, limbSwingAmount, partialTick);
         horseModel.setupAnim(horse, limbSwing, limbSwingAmount, animationTime, 0.0F, 0.0F);

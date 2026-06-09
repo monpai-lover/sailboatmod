@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.CarriageControlInputPacket;
 import com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket;
 import com.monpai.sailboatmod.network.packet.CloseClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
@@ -30,9 +31,11 @@ import com.monpai.sailboatmod.network.packet.OpenDockScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenMarketScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenNationScreenPacket;
+import com.monpai.sailboatmod.network.packet.OpenPostStationScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
+import com.monpai.sailboatmod.network.packet.PostStationGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.RenameDockPacket;
@@ -97,7 +100,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "2";
+    private static final String PROTOCOL_VERSION = "3";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(SailboatMod.MODID, "main"),
             () -> PROTOCOL_VERSION,
@@ -159,6 +162,14 @@ public final class ModNetwork {
         );
         CHANNEL.registerMessage(
                 packetId++,
+                CarriageControlInputPacket.class,
+                CarriageControlInputPacket::encode,
+                CarriageControlInputPacket::decode,
+                CarriageControlInputPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
                 OpenDockScreenPacket.class,
                 OpenDockScreenPacket::encode,
                 OpenDockScreenPacket::decode,
@@ -170,6 +181,22 @@ public final class ModNetwork {
                 DockGuiActionPacket::encode,
                 DockGuiActionPacket::decode,
                 DockGuiActionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenPostStationScreenPacket.class,
+                OpenPostStationScreenPacket::encode,
+                OpenPostStationScreenPacket::decode,
+                OpenPostStationScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                PostStationGuiActionPacket.class,
+                PostStationGuiActionPacket::encode,
+                PostStationGuiActionPacket::decode,
+                PostStationGuiActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,

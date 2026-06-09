@@ -26,22 +26,30 @@ public record VirtualHorseDriveState(
                                                      boolean braking) {
         SailboatEntity.EngineGear effectiveGear = gear == null ? SailboatEntity.EngineGear.STOP : gear;
         double clampedIntent = Mth.clamp(driveIntent, -1.0D, 1.0D);
-        boolean reversing = effectiveGear.id < 0 || clampedIntent < 0.0D;
-
-        double nextTargetSpeed;
-        double nextTargetTraction;
-        if (braking || effectiveGear == SailboatEntity.EngineGear.STOP || Math.abs(clampedIntent) < 1.0E-4D) {
-            nextTargetSpeed = 0.0D;
-            nextTargetTraction = 0.0D;
-        } else {
-            double commandedSpeed = effectiveGear.targetSpeed(MAX_FORWARD_SPEED, MAX_REVERSE_SPEED, false);
-            if (reversing) {
-                nextTargetSpeed = -Math.min(MAX_REVERSE_SPEED, Math.abs(commandedSpeed));
-                nextTargetTraction = Math.min(1.0D, Math.abs(nextTargetSpeed) / MAX_REVERSE_SPEED) * Math.abs(clampedIntent);
-            } else {
-                nextTargetSpeed = Math.max(0.0D, commandedSpeed);
-                nextTargetTraction = Math.min(1.0D, nextTargetSpeed / MAX_FORWARD_SPEED) * Math.abs(clampedIntent);
+        double targetSpeed = 0.0D;
+        if (!braking && effectiveGear != SailboatEntity.EngineGear.STOP && Math.abs(clampedIntent) >= 1.0E-4D) {
+            targetSpeed = effectiveGear.targetSpeed(MAX_FORWARD_SPEED, MAX_REVERSE_SPEED, false);
+            if (clampedIntent < 0.0D && targetSpeed > 0.0D) {
+                targetSpeed = -Math.min(MAX_REVERSE_SPEED, targetSpeed);
             }
+        }
+        return updateTowardCommand(clampedIntent, headingIntent, targetSpeed, braking || effectiveGear == SailboatEntity.EngineGear.STOP);
+    }
+
+    public VirtualHorseDriveState updateTowardCommand(double driveIntent,
+                                                      float headingIntent,
+                                                      double targetSpeed,
+                                                      boolean braking) {
+        double clampedIntent = Mth.clamp(driveIntent, -1.0D, 1.0D);
+        double cappedTargetSpeed = Mth.clamp(targetSpeed, -MAX_REVERSE_SPEED, MAX_FORWARD_SPEED);
+        boolean activeDrive = !braking && Math.abs(clampedIntent) >= 1.0E-4D && Math.abs(cappedTargetSpeed) >= 1.0E-4D;
+        boolean reversing = cappedTargetSpeed < 0.0D || clampedIntent < 0.0D;
+
+        double nextTargetSpeed = activeDrive ? cappedTargetSpeed : 0.0D;
+        double nextTargetTraction = 0.0D;
+        if (activeDrive) {
+            double speedCap = reversing ? MAX_REVERSE_SPEED : MAX_FORWARD_SPEED;
+            nextTargetTraction = Math.min(1.0D, Math.abs(nextTargetSpeed) / speedCap) * Math.abs(clampedIntent);
         }
 
         double nextTraction = Mth.lerp(TRACTION_RAMP, currentTraction, nextTargetTraction);

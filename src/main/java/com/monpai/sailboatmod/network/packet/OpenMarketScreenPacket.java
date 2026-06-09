@@ -217,6 +217,7 @@ public class OpenMarketScreenPacket {
     private static void writeListingEntries(FriendlyByteBuf buffer, List<MarketOverviewData.ListingEntry> entries) {
         buffer.writeVarInt(entries.size());
         for (MarketOverviewData.ListingEntry entry : entries) {
+            PacketStringCodec.writeUtfSafe(buffer, entry.listingId(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.label(), 192);
             PacketStringCodec.writeUtfSafe(buffer, entry.commodityKey(), 128);
             PacketStringCodec.writeUtfSafe(buffer, entry.itemName(), 96);
@@ -238,6 +239,7 @@ public class OpenMarketScreenPacket {
         List<MarketOverviewData.ListingEntry> entries = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             entries.add(new MarketOverviewData.ListingEntry(
+                    buffer.readUtf(64),
                     buffer.readUtf(192),
                     buffer.readUtf(128),
                     buffer.readUtf(96),
@@ -259,6 +261,7 @@ public class OpenMarketScreenPacket {
     private static void writeOrderEntries(FriendlyByteBuf buffer, List<MarketOverviewData.OrderEntry> entries) {
         buffer.writeVarInt(entries.size());
         for (MarketOverviewData.OrderEntry entry : entries) {
+            PacketStringCodec.writeUtfSafe(buffer, entry.orderId(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.label(), 192);
             PacketStringCodec.writeUtfSafe(buffer, entry.sourceDockName(), 64);
             PacketStringCodec.writeUtfSafe(buffer, entry.targetDockName(), 64);
@@ -273,6 +276,7 @@ public class OpenMarketScreenPacket {
         List<MarketOverviewData.OrderEntry> entries = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             entries.add(new MarketOverviewData.OrderEntry(
+                    buffer.readUtf(64),
                     buffer.readUtf(192),
                     buffer.readUtf(64),
                     buffer.readUtf(64),

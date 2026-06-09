@@ -1,9 +1,11 @@
 package com.monpai.sailboatmod.menu;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
+import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.item.TransportRouteBook;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.OpenDockScreenPacket;
+import com.monpai.sailboatmod.network.packet.OpenPostStationScreenPacket;
 import com.monpai.sailboatmod.registry.ModMenus;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
@@ -194,6 +196,13 @@ public class DockMenu extends AbstractContainerMenu {
             return;
         }
         if (player instanceof ServerPlayer serverPlayer) {
+            if (dock instanceof PostStationBlockEntity station) {
+                ModNetwork.CHANNEL.send(
+                        PacketDistributor.PLAYER.with(() -> serverPlayer),
+                        new OpenPostStationScreenPacket(station.buildPostStationScreenData(serverPlayer))
+                );
+                return;
+            }
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> serverPlayer),
                     new OpenDockScreenPacket(dock.buildScreenData(serverPlayer))

@@ -13,23 +13,23 @@ import java.util.function.Supplier;
 
 public class DispatchMarketOrderPacket {
     private final BlockPos marketPos;
-    private final int orderIndex;
+    private final String orderId;
     private final TransportTerminalKind terminalKind;
 
-    public DispatchMarketOrderPacket(BlockPos marketPos, int orderIndex, TransportTerminalKind terminalKind) {
+    public DispatchMarketOrderPacket(BlockPos marketPos, String orderId, TransportTerminalKind terminalKind) {
         this.marketPos = marketPos;
-        this.orderIndex = orderIndex;
+        this.orderId = orderId == null ? "" : orderId;
         this.terminalKind = terminalKind == null ? TransportTerminalKind.AUTO : terminalKind;
     }
 
     public static void encode(DispatchMarketOrderPacket packet, FriendlyByteBuf buffer) {
         buffer.writeBlockPos(packet.marketPos);
-        buffer.writeVarInt(packet.orderIndex);
+        PacketStringCodec.writeUtfSafe(buffer, packet.orderId, 64);
         buffer.writeEnum(packet.terminalKind);
     }
 
     public static DispatchMarketOrderPacket decode(FriendlyByteBuf buffer) {
-        return new DispatchMarketOrderPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readEnum(TransportTerminalKind.class));
+        return new DispatchMarketOrderPacket(buffer.readBlockPos(), buffer.readUtf(64), buffer.readEnum(TransportTerminalKind.class));
     }
 
     public static void handle(DispatchMarketOrderPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -42,12 +42,11 @@ public class DispatchMarketOrderPacket {
             if (!(player.level().getBlockEntity(packet.marketPos) instanceof MarketBlockEntity market)) {
                 return;
             }
-            market.dispatchOrder(
+            market.dispatchOrderById(
                     player.getUUID().toString(),
                     player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
                     player,
-                    packet.orderIndex,
-                    0,
+                    packet.orderId,
                     packet.terminalKind
             );
             ModNetwork.CHANNEL.send(

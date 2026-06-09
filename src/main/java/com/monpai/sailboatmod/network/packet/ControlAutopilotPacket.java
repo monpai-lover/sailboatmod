@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.entity.TransportEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
@@ -34,8 +35,8 @@ public class ControlAutopilotPacket {
             if (sender == null) {
                 return;
             }
-            if (sender.level().getEntity(packet.sailboatId) instanceof SailboatEntity sailboat) {
-                sailboat.controlAutopilot(sender, packet.action);
+            if (sender.level().getEntity(packet.sailboatId) instanceof TransportEntity transport) {
+                transport.controlAutopilot(sender, packet.action);
             }
         });
         context.setPacketHandled(true);

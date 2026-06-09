@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
+import com.monpai.sailboatmod.construction.RoadPlacementPlan;
 import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.SharedConstants;
@@ -69,6 +70,46 @@ class StructureConstructionManagerRoadGhostTest {
         assertTrue(StructureConstructionManager.placePlannedRoadBuildStepForTest(level, step));
 
         assertEquals(Blocks.SMOOTH_STONE.defaultBlockState(), level.getBlockState(pos));
+    }
+
+    @Test
+    void restoredCompletedRoadKeepsAttemptedStepConsumedWhenPlayerPlacedStationOnRoadSurface() {
+        BlockPos stationOnRoad = new BlockPos(0, 64, 0);
+        BlockPos intactRoad = new BlockPos(1, 64, 0);
+        RoadGeometryPlanner.RoadBuildStep replacedByStation = new RoadGeometryPlanner.RoadBuildStep(
+                0,
+                stationOnRoad,
+                Blocks.STONE_BRICKS.defaultBlockState(),
+                RoadGeometryPlanner.RoadBuildPhase.SURFACE
+        );
+        RoadGeometryPlanner.RoadBuildStep stillRoad = new RoadGeometryPlanner.RoadBuildStep(
+                1,
+                intactRoad,
+                Blocks.STONE_BRICKS.defaultBlockState(),
+                RoadGeometryPlanner.RoadBuildPhase.SURFACE
+        );
+        RoadPlacementPlan plan = new RoadPlacementPlan(
+                List.of(stationOnRoad, intactRoad),
+                stationOnRoad,
+                stationOnRoad,
+                intactRoad,
+                intactRoad,
+                List.of(),
+                List.of(replacedByStation, stillRoad),
+                List.of(),
+                List.of(),
+                List.of(),
+                stationOnRoad,
+                intactRoad,
+                stationOnRoad,
+                null
+        );
+
+        assertEquals(2, StructureConstructionManager.consumedRoadBuildStepCountForTest(
+                plan,
+                java.util.Set.of(intactRoad.asLong()),
+                java.util.Set.of(stationOnRoad.asLong(), intactRoad.asLong())
+        ));
     }
 
     private static TestServerLevel newTestLevel() {

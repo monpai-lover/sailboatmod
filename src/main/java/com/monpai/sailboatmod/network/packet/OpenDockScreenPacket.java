@@ -21,8 +21,15 @@ public class OpenDockScreenPacket {
         this.data = data;
     }
 
+    public DockScreenData data() {
+        return data;
+    }
+
     public static void encode(OpenDockScreenPacket packet, FriendlyByteBuf buffer) {
-        DockScreenData data = packet.data;
+        encodeData(packet.data, buffer);
+    }
+
+    static void encodeData(DockScreenData data, FriendlyByteBuf buffer) {
         buffer.writeBlockPos(data.dockPos());
         PacketStringCodec.writeUtfSafe(buffer, data.dockName(), 64);
         PacketStringCodec.writeUtfSafe(buffer, data.dockOwnerName(), 64);
@@ -87,6 +94,10 @@ public class OpenDockScreenPacket {
     }
 
     public static OpenDockScreenPacket decode(FriendlyByteBuf buffer) {
+        return new OpenDockScreenPacket(decodeData(buffer));
+    }
+
+    static DockScreenData decodeData(FriendlyByteBuf buffer) {
         BlockPos dockPos = buffer.readBlockPos();
         String dockName = buffer.readUtf(64);
         String dockOwnerName = buffer.readUtf(64);
@@ -154,11 +165,11 @@ public class OpenDockScreenPacket {
             selectedWaybillCargoLines.add(buffer.readUtf(160));
         }
 
-        return new OpenDockScreenPacket(new DockScreenData(
+        return new DockScreenData(
                 dockPos, dockName, dockOwnerName, dockOwnerUuid, canManageDock, nonOrderAutoReturnEnabled, nonOrderAutoUnloadEnabled, routeBook, routeNames, routeMetas, selectedRouteIndex, waypoints, zoneMinX, zoneMaxX, zoneMinZ, zoneMaxZ,
                 boatIds, boatNames, boatPositions, selectedBoatIndex, storageLines, selectedStorageIndex,
                 waybillNames, selectedWaybillIndex, selectedWaybillInfoLines, selectedWaybillCargoLines
-        ));
+        );
     }
 
     public static void handle(OpenDockScreenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {

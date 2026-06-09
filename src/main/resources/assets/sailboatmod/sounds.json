@@ -16,5 +16,94 @@
     "sounds": [
       "minecraft:entity.leash_knot.break"
     ]
+  },
+  "entity.carriage.move": {
+    "subtitle": "entity.sailboatmod.carriage",
+    "sounds": [
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_blocky"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_clicky"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_grass"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_ground"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_hall"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_muffled"
+      }
+    ]
+  },
+  "entity.carriage.move.stone": {
+    "subtitle": "entity.sailboatmod.carriage",
+    "sounds": [
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_blocky"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_clicky"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_hall"
+      }
+    ]
+  },
+  "entity.carriage.move.grass": {
+    "subtitle": "entity.sailboatmod.carriage",
+    "sounds": [
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_grass"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_muffled"
+      }
+    ]
+  },
+  "entity.carriage.move.sand": {
+    "subtitle": "entity.sailboatmod.carriage",
+    "sounds": [
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_ground"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_muffled"
+      }
+    ]
+  },
+  "entity.carriage.move.snow": {
+    "subtitle": "entity.sailboatmod.carriage",
+    "sounds": [
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_muffled"
+      }
+    ]
+  },
+  "entity.carriage.move.wood": {
+    "subtitle": "entity.sailboatmod.carriage",
+    "sounds": [
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_clicky"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_blocky"
+      }
+    ]
+  },
+  "entity.carriage.move.ground": {
+    "subtitle": "entity.sailboatmod.carriage",
+    "sounds": [
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_ground"
+      },
+      {
+        "name": "sailboatmod:entity/carriage/horse_gallop_grass"
+      }
+    ]
   }
 }

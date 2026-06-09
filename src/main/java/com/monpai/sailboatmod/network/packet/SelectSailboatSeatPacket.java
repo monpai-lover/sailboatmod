@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
-import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.entity.TransportEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
@@ -33,12 +33,12 @@ public class SelectSailboatSeatPacket {
                 return;
             }
 
-            if (!(player.level().getEntity(packet.sailboatId) instanceof SailboatEntity sailboat)) {
+            if (!(player.level().getEntity(packet.sailboatId) instanceof TransportEntity transport)) {
                 return;
             }
 
-            if (player.getVehicle() == sailboat) {
-                sailboat.requestSeat(player, packet.seat);
+            if (player.getVehicle() == transport.asEntity()) {
+                transport.requestSeat(player, packet.seat);
             }
         });
         context.setPacketHandled(true);

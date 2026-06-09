@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
-import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.entity.TransportEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -34,19 +34,19 @@ public class RenameSailboatPacket {
                 return;
             }
 
-            if (!(player.level().getEntity(packet.sailboatId) instanceof SailboatEntity sailboat)) {
+            if (!(player.level().getEntity(packet.sailboatId) instanceof TransportEntity transport)) {
                 return;
             }
 
-            if (player.getVehicle() != sailboat || !sailboat.isCaptain(player)) {
+            if (player.getVehicle() != transport.asEntity() || !transport.isCaptain(player)) {
                 return;
             }
 
                 String trimmed = packet.name.trim();
                 if (trimmed.isEmpty()) {
-                    sailboat.setCustomName(null);
+                    transport.asEntity().setCustomName(null);
                 } else {
-                    sailboat.setCustomName(Component.literal(trimmed));
+                    transport.asEntity().setCustomName(Component.literal(trimmed));
                 }
         });
         context.setPacketHandled(true);

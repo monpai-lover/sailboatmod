@@ -50,7 +50,7 @@ class RoadPlannerOverlayRenderingTest {
     }
 
     @Test
-    void keyNodesSuppressesEveryRoadNodeUnlessSelectedOrHovered() {
+    void keyNodesShowsDisplayPathNodesAtInteractiveLod() {
         RoadPlannerRoadOverlaySyncPacket.Entry overlay = road(
                 "road-a",
                 new BlockPos(0, 64, 0),
@@ -62,9 +62,47 @@ class RoadPlannerOverlayRenderingTest {
                 new RoadPlannerMergeSelection("road-a", 1, new BlockPos(40, 64, 0), RoadPlannerMergeScope.OWN_NATION),
                 Set.of("road-a"),
                 null,
-                false);
+                true,
+                1);
 
-        assertEquals(List.of(new BlockPos(40, 64, 0)), nodes);
+        assertEquals(List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 64, 0),
+                new BlockPos(80, 64, 0)), nodes);
+    }
+
+    @Test
+    void keyNodesUseLodToAvoidDenseNodeFloodButKeepSelectedAnchor() {
+        RoadPlannerRoadOverlaySyncPacket.Entry overlay = road(
+                "road-a",
+                new BlockPos(0, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(4, 64, 0),
+                new BlockPos(6, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(10, 64, 0));
+
+        List<BlockPos> nodes = RoadPlannerRoadOverlayRenderModel.keyNodes(
+                overlay,
+                new RoadPlannerMergeSelection("road-a", 2, new BlockPos(4, 64, 0), RoadPlannerMergeScope.OWN_NATION),
+                Set.of("road-a"),
+                null,
+                true,
+                8);
+
+        assertEquals(List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(8, 64, 0),
+                new BlockPos(10, 64, 0),
+                new BlockPos(4, 64, 0)), nodes);
+    }
+
+    @Test
+    void solidAxisAlignedThickLineUsesSingleFillOperation() {
+        int fills = RoadPlannerOverlayLineRenderer.estimatedFillCallsForTest(
+                0, 10, 600, 10, 6, 0, 0);
+
+        assertEquals(1, fills);
     }
 
     private RoadPlannerRoadOverlaySyncPacket.Entry road(String roadId, BlockPos... path) {

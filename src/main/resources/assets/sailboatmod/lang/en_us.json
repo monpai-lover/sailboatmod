@@ -128,6 +128,26 @@
     "screen.sailboatmod.post_station.tab.dispatch":  "Dispatch",
     "screen.sailboatmod.post_station.tab.waybill":  "Inbox",
     "screen.sailboatmod.post_station.tab.warehouse":  "Storage",
+    "screen.sailboatmod.post_station.tab.destinations": "Towns",
+    "screen.sailboatmod.post_station.tab.vehicles": "Vehicles",
+    "screen.sailboatmod.post_station.tab.advanced": "Advanced",
+    "screen.sailboatmod.post_station.destinations": "Reachable Towns",
+    "screen.sailboatmod.post_station.vehicles": "Carriages",
+    "screen.sailboatmod.post_station.dispatch": "Dispatch",
+    "screen.sailboatmod.post_station.recall": "Recall",
+    "screen.sailboatmod.post_station.empty.no_reachable_town": "No reachable town",
+    "screen.sailboatmod.post_station.empty.no_vehicle": "No carriage in this station",
+    "screen.sailboatmod.post_station.selected_town": "Destination",
+    "screen.sailboatmod.post_station.selected_vehicle": "Vehicle",
+    "screen.sailboatmod.post_station.route.none": "No land route selected",
+    "screen.sailboatmod.post_station.advanced.routes": "Manual Routes",
+    "screen.sailboatmod.post_station.advanced.storage": "Storage",
+    "screen.sailboatmod.post_station.advanced.waybill": "Waybills",
+    "screen.sailboatmod.post_station.no_reachable_town": "No reachable town is connected by road.",
+    "screen.sailboatmod.post_station.route_unavailable": "The selected town is no longer reachable.",
+    "screen.sailboatmod.post_station.no_recall_vehicle": "No loaded parked carriage can be recalled.",
+    "screen.sailboatmod.post_station.auto_return.on": "Auto return: ON",
+    "screen.sailboatmod.post_station.auto_return.off": "Auto return: OFF",
     "screen.sailboatmod.post_station.assign":  "Assign Cart",
     "screen.sailboatmod.post_station.ship_cargo":  "Ship Cargo",
     "screen.sailboatmod.post_station.withdraw":  "Withdraw",
@@ -1379,6 +1399,7 @@
     ,"screen.sailboatmod.market.catalog.filter.weapon":  "Weapon"
     ,"screen.sailboatmod.market.catalog.filter.armor":  "Armor"
     ,"entity.sailboatmod.carriage": "Carriage"
+    ,"entity.sailboatmod.carriage.arrived": "Arrived"
     ,"item.sailboatmod.carriage": "Carriage"
     ,"item.sailboatmod.carriage.wood": "Wood: %s"
     ,"item.sailboatmod.carriage.tip.cycle": "Sneak + right-click: cycle wood type"

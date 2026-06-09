@@ -1943,7 +1943,8 @@ public final class StructureConstructionManager {
             return job;
         }
         Set<Long> completedStepKeys = completedRoadBuildStepKeys(level, job.plan);
-        Set<Long> consumedStepKeys = unionRoadBuildStepKeys(completedStepKeys, skippedRoadBuildStepKeys(job.roadId, job.plan));
+        Set<Long> attemptedStepKeys = consumedRoadBuildStepKeys(job.plan, completedStepKeys, job.attemptedStepKeys);
+        Set<Long> consumedStepKeys = unionRoadBuildStepKeys(attemptedStepKeys, skippedRoadBuildStepKeys(job.roadId, job.plan));
         int placedStepCount = countCompletedRoadBuildSteps(job.plan, consumedStepKeys);
         return new RoadConstructionJob(
                 job.level,
@@ -1962,7 +1963,7 @@ public final class StructureConstructionManager {
                 job.rollbackActive,
                 job.rollbackActionIndex,
                 job.removeRoadNetworkOnComplete,
-                completedStepKeys
+                attemptedStepKeys
         );
     }
 
@@ -2865,7 +2866,7 @@ public final class StructureConstructionManager {
             return Set.of();
         }
         return unionRoadBuildStepKeys(
-                completedRoadBuildStepKeys(level, job.plan),
+                consumedRoadBuildStepKeys(job.plan, completedRoadBuildStepKeys(level, job.plan), job.attemptedStepKeys),
                 skippedRoadBuildStepKeys(job.roadId, job.plan)
         );
     }
@@ -2888,7 +2889,20 @@ public final class StructureConstructionManager {
                 }
             }
         }
+        if (attemptedStepKeys != null) {
+            for (Long key : attemptedStepKeys) {
+                if (key != null && validStepKeys.contains(key)) {
+                    consumed.add(key);
+                }
+            }
+        }
         return Set.copyOf(consumed);
+    }
+
+    static int consumedRoadBuildStepCountForTest(RoadPlacementPlan plan,
+                                                 Set<Long> completedStepKeys,
+                                                 Set<Long> attemptedStepKeys) {
+        return consumedRoadBuildStepKeys(plan, completedStepKeys, attemptedStepKeys).size();
     }
 
     private static Set<Long> skippedRoadBuildStepKeys(String roadId, RoadPlacementPlan plan) {

@@ -77,6 +77,23 @@ class CarriageRoutePlannerTest {
     }
 
     @Test
+    void builtRoadSurfaceBlocksCreateCarriageRoadCorridorSegmentsWithoutGraphNodes() {
+        TestServerLevel level = newPersistentLevel();
+        seedFlatGround(level, 0, 9, -1, 1, 64);
+        seedRoadSurface(level, new BlockPos(2, 64, 0), new BlockPos(7, 64, 0));
+
+        CarriageRoutePlan plan = CarriageRoutePlanner.planFromPath(level,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(2, 64, 0), new BlockPos(7, 64, 0), new BlockPos(9, 64, 0)));
+
+        assertTrue(plan.found());
+        assertEquals(List.of(
+                CarriageRoutePlan.SegmentKind.TERRAIN_CONNECTOR,
+                CarriageRoutePlan.SegmentKind.ROAD_CORRIDOR,
+                CarriageRoutePlan.SegmentKind.TERRAIN_CONNECTOR
+        ), plan.segments().stream().map(CarriageRoutePlan.Segment::kind).toList());
+    }
+
+    @Test
     void findRoadRouteUsesGraphRoadsAndIgnoresLegacyRoadRecords() {
         TestServerLevel level = newPersistentLevel();
         seedFlatGround(level, 0, 20, -1, 1, 64);
@@ -148,6 +165,13 @@ class CarriageRoutePlannerTest {
                 RoadGraphEdgeRecord.Status.BUILT, path, List.of(from, to),
                 path.stream().map(pos -> new RoadGraphSegmentPlacement(pos, List.of(pos, pos.north(), pos.south()))).toList(),
                 List.of(), List.of(), 1L, 1L));
+    }
+
+    private static void seedRoadSurface(TestServerLevel level, BlockPos from, BlockPos to) {
+        List<BlockPos> path = buildStraightPath(from, to);
+        for (BlockPos pos : path) {
+            setSurfaceColumn(level, pos.getX(), pos.getZ(), pos.getY(), Blocks.STONE_BRICKS.defaultBlockState());
+        }
     }
 
     private static List<BlockPos> buildStraightPath(BlockPos from, BlockPos to) {

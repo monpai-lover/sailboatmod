@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.route;
 
+import com.monpai.sailboatmod.nation.RoadTravelHelper;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -41,11 +42,12 @@ public final class CarriageRoutePlanner {
             return CarriageRoutePlan.empty();
         }
         RoadGraphRoutingService graph = new RoadGraphRoutingService(RoadGraphRepository.forLevel(level));
-        List<CarriageRoutePlan.Segment> segments = splitIntoSegments(level.dimension().location().toString(), path, graph);
+        List<CarriageRoutePlan.Segment> segments = splitIntoSegments(level, level.dimension().location().toString(), path, graph);
         return segments.isEmpty() ? CarriageRoutePlan.empty() : new CarriageRoutePlan(segments);
     }
 
-    private static List<CarriageRoutePlan.Segment> splitIntoSegments(String dimensionId,
+    private static List<CarriageRoutePlan.Segment> splitIntoSegments(ServerLevel level,
+                                                                     String dimensionId,
                                                                      List<BlockPos> path,
                                                                      RoadGraphRoutingService graph) {
         List<CarriageRoutePlan.Segment> segments = new ArrayList<>();
@@ -53,14 +55,14 @@ public final class CarriageRoutePlanner {
             return segments;
         }
 
-        CarriageRoutePlan.SegmentKind currentKind = classify(dimensionId, path.get(0), graph);
+        CarriageRoutePlan.SegmentKind currentKind = classify(level, dimensionId, path.get(0), graph);
         List<BlockPos> currentPath = new ArrayList<>();
         currentPath.add(path.get(0).immutable());
 
         for (int i = 1; i < path.size(); i++) {
             BlockPos previous = path.get(i - 1);
             BlockPos current = path.get(i);
-            CarriageRoutePlan.SegmentKind nextKind = classify(dimensionId, current, graph);
+            CarriageRoutePlan.SegmentKind nextKind = classify(level, dimensionId, current, graph);
             if (nextKind != currentKind) {
                 currentPath.add(current.immutable());
                 addSegmentIfUsable(segments, currentKind, currentPath);
@@ -94,9 +96,20 @@ public final class CarriageRoutePlanner {
         }
     }
 
-    private static CarriageRoutePlan.SegmentKind classify(String dimensionId, BlockPos pos, RoadGraphRoutingService graph) {
-        return graph != null && graph.isRoadCorridor(dimensionId, pos, 1)
+    private static CarriageRoutePlan.SegmentKind classify(ServerLevel level,
+                                                          String dimensionId,
+                                                          BlockPos pos,
+                                                          RoadGraphRoutingService graph) {
+        return graph != null && graph.isRoadCorridor(dimensionId, pos, 1) || isBuiltRoadSurface(level, pos)
                 ? CarriageRoutePlan.SegmentKind.ROAD_CORRIDOR
                 : CarriageRoutePlan.SegmentKind.TERRAIN_CONNECTOR;
+    }
+
+    private static boolean isBuiltRoadSurface(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return false;
+        }
+        return RoadTravelHelper.isWalkableRoadSurface(level.getBlockState(pos))
+                || RoadTravelHelper.isWalkableRoadSurface(level.getBlockState(pos.below()));
     }
 }

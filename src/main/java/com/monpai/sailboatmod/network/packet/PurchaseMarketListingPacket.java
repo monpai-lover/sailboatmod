@@ -12,23 +12,23 @@ import java.util.function.Supplier;
 
 public class PurchaseMarketListingPacket {
     private final BlockPos marketPos;
-    private final int listingIndex;
+    private final String listingId;
     private final int quantity;
 
-    public PurchaseMarketListingPacket(BlockPos marketPos, int listingIndex, int quantity) {
+    public PurchaseMarketListingPacket(BlockPos marketPos, String listingId, int quantity) {
         this.marketPos = marketPos;
-        this.listingIndex = listingIndex;
+        this.listingId = listingId == null ? "" : listingId;
         this.quantity = quantity;
     }
 
     public static void encode(PurchaseMarketListingPacket packet, FriendlyByteBuf buffer) {
         buffer.writeBlockPos(packet.marketPos);
-        buffer.writeVarInt(packet.listingIndex);
+        PacketStringCodec.writeUtfSafe(buffer, packet.listingId, 64);
         buffer.writeVarInt(packet.quantity);
     }
 
     public static PurchaseMarketListingPacket decode(FriendlyByteBuf buffer) {
-        return new PurchaseMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt());
+        return new PurchaseMarketListingPacket(buffer.readBlockPos(), buffer.readUtf(64), buffer.readVarInt());
     }
 
     public static void handle(PurchaseMarketListingPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -41,7 +41,13 @@ public class PurchaseMarketListingPacket {
             if (!(player.level().getBlockEntity(packet.marketPos) instanceof MarketBlockEntity market)) {
                 return;
             }
-            market.purchaseListing(player, packet.listingIndex, packet.quantity);
+            market.purchaseListingById(
+                    player.getUUID().toString(),
+                    player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName(),
+                    player,
+                    packet.listingId,
+                    packet.quantity
+            );
             ModNetwork.CHANNEL.send(
                     PacketDistributor.PLAYER.with(() -> player),
                     new OpenMarketScreenPacket(market.buildOverview(player))
