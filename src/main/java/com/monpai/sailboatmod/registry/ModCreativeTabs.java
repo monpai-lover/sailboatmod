@@ -22,6 +22,8 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.ROUTE_BOOK_ITEM.get());
                         output.accept(ModItems.POST_ROUTE_BOOK_ITEM.get());
                         output.accept(ModItems.ROAD_PLANNER_ITEM.get());
+                        output.accept(ModItems.BUILDER_HAMMER_ITEM.get());
+                        output.accept(ModItems.COMMAND_BATON_ITEM.get());
                         output.accept(ModItems.DOCK_ITEM.get());
                         output.accept(ModItems.POST_STATION_ITEM.get());
                         output.accept(ModItems.TOWN_WAREHOUSE_ITEM.get());
@@ -32,6 +34,12 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.TOWN_FLAG_ITEM.get());
                         output.accept(ModItems.BANK_ITEM.get());
                         output.accept(ModItems.BANK_CONSTRUCTOR_ITEM.get());
+                        output.accept(ModItems.COTTAGE_ITEM.get());
+                        output.accept(ModItems.BAR_ITEM.get());
+                        output.accept(ModItems.BARRACKS_ITEM.get());
+                        output.accept(ModItems.WORKSTATION_ITEM.get());
+                        output.accept(ModItems.SCHOOL_ITEM.get());
+                        output.accept(ModItems.HALF_NUGGET_ITEM.get());
                     })
                     .build()
     );

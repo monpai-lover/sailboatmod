@@ -167,6 +167,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private int nonWaterTicks = 0;
     private boolean forwardPressedLastTick = false;
     private boolean reversePressedLastTick = false;
+    private final SailboatManualInputState manualInputState = new SailboatManualInputState();
     private float previousSailDeployProgress = 1.0F;
     private float sailDeployProgress = 1.0F;
     private final List<Vec3> autopilotRoute = new ArrayList<>();
@@ -376,6 +377,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         limitTurnRate();
 
         LivingEntity captain = getControllingPassenger();
+        if (!level().isClientSide && !(captain instanceof Player)) {
+            manualInputState.clear();
+        }
         boolean autopilotControl = !level().isClientSide
                 && isAutopilotActive()
                 && !isAutopilotPaused()
@@ -424,10 +428,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             boolean hasManualInput = false;
 
             if (captain instanceof Player captainPlayer) {
-                // Ignore tiny client-side input jitter so autopilot is not canceled accidentally.
-                boolean playerWantsForward = captainPlayer.zza > 0.15F;
-                boolean playerWantsReverse = captainPlayer.zza < -0.15F;
-                boolean playerWantsTurn = Math.abs(captainPlayer.xxa) > 0.15F;
+                SailboatControlInput controlInput = manualInputState.currentInput(captainPlayer.getUUID(), tickCount);
+                boolean playerWantsForward = controlInput.wantsForward();
+                boolean playerWantsReverse = controlInput.wantsReverse();
+                boolean playerWantsTurn = controlInput.wantsTurn();
                 hasManualInput = playerWantsForward || playerWantsReverse || playerWantsTurn;
                 if (autopilotControl && !hasManualInput) {
                     // Keep autopilot running when rider has no steering/throttle input.
@@ -454,7 +458,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     wantsForward = playerWantsForward;
                     wantsReverse = playerWantsReverse;
                     wantsTurn = playerWantsTurn;
-                    turnInput = captainPlayer.xxa;
+                    turnInput = controlInput.turnInput();
                     if (usesHoldToDriveControls()) {
                         entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
                         forwardPressedLastTick = false;
@@ -467,6 +471,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     }
                 }
             } else if (autopilotControl) {
+                manualInputState.clear();
                 AutopilotCommand autopilotCommand = computeAutopilotCommand();
                 if (autopilotCommand.active) {
                     if (autopilotCommand.yawStep != 0.0F) {
@@ -1410,6 +1415,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!level().isClientSide && isCaptain(player)) {
             entityData.set(DATA_SAIL_DEPLOYED, !entityData.get(DATA_SAIL_DEPLOYED));
         }
+    }
+
+    public void applyManualControlInput(Player player, SailboatControlInput input) {
+        if (player == null || level().isClientSide || player.getVehicle() != this || !hasPassenger(player) || !isCaptain(player)) {
+            return;
+        }
+        manualInputState.update(player.getUUID(), input, tickCount);
     }
 
     public float getSailDeployProgress(float partialTick) {

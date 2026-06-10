@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.entity.CarriageDriveInput;
 import com.monpai.sailboatmod.entity.CarriageLandDriveModel;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
+import com.monpai.sailboatmod.entity.SailboatControlInput;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.entity.TransportEntity;
 import com.monpai.sailboatmod.item.BankConstructorItem;
@@ -15,6 +16,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CarriageControlInputPacket;
 import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
+import com.monpai.sailboatmod.network.packet.SailboatControlInputPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
@@ -42,6 +44,7 @@ public final class ClientInputHandler {
             return;
         }
         syncCarriageControls(minecraft, player);
+        syncSailboatControls(minecraft, player);
         if (minecraft.screen != null) {
             return;
         }
@@ -146,6 +149,21 @@ public final class ClientInputHandler {
         ));
     }
 
+    private static void syncSailboatControls(Minecraft minecraft, LocalPlayer player) {
+        if (!(player.getVehicle() instanceof SailboatEntity)) {
+            return;
+        }
+        boolean controlsEnabled = minecraft.screen == null;
+        SailboatControlInput input = createSailboatControlInput(
+                controlsEnabled,
+                minecraft.options.keyUp.isDown(),
+                minecraft.options.keyDown.isDown(),
+                minecraft.options.keyLeft.isDown(),
+                minecraft.options.keyRight.isDown()
+        );
+        ModNetwork.CHANNEL.sendToServer(new SailboatControlInputPacket(input));
+    }
+
     private static CarriageDriveInput createCarriageControlInput(boolean controlsEnabled,
                                                                 boolean forwardDown,
                                                                 boolean backDown,
@@ -190,5 +208,27 @@ public final class ClientInputHandler {
                 previousTurnAngle,
                 currentSpeed
         );
+    }
+
+    static SailboatControlInput sailboatControlInputForTest(boolean controlsEnabled,
+                                                           boolean forwardDown,
+                                                           boolean backDown,
+                                                           boolean leftDown,
+                                                           boolean rightDown) {
+        return createSailboatControlInput(
+                controlsEnabled,
+                forwardDown,
+                backDown,
+                leftDown,
+                rightDown
+        );
+    }
+
+    private static SailboatControlInput createSailboatControlInput(boolean controlsEnabled,
+                                                                  boolean forwardDown,
+                                                                  boolean backDown,
+                                                                  boolean leftDown,
+                                                                  boolean rightDown) {
+        return SailboatControlInput.fromKeys(controlsEnabled, forwardDown, backDown, leftDown, rightDown);
     }
 }

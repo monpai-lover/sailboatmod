@@ -44,6 +44,7 @@ import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
 import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
 import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
+import com.monpai.sailboatmod.network.packet.SailboatControlInputPacket;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerTargetPacket;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerPreviewOptionPacket;
 import com.monpai.sailboatmod.network.packet.SelectSailboatSeatPacket;
@@ -100,7 +101,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "3";
+    private static final String PROTOCOL_VERSION = "4";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(SailboatMod.MODID, "main"),
             () -> PROTOCOL_VERSION,
@@ -166,6 +167,14 @@ public final class ModNetwork {
                 CarriageControlInputPacket::encode,
                 CarriageControlInputPacket::decode,
                 CarriageControlInputPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SailboatControlInputPacket.class,
+                SailboatControlInputPacket::encode,
+                SailboatControlInputPacket::decode,
+                SailboatControlInputPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
