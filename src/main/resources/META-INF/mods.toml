@@ -74,3 +74,9 @@ description='''${mod_description}'''
     versionRange="[4.4,)"
     ordering="AFTER"
     side="BOTH"
+[[dependencies.${mod_id}]]
+    modId="kotlinforforge"
+    mandatory=true
+    versionRange="[4.0,)"
+    ordering="AFTER"
+    side="BOTH"
