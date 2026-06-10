@@ -1,11 +1,16 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileManager;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaimWorldMapViewTest {
@@ -37,6 +42,36 @@ class ClaimWorldMapViewTest {
         assertTrue(packet.start().getX() < packet.destination().getX());
         assertTrue(packet.start().getZ() < packet.destination().getZ());
         assertEquals(2, packet.routeNodes().size());
+    }
+
+    @Test
+    void forceRenderRequestMarkerTracksVisibleChunkBounds() {
+        ClaimWorldMapView view = ClaimWorldMapView.forTest(0, 0, 2, 160, 160);
+        ClaimMapViewport viewport = new ClaimMapViewport(0, 0, 160, 160);
+
+        assertTrue(view.markVisibleForceRenderRequested(viewport));
+        assertEquals(false, view.markVisibleForceRenderRequested(viewport));
+
+        view.panByScreenDelta(160, 0);
+
+        assertTrue(view.markVisibleForceRenderRequested(viewport));
+    }
+
+    @Test
+    void defaultClaimMapUsesSharedRoadPlannerTileManager(@TempDir Path tempDir) {
+        RoadPlannerTileManager manager = new NonRefreshingTileManager(tempDir);
+        RoadPlannerTileManager.setSharedDefaultForTest(manager);
+        ClaimWorldMapView view = new ClaimWorldMapView();
+
+        try {
+            assertSame(manager, view.tileManagerForTest());
+
+            view.close();
+
+            assertSame(manager, RoadPlannerTileManager.sharedDefault());
+        } finally {
+            RoadPlannerTileManager.clearSharedDefaultForTest();
+        }
     }
 
     @Test
@@ -127,5 +162,15 @@ class ClaimWorldMapViewTest {
         assertEquals(explicitPacket.destination(), viewportPacket.destination());
         assertTrue(viewportPacket.start().getX() < viewportPacket.destination().getX());
         assertTrue(viewportPacket.start().getZ() < viewportPacket.destination().getZ());
+    }
+
+    private static final class NonRefreshingTileManager extends RoadPlannerTileManager {
+        private NonRefreshingTileManager(Path rootDir) {
+            super(rootDir.toFile());
+        }
+
+        @Override
+        public void refreshWorldContext() {
+        }
     }
 }

@@ -104,7 +104,7 @@ public final class ServerEvents {
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
-        ClaimPreviewTerrainService.onServerStopping();
+        ClaimPreviewTerrainService.onServerStopping(event.getServer());
         com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerStopping();
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();

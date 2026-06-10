@@ -10,8 +10,8 @@ public final class RoadPlannerClientMapTileCache {
         if (packet == null) {
             return;
         }
-        try (RoadPlannerTileManager manager = RoadPlannerTileManager.createDefault()) {
-            manager.applyTileSync(packet);
+        try {
+            RoadPlannerTileManager.sharedDefault().applyTileSync(packet);
         } catch (RuntimeException ignored) {
         }
     }

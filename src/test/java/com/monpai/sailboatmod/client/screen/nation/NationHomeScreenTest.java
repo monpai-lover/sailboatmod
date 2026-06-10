@@ -1,13 +1,10 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
-import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
-import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewNationEntry;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -19,11 +16,6 @@ class NationHomeScreenTest {
     static void bootstrapMinecraftRegistries() {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
-    }
-
-    @BeforeEach
-    void clearTerrainCache() {
-        TerrainColorClientCache.clear();
     }
 
     @Test
@@ -76,20 +68,6 @@ class NationHomeScreenTest {
         assertEquals("nation-id", NationHomeScreen.tradeOpenTargetForTest(entry));
         assertEquals("Legacy Nation", NationHomeScreen.tradeOpenTargetForTest(legacyEntryWithoutId));
         assertEquals("", NationHomeScreen.tradeOpenTargetForTest(null));
-    }
-
-    @Test
-    void loadingViewportPreservesCachedSubpixelTerrainResolution() {
-        TerrainColorClientCache.put(0, 0, new int[] {0xFF111111, 0xFF222222, 0xFF333333, 0xFF444444});
-        NationHomeScreen screen = new NationHomeScreen(NationOverviewData.empty().withClaimPreview(
-                ClaimPreviewMapState.loading(2L, 0, 1, 0),
-                java.util.List.of()
-        ));
-
-        assertEquals(0xFF111111, screen.sampleClaimTerrainColorForTest(0, 0, 0, 0));
-        assertEquals(0xFF222222, screen.sampleClaimTerrainColorForTest(0, 0, 1, 0));
-        assertEquals(0xFF333333, screen.sampleClaimTerrainColorForTest(0, 0, 0, 1));
-        assertEquals(0xFF444444, screen.sampleClaimTerrainColorForTest(0, 0, 1, 1));
     }
 
     @Test

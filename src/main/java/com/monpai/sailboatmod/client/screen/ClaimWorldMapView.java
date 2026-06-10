@@ -28,6 +28,7 @@ public final class ClaimWorldMapView implements AutoCloseable {
     private RoadPlannerMapView view;
     private long nextRequestId = 1L;
     private boolean initialForceRenderRequested;
+    private ChunkBounds lastForceRenderBounds;
 
     public ClaimWorldMapView() {
         this(null, true);
@@ -67,6 +68,7 @@ public final class ClaimWorldMapView implements AutoCloseable {
         double nextScale = preserveScale && view != null ? view.scale() : fitScale(radius, width, height);
         this.view = RoadPlannerMapView.centered(chunkCenterBlock(centerChunkX), chunkCenterBlock(centerChunkZ), nextScale);
         this.initialForceRenderRequested = false;
+        this.lastForceRenderBounds = null;
     }
 
     public void ensureView(int centerChunkX, int centerChunkZ, int radius, int width, int height) {
@@ -164,6 +166,19 @@ public final class ClaimWorldMapView implements AutoCloseable {
         return true;
     }
 
+    public boolean markVisibleForceRenderRequested(ClaimMapViewport viewport) {
+        if (viewport == null) {
+            return markInitialForceRenderRequested();
+        }
+        ChunkBounds currentBounds = visibleChunkBounds(viewport);
+        if (initialForceRenderRequested && currentBounds.equals(lastForceRenderBounds)) {
+            return false;
+        }
+        initialForceRenderRequested = true;
+        lastForceRenderBounds = currentBounds;
+        return true;
+    }
+
     public RoadPlannerMapPreloadRequestPacket createVisibleForceRenderRequest(String worldId,
                                                                              String dimensionId,
                                                                              int mapX,
@@ -217,12 +232,16 @@ public final class ClaimWorldMapView implements AutoCloseable {
 
     private RoadPlannerTileManager tileManager() {
         if (tileManager == null && createDefaultTileManager) {
-            tileManager = RoadPlannerTileManager.createDefault();
+            tileManager = RoadPlannerTileManager.sharedDefault();
         }
         if (tileManager != null) {
             tileManager.refreshWorldContext();
         }
         return tileManager;
+    }
+
+    RoadPlannerTileManager tileManagerForTest() {
+        return tileManager();
     }
 
     private static double fitScale(int radius, int width, int height) {
@@ -242,10 +261,10 @@ public final class ClaimWorldMapView implements AutoCloseable {
 
     @Override
     public void close() {
-        if (tileManager != null) {
+        if (tileManager != null && !createDefaultTileManager) {
             tileManager.close();
-            tileManager = null;
         }
+        tileManager = null;
     }
 
     public record ChunkBounds(int minChunkX, int maxChunkX, int minChunkZ, int maxChunkZ) {

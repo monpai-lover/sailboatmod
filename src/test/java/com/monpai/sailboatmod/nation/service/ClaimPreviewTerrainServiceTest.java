@@ -105,7 +105,7 @@ class ClaimPreviewTerrainServiceTest {
     }
 
     @Test
-    void chunkSamplingUsesForceLoadWhenResolvingChunk() {
+    void chunkSamplingDoesNotForceLoadWhenResolvingChunk() {
         ClaimPreviewTerrainService service = new ClaimPreviewTerrainService();
         AtomicBoolean forceLoad = new AtomicBoolean(false);
 
@@ -114,7 +114,7 @@ class ClaimPreviewTerrainServiceTest {
             return null;
         });
 
-        assertTrue(forceLoad.get());
+        assertFalse(forceLoad.get());
         assertNull(sampled);
     }
 

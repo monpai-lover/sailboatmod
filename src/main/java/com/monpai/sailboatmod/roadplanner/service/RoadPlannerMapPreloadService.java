@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.roadplanner.service;
 
+import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteResult;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteService;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathfinderRunnerFactory;
@@ -20,22 +21,30 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapSnapshot;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapSnapshotService;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraftforge.common.world.ForgeChunkManager;
 import net.minecraftforge.network.NetworkDirection;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 public final class RoadPlannerMapPreloadService {
     private static final int MAX_TILES_PER_TICK = 4;
+    private static final int MAX_FORCE_CHUNKS_PER_TICK = 8;
     private static final RoadMapRoutePreloadPlanner ROUTE_PLANNER = new RoadMapRoutePreloadPlanner(4096, 4, 3, 8);
     private static RoadPlannerMapPreloadService GLOBAL = new RoadPlannerMapPreloadService();
 
@@ -52,6 +61,9 @@ public final class RoadPlannerMapPreloadService {
     }
 
     public static void onServerStopped() {
+        for (ActiveJob active : List.copyOf(GLOBAL.jobs.values())) {
+            GLOBAL.releaseAllForcedChunks(active);
+        }
         GLOBAL.jobs.clear();
         GLOBAL.server = null;
     }
@@ -63,14 +75,15 @@ public final class RoadPlannerMapPreloadService {
         RoadPlannerMapPreloadRequestPacket.Purpose purpose = packet.purpose();
         RoadMapRoutePreloadPlan plan = resolvePlan(player.serverLevel(), packet);
         JobKey key = new JobKey(packet.sessionId(), purpose);
-        jobs.put(key, new ActiveJob(player.getUUID(), packet.sessionId(), packet.requestId(), purpose, packet.worldId(), packet.dimensionId(), new RoadPlannerMapPreloadJob(
+        ActiveJob activeJob = new ActiveJob(player.getUUID(), packet.sessionId(), packet.requestId(), purpose, packet.worldId(), packet.dimensionId(), new RoadPlannerMapPreloadJob(
                 packet.sessionId(),
                 packet.requestId(),
                 purpose,
                 packet.worldId(),
                 packet.dimensionId(),
-                plan)));
-        sendProgress(player, jobs.get(key).job.progress());
+                plan));
+        replaceJob(key, activeJob);
+        sendProgress(player, activeJob.job.progress());
     }
 
     public void enqueueBuiltRoadRefresh(ServerLevel level, Collection<net.minecraft.world.level.ChunkPos> chunks) {
@@ -121,8 +134,16 @@ public final class RoadPlannerMapPreloadService {
                             dimensionId,
                             plan));
             JobKey key = new JobKey(sessionId, RoadPlannerMapPreloadRequestPacket.Purpose.BUILT_ROAD_REFRESH);
-            jobs.put(key, activeJob);
+            replaceJob(key, activeJob);
             sendProgress(player, activeJob.job.progress());
+        }
+    }
+
+    private void replaceJob(JobKey key, ActiveJob activeJob) {
+        ActiveJob previous = jobs.put(key, activeJob);
+        if (previous != null && previous != activeJob) {
+            releaseAllForcedChunks(previous);
+            previous.job.cancel("replaced by newer request");
         }
     }
 
@@ -133,6 +154,7 @@ public final class RoadPlannerMapPreloadService {
         JobKey key = new JobKey(packet.sessionId(), packet.purpose());
         ActiveJob job = jobs.remove(key);
         if (job != null && job.requestId == packet.requestId()) {
+            releaseAllForcedChunks(job);
             job.job.cancel("已取消");
             sendProgress(player, job.job.progress());
         } else if (job != null) {
@@ -153,12 +175,13 @@ public final class RoadPlannerMapPreloadService {
             }
             ServerPlayer player = server.getPlayerList().getPlayer(active.playerId);
             if (player == null) {
+                releaseAllForcedChunks(active);
                 jobs.remove(entry.getKey());
                 continue;
             }
             int processedThisTick = 0;
             while (processedThisTick < MAX_TILES_PER_TICK && !active.job.isFinished()) {
-                int processed = active.job.advance(1, key -> buildSnapshot(level, key, active.job), packet -> sendTile(player, packet));
+                int processed = active.job.advance(1, key -> buildSnapshot(level, key, active), packet -> sendTile(player, packet));
                 if (processed <= 0) {
                     break;
                 }
@@ -169,6 +192,7 @@ public final class RoadPlannerMapPreloadService {
                 sendProgress(player, active.job.progress());
             }
             if (active.job.isFinished()) {
+                releaseAllForcedChunks(active);
                 jobs.remove(entry.getKey());
             }
         }
@@ -197,38 +221,129 @@ public final class RoadPlannerMapPreloadService {
         return List.of(packet.start(), packet.destination());
     }
 
-    private RoadMapSnapshot buildSnapshot(ServerLevel level, RoadPlannerTileKey key, RoadPlannerMapPreloadJob job) {
+    private RoadMapSnapshot buildSnapshot(ServerLevel level, RoadPlannerTileKey key, ActiveJob active) {
+        if (!prepareCoveredChunks(level, key, active)) {
+            return null;
+        }
         BlockPos center = new BlockPos(
                 key.tileX() * RoadMapTileSpec.TILE_BLOCKS + RoadMapTileSpec.TILE_BLOCKS / 2,
                 0,
                 key.tileZ() * RoadMapTileSpec.TILE_BLOCKS + RoadMapTileSpec.TILE_BLOCKS / 2);
-        forceLoadCoveredChunks(level, key, job);
         RoadMapRegion region = RoadMapRegion.centeredOn(center, RoadMapTileSpec.TILE_BLOCKS, MapLod.LOD_1);
         RoadMapSnapshotService service = RoadMapSnapshotService.directExecutorForTest(new RoadMapColorizer());
         RoadMapServerColumnSampler delegate = new RoadMapServerColumnSampler(level);
         RoadMapColumnSampler sampler = (worldX, worldZ) -> {
             int chunkX = Math.floorDiv(worldX, 16);
             int chunkZ = Math.floorDiv(worldZ, 16);
-            if (job != null && !job.coversChunk(chunkX, chunkZ)) {
+            if (active != null && active.job != null && !active.job.coversChunk(chunkX, chunkZ)) {
                 return RoadMapServerColumnSampler.unavailableSampleForTest(worldX, worldZ);
             }
             return delegate.sample(worldX, worldZ);
         };
-        return service.buildSnapshotAsync(level.getGameTime(), region, sampler).join();
+        RoadMapSnapshot snapshot = service.buildSnapshotAsync(level.getGameTime(), region, sampler).join();
+        releaseForcedTile(level, active, key);
+        return snapshot;
     }
 
-    private void forceLoadCoveredChunks(ServerLevel level, RoadPlannerTileKey key, RoadPlannerMapPreloadJob job) {
-        int startChunkX = key.tileX() * 16;
-        int startChunkZ = key.tileZ() * 16;
-        for (int localZ = 0; localZ < 16; localZ++) {
-            for (int localX = 0; localX < 16; localX++) {
-                int chunkX = startChunkX + localX;
-                int chunkZ = startChunkZ + localZ;
-                if (job == null || job.coversChunk(chunkX, chunkZ)) {
-                    level.getChunk(chunkX, chunkZ);
+    private boolean prepareCoveredChunks(ServerLevel level, RoadPlannerTileKey key, ActiveJob active) {
+        if (level == null || key == null || active == null || active.job == null
+                || active.job.purpose() != RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER) {
+            return true;
+        }
+        Set<Long> forcedForTile = active.forcedChunks.computeIfAbsent(key, ignored -> new LinkedHashSet<>());
+        int tileStartChunkX = key.tileX() * (RoadMapTileSpec.TILE_BLOCKS / 16);
+        int tileStartChunkZ = key.tileZ() * (RoadMapTileSpec.TILE_BLOCKS / 16);
+        int startedThisTick = 0;
+        boolean allLoaded = true;
+        BlockPos owner = forceOwnerPosition(key, level);
+        for (int dz = 0; dz < RoadMapTileSpec.TILE_BLOCKS / 16; dz++) {
+            for (int dx = 0; dx < RoadMapTileSpec.TILE_BLOCKS / 16; dx++) {
+                int chunkX = tileStartChunkX + dx;
+                int chunkZ = tileStartChunkZ + dz;
+                if (!active.job.coversChunk(chunkX, chunkZ)) {
+                    continue;
+                }
+                if (isChunkLoaded(level, chunkX, chunkZ)) {
+                    continue;
+                }
+                allLoaded = false;
+                long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
+                if (forcedForTile.contains(chunkKey) || startedThisTick >= MAX_FORCE_CHUNKS_PER_TICK) {
+                    continue;
+                }
+                if (ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false)) {
+                    forcedForTile.add(chunkKey);
+                    startedThisTick++;
                 }
             }
         }
+        return allLoaded;
+    }
+
+    private void releaseForcedTile(ServerLevel level, ActiveJob active, RoadPlannerTileKey key) {
+        if (level == null || active == null || key == null) {
+            return;
+        }
+        Set<Long> forced = active.forcedChunks.remove(key);
+        if (forced == null || forced.isEmpty()) {
+            return;
+        }
+        BlockPos owner = forceOwnerPosition(key, level);
+        for (Long chunkKey : forced) {
+            if (chunkKey == null) {
+                continue;
+            }
+            ForgeChunkManager.forceChunk(
+                    level,
+                    SailboatMod.MODID,
+                    owner,
+                    ChunkPos.getX(chunkKey),
+                    ChunkPos.getZ(chunkKey),
+                    false,
+                    false);
+        }
+    }
+
+    private void releaseAllForcedChunks(ActiveJob active) {
+        if (active == null || active.forcedChunks.isEmpty()) {
+            return;
+        }
+        ServerLevel level = resolveLevel(active.dimensionId);
+        if (level == null) {
+            active.forcedChunks.clear();
+            return;
+        }
+        for (RoadPlannerTileKey key : List.copyOf(active.forcedChunks.keySet())) {
+            releaseForcedTile(level, active, key);
+        }
+        active.forcedChunks.clear();
+    }
+
+    private ServerLevel resolveLevel(String dimensionId) {
+        if (server == null || dimensionId == null || dimensionId.isBlank()) {
+            return null;
+        }
+        ResourceLocation location = ResourceLocation.tryParse(dimensionId);
+        if (location == null) {
+            return null;
+        }
+        ResourceKey<Level> key = ResourceKey.create(Registries.DIMENSION, location);
+        return server.getLevel(key);
+    }
+
+    private static boolean isChunkLoaded(ServerLevel level, int chunkX, int chunkZ) {
+        try {
+            return level.getChunkSource().getChunk(chunkX, chunkZ, false) != null;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private static BlockPos forceOwnerPosition(RoadPlannerTileKey key, ServerLevel level) {
+        return new BlockPos(
+                key.tileX() * RoadMapTileSpec.TILE_BLOCKS,
+                level == null ? 0 : level.getMinBuildHeight(),
+                key.tileZ() * RoadMapTileSpec.TILE_BLOCKS);
     }
 
     private void sendTile(ServerPlayer player, RoadPlannerMapTileSyncPacket packet) {
@@ -252,12 +367,24 @@ public final class RoadPlannerMapPreloadService {
                              RoadPlannerMapPreloadRequestPacket.Purpose purpose,
                              String worldId,
                              String dimensionId,
-                             RoadPlannerMapPreloadJob job) {
+                             RoadPlannerMapPreloadJob job,
+                             Map<RoadPlannerTileKey, Set<Long>> forcedChunks) {
+        private ActiveJob(UUID playerId,
+                          UUID sessionId,
+                          long requestId,
+                          RoadPlannerMapPreloadRequestPacket.Purpose purpose,
+                          String worldId,
+                          String dimensionId,
+                          RoadPlannerMapPreloadJob job) {
+            this(playerId, sessionId, requestId, purpose, worldId, dimensionId, job, new LinkedHashMap<>());
+        }
+
         private ActiveJob {
             playerId = playerId == null ? new UUID(0L, 0L) : playerId;
             sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
             worldId = worldId == null ? "" : worldId;
             dimensionId = dimensionId == null ? "" : dimensionId;
+            forcedChunks = forcedChunks == null ? new LinkedHashMap<>() : forcedChunks;
         }
     }
 }

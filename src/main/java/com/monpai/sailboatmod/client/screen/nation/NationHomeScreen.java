@@ -7,7 +7,6 @@ import com.monpai.sailboatmod.client.screen.ClaimMapViewport;
 import com.monpai.sailboatmod.client.screen.ClaimWorldMapView;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
-import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.NationFlagUploadClient;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
@@ -69,7 +68,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     private static final int TREASURY_ITEM_VISIBLE_ROWS = 4;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
-    private static final int PREVIEW_DEFAULT_TERRAIN_COLOR = 0xFF33414A;
     private static final int VIEWPORT_PREFETCH_RADIUS = 2;
     private int claimRadius() {
         int stateRadius = this.data.claimMapState().radius();
@@ -173,7 +171,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     private Button acceptPeaceButton;
     private Button rejectPeaceButton;
     private Button resetMapButton;
-    private Button clearTerrainCacheButton;
+    private Button refreshMapButton;
     private int mapOffsetX = 0;
     private int mapOffsetZ = 0;
     private boolean isDraggingMap = false;
@@ -204,8 +202,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     public void updateData(NationOverviewData updated) {
         NationOverviewData previousData = this.data;
         rememberClaimRadius(previousData);
-        cacheTerrainColors(previousData);
-        boolean preserveVisibleCenter = previousData != null && !previousData.nearbyTerrainColors().isEmpty();
+        boolean preserveVisibleCenter = previousData != null;
         int visibleCenterX = preserveVisibleCenter ? mapCenterX() : Integer.MIN_VALUE;
         int visibleCenterZ = preserveVisibleCenter ? mapCenterZ() : Integer.MIN_VALUE;
         this.data = updated == null ? NationOverviewData.empty() : updated;
@@ -247,21 +244,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         syncNationInfoInputs();
         syncColorInputs();
         syncOfficerTitleInput();
-        int radius = claimRadius();
-        int diameter = radius * 2 + 1;
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        List<Integer> colors = this.data.nearbyTerrainColors();
-        for (int gz = 0; gz < diameter; gz++) {
-            for (int gx = 0; gx < diameter; gx++) {
-                int chunkIndex = gz * diameter + gx;
-                int colorIndex = chunkIndex * sub * sub;
-                if (colorIndex + (sub * sub) <= colors.size()) {
-                    int cx = this.data.previewCenterChunkX() + gx - radius;
-                    int cz = this.data.previewCenterChunkZ() + gz - radius;
-                    TerrainColorClientCache.put(cx, cz, copyChunkSubColors(colors, colorIndex, sub));
-                }
-            }
-        }
         this.statusLine = Component.translatable("screen.sailboatmod.nation.status.synced");
         updateButtonState();
         flushQueuedPreviewRefresh();
@@ -350,10 +332,10 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         // Claim radius buttons
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
         this.resetMapButton.visible = false;
-        this.clearTerrainCacheButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
+        this.refreshMapButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
             requestRefresh();
         }).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 44, top + BODY_Y + 10, 24, 14).build());
-        this.clearTerrainCacheButton.visible = false;
+        this.refreshMapButton.visible = false;
 
         // Peace proposal buttons
         this.proposeCeasefireButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.ceasefire"), b -> submitPeaceProposal("ceasefire", 0, 0)).bounds(left + BODY_X + 12, top + BODY_Y + 148, 90, 18).build());
@@ -422,10 +404,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             return;
         }
         this.autoRefreshTicks++;
-        boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
-        int interval = claimsMapView && hasIncompletePreviewTerrain()
-                ? 8
-                : (this.data.hasActiveWar() ? ACTIVE_WAR_REFRESH_INTERVAL_TICKS : AUTO_REFRESH_INTERVAL_TICKS);
+        int interval = this.data.hasActiveWar() ? ACTIVE_WAR_REFRESH_INTERVAL_TICKS : AUTO_REFRESH_INTERVAL_TICKS;
         if (this.autoRefreshTicks < interval) {
             return;
         }
@@ -1138,7 +1117,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         if (this.tariffDownButton != null) { this.tariffDownButton.visible = treasuryPage; this.tariffDownButton.active = canTreasury; }
 
         if (this.resetMapButton != null) { this.resetMapButton.visible = claimsMapView; this.resetMapButton.active = claimsMapView; }
-        if (this.clearTerrainCacheButton != null) { this.clearTerrainCacheButton.visible = claimsMapView; this.clearTerrainCacheButton.active = claimsMapView; }
+        if (this.refreshMapButton != null) { this.refreshMapButton.visible = claimsMapView; this.refreshMapButton.active = claimsMapView; }
 
         boolean hasWar = this.data.hasActiveWar();
         boolean canWar = warPage && this.data.hasNation() && this.data.canDeclareWar() && hasWar;
@@ -1256,31 +1235,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         int ty = Math.max(labelTop, Math.min(mouseY - 14, labelBottom));
         g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xCC000000);
         g.drawString(this.font, text, tx, ty, color);
-    }
-
-    private int sampleClaimTerrainColor(int chunkX, int chunkZ, int sx, int sz) {
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        int gridX = chunkX - this.data.previewCenterChunkX() + claimRadius();
-        int gridZ = chunkZ - this.data.previewCenterChunkZ() + claimRadius();
-        int diameter = claimRadius() * 2 + 1;
-        if (gridX >= 0 && gridX < diameter && gridZ >= 0 && gridZ < diameter) {
-            int chunkIndex = gridZ * diameter + gridX;
-            int subIndex = chunkIndex * sub * sub + sz * sub + sx;
-            List<Integer> colors = this.data.nearbyTerrainColors();
-            if (subIndex >= 0 && subIndex < colors.size()) {
-                int color = colors.get(subIndex);
-                if (color != PREVIEW_DEFAULT_TERRAIN_COLOR) {
-                    TerrainColorClientCache.put(chunkX, chunkZ, sx, sz, color);
-                    return color;
-                }
-            }
-        }
-        Integer cached = TerrainColorClientCache.get(chunkX, chunkZ, sx, sz);
-        return cached != null ? cached : PREVIEW_DEFAULT_TERRAIN_COLOR;
-    }
-
-    int sampleClaimTerrainColorForTest(int chunkX, int chunkZ, int sx, int sz) {
-        return sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
     }
 
     static boolean shouldShowClaimMapProgress(ClaimPreviewMapState mapState) {
@@ -1448,7 +1402,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         layoutWidget(this.claimButton, 12, BODY_H - 26, 18, claimsMapView);
         layoutWidget(this.unclaimButton, 90, BODY_H - 26, 18, claimsMapView);
         layoutWidget(this.claimsSubPageButton, 184, BODY_H - 26, 18, claimsPage);
-        layoutFixedWidget(this.clearTerrainCacheButton, BODY_W - CLAIM_MAP_W - 44, 10, claimsMapView);
+        layoutFixedWidget(this.refreshMapButton, BODY_W - CLAIM_MAP_W - 44, 10, claimsMapView);
         layoutWidget(this.breakPermissionButton, 12, 50, 18, claimsPermView);
         layoutWidget(this.placePermissionButton, 120, 50, 18, claimsPermView);
         layoutWidget(this.usePermissionButton, 12, 74, 18, claimsPermView);
@@ -1685,7 +1639,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         if (minecraft == null || minecraft.getConnection() == null) {
             return;
         }
-        if (this.claimWorldMapView.markInitialForceRenderRequested()) {
+        if (this.claimWorldMapView.markVisibleForceRenderRequested(viewport)) {
             requestVisibleClaimMapForceRender(viewport);
         }
     }
@@ -1748,67 +1702,14 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         }
         int centerChunkX = mapCenterX();
         int centerChunkZ = mapCenterZ();
-        int diameter = claimRadius() * 2 + 1;
-        boolean missingTerrain = hasIncompletePreviewTerrain();
         boolean offCenter = centerChunkX != this.data.previewCenterChunkX() || centerChunkZ != this.data.previewCenterChunkZ();
         traceClaim("ensureClaimPreviewVisible center=" + centerChunkX + "," + centerChunkZ
                 + " previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
                 + " terrainCount=" + this.data.nearbyTerrainColors().size()
-                + " expected=" + (diameter * diameter)
-                + " missingTerrain=" + missingTerrain
                 + " offCenter=" + offCenter);
-        if (missingTerrain || offCenter) {
+        if (offCenter) {
             requestRefresh(centerChunkX, centerChunkZ);
         }
-    }
-
-    private boolean hasIncompletePreviewTerrain() {
-        int diameter = claimRadius() * 2 + 1;
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        if (this.data.nearbyTerrainColors().size() < diameter * diameter * sub * sub) {
-            return true;
-        }
-        for (Integer color : this.data.nearbyTerrainColors()) {
-            if (color == null || color == PREVIEW_DEFAULT_TERRAIN_COLOR) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void cacheTerrainColors(NationOverviewData snapshot) {
-        if (snapshot == null) {
-            return;
-        }
-        List<Integer> colors = snapshot.nearbyTerrainColors();
-        if (colors.isEmpty()) {
-            return;
-        }
-        int radius = resolvedRadiusForSnapshot(snapshot);
-        if (radius < 0) {
-            return;
-        }
-        int diameter = radius * 2 + 1;
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        for (int gz = 0; gz < diameter; gz++) {
-            for (int gx = 0; gx < diameter; gx++) {
-                int chunkIndex = gz * diameter + gx;
-                int colorIndex = chunkIndex * sub * sub;
-                if (colorIndex + (sub * sub) <= colors.size()) {
-                    int cx = snapshot.previewCenterChunkX() + gx - radius;
-                    int cz = snapshot.previewCenterChunkZ() + gz - radius;
-                    TerrainColorClientCache.put(cx, cz, copyChunkSubColors(colors, colorIndex, sub));
-                }
-            }
-        }
-    }
-
-    private static int[] copyChunkSubColors(List<Integer> colors, int startIndex, int sub) {
-        int[] chunkColors = new int[sub * sub];
-        for (int i = 0; i < chunkColors.length; i++) {
-            chunkColors[i] = colors.get(startIndex + i);
-        }
-        return chunkColors;
     }
 
     private void rememberClaimRadius(NationOverviewData snapshot) {

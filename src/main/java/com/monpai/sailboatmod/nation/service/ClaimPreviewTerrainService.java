@@ -100,6 +100,10 @@ public final class ClaimPreviewTerrainService {
         ACTIVE.set(new ClaimPreviewTerrainService());
     }
 
+    public static void onServerStopping(MinecraftServer server) {
+        onServerStopping();
+    }
+
     public static void onServerStopping() {
         ClaimPreviewTerrainService service = ACTIVE.getAndSet(null);
         if (service != null) {
@@ -326,10 +330,9 @@ public final class ClaimPreviewTerrainService {
         }
         String dimensionId = level.dimension().location().toString();
         drainQueue(level, visibleQueue, visibleQueuedKeys, dimensionId, Math.max(0, visibleBudget));
-        if (!visibleQueue.isEmpty()) {
-            return;
+        if (visibleQueue.isEmpty()) {
+            drainQueue(level, prefetchQueue, prefetchQueuedKeys, dimensionId, Math.max(0, prefetchBudget));
         }
-        drainQueue(level, prefetchQueue, prefetchQueuedKeys, dimensionId, Math.max(0, prefetchBudget));
     }
 
     public void invalidateChunkNow(ServerLevel level, int chunkX, int chunkZ) {
@@ -384,9 +387,12 @@ public final class ClaimPreviewTerrainService {
             }
             ChunkAccess chunk = null;
             try {
-                chunk = level.getChunkSource().getChunk(request.chunkX(), request.chunkZ(), ChunkStatus.FULL, true);
+                chunk = level.getChunkSource().getChunk(request.chunkX(), request.chunkZ(), ChunkStatus.FULL, false);
             } catch (Exception ignored) {
                 chunk = null;
+            }
+            if (chunk == null) {
+                continue;
             }
             batch.add(new ResolvedTileRequest(
                     request.dimensionId(),
@@ -444,6 +450,9 @@ public final class ClaimPreviewTerrainService {
         }
         for (CompletableFuture<SampledTile> future : futures) {
             SampledTile sampledTile = future.join();
+            if (sampledTile.tile() == null) {
+                continue;
+            }
             storeTile(sampledTile.dimensionId(), sampledTile.chunkX(), sampledTile.chunkZ(), sampledTile.tile(), null);
             markViewportDirty(sampledTile.viewportKey());
         }
@@ -681,7 +690,7 @@ public final class ClaimPreviewTerrainService {
             return null;
         }
         try {
-            ChunkAccess chunk = chunkResolver.resolve(chunkX, chunkZ, true);
+            ChunkAccess chunk = chunkResolver.resolve(chunkX, chunkZ, false);
             if (chunk == null) {
                 return null;
             }

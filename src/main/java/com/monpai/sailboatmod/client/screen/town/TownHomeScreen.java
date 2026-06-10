@@ -6,7 +6,6 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
 import com.monpai.sailboatmod.client.screen.ClaimMapViewport;
 import com.monpai.sailboatmod.client.screen.ClaimWorldMapView;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
-import com.monpai.sailboatmod.client.cache.TerrainColorClientCache;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.TownFlagUploadClient;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
@@ -54,7 +53,6 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     private static final int BODY_H = 220;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
-    private static final int PREVIEW_DEFAULT_TERRAIN_COLOR = 0xFF33414A;
     private static final int VIEWPORT_PREFETCH_RADIUS = 2;
     private int claimRadius() {
         int stateRadius = this.data.claimMapState().radius();
@@ -119,7 +117,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     private int claimsSubPage;
     private Button claimsSubPageButton;
     private Button resetMapButton;
-    private Button clearTerrainCacheButton;
+    private Button refreshMapButton;
     private int autoRefreshTicks;
     private int memberScroll;
     private int pageScroll;
@@ -154,8 +152,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     public void updateData(TownOverviewData updated) {
         TownOverviewData previousData = this.data;
         rememberClaimRadius(previousData);
-        cacheTerrainColors(previousData);
-        boolean preserveVisibleCenter = previousData != null && !previousData.nearbyTerrainColors().isEmpty();
+        boolean preserveVisibleCenter = previousData != null;
         int visibleCenterX = preserveVisibleCenter ? mapCenterX() : Integer.MIN_VALUE;
         int visibleCenterZ = preserveVisibleCenter ? mapCenterZ() : Integer.MIN_VALUE;
         this.data = updated == null ? TownOverviewData.empty() : updated;
@@ -194,21 +191,6 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         this.memberScroll = clampMemberScroll(this.memberScroll);
         syncSelections();
         syncTownNameInput();
-        int radius = claimRadius();
-        int diameter = radius * 2 + 1;
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        List<Integer> colors = this.data.nearbyTerrainColors();
-        for (int gz = 0; gz < diameter; gz++) {
-            for (int gx = 0; gx < diameter; gx++) {
-                int chunkIndex = gz * diameter + gx;
-                int colorIndex = chunkIndex * sub * sub;
-                if (colorIndex + (sub * sub) <= colors.size()) {
-                    int cx = this.data.previewCenterChunkX() + gx - radius;
-                    int cz = this.data.previewCenterChunkZ() + gz - radius;
-                    TerrainColorClientCache.put(cx, cz, copyChunkSubColors(colors, colorIndex, sub));
-                }
-            }
-        }
         this.statusLine = Component.translatable("screen.sailboatmod.town.status.synced");
         updateButtonState();
         flushQueuedPreviewRefresh();
@@ -242,10 +224,10 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         this.claimsSubPageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claims.show_perms"), b -> { this.claimsSubPage = this.claimsSubPage == 0 ? 1 : 0; updateButtonState(); }).bounds(left + BODY_X + 184, top + BODY_Y + BODY_H - 26, 120, 18).build());
         this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("\u2316"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
         this.resetMapButton.visible = false;
-        this.clearTerrainCacheButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
+        this.refreshMapButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
             requestRefresh();
         }).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 44, top + BODY_Y + 10, 24, 14).build());
-        this.clearTerrainCacheButton.visible = false;
+        this.refreshMapButton.visible = false;
         this.breakPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("break", selectedBreakAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 50, 100, 18).build());
         this.placePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("place", selectedPlaceAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 50, 100, 18).build());
         this.usePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("use", selectedUseAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 74, 100, 18).build());
@@ -305,8 +287,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
             this.autoRefreshTicks = 0;
             return;
         }
-        boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
-        int interval = claimsMapView && hasIncompletePreviewTerrain() ? 8 : AUTO_REFRESH_INTERVAL_TICKS;
+        int interval = AUTO_REFRESH_INTERVAL_TICKS;
         this.autoRefreshTicks++;
         if (this.autoRefreshTicks < interval) {
             return;
@@ -843,7 +824,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         if (this.entityUsePermissionButton != null) { this.entityUsePermissionButton.visible = claimsPermView; this.entityUsePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.entityUsePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_use", accessName(selectedEntityUseAccessLevel()))); }
         if (this.entityDamagePermissionButton != null) { this.entityDamagePermissionButton.visible = claimsPermView; this.entityDamagePermissionButton.active = claimsPermView && hasTown && this.data.canManageTown() && ownClaim; this.entityDamagePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_damage", accessName(selectedEntityDamageAccessLevel()))); }
         if (this.resetMapButton != null) { this.resetMapButton.visible = claimsMapView; this.resetMapButton.active = claimsMapView; }
-        if (this.clearTerrainCacheButton != null) { this.clearTerrainCacheButton.visible = claimsMapView; this.clearTerrainCacheButton.active = claimsMapView; }
+        if (this.refreshMapButton != null) { this.refreshMapButton.visible = claimsMapView; this.refreshMapButton.active = claimsMapView; }
 
         boolean flagPage = this.currentPage == Page.FLAG;
         if (this.flagPathInput != null) { this.flagPathInput.visible = flagPage; this.flagPathInput.setEditable(flagPage && hasTown && this.data.canUploadFlag()); }
@@ -948,31 +929,6 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         g.drawString(this.font, text, tx, ty, color);
     }
 
-    private int sampleClaimTerrainColor(int chunkX, int chunkZ, int sx, int sz) {
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        int gridX = chunkX - this.data.previewCenterChunkX() + claimRadius();
-        int gridZ = chunkZ - this.data.previewCenterChunkZ() + claimRadius();
-        int diameter = claimRadius() * 2 + 1;
-        if (gridX >= 0 && gridX < diameter && gridZ >= 0 && gridZ < diameter) {
-            int chunkIndex = gridZ * diameter + gridX;
-            int subIndex = chunkIndex * sub * sub + sz * sub + sx;
-            List<Integer> colors = this.data.nearbyTerrainColors();
-            if (subIndex >= 0 && subIndex < colors.size()) {
-                int color = colors.get(subIndex);
-                if (color != PREVIEW_DEFAULT_TERRAIN_COLOR) {
-                    TerrainColorClientCache.put(chunkX, chunkZ, sx, sz, color);
-                    return color;
-                }
-            }
-        }
-        Integer cached = TerrainColorClientCache.get(chunkX, chunkZ, sx, sz);
-        return cached != null ? cached : PREVIEW_DEFAULT_TERRAIN_COLOR;
-    }
-
-    int sampleClaimTerrainColorForTest(int chunkX, int chunkZ, int sx, int sz) {
-        return sampleClaimTerrainColor(chunkX, chunkZ, sx, sz);
-    }
-
     static boolean shouldShowClaimMapProgress(ClaimPreviewMapState mapState) {
         ClaimPreviewMapState safeMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
         return safeMapState.loading() || safeMapState.hasPendingProgress();
@@ -1034,7 +990,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         layoutWidget(this.unclaimButton, 90, BODY_H - 26, 18, claimsMapView);
         layoutWidget(this.claimsSubPageButton, 184, BODY_H - 26, 18, claimsPage);
         layoutFixedWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, claimsMapView);
-        layoutFixedWidget(this.clearTerrainCacheButton, BODY_W - CLAIM_MAP_W - 44, 10, claimsMapView);
+        layoutFixedWidget(this.refreshMapButton, BODY_W - CLAIM_MAP_W - 44, 10, claimsMapView);
         layoutWidget(this.breakPermissionButton, 12, 50, 18, claimsPermView);
         layoutWidget(this.placePermissionButton, 120, 50, 18, claimsPermView);
         layoutWidget(this.usePermissionButton, 12, 74, 18, claimsPermView);
@@ -1268,7 +1224,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         if (minecraft == null || minecraft.getConnection() == null) {
             return;
         }
-        if (this.claimWorldMapView.markInitialForceRenderRequested()) {
+        if (this.claimWorldMapView.markVisibleForceRenderRequested(viewport)) {
             requestVisibleClaimMapForceRender(viewport);
         }
     }
@@ -1315,67 +1271,14 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         }
         int centerChunkX = mapCenterX();
         int centerChunkZ = mapCenterZ();
-        int diameter = claimRadius() * 2 + 1;
-        boolean missingTerrain = hasIncompletePreviewTerrain();
         boolean offCenter = centerChunkX != this.data.previewCenterChunkX() || centerChunkZ != this.data.previewCenterChunkZ();
         traceClaim("ensureClaimPreviewVisible center=" + centerChunkX + "," + centerChunkZ
                 + " previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
                 + " terrainCount=" + this.data.nearbyTerrainColors().size()
-                + " expected=" + (diameter * diameter)
-                + " missingTerrain=" + missingTerrain
                 + " offCenter=" + offCenter);
-        if (missingTerrain || offCenter) {
+        if (offCenter) {
             requestRefresh(centerChunkX, centerChunkZ);
         }
-    }
-
-    private boolean hasIncompletePreviewTerrain() {
-        int diameter = claimRadius() * 2 + 1;
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        if (this.data.nearbyTerrainColors().size() < diameter * diameter * sub * sub) {
-            return true;
-        }
-        for (Integer color : this.data.nearbyTerrainColors()) {
-            if (color == null || color == PREVIEW_DEFAULT_TERRAIN_COLOR) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void cacheTerrainColors(TownOverviewData snapshot) {
-        if (snapshot == null) {
-            return;
-        }
-        List<Integer> colors = snapshot.nearbyTerrainColors();
-        if (colors.isEmpty()) {
-            return;
-        }
-        int radius = resolvedRadiusForSnapshot(snapshot);
-        if (radius < 0) {
-            return;
-        }
-        int diameter = radius * 2 + 1;
-        int sub = com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.SUB;
-        for (int gz = 0; gz < diameter; gz++) {
-            for (int gx = 0; gx < diameter; gx++) {
-                int chunkIndex = gz * diameter + gx;
-                int colorIndex = chunkIndex * sub * sub;
-                if (colorIndex + (sub * sub) <= colors.size()) {
-                    int cx = snapshot.previewCenterChunkX() + gx - radius;
-                    int cz = snapshot.previewCenterChunkZ() + gz - radius;
-                    TerrainColorClientCache.put(cx, cz, copyChunkSubColors(colors, colorIndex, sub));
-                }
-            }
-        }
-    }
-
-    private static int[] copyChunkSubColors(List<Integer> colors, int startIndex, int sub) {
-        int[] chunkColors = new int[sub * sub];
-        for (int i = 0; i < chunkColors.length; i++) {
-            chunkColors[i] = colors.get(startIndex + i);
-        }
-        return chunkColors;
     }
 
     private void rememberClaimRadius(TownOverviewData snapshot) {

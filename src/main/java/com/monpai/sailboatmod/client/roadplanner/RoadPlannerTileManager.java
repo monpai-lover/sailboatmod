@@ -16,6 +16,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class RoadPlannerTileManager implements AutoCloseable {
+    private static RoadPlannerTileManager sharedDefault;
+
     private final File rootDir;
     private final Map<RoadPlannerTileKey, RoadPlannerTile> loadedTiles = new ConcurrentHashMap<>();
     private String worldId;
@@ -37,6 +39,39 @@ public class RoadPlannerTileManager implements AutoCloseable {
 
     public static RoadPlannerTileManager createDefault() {
         return new RoadPlannerTileManager(new File(Minecraft.getInstance().gameDirectory, "roadplanner_map_cache"));
+    }
+
+    public static RoadPlannerTileManager sharedDefault() {
+        synchronized (RoadPlannerTileManager.class) {
+            if (sharedDefault == null) {
+                sharedDefault = createDefault();
+            }
+            sharedDefault.refreshWorldContext();
+            return sharedDefault;
+        }
+    }
+
+    public static void closeSharedDefault() {
+        synchronized (RoadPlannerTileManager.class) {
+            RoadPlannerTileManager manager = sharedDefault;
+            sharedDefault = null;
+            if (manager != null) {
+                manager.close();
+            }
+        }
+    }
+
+    public static void setSharedDefaultForTest(RoadPlannerTileManager manager) {
+        synchronized (RoadPlannerTileManager.class) {
+            if (sharedDefault != null && sharedDefault != manager) {
+                sharedDefault.close();
+            }
+            sharedDefault = manager;
+        }
+    }
+
+    public static void clearSharedDefaultForTest() {
+        closeSharedDefault();
     }
 
     public int loadedTileCount() {

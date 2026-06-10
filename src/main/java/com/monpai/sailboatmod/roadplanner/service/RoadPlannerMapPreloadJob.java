@@ -78,7 +78,13 @@ public final class RoadPlannerMapPreloadJob {
                 break;
             }
             RoadMapSnapshot snapshot = source == null ? null : source.load(key);
-            if (snapshot == null || snapshot.region() == null) {
+            if (snapshot == null) {
+                pendingKeys.addFirst(key);
+                state = RoadPlannerMapPreloadProgressPacket.State.SAMPLING;
+                message = "绛夊緟 LOD_1 蹇収";
+                break;
+            }
+            if (snapshot.region() == null) {
                 state = RoadPlannerMapPreloadProgressPacket.State.FAILED;
                 message = "缺少 LOD_1 快照";
                 break;

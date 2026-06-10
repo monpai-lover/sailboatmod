@@ -83,6 +83,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private RoadPlannerMapCanvas canvas;
     private RoadPlannerClaimOverlayRenderer claimOverlayRenderer = new RoadPlannerClaimOverlayRenderer(List.of());
     private RoadPlannerTileManager tileManager;
+    private boolean closeTileManagerOnRemoved;
     private RoadPlannerVanillaContextMenu contextMenu;
     private RoadNetworkGraph graph = new RoadNetworkGraph();
     private final RoadPlannerLinePlan linePlan = new RoadPlannerLinePlan();
@@ -433,7 +434,11 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     public void setTileManagerForTest(RoadPlannerTileManager tileManager) {
+        if (this.tileManager != null && closeTileManagerOnRemoved && this.tileManager != tileManager) {
+            this.tileManager.close();
+        }
         this.tileManager = tileManager;
+        this.closeTileManagerOnRemoved = tileManager != null;
     }
 
     public void applyMapPreloadProgress(RoadPlannerMapPreloadProgressPacket packet) {
@@ -1127,10 +1132,11 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     public void removed() {
         sendMapPreloadCancel();
         super.removed();
-        if (tileManager != null) {
+        if (tileManager != null && closeTileManagerOnRemoved) {
             tileManager.close();
-            tileManager = null;
         }
+        tileManager = null;
+        closeTileManagerOnRemoved = false;
         tileRenderScheduler.close();
     }
 
@@ -1140,7 +1146,8 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         RoadMapRegion region = RoadMapRegion.centeredOn(BlockPos.ZERO, 128, MapLod.LOD_1);
         RoadMapViewport viewport = new RoadMapViewport(mapLayout.map().x(), mapLayout.map().y(), mapLayout.map().width(), mapLayout.map().height());
         if (!testMode && tileManager == null) {
-            tileManager = RoadPlannerTileManager.createDefault();
+            tileManager = RoadPlannerTileManager.sharedDefault();
+            closeTileManagerOnRemoved = false;
         }
         RoadPlannerHeightSampler heightSampler = testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain();
         canvas = new RoadPlannerMapCanvas(mapLayout.map().asVanillaRect(), new RoadPlannerMapComponent(region, viewport), mapView, tileManager, heightSampler);

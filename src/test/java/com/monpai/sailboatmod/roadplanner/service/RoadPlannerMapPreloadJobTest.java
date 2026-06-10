@@ -151,6 +151,33 @@ class RoadPlannerMapPreloadJobTest {
         assertTrue(packets.isEmpty());
     }
 
+    @Test
+    void jobDefersTileWhenSourceIsStillPreparingChunks() {
+        RoadMapRoutePreloadPlan plan = new RoadMapRoutePreloadPlan(
+                RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE,
+                List.of(new ChunkPos(0, 0)),
+                1,
+                1);
+        RoadPlannerMapPreloadJob job = new RoadPlannerMapPreloadJob(
+                UUID.randomUUID(),
+                10L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER,
+                "world_a",
+                "minecraft:overworld",
+                plan);
+        List<RoadPlannerMapTileSyncPacket> packets = new ArrayList<>();
+
+        int firstProcessed = job.advance(1, key -> null, packets::add);
+
+        assertEquals(0, firstProcessed);
+        assertTrue(packets.isEmpty());
+
+        int secondProcessed = job.advance(1, this::loadSnapshot, packets::add);
+
+        assertEquals(1, secondProcessed);
+        assertEquals(4, packets.size());
+    }
+
     private RoadMapSnapshot loadSnapshot(RoadPlannerTileKey key) {
         return new RoadMapSnapshot(
                 1L,

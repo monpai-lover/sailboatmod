@@ -23,6 +23,11 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
             return unavailableSample(worldX, worldZ);
         }
         try {
+            int chunkX = Math.floorDiv(worldX, 16);
+            int chunkZ = Math.floorDiv(worldZ, 16);
+            if (level.getChunkSource().getChunk(chunkX, chunkZ, false) == null) {
+                return unavailableSample(worldX, worldZ);
+            }
             int surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX, worldZ) - 1;
             if (surfaceY < level.getMinBuildHeight()) {
                 return unavailableSample(worldX, worldZ);
