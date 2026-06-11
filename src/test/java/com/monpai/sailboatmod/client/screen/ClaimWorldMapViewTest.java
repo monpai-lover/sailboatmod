@@ -1,12 +1,16 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.monpai.sailboatmod.client.map.SharedMapClientState;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileManager;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -70,6 +74,40 @@ class ClaimWorldMapViewTest {
 
             assertSame(manager, RoadPlannerTileManager.sharedDefault());
         } finally {
+            RoadPlannerTileManager.clearSharedDefaultForTest();
+        }
+    }
+
+    @Test
+    void claimMapAcknowledgesSharedTilePacketFromOtherSession(@TempDir Path tempDir) {
+        RoadPlannerTileManager manager = new NonRefreshingTileManager(tempDir);
+        RoadPlannerTileManager.setSharedDefaultForTest(manager);
+        SharedMapClientState.defaultState().clearAll();
+        ClaimWorldMapView view = new ClaimWorldMapView();
+        RoadPlannerMapTileSyncPacket packet = new RoadPlannerMapTileSyncPacket(
+                UUID.randomUUID(),
+                77L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER,
+                manager.worldId(),
+                manager.dimensionId(),
+                MapLod.LOD_1,
+                0,
+                0,
+                RoadMapTileSpec.TILE_PIXELS,
+                RoadMapTileSpec.TILE_PIXELS,
+                new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS],
+                null
+        );
+
+        try {
+            SharedMapClientState.defaultState().applyTileDelta(packet);
+
+            int applied = view.applyTileSync(packet);
+
+            assertEquals(1, applied);
+        } finally {
+            view.close();
+            SharedMapClientState.defaultState().clearAll();
             RoadPlannerTileManager.clearSharedDefaultForTest();
         }
     }

@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.monpai.sailboatmod.client.map.SharedMapClientState;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerMapCanvas;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerMapComponent;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerMapLayout;
@@ -213,11 +214,19 @@ public final class ClaimWorldMapView implements AutoCloseable {
     }
 
     public int applyTileSync(RoadPlannerMapTileSyncPacket packet) {
-        if (packet == null || !sessionId.equals(packet.sessionId())) {
+        if (packet == null) {
             return 0;
         }
-        RoadPlannerTileManager manager = tileManager();
-        return manager == null ? 0 : manager.applyTileSync(packet);
+        if (sessionId.equals(packet.sessionId())) {
+            RoadPlannerTileManager manager = tileManager();
+            return manager == null ? 0 : manager.applyTileSync(packet);
+        }
+        if (!createDefaultTileManager) {
+            return 0;
+        }
+        return SharedMapClientState.defaultState().hasAnyRenderedChunkInTile(packet.dimensionId(), packet.tileX(), packet.tileZ())
+                ? 1
+                : 0;
     }
 
     public String worldId() {
