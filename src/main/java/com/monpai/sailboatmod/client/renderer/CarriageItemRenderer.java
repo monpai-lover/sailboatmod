@@ -1,18 +1,20 @@
 package com.monpai.sailboatmod.client.renderer;
 
-import com.monpai.sailboatmod.client.model.CarriageItemModel;
+import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.item.CarriageItem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import software.bernie.geckolib.model.GeoModel;
 import software.bernie.geckolib.renderer.GeoItemRenderer;
 
 public class CarriageItemRenderer extends GeoItemRenderer<CarriageItem> {
     private static final ThreadLocal<ItemStack> CURRENT_STACK = ThreadLocal.withInitial(() -> ItemStack.EMPTY);
 
     public CarriageItemRenderer() {
-        super(new CarriageItemModel());
+        super(new Model());
     }
 
     public static ItemStack currentItemStack() {
@@ -41,5 +43,22 @@ public class CarriageItemRenderer extends GeoItemRenderer<CarriageItem> {
         super.renderByItem(stack, displayContext, poseStack, bufferSource, packedLight, packedOverlay);
         poseStack.popPose();
         CURRENT_STACK.remove();
+    }
+
+    private static final class Model extends GeoModel<CarriageItem> {
+        @Override
+        public ResourceLocation getModelResource(CarriageItem animatable) {
+            return new ResourceLocation(SailboatMod.MODID, "geo/carriage.geo.json");
+        }
+
+        @Override
+        public ResourceLocation getTextureResource(CarriageItem animatable) {
+            return CarriageItem.getWoodType(CarriageItemRenderer.currentItemStack()).textureLocation();
+        }
+
+        @Override
+        public ResourceLocation getAnimationResource(CarriageItem animatable) {
+            return new ResourceLocation(SailboatMod.MODID, "animations/carriage.animation.json");
+        }
     }
 }
