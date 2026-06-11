@@ -2,6 +2,7 @@ package com.monpai.sailboatmod;
 
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
+import com.monpai.sailboatmod.map.SharedMapServerState;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
@@ -39,6 +40,7 @@ public final class ServerEvents {
         BlueMapIntegration.onServerStarted(event.getServer());
         ClaimPreviewTerrainService.onServerStarted(event.getServer());
         ClaimMapTaskService.onServerStarted(event.getServer());
+        SharedMapServerState.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
         RoadPlannerMapPreloadService.onServerStarted(event.getServer());
     }
@@ -108,6 +110,7 @@ public final class ServerEvents {
         com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerStopping();
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
+        SharedMapServerState.onServerStopped();
         RoadPlannerMapPreloadService.onServerStopped();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
