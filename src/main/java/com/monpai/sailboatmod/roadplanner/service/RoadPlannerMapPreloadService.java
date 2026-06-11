@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteResult;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteService;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathfinderRunnerFactory;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileKey;
+import com.monpai.sailboatmod.map.SharedMapServerState;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCancelPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
@@ -347,6 +348,7 @@ public final class RoadPlannerMapPreloadService {
     }
 
     private void sendTile(ServerPlayer player, RoadPlannerMapTileSyncPacket packet) {
+        SharedMapServerState.markRendered(packet);
         ModNetwork.CHANNEL.sendTo(packet, player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
     }
 
