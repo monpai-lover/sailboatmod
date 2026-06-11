@@ -44,7 +44,6 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class RoadPlannerMapPreloadService {
-    private static final int MAX_TILES_PER_TICK = 4;
     private static final int MAX_FORCE_CHUNKS_PER_TICK = 8;
     private static final RoadMapRoutePreloadPlanner ROUTE_PLANNER = new RoadMapRoutePreloadPlanner(4096, 4, 3, 8);
     private static RoadPlannerMapPreloadService GLOBAL = new RoadPlannerMapPreloadService();
@@ -169,6 +168,8 @@ public final class RoadPlannerMapPreloadService {
         }
         String dimensionId = level.dimension().location().toString();
         List<Map.Entry<JobKey, ActiveJob>> snapshot = new ArrayList<>(jobs.entrySet());
+        RoadPlannerMapPreloadBudget tileBudget = new RoadPlannerMapPreloadBudget(
+                RoadPlannerMapPreloadBudget.DEFAULT_GLOBAL_TILE_BUDGET_PER_LEVEL_TICK);
         for (Map.Entry<JobKey, ActiveJob> entry : snapshot) {
             ActiveJob active = entry.getValue();
             if (!Objects.equals(active.job.dimensionId(), dimensionId)) {
@@ -180,8 +181,9 @@ public final class RoadPlannerMapPreloadService {
                 jobs.remove(entry.getKey());
                 continue;
             }
+            int maxTilesForJob = tileBudget.claim(active.job.purpose());
             int processedThisTick = 0;
-            while (processedThisTick < MAX_TILES_PER_TICK && !active.job.isFinished()) {
+            while (processedThisTick < maxTilesForJob && !active.job.isFinished()) {
                 int processed = active.job.advance(1, key -> buildSnapshot(level, key, active), packet -> sendTile(player, packet));
                 if (processed <= 0) {
                     break;
@@ -195,6 +197,9 @@ public final class RoadPlannerMapPreloadService {
             if (active.job.isFinished()) {
                 releaseAllForcedChunks(active);
                 jobs.remove(entry.getKey());
+            }
+            if (tileBudget.remaining() <= 0) {
+                break;
             }
         }
     }
