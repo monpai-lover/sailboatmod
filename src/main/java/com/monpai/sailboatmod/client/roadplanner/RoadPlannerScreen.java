@@ -24,6 +24,7 @@ import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import com.monpai.sailboatmod.roadplanner.model.RoadToolType;
+import com.monpai.sailboatmod.road.pathfinding.cache.RoadSurfaceHeuristics;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.Minecraft;
@@ -227,7 +228,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (level == null) {
             return true;
         }
-        int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+        int surfaceY = clientRoadSurfaceY(level, x, z);
         if (surfaceY < level.getMinBuildHeight()) {
             return false;
         }
@@ -242,7 +243,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return 0;
         }
         ClientLevel level = minecraft.level;
-        int surfaceY = level.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+        int surfaceY = clientRoadSurfaceY(level, x, z);
         if (surfaceY < level.getMinBuildHeight()) {
             return 0;
         }
@@ -263,6 +264,15 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             }
         }
         return depth;
+    }
+
+    private static int clientRoadSurfaceY(ClientLevel level, int x, int z) {
+        int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+        while (y > level.getMinBuildHeight()
+                && RoadSurfaceHeuristics.isIgnoredSurfaceNoise(level.getBlockState(new BlockPos(x, y, z)))) {
+            y--;
+        }
+        return y;
     }
 
     public static RoadPlannerScreen forTest(UUID sessionId, int width, int height) {

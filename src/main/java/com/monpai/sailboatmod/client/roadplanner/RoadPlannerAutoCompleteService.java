@@ -121,10 +121,6 @@ public class RoadPlannerAutoCompleteService {
 
     private RoadPlannerSegmentType classifySegment(BlockPos from, BlockPos to) {
         int horizontal = Math.abs(to.getX() - from.getX()) + Math.abs(to.getZ() - from.getZ());
-        int vertical = Math.abs(to.getY() - from.getY());
-        if (vertical >= 10) {
-            return RoadPlannerSegmentType.BRIDGE_MAJOR;
-        }
         boolean fromLand = landProbe.isLand(from.getX(), from.getZ());
         boolean toLand = landProbe.isLand(to.getX(), to.getZ());
         if (!fromLand || !toLand) {

@@ -84,6 +84,52 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
+    void treeHeightSpikeOnLandDoesNotBecomeBridge() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService(
+                (from, to) -> List.of(
+                        from,
+                        new BlockPos(16, 86, 0),
+                        to
+                ),
+                null,
+                (x, z) -> true
+        );
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                new BlockPos(0, 64, 0),
+                new BlockPos(32, 64, 0),
+                List.of(),
+                8
+        );
+
+        assertTrue(result.success());
+        assertTrue(result.segmentTypes().stream().allMatch(type -> type == RoadPlannerSegmentType.ROAD));
+    }
+
+    @Test
+    void smallPitOnLandDoesNotBecomeBridge() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService(
+                (from, to) -> List.of(
+                        from,
+                        new BlockPos(16, 52, 0),
+                        to
+                ),
+                null,
+                (x, z) -> true
+        );
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                new BlockPos(0, 64, 0),
+                new BlockPos(32, 64, 0),
+                List.of(),
+                8
+        );
+
+        assertTrue(result.success());
+        assertTrue(result.segmentTypes().stream().allMatch(type -> type == RoadPlannerSegmentType.ROAD));
+    }
+
+    @Test
     void appliesInjectedBridgeThresholdClassifier() {
         RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService(
                 (from, to) -> List.of(
