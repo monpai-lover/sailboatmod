@@ -202,10 +202,18 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     public void updateData(NationOverviewData updated) {
         NationOverviewData previousData = this.data;
         rememberClaimRadius(previousData);
-        boolean preserveVisibleCenter = previousData != null;
+        NationOverviewData nextData = updated == null ? NationOverviewData.empty() : updated;
+        boolean preserveVisibleCenter = shouldPreserveClaimMapVisibleCenter(
+                previousData == null ? "" : previousData.nationId(),
+                nextData.nationId(),
+                this.mapOffsetX,
+                this.mapOffsetZ,
+                this.refreshPending,
+                this.resetPending
+        );
         int visibleCenterX = preserveVisibleCenter ? mapCenterX() : Integer.MIN_VALUE;
         int visibleCenterZ = preserveVisibleCenter ? mapCenterZ() : Integer.MIN_VALUE;
-        this.data = updated == null ? NationOverviewData.empty() : updated;
+        this.data = nextData;
         rememberClaimRadius(this.data);
         traceClaim("updateData previewCenter=" + this.data.previewCenterChunkX() + "," + this.data.previewCenterChunkZ()
                 + " visibleCenterBefore=" + visibleCenterX + "," + visibleCenterZ
@@ -1610,6 +1618,23 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             return false;
         }
         return queuedPreviewCenterX != previewCenterChunkX || queuedPreviewCenterZ != previewCenterChunkZ;
+    }
+
+    static boolean shouldPreserveClaimMapVisibleCenter(String previousOwnerId,
+                                                       String nextOwnerId,
+                                                       int mapOffsetX,
+                                                       int mapOffsetZ,
+                                                       boolean refreshPending,
+                                                       boolean resetPending) {
+        if (resetPending) {
+            return false;
+        }
+        String previous = previousOwnerId == null ? "" : previousOwnerId.trim();
+        String next = nextOwnerId == null ? "" : nextOwnerId.trim();
+        if (previous.isBlank() || !previous.equals(next)) {
+            return false;
+        }
+        return refreshPending || mapOffsetX != 0 || mapOffsetZ != 0;
     }
 
     private int viewportRadius() {

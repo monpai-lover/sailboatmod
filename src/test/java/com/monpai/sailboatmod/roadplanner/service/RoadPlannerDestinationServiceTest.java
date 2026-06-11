@@ -7,6 +7,9 @@ import net.minecraft.server.Bootstrap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,12 +34,19 @@ class RoadPlannerDestinationServiceTest {
 
     @Test
     void plannerItemUsesNewPlannerEntryIntent() {
-        assertEquals(RoadPlannerItem.EntryAction.OPEN_NEW_PLANNER, RoadPlannerItem.entryAction(false));
-        assertEquals(RoadPlannerItem.EntryAction.SET_CURRENT_POSITION_DESTINATION, RoadPlannerItem.entryAction(true));
         assertFalse(RoadPlannerItem.usesLegacyManualPlanner());
-        assertTrue(RoadPlannerItem.entryAction(false).opensPlanner());
-        assertFalse(RoadPlannerItem.entryAction(true).opensPlanner());
-        assertTrue(RoadPlannerItem.entryAction(true).storesDestinationOnly());
+        assertTrue(RoadPlannerItem.opensPlannerEntry(false));
+        assertFalse(RoadPlannerItem.opensPlannerEntry(true));
+        assertFalse(RoadPlannerItem.storesCurrentPositionDestination(false));
+        assertTrue(RoadPlannerItem.storesCurrentPositionDestination(true));
+    }
+
+    @Test
+    void plannerItemUseEntryDoesNotDependOnNestedActionClass() throws IOException {
+        String source = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/item/RoadPlannerItem.java"));
+
+        assertFalse(source.contains("enum EntryAction"),
+                "right-clicking the road planner item should not require loading RoadPlannerItem$EntryAction");
     }
 
     @Test

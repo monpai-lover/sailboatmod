@@ -34,6 +34,15 @@ class NationHomeScreenTest {
     }
 
     @Test
+    void claimMapVisibleCenterIsNotPreservedFromEmptyCache() {
+        assertFalse(NationHomeScreen.shouldPreserveClaimMapVisibleCenter("", "nation-id", 0, 0, false, false));
+        assertFalse(NationHomeScreen.shouldPreserveClaimMapVisibleCenter("old-nation", "nation-id", 4, 0, true, false));
+        assertFalse(NationHomeScreen.shouldPreserveClaimMapVisibleCenter("nation-id", "nation-id", 4, 0, true, true));
+        assertTrue(NationHomeScreen.shouldPreserveClaimMapVisibleCenter("nation-id", "nation-id", 4, 0, false, false));
+        assertTrue(NationHomeScreen.shouldPreserveClaimMapVisibleCenter("nation-id", "nation-id", 0, 0, true, false));
+    }
+
+    @Test
     void tradeWindowEntryDoesNotRequireWarOrTreasuryPermission() {
         assertTrue(NationHomeScreen.canOpenTradeWindow(true, true, true, false, true));
         assertTrue(NationHomeScreen.canOpenTradeWindow(true, true, true, true, false));
@@ -98,4 +107,5 @@ class NationHomeScreenTest {
         assertTrue(NationHomeScreen.shouldShowClaimMapProgress(pendingPrefetch));
         assertFalse(NationHomeScreen.shouldShowClaimMapProgress(complete));
     }
+
 }

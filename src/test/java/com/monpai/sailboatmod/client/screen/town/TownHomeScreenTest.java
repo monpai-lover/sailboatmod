@@ -75,6 +75,22 @@ class TownHomeScreenTest {
     }
 
     @Test
+    void firstRealClaimMapDataCentersOnPreviewInsteadOfEmptyCache() throws ReflectiveOperationException {
+        TownHomeScreen screen = new TownHomeScreen(TownOverviewData.empty());
+        TownOverviewData realData = dataWithJoinTargets().withClaimPreviewContext(
+                ClaimPreviewMapState.ready(1L, 8, 234, -648, List.of(0xFF304050)),
+                List.of(0xFF304050),
+                234,
+                -648
+        );
+
+        screen.updateData(realData);
+
+        assertEquals(234, claimWorldMapView(screen).centerChunkX());
+        assertEquals(-648, claimWorldMapView(screen).centerChunkZ());
+    }
+
+    @Test
     void bottomClaimMapProgressStaysVisibleUntilPrefetchFinishes() {
         ClaimPreviewMapState state = ClaimPreviewMapState.ready(
                 9L,
@@ -91,6 +107,12 @@ class TownHomeScreenTest {
         assertTrue(TownHomeScreen.shouldShowClaimMapProgress(state));
         assertEquals(164, TownHomeScreen.claimMapProgressWidthForTest(state, 164, true));
         assertEquals(82, TownHomeScreen.claimMapProgressWidthForTest(state, 164, false));
+    }
+
+    private static com.monpai.sailboatmod.client.screen.ClaimWorldMapView claimWorldMapView(TownHomeScreen screen) throws ReflectiveOperationException {
+        var field = TownHomeScreen.class.getDeclaredField("claimWorldMapView");
+        field.setAccessible(true);
+        return (com.monpai.sailboatmod.client.screen.ClaimWorldMapView) field.get(screen);
     }
 
     private static TownOverviewData dataWithJoinTargets() {

@@ -39,31 +39,16 @@ import java.util.Optional;
 import java.util.UUID;
 
 public class RoadPlannerItem extends Item {
-    public enum EntryAction {
-        OPEN_NEW_PLANNER(true),
-        SET_CURRENT_POSITION_DESTINATION(false);
-
-        private final boolean opensPlanner;
-
-        EntryAction(boolean opensPlanner) {
-            this.opensPlanner = opensPlanner;
-        }
-
-        public boolean opensPlanner() {
-            return opensPlanner;
-        }
-
-        public boolean storesDestinationOnly() {
-            return !opensPlanner;
-        }
-    }
-
     public RoadPlannerItem(Properties properties) {
         super(properties);
     }
 
-    public static EntryAction entryAction(boolean sneaking) {
-        return sneaking ? EntryAction.SET_CURRENT_POSITION_DESTINATION : EntryAction.OPEN_NEW_PLANNER;
+    public static boolean opensPlannerEntry(boolean sneaking) {
+        return !sneaking;
+    }
+
+    public static boolean storesCurrentPositionDestination(boolean sneaking) {
+        return sneaking;
     }
 
     public static boolean usesLegacyManualPlanner() {
@@ -77,8 +62,7 @@ public class RoadPlannerItem extends Item {
             if (openActiveActionMenu(serverPlayer)) {
                 return InteractionResultHolder.sidedSuccess(stack, false);
             }
-            EntryAction action = entryAction(player.isShiftKeyDown());
-            if (action.opensPlanner()) {
+            if (opensPlannerEntry(player.isShiftKeyDown())) {
                 openMainActionMenu(serverPlayer);
             } else {
                 serverPlayer.sendSystemMessage(ManualRoadPlannerService.openTargetSelection(serverPlayer, stack, hand == InteractionHand.OFF_HAND));
