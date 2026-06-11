@@ -13,9 +13,10 @@ The first phase is deliberately read-mostly. MineColonies remains authoritative 
 The approved first phase covers:
 
 - Show MineColonies population, maximum population, citizen names, jobs, and happiness in Sailboat town/nation views.
-- Associate a Sailboat town with a MineColonies colony by nearby town core or explicit binding.
+- Associate a Sailboat town with one regional MineColonies colony by town core, town claim area, or explicit binding.
 - Count nearby MineColonies workers as external workers for active Sailboat structure and road construction.
 - Keep MineColonies optional. A server without MineColonies must still start and play normally.
+- Never aggregate MineColonies population by player owner. If the same player owns more than one colony, each Sailboat town only reads the one colony matched to that town's region.
 
 Out of scope for the first phase:
 
@@ -37,6 +38,14 @@ The installed MineColonies jar exposes the public API needed for this integratio
 - `IJob`: read job registry entry, worker citizen, work building, building position, idling state, and activity counters.
 
 This is enough for read-only snapshots and workforce detection. The API also exposes mutating methods, but this phase should not use them.
+
+The bridge should use coordinate and region APIs as the primary lookup path:
+
+- `getColonyByPosFromWorld` / `getIColony(level, pos)` for a concrete position.
+- `IColony.isCoordInColony(level, pos)` to validate a candidate colony against a town core or claim sample.
+- `getAllColonies` or `getColonies(level)` only for bounded scanning and cache refresh.
+
+Do not use `getIColonyByOwner` for town population. It returns a single owner-owned colony and is not a correct source when config or dimensions allow more than one colony over a player's lifecycle.
 
 ## Approach Options
 
@@ -126,20 +135,34 @@ Two implementation paths are acceptable:
 
 Given the current project already uses reflection for BlueMap and MineColonies API artifacts may vary, reflection is the safer first implementation.
 
-## Town Binding
+## Town Binding and Regional Population
 
-A Sailboat town can be linked to a MineColonies colony in two ways:
+A Sailboat town can be linked to exactly one MineColonies colony for population statistics. The binding must be regional, not owner-based.
 
-1. Automatic proximity binding:
+Resolution order:
+
+1. Explicit binding:
+   - If a town has a stored MineColonies dimension id and colony id, resolve that exact colony.
+   - Validate that the colony still exists and still intersects the town core or town claim area.
+   - If validation fails, clear or ignore the binding until a new match is found.
+
+2. Town core containment:
    - If the Sailboat town core is inside a MineColonies colony, bind to that colony.
-   - Otherwise bind to the nearest colony within a configurable radius.
-   - Do not auto-bind if multiple colonies are similarly close; require explicit binding.
+   - This is the strongest automatic match because it maps one Sailboat town center to one MineColonies region.
 
-2. Explicit binding:
-   - Add a command or town UI action later, for example `/sailboat town minecolonies bind`.
-   - Store MineColonies dimension id and colony id against the Sailboat town id.
+3. Town claim overlap:
+   - Sample the Sailboat town's managed claim chunks in the same dimension.
+   - Count which MineColonies colony owns or contains those sample positions.
+   - Bind to the single colony with the strongest overlap.
+   - If two or more colonies overlap with similar weight, do not aggregate them. Treat the result as ambiguous and require explicit binding.
 
-The first implementation can use automatic proximity only, as long as the binding is read-only and visible in the UI.
+4. Nearby fallback:
+   - If no overlap exists, optionally bind to the nearest colony within a small configurable radius.
+   - Do not use this fallback if more than one colony is similarly close.
+
+If the same Minecraft player owns multiple MineColonies colonies, a Sailboat town still only reads the colony selected by this resolution order. It must not sum all colonies owned by the mayor, nation leader, or any shared MineColonies owner.
+
+The first implementation can use town core containment plus claim-overlap matching. Explicit binding can be added as the correction path for ambiguous layouts.
 
 ## Snapshot Data
 
@@ -179,7 +202,7 @@ These snapshots are display and scoring data only. They must not be persisted as
 Extend the town overview building path so it can include local and external population:
 
 - Local population remains `ResidentSavedData.countResidentsForTown(townId)`.
-- MineColonies population is shown as an external population line.
+- MineColonies population is shown as an external population line for the one matched regional colony only.
 - Combined population may be displayed as `local + external`, but internal economy logic should keep both values separate.
 - Employment rate should either stay local-only or show a separate external workforce rate.
 
@@ -190,6 +213,8 @@ Recommended UI labels:
 - `Residents`: Sailboat residents.
 - `MineColonies`: linked colony population.
 - `External workers`: MineColonies workers currently helping construction.
+
+If a player owns multiple MineColonies colonies, the UI should show the matched colony name/id so the user can see which colony is being counted for this town.
 
 ## Construction Workforce Integration
 
