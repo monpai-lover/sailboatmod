@@ -109,6 +109,7 @@ public final class ServerEvents {
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         RoadPlannerMapPreloadService.onServerStopped();
+        com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration.onServerStopped();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
     }

@@ -16,7 +16,7 @@ The approved first phase covers:
 - Associate a Sailboat town with one regional MineColonies colony by town core, town claim area, or explicit binding.
 - Count nearby MineColonies workers as external workers for active Sailboat structure and road construction.
 - Keep MineColonies optional. A server without MineColonies must still start and play normally.
-- Never aggregate MineColonies population by player owner. If the same player owns more than one colony, each Sailboat town only reads the one colony matched to that town's region.
+- Never aggregate MineColonies population by player owner. MineColonies normally allows only one active owner colony; old abandoned colonies can still leave the player as an officer, so Sailboat towns must read only the one colony matched to that town's region.
 
 Out of scope for the first phase:
 
@@ -45,7 +45,7 @@ The bridge should use coordinate and region APIs as the primary lookup path:
 - `IColony.isCoordInColony(level, pos)` to validate a candidate colony against a town core or claim sample.
 - `getAllColonies` or `getColonies(level)` only for bounded scanning and cache refresh.
 
-Do not use `getIColonyByOwner` for town population. It returns a single owner-owned colony and is not a correct source when config or dimensions allow more than one colony over a player's lifecycle.
+Do not use `getIColonyByOwner` for town population. It returns the single active owner colony and is not a correct town-region mapping, especially after a player abandons an old colony and remains an officer there.
 
 ## Approach Options
 
@@ -160,7 +160,7 @@ Resolution order:
    - If no overlap exists, optionally bind to the nearest colony within a small configurable radius.
    - Do not use this fallback if more than one colony is similarly close.
 
-If the same Minecraft player owns multiple MineColonies colonies, a Sailboat town still only reads the colony selected by this resolution order. It must not sum all colonies owned by the mayor, nation leader, or any shared MineColonies owner.
+Even when a player has access to an old abandoned colony as an officer, a Sailboat town still only reads the colony selected by this resolution order. It must not sum colonies by mayor, nation leader, officer access, or any shared MineColonies membership.
 
 The first implementation can use town core containment plus claim-overlap matching. Explicit binding can be added as the correction path for ambiguous layouts.
 
@@ -214,7 +214,7 @@ Recommended UI labels:
 - `MineColonies`: linked colony population.
 - `External workers`: MineColonies workers currently helping construction.
 
-If a player owns multiple MineColonies colonies, the UI should show the matched colony name/id so the user can see which colony is being counted for this town.
+The UI should show the matched colony name/id so the user can see which regional MineColonies colony is being counted for this town.
 
 ## Construction Workforce Integration
 

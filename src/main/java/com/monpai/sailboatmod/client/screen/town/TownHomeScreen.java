@@ -490,7 +490,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         int cardH = 22;
         drawMetricCard(g, cardX, cardY, cardW, cardH,
                 Component.translatable("screen.sailboatmod.town.economy.metric.population"),
-                Integer.toString(this.data.residentCount()),
+                populationMetricValue(),
                 0xC06A8BA1);
         drawMetricCard(g, cardX + (cardW + cardGap), cardY, cardW, cardH,
                 Component.translatable("screen.sailboatmod.town.economy.metric.employment"),
@@ -685,7 +685,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         int cardH = 22;
         drawMetricCard(g, cardX, cardY, cardW, cardH,
                 Component.translatable("screen.sailboatmod.town.economy.metric.population"),
-                Integer.toString(this.data.residentCount()),
+                populationMetricValue(),
                 0xC06A8BA1);
         drawMetricCard(g, cardX + (cardW + cardGap), cardY, cardW, cardH,
                 Component.translatable("screen.sailboatmod.town.economy.metric.employment"),
@@ -764,6 +764,13 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         return GoldStandardEconomy.formatBalance(value);
     }
 
+    private String populationMetricValue() {
+        if (this.data.externalColony().present() && this.data.externalColony().population() > 0) {
+            return this.data.residentCount() + "+" + this.data.externalColony().population();
+        }
+        return Integer.toString(this.data.residentCount());
+    }
+
     private List<Component> buildOverviewLines() {
         List<Component> lines = new ArrayList<>();
         if (!this.data.hasTown()) {
@@ -773,6 +780,13 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         lines.add(Component.translatable("screen.sailboatmod.town.overview.name", this.data.townName()));
         lines.add(Component.translatable("screen.sailboatmod.town.overview.nation", this.data.nationName().isBlank() ? "-" : this.data.nationName()));
         lines.add(Component.translatable("screen.sailboatmod.town.overview.mayor", this.data.mayorName()));
+        if (this.data.externalColony().present()) {
+            lines.add(Component.translatable(
+                    "screen.sailboatmod.town.overview.minecolonies",
+                    this.data.externalColony().colonyName().isBlank() ? "#" + this.data.externalColony().colonyId() : this.data.externalColony().colonyName(),
+                    this.data.externalColony().population(),
+                    this.data.externalColony().maxPopulation()));
+        }
         lines.add(Component.translatable("screen.sailboatmod.town.overview.culture", cultureDisplayName(this.data.cultureId())));
         lines.add(this.data.hasCore() ? Component.translatable("screen.sailboatmod.town.overview.core", formatCoreLocation()) : Component.translatable("screen.sailboatmod.town.overview.core_missing"));
         return lines;

@@ -631,6 +631,16 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_selected", shortText(selectedTown.townName(), 18)), x + 12, townInfoY, 0xFFDCEEFF);
             g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_mayor", shortText(selectedTown.mayorName(), 18)), x + 12, townInfoY + 16, 0xFFB8C0C8);
             g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_claims", selectedTown.claimCount(), selectedTown.capital() ? Component.translatable("screen.sailboatmod.nation.overview.town_capital").getString() : ""), x + 12, townInfoY + 32, 0xFF8D98A3);
+            if (selectedTown.externalColony().present()) {
+                String colonyName = selectedTown.externalColony().colonyName().isBlank()
+                        ? "#" + selectedTown.externalColony().colonyId()
+                        : selectedTown.externalColony().colonyName();
+                g.drawString(this.font, Component.translatable(
+                        "screen.sailboatmod.nation.overview.town_minecolonies",
+                        shortText(colonyName, 18),
+                        selectedTown.externalColony().population(),
+                        selectedTown.externalColony().maxPopulation()), x + 12, townInfoY + 48, 0xFF8D98A3);
+            }
         } else {
             g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_none"), x + 12, townInfoY + 8, 0xFF8D98A3);
         }

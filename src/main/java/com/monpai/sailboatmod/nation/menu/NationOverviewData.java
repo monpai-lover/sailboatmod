@@ -303,7 +303,8 @@ public record NationOverviewData(
                         sanitize(town.townName(), 64),
                         sanitize(town.mayorName(), 64),
                         town.claimCount(),
-                        town.capital()))
+                        town.capital(),
+                        town.externalColony()))
                 .toList();
         nearbyTerrainColors = nearbyTerrainColors == null ? List.of() : nearbyTerrainColors.stream()
                 .map(color -> 0xFF000000 | (color & 0x00FFFFFF))

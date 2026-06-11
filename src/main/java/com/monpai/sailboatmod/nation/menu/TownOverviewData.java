@@ -19,6 +19,7 @@ public record TownOverviewData(
         long corePos,
         int totalClaims,
         int residentCount,
+        ExternalColonyOverview externalColony,
         int currentChunkX,
         int currentChunkZ,
         int previewCenterChunkX,
@@ -145,6 +146,7 @@ public record TownOverviewData(
                 corePos,
                 totalClaims,
                 residentCount,
+                ExternalColonyOverview.empty(),
                 currentChunkX,
                 currentChunkZ,
                 previewCenterChunkX,
@@ -274,6 +276,7 @@ public record TownOverviewData(
                 corePos,
                 totalClaims,
                 residentCount,
+                ExternalColonyOverview.empty(),
                 currentChunkX,
                 currentChunkZ,
                 previewCenterChunkX,
@@ -347,6 +350,7 @@ public record TownOverviewData(
         cultureId = sanitize(cultureId, 32);
         totalClaims = Math.max(0, totalClaims);
         residentCount = Math.max(0, residentCount);
+        externalColony = externalColony == null ? ExternalColonyOverview.empty() : externalColony;
         flagWidth = Math.max(0, flagWidth);
         flagHeight = Math.max(0, flagHeight);
         flagByteSize = Math.max(0L, flagByteSize);
@@ -417,6 +421,7 @@ public record TownOverviewData(
                 0L,
                 0,
                 0,
+                ExternalColonyOverview.empty(),
                 0,
                 0,
                 0,
@@ -492,6 +497,74 @@ public record TownOverviewData(
         return withClaimPreviewContext(nextMapState, nearbyTerrainColors, previewCenterChunkX, previewCenterChunkZ);
     }
 
+    public TownOverviewData withExternalColony(ExternalColonyOverview nextExternalColony) {
+        return new TownOverviewData(
+                hasTown,
+                townId,
+                townName,
+                nationId,
+                nationName,
+                mayorUuid,
+                mayorName,
+                capitalTown,
+                primaryColorRgb,
+                secondaryColorRgb,
+                hasCore,
+                coreDimension,
+                corePos,
+                totalClaims,
+                residentCount,
+                nextExternalColony,
+                currentChunkX,
+                currentChunkZ,
+                previewCenterChunkX,
+                previewCenterChunkZ,
+                currentChunkClaimed,
+                currentChunkOwnedByTown,
+                currentChunkOwnerName,
+                breakAccessLevel,
+                placeAccessLevel,
+                useAccessLevel,
+                containerAccessLevel,
+                redstoneAccessLevel,
+                entityUseAccessLevel,
+                entityDamageAccessLevel,
+                flagId,
+                flagWidth,
+                flagHeight,
+                flagByteSize,
+                flagHash,
+                flagMirrored,
+                canManageTown,
+                canManageClaims,
+                canUploadFlag,
+                canAssignMayor,
+                isMayor,
+                members,
+                nearbyTerrainColors,
+                nearbyClaims,
+                cultureId,
+                cultureDistribution,
+                averageLiteracy,
+                educationLevelDistribution,
+                employmentRate,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines,
+                joinableNationTargets,
+                claimMapState
+        );
+    }
+
     public TownOverviewData withCurrentChunkForNoTown(int nextCurrentChunkX, int nextCurrentChunkZ) {
         if (hasTown) {
             return this;
@@ -512,6 +585,7 @@ public record TownOverviewData(
                 corePos,
                 totalClaims,
                 residentCount,
+                externalColony,
                 nextCurrentChunkX,
                 nextCurrentChunkZ,
                 previewCenterChunkX,
@@ -583,6 +657,7 @@ public record TownOverviewData(
                 corePos,
                 totalClaims,
                 residentCount,
+                externalColony,
                 currentChunkX,
                 currentChunkZ,
                 nextPreviewCenterChunkX,
