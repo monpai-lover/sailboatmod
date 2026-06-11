@@ -41,6 +41,11 @@ class ClaimLocalizationTest {
         assertEquals("\u5269\u4f59\u6750\u6599", zhCn.get("overlay.sailboatmod.constructor.materials"));
         assertEquals("%s \u5efa\u7b51\u5df2\u5b8c\u6210\uff01", zhCn.get("command.sailboatmod.nation.structure.placed"));
         assertEquals("%s \u5efa\u7b51\u5df2\u5f00\u59cb\uff01", zhCn.get("command.sailboatmod.nation.structure.started"));
+        assertEquals("\u521b\u5efa\u56fd\u5bb6\u540d\u79f0", zhCn.get("screen.sailboatmod.nation.overview.create_label"));
+        assertEquals("\u52a0\u5165\u56fd\u5bb6\u540d\u79f0", zhCn.get("screen.sailboatmod.nation.overview.join_label"));
+        assertEquals("\u521b\u5efa\u56fd\u5bb6", zhCn.get("screen.sailboatmod.nation.action.create"));
+        assertEquals("\u7533\u8bf7\u52a0\u5165", zhCn.get("screen.sailboatmod.nation.action.join"));
+        assertEquals("\u5e2e\u52a9", zhCn.get("screen.sailboatmod.nation.action.help"));
         assertFalse(zhCn.values().stream().anyMatch(value -> value != null && value.indexOf('\u20AC') >= 0));
     }
 

@@ -41,20 +41,20 @@ public final class NationOverviewService {
             return NationOverviewData.empty();
         }
 
+        ChunkPos playerChunk = player.chunkPosition();
+        ChunkPos previewChunk = previewCenterChunk == null ? playerChunk : previewCenterChunk;
         NationSavedData data = NationSavedData.get(player.level());
         NationMemberRecord selfMember = data.getMember(player.getUUID());
         if (selfMember == null) {
-            return NationOverviewData.empty();
+            return noNationData(playerChunk, previewChunk);
         }
 
         NationRecord nation = data.getNation(selfMember.nationId());
         if (nation == null) {
-            return NationOverviewData.empty();
+            return noNationData(playerChunk, previewChunk);
         }
 
         long now = System.currentTimeMillis();
-        ChunkPos playerChunk = player.chunkPosition();
-        ChunkPos previewChunk = previewCenterChunk == null ? playerChunk : previewCenterChunk;
         NationClaimRecord currentClaim = data.getClaim(player.level(), playerChunk);
         NationRecord currentClaimNation = currentClaim == null ? null : data.getNation(currentClaim.nationId());
         NationWarRecord activeWar = NationWarService.getActiveWarForNation(data, nation.nationId());
@@ -311,6 +311,25 @@ public final class NationOverviewService {
     private static ClaimPreviewMapState initialClaimMapState(int radius, ChunkPos previewChunk) {
         ChunkPos safePreviewChunk = previewChunk == null ? new ChunkPos(0, 0) : previewChunk;
         return ClaimPreviewMapState.loading(0L, Math.max(0, radius), safePreviewChunk.x, safePreviewChunk.z);
+    }
+
+    static NationOverviewData noNationDataForTest(ChunkPos playerChunk, ChunkPos previewCenterChunk) {
+        return noNationData(playerChunk, previewCenterChunk, 8);
+    }
+
+    private static NationOverviewData noNationData(ChunkPos playerChunk, ChunkPos previewCenterChunk) {
+        return noNationData(playerChunk, previewCenterChunk, claimPreviewRadius());
+    }
+
+    private static NationOverviewData noNationData(ChunkPos playerChunk, ChunkPos previewCenterChunk, int previewRadius) {
+        ChunkPos safePlayerChunk = playerChunk == null ? new ChunkPos(0, 0) : playerChunk;
+        ChunkPos safePreviewChunk = previewCenterChunk == null ? safePlayerChunk : previewCenterChunk;
+        return NationOverviewData.empty().withClaimPreviewContext(
+                initialClaimMapState(previewRadius, safePreviewChunk),
+                List.of(),
+                safePreviewChunk.x,
+                safePreviewChunk.z
+        ).withCurrentChunkForNoNation(safePlayerChunk.x, safePlayerChunk.z);
     }
 
     public static ChunkPos getCoreCenterOrPlayer(ServerPlayer player) {
