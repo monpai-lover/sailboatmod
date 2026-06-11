@@ -11,18 +11,20 @@ import org.lwjgl.glfw.GLFW;
 
 @Mod.EventBusSubscriber(modid = SailboatMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public final class ClientKeyMappings {
+    private static final String CATEGORY = "key.categories.sailboatmod";
+
     public static final KeyMapping OPEN_SAILBOAT_INFO = new KeyMapping(
             "key.sailboatmod.open_info",
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_R,
-            "key.categories.gameplay"
+            CATEGORY
     );
 
     public static final KeyMapping OPEN_NATION_MENU = new KeyMapping(
             "key.sailboatmod.open_nation_menu",
             InputConstants.Type.KEYSYM,
             GLFW.GLFW_KEY_N,
-            "key.categories.gameplay"
+            CATEGORY
     );
 
     @SubscribeEvent

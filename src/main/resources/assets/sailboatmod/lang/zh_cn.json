@@ -3,6 +3,7 @@
     "itemGroup.sailboatmod.sailboat_tab": "帆船模组",
     "entity.sailboatmod.sailboat": "帆船",
     "container.sailboatmod.sailboat_storage": "船舱储物",
+    "key.categories.sailboatmod": "帆船模组",
     "key.sailboatmod.open_info": "打开帆船信息",
     "screen.sailboatmod.info": "帆船信息",
     "screen.sailboatmod.name": "船名",

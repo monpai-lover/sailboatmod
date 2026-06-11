@@ -3,6 +3,7 @@
     "itemGroup.sailboatmod.sailboat_tab":  "Sailboat Mod",
     "entity.sailboatmod.sailboat":  "Sailboat",
     "container.sailboatmod.sailboat_storage":  "Sailboat Storage",
+    "key.categories.sailboatmod": "Sailboat Mod",
     "key.sailboatmod.open_info":  "Open Sailboat Info",
     "screen.sailboatmod.info":  "Sailboat Info",
     "screen.sailboatmod.name":  "Ship Name",
