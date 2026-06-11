@@ -79,10 +79,9 @@ public final class RoadPlannerTileMergeRules {
         if (incomingArgb == null || incomingArgb.length == 0) {
             return false;
         }
-        boolean[] known = knownMask(incomingArgb);
         int knownCount = 0;
-        for (boolean value : known) {
-            if (value) {
+        for (int pixel : incomingArgb) {
+            if (isSafeFullReplacementSample(pixel)) {
                 knownCount++;
             }
         }
@@ -90,19 +89,17 @@ public final class RoadPlannerTileMergeRules {
         return knownCount >= minimumKnown;
     }
 
-    private static boolean isUnsafeSample(int argb) {
+    private static boolean isSafeFullReplacementSample(int argb) {
         int alpha = (argb >>> 24) & 0xFF;
         if (alpha == 0) {
-            return true;
+            return false;
         }
         int rgb = argb & 0x00FFFFFF;
-        return rgb == 0x000000 || rgb == 0x2A2A2A || rgb == 0x3A3A3A || isDarkNeutralUnknown(rgb);
+        return rgb != 0x000000 && rgb != 0x2A2A2A && rgb != 0x3A3A3A;
     }
 
-    private static boolean isDarkNeutralUnknown(int rgb) {
-        int red = (rgb >>> 16) & 0xFF;
-        int green = (rgb >>> 8) & 0xFF;
-        int blue = rgb & 0xFF;
-        return red == green && green == blue && red <= 0x3A;
+    private static boolean isUnsafeSample(int argb) {
+        int alpha = (argb >>> 24) & 0xFF;
+        return alpha == 0;
     }
 }

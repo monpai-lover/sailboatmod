@@ -29,6 +29,14 @@ class RoadMapSnapshotServiceTest {
     }
 
     @Test
+    void colorizerMakesUnavailableSamplesTransparent() {
+        RoadMapColorizer colorizer = new RoadMapColorizer();
+        RoadMapColumnSample unavailable = RoadMapServerColumnSampler.unavailableSampleForTest(0, 0);
+
+        assertEquals(0x00000000, colorizer.color(unavailable));
+    }
+
+    @Test
     void sampleColumnsForTestSamplesEveryLodPixel() {
         RoadMapRegion region = RoadMapRegion.centeredOn(BlockPos.ZERO, 128, MapLod.LOD_4);
 

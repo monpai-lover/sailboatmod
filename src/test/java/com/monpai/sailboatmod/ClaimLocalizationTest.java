@@ -9,6 +9,7 @@ import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -52,6 +53,20 @@ class ClaimLocalizationTest {
         missingKeys.removeAll(enUs.keySet());
 
         assertEquals(Set.of(), missingKeys, "Missing en_us localization keys: " + missingKeys);
+    }
+
+    @Test
+    void zhCnPaidClaimMessagesRenderCostBeforeCoordinates() throws IOException {
+        Map<String, String> zhCn = loadLocalization(ZH_CN_PATH);
+
+        assertEquals(
+                "\u5df2\u82b1\u8d39 100 \u5708\u5b9a\u533a\u5757 656, -877\u3002",
+                String.format(Locale.ROOT, zhCn.get("command.sailboatmod.nation.claim.success_paid"), 656, -877, 100)
+        );
+        assertEquals(
+                "\u5df2\u82b1\u8d39 100 \u5708\u5b9a\u57ce\u9547\u533a\u5757 656, -877\u3002",
+                String.format(Locale.ROOT, zhCn.get("command.sailboatmod.nation.town.claim.success_paid"), 656, -877, 100)
+        );
     }
 
     private static Map<String, String> loadLocalization(Path path) throws IOException {

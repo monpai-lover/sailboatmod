@@ -2,6 +2,9 @@ package com.monpai.sailboatmod.roadplanner.map;
 
 public class RoadMapColorizer {
     public int color(RoadMapColumnSample sample) {
+        if (RoadMapServerColumnSampler.isUnavailableSample(sample)) {
+            return 0x00000000;
+        }
         double factor = sample.water() ? waterFactor(sample.waterDepth()) : reliefFactor(sample.surfaceY() - sample.reliefBaseY());
         return scaleArgb(sample.baseArgb(), factor);
     }

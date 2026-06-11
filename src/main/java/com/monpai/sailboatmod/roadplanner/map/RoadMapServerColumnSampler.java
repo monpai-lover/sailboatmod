@@ -51,6 +51,15 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
         return unavailableSample(worldX, worldZ);
     }
 
+    static boolean isUnavailableSample(RoadMapColumnSample sample) {
+        return sample != null
+                && sample.baseArgb() == UNKNOWN_ARGB
+                && sample.surfaceY() == 0
+                && sample.reliefBaseY() == 0
+                && !sample.water()
+                && sample.waterDepth() == 0;
+    }
+
     private static RoadMapColumnSample unavailableSample(int worldX, int worldZ) {
         return new RoadMapColumnSample(worldX, 0, worldZ, UNKNOWN_ARGB, false, 0, 0);
     }

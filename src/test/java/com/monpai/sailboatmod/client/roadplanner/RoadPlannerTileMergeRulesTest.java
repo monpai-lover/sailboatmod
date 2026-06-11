@@ -48,23 +48,35 @@ class RoadPlannerTileMergeRulesTest {
     }
 
     @Test
-    void knownMaskRejectsBlackAndLoadingCheckerSamples() {
-        assertArrayEquals(new boolean[] { false, false, false, true },
+    void knownMaskRejectsTransparentUnknownSamples() {
+        assertArrayEquals(new boolean[] { false, true, true, true },
                 RoadPlannerTileMergeRules.knownMask(new int[] {
+                        0x00000000,
                         0xFF000000,
                         0xFF2A2A2A,
-                        0xFF3A3A3A,
-                        0xFF778899
+                        0xFF3A3A3A
                 }));
     }
 
     @Test
-    void chunkSubregionMergePreservesBaseForTransparentAndColorizedUnknownPixels() {
+    void knownMaskAcceptsDarkTerrainSamples() {
+        assertArrayEquals(new boolean[] { true, true, true, true, true },
+                RoadPlannerTileMergeRules.knownMask(new int[] {
+                        0xFF1D1D1D,
+                        0xFF252525,
+                        0xFF2A2A2A,
+                        0xFF393939,
+                        0xFF3A3A3A
+                }));
+    }
+
+    @Test
+    void chunkSubregionMergePreservesBaseForTransparentUnknownPixels() {
         int[] base = new int[16];
         java.util.Arrays.fill(base, 0xFF00AA00);
         int[] chunk = {
                 0x00000000, 0xFF88CCEE,
-                0xFF1D1D1D, 0xFF556677
+                0x00000000, 0xFF556677
         };
 
         boolean applied = RoadPlannerTileMergeRules.mergeSubregion(base, 4, 4, chunk, 2, 2, 1, 1);
