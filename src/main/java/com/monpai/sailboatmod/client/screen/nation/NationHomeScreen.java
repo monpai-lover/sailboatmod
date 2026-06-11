@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
 import com.monpai.sailboatmod.client.screen.ClaimMapViewport;
 import com.monpai.sailboatmod.client.screen.ClaimWorldMapView;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
+import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.NationFlagUploadClient;
@@ -233,6 +234,9 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             this.pendingPreviewRevision = Long.MIN_VALUE;
         }
         this.autoRefreshTicks = 0;
+        if (shouldClearClaimOverlayCache(previousData, this.data)) {
+            this.cachedClaimOverlays.clear();
+        }
         cacheNearbyClaims();
         if (this.resetPending) {
             this.mapOffsetX = 0;
@@ -422,6 +426,17 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode,
+                this.nationNameInput,
+                this.shortNameInput,
+                this.joinNationInput,
+                this.primaryColorInput,
+                this.secondaryColorInput,
+                this.flagPathInput,
+                this.warTargetInput,
+                this.officerTitleInput)) {
+            return true;
+        }
         if (keyCode == 257 || keyCode == 335) {
             if (this.currentPage == Page.OVERVIEW) {
                 if (!this.data.hasNation()) {
@@ -1618,6 +1633,35 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             return false;
         }
         return queuedPreviewCenterX != previewCenterChunkX || queuedPreviewCenterZ != previewCenterChunkZ;
+    }
+
+    private static boolean shouldClearClaimOverlayCache(NationOverviewData previousData, NationOverviewData nextData) {
+        if (previousData == null || nextData == null) {
+            return false;
+        }
+        return shouldClearClaimOverlayCacheForTest(
+                previousData.nationId(),
+                nextData.nationId(),
+                previousData.primaryColorRgb(),
+                nextData.primaryColorRgb(),
+                previousData.secondaryColorRgb(),
+                nextData.secondaryColorRgb()
+        );
+    }
+
+    static boolean shouldClearClaimOverlayCacheForTest(String previousNationId,
+                                                       String nextNationId,
+                                                       int previousPrimaryColor,
+                                                       int nextPrimaryColor,
+                                                       int previousSecondaryColor,
+                                                       int nextSecondaryColor) {
+        return !normalizedId(previousNationId).equals(normalizedId(nextNationId))
+                || previousPrimaryColor != nextPrimaryColor
+                || previousSecondaryColor != nextSecondaryColor;
+    }
+
+    private static String normalizedId(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     static boolean shouldPreserveClaimMapVisibleCenter(String previousOwnerId,

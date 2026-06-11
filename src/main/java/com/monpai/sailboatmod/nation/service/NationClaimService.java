@@ -218,8 +218,7 @@ public final class NationClaimService {
                 || !player.level().getBlockState(corePos).is(ModBlocks.NATION_CORE_BLOCK.get())) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.expected_missing"));
         }
-        player.level().removeBlock(corePos, false);
-        return NationResult.success(Component.translatable("command.sailboatmod.nation.town.core.removed"));
+        return pickupCore(player, corePos);
     }
 
     public static void onCoreRemoved(Level level, BlockPos pos) {

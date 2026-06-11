@@ -160,6 +160,14 @@ public class SailboatInfoScreen extends Screen {
     }
 
     @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.nameInput, this.rentalPriceInput)) {
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
     public boolean isPauseScreen() {
         return false;
     }

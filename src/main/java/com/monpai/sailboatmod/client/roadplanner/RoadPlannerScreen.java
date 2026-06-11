@@ -79,7 +79,8 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private RoadPlannerClientState state;
     private RoadPlannerMapLayout mapLayout;
     private RoadPlannerVanillaLayout compatibilityLayout;
-    private RoadPlannerMapView mapView = RoadPlannerMapView.centered(0, 0, 2.0D);
+    private RoadPlannerMapView mapView;
+    private boolean mapViewUsingFallbackOrigin;
     private RoadPlannerMapCanvas canvas;
     private RoadPlannerClaimOverlayRenderer claimOverlayRenderer = new RoadPlannerClaimOverlayRenderer(List.of());
     private RoadPlannerTileManager tileManager;
@@ -163,6 +164,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         this.state = RoadPlannerClientState.open(sessionId);
         this.testMode = testMode;
         this.draftPersistence = new RoadPlannerDraftPersistence(draftRootDir(testMode));
+        BlockPos playerPos = testMode ? null : currentClientPlayerPos();
+        this.mapView = initialMapViewForPlayer(playerPos);
+        this.mapViewUsingFallbackOrigin = playerPos == null;
     }
 
     private static File draftRootDir(boolean testMode) {
@@ -184,6 +188,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 (this.startTownPos.getZ() + this.destinationTownPos.getZ()) / 2.0D,
                 2.0D
         );
+        this.mapViewUsingFallbackOrigin = false;
         linePlan.clear();
         RoadPlannerDraftStore.Draft draft = testMode ? null : RoadPlannerDraftStore.get(state.sessionId());
         if (!testMode && draft == null) {
@@ -1123,6 +1128,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     @Override
     protected void init() {
+        centerFallbackMapViewOnPlayerIfAvailable();
         recomputeLayout();
         requestEnterPlannerPreload();
         requestInitialMapSnapshot();
@@ -1151,6 +1157,37 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         RoadPlannerHeightSampler heightSampler = testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain();
         canvas = new RoadPlannerMapCanvas(mapLayout.map().asVanillaRect(), new RoadPlannerMapComponent(region, viewport), mapView, tileManager, heightSampler);
+    }
+
+    static RoadPlannerMapView initialMapViewForPlayerForTest(BlockPos playerPos) {
+        return initialMapViewForPlayer(playerPos);
+    }
+
+    private static RoadPlannerMapView initialMapViewForPlayer(BlockPos playerPos) {
+        if (playerPos == null) {
+            return RoadPlannerMapView.centered(0, 0, 2.0D);
+        }
+        return RoadPlannerMapView.centered(playerPos.getX(), playerPos.getZ(), 2.0D);
+    }
+
+    private void centerFallbackMapViewOnPlayerIfAvailable() {
+        if (testMode || hasTownRoute || !mapViewUsingFallbackOrigin) {
+            return;
+        }
+        BlockPos playerPos = currentClientPlayerPos();
+        if (playerPos == null) {
+            return;
+        }
+        this.mapView = initialMapViewForPlayer(playerPos);
+        this.mapViewUsingFallbackOrigin = false;
+    }
+
+    private static BlockPos currentClientPlayerPos() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.player == null) {
+            return null;
+        }
+        return minecraft.player.blockPosition();
     }
 
     private void requestInitialMapSnapshot() {

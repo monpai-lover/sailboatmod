@@ -110,6 +110,18 @@ class NationClientHooksTest {
         assertTrue(NationClientHooks.shouldOpenNationHomeScreen(false, false, false));
     }
 
+    @Test
+    void emptyNationOverviewCanBeCenteredOnPlayerChunk() {
+        NationOverviewData data = NationOverviewData.emptyAt(34, -12);
+
+        assertEquals(34, data.currentChunkX());
+        assertEquals(-12, data.currentChunkZ());
+        assertEquals(34, data.previewCenterChunkX());
+        assertEquals(-12, data.previewCenterChunkZ());
+        assertEquals(34, data.claimMapState().centerChunkX());
+        assertEquals(-12, data.claimMapState().centerChunkZ());
+    }
+
     private static NationOverviewData nationData(String nationId,
                                                  String nationName,
                                                  boolean hasActiveWar,

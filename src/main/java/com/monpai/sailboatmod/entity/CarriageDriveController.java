@@ -14,7 +14,9 @@ final class CarriageDriveController {
                 : context;
         float turnInput = Mth.clamp(effectiveContext.turnInput(), -1.0F, 1.0F);
 
-        if (effectiveContext.autopilotControl() && !effectiveContext.hasManualInput()) {
+        if (AutopilotPassengerInputPolicy.shouldUseAutopilotCommand(
+                effectiveContext.autopilotControl(),
+                effectiveContext.hasManualInput())) {
             return fromAutopilotGear(effectiveContext.gear(), turnInput);
         }
 

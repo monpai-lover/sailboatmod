@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
+import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
 import com.monpai.sailboatmod.client.TradeClientHooks;
 import com.monpai.sailboatmod.client.gui.TradeWindowStatePolicy;
 import com.monpai.sailboatmod.nation.menu.TradeScreenData;
@@ -126,6 +127,14 @@ public class NationTradeScreen extends Screen {
             ModNetwork.CHANNEL.sendToServer(
                     new TradeScreenActionPacket(TradeScreenActionPacket.Action.REFRESH, data.targetNationId()));
         }
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.offerCurrencyInput, this.requestCurrencyInput)) {
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override

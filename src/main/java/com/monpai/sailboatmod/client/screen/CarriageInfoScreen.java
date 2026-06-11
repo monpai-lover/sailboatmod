@@ -115,6 +115,14 @@ public class CarriageInfoScreen extends Screen {
         return false;
     }
 
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.nameInput)) {
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
     private Component autopilotState() {
         if (!carriage.isAutopilotActive()) {
             return Component.translatable("screen.sailboatmod.route_status.stopped");

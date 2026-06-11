@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRenameRoadPacket;
 import net.minecraft.client.Minecraft;
@@ -53,6 +54,9 @@ public class RoadPlannerTextInputScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.input)) {
+            return true;
+        }
         if (keyCode == 257 || keyCode == 335) {
             submit();
             return true;

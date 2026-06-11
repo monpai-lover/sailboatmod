@@ -22,6 +22,7 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     private static final int TAB_VEHICLES = 1;
     private static final int TAB_DISPATCH = 2;
     private static final int TAB_ADVANCED = 3;
+    private static final int MAIN_PANEL_W = 194;
     private static final int RIGHT_PANEL_W = 194;
     private static final int RIGHT_PANEL_GAP = 6;
     private static final int ROW_H = 16;
@@ -41,7 +42,7 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
 
     public PostStationScreen(PostStationMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
-        this.imageWidth = 194;
+        this.imageWidth = combinedImageWidth();
         this.imageHeight = 176;
         PostStationScreenData initial = PostStationClientHooks.consumeFor(menu.getDockPos());
         this.data = initial != null ? initial : empty(menu.getDockPos());
@@ -62,8 +63,7 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     @Override
     protected void init() {
         super.init();
-        this.leftPos = Math.max(8, this.leftPos - (RIGHT_PANEL_W + RIGHT_PANEL_GAP) / 2);
-        this.rightPanelX = this.leftPos + this.imageWidth + RIGHT_PANEL_GAP;
+        this.rightPanelX = this.leftPos + rightPanelOffset();
         this.rightPanelY = this.topPos;
         int x = rightPanelX;
         int y = rightPanelY;
@@ -99,8 +99,8 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     @Override
     protected void renderBg(GuiGraphics guiGraphics, float partialTick, int mouseX, int mouseY) {
         updateButtons();
-        guiGraphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xCC6E4B2A);
-        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + imageWidth - 1, topPos + imageHeight - 1, 0xCC49311F);
+        guiGraphics.fill(leftPos, topPos, leftPos + MAIN_PANEL_W, topPos + imageHeight, 0xCC6E4B2A);
+        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + MAIN_PANEL_W - 1, topPos + imageHeight - 1, 0xCC49311F);
         guiGraphics.fill(rightPanelX, rightPanelY, rightPanelX + RIGHT_PANEL_W, rightPanelY + imageHeight, 0xCC6E4B2A);
         guiGraphics.fill(rightPanelX + 1, rightPanelY + 1, rightPanelX + RIGHT_PANEL_W - 1, rightPanelY + imageHeight - 1, 0xCC49311F);
         drawSlotFrames(guiGraphics);
@@ -359,6 +359,34 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
 
     private void send(PostStationGuiActionPacket.Action action, int value) {
         ModNetwork.CHANNEL.sendToServer(new PostStationGuiActionPacket(data.stationPos(), action, value));
+    }
+
+    private static int combinedImageWidth() {
+        return MAIN_PANEL_W + RIGHT_PANEL_GAP + RIGHT_PANEL_W;
+    }
+
+    private static int rightPanelOffset() {
+        return MAIN_PANEL_W + RIGHT_PANEL_GAP;
+    }
+
+    static int mainPanelWidthForTest() {
+        return MAIN_PANEL_W;
+    }
+
+    static int rightPanelWidthForTest() {
+        return RIGHT_PANEL_W;
+    }
+
+    static int rightPanelGapForTest() {
+        return RIGHT_PANEL_GAP;
+    }
+
+    static int combinedImageWidthForTest() {
+        return combinedImageWidth();
+    }
+
+    static int rightPanelOffsetForTest() {
+        return rightPanelOffset();
     }
 
     private String trimToWidth(String src, int maxPixels) {

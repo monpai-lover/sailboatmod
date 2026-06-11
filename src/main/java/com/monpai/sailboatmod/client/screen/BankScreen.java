@@ -136,6 +136,14 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
     }
 
     @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.amountInput, this.loanAmountInput)) {
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
     protected void renderBg(GuiGraphics g, float partialTick, int mouseX, int mouseY) {
         int left = this.leftPos;
         int top = this.topPos;

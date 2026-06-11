@@ -29,6 +29,21 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
+    void longFlatLandAutoCompleteStaysRoad() {
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService();
+
+        RoadPlannerAutoCompleteResult result = service.complete(
+                new BlockPos(0, 64, 0),
+                new BlockPos(160, 64, 0),
+                List.of(),
+                80
+        );
+
+        assertTrue(result.success());
+        assertTrue(result.segmentTypes().stream().allMatch(type -> type == RoadPlannerSegmentType.ROAD));
+    }
+
+    @Test
     void continuesFromLastManualNode() {
         RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService();
         BlockPos manualStart = new BlockPos(0, 64, 0);

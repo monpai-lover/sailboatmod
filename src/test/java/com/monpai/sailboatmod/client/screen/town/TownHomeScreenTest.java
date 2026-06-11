@@ -38,6 +38,17 @@ class TownHomeScreenTest {
     }
 
     @Test
+    void joinNationOverlaySitsInOverviewSideArea() {
+        int[] overlay = TownHomeScreen.joinNationOverlayBoundsForTest(0, 0);
+        int[] list = TownHomeScreen.joinNationListBoundsForTest(0, 0);
+
+        assertTrue(overlay[0] >= 190);
+        assertTrue(overlay[0] + overlay[2] <= 12 + 416);
+        assertTrue(list[0] >= overlay[0]);
+        assertTrue(list[0] + list[2] <= overlay[0] + overlay[2]);
+    }
+
+    @Test
     void pendingLoadingStateRequestsRetryForSameRevision() {
         assertTrue(TownHomeScreen.shouldRetryPendingPreviewRequest(
                 true,
@@ -72,6 +83,13 @@ class TownHomeScreenTest {
         assertFalse(TownHomeScreen.shouldFlushQueuedPreviewRefresh(true, 14, -6, 10, -6));
         assertFalse(TownHomeScreen.shouldFlushQueuedPreviewRefresh(false, Integer.MIN_VALUE, -6, 10, -6));
         assertFalse(TownHomeScreen.shouldFlushQueuedPreviewRefresh(false, 10, -6, 10, -6));
+    }
+
+    @Test
+    void claimOverlayCacheClearsWhenOwnerOrColorChanges() {
+        assertTrue(TownHomeScreen.shouldClearClaimOverlayCacheForTest("town", "town", "nation", "nation", 0x112233, 0x445566, 0x778899, 0x778899));
+        assertTrue(TownHomeScreen.shouldClearClaimOverlayCacheForTest("town", "town", "", "nation", 0x112233, 0x112233, 0x778899, 0x778899));
+        assertFalse(TownHomeScreen.shouldClearClaimOverlayCacheForTest("town", "town", "nation", "nation", 0x112233, 0x112233, 0x778899, 0x778899));
     }
 
     @Test

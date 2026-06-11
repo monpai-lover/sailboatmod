@@ -23,11 +23,12 @@ public final class TownClientHooks {
     public static void openCachedOrEmpty() {
         suppressReopen = false;
         Minecraft minecraft = Minecraft.getInstance();
+        TownOverviewData openData = cachedOrLocalEmpty();
         if (minecraft.screen instanceof TownHomeScreen townHomeScreen) {
-            townHomeScreen.updateData(lastSyncedData);
+            townHomeScreen.updateData(openData);
             return;
         }
-        minecraft.setScreen(new TownHomeScreen(lastSyncedData));
+        minecraft.setScreen(new TownHomeScreen(openData));
     }
 
     public static void openOrUpdate(TownOverviewData data) {
@@ -50,8 +51,8 @@ public final class TownClientHooks {
     static TownOverviewData mergeOverviewPreservingPendingClaimPreview(TownOverviewData current,
                                                                        TownOverviewData incoming,
                                                                        long latestRequestedPreviewRevision) {
-        TownOverviewData safeCurrent = current == null ? TownOverviewData.empty() : current;
-        TownOverviewData safeIncoming = incoming == null ? TownOverviewData.empty() : incoming;
+        TownOverviewData safeCurrent = current == null ? localEmpty() : current;
+        TownOverviewData safeIncoming = incoming == null ? localEmpty() : incoming;
         if (!sameOwner(safeCurrent, safeIncoming)
                 || !isMetadataOnlyClaimPreview(safeIncoming)
                 || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
@@ -78,7 +79,7 @@ public final class TownClientHooks {
     }
 
     private static boolean isMetadataOnlyClaimPreview(TownOverviewData data) {
-        ClaimPreviewMapState state = data == null ? ClaimPreviewMapState.empty() : data.claimMapState();
+        ClaimPreviewMapState state = data == null ? localEmpty().claimMapState() : data.claimMapState();
         return state.loading() && state.revision() == 0L && data != null && data.nearbyTerrainColors().isEmpty();
     }
 
@@ -179,6 +180,26 @@ public final class TownClientHooks {
     private static long nextClaimPreviewRevision() {
         claimPreviewRevisionCounter = Math.max(1L, claimPreviewRevisionCounter + 1L);
         return claimPreviewRevisionCounter;
+    }
+
+    private static TownOverviewData cachedOrLocalEmpty() {
+        return lastSyncedData.hasTown() ? lastSyncedData : localEmpty();
+    }
+
+    private static TownOverviewData localEmpty() {
+        int[] chunk = localPlayerChunk();
+        return TownOverviewData.emptyAt(chunk[0], chunk[1]);
+    }
+
+    private static int[] localPlayerChunk() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.player == null) {
+            return new int[] {0, 0};
+        }
+        return new int[] {
+                minecraft.player.blockPosition().getX() >> 4,
+                minecraft.player.blockPosition().getZ() >> 4
+        };
     }
 
     private TownClientHooks() {

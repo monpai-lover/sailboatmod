@@ -1095,7 +1095,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return;
         }
         applyControlInputState(input);
-        if (lastClientInput.hasThrottle() || lastClientInput.turn() != CarriageDriveInput.TurnDirection.FORWARD) {
+        if (AutopilotPassengerInputPolicy.shouldCancelAutopilotForPassengerInput(isAutopilotActive(), lastClientInput)) {
             stopAutopilot();
         }
     }

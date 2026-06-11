@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
+import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
 import com.monpai.sailboatmod.client.texture.NationFlagUploadClient;
 import com.monpai.sailboatmod.nation.service.NationFlagStorage;
 import net.minecraft.client.Minecraft;
@@ -64,6 +65,9 @@ public class NationMenuScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.flagPathInput)) {
+            return true;
+        }
         if ((keyCode == 257 || keyCode == 335) && this.flagPathInput != null && this.flagPathInput.isFocused()) {
             submitUpload();
             return true;

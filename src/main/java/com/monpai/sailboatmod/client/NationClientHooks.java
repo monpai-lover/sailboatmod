@@ -22,11 +22,12 @@ public final class NationClientHooks {
     public static void openCachedOrEmpty() {
         suppressReopen = false;
         Minecraft minecraft = Minecraft.getInstance();
+        NationOverviewData openData = cachedOrLocalEmpty();
         if (minecraft.screen instanceof NationHomeScreen nationHomeScreen) {
-            nationHomeScreen.updateData(lastSyncedData);
+            nationHomeScreen.updateData(openData);
             return;
         }
-        minecraft.setScreen(new NationHomeScreen(lastSyncedData));
+        minecraft.setScreen(new NationHomeScreen(openData));
     }
 
     public static void openOrUpdate(NationOverviewData data) {
@@ -62,8 +63,8 @@ public final class NationClientHooks {
     static NationOverviewData mergeOverviewPreservingPendingClaimPreview(NationOverviewData current,
                                                                          NationOverviewData incoming,
                                                                          long latestRequestedPreviewRevision) {
-        NationOverviewData safeCurrent = current == null ? NationOverviewData.empty() : current;
-        NationOverviewData safeIncoming = incoming == null ? NationOverviewData.empty() : incoming;
+        NationOverviewData safeCurrent = current == null ? localEmpty() : current;
+        NationOverviewData safeIncoming = incoming == null ? localEmpty() : incoming;
         if (!sameOwner(safeCurrent, safeIncoming)
                 || !isMetadataOnlyClaimPreview(safeIncoming)
                 || !shouldPreserveLocalClaimPreview(safeCurrent, latestRequestedPreviewRevision)) {
@@ -90,7 +91,7 @@ public final class NationClientHooks {
     }
 
     private static boolean isMetadataOnlyClaimPreview(NationOverviewData data) {
-        ClaimPreviewMapState state = data == null ? ClaimPreviewMapState.empty() : data.claimMapState();
+        ClaimPreviewMapState state = data == null ? localEmpty().claimMapState() : data.claimMapState();
         return state.loading() && state.revision() == 0L && data != null && data.nearbyTerrainColors().isEmpty();
     }
 
@@ -211,6 +212,26 @@ public final class NationClientHooks {
     private static long nextClaimPreviewRevision() {
         claimPreviewRevisionCounter = Math.max(1L, claimPreviewRevisionCounter + 1L);
         return claimPreviewRevisionCounter;
+    }
+
+    private static NationOverviewData cachedOrLocalEmpty() {
+        return lastSyncedData.hasNation() ? lastSyncedData : localEmpty();
+    }
+
+    private static NationOverviewData localEmpty() {
+        int[] chunk = localPlayerChunk();
+        return NationOverviewData.emptyAt(chunk[0], chunk[1]);
+    }
+
+    private static int[] localPlayerChunk() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.player == null) {
+            return new int[] {0, 0};
+        }
+        return new int[] {
+                minecraft.player.blockPosition().getX() >> 4,
+                minecraft.player.blockPosition().getZ() >> 4
+        };
     }
 
     private NationClientHooks() {

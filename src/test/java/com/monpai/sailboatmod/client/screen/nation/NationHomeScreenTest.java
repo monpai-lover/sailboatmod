@@ -43,6 +43,13 @@ class NationHomeScreenTest {
     }
 
     @Test
+    void claimOverlayCacheClearsWhenNationOrColorChanges() {
+        assertTrue(NationHomeScreen.shouldClearClaimOverlayCacheForTest("nation", "nation", 0x112233, 0x445566, 0x778899, 0x778899));
+        assertTrue(NationHomeScreen.shouldClearClaimOverlayCacheForTest("old", "nation", 0x112233, 0x112233, 0x778899, 0x778899));
+        assertFalse(NationHomeScreen.shouldClearClaimOverlayCacheForTest("nation", "nation", 0x112233, 0x112233, 0x778899, 0x778899));
+    }
+
+    @Test
     void tradeWindowEntryDoesNotRequireWarOrTreasuryPermission() {
         assertTrue(NationHomeScreen.canOpenTradeWindow(true, true, true, false, true));
         assertTrue(NationHomeScreen.canOpenTradeWindow(true, true, true, true, false));

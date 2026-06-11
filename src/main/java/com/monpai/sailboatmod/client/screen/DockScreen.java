@@ -40,6 +40,7 @@ public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
     private static final int DISPATCH_VISIBLE_ROWS = 5;
     private static final int STORAGE_ROW_H = 12;
     private static final int STORAGE_VISIBLE_ROWS = 4;
+    private static final int MAIN_PANEL_W = 194;
     private static final int RIGHT_PANEL_W = 194;
     private static final int RIGHT_PANEL_GAP = 6;
     private static final int RIGHT_PANEL_OVERLAP = 0;
@@ -88,7 +89,7 @@ public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
 
     public DockScreen(T menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
-        this.imageWidth = 194;
+        this.imageWidth = combinedImageWidth();
         this.imageHeight = 176;
         DockScreenData initial = DockClientHooks.consumeFor(menu.getDockPos());
         this.data = initial != null ? initial : empty(menu.getDockPos());
@@ -129,9 +130,6 @@ public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
     @Override
     protected void init() {
         super.init();
-        int extraWidth = RIGHT_PANEL_W + RIGHT_PANEL_GAP - RIGHT_PANEL_OVERLAP;
-        int centeredLeft = this.leftPos - extraWidth / 2;
-        this.leftPos = Math.max(8, centeredLeft);
         updateRightPanelAnchor();
         int top = this.rightPanelY;
         int panelX = this.rightPanelX;
@@ -182,8 +180,8 @@ public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
     protected void renderBg(GuiGraphics guiGraphics, float partialTick, int mouseX, int mouseY) {
         hoveredMinimapBoatName = null;
         updateActionButtonVisibility();
-        guiGraphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xCC6E4B2A);
-        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + imageWidth - 1, topPos + imageHeight - 1, 0xCC49311F);
+        guiGraphics.fill(leftPos, topPos, leftPos + MAIN_PANEL_W, topPos + imageHeight, 0xCC6E4B2A);
+        guiGraphics.fill(leftPos + 1, topPos + 1, leftPos + MAIN_PANEL_W - 1, topPos + imageHeight - 1, 0xCC49311F);
         drawMenuSlotFrames(guiGraphics);
         guiGraphics.fill(rightPanelX, rightPanelY, rightPanelX + RIGHT_PANEL_W, rightPanelY + imageHeight, 0xCC6E4B2A);
         guiGraphics.fill(rightPanelX + 1, rightPanelY + 1, rightPanelX + RIGHT_PANEL_W - 1, rightPanelY + imageHeight - 1, 0xCC49311F);
@@ -197,7 +195,7 @@ public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
         int slotLabelColor = data.canManageDock() ? 0xFFF4CF8A : 0xFFAAA39A;
         guiGraphics.drawString(font, screenText("book_slot"), leftPos + 8, topPos + 6, slotLabelColor);
         guiGraphics.drawString(font, screenText("storage_slot"), leftPos + 8, topPos + 32, slotLabelColor);
-        guiGraphics.fill(leftPos + 6, topPos + 38, leftPos + imageWidth - 6, topPos + 39, 0xFF9F7A4A);
+        guiGraphics.fill(leftPos + 6, topPos + 38, leftPos + MAIN_PANEL_W - 6, topPos + 39, 0xFF9F7A4A);
 
         if (activeTab == TAB_ROUTE) {
             drawRouteTab(guiGraphics, mouseX, mouseY);
@@ -231,7 +229,8 @@ public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
         }
         if (this.minecraft != null
                 && this.minecraft.options.keyInventory.matches(keyCode, scanCode)
-                && (dockNameInput == null || !dockNameInput.isFocused())) {
+                && dockNameInput != null
+                && dockNameInput.isFocused()) {
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
@@ -794,9 +793,37 @@ public class DockScreen<T extends DockMenu> extends AbstractContainerScreen<T> {
 
     private void updateRightPanelAnchor() {
         this.rightPanelY = this.topPos;
-        int desired = this.leftPos + this.imageWidth + RIGHT_PANEL_GAP - RIGHT_PANEL_OVERLAP;
+        int desired = this.leftPos + rightPanelOffset();
         int maxAllowed = this.width - RIGHT_PANEL_W - 8;
         this.rightPanelX = Math.max(8, Math.min(desired, maxAllowed));
+    }
+
+    private static int combinedImageWidth() {
+        return MAIN_PANEL_W + RIGHT_PANEL_GAP + RIGHT_PANEL_W - RIGHT_PANEL_OVERLAP;
+    }
+
+    private static int rightPanelOffset() {
+        return MAIN_PANEL_W + RIGHT_PANEL_GAP - RIGHT_PANEL_OVERLAP;
+    }
+
+    static int mainPanelWidthForTest() {
+        return MAIN_PANEL_W;
+    }
+
+    static int rightPanelWidthForTest() {
+        return RIGHT_PANEL_W;
+    }
+
+    static int rightPanelGapForTest() {
+        return RIGHT_PANEL_GAP - RIGHT_PANEL_OVERLAP;
+    }
+
+    static int combinedImageWidthForTest() {
+        return combinedImageWidth();
+    }
+
+    static int rightPanelOffsetForTest() {
+        return rightPanelOffset();
     }
 
     private DockScreenData empty(net.minecraft.core.BlockPos pos) {

@@ -422,6 +422,17 @@ public record NationOverviewData(
         );
     }
 
+    public static NationOverviewData emptyAt(int currentChunkX, int currentChunkZ) {
+        return empty()
+                .withClaimPreviewContext(
+                        ClaimPreviewMapState.emptyAt(currentChunkX, currentChunkZ),
+                        List.of(),
+                        currentChunkX,
+                        currentChunkZ
+                )
+                .withCurrentChunkForNoNation(currentChunkX, currentChunkZ);
+    }
+
     public NationOverviewData withClaimPreview(ClaimPreviewMapState mapState, List<Integer> terrainColors) {
         ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
         return withClaimPreviewContext(

@@ -56,6 +56,14 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void defaultMapViewCanStartAtPlayerPosition() {
+        RoadPlannerMapView view = RoadPlannerScreen.initialMapViewForPlayerForTest(new BlockPos(544, 70, -192));
+
+        assertEquals(544.0D, view.centerX());
+        assertEquals(-192.0D, view.centerZ());
+    }
+
+    @Test
     void roadToolDrawsNodesOnMapCanvasAfterSelectingRoadTool() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
@@ -66,6 +74,19 @@ class RoadPlannerScreenBehaviorTest {
         screen.mouseReleased(map.x() + 180, map.y() + 120, 0);
 
         assertTrue(screen.plannedNodeCountForTest() >= 2);
+    }
+
+    @Test
+    void roadToolAllowsLongFlatLandSegment() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
+
+        clickToolbarTool(screen, RoadToolType.ROAD);
+        screen.mouseClicked(screenXFromWorld(map, 0), screenZFromWorld(map, 0), 0);
+        screen.mouseClicked(screenXFromWorld(map, 160), screenZFromWorld(map, 0), 0);
+
+        assertEquals(2, screen.plannedNodeCountForTest());
+        assertEquals(RoadPlannerSegmentType.ROAD, screen.segmentTypeForTest(0));
     }
 
     @Test

@@ -68,4 +68,18 @@ class CarriageDriveControllerTest {
         assertEquals(0.35F, command.turnInput(), 1.0E-6F);
         assertFalse(command.manualControl());
     }
+
+    @Test
+    void autopilotRouteCommandWinsOverPassengerControlInput() {
+        CarriageDriveCommand command = CarriageDriveController.createCommand(
+                new SailboatEntity.GroundDriveContext(true, true, false, true, true, -1.0F, SailboatEntity.EngineGear.FULL_AHEAD),
+                0.0D
+        );
+
+        assertTrue(command.driveIntent() > 0.0D);
+        assertTrue(command.targetSpeed() > 0.0D);
+        assertEquals(-1.0F, command.turnInput(), 1.0E-6F);
+        assertFalse(command.braking());
+        assertFalse(command.manualControl());
+    }
 }

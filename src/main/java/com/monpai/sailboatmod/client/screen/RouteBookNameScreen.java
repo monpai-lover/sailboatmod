@@ -38,6 +38,9 @@ public class RouteBookNameScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.nameBox)) {
+            return true;
+        }
         if (keyCode == 257 || keyCode == 335) {
             submit();
             return true;

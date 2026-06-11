@@ -433,8 +433,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 boolean playerWantsReverse = controlInput.wantsReverse();
                 boolean playerWantsTurn = controlInput.wantsTurn();
                 hasManualInput = playerWantsForward || playerWantsReverse || playerWantsTurn;
-                if (autopilotControl && !hasManualInput) {
-                    // Keep autopilot running when rider has no steering/throttle input.
+                if (AutopilotPassengerInputPolicy.shouldUseAutopilotCommand(autopilotControl, hasManualInput)) {
+                    // Keep route control authoritative while riders are aboard; stop/pause stays explicit.
                     AutopilotCommand autopilotCommand = computeAutopilotCommand();
                     if (autopilotCommand.active) {
                         if (autopilotCommand.yawStep != 0.0F) {
@@ -465,9 +465,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                         reversePressedLastTick = false;
                     } else {
                         updateGearFromInput(wantsForward, wantsReverse);
-                    }
-                    if (autopilotControl && hasManualInput) {
-                        stopAutopilot();
                     }
                 }
             } else if (autopilotControl) {

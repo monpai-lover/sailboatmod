@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 public final class TownService {
     private static final Set<String> SUPPRESSED_CORE_REMOVALS = new HashSet<>();
@@ -193,14 +194,11 @@ public final class TownService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.none"));
         }
         Level level = actor.level();
-        if (level.dimension().location().toString().equalsIgnoreCase(town.coreDimension())) {
-            BlockPos corePos = BlockPos.of(town.corePos());
-            if (level.hasChunkAt(corePos) && level.getBlockState(corePos).is(com.monpai.sailboatmod.registry.ModBlocks.TOWN_CORE_BLOCK.get())) {
-                level.removeBlock(corePos, false);
-                return NationResult.success(Component.translatable("command.sailboatmod.nation.town.core.removed"));
-            }
-        }
-        return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.expected_missing"));
+        boolean sameDimension = level.dimension().location().toString().equalsIgnoreCase(town.coreDimension());
+        BlockPos corePos = BlockPos.of(town.corePos());
+        boolean chunkLoaded = sameDimension && level.hasChunkAt(corePos);
+        boolean corePresent = chunkLoaded && level.getBlockState(corePos).is(ModBlocks.TOWN_CORE_BLOCK.get());
+        return finishTownCoreRemoval(sameDimension, chunkLoaded, corePresent, () -> pickupCore(actor, corePos));
     }
 
     public static NationResult assignMayorById(ServerPlayer actor, String townId, UUID targetUuid) {
@@ -1179,17 +1177,6 @@ public final class TownService {
         );
         data.putTown(updated);
 
-        for (NationClaimRecord claim : data.getClaimsForTown(town.townId())) {
-            data.putClaim(new NationClaimRecord(
-                    claim.dimensionId(), claim.chunkX(), claim.chunkZ(),
-                    nationId, claim.townId(),
-                    claim.breakAccessLevel(), claim.placeAccessLevel(), claim.useAccessLevel(),
-                    claim.containerAccessLevel(), claim.redstoneAccessLevel(),
-                    claim.entityUseAccessLevel(), claim.entityDamageAccessLevel(),
-                    claim.claimedAt()
-            ));
-        }
-
         NationRecord nation = data.getNation(nationId);
         if (nation != null && nation.capitalTownId().isBlank()) {
             data.putNation(new NationRecord(
@@ -1201,26 +1188,76 @@ public final class TownService {
             ));
         }
 
+        for (NationClaimRecord claim : managedClaimsForNationRewrite(data, town, updated)) {
+            data.putClaim(rewriteTownClaim(claim, nationId, updated.townId()));
+        }
+
         data.clearTownNationRequestsForTown(town.townId());
     }
 
     private static void unbindTownFromNation(NationSavedData data, TownRecord town) {
+        List<NationClaimRecord> claims = managedClaimsForNationRewrite(data, town, town);
         TownRecord updated = new TownRecord(
                 town.townId(), "", town.name(), town.mayorUuid(), town.createdAt(),
                 town.coreDimension(), town.corePos(), town.flagId(), town.cultureId()
         );
         data.putTown(updated);
 
-        for (NationClaimRecord claim : data.getClaimsForTown(town.townId())) {
-            data.putClaim(new NationClaimRecord(
-                    claim.dimensionId(), claim.chunkX(), claim.chunkZ(),
-                    "", claim.townId(),
-                    claim.breakAccessLevel(), claim.placeAccessLevel(), claim.useAccessLevel(),
-                    claim.containerAccessLevel(), claim.redstoneAccessLevel(),
-                    claim.entityUseAccessLevel(), claim.entityDamageAccessLevel(),
-                    claim.claimedAt()
-            ));
+        for (NationClaimRecord claim : claims) {
+            data.putClaim(rewriteTownClaim(claim, "", town.townId()));
         }
+    }
+
+    private static List<NationClaimRecord> managedClaimsForNationRewrite(NationSavedData data, TownRecord before, TownRecord after) {
+        if (data == null || before == null) {
+            return List.of();
+        }
+        List<NationClaimRecord> claims = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        addClaims(claims, seen, data.getClaimsForTown(before.townId()));
+        addClaims(claims, seen, getManagedClaims(data, before));
+        if (after != null) {
+            addClaims(claims, seen, data.getClaimsForTown(after.townId()));
+            addClaims(claims, seen, getManagedClaims(data, after));
+        }
+        return List.copyOf(claims);
+    }
+
+    private static void addClaims(List<NationClaimRecord> claims, Set<String> seen, List<NationClaimRecord> candidates) {
+        for (NationClaimRecord claim : candidates) {
+            String key = claim.dimensionId() + "|" + claim.chunkX() + "|" + claim.chunkZ();
+            if (seen.add(key)) {
+                claims.add(claim);
+            }
+        }
+    }
+
+    private static NationClaimRecord rewriteTownClaim(NationClaimRecord claim, String nationId, String townId) {
+        return new NationClaimRecord(
+                claim.dimensionId(), claim.chunkX(), claim.chunkZ(),
+                nationId, townId,
+                claim.breakAccessLevel(), claim.placeAccessLevel(), claim.useAccessLevel(),
+                claim.containerAccessLevel(), claim.redstoneAccessLevel(),
+                claim.entityUseAccessLevel(), claim.entityDamageAccessLevel(),
+                claim.claimedAt()
+        );
+    }
+
+    static NationResult finishTownCoreRemovalForTest(boolean sameDimension,
+                                                     boolean chunkLoaded,
+                                                     boolean corePresent,
+                                                     Supplier<NationResult> pickup) {
+        return finishTownCoreRemoval(sameDimension, chunkLoaded, corePresent, pickup);
+    }
+
+    private static NationResult finishTownCoreRemoval(boolean sameDimension,
+                                                      boolean chunkLoaded,
+                                                      boolean corePresent,
+                                                      Supplier<NationResult> pickup) {
+        if (sameDimension && chunkLoaded && corePresent) {
+            return pickup.get();
+        }
+        return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.core.expected_missing"));
     }
 
     private static TownRecord findStandaloneTownForMayor(NationSavedData data, UUID mayorUuid) {

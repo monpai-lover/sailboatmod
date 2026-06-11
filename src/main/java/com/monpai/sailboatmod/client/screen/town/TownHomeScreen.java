@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
 import com.monpai.sailboatmod.client.screen.ClaimMapViewport;
 import com.monpai.sailboatmod.client.screen.ClaimWorldMapView;
 import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
+import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.TownFlagUploadClient;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
@@ -77,6 +78,12 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     private static final int MEMBER_LIST_W = 180;
     private static final int MEMBER_ROW_H = 14;
     private static final int MEMBER_VISIBLE_ROWS = 8;
+    private static final int JOIN_NATION_OVERLAY_LOCAL_X = 194;
+    private static final int JOIN_NATION_OVERLAY_LOCAL_Y = 36;
+    private static final int JOIN_NATION_OVERLAY_W = BODY_W - 206;
+    private static final int JOIN_NATION_OVERLAY_H = 130;
+    private static final int JOIN_NATION_ROW_H = 16;
+    private static final int JOIN_NATION_VISIBLE_ROWS = 5;
 
     private TownOverviewData data;
     private Page currentPage = Page.OVERVIEW;
@@ -183,6 +190,9 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
             this.pendingPreviewRevision = Long.MIN_VALUE;
         }
         this.autoRefreshTicks = 0;
+        if (shouldClearClaimOverlayCache(previousData, this.data)) {
+            this.cachedClaimOverlays.clear();
+        }
         cacheNearbyClaims();
         if (this.resetPending) {
             this.mapOffsetX = 0;
@@ -322,6 +332,9 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
             if (keyCode == 257 || keyCode == 335) {
                 return submitAndTrue(this::submitJoinNationSelection);
             }
+        }
+        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.townNameInput, this.flagPathInput)) {
+            return true;
         }
         if (keyCode == 257 || keyCode == 335) {
             if (this.currentPage == Page.OVERVIEW && this.townNameInput != null && this.townNameInput.isFocused()) return submitAndTrue(this::submitRenameTown);
@@ -527,19 +540,21 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     }
 
     private void drawJoinNationOverlay(GuiGraphics g, int mouseX, int mouseY) {
-        int x = left() + BODY_X + 30;
-        int y = top() + BODY_Y + 36;
-        int w = BODY_W - 60;
-        int h = 130;
+        int[] overlay = joinNationOverlayBounds(left(), top());
+        int x = overlay[0];
+        int y = overlay[1];
+        int w = overlay[2];
+        int h = overlay[3];
         g.fill(left() + BODY_X, top() + BODY_Y + 24, left() + BODY_X + BODY_W, top() + BODY_Y + BODY_H - 1, 0x88000000);
         drawPanelFrame(g, x, y, w, h);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.town.join_nation.title"), x + 10, y + 10, 0xFFE7C977);
-        int listX = x + 10;
-        int listY = y + 28;
-        int listW = w - 20;
-        int rowH = 16;
-        int visibleRows = 5;
-        g.fill(listX, listY, listX + listW, listY + rowH * visibleRows + 4, 0xAA182632);
+        int[] list = joinNationListBounds(left(), top());
+        int listX = list[0];
+        int listY = list[1];
+        int listW = list[2];
+        int rowH = JOIN_NATION_ROW_H;
+        int visibleRows = JOIN_NATION_VISIBLE_ROWS;
+        g.fill(listX, listY, listX + listW, listY + list[3], 0xAA182632);
         int start = clampJoinNationScroll(this.joinNationScroll);
         int end = Math.min(joinableNationTargets().size(), start + visibleRows);
         int rowY = listY + 2;
@@ -989,8 +1004,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         layoutWidget(this.abandonTownButton, 266, 154, 18, overviewPage);
         layoutWidget(this.joinNationButton, 12, 178, 18, overviewPage);
         layoutWidget(this.removeCoreButton, 266, 178, 18, overviewPage);
-        layoutFixedWidget(this.joinNationConfirmButton, 196, 164, this.joinNationOverlayOpen);
-        layoutFixedWidget(this.joinNationCancelButton, 276, 164, this.joinNationOverlayOpen);
+        layoutJoinNationOverlayButtons();
 
         layoutWidget(this.appointMayorButton, 222, 196, 18, membersPage);
 
@@ -1037,6 +1051,20 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         int absoluteY = top() + BODY_Y + bodyLocalY;
         widget.setPosition(absoluteX, absoluteY);
         widget.visible = pageVisible;
+    }
+
+    private void layoutJoinNationOverlayButtons() {
+        int[] overlay = joinNationOverlayBounds(left(), top());
+        positionJoinNationOverlayButton(this.joinNationConfirmButton, overlay[0] + overlay[2] - 154, overlay[1] + overlay[3] - 24);
+        positionJoinNationOverlayButton(this.joinNationCancelButton, overlay[0] + overlay[2] - 76, overlay[1] + overlay[3] - 24);
+    }
+
+    private void positionJoinNationOverlayButton(AbstractWidget widget, int x, int y) {
+        if (widget == null) {
+            return;
+        }
+        widget.setPosition(x, y);
+        widget.visible = this.joinNationOverlayOpen;
     }
 
     private boolean isInsideBodyViewport(double mouseX, double mouseY) {
@@ -1172,6 +1200,40 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
             return false;
         }
         return queuedPreviewCenterX != previewCenterChunkX || queuedPreviewCenterZ != previewCenterChunkZ;
+    }
+
+    private static boolean shouldClearClaimOverlayCache(TownOverviewData previousData, TownOverviewData nextData) {
+        if (previousData == null || nextData == null) {
+            return false;
+        }
+        return shouldClearClaimOverlayCacheForTest(
+                previousData.townId(),
+                nextData.townId(),
+                previousData.nationId(),
+                nextData.nationId(),
+                previousData.primaryColorRgb(),
+                nextData.primaryColorRgb(),
+                previousData.secondaryColorRgb(),
+                nextData.secondaryColorRgb()
+        );
+    }
+
+    static boolean shouldClearClaimOverlayCacheForTest(String previousTownId,
+                                                       String nextTownId,
+                                                       String previousNationId,
+                                                       String nextNationId,
+                                                       int previousPrimaryColor,
+                                                       int nextPrimaryColor,
+                                                       int previousSecondaryColor,
+                                                       int nextSecondaryColor) {
+        return !normalizedId(previousTownId).equals(normalizedId(nextTownId))
+                || !normalizedId(previousNationId).equals(normalizedId(nextNationId))
+                || previousPrimaryColor != nextPrimaryColor
+                || previousSecondaryColor != nextSecondaryColor;
+    }
+
+    private static String normalizedId(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     static boolean shouldPreserveClaimMapVisibleCenter(String previousOwnerId,
@@ -1624,12 +1686,13 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     }
 
     private boolean trySelectJoinNation(double mouseX, double mouseY) {
-        int listX = left() + BODY_X + 40;
-        int listY = top() + BODY_Y + 66;
-        int listW = BODY_W - 80;
-        int rowH = 16;
-        int visibleRows = 5;
-        if (!isInside(listX, listY, listW, rowH * visibleRows + 4, mouseX, mouseY) || joinableNationTargets().isEmpty()) {
+        int[] list = joinNationListBounds(left(), top());
+        int listX = list[0];
+        int listY = list[1];
+        int listW = list[2];
+        int rowH = JOIN_NATION_ROW_H;
+        int visibleRows = JOIN_NATION_VISIBLE_ROWS;
+        if (!isInside(listX, listY, listW, list[3], mouseX, mouseY) || joinableNationTargets().isEmpty()) {
             return false;
         }
         int row = (int) ((mouseY - listY - 2) / rowH);
@@ -1646,7 +1709,8 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     }
 
     private boolean isInsideJoinNationList(double mouseX, double mouseY) {
-        return isInside(left() + BODY_X + 40, top() + BODY_Y + 66, BODY_W - 80, 84, mouseX, mouseY);
+        int[] list = joinNationListBounds(left(), top());
+        return isInside(list[0], list[1], list[2], list[3], mouseX, mouseY);
     }
 
     private boolean isInside(int x, int y, int width, int height, double mouseX, double mouseY) {
@@ -1654,8 +1718,35 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     }
 
     private int clampJoinNationScroll(int value) {
-        int maxScroll = Math.max(0, joinableNationTargets().size() - 5);
+        int maxScroll = Math.max(0, joinableNationTargets().size() - JOIN_NATION_VISIBLE_ROWS);
         return Math.max(0, Math.min(value, maxScroll));
+    }
+
+    private static int[] joinNationOverlayBounds(int screenLeft, int screenTop) {
+        return new int[] {
+                screenLeft + BODY_X + JOIN_NATION_OVERLAY_LOCAL_X,
+                screenTop + BODY_Y + JOIN_NATION_OVERLAY_LOCAL_Y,
+                JOIN_NATION_OVERLAY_W,
+                JOIN_NATION_OVERLAY_H
+        };
+    }
+
+    private static int[] joinNationListBounds(int screenLeft, int screenTop) {
+        int[] overlay = joinNationOverlayBounds(screenLeft, screenTop);
+        return new int[] {
+                overlay[0] + 10,
+                overlay[1] + 28,
+                overlay[2] - 20,
+                JOIN_NATION_ROW_H * JOIN_NATION_VISIBLE_ROWS + 4
+        };
+    }
+
+    static int[] joinNationOverlayBoundsForTest(int screenLeft, int screenTop) {
+        return joinNationOverlayBounds(screenLeft, screenTop);
+    }
+
+    static int[] joinNationListBoundsForTest(int screenLeft, int screenTop) {
+        return joinNationListBounds(screenLeft, screenTop);
     }
 
     boolean shouldShowJoinNationButtonForTest() {

@@ -34,6 +34,10 @@ public record ClaimPreviewMapState(long revision,
         return new ClaimPreviewMapState(0L, 0, 0, 0, false, false, List.of(), 0, 0, 0, 0);
     }
 
+    public static ClaimPreviewMapState emptyAt(int centerChunkX, int centerChunkZ) {
+        return new ClaimPreviewMapState(0L, 0, centerChunkX, centerChunkZ, false, false, List.of(), 0, 0, 0, 0);
+    }
+
     public static ClaimPreviewMapState loading(long revision, int radius, int centerChunkX, int centerChunkZ) {
         return new ClaimPreviewMapState(revision, radius, centerChunkX, centerChunkZ, true, false, List.of(), 0, 0, 0, 0);
     }

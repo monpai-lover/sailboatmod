@@ -11,13 +11,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerBridgeRuleServiceTest {
     @Test
-    void roadToolRejectsMajorBridgeSpan() {
+    void roadToolAcceptsLongFlatLandSpan() {
         RoadPlannerBridgeRuleService service = new RoadPlannerBridgeRuleService((x, z) -> true);
 
         RoadPlannerBridgeRuleService.Decision decision = service.evaluateRoadTool(List.of(new BlockPos(0, 64, 0)), new BlockPos(128, 64, 0));
 
-        assertFalse(decision.accepted());
-        assertEquals(RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE, decision.segmentType());
+        assertTrue(decision.accepted());
+        assertEquals(RoadPlannerSegmentType.ROAD, decision.segmentType());
+    }
+
+    @Test
+    void roadToolDoesNotForceBridgeFromSampledHeightJump() {
+        RoadPlannerBridgeRuleService service = new RoadPlannerBridgeRuleService((x, z) -> true);
+
+        RoadPlannerBridgeRuleService.Decision decision = service.evaluateRoadTool(List.of(new BlockPos(0, 64, 0)), new BlockPos(32, 96, 0));
+
+        assertTrue(decision.accepted());
+        assertEquals(RoadPlannerSegmentType.ROAD, decision.segmentType());
     }
 
     @Test

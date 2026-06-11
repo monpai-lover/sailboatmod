@@ -466,6 +466,17 @@ public record TownOverviewData(
                 ClaimPreviewMapState.empty());
     }
 
+    public static TownOverviewData emptyAt(int currentChunkX, int currentChunkZ) {
+        return empty()
+                .withClaimPreviewContext(
+                        ClaimPreviewMapState.emptyAt(currentChunkX, currentChunkZ),
+                        List.of(),
+                        currentChunkX,
+                        currentChunkZ
+                )
+                .withCurrentChunkForNoTown(currentChunkX, currentChunkZ);
+    }
+
     public TownOverviewData withClaimPreview(ClaimPreviewMapState mapState, List<Integer> terrainColors) {
         ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
         return withClaimPreviewContext(
@@ -479,6 +490,76 @@ public record TownOverviewData(
     public TownOverviewData withClaimPreviewState(ClaimPreviewMapState mapState) {
         ClaimPreviewMapState nextMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
         return withClaimPreviewContext(nextMapState, nearbyTerrainColors, previewCenterChunkX, previewCenterChunkZ);
+    }
+
+    public TownOverviewData withCurrentChunkForNoTown(int nextCurrentChunkX, int nextCurrentChunkZ) {
+        if (hasTown) {
+            return this;
+        }
+        return new TownOverviewData(
+                hasTown,
+                townId,
+                townName,
+                nationId,
+                nationName,
+                mayorUuid,
+                mayorName,
+                capitalTown,
+                primaryColorRgb,
+                secondaryColorRgb,
+                hasCore,
+                coreDimension,
+                corePos,
+                totalClaims,
+                residentCount,
+                nextCurrentChunkX,
+                nextCurrentChunkZ,
+                previewCenterChunkX,
+                previewCenterChunkZ,
+                currentChunkClaimed,
+                currentChunkOwnedByTown,
+                currentChunkOwnerName,
+                breakAccessLevel,
+                placeAccessLevel,
+                useAccessLevel,
+                containerAccessLevel,
+                redstoneAccessLevel,
+                entityUseAccessLevel,
+                entityDamageAccessLevel,
+                flagId,
+                flagWidth,
+                flagHeight,
+                flagByteSize,
+                flagHash,
+                flagMirrored,
+                canManageTown,
+                canManageClaims,
+                canUploadFlag,
+                canAssignMayor,
+                isMayor,
+                members,
+                nearbyTerrainColors,
+                nearbyClaims,
+                cultureId,
+                cultureDistribution,
+                averageLiteracy,
+                educationLevelDistribution,
+                employmentRate,
+                stockpileCommodityTypes,
+                stockpileTotalUnits,
+                openDemandCount,
+                openDemandUnits,
+                activeProcurementCount,
+                totalIncome,
+                totalExpense,
+                netBalance,
+                stockpilePreviewLines,
+                demandPreviewLines,
+                procurementPreviewLines,
+                financePreviewLines,
+                joinableNationTargets,
+                claimMapState
+        );
     }
 
     public TownOverviewData withClaimPreviewContext(ClaimPreviewMapState mapState,
