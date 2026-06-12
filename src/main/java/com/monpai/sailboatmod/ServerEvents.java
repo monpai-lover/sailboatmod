@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import com.monpai.sailboatmod.nation.service.ClaimMapTaskService;
 import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditTaskService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerMapPreloadService;
 import com.monpai.sailboatmod.route.water.WaterRouteTaskService;
@@ -64,6 +65,7 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
                 RoadPlannerBuildControlService.global().tick(level);
+                RoadEditTaskService.global().tick(level);
                 RoadPlannerMapPreloadService.global().tick(level);
                 WaterRouteTaskService.global().tick(level);
             });
@@ -114,6 +116,7 @@ public final class ServerEvents {
         RoadPlanningTaskService.onServerStopping();
         SharedMapServerState.onServerStopped();
         RoadPlannerMapPreloadService.onServerStopped();
+        RoadEditTaskService.global().clear();
         WaterRouteTaskService.global().clear();
         com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration.onServerStopped();
         MarketDatabase.shutdown();
