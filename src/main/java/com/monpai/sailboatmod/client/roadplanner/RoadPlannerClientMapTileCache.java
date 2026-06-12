@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.client.map.SharedMapClientState;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 
 public final class RoadPlannerClientMapTileCache {
@@ -7,12 +8,6 @@ public final class RoadPlannerClientMapTileCache {
     }
 
     public static void applyToDefaultCache(RoadPlannerMapTileSyncPacket packet) {
-        if (packet == null) {
-            return;
-        }
-        try {
-            RoadPlannerTileManager.sharedDefault().applyTileSync(packet);
-        } catch (RuntimeException ignored) {
-        }
+        SharedMapClientState.defaultState().applyTileDelta(packet);
     }
 }
