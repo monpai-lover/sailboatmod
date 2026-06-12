@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -115,6 +116,39 @@ class RoadEditTaskServiceTest {
         assertEquals(Blocks.GRASS_BLOCK.defaultBlockState(), data.ledgerAt(added).orElseThrow().originalState());
     }
 
+    @Test
+    void completionCallbackRunsAfterBudgetedJobFinishes() {
+        RoadEditableNetworkSavedData data = new RoadEditableNetworkSavedData();
+        BlockPos removed = pos(0);
+        BlockPos added = pos(1);
+        data.putLedgerEntry(singleOwner(removed));
+        FakeBlocks blocks = new FakeBlocks();
+        blocks.put(removed, Blocks.SMOOTH_STONE.defaultBlockState());
+        blocks.put(added, Blocks.GRASS_BLOCK.defaultBlockState());
+        RoadEditDiff diff = new RoadEditDiff("road-a",
+                List.of(new RoadEditDiff.RemovedBlock("road-a:segment:0", removed)),
+                List.of(),
+                List.of(new RoadEditBlockPlacement("road-a:segment:0", added, Blocks.SMOOTH_STONE.defaultBlockState())),
+                List.of());
+        RoadEditableRecord target = road(List.of(added), RoadEditableRecord.Status.BUILT);
+        RoadEditTaskService service = new RoadEditTaskService();
+        UUID jobId = service.submit(diff, target);
+        ArrayList<RoadEditTaskService.CompletedEdit> completed = new ArrayList<>();
+
+        service.processBudgetedWorkForTest(data, blocks, 1, 200L, completed::add);
+
+        assertTrue(service.hasJob(jobId));
+        assertTrue(completed.isEmpty());
+
+        service.processBudgetedWorkForTest(data, blocks, 1, 201L, completed::add);
+
+        assertFalse(service.hasJob(jobId));
+        assertEquals(1, completed.size());
+        assertEquals(diff, completed.get(0).diff());
+        assertEquals(target, completed.get(0).targetRecord());
+        assertEquals(201L, completed.get(0).timestamp());
+    }
+
     private static RoadBlockLedgerEntry singleOwner(BlockPos pos) {
         return new RoadBlockLedgerEntry(
                 pos,
@@ -123,6 +157,40 @@ class RoadEditTaskServiceTest {
                 Set.of("road-a:segment:0"),
                 "road-a",
                 100L);
+    }
+
+    private static RoadEditableRecord road(List<BlockPos> blockPositions, RoadEditableRecord.Status status) {
+        return new RoadEditableRecord(
+                "road-a",
+                "",
+                "minecraft:overworld",
+                "nation-a",
+                "town-a",
+                "creator",
+                "Builder",
+                "town-a",
+                "town-b",
+                "Alpha",
+                "Beta",
+                3,
+                "minecraft:smooth_stone",
+                status,
+                false,
+                List.of(
+                        new RoadEditableNode("road-a:source", pos(0), RoadEditableNode.Kind.SOURCE_TOWN, "Alpha"),
+                        new RoadEditableNode("road-a:target", pos(16), RoadEditableNode.Kind.TARGET_TOWN, "Beta")),
+                List.of(new RoadEditableSegment(
+                        "road-a:segment:0",
+                        "road-a:source",
+                        "road-a:target",
+                        List.of(pos(0), pos(16)),
+                        List.of(pos(0), pos(16)),
+                        3,
+                        "ROAD",
+                        "minecraft:smooth_stone",
+                        blockPositions.stream().map(BlockPos::asLong).toList())),
+                100L,
+                200L);
     }
 
     private static BlockPos pos(int x) {

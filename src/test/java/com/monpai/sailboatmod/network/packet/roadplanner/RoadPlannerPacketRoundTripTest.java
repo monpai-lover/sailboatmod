@@ -5,6 +5,9 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlan;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditableNode;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditableRecord;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditableSegment;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
@@ -305,6 +308,27 @@ class RoadPlannerPacketRoundTripTest {
     }
 
     @Test
+    void editCommitProposedSegmentsUseInterpolatedCenterline() {
+        RoadEditableRecord current = editableRoad();
+        RoadPlannerEditCommitPacket packet = new RoadPlannerEditCommitPacket(
+                UUID.randomUUID(),
+                "road-a",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings.DEFAULTS);
+
+        RoadPlannerEditCommitPacket.ProposedEdit edit =
+                RoadPlannerEditCommitPacket.proposedEditForTest(current, packet, null);
+
+        assertEquals(List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(1, 64, 0),
+                new BlockPos(2, 64, 0),
+                new BlockPos(3, 64, 0),
+                new BlockPos(4, 64, 0)), edit.segments().get(0).centerline());
+    }
+
+    @Test
     void mergeCandidateRequestNormalizesRadiusToBounds() {
         UUID sessionId = UUID.randomUUID();
         RoadPlannerMergeCandidateRequestPacket huge = new RoadPlannerMergeCandidateRequestPacket(
@@ -414,6 +438,40 @@ class RoadPlannerPacketRoundTripTest {
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
         encoder.encode(packet, buffer);
         return decoder.decode(buffer);
+    }
+
+    private static RoadEditableRecord editableRoad() {
+        return new RoadEditableRecord(
+                "road-a",
+                "",
+                "minecraft:overworld",
+                "nation-a",
+                "town-a",
+                "creator",
+                "Builder",
+                "town-a",
+                "town-b",
+                "Alpha",
+                "Beta",
+                3,
+                "minecraft:smooth_stone",
+                RoadEditableRecord.Status.BUILT,
+                false,
+                List.of(
+                        new RoadEditableNode("road-a:source", new BlockPos(0, 64, 0), RoadEditableNode.Kind.SOURCE_TOWN, "Alpha"),
+                        new RoadEditableNode("road-a:target", new BlockPos(4, 64, 0), RoadEditableNode.Kind.TARGET_TOWN, "Beta")),
+                List.of(new RoadEditableSegment(
+                        "road-a:segment:0",
+                        "road-a:source",
+                        "road-a:target",
+                        List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0)),
+                        List.of(new BlockPos(0, 64, 0), new BlockPos(4, 64, 0)),
+                        3,
+                        "ROAD",
+                        "minecraft:smooth_stone",
+                        List.of())),
+                100L,
+                200L);
     }
 
     @FunctionalInterface

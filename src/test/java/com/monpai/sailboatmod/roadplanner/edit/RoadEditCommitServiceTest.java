@@ -133,6 +133,36 @@ class RoadEditCommitServiceTest {
         assertEquals("cobblestone", completed.materialId());
     }
 
+    @Test
+    void noWorkEditReturnsCompletedRecordForImmediateRefresh() {
+        RoadEditableNetworkSavedData data = new RoadEditableNetworkSavedData();
+        RoadEditableRecord current = road(List.of(pos(0)), RoadEditableRecord.Status.BUILT);
+        data.putRoad(current);
+        data.putLedgerEntry(new RoadBlockLedgerEntry(
+                pos(0),
+                Blocks.DIRT.defaultBlockState(),
+                Blocks.SMOOTH_STONE.defaultBlockState(),
+                java.util.Set.of("road-a:segment:0"),
+                "road-a",
+                100L));
+        List<RoadEditableNode> proposedNodes = List.of(
+                new RoadEditableNode("road-a:node:0", pos(0), RoadEditableNode.Kind.SOURCE_TOWN, "Alpha"),
+                new RoadEditableNode("road-a:node:1", pos(8), RoadEditableNode.Kind.NORMAL, ""),
+                new RoadEditableNode("road-a:node:2", pos(16), RoadEditableNode.Kind.TARGET_TOWN, "Beta"));
+
+        RoadEditCommitService.Result result = new RoadEditCommitService()
+                .queueEdit(data, current, proposedNodes,
+                        List.of(segment("road-a:segment:0", List.of(pos(0)))),
+                        List.of(new RoadEditBlockPlacement("road-a:segment:0", pos(0), Blocks.SMOOTH_STONE.defaultBlockState())),
+                        new RoadEditTaskService(),
+                        300L);
+
+        assertTrue(result.jobId().isEmpty());
+        assertTrue(result.completedRecord().isPresent());
+        assertEquals(proposedNodes, result.completedRecord().orElseThrow().nodes());
+        assertEquals(RoadEditableRecord.Status.BUILT, result.completedRecord().orElseThrow().status());
+    }
+
     private static RoadEditableRecord road(List<BlockPos> blockPositions, RoadEditableRecord.Status status) {
         return new RoadEditableRecord(
                 "road-a",

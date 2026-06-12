@@ -36,7 +36,7 @@ public class RoadEditCommitService {
         data.putRoad(editing);
         if (!diff.hasWork()) {
             data.putRoad(built);
-            return new Result(true, Optional.empty(), diff);
+            return new Result(true, Optional.empty(), diff, Optional.of(built));
         }
         UUID jobId = tasks.submit(diff, built);
         return new Result(true, Optional.of(jobId), diff);
@@ -70,10 +70,18 @@ public class RoadEditCommitService {
                 Math.max(timestamp, current.updatedAt()));
     }
 
-    public record Result(boolean success, Optional<UUID> jobId, RoadEditDiff diff) {
+    public record Result(boolean success,
+                         Optional<UUID> jobId,
+                         RoadEditDiff diff,
+                         Optional<RoadEditableRecord> completedRecord) {
+        public Result(boolean success, Optional<UUID> jobId, RoadEditDiff diff) {
+            this(success, jobId, diff, Optional.empty());
+        }
+
         public Result {
             jobId = jobId == null ? Optional.empty() : jobId;
             diff = diff == null ? new RoadEditDiff("", List.of(), List.of(), List.of(), List.of()) : diff;
+            completedRecord = completedRecord == null ? Optional.empty() : completedRecord;
         }
     }
 }

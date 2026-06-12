@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public class RoadEditTaskService {
     private static final RoadEditTaskService GLOBAL = new RoadEditTaskService();
@@ -45,7 +46,12 @@ public class RoadEditTaskService {
                 RoadEditableNetworkSavedData.get(level),
                 new LevelBlockAccess(level),
                 DEFAULT_OPERATIONS_PER_TICK,
-                System.currentTimeMillis());
+                System.currentTimeMillis(),
+                completed -> RoadEditCompletionRefreshService.refresh(
+                        level,
+                        completed.targetRecord(),
+                        completed.diff(),
+                        completed.timestamp()));
     }
 
     public void clear() {
@@ -53,13 +59,26 @@ public class RoadEditTaskService {
     }
 
     void processBudgetedWorkForTest(RoadEditableNetworkSavedData data, BlockAccess blocks, int budget, long timestamp) {
-        processBudgetedWork(data, blocks, budget, timestamp);
+        processBudgetedWork(data, blocks, budget, timestamp, ignored -> { });
     }
 
-    private void processBudgetedWork(RoadEditableNetworkSavedData data, BlockAccess blocks, int budget, long timestamp) {
+    void processBudgetedWorkForTest(RoadEditableNetworkSavedData data,
+                                    BlockAccess blocks,
+                                    int budget,
+                                    long timestamp,
+                                    Consumer<CompletedEdit> completionHandler) {
+        processBudgetedWork(data, blocks, budget, timestamp, completionHandler);
+    }
+
+    private void processBudgetedWork(RoadEditableNetworkSavedData data,
+                                     BlockAccess blocks,
+                                     int budget,
+                                     long timestamp,
+                                     Consumer<CompletedEdit> completionHandler) {
         if (data == null || blocks == null || budget <= 0 || jobs.isEmpty()) {
             return;
         }
+        Consumer<CompletedEdit> safeCompletionHandler = completionHandler == null ? ignored -> { } : completionHandler;
         int remaining = budget;
         java.util.ArrayList<UUID> completed = new java.util.ArrayList<>();
         for (JobState job : jobs.values()) {
@@ -74,6 +93,7 @@ public class RoadEditTaskService {
             if (job.complete()) {
                 if (job.targetRecordOnComplete() != null) {
                     data.putRoad(job.targetRecordOnComplete());
+                    safeCompletionHandler.accept(new CompletedEdit(job.diff(), job.targetRecordOnComplete(), timestamp));
                 }
                 completed.add(job.jobId());
             }
@@ -140,6 +160,14 @@ public class RoadEditTaskService {
         void setBlock(BlockPos pos, BlockState state);
     }
 
+    public record CompletedEdit(RoadEditDiff diff, RoadEditableRecord targetRecord, long timestamp) {
+        public CompletedEdit {
+            diff = diff == null
+                    ? new RoadEditDiff("", java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of())
+                    : diff;
+        }
+    }
+
     private static final class LevelBlockAccess implements BlockAccess {
         private final ServerLevel level;
 
@@ -179,6 +207,10 @@ public class RoadEditTaskService {
 
         private RoadEditableRecord targetRecordOnComplete() {
             return targetRecordOnComplete;
+        }
+
+        private RoadEditDiff diff() {
+            return diff;
         }
 
         private boolean hasNextRemoval() {

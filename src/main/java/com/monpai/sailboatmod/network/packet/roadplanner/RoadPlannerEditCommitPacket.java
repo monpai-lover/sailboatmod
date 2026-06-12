@@ -1,12 +1,14 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathCompiler;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.road.model.BuildStep;
 import com.monpai.sailboatmod.roadplanner.edit.RoadEditBlockPlacement;
 import com.monpai.sailboatmod.roadplanner.edit.RoadEditCommitService;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditCompletionRefreshService;
 import com.monpai.sailboatmod.roadplanner.edit.RoadEditPermissionService;
 import com.monpai.sailboatmod.roadplanner.edit.RoadEditTaskService;
 import com.monpai.sailboatmod.roadplanner.edit.RoadEditableMigrationService;
@@ -109,6 +111,7 @@ public record RoadPlannerEditCommitPacket(UUID sessionId,
             return Component.literal("Road edit ledger could not be prepared");
         }
         ProposedEdit proposed = proposedEdit(editable.get(), packet, level);
+        long now = System.currentTimeMillis();
         RoadEditCommitService.Result result = new RoadEditCommitService().queueEdit(
                 editableData,
                 editable.get(),
@@ -116,13 +119,15 @@ public record RoadPlannerEditCommitPacket(UUID sessionId,
                 proposed.segments(),
                 proposed.placements(),
                 RoadEditTaskService.global(),
-                System.currentTimeMillis());
+                now);
         if (!result.success()) {
             return Component.literal("Road edit rejected: " + result.diff().conflicts().size() + " placement conflicts");
         }
         if (result.jobId().isPresent()) {
             return Component.literal("Road edit queued: " + result.jobId().get());
         }
+        result.completedRecord().ifPresent(record ->
+                RoadEditCompletionRefreshService.refresh(level, record, result.diff(), now));
         return Component.literal("Road edit applied");
     }
 
@@ -158,7 +163,7 @@ public record RoadPlannerEditCommitPacket(UUID sessionId,
                     segmentId(current.roadId(), index),
                     nodeId(current.roadId(), index),
                     nodeId(current.roadId(), index + 1),
-                    List.of(packet.nodes().get(index), packet.nodes().get(index + 1)),
+                    segmentCenterline(packet.nodes(), index),
                     List.of(packet.nodes().get(index), packet.nodes().get(index + 1)),
                     packet.settings().width(),
                     sectionType(packet.segmentTypes().get(index)),
@@ -166,6 +171,17 @@ public record RoadPlannerEditCommitPacket(UUID sessionId,
                     List.copyOf(segmentPlacements.keySet())));
         }
         return new ProposedEdit(proposedNodes, segments, List.copyOf(placements));
+    }
+
+    private static List<BlockPos> segmentCenterline(List<BlockPos> nodes, int segmentIndex) {
+        if (nodes == null || segmentIndex < 0 || segmentIndex + 1 >= nodes.size()) {
+            return List.of();
+        }
+        List<BlockPos> centers = RoadPlannerPathCompiler.interpolateCenters(
+                List.of(nodes.get(segmentIndex), nodes.get(segmentIndex + 1)));
+        return centers.isEmpty()
+                ? List.of(nodes.get(segmentIndex), nodes.get(segmentIndex + 1))
+                : centers;
     }
 
     private static List<RoadEditableNode> proposedNodes(RoadEditableRecord current, List<BlockPos> nodes) {
