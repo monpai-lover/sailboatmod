@@ -349,7 +349,7 @@
     "screen.sailboatmod.market.dispatch.boat":  "Boat: %s",
     "screen.sailboatmod.market.dispatch.route":  "Route: %s",
     "screen.sailboatmod.market.dispatch.mode":  "Mode: %s",
-    "screen.sailboatmod.market.dispatch.select_boat":  "Select a boat.",
+    "screen.sailboatmod.market.dispatch.select_boat":  "Select a transport carrier.",
     "screen.sailboatmod.market.dispatch.status_title":  "Dispatch Status",
     "screen.sailboatmod.market.dispatch.metric.orders":  "Orders",
     "screen.sailboatmod.market.dispatch.metric.fleet":  "Fleet",

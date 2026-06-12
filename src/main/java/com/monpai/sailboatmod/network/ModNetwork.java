@@ -63,6 +63,7 @@ import com.monpai.sailboatmod.network.packet.SetDockZonePacket;
 import com.monpai.sailboatmod.network.packet.SetHandlingPresetPacket;
 import com.monpai.sailboatmod.network.packet.SetSailboatRentalPricePacket;
 import com.monpai.sailboatmod.network.packet.SyncAutoRouteDocksPacket;
+import com.monpai.sailboatmod.network.packet.SyncClaimHighlightsPacket;
 import com.monpai.sailboatmod.network.packet.SyncNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.TownGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.ToggleSailPacket;
@@ -101,7 +102,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "4";
+    private static final String PROTOCOL_VERSION = "5";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(SailboatMod.MODID, "main"),
             () -> PROTOCOL_VERSION,
@@ -369,6 +370,14 @@ public final class ModNetwork {
                 SetTownClaimPermissionPacket::encode,
                 SetTownClaimPermissionPacket::decode,
                 SetTownClaimPermissionPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SyncClaimHighlightsPacket.class,
+                SyncClaimHighlightsPacket::encode,
+                SyncClaimHighlightsPacket::decode,
+                SyncClaimHighlightsPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,

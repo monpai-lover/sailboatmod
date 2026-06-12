@@ -349,7 +349,7 @@
     "screen.sailboatmod.market.dispatch.boat": "船只：%s",
     "screen.sailboatmod.market.dispatch.route": "航线：%s",
     "screen.sailboatmod.market.dispatch.mode": "模式：%s",
-    "screen.sailboatmod.market.dispatch.select_boat": "请选择一艘船只。",
+    "screen.sailboatmod.market.dispatch.select_boat": "请选择一个运输工具。",
     "screen.sailboatmod.market.dispatch.status_title": "发运状态",
     "screen.sailboatmod.market.dispatch.metric.orders": "订单",
     "screen.sailboatmod.market.dispatch.metric.fleet": "船队",

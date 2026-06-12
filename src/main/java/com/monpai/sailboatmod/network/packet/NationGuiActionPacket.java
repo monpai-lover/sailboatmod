@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.network.packet;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.TradeScreenData;
+import com.monpai.sailboatmod.nation.service.ClaimHighlightSyncService;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationDiplomacyService;
 import com.monpai.sailboatmod.nation.service.NationFlagService;
@@ -192,6 +193,10 @@ public class NationGuiActionPacket {
                 }
             }
 
+            if (result.success() && shouldSyncClaimHighlightsAfterAction(packet.action)) {
+                ClaimHighlightSyncService.syncAll(player.getServer());
+            }
+
             if (shouldRefreshNationOverviewAfterAction(packet.action)) {
                 NationOverviewData data = NationOverviewService.buildFor(player);
                 ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
@@ -202,6 +207,24 @@ public class NationGuiActionPacket {
 
     static boolean shouldRefreshNationOverviewAfterAction(Action action) {
         return action != Action.OPEN_TRADE_SCREEN;
+    }
+
+    static boolean shouldSyncClaimHighlightsAfterAction(Action action) {
+        return switch (action) {
+            case CLAIM_CHUNK,
+                 UNCLAIM_CHUNK,
+                 CLAIM_AREA,
+                 UNCLAIM_AREA,
+                 REMOVE_CORE,
+                 CREATE_NATION,
+                 RENAME_NATION,
+                 JOIN_NATION,
+                 LEAVE_NATION,
+                 KICK_MEMBER,
+                 SET_COLOR_PRIMARY,
+                 SET_COLOR_SECONDARY -> true;
+            default -> false;
+        };
     }
 
     private static UUID parseUuid(String raw) {

@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.service.BankConstructionManager;
+import com.monpai.sailboatmod.nation.service.ClaimHighlightSyncService;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationFlagBlockTracker;
@@ -73,6 +74,7 @@ public final class NationEvents {
             LAST_TAB_LIST_KEYS.remove(player.getUUID());
             PENDING_CONTAINER_ACCESS.remove(player.getUUID());
             syncPlayerNames(player, true);
+            ClaimHighlightSyncService.syncTo(player);
         }
     }
 
@@ -295,6 +297,7 @@ public final class NationEvents {
         PENDING_CONTAINER_ACCESS.remove(event.getEntity().getUUID());
         if (event.getEntity() instanceof ServerPlayer player) {
             syncPlayerNames(player, true);
+            ClaimHighlightSyncService.syncTo(player);
         }
     }
 
@@ -305,6 +308,7 @@ public final class NationEvents {
         PENDING_CONTAINER_ACCESS.remove(event.getEntity().getUUID());
         if (event.getEntity() instanceof ServerPlayer player) {
             syncPlayerNames(player, true);
+            ClaimHighlightSyncService.syncTo(player);
         }
     }
 

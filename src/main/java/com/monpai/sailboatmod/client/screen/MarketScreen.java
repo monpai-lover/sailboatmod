@@ -2365,7 +2365,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             int index = i;
             rows.add(rowSpec(
                     entry.terminalLabel(),
-                    entry.routeName().isBlank() ? Component.translatable("screen.sailboatmod.market.dispatch.select_boat").getString() : entry.routeName(),
+                    dispatchCandidateSubtitle(
+                            entry.carrierName(),
+                            entry.routeName(),
+                            Component.translatable("screen.sailboatmod.market.dispatch.select_boat").getString()
+                    ),
                     entry.available() ? shorten(formatEta(entry.etaSeconds()), 10) : shorten(entry.availability(), 10),
                     index == selectedBoatIndex,
                     () -> {
@@ -3131,6 +3135,22 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.detail.unit_price").getString(), formatCompactLong(selectedStorageRequestedUnitPrice()), ACCENT));
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.derived_bp").getString(), selectedStorageDerivedPriceAdjustmentBp() + " bp", ACCENT_DIM));
         return rows;
+    }
+
+    private static String dispatchCandidateSubtitle(String carrierName, String routeName, String fallback) {
+        String safeCarrier = carrierName == null ? "" : carrierName.trim();
+        String safeRoute = routeName == null ? "" : routeName.trim();
+        String safeFallback = fallback == null ? "" : fallback.trim();
+        if (!safeCarrier.isBlank() && !safeRoute.isBlank() && !"-".equals(safeRoute)) {
+            return safeCarrier + " | " + safeRoute;
+        }
+        if (!safeCarrier.isBlank()) {
+            return safeCarrier;
+        }
+        if (!safeRoute.isBlank() && !"-".equals(safeRoute)) {
+            return safeRoute;
+        }
+        return safeFallback;
     }
 
     private String buildSellConfirmSummary() {
@@ -4589,6 +4609,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         List<MarketOverviewData.DispatchOption> options = currentDispatchOptions();
         return selectedBoatIndex >= 0 && selectedBoatIndex < options.size()
                 ? options.get(selectedBoatIndex) : null;
+    }
+
+    static String dispatchCandidateSubtitleForTest(String carrierName, String routeName, String fallback) {
+        return dispatchCandidateSubtitle(carrierName, routeName, fallback);
     }
 
     private MarketOverviewData.BuyOrderEntry selectedBuyOrder() {

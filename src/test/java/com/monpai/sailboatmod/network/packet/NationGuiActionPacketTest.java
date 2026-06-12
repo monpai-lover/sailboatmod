@@ -13,4 +13,14 @@ class NationGuiActionPacketTest {
         assertTrue(NationGuiActionPacket.shouldRefreshNationOverviewAfterAction(
                 NationGuiActionPacket.Action.DIPLOMACY_TRADE));
     }
+
+    @Test
+    void colorAndClaimActionsSyncClaimHighlights() {
+        assertTrue(NationGuiActionPacket.shouldSyncClaimHighlightsAfterAction(
+                NationGuiActionPacket.Action.SET_COLOR_PRIMARY));
+        assertTrue(NationGuiActionPacket.shouldSyncClaimHighlightsAfterAction(
+                NationGuiActionPacket.Action.CLAIM_CHUNK));
+        assertFalse(NationGuiActionPacket.shouldSyncClaimHighlightsAfterAction(
+                NationGuiActionPacket.Action.DIPLOMACY_TRADE));
+    }
 }

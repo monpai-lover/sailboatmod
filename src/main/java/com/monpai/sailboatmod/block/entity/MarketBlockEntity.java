@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.dock.TownWarehouseRegistry;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.entity.TransportEntity;
+import com.monpai.sailboatmod.market.MarketDispatchPlanner;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketSavedData;
@@ -780,8 +781,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 return processLocalOrders(sourceWarehouse, market);
             }
             if (effectiveKind == TransportTerminalKind.AUTO) {
-                return dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, selectedOrder, TransportTerminalKind.PORT)
-                        || dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, selectedOrder, TransportTerminalKind.POST_STATION);
+                return dispatchBestSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, selectedOrder);
             }
             return dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, selectedOrder, effectiveKind);
         }
@@ -816,8 +816,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
         TransportTerminalKind effectiveKind = terminalKind == null ? TransportTerminalKind.AUTO : terminalKind;
         if (effectiveKind == TransportTerminalKind.AUTO) {
-            return dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, order, TransportTerminalKind.PORT)
-                    || dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, order, TransportTerminalKind.POST_STATION);
+            return dispatchBestSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, order);
         }
         return dispatchSelectedOrder(playerUuid, playerName, onlinePlayer, sourceWarehouse, market, order, effectiveKind);
     }
@@ -940,8 +939,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             boolean shipped = false;
             TransportTerminalKind effectiveKind = terminalKind == null ? TransportTerminalKind.AUTO : terminalKind;
             if (effectiveKind == TransportTerminalKind.AUTO) {
-                shipped = tryDispatchWaitingOrders(shipperUuid, shipperName, player, sourceWarehouse, market, TransportTerminalKind.PORT)
-                        || tryDispatchWaitingOrders(shipperUuid, shipperName, player, sourceWarehouse, market, TransportTerminalKind.POST_STATION);
+                shipped = tryDispatchWaitingOrdersAuto(shipperUuid, shipperName, player, sourceWarehouse, market);
             } else {
                 shipped = tryDispatchWaitingOrders(shipperUuid, shipperName, player, sourceWarehouse, market, effectiveKind);
             }
@@ -989,6 +987,39 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 if (dispatchShipmentPlan(shipperUuid, shipperName, player, boat, terminalPlan.sourceTerminal(), market, shipmentPlan, terminalKind)) {
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    private boolean tryDispatchWaitingOrdersAuto(String shipperUuid, String shipperName, @Nullable Player player,
+                                                 TownWarehouseBlockEntity sourceWarehouse, MarketSavedData market) {
+        if (sourceWarehouse == null || market == null) {
+            return false;
+        }
+        LinkedHashMap<BlockPos, List<PurchaseOrder>> byTargetWarehouse = new LinkedHashMap<>();
+        for (PurchaseOrder order : market.getOpenOrdersForSourceDock(sourceWarehouse.getBlockPos())) {
+            if (order.sourceDockPos().equals(order.targetDockPos())) {
+                continue;
+            }
+            byTargetWarehouse.computeIfAbsent(order.targetDockPos(), ignored -> new ArrayList<>()).add(order);
+        }
+        List<DispatchCandidate> candidates = new ArrayList<>();
+        for (Map.Entry<BlockPos, List<PurchaseOrder>> entry : byTargetWarehouse.entrySet()) {
+            collectDispatchCandidates(market, sourceWarehouse, entry.getKey(), entry.getValue(), player, candidates);
+        }
+        for (DispatchCandidate candidate : rankedDispatchCandidates(candidates)) {
+            if (dispatchShipmentPlan(
+                    shipperUuid,
+                    shipperName,
+                    player,
+                    candidate.carrier(),
+                    candidate.sourceTerminal(),
+                    market,
+                    candidate.shipmentPlan(),
+                    candidate.terminalKind()
+            )) {
+                return true;
             }
         }
         return false;
@@ -1099,6 +1130,29 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return best;
     }
 
+    private boolean dispatchBestSelectedOrder(String shipperUuid, String shipperName, @Nullable Player player,
+                                             TownWarehouseBlockEntity sourceWarehouse, MarketSavedData market,
+                                             PurchaseOrder order) {
+        if (sourceWarehouse == null || market == null || order == null) {
+            return false;
+        }
+        for (DispatchCandidate candidate : dispatchCandidates(market, sourceWarehouse, order.targetDockPos(), List.of(order), player)) {
+            if (dispatchShipmentPlan(
+                    shipperUuid,
+                    shipperName,
+                    player,
+                    candidate.carrier(),
+                    candidate.sourceTerminal(),
+                    market,
+                    candidate.shipmentPlan(),
+                    candidate.terminalKind()
+            )) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean dispatchSelectedOrder(String shipperUuid, String shipperName, @Nullable Player player,
                                           TownWarehouseBlockEntity sourceWarehouse, MarketSavedData market,
                                           PurchaseOrder order, TransportTerminalKind terminalKind) {
@@ -1124,6 +1178,77 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
         return false;
+    }
+
+    private List<DispatchCandidate> dispatchCandidates(MarketSavedData market, TownWarehouseBlockEntity sourceWarehouse,
+                                                       BlockPos targetWarehousePos, List<PurchaseOrder> orders,
+                                                       @Nullable Player player) {
+        List<DispatchCandidate> candidates = new ArrayList<>();
+        collectDispatchCandidates(market, sourceWarehouse, targetWarehousePos, orders, player, candidates);
+        return rankedDispatchCandidates(candidates);
+    }
+
+    private void collectDispatchCandidates(MarketSavedData market, TownWarehouseBlockEntity sourceWarehouse,
+                                           BlockPos targetWarehousePos, List<PurchaseOrder> orders,
+                                           @Nullable Player player, List<DispatchCandidate> candidates) {
+        if (market == null || sourceWarehouse == null || targetWarehousePos == null || orders == null || orders.isEmpty() || candidates == null) {
+            return;
+        }
+        collectDispatchCandidatesForKind(market, sourceWarehouse, targetWarehousePos, orders, player, TransportTerminalKind.PORT, candidates);
+        collectDispatchCandidatesForKind(market, sourceWarehouse, targetWarehousePos, orders, player, TransportTerminalKind.POST_STATION, candidates);
+    }
+
+    private void collectDispatchCandidatesForKind(MarketSavedData market, TownWarehouseBlockEntity sourceWarehouse,
+                                                  BlockPos targetWarehousePos, List<PurchaseOrder> orders,
+                                                  @Nullable Player player, TransportTerminalKind terminalKind,
+                                                  List<DispatchCandidate> candidates) {
+        DispatchTerminalPlan terminalPlan = resolveDispatchTerminalPlan(sourceWarehouse, targetWarehousePos, terminalKind, player);
+        if (terminalPlan == null) {
+            return;
+        }
+        for (TransportEntity carrier : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
+            ShipmentPlan shipmentPlan = buildShipmentPlanForWarehouseTarget(
+                    market,
+                    carrier,
+                    terminalPlan.routeIndex(),
+                    terminalPlan.generatedRoute(),
+                    terminalPlan.landPlan(),
+                    terminalPlan.targetTerminal(),
+                    orders
+            );
+            if (shipmentPlan == null) {
+                continue;
+            }
+            int distanceMeters = shipmentDistanceMeters(terminalPlan.sourceTerminal(), shipmentPlan);
+            MarketDispatchPlanner.DispatchChoice choice = new MarketDispatchPlanner.DispatchChoice(
+                    dispatchChoiceId(terminalKind, targetWarehousePos, carrier),
+                    terminalKind,
+                    true,
+                    shipmentEtaSeconds(terminalKind, shipmentPlan, distanceMeters),
+                    distanceMeters,
+                    terminalPlan.pairScore(),
+                    candidates.size()
+            );
+            candidates.add(new DispatchCandidate(choice, terminalKind, carrier, terminalPlan.sourceTerminal(), shipmentPlan));
+        }
+    }
+
+    private List<DispatchCandidate> rankedDispatchCandidates(List<DispatchCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return List.of();
+        }
+        List<MarketDispatchPlanner.DispatchChoice> rankedChoices =
+                MarketDispatchPlanner.rankedChoices(candidates.stream().map(DispatchCandidate::choice).toList());
+        List<DispatchCandidate> rankedCandidates = new ArrayList<>();
+        for (MarketDispatchPlanner.DispatchChoice choice : rankedChoices) {
+            for (DispatchCandidate candidate : candidates) {
+                if (candidate.choice().equals(choice)) {
+                    rankedCandidates.add(candidate);
+                    break;
+                }
+            }
+        }
+        return List.copyOf(rankedCandidates);
     }
 
     private List<MarketOverviewData.DispatchOption> buildDispatchOptionsForOrder(@Nullable TownWarehouseBlockEntity sourceWarehouse,
@@ -1483,6 +1608,30 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return new ShipmentPlan(routeIndex, generatedRoute, landPlan, targetTerminal.getBlockPos(), targetTerminal.getDockName(), cargo, selections);
     }
 
+    private String dispatchChoiceId(TransportTerminalKind terminalKind, BlockPos targetWarehousePos, TransportEntity carrier) {
+        String kind = terminalKind == null ? TransportTerminalKind.AUTO.name() : terminalKind.name();
+        String target = targetWarehousePos == null ? "0" : Long.toString(targetWarehousePos.asLong());
+        String carrierId = carrier == null || carrier.getTransportUuid() == null ? "" : carrier.getTransportUuid().toString();
+        return kind + ":" + target + ":" + carrierId;
+    }
+
+    private int shipmentDistanceMeters(DockBlockEntity sourceDock, ShipmentPlan plan) {
+        if (plan == null) {
+            return 0;
+        }
+        if (plan.landPlan() != null) {
+            return plan.landPlan().distanceMeters();
+        }
+        return (int) Math.round(estimateRouteLength(routeForShipment(sourceDock, plan)));
+    }
+
+    private int shipmentEtaSeconds(TransportTerminalKind terminalKind, ShipmentPlan plan, int distanceMeters) {
+        if (plan != null && plan.landPlan() != null) {
+            return plan.landPlan().etaSeconds();
+        }
+        return estimateEtaSeconds(terminalKind == null ? TransportTerminalKind.PORT : terminalKind, distanceMeters);
+    }
+
     private boolean dispatchShipmentPlan(String shipperUuid, String shipperName, @Nullable Player player, TransportEntity boat, DockBlockEntity sourceDock,
                                          MarketSavedData market, ShipmentPlan plan, TransportTerminalKind terminalKind) {
         if (boat == null || sourceDock == null || market == null || plan == null) {
@@ -1496,10 +1645,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         Map<String, Integer> listingReservationDeltas = new LinkedHashMap<>();
         List<ShippingOrder> shippingOrders = new ArrayList<>();
         RouteDefinition route = routeForShipment(sourceDock, plan);
-        int distanceMeters = plan.landPlan() == null ? (int) Math.round(estimateRouteLength(route)) : plan.landPlan().distanceMeters();
-        int etaSeconds = plan.landPlan() == null
-                ? estimateEtaSeconds(terminalKind == null ? TransportTerminalKind.PORT : terminalKind, distanceMeters)
-                : plan.landPlan().etaSeconds();
+        int distanceMeters = shipmentDistanceMeters(sourceDock, plan);
+        int etaSeconds = shipmentEtaSeconds(terminalKind, plan, distanceMeters);
         String routeName = route == null || route.name().isBlank() ? sourceDock.getRouteName(plan.routeIndex()) : route.name();
         for (ShipmentOrderSelection selection : plan.selections()) {
             String shippingOrderId = market.nextId();
@@ -1706,6 +1853,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         boolean usesGeneratedRoute() {
             return generatedRoute != null;
         }
+    }
+
+    private record DispatchCandidate(MarketDispatchPlanner.DispatchChoice choice,
+                                     TransportTerminalKind terminalKind,
+                                     TransportEntity carrier,
+                                     DockBlockEntity sourceTerminal,
+                                     ShipmentPlan shipmentPlan) {
     }
 
     private record RoutePreview(String routeName,
