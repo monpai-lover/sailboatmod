@@ -13,8 +13,10 @@ import com.monpai.sailboatmod.roadplanner.service.RoadPlannerClaimOverlayService
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerSessionService;
 import com.monpai.sailboatmod.nation.service.ManualRoadPlannerService;
 import com.monpai.sailboatmod.nation.service.RoadPlannerRoadDemolitionService;
+import com.monpai.sailboatmod.roadplanner.edit.RoadPlannerRoadEditSelectionService;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkEvent;
@@ -48,7 +50,7 @@ public record RoadPlannerMenuActionPacket(Action action) {
                 return;
             }
             if (packet.action() == Action.OPEN_EDIT_ROAD_SELECTION) {
-                sender.sendSystemMessage(Component.literal("Road edit selection is not available yet."));
+                openEditSelection(sender, RoadPlannerRoadEditSelectionService.listEditableRoads(sender));
                 return;
             }
             if (packet.action() == Action.OPEN_DEMOLITION_PLANNER) {
@@ -79,13 +81,32 @@ public record RoadPlannerMenuActionPacket(Action action) {
             return;
         }
         RoadPlannerDestinationService.TownRoute townRoute = route.get();
+        if (!(player.level() instanceof ServerLevel level)) {
+            player.sendSystemMessage(Component.literal("Road planner is unavailable on this side."));
+            return;
+        }
+        NationSavedData data = NationSavedData.get(level);
+        RoadPlannerRoadEditSelectionService.DuplicateRouteDecision duplicateDecision =
+                RoadPlannerRoadEditSelectionService.duplicateRouteDecision(
+                        level,
+                        player,
+                        data,
+                        townRoute.start().townId(),
+                        townRoute.destination().townId());
+        if (duplicateDecision.action() == RoadPlannerRoadEditSelectionService.DuplicateRouteDecision.Action.OPEN_EDIT_SELECTION) {
+            openEditSelection(player, RoadPlannerRoadEditSelectionService.listEditableRoads(player, duplicateDecision.roadIds()));
+            return;
+        }
+        if (duplicateDecision.action() == RoadPlannerRoadEditSelectionService.DuplicateRouteDecision.Action.DENY_DUPLICATE) {
+            player.sendSystemMessage(Component.literal("A road already exists between these towns, and you cannot edit it."));
+            return;
+        }
         RoadPlanningSession session = RoadPlannerSessionService.global().startSession(
                 player.getUUID(),
                 player.level().dimension(),
                 townRoute.start().anchorPos(),
                 townRoute.destination().anchorPos()
         );
-        NationSavedData data = NationSavedData.get(player.level());
         TownRecord startTown = data.getTown(townRoute.start().townId());
         TownRecord destinationTown = data.getTown(townRoute.destination().townId());
         List<RoadPlannerClaimOverlay> claimOverlays = RoadPlannerClaimOverlayService.collectRouteClaims(data, startTown, destinationTown);
@@ -102,6 +123,18 @@ public record RoadPlannerMenuActionPacket(Action action) {
                         townRoute.destination().anchorPos(),
                         claimOverlays
                 ),
+                player.connection.connection,
+                NetworkDirection.PLAY_TO_CLIENT
+        );
+    }
+
+    private static void openEditSelection(ServerPlayer player, List<OpenRoadEditSelectionPacket.Entry> roads) {
+        if (roads == null || roads.isEmpty()) {
+            player.sendSystemMessage(Component.literal("No editable roads available."));
+            return;
+        }
+        ModNetwork.CHANNEL.sendTo(
+                new OpenRoadEditSelectionPacket(roads),
                 player.connection.connection,
                 NetworkDirection.PLAY_TO_CLIENT
         );

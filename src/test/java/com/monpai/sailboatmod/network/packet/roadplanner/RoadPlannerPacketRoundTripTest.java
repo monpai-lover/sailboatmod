@@ -171,6 +171,10 @@ class RoadPlannerPacketRoundTripTest {
                 new OpenRoadDemolitionSelectionPacket.Entry("road_a", "Alpha", "Beta", "MANUAL", 12, 128)
         ));
         RoadPlannerSelectDemolitionRoadPacket demolitionSelection = new RoadPlannerSelectDemolitionRoadPacket("road_a");
+        OpenRoadEditSelectionPacket editList = new OpenRoadEditSelectionPacket(List.of(
+                new OpenRoadEditSelectionPacket.Entry("road_a", "Alpha", "Beta", "MANUAL", 12, 128, 5, false, "BUILT")
+        ));
+        RoadPlannerSelectEditRoadPacket editSelection = new RoadPlannerSelectEditRoadPacket("road_a");
 
         assertEquals(request, roundTrip(request, RoadPlannerMapPreloadRequestPacket::encode, RoadPlannerMapPreloadRequestPacket::decode));
         assertEquals(tile, roundTrip(tile, RoadPlannerMapTileSyncPacket::encode, RoadPlannerMapTileSyncPacket::decode));
@@ -179,6 +183,8 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals(cancel, roundTrip(cancel, RoadPlannerMapPreloadCancelPacket::encode, RoadPlannerMapPreloadCancelPacket::decode));
         assertEquals(demolitionList, roundTrip(demolitionList, OpenRoadDemolitionSelectionPacket::encode, OpenRoadDemolitionSelectionPacket::decode));
         assertEquals(demolitionSelection, roundTrip(demolitionSelection, RoadPlannerSelectDemolitionRoadPacket::encode, RoadPlannerSelectDemolitionRoadPacket::decode));
+        assertEquals(editList, roundTrip(editList, OpenRoadEditSelectionPacket::encode, OpenRoadEditSelectionPacket::decode));
+        assertEquals(editSelection, roundTrip(editSelection, RoadPlannerSelectEditRoadPacket::encode, RoadPlannerSelectEditRoadPacket::decode));
     }
 
     @Test

@@ -6,10 +6,12 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.client.screen.RoadPlannerConfigScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerActionMenuScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerDemolitionSelectionScreen;
+import com.monpai.sailboatmod.client.screen.RoadPlannerEditSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerOptionSelectionScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerTargetSelectionScreen;
 import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadEditSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerActionMenuMode;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRouteSyncPacket;
@@ -158,6 +160,10 @@ public final class RoadPlannerClientHooks {
 
     public static void openDemolitionSelection(List<OpenRoadDemolitionSelectionPacket.Entry> roads) {
         Minecraft.getInstance().setScreen(new RoadPlannerDemolitionSelectionScreen(roads));
+    }
+
+    public static void openEditSelection(List<OpenRoadEditSelectionPacket.Entry> roads) {
+        Minecraft.getInstance().setScreen(new RoadPlannerEditSelectionScreen(roads));
     }
 
     public static void openNewPlannerEntry(UUID sessionId,
