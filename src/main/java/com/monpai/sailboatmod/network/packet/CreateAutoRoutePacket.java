@@ -2,8 +2,9 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
-import com.monpai.sailboatmod.route.AutoRouteService;
 import com.monpai.sailboatmod.route.RoadAutoRouteService;
+import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
+import com.monpai.sailboatmod.route.water.WaterRouteResult;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -44,19 +45,23 @@ public class CreateAutoRoutePacket {
                 return;
             }
 
-            boolean success;
             if (sourceDock instanceof PostStationBlockEntity && targetDock instanceof PostStationBlockEntity) {
-                success = RoadAutoRouteService.createAndSaveAutoRoute(serverLevel, sourceDock, targetDock);
+                boolean success = RoadAutoRouteService.createAndSaveAutoRoute(serverLevel, sourceDock, targetDock);
+                if (success) {
+                    player.sendSystemMessage(Component.translatable(
+                            "message.sailboatmod.auto_route.created",
+                            targetDock.getDockName().isBlank() ? Component.translatable("block.sailboatmod.dock") : Component.literal(targetDock.getDockName())
+                    ));
+                } else {
+                    player.sendSystemMessage(Component.translatable("message.sailboatmod.auto_route.create_failed"));
+                }
             } else if (!(sourceDock instanceof PostStationBlockEntity) && !(targetDock instanceof PostStationBlockEntity)) {
-                success = AutoRouteService.createAndSaveAutoRoute(serverLevel, sourceDock, targetDock);
-            } else {
-                success = false;
-            }
-            if (success) {
-                player.sendSystemMessage(Component.translatable(
-                        "message.sailboatmod.auto_route.created",
-                        targetDock.getDockName().isBlank() ? Component.translatable("block.sailboatmod.dock") : Component.literal(targetDock.getDockName())
-                ));
+                WaterRouteResult<Void> result = WaterAutoRouteService.submitAutoRoute(serverLevel, sourceDock, targetDock, player);
+                if (result.successful()) {
+                    player.sendSystemMessage(Component.translatable("message.sailboatmod.auto_route.water.started"));
+                } else {
+                    player.sendSystemMessage(WaterAutoRouteService.messageFor(result.reason()));
+                }
             } else {
                 player.sendSystemMessage(Component.translatable("message.sailboatmod.auto_route.create_failed"));
             }

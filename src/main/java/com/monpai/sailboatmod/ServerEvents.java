@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerMapPreloadService;
+import com.monpai.sailboatmod.route.water.WaterRouteTaskService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
@@ -62,6 +63,7 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
                 RoadPlannerBuildControlService.global().tick(level);
                 RoadPlannerMapPreloadService.global().tick(level);
+                WaterRouteTaskService.global().tick(level);
             });
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
@@ -109,6 +111,7 @@ public final class ServerEvents {
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         RoadPlannerMapPreloadService.onServerStopped();
+        WaterRouteTaskService.global().clear();
         com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration.onServerStopped();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
