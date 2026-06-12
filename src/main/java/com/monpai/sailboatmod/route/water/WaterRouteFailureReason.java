@@ -1,0 +1,19 @@
+package com.monpai.sailboatmod.route.water;
+
+public enum WaterRouteFailureReason {
+    NONE,
+    MISSING_SOURCE_DOCK,
+    MISSING_TARGET_DOCK,
+    INVALID_TERMINAL_KIND,
+    MISSING_TOWN,
+    MISSING_NATION,
+    NO_PERMISSION,
+    NO_SOURCE_BERTH,
+    NO_TARGET_BERTH,
+    RANGE_EXCEEDED,
+    NO_WATER_PATH,
+    CHUNK_BUDGET_EXCEEDED,
+    NODE_BUDGET_EXCEEDED,
+    TIMEOUT,
+    ALREADY_PENDING
+}
