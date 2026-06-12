@@ -27,7 +27,9 @@ public record RoadNetworkRecord(
         String creatorName,
         String sourceType,
         String routeSourceName,
-        String routeTargetName
+        String routeTargetName,
+        String routeSourceTownId,
+        String routeTargetTownId
 ) {
     public static final String SOURCE_TYPE_AUTO = "AUTO";
     public static final String SOURCE_TYPE_MANUAL = "MANUAL";
@@ -50,6 +52,8 @@ public record RoadNetworkRecord(
                 : sourceType.trim().toUpperCase(Locale.ROOT);
         routeSourceName = routeSourceName == null ? "" : routeSourceName.trim();
         routeTargetName = routeTargetName == null ? "" : routeTargetName.trim();
+        routeSourceTownId = sanitizeId(routeSourceTownId);
+        routeTargetTownId = sanitizeId(routeTargetTownId);
     }
 
     public RoadNetworkRecord(String roadId,
@@ -65,7 +69,7 @@ public record RoadNetworkRecord(
                              String creatorName,
                              String sourceType) {
         this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path,
-                null, List.of(), updatedAt, createdAt, creatorUuid, creatorName, sourceType, "", "");
+                null, List.of(), updatedAt, createdAt, creatorUuid, creatorName, sourceType, "", "", "", "");
     }
 
     public RoadNetworkRecord(String roadId,
@@ -83,7 +87,48 @@ public record RoadNetworkRecord(
                              String routeSourceName,
                              String routeTargetName) {
         this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path,
-                null, List.of(), updatedAt, createdAt, creatorUuid, creatorName, sourceType, routeSourceName, routeTargetName);
+                null, List.of(), updatedAt, createdAt, creatorUuid, creatorName, sourceType, routeSourceName, routeTargetName, "", "");
+    }
+
+    public RoadNetworkRecord(String roadId,
+                             String nationId,
+                             String townId,
+                             String dimensionId,
+                             String structureAId,
+                             String structureBId,
+                             List<BlockPos> path,
+                             List<BlockPos> displayPath,
+                             List<RoadPlannerSharedRoadSpan> sharedSpans,
+                             long updatedAt,
+                             long createdAt,
+                             String creatorUuid,
+                             String creatorName,
+                             String sourceType,
+                             String routeSourceName,
+                             String routeTargetName) {
+        this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path, displayPath, sharedSpans,
+                updatedAt, createdAt, creatorUuid, creatorName, sourceType, routeSourceName, routeTargetName, "", "");
+    }
+
+    public RoadNetworkRecord(String roadId,
+                             String nationId,
+                             String townId,
+                             String dimensionId,
+                             String structureAId,
+                             String structureBId,
+                             List<BlockPos> path,
+                             long updatedAt,
+                             long createdAt,
+                             String creatorUuid,
+                             String creatorName,
+                             String sourceType,
+                             String routeSourceName,
+                             String routeTargetName,
+                             String routeSourceTownId,
+                             String routeTargetTownId) {
+        this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path,
+                null, List.of(), updatedAt, createdAt, creatorUuid, creatorName, sourceType,
+                routeSourceName, routeTargetName, routeSourceTownId, routeTargetTownId);
     }
 
     public RoadNetworkRecord(String roadId,
@@ -96,7 +141,20 @@ public record RoadNetworkRecord(
                              long updatedAt,
                              String sourceType) {
         this(roadId, nationId, townId, dimensionId, structureAId, structureBId, path,
-                null, List.of(), updatedAt, updatedAt, "", "", sourceType, "", "");
+                null, List.of(), updatedAt, updatedAt, "", "", sourceType, "", "", "", "");
+    }
+
+    public static String townConnectionKey(String leftTownId, String rightTownId) {
+        String left = sanitizeId(leftTownId);
+        String right = sanitizeId(rightTownId);
+        if (left.isBlank() || right.isBlank() || left.equals(right)) {
+            return "";
+        }
+        return left.compareTo(right) <= 0 ? left + "|" + right : right + "|" + left;
+    }
+
+    public String routeTownConnectionKey() {
+        return townConnectionKey(routeSourceTownId, routeTargetTownId);
     }
 
     public static String edgeKey(String leftStructureId, String rightStructureId) {
@@ -144,6 +202,8 @@ public record RoadNetworkRecord(
         tag.putString("SourceType", sourceType);
         tag.putString("RouteSourceName", routeSourceName);
         tag.putString("RouteTargetName", routeTargetName);
+        tag.putString("RouteSourceTownId", routeSourceTownId);
+        tag.putString("RouteTargetTownId", routeTargetTownId);
         tag.put("Path", writePath(path));
         tag.put("DisplayPath", writePath(displayPath));
         tag.put("SharedSpans", writeSharedSpans(sharedSpans));
@@ -177,8 +237,14 @@ public record RoadNetworkRecord(
                 tag.contains("CreatorName") ? tag.getString("CreatorName") : "",
                 tag.contains("SourceType") ? tag.getString("SourceType") : SOURCE_TYPE_AUTO,
                 tag.contains("RouteSourceName") ? tag.getString("RouteSourceName") : "",
-                tag.contains("RouteTargetName") ? tag.getString("RouteTargetName") : ""
+                tag.contains("RouteTargetName") ? tag.getString("RouteTargetName") : "",
+                tag.contains("RouteSourceTownId") ? tag.getString("RouteSourceTownId") : "",
+                tag.contains("RouteTargetTownId") ? tag.getString("RouteTargetTownId") : ""
         );
+    }
+
+    private static String sanitizeId(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private static List<BlockPos> normalizePath(List<BlockPos> path) {

@@ -133,7 +133,7 @@ public class RoadPlannerBuildControlService {
         UUID previewId = UUID.randomUUID();
         activePreviews.put(playerId, previewId);
         previews.put(previewId, new PreviewSnapshot(nodes, segmentTypes, settings, mergeSelection,
-                logicalNodes, sharedSpans, sourceTownName, targetTownName, reusePlan));
+                logicalNodes, sharedSpans, sourceTownName, targetTownName, "", "", reusePlan));
         return previewId;
     }
 
@@ -375,7 +375,7 @@ public class RoadPlannerBuildControlService {
         }
         return new PreviewSnapshot(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), revalidated,
                 snapshot.logicalNodes(), snapshot.sharedSpans(), snapshot.sourceTownName(), snapshot.targetTownName(),
-                snapshot.reusePlan());
+                snapshot.sourceTownId(), snapshot.targetTownId(), snapshot.reusePlan());
     }
 
     static List<BuildStep> nodeAnchoredBridgeStepsForCompiler(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus, com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings settings) {
@@ -574,6 +574,8 @@ public class RoadPlannerBuildControlService {
                 metadata.sharedSpans(),
                 metadata.sourceTownName(),
                 metadata.targetTownName(),
+                metadata.sourceTownId(),
+                metadata.targetTownId(),
                 metadata.reusePlan()
         );
     }
@@ -655,6 +657,8 @@ public class RoadPlannerBuildControlService {
                                      List<RoadPlannerSharedRoadSpan> sharedSpans,
                                      String sourceTownName,
                                      String targetTownName,
+                                     String sourceTownId,
+                                     String targetTownId,
                                      RoadReusePlan reusePlan) {
         public CompletedRoadBuild {
             roadId = roadId == null ? "" : roadId.trim();
@@ -678,6 +682,8 @@ public class RoadPlannerBuildControlService {
                     .toList();
             sourceTownName = sourceTownName == null ? "" : sourceTownName.trim();
             targetTownName = targetTownName == null ? "" : targetTownName.trim();
+            sourceTownId = normalizeTownId(sourceTownId);
+            targetTownId = normalizeTownId(targetTownId);
             reusePlan = reusePlan == null ? RoadReusePlan.noReuse(List.of(), centerPath) : reusePlan;
         }
 
@@ -689,6 +695,7 @@ public class RoadPlannerBuildControlService {
                                   ResourceKey<Level> dimension,
                                   RoadPlannerMergeSelection mergeSelection) {
             this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, List.of(), "", "",
+                    "", "",
                     RoadReusePlan.noReuse(List.of(), centerPath));
         }
 
@@ -702,6 +709,7 @@ public class RoadPlannerBuildControlService {
                                   String sourceTownName,
                                   String targetTownName) {
             this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, List.of(), sourceTownName, targetTownName,
+                    "", "",
                     RoadReusePlan.noReuse(List.of(), centerPath));
         }
 
@@ -717,7 +725,40 @@ public class RoadPlannerBuildControlService {
                                   String targetTownName,
                                   RoadReusePlan reusePlan) {
             this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection,
-                    sharedSpans, sourceTownName, targetTownName, reusePlan);
+                    sharedSpans, sourceTownName, targetTownName, "", "", reusePlan);
+        }
+
+        public CompletedRoadBuild(String roadId,
+                                  UUID ownerId,
+                                  List<BlockPos> centerPath,
+                                  List<BlockPos> displayPath,
+                                  List<BuildStep> buildSteps,
+                                  List<ConstructionQueue.RollbackEntry> rollbackEntries,
+                                  ResourceKey<Level> dimension,
+                                  RoadPlannerMergeSelection mergeSelection,
+                                  List<RoadPlannerSharedRoadSpan> sharedSpans,
+                                  String sourceTownName,
+                                  String targetTownName,
+                                  RoadReusePlan reusePlan) {
+            this(roadId, ownerId, centerPath, displayPath, buildSteps, rollbackEntries, dimension, mergeSelection,
+                    sharedSpans, sourceTownName, targetTownName, "", "", reusePlan);
+        }
+
+        public CompletedRoadBuild(String roadId,
+                                  UUID ownerId,
+                                  List<BlockPos> centerPath,
+                                  List<BuildStep> buildSteps,
+                                  List<ConstructionQueue.RollbackEntry> rollbackEntries,
+                                  ResourceKey<Level> dimension,
+                                  RoadPlannerMergeSelection mergeSelection,
+                                  List<RoadPlannerSharedRoadSpan> sharedSpans,
+                                  String sourceTownName,
+                                  String targetTownName,
+                                  String sourceTownId,
+                                  String targetTownId) {
+            this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection,
+                    sharedSpans, sourceTownName, targetTownName, sourceTownId, targetTownId,
+                    RoadReusePlan.noReuse(List.of(), centerPath));
         }
 
         public CompletedRoadBuild(String roadId,
@@ -731,6 +772,7 @@ public class RoadPlannerBuildControlService {
                                   String sourceTownName,
                                   String targetTownName) {
             this(roadId, ownerId, centerPath, centerPath, buildSteps, rollbackEntries, dimension, mergeSelection, sharedSpans, sourceTownName, targetTownName,
+                    "", "",
                     RoadReusePlan.noReuse(List.of(), centerPath));
         }
 
@@ -745,6 +787,7 @@ public class RoadPlannerBuildControlService {
     }
 
     private record BuildMetadata(UUID ownerId, String roadId, String sourceTownName, String targetTownName,
+                                 String sourceTownId, String targetTownId,
                                  BlockPos focusPos, ResourceKey<Level> dimension, List<BlockPos> centerPath,
                                  List<BlockPos> displayPath, RoadPlannerMergeSelection mergeSelection,
                                  List<RoadPlannerSharedRoadSpan> sharedSpans,
@@ -752,6 +795,8 @@ public class RoadPlannerBuildControlService {
         private BuildMetadata {
             sourceTownName = sourceTownName == null ? "" : sourceTownName;
             targetTownName = targetTownName == null ? "" : targetTownName;
+            sourceTownId = normalizeTownId(sourceTownId);
+            targetTownId = normalizeTownId(targetTownId);
             focusPos = focusPos == null ? BlockPos.ZERO : focusPos.immutable();
             centerPath = centerPath == null ? List.of() : centerPath.stream()
                     .filter(java.util.Objects::nonNull)
@@ -788,6 +833,8 @@ public class RoadPlannerBuildControlService {
             return new BuildMetadata(ownerId, jobId.toString(),
                     snapshot == null ? "" : snapshot.sourceTownName(),
                     snapshot == null ? "" : snapshot.targetTownName(),
+                    snapshot == null ? "" : snapshot.sourceTownId(),
+                    snapshot == null ? "" : snapshot.targetTownId(),
                     focusPos, dimension, centerPath, displayPath, mergeSelection,
                     snapshot == null ? List.of() : snapshot.sharedSpans(), finalSegmentType,
                     snapshot == null ? RoadReusePlan.noReuse(List.of(), displayPath) : snapshot.reusePlan());
@@ -836,6 +883,8 @@ public class RoadPlannerBuildControlService {
                                   List<RoadPlannerSharedRoadSpan> sharedSpans,
                                   String sourceTownName,
                                   String targetTownName,
+                                  String sourceTownId,
+                                  String targetTownId,
                                   RoadReusePlan reusePlan) {
         public PreviewSnapshot {
             nodes = nodes == null ? List.of() : nodes.stream().map(BlockPos::immutable).toList();
@@ -851,17 +900,25 @@ public class RoadPlannerBuildControlService {
                     .toList();
             sourceTownName = sourceTownName == null ? "" : sourceTownName.trim();
             targetTownName = targetTownName == null ? "" : targetTownName.trim();
+            sourceTownId = normalizeTownId(sourceTownId);
+            targetTownId = normalizeTownId(targetTownId);
             reusePlan = reusePlan == null ? RoadReusePlan.noReuse(List.of(), logicalNodes) : reusePlan;
         }
 
         public PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings) {
             this(nodes, segmentTypes, settings, RoadPlannerMergeSelection.none(), nodes, List.of(), "", "",
+                    "", "",
                     RoadReusePlan.noReuse(List.of(), nodes));
         }
 
         public PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings, RoadPlannerMergeSelection mergeSelection) {
             this(nodes, segmentTypes, settings, mergeSelection, nodes, List.of(), "", "",
+                    "", "",
                     RoadReusePlan.noReuse(List.of(), nodes));
         }
+    }
+
+    private static String normalizeTownId(String value) {
+        return value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 }

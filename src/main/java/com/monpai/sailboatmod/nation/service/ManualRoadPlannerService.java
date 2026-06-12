@@ -20,6 +20,7 @@ import com.monpai.sailboatmod.network.packet.OpenRoadPlannerScreenPacket;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerResultPacket;
+import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.road.config.PathfindingConfig;
 import com.monpai.sailboatmod.road.config.RoadConfig;
 import com.monpai.sailboatmod.road.construction.road.RoadBuilder;
@@ -227,6 +228,21 @@ public final class ManualRoadPlannerService {
                 new OpenRoadPlannerScreenPacket(offhand, displayTownName(sourceTown), selectedTownId, entries)
         );
         return Component.translatable("message.sailboatmod.road_planner.selection_opened", displayTownName(sourceTown));
+    }
+
+    public static Component openTargetSelectionFromHeldPlanner(ServerPlayer player) {
+        if (player == null) {
+            return Component.translatable("message.sailboatmod.road_planner.unavailable");
+        }
+        ItemStack mainHand = player.getMainHandItem();
+        if (mainHand.is(ModItems.ROAD_PLANNER_ITEM.get())) {
+            return openTargetSelection(player, mainHand, false);
+        }
+        ItemStack offhand = player.getOffhandItem();
+        if (offhand.is(ModItems.ROAD_PLANNER_ITEM.get())) {
+            return openTargetSelection(player, offhand, true);
+        }
+        return Component.translatable("message.sailboatmod.road_planner.unavailable");
     }
 
     public static Component setSelectedTarget(ServerPlayer player, ItemStack stack, String selectedTownId) {

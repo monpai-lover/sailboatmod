@@ -88,6 +88,10 @@ class RoadPlannerPacketRoundTripTest {
                 roundTrip(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_DEMOLITION_PLANNER), RoadPlannerMenuActionPacket::encode, RoadPlannerMenuActionPacket::decode));
         assertEquals(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.RETURN_TO_PLANNER),
                 roundTrip(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.RETURN_TO_PLANNER), RoadPlannerMenuActionPacket::encode, RoadPlannerMenuActionPacket::decode));
+        assertEquals(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_TARGET_SELECTION),
+                roundTrip(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_TARGET_SELECTION), RoadPlannerMenuActionPacket::encode, RoadPlannerMenuActionPacket::decode));
+        assertEquals(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_EDIT_ROAD_SELECTION),
+                roundTrip(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_EDIT_ROAD_SELECTION), RoadPlannerMenuActionPacket::encode, RoadPlannerMenuActionPacket::decode));
     }
 
     @Test

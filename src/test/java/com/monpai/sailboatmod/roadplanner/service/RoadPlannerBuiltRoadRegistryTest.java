@@ -116,6 +116,37 @@ class RoadPlannerBuiltRoadRegistryTest {
     }
 
     @Test
+    void registerCompletedBuildPersistsEndpointTownIds() {
+        TestServerLevel level = newPersistentLevel();
+        UUID ownerId = UUID.randomUUID();
+        NationSavedData data = NationSavedData.get(level);
+        data.putTown(new TownRecord("town-a", "nation-a", "Alpha", ownerId, 1L, "", TownRecord.noCorePos(), "", "european"));
+        data.putNation(new NationRecord("nation-a", "Alpha Nation", "AN", 0x112233, 0x445566, ownerId, 1L, "town-a", "", NationRecord.noCorePos(), ""));
+        data.putMember(new NationMemberRecord(ownerId, "Builder", "nation-a", NationOfficeIds.LEADER, 1L));
+        List<BuildStep> buildSteps = List.of(new BuildStep(0, new BlockPos(0, 63, 0), Blocks.SMOOTH_STONE.defaultBlockState(), BuildPhase.SURFACE));
+
+        RoadPlannerBuiltRoadRegistry.register(level, new RoadPlannerBuildControlService.CompletedRoadBuild(
+                "road-town-ids",
+                ownerId,
+                List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0)),
+                buildSteps,
+                rollbackEntriesFor(buildSteps),
+                Level.OVERWORLD,
+                RoadPlannerMergeSelection.none(),
+                List.of(),
+                "Alpha",
+                "Beta",
+                "town-a",
+                "town-b"));
+
+        RoadNetworkRecord road = data.getRoadNetwork("road-town-ids");
+
+        assertNotNull(road);
+        assertEquals("town-a", road.routeSourceTownId());
+        assertEquals("town-b", road.routeTargetTownId());
+    }
+
+    @Test
     void registerCompletedBuildReindexesRollbackFilteredStepsAndPersistsMatchingGhostsAndOwnedBlocks() {
         TestServerLevel level = newPersistentLevel();
         UUID ownerId = UUID.randomUUID();

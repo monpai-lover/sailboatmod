@@ -4,13 +4,13 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
-import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayRequestPacket;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphOverlayService;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditPermissionService;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
@@ -494,22 +494,7 @@ public final class RoadPlannerRoadMergeService {
     }
 
     private static boolean canManageRoad(ServerLevel level, ServerPlayer player, NationSavedData data, RoadNetworkRecord road) {
-        if (player == null || data == null || road == null) {
-            return false;
-        }
-        if (player.hasPermissions(2)) {
-            return true;
-        }
-        if (level == null) {
-            return false;
-        }
-        NationRecord nation = NationService.getPlayerNation(level, player.getUUID());
-        if (nation != null && nation.nationId().equalsIgnoreCase(road.nationId())
-                && NationService.hasPermission(level, player.getUUID(), NationPermission.MANAGE_CLAIMS)) {
-            return true;
-        }
-        TownRecord town = data.getTown(road.townId());
-        return town != null && player.getUUID().equals(town.mayorUuid());
+        return RoadEditPermissionService.canManageRoad(level, player, data, road);
     }
 
     private static boolean isBridgeSegment(RoadPlannerSegmentType segmentType) {

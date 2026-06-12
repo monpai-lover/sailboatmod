@@ -87,4 +87,32 @@ class RoadNetworkRecordTest {
                 new BlockPos(2, 64, 0),
                 new BlockPos(4, 64, 2)), loaded.displayPath());
     }
+
+    @Test
+    void saveLoadPreservesRouteTownIds() {
+        RoadNetworkRecord road = new RoadNetworkRecord(
+                "road-town-link",
+                "nation-a",
+                "source-town",
+                "minecraft:overworld",
+                "town:source-town",
+                "town:target-town",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(8, 64, 0)),
+                null,
+                List.of(),
+                200L,
+                100L,
+                "creator-uuid",
+                "Builder",
+                RoadNetworkRecord.SOURCE_TYPE_MANUAL,
+                "Alpha",
+                "Beta",
+                "source-town",
+                "target-town");
+
+        RoadNetworkRecord loaded = RoadNetworkRecord.load(road.save());
+
+        assertEquals("source-town", loaded.routeSourceTownId());
+        assertEquals("target-town", loaded.routeTargetTownId());
+    }
 }

@@ -1,11 +1,10 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
-import com.monpai.sailboatmod.nation.model.NationPermission;
-import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditPermissionService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -26,7 +25,7 @@ public final class RoadPlannerRoadDemolitionService {
         String dimensionId = level.dimension().location().toString();
         return data.getRoadNetworks().stream()
                 .filter(road -> road != null && dimensionId.equalsIgnoreCase(road.dimensionId()))
-                .filter(road -> canManageRoad(player, data, road))
+                .filter(road -> RoadEditPermissionService.canManageRoad(level, player, data, road))
                 .map(road -> toEntry(data, road))
                 .sorted(Comparator.comparing(OpenRoadDemolitionSelectionPacket.Entry::sourceName)
                         .thenComparing(OpenRoadDemolitionSelectionPacket.Entry::targetName)
@@ -46,29 +45,13 @@ public final class RoadPlannerRoadDemolitionService {
         if (!level.dimension().location().toString().equalsIgnoreCase(road.dimensionId())) {
             return new Result(false, Component.literal("Road is in another dimension"));
         }
-        if (!canManageRoad(player, data, road)) {
+        if (!RoadEditPermissionService.canManageRoad(level, player, data, road)) {
             return new Result(false, Component.literal("No permission to demolish this road"));
         }
         boolean started = RoadLifecycleService.demolishPersistedRoad(level, road.roadId());
         return new Result(started, started
                 ? Component.literal("Road demolition queued")
                 : Component.literal("Road demolition failed"));
-    }
-
-    private static boolean canManageRoad(ServerPlayer player, NationSavedData data, RoadNetworkRecord road) {
-        if (player == null || data == null || road == null) {
-            return false;
-        }
-        if (player.hasPermissions(2)) {
-            return true;
-        }
-        NationRecord nation = NationService.getPlayerNation(player.level(), player.getUUID());
-        if (nation != null && nation.nationId().equalsIgnoreCase(road.nationId())
-                && NationService.hasPermission(player.level(), player.getUUID(), NationPermission.MANAGE_CLAIMS)) {
-            return true;
-        }
-        TownRecord town = data.getTown(road.townId());
-        return town != null && player.getUUID().equals(town.mayorUuid());
     }
 
     private static OpenRoadDemolitionSelectionPacket.Entry toEntry(NationSavedData data, RoadNetworkRecord road) {

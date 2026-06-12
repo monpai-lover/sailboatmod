@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.roadplanner.service.RoadPlannerDestinationService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerClaimOverlayService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerSessionService;
+import com.monpai.sailboatmod.nation.service.ManualRoadPlannerService;
 import com.monpai.sailboatmod.nation.service.RoadPlannerRoadDemolitionService;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -40,6 +41,14 @@ public record RoadPlannerMenuActionPacket(Action action) {
         context.enqueueWork(() -> {
             ServerPlayer sender = context.getSender();
             if (sender == null) {
+                return;
+            }
+            if (packet.action() == Action.OPEN_TARGET_SELECTION) {
+                sender.sendSystemMessage(ManualRoadPlannerService.openTargetSelectionFromHeldPlanner(sender));
+                return;
+            }
+            if (packet.action() == Action.OPEN_EDIT_ROAD_SELECTION) {
+                sender.sendSystemMessage(Component.literal("Road edit selection is not available yet."));
                 return;
             }
             if (packet.action() == Action.OPEN_DEMOLITION_PLANNER) {
@@ -101,6 +110,8 @@ public record RoadPlannerMenuActionPacket(Action action) {
     public enum Action {
         OPEN_PLANNER,
         RETURN_TO_PLANNER,
-        OPEN_DEMOLITION_PLANNER
+        OPEN_DEMOLITION_PLANNER,
+        OPEN_TARGET_SELECTION,
+        OPEN_EDIT_ROAD_SELECTION
     }
 }

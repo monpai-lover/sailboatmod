@@ -30,7 +30,7 @@ public class RoadPlannerActionMenuScreen extends Screen {
     @Override
     protected void init() {
         int left = width / 2 - 90;
-        int top = height / 2 - 58;
+        int top = height / 2 - 70;
         int row = 24;
         if (mode == RoadPlannerActionMenuMode.PREVIEW) {
             addButton(left, top, "\u786e\u8ba4\u5efa\u9020", button -> confirmBuild());
@@ -47,10 +47,11 @@ public class RoadPlannerActionMenuScreen extends Screen {
             return;
         }
         addButton(left, top, "\u6253\u5f00\u9053\u8def\u89c4\u5212", button -> openPlannerFromServer());
-        addButton(left, top + row, "\u9009\u62e9\u76ee\u7684\u5730 Town", button -> closeOnly());
-        addButton(left, top + row * 2, "\u62c6\u9664\u5df2\u6709\u9053\u8def", button -> openDemolitionPlanner());
-        addButton(left, top + row * 3, "\u67e5\u770b\u65bd\u5de5\u961f\u5217", button -> closeOnly());
-        addButton(left, top + row * 4, "\u5173\u95ed", button -> onClose());
+        addButton(left, top + row, "\u9009\u62e9\u76ee\u7684\u5730 Town", button -> openTargetSelection());
+        addButton(left, top + row * 2, "\u7f16\u8f91\u73b0\u6709\u9053\u8def", button -> openEditRoadSelection());
+        addButton(left, top + row * 3, "\u62c6\u9664\u5df2\u6709\u9053\u8def", button -> openDemolitionPlanner());
+        addButton(left, top + row * 4, "\u67e5\u770b\u65bd\u5de5\u961f\u5217", button -> closeOnly());
+        addButton(left, top + row * 5, "\u5173\u95ed", button -> onClose());
     }
 
     private void addButton(int x, int y, String label, Button.OnPress onPress) {
@@ -96,6 +97,16 @@ public class RoadPlannerActionMenuScreen extends Screen {
 
     private void cancelBuildAndRollback() {
         ModNetwork.CHANNEL.sendToServer(new RoadPlannerCancelJobPacket(sessionId));
+        onClose();
+    }
+
+    private void openTargetSelection() {
+        ModNetwork.CHANNEL.sendToServer(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_TARGET_SELECTION));
+        onClose();
+    }
+
+    private void openEditRoadSelection() {
+        ModNetwork.CHANNEL.sendToServer(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_EDIT_ROAD_SELECTION));
         onClose();
     }
 
