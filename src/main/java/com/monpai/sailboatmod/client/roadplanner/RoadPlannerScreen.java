@@ -107,6 +107,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private String destinationTownName = "";
     private boolean hasTownRoute;
     private UUID routeDraftId;
+    private String editingRoadId = "";
     private BlockPos hoverWorldPos;
     private BlockPos forceRenderSelectionStart;
     private BlockPos forceRenderSelectionEnd;
@@ -158,6 +159,24 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         this(sessionId, false);
         this.claimOverlayRenderer = new RoadPlannerClaimOverlayRenderer(claimOverlays);
         applyTownRoute(startTownName, startTownPos, destinationTownName, destinationTownPos);
+    }
+
+    public RoadPlannerScreen(UUID sessionId,
+                             String editingRoadId,
+                             String sourceTownId,
+                             String sourceTownName,
+                             BlockPos sourceTownPos,
+                             String destinationTownId,
+                             String destinationTownName,
+                             BlockPos destinationTownPos,
+                             List<BlockPos> nodes,
+                             List<RoadPlannerSegmentType> segmentTypes,
+                             RoadPlannerBuildSettings settings,
+                             List<RoadPlannerClaimOverlay> claimOverlays) {
+        this(sessionId, false);
+        this.claimOverlayRenderer = new RoadPlannerClaimOverlayRenderer(claimOverlays);
+        applyEditRoute(editingRoadId, sourceTownId, sourceTownName, sourceTownPos,
+                destinationTownId, destinationTownName, destinationTownPos, nodes, segmentTypes, settings);
     }
 
     private RoadPlannerScreen(UUID sessionId, boolean testMode) {
@@ -213,6 +232,45 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         selectedNode = null;
         statusLine = "路线: " + displayTownName(this.startTownName, "起点 Town") + " -> "
                 + displayTownName(this.destinationTownName, "目标 Town") + "，请点击设置道路起点";
+    }
+
+    private void applyEditRoute(String editingRoadId,
+                                String sourceTownId,
+                                String sourceTownName,
+                                BlockPos sourceTownPos,
+                                String destinationTownId,
+                                String destinationTownName,
+                                BlockPos destinationTownPos,
+                                List<BlockPos> nodes,
+                                List<RoadPlannerSegmentType> segmentTypes,
+                                RoadPlannerBuildSettings settings) {
+        this.editingRoadId = editingRoadId == null ? "" : editingRoadId.trim().toLowerCase(java.util.Locale.ROOT);
+        this.startTownName = sourceTownName == null ? "" : sourceTownName;
+        this.destinationTownName = destinationTownName == null ? "" : destinationTownName;
+        List<BlockPos> safeNodes = nodes == null ? List.of() : nodes.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(BlockPos::immutable)
+                .toList();
+        this.startTownPos = sourceTownPos == null || sourceTownPos.equals(BlockPos.ZERO)
+                ? (safeNodes.isEmpty() ? BlockPos.ZERO : safeNodes.get(0))
+                : sourceTownPos.immutable();
+        this.destinationTownPos = destinationTownPos == null || destinationTownPos.equals(BlockPos.ZERO)
+                ? (safeNodes.isEmpty() ? new BlockPos(160, 64, 0) : safeNodes.get(safeNodes.size() - 1))
+                : destinationTownPos.immutable();
+        this.hasTownRoute = true;
+        this.routeDraftId = null;
+        this.buildSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
+        this.state = this.state.withSelectedWidth(this.buildSettings.width());
+        this.mapView = RoadPlannerMapView.centered(
+                (this.startTownPos.getX() + this.destinationTownPos.getX()) / 2.0D,
+                (this.startTownPos.getZ() + this.destinationTownPos.getZ()) / 2.0D,
+                2.0D
+        );
+        this.mapViewUsingFallbackOrigin = false;
+        linePlan.replaceWith(safeNodes, segmentTypes);
+        selectedNode = null;
+        statusLine = "编辑道路: " + displayTownName(this.startTownName, "起点 Town") + " -> "
+                + displayTownName(this.destinationTownName, "目标 Town");
     }
 
     private static String displayTownName(String value, String fallback) {
@@ -309,6 +367,25 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         return screen;
     }
 
+    public static RoadPlannerScreen forEditTest(UUID sessionId,
+                                                int width,
+                                                int height,
+                                                String roadId,
+                                                String sourceTownName,
+                                                String destinationTownName,
+                                                List<BlockPos> nodes,
+                                                List<RoadPlannerSegmentType> segmentTypes,
+                                                RoadPlannerBuildSettings settings) {
+        BlockPos source = nodes == null || nodes.isEmpty() ? BlockPos.ZERO : nodes.get(0);
+        BlockPos destination = nodes == null || nodes.isEmpty() ? new BlockPos(160, 64, 0) : nodes.get(nodes.size() - 1);
+        RoadPlannerScreen screen = new RoadPlannerScreen(sessionId, true);
+        screen.applyEditRoute(roadId, "", sourceTownName, source, "", destinationTownName, destination, nodes, segmentTypes, settings);
+        screen.width = width;
+        screen.height = height;
+        screen.recomputeLayout();
+        return screen;
+    }
+
     public RoadPlannerClientState state() {
         return state;
     }
@@ -375,6 +452,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     public String statusLineForTest() {
         return statusLine;
+    }
+
+    public String editingRoadIdForTest() {
+        return editingRoadId;
     }
 
     public String mapStatusLineForTest() {
@@ -2238,7 +2319,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 statusLine = linePlan.hasUnresolvedBridgeBlocker() ? "路线存在未解决的桥梁跨越" : "至少需要起点和终点";
                 return;
             }
-            if (hasTownRoute) {
+            if (hasTownRoute && !isEditMode()) {
                 RoadPlannerEndpointRules.Validation validation = RoadPlannerEndpointRules.validate(linePlan.nodes(), claimOverlayRenderer);
                 if (!validation.valid()) {
                     statusLine = validation.message();
@@ -2256,6 +2337,23 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     private void submitPreviewWithSettings(RoadPlannerBuildSettings settings) {
         buildSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
+        if (isEditMode()) {
+            if (linePlan.nodes().size() < 2) {
+                statusLine = "至少需要起点和终点";
+                return;
+            }
+            if (RoadPlannerEditCommitBridge.submitCommit(
+                    state.sessionId(),
+                    editingRoadId,
+                    linePlan.nodes(),
+                    linePlan.segments(),
+                    buildSettings)) {
+                if (minecraft != null) {
+                    onClose();
+                }
+            }
+            return;
+        }
         PreviewSubmission submission = previewSubmission();
         if (submission.buildNodes().size() < 2) {
             statusLine = "\u5df2\u5efa\u9053\u8def\u590d\u7528\u6bb5\u4e0d\u9700\u8981\u91cd\u590d\u5efa\u9020";
@@ -2280,6 +2378,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 onClose();
             }
         }
+    }
+
+    private boolean isEditMode() {
+        return editingRoadId != null && !editingRoadId.isBlank();
     }
 
 

@@ -74,6 +74,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPack
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadEditSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerEditScreenPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerActionMenuPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCancelPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
@@ -86,6 +87,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRou
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerConfirmBuildPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerDemolishRoadPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerEditCommitPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerGraphSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMenuActionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMergeCandidateRequestPacket;
@@ -104,7 +106,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "6";
+    private static final String PROTOCOL_VERSION = "7";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(SailboatMod.MODID, "main"),
             () -> PROTOCOL_VERSION,
@@ -760,6 +762,22 @@ public final class ModNetwork {
                 RoadPlannerSelectEditRoadPacket::encode,
                 RoadPlannerSelectEditRoadPacket::decode,
                 RoadPlannerSelectEditRoadPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                OpenRoadPlannerEditScreenPacket.class,
+                OpenRoadPlannerEditScreenPacket::encode,
+                OpenRoadPlannerEditScreenPacket::decode,
+                OpenRoadPlannerEditScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RoadPlannerEditCommitPacket.class,
+                RoadPlannerEditCommitPacket::encode,
+                RoadPlannerEditCommitPacket::decode,
+                RoadPlannerEditCommitPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,

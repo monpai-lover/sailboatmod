@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadPr
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRouteSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerEditCommitPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPreviewRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
@@ -42,6 +43,7 @@ class RoadPlannerScreenBehaviorTest {
     @BeforeEach
     void clearPreviewBridgeTestState() {
         RoadPlannerGhostPreviewBridge.clearLastPreviewRequestForTest();
+        RoadPlannerEditCommitBridge.clearLastCommitRequestForTest();
     }
 
     @Test
@@ -1116,6 +1118,42 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void editModeLoadsExistingNodesAndSubmitsRoadEditCommit() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        List<BlockPos> nodes = List.of(
+                new BlockPos(0, 64, 0),
+                new BlockPos(40, 65, 0),
+                new BlockPos(80, 64, 8));
+        List<RoadPlannerSegmentType> segments = List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR);
+        RoadPlannerBuildSettings settings = new RoadPlannerBuildSettings(7, "cobblestone", false);
+
+        RoadPlannerScreen screen = RoadPlannerScreen.forEditTest(
+                sessionId,
+                1280,
+                720,
+                "road_a",
+                "Alpha",
+                "Beta",
+                nodes,
+                segments,
+                settings);
+
+        assertEquals("road_a", screen.editingRoadIdForTest());
+        assertEquals(nodes, screen.plannedNodesForTest());
+        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, screen.segmentTypeForTest(1));
+
+        invokeSubmitPreview(screen, settings);
+
+        assertNull(RoadPlannerGhostPreviewBridge.lastPreviewRequestForTest());
+        RoadPlannerEditCommitPacket packet = RoadPlannerEditCommitBridge.lastCommitRequestForTest();
+        assertEquals(sessionId, packet.sessionId());
+        assertEquals("road_a", packet.roadId());
+        assertEquals(nodes, packet.nodes());
+        assertEquals(segments, packet.segmentTypes());
+        assertEquals(settings, packet.settings());
+    }
+
+    @Test
     void previewSubmissionCarriesSelectedMergeSelection() throws Exception {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
@@ -1289,8 +1327,12 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     private void invokeSubmitPreview(RoadPlannerScreen screen) throws Exception {
+        invokeSubmitPreview(screen, RoadPlannerBuildSettings.DEFAULTS);
+    }
+
+    private void invokeSubmitPreview(RoadPlannerScreen screen, RoadPlannerBuildSettings settings) throws Exception {
         Method method = RoadPlannerScreen.class.getDeclaredMethod("submitPreviewWithSettings", RoadPlannerBuildSettings.class);
         method.setAccessible(true);
-        method.invoke(screen, RoadPlannerBuildSettings.DEFAULTS);
+        method.invoke(screen, settings);
     }
 }

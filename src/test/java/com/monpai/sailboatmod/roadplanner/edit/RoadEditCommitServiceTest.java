@@ -79,6 +79,60 @@ class RoadEditCommitServiceTest {
         assertEquals(RoadEditableRecord.Status.BUILT, current.status());
     }
 
+    @Test
+    void queueEditStoresProposedNodesOnCompletion() {
+        RoadEditableNetworkSavedData data = new RoadEditableNetworkSavedData();
+        RoadEditableRecord current = road(List.of(pos(0)), RoadEditableRecord.Status.BUILT);
+        data.putRoad(current);
+        data.putLedgerEntry(new RoadBlockLedgerEntry(
+                pos(0),
+                Blocks.DIRT.defaultBlockState(),
+                Blocks.SMOOTH_STONE.defaultBlockState(),
+                java.util.Set.of("road-a:segment:0"),
+                "road-a",
+                100L));
+        List<RoadEditableNode> proposedNodes = List.of(
+                new RoadEditableNode("road-a:node:0", pos(0), RoadEditableNode.Kind.SOURCE_TOWN, "Alpha"),
+                new RoadEditableNode("road-a:node:1", pos(8), RoadEditableNode.Kind.NORMAL, ""),
+                new RoadEditableNode("road-a:node:2", pos(16), RoadEditableNode.Kind.TARGET_TOWN, "Beta"));
+
+        RoadEditCommitService.Result result = new RoadEditCommitService()
+                .queueEdit(data, current, proposedNodes, List.of(segment("road-a:segment:0", List.of(pos(0)))),
+                        List.of(new RoadEditBlockPlacement("road-a:segment:0", pos(0), Blocks.SMOOTH_STONE.defaultBlockState())),
+                        new RoadEditTaskService(),
+                        300L);
+
+        assertTrue(result.success());
+        assertEquals(proposedNodes, data.getRoad("road-a").orElseThrow().nodes());
+        assertEquals(RoadEditableRecord.Status.BUILT, data.getRoad("road-a").orElseThrow().status());
+    }
+
+    @Test
+    void queueEditStoresProposedWidthAndMaterial() {
+        RoadEditableNetworkSavedData data = new RoadEditableNetworkSavedData();
+        RoadEditableRecord current = road(List.of(pos(0)), RoadEditableRecord.Status.BUILT);
+        data.putRoad(current);
+        data.putLedgerEntry(new RoadBlockLedgerEntry(
+                pos(0),
+                Blocks.DIRT.defaultBlockState(),
+                Blocks.SMOOTH_STONE.defaultBlockState(),
+                java.util.Set.of("road-a:segment:0"),
+                "road-a",
+                100L));
+
+        RoadEditCommitService.Result result = new RoadEditCommitService()
+                .queueEdit(data, current, current.nodes(),
+                        List.of(segment("road-a:segment:0", List.of(pos(0)), 7, "cobblestone")),
+                        List.of(new RoadEditBlockPlacement("road-a:segment:0", pos(0), Blocks.SMOOTH_STONE.defaultBlockState())),
+                        new RoadEditTaskService(),
+                        300L);
+
+        RoadEditableRecord completed = data.getRoad("road-a").orElseThrow();
+        assertTrue(result.success());
+        assertEquals(7, completed.width());
+        assertEquals("cobblestone", completed.materialId());
+    }
+
     private static RoadEditableRecord road(List<BlockPos> blockPositions, RoadEditableRecord.Status status) {
         return new RoadEditableRecord(
                 "road-a",
@@ -105,15 +159,19 @@ class RoadEditCommitServiceTest {
     }
 
     private static RoadEditableSegment segment(String segmentId, List<BlockPos> blockPositions) {
+        return segment(segmentId, blockPositions, 3, "minecraft:smooth_stone");
+    }
+
+    private static RoadEditableSegment segment(String segmentId, List<BlockPos> blockPositions, int width, String materialId) {
         return new RoadEditableSegment(
                 segmentId,
                 "road-a:source",
                 "road-a:target",
                 List.of(pos(0), pos(16)),
                 List.of(pos(0), pos(16)),
-                3,
+                width,
                 "ROAD",
-                "minecraft:smooth_stone",
+                materialId,
                 blockPositions.stream().map(BlockPos::asLong).toList());
     }
 

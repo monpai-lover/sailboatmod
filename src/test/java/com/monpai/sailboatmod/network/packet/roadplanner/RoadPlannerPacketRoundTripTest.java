@@ -175,6 +175,25 @@ class RoadPlannerPacketRoundTripTest {
                 new OpenRoadEditSelectionPacket.Entry("road_a", "Alpha", "Beta", "MANUAL", 12, 128, 5, false, "BUILT")
         ));
         RoadPlannerSelectEditRoadPacket editSelection = new RoadPlannerSelectEditRoadPacket("road_a");
+        OpenRoadPlannerEditScreenPacket editScreen = new OpenRoadPlannerEditScreenPacket(
+                sessionId,
+                "road_a",
+                "town-a",
+                "Alpha",
+                new BlockPos(0, 64, 0),
+                "town-b",
+                "Beta",
+                new BlockPos(80, 64, 0),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(40, 65, 0), new BlockPos(80, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                new com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings(7, "cobblestone", false),
+                List.of());
+        RoadPlannerEditCommitPacket editCommit = new RoadPlannerEditCommitPacket(
+                sessionId,
+                "road_a",
+                List.of(new BlockPos(0, 64, 0), new BlockPos(80, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                new com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings(5, "stone_bricks", true));
 
         assertEquals(request, roundTrip(request, RoadPlannerMapPreloadRequestPacket::encode, RoadPlannerMapPreloadRequestPacket::decode));
         assertEquals(tile, roundTrip(tile, RoadPlannerMapTileSyncPacket::encode, RoadPlannerMapTileSyncPacket::decode));
@@ -185,6 +204,8 @@ class RoadPlannerPacketRoundTripTest {
         assertEquals(demolitionSelection, roundTrip(demolitionSelection, RoadPlannerSelectDemolitionRoadPacket::encode, RoadPlannerSelectDemolitionRoadPacket::decode));
         assertEquals(editList, roundTrip(editList, OpenRoadEditSelectionPacket::encode, OpenRoadEditSelectionPacket::decode));
         assertEquals(editSelection, roundTrip(editSelection, RoadPlannerSelectEditRoadPacket::encode, RoadPlannerSelectEditRoadPacket::decode));
+        assertEquals(editScreen, roundTrip(editScreen, OpenRoadPlannerEditScreenPacket::encode, OpenRoadPlannerEditScreenPacket::decode));
+        assertEquals(editCommit, roundTrip(editCommit, RoadPlannerEditCommitPacket::encode, RoadPlannerEditCommitPacket::decode));
     }
 
     @Test

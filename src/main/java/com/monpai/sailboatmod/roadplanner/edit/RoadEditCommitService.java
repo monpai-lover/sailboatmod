@@ -11,6 +11,17 @@ public class RoadEditCommitService {
                             List<RoadEditBlockPlacement> proposedPlacements,
                             RoadEditTaskService tasks,
                             long timestamp) {
+        return queueEdit(data, current, current == null ? List.of() : current.nodes(),
+                proposedSegments, proposedPlacements, tasks, timestamp);
+    }
+
+    public Result queueEdit(RoadEditableNetworkSavedData data,
+                            RoadEditableRecord current,
+                            List<RoadEditableNode> proposedNodes,
+                            List<RoadEditableSegment> proposedSegments,
+                            List<RoadEditBlockPlacement> proposedPlacements,
+                            RoadEditTaskService tasks,
+                            long timestamp) {
         if (data == null || current == null || tasks == null) {
             return new Result(false, Optional.empty(),
                     new RoadEditDiff("", List.of(), List.of(), List.of(), List.of()));
@@ -19,8 +30,9 @@ public class RoadEditCommitService {
         if (!diff.conflicts().isEmpty()) {
             return new Result(false, Optional.empty(), diff);
         }
-        RoadEditableRecord editing = copyWith(current, proposedSegments, RoadEditableRecord.Status.EDITING, timestamp);
-        RoadEditableRecord built = copyWith(current, proposedSegments, RoadEditableRecord.Status.BUILT, timestamp);
+        List<RoadEditableNode> safeNodes = proposedNodes == null || proposedNodes.isEmpty() ? current.nodes() : proposedNodes;
+        RoadEditableRecord editing = copyWith(current, safeNodes, proposedSegments, RoadEditableRecord.Status.EDITING, timestamp);
+        RoadEditableRecord built = copyWith(current, safeNodes, proposedSegments, RoadEditableRecord.Status.BUILT, timestamp);
         data.putRoad(editing);
         if (!diff.hasWork()) {
             data.putRoad(built);
@@ -31,9 +43,11 @@ public class RoadEditCommitService {
     }
 
     private static RoadEditableRecord copyWith(RoadEditableRecord current,
+                                               List<RoadEditableNode> nodes,
                                                List<RoadEditableSegment> segments,
                                                RoadEditableRecord.Status status,
                                                long timestamp) {
+        RoadEditableSegment firstSegment = segments == null || segments.isEmpty() ? null : segments.get(0);
         return new RoadEditableRecord(
                 current.roadId(),
                 current.edgeId(),
@@ -46,11 +60,11 @@ public class RoadEditCommitService {
                 current.targetTownId(),
                 current.sourceTownName(),
                 current.targetTownName(),
-                current.width(),
-                current.materialId(),
+                firstSegment == null ? current.width() : firstSegment.width(),
+                firstSegment == null || firstSegment.materialId().isBlank() ? current.materialId() : firstSegment.materialId(),
                 status,
                 current.legacyMigrated(),
-                current.nodes(),
+                nodes == null ? current.nodes() : nodes,
                 segments == null ? List.of() : segments,
                 current.createdAt(),
                 Math.max(timestamp, current.updatedAt()));

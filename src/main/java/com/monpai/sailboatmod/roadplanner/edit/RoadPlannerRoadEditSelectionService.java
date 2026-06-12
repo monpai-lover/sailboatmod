@@ -1,9 +1,12 @@
 package com.monpai.sailboatmod.roadplanner.edit;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.RoadNetworkRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadEditSelectionPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerEditScreenPacket;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -100,7 +103,60 @@ public final class RoadPlannerRoadEditSelectionService {
         if (editable.isEmpty()) {
             return new Result(false, Component.literal("Road edit ledger could not be prepared"));
         }
-        return new Result(true, Component.literal("Road edit ledger prepared"));
+        return new Result(true, Component.literal("Road edit ledger prepared"), Optional.of(openPacket(editable.get())));
+    }
+
+    private static OpenRoadPlannerEditScreenPacket openPacket(RoadEditableRecord editable) {
+        List<BlockPos> nodes = editable.nodes().stream()
+                .map(RoadEditableNode::pos)
+                .toList();
+        BlockPos sourceAnchor = nodes.isEmpty() ? BlockPos.ZERO : nodes.get(0);
+        BlockPos targetAnchor = nodes.isEmpty() ? BlockPos.ZERO : nodes.get(nodes.size() - 1);
+        return new OpenRoadPlannerEditScreenPacket(
+                UUID.randomUUID(),
+                editable.roadId(),
+                editable.sourceTownId(),
+                editable.sourceTownName(),
+                sourceAnchor,
+                editable.targetTownId(),
+                editable.targetTownName(),
+                targetAnchor,
+                nodes,
+                segmentTypes(editable),
+                new RoadPlannerBuildSettings(editable.width(), materialPreset(editable.materialId()), true),
+                List.of());
+    }
+
+    private static List<RoadPlannerSegmentType> segmentTypes(RoadEditableRecord editable) {
+        if (editable == null || editable.segments().isEmpty()) {
+            return List.of();
+        }
+        return editable.segments().stream()
+                .map(RoadPlannerRoadEditSelectionService::segmentType)
+                .toList();
+    }
+
+    private static RoadPlannerSegmentType segmentType(RoadEditableSegment segment) {
+        if (segment == null || segment.sectionType() == null) {
+            return RoadPlannerSegmentType.ROAD;
+        }
+        String type = segment.sectionType().trim().toUpperCase(Locale.ROOT);
+        if (type.contains("BRIDGE")) {
+            return RoadPlannerSegmentType.BRIDGE_MAJOR;
+        }
+        if (type.contains("TUNNEL")) {
+            return RoadPlannerSegmentType.TUNNEL;
+        }
+        return RoadPlannerSegmentType.ROAD;
+    }
+
+    private static String materialPreset(String materialId) {
+        if (materialId == null || materialId.isBlank()) {
+            return RoadPlannerBuildSettings.DEFAULTS.materialPreset();
+        }
+        String value = materialId.trim().toLowerCase(Locale.ROOT);
+        String prefix = "minecraft:";
+        return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
     }
 
     private static List<OpenRoadEditSelectionPacket.Entry> listEditableRoads(NationSavedData data,
@@ -270,6 +326,14 @@ public final class RoadPlannerRoadEditSelectionService {
         }
     }
 
-    public record Result(boolean success, Component message) {
+    public record Result(boolean success, Component message, Optional<OpenRoadPlannerEditScreenPacket> openPacket) {
+        public Result(boolean success, Component message) {
+            this(success, message, Optional.empty());
+        }
+
+        public Result {
+            message = message == null ? Component.empty() : message;
+            openPacket = openPacket == null ? Optional.empty() : openPacket;
+        }
     }
 }

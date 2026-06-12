@@ -13,6 +13,7 @@ import com.monpai.sailboatmod.nation.service.ManualRoadPlannerConfig;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadEditSelectionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadPlannerEditScreenPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerActionMenuMode;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerAutoMergeRouteSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
@@ -164,6 +165,25 @@ public final class RoadPlannerClientHooks {
 
     public static void openEditSelection(List<OpenRoadEditSelectionPacket.Entry> roads) {
         Minecraft.getInstance().setScreen(new RoadPlannerEditSelectionScreen(roads));
+    }
+
+    public static void openEditPlanner(OpenRoadPlannerEditScreenPacket packet) {
+        if (packet == null) {
+            return;
+        }
+        Minecraft.getInstance().setScreen(new RoadPlannerScreen(
+                packet.sessionId(),
+                packet.roadId(),
+                packet.sourceTownId(),
+                packet.sourceTownName(),
+                packet.sourceAnchor(),
+                packet.targetTownId(),
+                packet.targetTownName(),
+                packet.targetAnchor(),
+                packet.nodes(),
+                packet.segmentTypes(),
+                packet.settings(),
+                packet.claimOverlays()));
     }
 
     public static void openNewPlannerEntry(UUID sessionId,
