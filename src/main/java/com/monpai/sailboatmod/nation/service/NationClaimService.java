@@ -19,6 +19,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraftforge.server.ServerLifecycleHooks;
 
 import java.util.HashSet;
 import java.util.List;
@@ -248,6 +249,7 @@ public final class NationClaimService {
             );
             data.putNation(updated);
             data.clearClaimsForNation(nation.nationId());
+            ClaimHighlightSyncService.syncAll(ServerLifecycleHooks.getCurrentServer());
             return;
         }
     }

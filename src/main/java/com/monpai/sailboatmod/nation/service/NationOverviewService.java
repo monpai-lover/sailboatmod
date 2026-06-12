@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration;
+import com.monpai.sailboatmod.nation.menu.ExternalColonyOverview;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
@@ -106,12 +108,16 @@ public final class NationOverviewService {
                         .thenComparing(TownRecord::name, String.CASE_INSENSITIVE_ORDER)
         );
         for (TownRecord town : townRecords) {
+            ExternalColonyOverview externalColony = player.level() instanceof net.minecraft.server.level.ServerLevel serverLevel
+                    ? MineColoniesIntegration.findTownColony(serverLevel, data, town, nation)
+                    : ExternalColonyOverview.empty();
             towns.add(new NationOverviewTown(
                     town.townId(),
                     town.name(),
                     playerName(data, player, town.mayorUuid()),
                     data.getClaimsForTown(town.townId()).size(),
-                    town.townId().equals(nation.capitalTownId())
+                    town.townId().equals(nation.capitalTownId()),
+                    externalColony
             ));
         }
 

@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.TownClientHooks;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
+import com.monpai.sailboatmod.nation.menu.ExternalColonyOverview;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
@@ -42,6 +43,7 @@ public class OpenTownScreenPacket {
         buffer.writeLong(data.corePos());
         buffer.writeVarInt(data.totalClaims());
         buffer.writeVarInt(data.residentCount());
+        writeExternalColony(buffer, data.externalColony());
         buffer.writeInt(data.currentChunkX());
         buffer.writeInt(data.currentChunkZ());
         buffer.writeInt(data.previewCenterChunkX());
@@ -147,6 +149,7 @@ public class OpenTownScreenPacket {
         long corePos = buffer.readLong();
         int totalClaims = buffer.readVarInt();
         int residentCount = buffer.readVarInt();
+        ExternalColonyOverview externalColony = readExternalColony(buffer);
         int currentChunkX = buffer.readInt();
         int currentChunkZ = buffer.readInt();
         int previewCenterChunkX = buffer.readInt();
@@ -268,6 +271,7 @@ public class OpenTownScreenPacket {
                 corePos,
                 totalClaims,
                 residentCount,
+                externalColony,
                 currentChunkX,
                 currentChunkZ,
                 previewCenterChunkX,
@@ -322,6 +326,33 @@ public class OpenTownScreenPacket {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> TownClientHooks.openOrUpdate(packet.data)));
         context.setPacketHandled(true);
+    }
+
+    private static void writeExternalColony(FriendlyByteBuf buffer, ExternalColonyOverview overview) {
+        ExternalColonyOverview safe = overview == null ? ExternalColonyOverview.empty() : overview;
+        buffer.writeBoolean(safe.present());
+        PacketStringCodec.writeUtfSafe(buffer, safe.source(), 32);
+        PacketStringCodec.writeUtfSafe(buffer, safe.dimensionId(), 128);
+        buffer.writeVarInt(safe.colonyId());
+        PacketStringCodec.writeUtfSafe(buffer, safe.colonyName(), 64);
+        PacketStringCodec.writeUtfSafe(buffer, safe.ownerName(), 64);
+        buffer.writeVarInt(safe.population());
+        buffer.writeVarInt(safe.maxPopulation());
+        buffer.writeFloat(safe.happiness());
+    }
+
+    private static ExternalColonyOverview readExternalColony(FriendlyByteBuf buffer) {
+        return new ExternalColonyOverview(
+                buffer.readBoolean(),
+                buffer.readUtf(32),
+                buffer.readUtf(128),
+                buffer.readVarInt(),
+                buffer.readUtf(64),
+                buffer.readUtf(64),
+                buffer.readVarInt(),
+                buffer.readVarInt(),
+                buffer.readFloat()
+        );
     }
 
     private static void writeLines(FriendlyByteBuf buffer, List<String> lines, int maxLength) {

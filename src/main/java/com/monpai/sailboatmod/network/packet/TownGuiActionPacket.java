@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
+import com.monpai.sailboatmod.nation.service.ClaimHighlightSyncService;
 import com.monpai.sailboatmod.nation.service.NationResult;
 import com.monpai.sailboatmod.nation.service.TownClaimService;
 import com.monpai.sailboatmod.nation.service.TownFlagService;
@@ -106,6 +107,10 @@ public class TownGuiActionPacket {
                 }
             }
 
+            if (result.success() && shouldSyncClaimHighlightsAfterAction(packet.action)) {
+                ClaimHighlightSyncService.syncAll(player.getServer());
+            }
+
             if (packet.action == Action.ABANDON_TOWN && result.success()) {
                 return;
             }
@@ -143,6 +148,20 @@ public class TownGuiActionPacket {
 
     static boolean shouldJoinTownDirectlyForTest(String actorNationId, String targetNationId) {
         return shouldJoinTownDirectly(actorNationId, targetNationId);
+    }
+
+    static boolean shouldSyncClaimHighlightsAfterAction(Action action) {
+        return switch (action) {
+            case CLAIM_CHUNK,
+                 UNCLAIM_CHUNK,
+                 CLAIM_AREA,
+                 UNCLAIM_AREA,
+                 RENAME_TOWN,
+                 ABANDON_TOWN,
+                 JOIN_NATION,
+                 REMOVE_CORE -> true;
+            default -> false;
+        };
     }
 
     private static boolean shouldJoinTownDirectly(String actorNationId, String targetNationId) {

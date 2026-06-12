@@ -2,6 +2,7 @@ package com.monpai.sailboatmod;
 
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
+import com.monpai.sailboatmod.map.SharedMapServerState;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.db.MarketDatabase;
 import com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService;
@@ -10,6 +11,7 @@ import com.monpai.sailboatmod.nation.service.BankLoanService;
 import com.monpai.sailboatmod.nation.service.RoadPlanningTaskService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerMapPreloadService;
+import com.monpai.sailboatmod.route.water.WaterRouteTaskService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
 import net.minecraftforge.event.TickEvent;
@@ -39,6 +41,7 @@ public final class ServerEvents {
         BlueMapIntegration.onServerStarted(event.getServer());
         ClaimPreviewTerrainService.onServerStarted(event.getServer());
         ClaimMapTaskService.onServerStarted(event.getServer());
+        SharedMapServerState.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
         RoadPlannerMapPreloadService.onServerStarted(event.getServer());
     }
@@ -62,6 +65,7 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
                 RoadPlannerBuildControlService.global().tick(level);
                 RoadPlannerMapPreloadService.global().tick(level);
+                WaterRouteTaskService.global().tick(level);
             });
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
@@ -108,7 +112,10 @@ public final class ServerEvents {
         com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerStopping();
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
+        SharedMapServerState.onServerStopped();
         RoadPlannerMapPreloadService.onServerStopped();
+        WaterRouteTaskService.global().clear();
+        com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration.onServerStopped();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
     }

@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.network.packet;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
+import com.monpai.sailboatmod.nation.menu.ExternalColonyOverview;
 import io.netty.buffer.Unpooled;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.NonNullList;
@@ -30,7 +31,7 @@ class ClaimOverviewPacketRoundTripTest {
     void openTownPacketCarriesEmptyMapStateWithoutTerrainColorPayload() {
         TownOverviewData data = new TownOverviewData(
                 true, "town-a", "Town A", "", "", "", "", false, 0x123456, 0x654321,
-                false, "", 0L, 0, 0, 0, 0, 10, 20, false, false, "", "", "", "", "", "", "", "",
+                false, "", 0L, 0, 0, ExternalColonyOverview.empty(), 0, 0, 10, 20, false, false, "", "", "", "", "", "", "", "",
                 "", 0, 0, 0L, "", false, false, false, false, false, false,
                 List.of(), List.of(), List.of(), "european", Map.of(), 0.0f, Map.of(), 0.0f,
                 0, 0, 0, 0, 0, 0L, 0L, 0L, List.of(), List.of(), List.of(), List.of(), List.of(),
@@ -49,6 +50,29 @@ class ClaimOverviewPacketRoundTripTest {
         assertTrue(decodedData.claimMapState().loading());
         assertFalse(decodedData.claimMapState().ready());
         assertTrue(decodedData.nearbyTerrainColors().isEmpty());
+    }
+
+    @Test
+    void openTownPacketCarriesExternalColonyPopulation() {
+        ExternalColonyOverview external = new ExternalColonyOverview(
+                true,
+                "minecolonies",
+                "minecraft:overworld",
+                42,
+                "Eastwatch",
+                "GoatDie",
+                17,
+                25,
+                6.5f
+        );
+        TownOverviewData data = TownOverviewData.emptyAt(10, 20).withExternalColony(external);
+
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        OpenTownScreenPacket.encode(new OpenTownScreenPacket(data), buffer);
+        OpenTownScreenPacket decoded = OpenTownScreenPacket.decode(buffer);
+
+        TownOverviewData decodedData = extractTownData(decoded);
+        assertEquals(external, decodedData.externalColony());
     }
 
     @Test
@@ -127,7 +151,7 @@ class ClaimOverviewPacketRoundTripTest {
     void loadingClaimPreviewStatePreservesCurrentPreviewCenterAndTerrain() {
         TownOverviewData current = new TownOverviewData(
                 true, "town-a", "Town A", "", "", "", "", false, 0x123456, 0x654321,
-                false, "", 0L, 0, 0, 0, 0, 10, 20, false, false, "", "", "", "", "", "", "", "",
+                false, "", 0L, 0, 0, ExternalColonyOverview.empty(), 0, 0, 10, 20, false, false, "", "", "", "", "", "", "", "",
                 "", 0, 0, 0L, "", false, false, false, false, false, false,
                 List.of(), List.of(0xFF010203, 0xFF0A0B0C), List.of(), "european", Map.of(), 0.0f, Map.of(), 0.0f,
                 0, 0, 0, 0, 0, 0L, 0L, 0L, List.of(), List.of(), List.of(), List.of(), List.of(),

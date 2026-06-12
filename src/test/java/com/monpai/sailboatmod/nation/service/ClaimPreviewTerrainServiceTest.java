@@ -143,4 +143,35 @@ class ClaimPreviewTerrainServiceTest {
 
         assertEquals(1, service.visibleQueueSizeForTest());
     }
+
+    @Test
+    void visibleBudgetCapsSampledTilesPerTick() {
+        ClaimPreviewTerrainService service = new ClaimPreviewTerrainService();
+        java.util.concurrent.atomic.AtomicInteger sampled = new java.util.concurrent.atomic.AtomicInteger();
+        service.enqueueViewportForTest("minecraft:overworld", 0, 0, 3, 0, 22L, "town|budget");
+
+        service.processBudgetedWorkForTest(5, 0, (dimensionId, chunkX, chunkZ) -> {
+            sampled.incrementAndGet();
+            return new int[] {1, 2, 3, 4};
+        });
+
+        assertEquals(5, sampled.get());
+        assertEquals(44, service.visibleQueueSizeForTest());
+    }
+
+    @Test
+    void prefetchBudgetIsNotSpentUntilVisibleQueueIsEmpty() {
+        ClaimPreviewTerrainService service = new ClaimPreviewTerrainService();
+        java.util.concurrent.atomic.AtomicInteger sampled = new java.util.concurrent.atomic.AtomicInteger();
+        service.enqueueViewportForTest("minecraft:overworld", 0, 0, 1, 1, 23L, "town|prefetch");
+
+        service.processBudgetedWorkForTest(1, 99, (dimensionId, chunkX, chunkZ) -> {
+            sampled.incrementAndGet();
+            return new int[] {1, 2, 3, 4};
+        });
+
+        assertEquals(1, sampled.get());
+        assertEquals(8, service.visibleQueueSizeForTest());
+        assertEquals(16, service.prefetchQueueSizeForTest());
+    }
 }

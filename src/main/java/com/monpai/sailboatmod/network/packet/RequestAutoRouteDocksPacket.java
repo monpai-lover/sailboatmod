@@ -8,8 +8,8 @@ import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.network.ModNetwork;
-import com.monpai.sailboatmod.route.AutoRouteService;
 import com.monpai.sailboatmod.route.RoadAutoRouteService;
+import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
@@ -57,7 +57,7 @@ public class RequestAutoRouteDocksPacket {
 
                 boolean canCreate = postStationMode
                         ? RoadAutoRouteService.canResolveAutoRoute(serverLevel, sourceDock, targetDock)
-                        : AutoRouteService.canCreateAutoRoute(serverLevel, sourceDock, targetDock);
+                        : WaterAutoRouteService.canListCandidate(serverLevel, sourceDock, targetDock).successful();
                 if (!canCreate) continue;
 
                 int distance = (int) Math.sqrt(msg.sourceDockPos.distSqr(dockPos));

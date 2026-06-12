@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyStatus;
+import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -15,6 +16,7 @@ public final class AutoRouteService {
 
     public static boolean canCreateAutoRoute(Level level, DockBlockEntity startDock, DockBlockEntity endDock) {
         if (level == null || startDock == null || endDock == null) return false;
+        if (WaterAutoRouteService.canListCandidate(level, startDock, endDock).successful()) return true;
 
         String startNationId = startDock.getNationId();
         String endNationId = endDock.getNationId();

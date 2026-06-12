@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.NationClientHooks;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
+import com.monpai.sailboatmod.nation.menu.ExternalColonyOverview;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
@@ -145,6 +146,7 @@ public class OpenNationScreenPacket {
             writeUtfSafe(buffer, town.mayorName(), 64);
             buffer.writeVarInt(town.claimCount());
             buffer.writeBoolean(town.capital());
+            writeExternalColony(buffer, town.externalColony());
         }
         buffer.writeVarInt(data.nearbyClaims().size());
         for (NationOverviewClaim claim : data.nearbyClaims()) {
@@ -299,7 +301,8 @@ public class OpenNationScreenPacket {
                     buffer.readUtf(64),
                     buffer.readUtf(64),
                     buffer.readVarInt(),
-                    buffer.readBoolean()
+                    buffer.readBoolean(),
+                    readExternalColony(buffer)
             ));
         }
         int claimListSize = buffer.readVarInt();
@@ -437,6 +440,33 @@ public class OpenNationScreenPacket {
             }
         }));
         context.setPacketHandled(true);
+    }
+
+    private static void writeExternalColony(FriendlyByteBuf buffer, ExternalColonyOverview overview) {
+        ExternalColonyOverview safe = overview == null ? ExternalColonyOverview.empty() : overview;
+        buffer.writeBoolean(safe.present());
+        writeUtfSafe(buffer, safe.source(), 32);
+        writeUtfSafe(buffer, safe.dimensionId(), 128);
+        buffer.writeVarInt(safe.colonyId());
+        writeUtfSafe(buffer, safe.colonyName(), 64);
+        writeUtfSafe(buffer, safe.ownerName(), 64);
+        buffer.writeVarInt(safe.population());
+        buffer.writeVarInt(safe.maxPopulation());
+        buffer.writeFloat(safe.happiness());
+    }
+
+    private static ExternalColonyOverview readExternalColony(FriendlyByteBuf buffer) {
+        return new ExternalColonyOverview(
+                buffer.readBoolean(),
+                buffer.readUtf(32),
+                buffer.readUtf(128),
+                buffer.readVarInt(),
+                buffer.readUtf(64),
+                buffer.readUtf(64),
+                buffer.readVarInt(),
+                buffer.readVarInt(),
+                buffer.readFloat()
+        );
     }
 
     private static void writeUtfSafe(FriendlyByteBuf buffer, String value, int maxLength) {

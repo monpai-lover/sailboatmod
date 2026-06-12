@@ -23,6 +23,7 @@ import com.monpai.sailboatmod.client.screen.MarketScreen;
 import com.monpai.sailboatmod.client.screen.PostStationScreen;
 import com.monpai.sailboatmod.client.screen.StandardDockScreen;
 import com.monpai.sailboatmod.client.screen.WarehouseScreen;
+import com.monpai.sailboatmod.client.integration.xaero.SailboatXaeroCompat;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.registry.ModEntities;
 import com.monpai.sailboatmod.registry.ModMenus;
@@ -75,6 +76,7 @@ public final class ClientEvents {
             MenuScreens.register(ModMenus.POST_STATION_MENU.get(), PostStationScreen::new);
             MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
             MenuScreens.register(ModMenus.WAREHOUSE_MENU.get(), WarehouseScreen::new);
+            SailboatXaeroCompat.onClientSetup();
         });
     }
 

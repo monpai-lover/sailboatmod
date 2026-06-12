@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.nation.service;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
+import com.monpai.sailboatmod.nation.menu.ExternalColonyOverview;
 import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
@@ -103,6 +105,9 @@ public final class TownOverviewService {
         int secondaryColor = nation == null ? DEFAULT_SECONDARY_COLOR : nation.secondaryColorRgb();
         TownEconomySnapshotService.TownEconomySnapshot economy = TownEconomySnapshotService.build(player.level(), town.townId());
         List<TownOverviewData.JoinableNationTarget> joinableNationTargets = joinableNationTargets(player, data, town, canManageTown);
+        ExternalColonyOverview externalColony = player.level() instanceof net.minecraft.server.level.ServerLevel serverLevel
+                ? MineColoniesIntegration.findTownColony(serverLevel, data, town, nation)
+                : ExternalColonyOverview.empty();
         String ownerName = currentTown != null
                 ? currentTown.name()
                 : displayClaimName(null, currentNation, town, nation, currentClaim);
@@ -123,6 +128,7 @@ public final class TownOverviewService {
                 town.corePos(),
                 countClaimsManagedByTown(data, town, nation),
                 com.monpai.sailboatmod.resident.data.ResidentSavedData.get(player.level()).countResidentsForTown(town.townId()),
+                externalColony,
                 playerChunk.x,
                 playerChunk.z,
                 previewChunk.x,

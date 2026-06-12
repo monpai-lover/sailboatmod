@@ -13,4 +13,11 @@ class TownGuiActionPacketTest {
         assertTrue(TownGuiActionPacket.shouldJoinTownDirectlyForTest("alpha", "alpha"));
         assertFalse(TownGuiActionPacket.shouldJoinTownDirectlyForTest("alpha", "beta"));
     }
+
+    @Test
+    void townJoinAndClaimActionsSyncClaimHighlights() {
+        assertTrue(TownGuiActionPacket.shouldSyncClaimHighlightsAfterAction(TownGuiActionPacket.Action.JOIN_NATION));
+        assertTrue(TownGuiActionPacket.shouldSyncClaimHighlightsAfterAction(TownGuiActionPacket.Action.CLAIM_CHUNK));
+        assertFalse(TownGuiActionPacket.shouldSyncClaimHighlightsAfterAction(TownGuiActionPacket.Action.TOGGLE_FLAG_MIRROR));
+    }
 }
