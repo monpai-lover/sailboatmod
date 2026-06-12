@@ -11,6 +11,8 @@ import com.monpai.sailboatmod.road.model.BuildStep;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphEdgeRecord;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphNodeRecord;
 import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraphSavedData;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditableMigrationService;
+import com.monpai.sailboatmod.roadplanner.edit.RoadEditableNetworkSavedData;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -82,6 +84,14 @@ final class RoadPlannerBuiltRoadRegistry {
                 ownedBlocks(executedSteps)
         ));
         registerGraphRoad(level, build, scope, creatorUuid, creatorName, executedSteps);
+        RoadEditableMigrationService.registerCompletedRoad(
+                RoadEditableNetworkSavedData.get(level),
+                road,
+                executedSteps,
+                build.rollbackEntries(),
+                3,
+                "minecraft:smooth_stone",
+                now);
     }
 
     private static void registerGraphRoad(ServerLevel level,
