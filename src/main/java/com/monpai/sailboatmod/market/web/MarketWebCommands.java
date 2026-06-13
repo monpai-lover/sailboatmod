@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web;
 
+import com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapRenderService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
 import com.mojang.brigadier.CommandDispatcher;
@@ -30,7 +32,25 @@ public final class MarketWebCommands {
                         .executes(context -> showVersion(context.getSource())))
                 .then(Commands.literal("reload")
                         .requires(source -> source.hasPermission(2))
-                        .executes(context -> reloadWeb(context.getSource()))));
+                        .executes(context -> reloadWeb(context.getSource())))
+                .then(Commands.literal("map")
+                        .requires(source -> source.hasPermission(2))
+                        .then(Commands.literal("repaircache")
+                                .executes(context -> repairMapCache(context.getSource())))
+                        .then(Commands.literal("clearlegacy")
+                                .executes(context -> clearLegacyMapCache(context.getSource())))
+                        .then(Commands.literal("clearclientuploads")
+                                .executes(context -> clearClientUploadMapCache(context.getSource())))
+                        .then(Commands.literal("clearstaleserver")
+                                .executes(context -> clearStaleServerMapCache(context.getSource())))
+                        .then(Commands.literal("clearall")
+                                .executes(context -> clearAllMapCache(context.getSource())))
+                        .then(Commands.literal("repaintall")
+                                .executes(context -> repaintAllMapCache(context.getSource())))
+                        .then(Commands.literal("scan")
+                                .executes(context -> enqueueMapRegionScan(context.getSource())))
+                        .then(Commands.literal("status")
+                                .executes(context -> showMapRenderStatus(context.getSource())))));
     }
 
     private static int issueToken(CommandSourceStack source) {
@@ -64,6 +84,66 @@ public final class MarketWebCommands {
         server.reload();
         source.sendSuccess(() -> Component.literal("Market web caches reloaded. Refresh the browser to see changes."), true);
         return 1;
+    }
+
+    private static int repairMapCache(CommandSourceStack source) {
+        int repaired = MarketWebMapTileCache.forServer(source.getServer()).repairLegacyMetadata();
+        source.sendSuccess(() -> Component.literal("Market web map legacy metadata repaired: " + repaired), true);
+        return repaired;
+    }
+
+    private static int clearLegacyMapCache(CommandSourceStack source) {
+        int cleared = MarketWebMapTileCache.forServer(source.getServer()).clearLegacyPngs();
+        source.sendSuccess(() -> Component.literal("Market web map legacy PNGs cleared: " + cleared), true);
+        return cleared;
+    }
+
+    private static int clearClientUploadMapCache(CommandSourceStack source) {
+        int cleared = MarketWebMapTileCache.forServer(source.getServer()).clearClientUploadChunks();
+        source.sendSuccess(() -> Component.literal("Market web map client upload chunks cleared: " + cleared), true);
+        return cleared;
+    }
+
+    private static int clearStaleServerMapCache(CommandSourceStack source) {
+        int cleared = MarketWebMapTileCache.forServer(source.getServer()).clearStaleServerChunks();
+        source.sendSuccess(() -> Component.literal("Market web map stale server chunks cleared: " + cleared), true);
+        return cleared;
+    }
+
+    private static int clearAllMapCache(CommandSourceStack source) {
+        int cleared = MarketWebMapTileCache.forServer(source.getServer()).clearAllTiles();
+        source.sendSuccess(() -> Component.literal("Market web map all cached tiles cleared: " + cleared), true);
+        return cleared;
+    }
+
+    /**
+     * 一键修复红水：清除所有客户端上传与遗留瓦片（含旧的红蓝颠倒"红水"），并触发区域扫描重渲。
+     * 配合磁盘 region 监听，受影响区域会逐步用新配色重新生成。
+     */
+    private static int repaintAllMapCache(CommandSourceStack source) {
+        MarketWebMapTileCache cache = MarketWebMapTileCache.forServer(source.getServer());
+        int clearedUploads = cache.clearClientUploadChunks();
+        int clearedLegacy = cache.clearLegacyPngs();
+        int clearedStale = cache.clearStaleServerChunks();
+        int queued = MarketWebMapRenderService.global().enqueueRegionRepairScan(source.getServer().overworld(), 64);
+        int total = clearedUploads + clearedLegacy + clearedStale;
+        source.sendSuccess(() -> Component.literal(
+                "Market web map repaint: cleared " + total + " stale/upload tiles, queued " + queued
+                        + " loaded chunks. Walk through old areas to let the disk watcher repaint them."), true);
+        return total;
+    }
+
+    private static int enqueueMapRegionScan(CommandSourceStack source) {
+        int queued = MarketWebMapRenderService.global().enqueueRegionRepairScan(source.getServer().overworld(), 16);
+        source.sendSuccess(() -> Component.literal("Market web map region scan queued loaded chunks: " + queued), true);
+        return queued;
+    }
+
+    private static int showMapRenderStatus(CommandSourceStack source) {
+        int queueSize = MarketWebMapRenderService.global().queueSize();
+        source.sendSuccess(() -> Component.literal("Market web map render queue: " + queueSize), false);
+        source.sendSuccess(() -> Component.literal("Renderer version: " + MarketWebMapTileCache.RENDER_VERSION), false);
+        return queueSize;
     }
 
     private static int showVersion(CommandSourceStack source) {

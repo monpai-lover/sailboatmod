@@ -56,26 +56,24 @@ public class RoadPlannerChunkImage implements AutoCloseable {
         if (state.getFluidState().is(Fluids.WATER)) {
             BlockState topState = topWaterBlock(level, pos);
             MapColor mapColor = topState.getMapColor(level, pos);
-            if (mapColor == null) {
-                mapColor = MapColor.WATER;
-            }
+            int fallback = mapColor == null ? MapColor.WATER.calculateRGBColor(MapColor.Brightness.NORMAL)
+                    : mapColor.calculateRGBColor(MapColor.Brightness.NORMAL);
+            int waterColor = com.monpai.sailboatmod.roadplanner.map.MapBlockColors.colorFor(state, fallback);
             int depth = waterDepth(level, pos);
-            MapColor.Brightness brightness = depth > 6 ? MapColor.Brightness.LOWEST
-                    : depth > 3 ? MapColor.Brightness.LOW : MapColor.Brightness.NORMAL;
-            return RoadPlannerMapPalette.softenWater(0xFF000000 | mapColor.calculateRGBColor(brightness));
+            int extraDark = depth > 6 ? 0x60 : depth > 3 ? 0x40 : 0x18;
+            return com.monpai.sailboatmod.roadplanner.map.MapReliefShader.shadeByDelta(waterColor, 0, extraDark);
         }
         MapColor mapColor = state.getMapColor(level, pos);
         if (mapColor == null) {
             return 0x00000000;
         }
+        int fallback = mapColor.calculateRGBColor(MapColor.Brightness.NORMAL);
+        int baseColor = com.monpai.sailboatmod.roadplanner.map.MapBlockColors.colorFor(state, fallback);
         int heightHere = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ());
         int heightSouth = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ() + 1);
         int heightWest = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX() - 1, pos.getZ());
-        int relief = heightHere - Math.max(heightSouth, heightWest);
-        MapColor.Brightness brightness = relief > 2 ? MapColor.Brightness.HIGH
-                : relief > 0 ? MapColor.Brightness.NORMAL
-                : relief > -2 ? MapColor.Brightness.LOW : MapColor.Brightness.LOWEST;
-        return RoadPlannerMapPalette.softenTerrain(0xFF000000 | mapColor.calculateRGBColor(brightness));
+        int delta = heightHere - Math.max(heightSouth, heightWest);
+        return com.monpai.sailboatmod.roadplanner.map.MapReliefShader.shadeByDelta(baseColor, delta, 0);
     }
 
     private BlockState topWaterBlock(ClientLevel level, BlockPos pos) {

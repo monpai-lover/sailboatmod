@@ -1,46 +1,30 @@
 package com.monpai.sailboatmod.roadplanner.map;
 
+/**
+ * 把采样列转成地图像素颜色。取色已在采样器用 {@link MapBlockColors} 完成（{@code baseArgb} 即最终地形色），
+ * 本类只负责 Pl3xMap 式的明暗遮罩叠加（{@link MapReliefShader}）：陆地按相对高差压暗/提亮，
+ * 水按深度额外压暗。不再用 RGB×系数缩放，避免发灰。
+ */
 public class RoadMapColorizer {
     public int color(RoadMapColumnSample sample) {
         if (RoadMapServerColumnSampler.isUnavailableSample(sample)) {
             return 0x00000000;
         }
-        double factor = sample.water() ? waterFactor(sample.waterDepth()) : reliefFactor(sample.surfaceY() - sample.reliefBaseY());
-        return scaleArgb(sample.baseArgb(), factor);
+        if (sample.water()) {
+            return MapReliefShader.shadeByDelta(sample.baseArgb(), 0, waterDarkness(sample.waterDepth()));
+        }
+        int delta = sample.surfaceY() - sample.reliefBaseY();
+        return MapReliefShader.shadeByDelta(sample.baseArgb(), delta, 0);
     }
 
-    private double waterFactor(int waterDepth) {
+    /** 水深越深，额外叠加的黑色遮罩 alpha 越大（深水更暗）。 */
+    private int waterDarkness(int waterDepth) {
         if (waterDepth > 6) {
-            return 0.55D;
+            return 0x60;
         }
         if (waterDepth > 3) {
-            return 0.7D;
+            return 0x40;
         }
-        return 0.9D;
-    }
-
-    private double reliefFactor(int relativeHeight) {
-        if (relativeHeight > 2) {
-            return 1.25D;
-        }
-        if (relativeHeight > 0) {
-            return 1.08D;
-        }
-        if (relativeHeight > -2) {
-            return 0.88D;
-        }
-        return 0.68D;
-    }
-
-    private int scaleArgb(int argb, double factor) {
-        int alpha = (argb >>> 24) & 0xFF;
-        int red = clamp((int) Math.round(((argb >>> 16) & 0xFF) * factor));
-        int green = clamp((int) Math.round(((argb >>> 8) & 0xFF) * factor));
-        int blue = clamp((int) Math.round((argb & 0xFF) * factor));
-        return (alpha << 24) | (red << 16) | (green << 8) | blue;
-    }
-
-    private int clamp(int value) {
-        return Math.max(0, Math.min(255, value));
+        return 0x18;
     }
 }
