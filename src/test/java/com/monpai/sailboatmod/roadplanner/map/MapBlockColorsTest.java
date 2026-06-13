@@ -46,4 +46,27 @@ class MapBlockColorsTest {
         int result = MapBlockColors.colorFor(null, fallback);
         assertEquals(0xFF123456, result, "null state must yield opaque fallback color");
     }
+
+    @Test
+    void argbToNativeAbgrSwapsRedAndBlueKeepsAlphaAndGreen() {
+        // 蓝色水 ARGB 0xFF3F76C4 (R=3F,G=76,B=C4) → native ABGR 应为 0xFFC4763F (R 与 B 互换)
+        int water = 0xFF3F76C4;
+        int nativeAbgr = MapBlockColors.argbToNativeAbgr(water);
+        assertEquals(0xFFC4763F, nativeAbgr);
+        // alpha 与 green 保持不变
+        assertEquals(0xFF, (nativeAbgr >>> 24) & 0xFF);
+        assertEquals(0x76, (nativeAbgr >>> 8) & 0xFF);
+    }
+
+    @Test
+    void argbToNativeAbgrIsSymmetric() {
+        int original = 0xFF3F76C4;
+        assertEquals(original, MapBlockColors.argbToNativeAbgr(MapBlockColors.argbToNativeAbgr(original)),
+                "double conversion must return the original (swap is its own inverse)");
+    }
+
+    @Test
+    void argbToNativeAbgrPreservesTransparency() {
+        assertEquals(0, MapBlockColors.argbToNativeAbgr(0));
+    }
 }

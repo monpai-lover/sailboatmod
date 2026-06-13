@@ -41,7 +41,12 @@ public class RoadPlannerChunkImage implements AutoCloseable {
                 int worldX = chunkPos.getMinBlockX() + x;
                 int worldZ = chunkPos.getMinBlockZ() + z;
                 int worldY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX, worldZ) - 1;
-                result.setPixelRGBA(x, z, reliefColor(level, new BlockPos(worldX, worldY, worldZ)));
+                int argb = reliefColor(level, new BlockPos(worldX, worldY, worldZ));
+                // reliefColor 产出项目内部 ARGB；NativeImage.setPixelRGBA 期望 native ABGR，否则红蓝颠倒(蓝水变橙)。
+                int nativeAbgr = (argb >>> 24) == 0
+                        ? 0
+                        : com.monpai.sailboatmod.roadplanner.map.MapBlockColors.argbToNativeAbgr(argb);
+                result.setPixelRGBA(x, z, nativeAbgr);
             }
         }
         result.untrack();

@@ -85,6 +85,13 @@ public class RoadPlannerTile implements AutoCloseable {
         return !loadedFromCache;
     }
 
+    public synchronized int[] copyPixels() {
+        if (image == null || !loadedFromCache) {
+            return new int[0];
+        }
+        return tilePixels();
+    }
+
     public void updateChunkDirect(RoadPlannerChunkImage chunkImage, int chunkXInTile, int chunkZInTile) {
         if (image == null || chunkImage == null || !chunkImage.isMeaningful()) {
             return;
@@ -129,7 +136,8 @@ public class RoadPlannerTile implements AutoCloseable {
         if (localX < 0 || localX >= TILE_PIXEL_SIZE || localZ < 0 || localZ >= TILE_PIXEL_SIZE) {
             return;
         }
-        image.setPixelRGBA(localX, localZ, argb);
+        // 入参为项目 ARGB；NativeImage 内部用 native ABGR，写入前转换避免红蓝颠倒(蓝水变橙)。
+        image.setPixelRGBA(localX, localZ, toNativeAbgr(argb));
         loadedFromCache = true;
         dirty = true;
     }
@@ -140,7 +148,7 @@ public class RoadPlannerTile implements AutoCloseable {
         }
         for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
             for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
-                image.setPixelRGBA(x, y, argbPixels[y * RoadMapTileSpec.TILE_PIXELS + x]);
+                image.setPixelRGBA(x, y, toNativeAbgr(argbPixels[y * RoadMapTileSpec.TILE_PIXELS + x]));
             }
         }
         loadedFromCache = true;
@@ -155,10 +163,11 @@ public class RoadPlannerTile implements AutoCloseable {
         if (image == null || argbPixels == null || argbPixels.length != RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS) {
             return false;
         }
+        // 把内部 native ABGR 读回时转回 ARGB，使合并比较与入参 argbPixels 同处 ARGB 域。
         int[] current = new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS];
         for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
             for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
-                current[y * RoadMapTileSpec.TILE_PIXELS + x] = image.getPixelRGBA(x, y);
+                current[y * RoadMapTileSpec.TILE_PIXELS + x] = toNativeAbgr(image.getPixelRGBA(x, y));
             }
         }
         boolean applied = RoadPlannerTileMergeRules.merge(current, argbPixels, coverageMask,
@@ -168,7 +177,7 @@ public class RoadPlannerTile implements AutoCloseable {
         }
         for (int y = 0; y < RoadMapTileSpec.TILE_PIXELS; y++) {
             for (int x = 0; x < RoadMapTileSpec.TILE_PIXELS; x++) {
-                image.setPixelRGBA(x, y, current[y * RoadMapTileSpec.TILE_PIXELS + x]);
+                image.setPixelRGBA(x, y, toNativeAbgr(current[y * RoadMapTileSpec.TILE_PIXELS + x]));
             }
         }
         loadedFromCache = true;
@@ -194,6 +203,11 @@ public class RoadPlannerTile implements AutoCloseable {
 
     public void markAccessed() {
         lastAccessedAt = System.currentTimeMillis();
+    }
+
+    /** ARGB({@code 0xAARRGGBB}) ↔ NativeImage native ABGR({@code 0xAABBGGRR})。对称运算，用于跨格式边界转换。 */
+    private static int toNativeAbgr(int argb) {
+        return com.monpai.sailboatmod.roadplanner.map.MapBlockColors.argbToNativeAbgr(argb);
     }
 
     private NativeImage createLoadingImage() {

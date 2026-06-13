@@ -391,6 +391,21 @@ public final class MapBlockColors {
     }
 
     /**
+     * 把项目内部使用的 ARGB({@code 0xAARRGGBB})颜色转成 Minecraft {@code NativeImage} 期望的
+     * native 字节序({@code 0xAABBGGRR}，即 setPixelRGBA/getPixelRGBA 的 int 格式)。
+     *
+     * <p>客户端小地图({@code RoadPlannerChunkImage})把像素写入 {@code NativeImage.setPixelRGBA} 前必须做此转换，
+     * 否则红蓝(R↔B)通道颠倒会让蓝色水面渲染成橙色。服务端 PNG 路径用 {@code BufferedImage.TYPE_INT_ARGB}，
+     * 直接接收 ARGB，不需要此转换。该操作对称(R↔B 互换)。
+     */
+    public static int argbToNativeAbgr(int argb) {
+        return (argb & 0xFF000000)
+                | ((argb & 0x000000FF) << 16)
+                | (argb & 0x0000FF00)
+                | ((argb & 0x00FF0000) >>> 16);
+    }
+
+    /**
      * 返回方块的不透明 ARGB 颜色。表中无此方块时回退到 vanilla {@link MapColor}。
      *
      * @param state    方块状态
