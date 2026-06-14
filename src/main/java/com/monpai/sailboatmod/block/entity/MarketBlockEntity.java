@@ -600,7 +600,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         MarketSavedData market = MarketSavedData.get(level);
-        applyCommodityDemand(listing, amount, safePlayerUuid, safePlayerName);
+        applyCommodityDemand(listing, amount, total, safePlayerUuid, safePlayerName);
         int sellerPayout = total;
         com.monpai.sailboatmod.nation.service.TaxService.TaxResult salesTaxResult =
                 com.monpai.sailboatmod.nation.service.TaxService.applySalesTax(level, total, this.worldPosition);
@@ -2102,7 +2102,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
-    private void applyCommodityDemand(MarketListing listing, int amount, String buyerUuid, String buyerName) {
+    private void applyCommodityDemand(MarketListing listing, int amount, int totalPrice, String buyerUuid, String buyerName) {
         if (listing == null || amount <= 0) {
             return;
         }
@@ -2112,10 +2112,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             buyerNationId = buyerTown == null ? "" : buyerTown.nationId();
         }
         try {
-            COMMODITY_MARKET.applyTrade(
+            COMMODITY_MARKET.recordTradeAtPrice(
                     listing.itemStack(),
                     MarketTradeSide.BUY,
                     amount,
+                    Math.max(0, listing.unitPrice()),
+                    Math.max(0, totalPrice),
                     worldPosition.toShortString(),
                     listing.nationId(),
                     buyerNationId,

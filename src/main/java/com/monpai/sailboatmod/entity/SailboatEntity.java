@@ -1212,6 +1212,23 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         syncPrimaryShipmentFieldsFromManifest();
     }
 
+    /**
+     * 多站连运剪枝：只更新留车 manifest，**不重置**非订单自动卸货/返航开关。
+     * 与 setPendingShipmentManifest 的区别——后者用于发新单（清旧标志），本方法用于中途剪枝（保留开关）。
+     */
+    public void pruneShipmentManifest(List<ShipmentManifestEntry> manifest) {
+        autopilotShipmentManifest.clear();
+        if (manifest != null) {
+            for (ShipmentManifestEntry entry : manifest) {
+                if (entry == null) {
+                    continue;
+                }
+                autopilotShipmentManifest.add(entry);
+            }
+        }
+        syncPrimaryShipmentFieldsFromManifest();
+    }
+
     public boolean hasCargo() {
         for (ItemStack stack : inventory) {
             if (!stack.isEmpty()) {
@@ -2147,7 +2164,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     level(), destinationDock.getBlockPos(), manifest);
             keepOnboard = split.keepOnboard();
             List<ItemStack> pool = new ArrayList<>(allCargo);
-            List<ItemStack> deliverCargo = DockBlockEntity.resolveDeliverCargo(pool, split.deliverHere());
+            List<ItemStack> deliverCargo = DockBlockEntity.resolveDeliverCargo(pool, split.deliverHere(), !split.keepOnboard().isEmpty());
             if (!pool.isEmpty()) {
                 loadCargo(pool); // 留车货物退回库存
             }
@@ -2159,7 +2176,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 destinationDock.receiveShipment(this, routeName, autopilotShipmentShipperName, autopilotShipmentStartDockName,
                         autopilotShipmentEndDockName, depart, elapsed, distance, deliverCargo, split.deliverHere());
             }
-            setPendingShipmentManifest(split.keepOnboard()); // 剪枝：移除已交付条目
+            pruneShipmentManifest(split.keepOnboard()); // 剪枝：移除已交付条目（保留中途卸货/返航开关）
         }
 
         // 仍有未送达运单 → 自动开往下一港，逐港连运（去程才续运，返航不续）。

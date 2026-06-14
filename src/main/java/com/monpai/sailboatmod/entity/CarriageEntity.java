@@ -2351,7 +2351,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                         level(), destination.getBlockPos(), manifest);
                 List<ItemStack> pool = new ArrayList<>(allCargo);
                 // 兜底全卸：manifest 条目无物品规格时投递整池，否则精确抽取（保多站连运）。
-                List<ItemStack> deliverCargo = DockBlockEntity.resolveDeliverCargo(pool, split.deliverHere());
+                List<ItemStack> deliverCargo = DockBlockEntity.resolveDeliverCargo(pool, split.deliverHere(), !split.keepOnboard().isEmpty());
                 if (!pool.isEmpty()) {
                     loadCargo(pool); // 留车货物退回库存
                 }

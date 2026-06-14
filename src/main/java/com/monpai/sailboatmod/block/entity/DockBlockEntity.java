@@ -1195,6 +1195,16 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
      * 否则按 selectCargoForEntries 精确抽取（保多站连运：只卸本站该投递的量，其余留车）。
      */
     public static List<ItemStack> resolveDeliverCargo(List<ItemStack> pool, List<ShipmentManifestEntry> deliverHere) {
+        return resolveDeliverCargo(pool, deliverHere, false);
+    }
+
+    /**
+     * 决定本站实际投递的货。
+     * 空规格条目（itemStack 空 / quantity<=0，如手动发车占位 manifest）的兜底"全卸"**只在没有续运货时**才允许，
+     * 否则（多站连运、本站还有 keepOnboard）会把续运货误投本站——此时退回精确抽取（抽不出就不卸，留车续运）。
+     */
+    public static List<ItemStack> resolveDeliverCargo(List<ItemStack> pool, List<ShipmentManifestEntry> deliverHere,
+                                                      boolean hasKeepOnboard) {
         if (pool == null || pool.isEmpty() || deliverHere == null || deliverHere.isEmpty()) {
             return new ArrayList<>();
         }
@@ -1208,7 +1218,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 break;
             }
         }
-        if (hasUnspecifiedEntry) {
+        // 仅当本站是终点（无续运货）时，空规格才安全全卸；有续运货则精确抽取，避免误投续运货。
+        if (hasUnspecifiedEntry && !hasKeepOnboard) {
             List<ItemStack> all = new ArrayList<>(pool);
             pool.clear();
             return all;

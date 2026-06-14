@@ -63,4 +63,37 @@ class CarriageUnloadDecisionTest {
         assertTrue(delivered == 16, "exact selection should deliver only the manifest quantity");
         assertFalse(pool.isEmpty(), "remaining cargo should stay in the pool for onward legs");
     }
+
+    @Test
+    void noSpecEntryDoesNotDrainPoolWhenThereIsOnwardCargo() {
+        // 多站连运：本站条目无规格 + 还有续运货(hasKeepOnboard=true) → 不得全卸（否则把续运货误投本站）
+        java.util.List<com.monpai.sailboatmod.market.ShipmentManifestEntry> deliverHere = java.util.List.of(
+                new com.monpai.sailboatmod.market.ShipmentManifestEntry(
+                        "", net.minecraft.world.item.ItemStack.EMPTY, "po-1", "so-1", "uuid", "buyer", 0));
+        java.util.List<net.minecraft.world.item.ItemStack> pool = new java.util.ArrayList<>(java.util.List.of(
+                new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.OAK_LOG, 64)));
+
+        java.util.List<net.minecraft.world.item.ItemStack> deliver =
+                com.monpai.sailboatmod.block.entity.DockBlockEntity.resolveDeliverCargo(pool, deliverHere, true);
+
+        assertTrue(deliver.isEmpty(),
+                "no-spec entry must NOT drain the whole pool when onward cargo remains (would mis-deliver)");
+        assertFalse(pool.isEmpty(), "onward cargo must stay on the vehicle");
+    }
+
+    @Test
+    void noSpecEntryDrainsPoolOnlyWhenNoOnwardCargo() {
+        // 终点站：无续运货(hasKeepOnboard=false) → 空规格才安全兜底全卸（修手动发车）
+        java.util.List<com.monpai.sailboatmod.market.ShipmentManifestEntry> deliverHere = java.util.List.of(
+                new com.monpai.sailboatmod.market.ShipmentManifestEntry(
+                        "", net.minecraft.world.item.ItemStack.EMPTY, "po-1", "so-1", "uuid", "buyer", 0));
+        java.util.List<net.minecraft.world.item.ItemStack> pool = new java.util.ArrayList<>(java.util.List.of(
+                new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.OAK_LOG, 64)));
+
+        java.util.List<net.minecraft.world.item.ItemStack> deliver =
+                com.monpai.sailboatmod.block.entity.DockBlockEntity.resolveDeliverCargo(pool, deliverHere, false);
+
+        assertFalse(deliver.isEmpty(), "no-spec entry at final stop should fall back to delivering the whole pool");
+        assertTrue(pool.isEmpty(), "fallback delivery drains the pool at the final stop");
+    }
 }

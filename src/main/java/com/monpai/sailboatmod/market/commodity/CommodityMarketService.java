@@ -105,6 +105,47 @@ public final class CommodityMarketService {
         return chargedQuote;
     }
 
+    public void recordTradeAtPrice(ItemStack itemStack, MarketTradeSide tradeSide, int quantity,
+                                   int unitPrice, int totalPrice,
+                                   String sourceMarketPos, String sourceNationId, String targetNationId,
+                                   String actorUuid, String actorName) throws SQLException {
+        CommoditySnapshot snapshot = ensureCommodity(itemStack);
+        CommodityMarketState current = snapshot.state();
+        int safeQuantity = Math.max(1, quantity);
+        int nextStock = tradeSide == MarketTradeSide.BUY
+                ? current.currentStock() - safeQuantity
+                : current.currentStock() + safeQuantity;
+        long now = System.currentTimeMillis();
+        CommodityMarketState updated = new CommodityMarketState(
+                current.commodityKey(),
+                current.basePrice(),
+                nextStock,
+                current.volatility(),
+                current.spreadBp(),
+                current.stockFloor(),
+                current.stockCeil(),
+                current.priceFloor(),
+                current.priceCeil(),
+                now,
+                now,
+                current.version() + 1
+        );
+        repository.upsertState(updated);
+        repository.appendTrade(new CommodityTradeRecord(
+                current.commodityKey(),
+                tradeSide,
+                safeQuantity,
+                Math.max(0, unitPrice),
+                Math.max(0, totalPrice),
+                sourceMarketPos,
+                sourceNationId,
+                targetNationId,
+                actorUuid,
+                actorName,
+                now
+        ));
+    }
+
     public void setPlayerPriceAdjustment(String playerUuid, int buyAdjustmentBp, int sellAdjustmentBp) throws SQLException {
         PlayerMarketSettings settings = new PlayerMarketSettings(playerUuid, buyAdjustmentBp, sellAdjustmentBp);
         repository.upsertPlayerSettings(settings);

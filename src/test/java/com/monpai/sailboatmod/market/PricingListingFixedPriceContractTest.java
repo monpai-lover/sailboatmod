@@ -46,6 +46,15 @@ class PricingListingFixedPriceContractTest {
     }
 
     @Test
+    void purchaseTradeHistoryUsesActualListingPriceNotDynamicQuote() throws Exception {
+        String source = marketBlockEntity();
+        assertTrue(source.contains("COMMODITY_MARKET.recordTradeAtPrice("),
+                "purchase trade history should record the actual fixed listing unit price");
+        assertFalse(source.contains("COMMODITY_MARKET.applyTrade(\n                    listing.itemStack(),\n                    MarketTradeSide.BUY"),
+                "purchase trade history must not call applyTrade because it recomputes a dynamic quote price");
+    }
+
+    @Test
     void overviewSuggestedPriceUsesReferenceNotDynamicQuote() throws Exception {
         String source = marketBlockEntity();
         assertTrue(source.contains("COMMODITY_MARKET.referencePrice("),
