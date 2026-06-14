@@ -356,6 +356,27 @@ public final class CommodityMarketService {
         return estimateBaseUnitPrice(definition);
     }
 
+    /** 参考价取样：最近 N 笔成交（spec 决策 N=20，可调）。 */
+    public static final int REFERENCE_TRADE_SAMPLE_SIZE = 20;
+
+    /**
+     * 参考价 = 最近 N 笔成交均价；无成交记录时回退到基准价（estimateBaseUnitPrice）作初始锚。
+     * 仅用于上架价格保护与建议价，不驱动任何实际成交价。
+     */
+    public int referencePrice(ItemStack itemStack) {
+        int fallback = Math.max(1, estimateBaseUnitPrice(itemStack));
+        if (itemStack == null || itemStack.isEmpty()) {
+            return fallback;
+        }
+        try {
+            String commodityKey = CommodityKeyResolver.resolve(itemStack);
+            int avg = repository.recentTradeAveragePrice(commodityKey, REFERENCE_TRADE_SAMPLE_SIZE);
+            return avg > 0 ? avg : fallback;
+        } catch (SQLException exception) {
+            return fallback;
+        }
+    }
+
     private CommodityMarketState defaultState(CommodityDefinition definition) {
         long now = System.currentTimeMillis();
         int base = estimateBaseUnitPrice(definition);

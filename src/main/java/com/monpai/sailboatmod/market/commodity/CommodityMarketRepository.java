@@ -159,6 +159,35 @@ public final class CommodityMarketRepository {
         }
     }
 
+    /**
+     * 最近 n 笔成交的单价均值（按成交时间倒序取 n 笔）。无成交记录返回 0（由 service 层回退 basePrice）。
+     * 用子查询先取最近 n 笔，再对其 unit_price 求均值，避免对全表平均。
+     */
+    public int recentTradeAveragePrice(String commodityKey, int n) throws SQLException {
+        int safeN = Math.max(1, n);
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                SELECT AVG(unit_price) AS avg_price FROM (
+                    SELECT unit_price FROM commodity_trade_history
+                    WHERE commodity_key = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                )
+                """)) {
+            statement.setString(1, commodityKey == null ? "" : commodityKey);
+            statement.setInt(2, safeN);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    double avg = resultSet.getDouble("avg_price");
+                    if (!resultSet.wasNull() && avg > 0) {
+                        return (int) Math.round(avg);
+                    }
+                }
+                return 0;
+            }
+        }
+    }
+
     public List<CommodityPriceChartPoint> listTradeHistoryBuckets(String commodityKey, long bucketSizeMs, int bucketCount) throws SQLException {
         if (commodityKey == null || commodityKey.isBlank() || bucketSizeMs <= 0 || bucketCount <= 0) {
             return List.of();

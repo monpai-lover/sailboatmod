@@ -78,8 +78,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private static final double PORT_PREVIEW_SPEED_MPS = 8.0D;
     private static final double POST_STATION_PREVIEW_SPEED_MPS = 5.0D;
     private static final boolean ALLOW_TERRAIN_FALLBACK_FOR_POST_STATION_DISPATCH = false;
-    private static final int MIN_LISTING_PRICE_BP = -1000;
-    private static final int MAX_LISTING_PRICE_BP = 1000;
     private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
     private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
     private String marketName = "";
@@ -237,7 +235,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     String itemKey = ForgeRegistries.ITEMS.getKey(stack.getItem()) != null
                             ? ForgeRegistries.ITEMS.getKey(stack.getItem()).toString()
                             : "";
-                    int suggestedUnitPrice = currentCommodityUnitPrice(stack, 1, CommodityMarketService.estimateBaseUnitPrice(stack));
+                    int suggestedUnitPrice = COMMODITY_MARKET.referencePrice(stack);
                     ListingPriceWindow priceWindow = listingPriceWindow(stack, 1, suggestedUnitPrice);
                     storageEntries.add(new MarketOverviewData.StorageEntry(
                             label,
@@ -517,7 +515,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (!warehouse.extractVisibleStorage(sellerId, visibleStorageIndex, amount)) {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
-        adjustCommoditySupply(listed, amount);
+        // pricing: listing no longer bumps stock (stock no longer drives price)
         MarketSavedData market = MarketSavedData.get(level);
         String listingTownId = warehouse.getTownId();
         String listingNationId = "";
@@ -612,12 +610,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         sellerPayout = tariffResult.sellerReceives();
         com.monpai.sailboatmod.nation.service.TaxService.recordTrade(level, this.worldPosition);
         paySeller(market, listing.sellerUuid(), listing.sellerName(), sellerPayout);
+        // pricing: keep the seller-fixed unit price on resale
         market.putListing(new MarketListing(
                 listing.listingId(),
                 listing.sellerUuid(),
                 listing.sellerName(),
                 listing.itemStack(),
-                currentListingUnitPrice(listing, 1),
+                listing.unitPrice(),
                 Math.max(0, listing.availableCount() - amount),
                 listing.reservedCount() + amount,
                 listing.sourceDockPos(),
@@ -2044,51 +2043,26 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
-    private int currentCommodityUnitPrice(ItemStack stack, int quantity, int fallbackPrice) {
-        CommodityQuote quote = quoteCommodity(stack, quantity);
-        if (quote == null) {
-            return Math.max(1, fallbackPrice);
-        }
-        return Math.max(1, quote.buyUnitPrice());
-    }
-
     private ListingPriceWindow listingPriceWindow(ItemStack stack, int quantity, int requestedUnitPrice) {
-        int referenceUnitPrice = currentCommodityUnitPrice(stack, quantity, CommodityMarketService.estimateBaseUnitPrice(stack));
-        return MarketPricePolicy.listingWindow(
-                hasConstrainedListingPrice(stack),
-                referenceUnitPrice,
-                requestedUnitPrice,
-                MIN_LISTING_PRICE_BP,
-                MAX_LISTING_PRICE_BP
-        );
+        // pricing: protection band is reference-price +/-50%, not dynamic-quote bp
+        int referenceUnitPrice = COMMODITY_MARKET.referencePrice(stack);
+        return MarketPricePolicy.referencePriceWindow(referenceUnitPrice, requestedUnitPrice);
     }
 
     private int currentListingUnitPrice(MarketListing listing, int quantity) {
+        // pricing: listing price is fixed by the seller, never recomputed from stock/quote
         if (listing == null) {
             return 0;
         }
-        if (!hasConstrainedListingPrice(listing.itemStack())) {
-            return Math.max(1, listing.unitPrice());
-        }
-        CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
-        int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listing.itemStack()), listing.unitPrice());
-        int basePrice = quote == null ? Math.max(1, fallbackPrice) : Math.max(1, quote.buyUnitPrice());
-        return applyPriceAdjustment(basePrice, listing.priceAdjustmentBp());
+        return Math.max(1, listing.unitPrice());
     }
 
     private int currentListingTotalPrice(MarketListing listing, int quantity) {
+        // pricing: total is the seller-fixed unit price times quantity, no dynamic recompute
         if (listing == null) {
             return 0;
         }
-        if (!hasConstrainedListingPrice(listing.itemStack())) {
-            return safeTotalPrice(listing.unitPrice(), quantity);
-        }
-        CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
-        int fallbackUnitPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listing.itemStack()), listing.unitPrice());
-        int baseTotal = quote == null
-                ? Math.max(1, fallbackUnitPrice) * Math.max(1, quantity)
-                : Math.max(0, quote.buyPrice());
-        return Math.max(0, applyPriceAdjustment(baseTotal, listing.priceAdjustmentBp()));
+        return safeTotalPrice(listing.unitPrice(), quantity);
     }
 
     private int applyPriceAdjustment(int basePrice, int priceAdjustmentBp) {
@@ -2097,10 +2071,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private int derivePriceAdjustmentBp(int basePrice, int requestedUnitPrice) {
         return MarketPricePolicy.derivePriceAdjustmentBp(basePrice, requestedUnitPrice);
-    }
-
-    private boolean hasConstrainedListingPrice(ItemStack stack) {
-        return CommodityConfigLoader.hasExplicitBasePrice(CommodityKeyResolver.resolve(stack));
     }
 
     private int safeTotalPrice(int unitPrice, int quantity) {
