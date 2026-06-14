@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.entity.TransportEntity;
 import com.monpai.sailboatmod.market.MarketDispatchPlanner;
 import com.monpai.sailboatmod.market.MarketListing;
+import com.monpai.sailboatmod.market.FulfillmentMode;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketPricePolicy;
 import com.monpai.sailboatmod.market.MarketPricePolicy.ListingPriceWindow;
@@ -557,6 +558,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean purchaseListing(String playerUuid, String playerName, @Nullable Player onlinePlayer, int listingIndex, int quantity) {
+        return purchaseListing(playerUuid, playerName, onlinePlayer, listingIndex, quantity, "SELLER_SHIP", null);
+    }
+
+    public boolean purchaseListing(String playerUuid, String playerName, @Nullable Player onlinePlayer, int listingIndex, int quantity,
+                                   String fulfillment, @Nullable BlockPos targetWarehousePos) {
         if (level == null || level.isClientSide) {
             return false;
         }
@@ -565,10 +571,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (listing == null) {
             return false;
         }
-        return purchaseListingResolved(playerUuid, playerName, onlinePlayer, listing, quantity);
+        return purchaseListingResolved(playerUuid, playerName, onlinePlayer, listing, quantity, fulfillment, targetWarehousePos);
     }
 
     public boolean purchaseListingById(String playerUuid, String playerName, @Nullable Player onlinePlayer, String listingId, int quantity) {
+        return purchaseListingById(playerUuid, playerName, onlinePlayer, listingId, quantity, "SELLER_SHIP", null);
+    }
+
+    public boolean purchaseListingById(String playerUuid, String playerName, @Nullable Player onlinePlayer, String listingId, int quantity,
+                                       String fulfillment, @Nullable BlockPos targetWarehousePos) {
         if (level == null || level.isClientSide) {
             return false;
         }
@@ -577,11 +588,62 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (listing == null) {
             return false;
         }
-        return purchaseListingResolved(playerUuid, playerName, onlinePlayer, listing, quantity);
+        return purchaseListingResolved(playerUuid, playerName, onlinePlayer, listing, quantity, fulfillment, targetWarehousePos);
+    }
+
+    /** 买家可用的收货仓库坐标列表：经其 nation 的各 town → town 仓库。供 UI 下拉与下单回退。 */
+    public java.util.List<BlockPos> receivingWarehouseCandidatesFor(String buyerUuid) {
+        java.util.List<BlockPos> out = new java.util.ArrayList<>();
+        if (level == null || level.isClientSide || buyerUuid == null || buyerUuid.isBlank()) {
+            return out;
+        }
+        UUID uuid;
+        try {
+            uuid = UUID.fromString(buyerUuid.trim());
+        } catch (IllegalArgumentException ex) {
+            return out;
+        }
+        NationSavedData nations = NationSavedData.get(level);
+        com.monpai.sailboatmod.nation.model.NationMemberRecord member = nations.getMember(uuid);
+        if (member == null || member.nationId() == null || member.nationId().isBlank()) {
+            return out;
+        }
+        for (TownRecord town : nations.getTownsForNation(member.nationId())) {
+            BlockPos warehousePos = TownWarehouseRegistry.get(level, town.townId());
+            if (warehousePos != null && !out.contains(warehousePos)) {
+                out.add(warehousePos);
+            }
+        }
+        return out;
+    }
+
+    /** 买家默认收货仓：候选列表第一个；无则返回 null（下单回退由调用方处理）。 */
+    @Nullable
+    public BlockPos defaultReceivingWarehouseFor(String buyerUuid) {
+        java.util.List<BlockPos> candidates = receivingWarehouseCandidatesFor(buyerUuid);
+        return candidates.isEmpty() ? null : candidates.get(0);
+    }
+
+    /** 下单目的地解析：买家选的收货仓 → 买家默认收货仓 → 现状 linkedDockPos（最终回退）。 */
+    private BlockPos resolveBuyerTargetWarehouse(String buyerUuid, @Nullable BlockPos chosen) {
+        if (chosen != null && !chosen.equals(BlockPos.ZERO)) {
+            return chosen;
+        }
+        BlockPos preferred = defaultReceivingWarehouseFor(buyerUuid);
+        return preferred != null ? preferred : linkedDockPos;
+    }
+
+    /** 取某仓库坐标的显示名：是 town 仓则用其名，否则回退 linked 仓名。 */
+    private String warehouseDisplayNameFor(BlockPos warehousePos, TownWarehouseBlockEntity fallback) {
+        if (level != null && level.getBlockEntity(warehousePos) instanceof TownWarehouseBlockEntity w) {
+            return w.getDisplayName().getString();
+        }
+        return fallback.getDisplayName().getString();
     }
 
     private boolean purchaseListingResolved(String playerUuid, String playerName, @Nullable Player onlinePlayer,
-                                            MarketListing listing, int quantity) {
+                                            MarketListing listing, int quantity,
+                                            String fulfillment, @Nullable BlockPos targetWarehousePos) {
         TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
         String safePlayerName = playerName == null ? "" : playerName.trim();
@@ -626,6 +688,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.priceAdjustmentBp(),
                 listing.sellerNote()
         ));
+        BlockPos receivingWarehouse = resolveBuyerTargetWarehouse(safePlayerUuid, targetWarehousePos);
+        String fulfillmentMode = FulfillmentMode.fromString(fulfillment).name();
         PurchaseOrder createdOrder = new PurchaseOrder(
                 market.nextId(),
                 listing.listingId(),
@@ -635,9 +699,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 total,
                 listing.sourceDockPos(),
                 listing.sourceDockName(),
-                linkedDockPos,
-                warehouse.getDisplayName().getString(),
-                "WAITING_SHIPMENT"
+                receivingWarehouse,
+                warehouseDisplayNameFor(receivingWarehouse, warehouse),
+                "WAITING_SHIPMENT",
+                fulfillmentMode,
+                receivingWarehouse
         );
         market.putPurchaseOrder(createdOrder);
         String buyerTownId = warehouse.getTownId();
@@ -1104,7 +1170,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 order.sourceDockName(),
                 order.targetDockPos(),
                 order.targetDockName(),
-                "CLAIMED"
+                "CLAIMED",
+                order.fulfillment(),
+                order.targetWarehousePos()
         ));
         ProcurementService.markDeliveredByOrder(level, order.orderId(), "", warehouse.getTownId(),
                 CommodityKeyResolver.resolve(listing.itemStack()), order.quantity());
@@ -1803,7 +1871,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     order.sourceDockName(),
                     order.targetDockPos(),
                     order.targetDockName(),
-                    "IN_TRANSIT"
+                    "IN_TRANSIT",
+                    order.fulfillment(),
+                    order.targetWarehousePos()
             ));
             if (selection.remainderOrder() != null) {
                 market.putPurchaseOrder(selection.remainderOrder());
@@ -1905,7 +1975,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 order.sourceDockName(),
                 order.targetDockPos(),
                 order.targetDockName(),
-                order.status()
+                order.status(),
+                order.fulfillment(),
+                order.targetWarehousePos()
         );
         PurchaseOrder remainder = new PurchaseOrder(
                 market.nextId(),
@@ -1918,7 +1990,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 order.sourceDockName(),
                 order.targetDockPos(),
                 order.targetDockName(),
-                "WAITING_SHIPMENT"
+                "WAITING_SHIPMENT",
+                order.fulfillment(),
+                order.targetWarehousePos()
         );
         return new PurchaseSplit(shipped, remainder);
     }

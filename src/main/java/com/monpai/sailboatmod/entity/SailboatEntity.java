@@ -2304,7 +2304,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                         purchaseOrder.sourceDockName(),
                         purchaseOrder.targetDockPos(),
                         purchaseOrder.targetDockName(),
-                        nextStatus
+                        nextStatus,
+                        purchaseOrder.fulfillment(),
+                        purchaseOrder.targetWarehousePos()
                 ));
                 MarketListing listing = market.getListing(purchaseOrder.listingId());
                 if (listing != null && rolledBackToMarket) {

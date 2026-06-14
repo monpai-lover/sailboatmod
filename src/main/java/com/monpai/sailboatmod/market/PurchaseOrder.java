@@ -16,7 +16,9 @@ public record PurchaseOrder(
         String sourceDockName,
         BlockPos targetDockPos,
         String targetDockName,
-        String status
+        String status,
+        String fulfillment,
+        BlockPos targetWarehousePos
 ) {
     public PurchaseOrder {
         orderId = sanitize(orderId);
@@ -30,6 +32,10 @@ public record PurchaseOrder(
         targetDockPos = targetDockPos == null ? BlockPos.ZERO : targetDockPos.immutable();
         targetDockName = sanitize(targetDockName);
         status = sanitize(status).isBlank() ? "PAID" : sanitize(status);
+        fulfillment = FulfillmentMode.fromString(fulfillment).name();
+        targetWarehousePos = targetWarehousePos == null || targetWarehousePos.equals(BlockPos.ZERO)
+                ? targetDockPos
+                : targetWarehousePos.immutable();
     }
 
     public CompoundTag save() {
@@ -45,6 +51,8 @@ public record PurchaseOrder(
         tag.putLong("TargetDockPos", targetDockPos.asLong());
         tag.putString("TargetDockName", targetDockName);
         tag.putString("Status", status);
+        tag.putString("Fulfillment", fulfillment);
+        tag.putLong("TargetWarehousePos", targetWarehousePos.asLong());
         return tag;
     }
 
@@ -60,7 +68,9 @@ public record PurchaseOrder(
                 tag.getString("SourceDockName"),
                 BlockPos.of(tag.getLong("TargetDockPos")),
                 tag.getString("TargetDockName"),
-                tag.getString("Status")
+                tag.getString("Status"),
+                tag.contains("Fulfillment") ? tag.getString("Fulfillment") : "",
+                tag.contains("TargetWarehousePos") ? BlockPos.of(tag.getLong("TargetWarehousePos")) : BlockPos.ZERO
         );
     }
 

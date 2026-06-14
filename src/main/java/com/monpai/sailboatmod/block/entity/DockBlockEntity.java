@@ -973,7 +973,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 order.sourceDockName(),
                 order.targetDockPos(),
                 order.targetDockName(),
-                "CLAIMED"
+                "CLAIMED",
+                order.fulfillment(),
+                order.targetWarehousePos()
         ));
         if (entry.shippingOrderId() != null && !entry.shippingOrderId().isBlank()) {
             ShippingOrder shippingOrder = market.getShippingOrder(entry.shippingOrderId());
@@ -1537,7 +1539,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     order.sourceDockName(),
                     order.targetDockPos(),
                     order.targetDockName(),
-                    "IN_TRANSIT"
+                    "IN_TRANSIT",
+                    order.fulfillment(),
+                    order.targetWarehousePos()
             ));
             if (selection.remainderOrder() != null) {
                 market.putPurchaseOrder(selection.remainderOrder());
@@ -1706,7 +1710,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 order.sourceDockName(),
                 order.targetDockPos(),
                 order.targetDockName(),
-                order.status()
+                order.status(),
+                order.fulfillment(),
+                order.targetWarehousePos()
         );
         PurchaseOrder remainder = new PurchaseOrder(
                 market.nextId(),
@@ -1719,7 +1725,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 order.sourceDockName(),
                 order.targetDockPos(),
                 order.targetDockName(),
-                "WAITING_SHIPMENT"
+                "WAITING_SHIPMENT",
+                order.fulfillment(),
+                order.targetWarehousePos()
         );
         return new PurchaseSplit(shipped, remainder);
     }
@@ -2113,7 +2121,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                         order.sourceDockName(),
                         order.targetDockPos(),
                         order.targetDockName(),
-                        "ARRIVED"
+                        "ARRIVED",
+                        order.fulfillment(),
+                        order.targetWarehousePos()
                 ));
             }
         }
@@ -2164,7 +2174,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     order.sourceDockName(),
                     order.targetDockPos(),
                     order.targetDockName(),
-                    "CLAIMED"
+                    "CLAIMED",
+                    order.fulfillment(),
+                    order.targetWarehousePos()
             ));
             if (entry.shippingOrderId != null && !entry.shippingOrderId.isBlank()) {
                 ShippingTraceService.updateStatus(level, entry.shippingOrderId, "CLAIMED");

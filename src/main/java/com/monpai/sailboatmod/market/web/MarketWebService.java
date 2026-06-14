@@ -282,6 +282,11 @@ public final class MarketWebService {
     }
 
     public boolean purchaseListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int listingIndex, int quantity) {
+        return purchaseListing(server, identity, marketId, listingIndex, quantity, "SELLER_SHIP", null);
+    }
+
+    public boolean purchaseListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int listingIndex, int quantity,
+                                   String fulfillment, net.minecraft.core.BlockPos targetWarehousePos) {
         ResolvedMarket resolved = resolveMarket(server, marketId);
         return resolved != null && identity != null
                 && resolved.market().purchaseListing(
@@ -289,7 +294,9 @@ public final class MarketWebService {
                 identity.playerName(),
                 identity.onlinePlayer(),
                 listingIndex,
-                quantity
+                quantity,
+                fulfillment,
+                targetWarehousePos
         );
     }
 
