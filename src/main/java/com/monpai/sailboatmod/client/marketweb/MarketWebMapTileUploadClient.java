@@ -93,7 +93,7 @@ public final class MarketWebMapTileUploadClient {
 
     private static UploadPixels selectUploadPixels(RoadPlannerMapTileSyncPacket packet, int[] mergedPixels) {
         if (mergedPixels != null && mergedPixels.length == MarketWebMapConstants.TILE_SIZE * MarketWebMapConstants.TILE_SIZE) {
-            return new UploadPixels(Arrays.copyOf(mergedPixels, mergedPixels.length), true);
+            return new UploadPixels(Arrays.copyOf(mergedPixels, mergedPixels.length), false);
         }
         if (packet == null || hasPartialCoverage(packet.coverageMask())) {
             return UploadPixels.empty();

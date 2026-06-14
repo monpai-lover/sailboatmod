@@ -36,6 +36,15 @@ class MapBlockColorsTest {
     }
 
     @Test
+    void aquaticPlantsUseWaterColorInsteadOfUnknownBlackFallback() {
+        int water = MapBlockColors.waterArgb();
+        assertEquals(water, MapBlockColors.lookup("minecraft:seagrass"));
+        assertEquals(water, MapBlockColors.lookup("minecraft:tall_seagrass"));
+        assertEquals(water, MapBlockColors.lookup("minecraft:kelp"));
+        assertEquals(water, MapBlockColors.lookup("minecraft:kelp_plant"));
+    }
+
+    @Test
     void unknownBlockHasNoMappingSoCallerCanFallBack() {
         assertNull(MapBlockColors.lookup("minecraft:not_a_real_block"));
     }

@@ -65,6 +65,19 @@ public final class MarketWebCommands {
                                         .executes(context -> startRadiusMapRender(
                                                 context.getSource(),
                                                 IntegerArgumentType.getInteger(context, "radiusBlocks")))))
+                        .then(Commands.literal("arearender")
+                                .then(Commands.argument("x1", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z1", IntegerArgumentType.integer())
+                                                .then(Commands.argument("x2", IntegerArgumentType.integer())
+                                                        .then(Commands.argument("z2", IntegerArgumentType.integer())
+                                                                .executes(context -> startAreaMapRender(
+                                                                        context.getSource(),
+                                                                        IntegerArgumentType.getInteger(context, "x1"),
+                                                                        IntegerArgumentType.getInteger(context, "z1"),
+                                                                        IntegerArgumentType.getInteger(context, "x2"),
+                                                                        IntegerArgumentType.getInteger(context, "z2"))))))))
+                        .then(Commands.literal("borderrender")
+                                .executes(context -> startWorldBorderMapRender(context.getSource())))
                         .then(Commands.literal("scan")
                                 .executes(context -> enqueueMapRegionScan(context.getSource())))
                         .then(Commands.literal("status")
@@ -182,6 +195,37 @@ public final class MarketWebCommands {
         return 1;
     }
 
+    private static int startAreaMapRender(CommandSourceStack source, int x1, int z1, int x2, int z2) {
+        boolean started = MarketWebMapRenderService.global().startAreaRender(
+                source.getServer().overworld(),
+                x1,
+                z1,
+                x2,
+                z2);
+        if (!started) {
+            source.sendFailure(Component.literal("Market web map arearender could not start. A render may already be active."));
+            return 0;
+        }
+        int minX = Math.min(x1, x2);
+        int maxX = Math.max(x1, x2);
+        int minZ = Math.min(z1, z2);
+        int maxZ = Math.max(z1, z2);
+        source.sendSuccess(() -> Component.literal("Market web map arearender started for blocks X "
+                + minX + ".." + maxX + ", Z " + minZ + ".." + maxZ
+                + ". Chunks will be queued gradually without force-loading."), true);
+        return 1;
+    }
+
+    private static int startWorldBorderMapRender(CommandSourceStack source) {
+        boolean started = MarketWebMapRenderService.global().startWorldBorderRender(source.getServer().overworld());
+        if (!started) {
+            source.sendFailure(Component.literal("Market web map borderrender could not start. A render may already be active or no saved chunks were found inside the world border."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Market web map borderrender started for saved chunks inside the overworld border. Chunks will be queued gradually without force-loading."), true);
+        return 1;
+    }
+
     private static int pauseMapRender(CommandSourceStack source) {
         boolean paused = MarketWebMapRenderService.global().pauseRender();
         if (!paused) {
@@ -223,6 +267,11 @@ public final class MarketWebCommands {
                 + " imageIO=" + status.pendingImageIo()), false);
         source.sendSuccess(() -> Component.literal("Progress chunks: " + status.processedChunks() + "/" + status.totalChunks()
                 + " regions: " + status.processedRegions() + "/" + status.totalRegions()), false);
+        source.sendSuccess(() -> Component.literal("Dirty regions/chunks: " + status.dirtyRegions() + "/" + status.dirtyChunks()
+                + " trackedRegions=" + status.trackedRegions()
+                + " failedChunks=" + status.failedChunks()), false);
+        source.sendSuccess(() -> Component.literal("Current cursor: region " + status.currentRegionX() + "," + status.currentRegionZ()
+                + " localChunk=" + status.currentLocalChunk()), false);
         source.sendSuccess(() -> Component.literal("Renderer version: " + MarketWebMapTileCache.RENDER_VERSION), false);
         return queueSize;
     }

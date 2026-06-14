@@ -76,6 +76,33 @@ class MarketWebMapNbtChunkSnapshotReaderTest {
         assertEquals(MapBlockColors.lookup("minecraft:grass_block"), sample.baseArgb());
     }
 
+    @Test
+    void treatsAquaticPlantsAsWaterInsteadOfUnknownBlackSurface() {
+        for (String plant : new String[]{
+                "minecraft:seagrass",
+                "minecraft:tall_seagrass",
+                "minecraft:kelp",
+                "minecraft:kelp_plant"
+        }) {
+            CompoundTag chunk = fullChunkTag();
+            int[] states = new int[4096];
+            states[index(0, 0, 0)] = 1;
+            states[index(0, 1, 0)] = 2;
+            chunk.put("sections", sections(packedSection(
+                    4,
+                    new String[]{"minecraft:air", "minecraft:water", plant},
+                    states)));
+
+            Optional<MarketWebMapChunkSnapshot> snapshot = MarketWebMapNbtChunkSnapshotReader.captureForTest(
+                    "minecraft:overworld", 0, 0, chunk, 0, 384);
+
+            assertTrue(snapshot.isPresent(), plant);
+            var sample = snapshot.get().samples()[0];
+            assertTrue(sample.water(), plant);
+            assertEquals(MapBlockColors.waterArgb(), sample.baseArgb(), plant);
+        }
+    }
+
     private static CompoundTag fullChunkTag() {
         CompoundTag tag = new CompoundTag();
         tag.putString("Status", "minecraft:full");

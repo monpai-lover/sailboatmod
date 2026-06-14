@@ -111,6 +111,7 @@ public class MarketWalletActionPacket {
         if (Boolean.TRUE.equals(deposited)) {
             return true;
         }
+        // rollback wallet: 实物金给付未成功，把已扣的钱包额精确退回
         MarketWalletService.deposit(player.level(), playerUuid, playerName, amount);
         return false;
     }

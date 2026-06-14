@@ -40,6 +40,10 @@ public final class MapBlockColors {
         put("minecraft:flowering_azalea_leaves", 0x6E8438);
         put("minecraft:water", WATER);
         put("minecraft:bubble_column", WATER);
+        put("minecraft:seagrass", WATER);
+        put("minecraft:tall_seagrass", WATER);
+        put("minecraft:kelp", WATER);
+        put("minecraft:kelp_plant", WATER);
         put("minecraft:snow", SNOW);
         put("minecraft:snow_block", SNOW);
         put("minecraft:powder_snow", SNOW);
@@ -428,6 +432,21 @@ public final class MapBlockColors {
     public static int waterArgb() {
         Integer water = COLORS.get("minecraft:water");
         return water == null ? 0xFF3F76C4 : water;
+    }
+
+    public static boolean isWaterSurface(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        if (state.getFluidState().is(net.minecraft.world.level.material.Fluids.WATER)) {
+            return true;
+        }
+        String key = blockKey(state);
+        return "minecraft:bubble_column".equals(key)
+                || "minecraft:seagrass".equals(key)
+                || "minecraft:tall_seagrass".equals(key)
+                || "minecraft:kelp".equals(key)
+                || "minecraft:kelp_plant".equals(key);
     }
 
     /**

@@ -70,6 +70,10 @@ public final class MarketWalletService {
 
     public static MarketWalletAccount deposit(MarketWalletAccount account, long amount, long nowMillis) {
         MarketWalletAccount safe = account == null ? MarketWalletAccount.empty("", "", nowMillis) : account;
+        if (safe.playerUuid() == null || safe.playerUuid().isBlank()) {
+            // 空身份账户不持有任何资金，防止未登录/匿名身份落到共享账户
+            return safe;
+        }
         long safeAmount = Math.max(0L, amount);
         return new MarketWalletAccount(
                 safe.playerUuid(),
@@ -82,6 +86,10 @@ public final class MarketWalletService {
 
     public static AccountResult withdraw(MarketWalletAccount account, long amount, long nowMillis) {
         MarketWalletAccount safe = account == null ? MarketWalletAccount.empty("", "", nowMillis) : account;
+        if (safe.playerUuid() == null || safe.playerUuid().isBlank()) {
+            // 空身份账户不可提款，防止匿名身份借共享账户取走资金
+            return AccountResult.failure(safe, Math.max(0L, amount));
+        }
         long safeAmount = Math.max(0L, amount);
         if (safeAmount <= 0L) {
             return AccountResult.success(new MarketWalletAccount(

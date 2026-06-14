@@ -93,7 +93,7 @@ class MarketWebMapRenderQueueTest {
     }
 
     @Test
-    void squareTileMissQueuesBoundedRegionScanWorkWithoutLoadedPredicate() {
+    void squareTileMissDoesNotQueueRegionScanWorkWithoutGeneratedRegionEvidence() {
         MarketWebMapRenderQueue queue = new MarketWebMapRenderQueue(4096);
 
         int queued = MarketWebMapRenderService.enqueueSquareTileRegionScanForTest(
@@ -105,12 +105,7 @@ class MarketWebMapRenderQueueTest {
                 10L,
                 48);
 
-        assertEquals(48, queued);
-        List<MarketWebMapRenderQueue.Task> tasks = queue.poll(64, 11L);
-        assertEquals(48, tasks.size());
-        assertEquals(MarketWebMapTileQuality.SERVER_REGION_SCAN, tasks.get(0).quality());
-        assertEquals(0, tasks.get(0).chunkX());
-        assertEquals(0, tasks.get(0).chunkZ());
-        assertTrue(tasks.stream().allMatch(task -> task.quality() == MarketWebMapTileQuality.SERVER_REGION_SCAN));
+        assertEquals(0, queued);
+        assertEquals(0, queue.poll(64, 11L).size());
     }
 }

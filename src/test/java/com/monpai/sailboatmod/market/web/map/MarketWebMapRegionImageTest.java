@@ -20,22 +20,24 @@ class MarketWebMapRegionImageTest {
     Path tempDir;
 
     @Test
-    void writesRegionAndPyramidOnlyAfterAllChunksArePresent() throws Exception {
+    void doesNotPublishPartialRegionPixelsBeforeAllChunksAreReady() throws Exception {
         MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
         MarketWebMapRegionImage image = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, 0, 0);
 
         image.putChunkPixels(0, 0, chunkPixels(0xFF114477));
 
-        assertFalse(image.writeIfComplete(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 10L));
-        assertFalse(cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 0, 0, 0).isPresent());
+        assertFalse(image.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 10L));
+        assertTrue(cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 0, 0, 0).isEmpty());
+        assertTrue(cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 1, 0, 0).isEmpty());
 
+        MarketWebMapRegionImage full = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, 0, 0);
         for (int chunkZ = 0; chunkZ < 32; chunkZ++) {
             for (int chunkX = 0; chunkX < 32; chunkX++) {
-                image.putChunkPixels(chunkX, chunkZ, chunkPixels(colorFor(chunkX, chunkZ)));
+                full.putChunkPixels(chunkX, chunkZ, chunkPixels(colorFor(chunkX, chunkZ)));
             }
         }
 
-        assertTrue(image.writeIfComplete(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 20L));
+        assertTrue(full.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 20L));
 
         BufferedImage base = ImageIO.read(new ByteArrayInputStream(
                 cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 0, 0, 0).orElseThrow()));
@@ -47,7 +49,31 @@ class MarketWebMapRegionImageTest {
         BufferedImage zoomOne = ImageIO.read(new ByteArrayInputStream(
                 cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 1, 0, 0).orElseThrow()));
         assertEquals(colorFor(0, 0), zoomOne.getRGB(0, 0));
-        assertEquals(0x00000000, zoomOne.getRGB(300, 300));
+        assertEquals(colorFor(18, 18), zoomOne.getRGB(150, 150));
+    }
+
+    @Test
+    void completeRegionCanPublishWhenSomeChunksWereUnrenderable() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        MarketWebMapRegionImage image = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, 0, 0);
+
+        for (int chunkZ = 0; chunkZ < 32; chunkZ++) {
+            for (int chunkX = 0; chunkX < 32; chunkX++) {
+                if (chunkX == 31 && chunkZ == 31) {
+                    image.markChunkSkipped(chunkX, chunkZ);
+                } else {
+                    image.putChunkPixels(chunkX, chunkZ, chunkPixels(colorFor(chunkX, chunkZ)));
+                }
+            }
+        }
+
+        assertTrue(image.complete());
+        assertTrue(image.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 30L));
+
+        BufferedImage base = ImageIO.read(new ByteArrayInputStream(
+                cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 0, 0, 0).orElseThrow()));
+        assertEquals(colorFor(0, 0), base.getRGB(0, 0));
+        assertEquals(0x00000000, base.getRGB(511, 511));
     }
 
     @Test

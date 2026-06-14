@@ -61,6 +61,26 @@ public final class MarketWalletGoldSource {
         return warehouse.insertCargo(ownerId, currencyStacks(amount));
     }
 
+    /**
+     * 只读盘点：绑定仓库内该 owner 的金类物品折算为货币总值，与提取走同一口径同一仓库。
+     * 供两端 UI 显示"可存入数值"，不扣减任何物品。
+     */
+    public static long linkedWarehouseGoldValue(MarketBlockEntity market, UUID ownerId) {
+        if (market == null || ownerId == null) {
+            return 0L;
+        }
+        TownWarehouseBlockEntity warehouse = market.getLinkedWarehouse();
+        if (warehouse == null) {
+            return 0L;
+        }
+        long total = 0L;
+        for (Denomination denomination : denominations()) {
+            long count = Math.max(0, warehouse.countMatchingStock(ownerId, new ItemStack(denomination.item())));
+            total += count * denomination.unitValue();
+        }
+        return total;
+    }
+
     private static TownWarehouseBlockEntity linkedWarehouse(MarketBlockEntity market, UUID ownerId, long amount) {
         if (market == null || ownerId == null || amount <= 0L) {
             return null;

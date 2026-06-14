@@ -73,6 +73,24 @@ class MarketWebMapTileUploadDedupeTest {
     }
 
     @Test
+    void partialTileUploadKeepsMergedArgbChannelsForWebPng() throws Exception {
+        int[] rawPixels = pixels(0xFF000000);
+        rawPixels[0] = 0xFF0000CC;
+        boolean[] coverage = new boolean[rawPixels.length];
+        coverage[0] = true;
+        int[] mergedPixels = pixels(0xFF00AA00);
+        mergedPixels[0] = 0xFF0000CC;
+
+        byte[] png = MarketWebMapTileUploadClient.encodeSelectedUploadPngForTest(packet(rawPixels, coverage), mergedPixels);
+
+        BufferedImage image = ImageIO.read(new ByteArrayInputStream(png));
+        assertTrue(png.length > 0);
+        assertTrue(image != null);
+        assertTrue(image.getRGB(0, 0) == 0xFF0000CC);
+        assertTrue(image.getRGB(32, 32) == 0xFF00AA00);
+    }
+
+    @Test
     void partialTileUploadSkipsWhenMergedTileIsUnavailable() {
         int[] rawPixels = pixels(0xFF000000);
         rawPixels[0] = 0xFF0000CC;

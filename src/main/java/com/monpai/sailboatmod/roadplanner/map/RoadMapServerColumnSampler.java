@@ -5,7 +5,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.material.MapColor;
 
 public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
@@ -34,7 +33,7 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
             }
             BlockPos pos = new BlockPos(worldX, surfaceY, worldZ);
             BlockState state = level.getBlockState(pos);
-            boolean water = state.getFluidState().is(Fluids.WATER);
+            boolean water = MapBlockColors.isWaterSurface(state);
             int waterDepth = water ? waterDepth(level, pos) : 0;
             int reliefBaseY = Math.max(
                     level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX, worldZ + 1),
@@ -68,7 +67,7 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
     private static int waterDepth(ServerLevel level, BlockPos pos) {
         int depth = 0;
         BlockPos.MutableBlockPos mutable = pos.mutable();
-        while (level.getBlockState(mutable).getFluidState().is(Fluids.WATER) && mutable.getY() > level.getMinBuildHeight()) {
+        while (MapBlockColors.isWaterSurface(level.getBlockState(mutable)) && mutable.getY() > level.getMinBuildHeight()) {
             depth++;
             mutable.move(Direction.DOWN);
         }

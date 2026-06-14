@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.monpai.sailboatmod.ModConfig;
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
@@ -15,11 +16,12 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.IntSupplier;
 
 public final class MarketWebMapRenderService {
     private static final int MAX_QUEUE_TASKS = 4096;
-    private static final int SNAPSHOTS_PER_TICK = 4;
-    private static final int SAME_TILE_BURST_LIMIT = 8;
+    private static final int DEFAULT_SNAPSHOTS_PER_TICK = 4;
+    private static final int DEFAULT_SAME_TILE_BURST_LIMIT = 8;
     private static final int REGION_CHUNK_CHECKS_PER_TICK = 128;
     private static final int PLAYER_SCAN_INTERVAL_TICKS = 80;
     private static final int POINT_SCAN_INTERVAL_TICKS = 400;
@@ -66,11 +68,16 @@ public final class MarketWebMapRenderService {
         }
         ServerLevel level = server.getLevel(Level.OVERWORLD);
         if (level != null) {
+            renderManager.loadDirtyChunks(level);
             regionWatcher.start(level);
         }
     }
 
     public void stopRegionWatcher(MinecraftServer server) {
+        ServerLevel level = server == null ? null : server.getLevel(Level.OVERWORLD);
+        if (level != null) {
+            renderManager.saveDirtyChunks(level);
+        }
         regionWatcher.stop();
         synchronized (regionCursors) {
             regionCursors.clear();
@@ -117,7 +124,6 @@ public final class MarketWebMapRenderService {
         if (level == null) {
             return;
         }
-        addSquareTileCursor(dimensionId, zoom, tileX, tileZ);
         enqueueSquareTileChunksForTest(
                 queue,
                 dimensionId,
@@ -170,6 +176,14 @@ public final class MarketWebMapRenderService {
         return renderManager.startRadiusRender(level, centerBlockX, centerBlockZ, radiusBlocks);
     }
 
+    public boolean startAreaRender(ServerLevel level, int x1, int z1, int x2, int z2) {
+        return renderManager.startAreaRender(level, x1, z1, x2, z2);
+    }
+
+    public boolean startWorldBorderRender(ServerLevel level) {
+        return renderManager.startWorldBorderRender(level);
+    }
+
     public boolean pauseRender() {
         return renderManager.pause();
     }
@@ -207,9 +221,9 @@ public final class MarketWebMapRenderService {
 
     private void drainDirtyRegions() {
         for (long packedRegion : regionWatcher.drainDirtyRegions()) {
-            addRegionCursor(
-                    MarketWebMapRegionWatcher.unpackRegionX(packedRegion),
-                    MarketWebMapRegionWatcher.unpackRegionZ(packedRegion));
+            int regionX = MarketWebMapRegionWatcher.unpackRegionX(packedRegion);
+            int regionZ = MarketWebMapRegionWatcher.unpackRegionZ(packedRegion);
+            renderManager.markRegionDirty(regionX, regionZ);
         }
     }
 
@@ -274,7 +288,9 @@ public final class MarketWebMapRenderService {
 
     private void processSnapshotBudget(ServerLevel level, long nowMillis) {
         MarketWebMapTileCache cache = MarketWebMapTileCache.forServer(level.getServer());
-        for (MarketWebMapRenderQueue.Task task : queue.pollCoalesced(SNAPSHOTS_PER_TICK, SAME_TILE_BURST_LIMIT, nowMillis)) {
+        int snapshotsPerTick = configuredInt(ModConfig::marketWebSnapshotTasksPerTick, DEFAULT_SNAPSHOTS_PER_TICK);
+        int sameTileBurstLimit = configuredInt(ModConfig::marketWebSameTileBurstLimit, DEFAULT_SAME_TILE_BURST_LIMIT);
+        for (MarketWebMapRenderQueue.Task task : queue.pollCoalesced(snapshotsPerTick, sameTileBurstLimit, nowMillis)) {
             if (!MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
                 continue;
             }
@@ -424,7 +440,7 @@ public final class MarketWebMapRenderService {
                 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
             return 0;
         }
-        return new TileCursor(dimensionId, zoom, tileX, tileZ).enqueue(queue, nowMillis, Math.max(0, maxChunks));
+        return 0;
     }
 
     private void enqueuePlayerAreas(ServerLevel level, long nowMillis) {
@@ -570,6 +586,14 @@ public final class MarketWebMapRenderService {
             thread.setDaemon(true);
             return thread;
         });
+    }
+
+    private static int configuredInt(IntSupplier supplier, int fallback) {
+        try {
+            return supplier.getAsInt();
+        } catch (IllegalStateException exception) {
+            return fallback;
+        }
     }
 
     @FunctionalInterface

@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.route.LandTransportNetworkService;
 import com.monpai.sailboatmod.route.RoadAutoRouteService;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -25,11 +26,13 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
 
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 
 public class PostStationBlockEntity extends DockBlockEntity {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final boolean ALLOW_TERRAIN_FALLBACK_FOR_DISPATCH = false;
     private static final int ARRIVAL_PARKING_CLEARANCE_RADIUS_BLOCKS = 2;
     private static final int ARRIVAL_PARKING_CLEARANCE_SQ =
@@ -234,6 +237,10 @@ public class PostStationBlockEntity extends DockBlockEntity {
     }
 
     public boolean dispatchSelectedDestination(Player player) {
+        return dispatchSelectedDestination(player, -1);
+    }
+
+    public boolean dispatchSelectedDestination(Player player, int selectedVehicleEntityId) {
         if (!(level instanceof ServerLevel serverLevel)) {
             return false;
         }
@@ -264,7 +271,18 @@ public class PostStationBlockEntity extends DockBlockEntity {
             }
             return false;
         }
-        selectedVehicleIndex = clampSelectedIndexForTest(selectedVehicleIndex, vehicles.size());
+        selectedVehicleIndex = selectedVehicleIndexForEntityId(vehicles, selectedVehicleEntityId, selectedVehicleIndex);
+        if (selectedVehicleIndex < 0 || selectedVehicleIndex >= vehicles.size()) {
+            LOGGER.warn("[PostStationDispatch] selected vehicle vanished station={} player={} selectedEntityId={} available={}",
+                    worldPosition,
+                    player == null ? "-" : player.getName().getString(),
+                    selectedVehicleEntityId,
+                    vehicles.stream().map(TransportEntity::getTransportId).toList());
+            if (player != null) {
+                player.displayClientMessage(Component.translatable(transportNotReadyTranslationKey()), true);
+            }
+            return false;
+        }
         TransportEntity vehicle = vehicles.get(selectedVehicleIndex);
         if (!isVehicleAvailableForPostStationDispatch(vehicle, player)) {
             if (player != null) {
@@ -272,12 +290,30 @@ public class PostStationBlockEntity extends DockBlockEntity {
             }
             return false;
         }
+        LOGGER.info("[PostStationDispatch] starting station={} player={} selectedEntityId={} resolvedIndex={} vehicle={} uuid={} pos={} route={} waypoints={} cargo={}",
+                worldPosition,
+                player == null ? "-" : player.getName().getString(),
+                selectedVehicleEntityId,
+                selectedVehicleIndex,
+                vehicle.getTransportId(),
+                vehicle.getTransportUuid(),
+                vehicle.transportPosition(),
+                availability.plan().route().name(),
+                availability.plan().route().waypoints().size(),
+                vehicle.hasCargo());
         vehicle.setAllowNonOrderAutoReturn(autoReturnOnDispatch);
         vehicle.setAllowNonOrderAutoUnload(false);
         vehicle.setPendingShipper(player == null ? null : player.getName().getString());
         vehicle.setRouteCatalog(List.of(availability.plan().route()), 0, worldPosition);
         vehicle.setLandTransportTask(availability.plan(), autoReturnOnDispatch, CarriageEntity.TransportTaskKind.DISPATCH);
         boolean started = vehicle.startAutopilotFromRouteStart();
+        LOGGER.info("[PostStationDispatch] result started={} vehicle={} alive={} pos={} autopilot={} paused={}",
+                started,
+                vehicle.getTransportId(),
+                vehicle.isTransportAlive(),
+                vehicle.transportPosition(),
+                vehicle.isAutopilotActive(),
+                vehicle.isAutopilotPaused());
         if (!started && player != null) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.route_start_need_zone"), true);
         }
@@ -326,6 +362,38 @@ public class PostStationBlockEntity extends DockBlockEntity {
             return 0;
         }
         return Mth.clamp(selected, 0, size - 1);
+    }
+
+    private static int selectedVehicleIndexForEntityId(List<TransportEntity> vehicles, int entityId, int fallbackIndex) {
+        if (vehicles == null || vehicles.isEmpty()) {
+            return 0;
+        }
+        if (entityId >= 0) {
+            for (int i = 0; i < vehicles.size(); i++) {
+                TransportEntity vehicle = vehicles.get(i);
+                if (vehicle != null && vehicle.getTransportId() == entityId) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        return clampSelectedIndexForTest(fallbackIndex, vehicles.size());
+    }
+
+    static int selectedVehicleIndexForEntityIdForTest(List<Integer> vehicleEntityIds, int entityId, int fallbackIndex) {
+        if (vehicleEntityIds == null || vehicleEntityIds.isEmpty()) {
+            return 0;
+        }
+        if (entityId >= 0) {
+            for (int i = 0; i < vehicleEntityIds.size(); i++) {
+                Integer candidate = vehicleEntityIds.get(i);
+                if (candidate != null && candidate == entityId) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        return clampSelectedIndexForTest(fallbackIndex, vehicleEntityIds.size());
     }
 
     static boolean defaultAutoReturnOnDispatchForTest() {

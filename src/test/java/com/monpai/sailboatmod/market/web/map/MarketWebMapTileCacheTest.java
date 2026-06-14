@@ -215,6 +215,11 @@ class MarketWebMapTileCacheTest {
     }
 
     @Test
+    void rendererVersionInvalidatesPreRegionCompletenessTiles() {
+        assertTrue(MarketWebMapTileCache.RENDER_VERSION >= 5);
+    }
+
+    @Test
     void clearStaleServerChunksRemovesOldRendererVersionTiles() throws Exception {
         MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
         assertTrue(cache.mergeChunkArgb("minecraft:overworld", 0, 0, chunkPixels(0xFFCC0000),

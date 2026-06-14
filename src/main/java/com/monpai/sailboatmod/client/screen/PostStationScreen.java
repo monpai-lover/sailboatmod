@@ -77,7 +77,7 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
                 .bounds(x + 138, y + 4, 50, 16).build());
         addRenderableWidget(Button.builder(text("refresh"), button -> send(PostStationGuiActionPacket.Action.REFRESH))
                 .bounds(x + 146, y + 160, 40, 16).build());
-        dispatchButton = addRenderableWidget(Button.builder(text("dispatch"), button -> send(PostStationGuiActionPacket.Action.DISPATCH_SELECTED))
+        dispatchButton = addRenderableWidget(Button.builder(text("dispatch"), button -> sendDispatchSelected())
                 .bounds(x + 8, y + 142, 70, 16).build());
         recallButton = addRenderableWidget(Button.builder(text("recall"), button -> send(PostStationGuiActionPacket.Action.RECALL_SELECTED))
                 .bounds(x + 82, y + 142, 60, 16).build());
@@ -359,6 +359,12 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
 
     private void send(PostStationGuiActionPacket.Action action, int value) {
         ModNetwork.CHANNEL.sendToServer(new PostStationGuiActionPacket(data.stationPos(), action, value));
+    }
+
+    private void sendDispatchSelected() {
+        PostStationScreenData.VehicleEntry selectedVehicle = selectedVehicle();
+        int selectedVehicleId = selectedVehicle == null ? -1 : selectedVehicle.entityId();
+        send(PostStationGuiActionPacket.Action.DISPATCH_SELECTED, selectedVehicleId);
     }
 
     private static int combinedImageWidth() {

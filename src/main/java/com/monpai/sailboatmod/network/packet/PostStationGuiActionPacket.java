@@ -53,7 +53,7 @@ public class PostStationGuiActionPacket {
                         station.togglePostStationAutoReturn();
                     }
                 }
-                case DISPATCH_SELECTED -> station.dispatchSelectedDestination(player);
+                case DISPATCH_SELECTED -> station.dispatchSelectedDestination(player, packet.value);
                 case RECALL_SELECTED -> station.recallSelectedVehicle(player);
                 case ADV_LOAD_BOOK_FROM_HAND -> {
                     if (station.canManageDock(player)) {

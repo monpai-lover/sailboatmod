@@ -89,7 +89,12 @@ public class RoadPlannerTile implements AutoCloseable {
         if (image == null || !loadedFromCache) {
             return new int[0];
         }
-        return tilePixels();
+        int[] nativePixels = tilePixels();
+        int[] argbPixels = new int[nativePixels.length];
+        for (int index = 0; index < nativePixels.length; index++) {
+            argbPixels[index] = toNativeAbgr(nativePixels[index]);
+        }
+        return argbPixels;
     }
 
     public void updateChunkDirect(RoadPlannerChunkImage chunkImage, int chunkXInTile, int chunkZInTile) {

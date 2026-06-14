@@ -11,7 +11,6 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.material.MapColor;
 
 import java.util.Optional;
@@ -126,7 +125,7 @@ public record MarketWebMapChunkSnapshot(
             }
             BlockPos pos = new BlockPos(worldX, surfaceY, worldZ);
             BlockState state = chunk.getBlockState(pos);
-            boolean water = state.getFluidState().is(Fluids.WATER);
+            boolean water = MapBlockColors.isWaterSurface(state);
             int waterDepth = water ? waterDepth(level, chunk, pos) : 0;
             int reliefBaseY = Math.max(
                     chunkHeightOrFallback(chunk, localX, localZ + 1, surfaceY + 1),
@@ -151,7 +150,7 @@ public record MarketWebMapChunkSnapshot(
     private static int waterDepth(ServerLevel level, ChunkAccess chunk, BlockPos pos) {
         int depth = 0;
         BlockPos.MutableBlockPos mutable = pos.mutable();
-        while (chunk.getBlockState(mutable).getFluidState().is(Fluids.WATER) && mutable.getY() > level.getMinBuildHeight()) {
+        while (MapBlockColors.isWaterSurface(chunk.getBlockState(mutable)) && mutable.getY() > level.getMinBuildHeight()) {
             depth++;
             mutable.move(net.minecraft.core.Direction.DOWN);
         }

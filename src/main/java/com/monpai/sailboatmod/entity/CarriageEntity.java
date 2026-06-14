@@ -13,6 +13,7 @@ import com.monpai.sailboatmod.route.CarriageRoutePlanner;
 import com.monpai.sailboatmod.route.LandTransportNetworkService;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.NonNullList;
@@ -50,11 +51,13 @@ import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
 import software.bernie.geckolib.animatable.GeoEntity;
 import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
 import software.bernie.geckolib.core.animation.AnimatableManager;
@@ -76,6 +79,8 @@ import java.util.Set;
 import java.util.UUID;
 
 public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, TransportEntity {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     public enum TransportTaskKind {
         NONE,
         DISPATCH,
@@ -126,6 +131,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                     ? List.of()
                     : List.copyOf(completedRouteWaypoints);
         }
+    }
+
+    private record RailAutopilotSupport(double rideY, boolean roadSurface) {
     }
 
     private static final EntityDataAccessor<String> DATA_WOOD_TYPE =
@@ -208,6 +216,11 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
     private static final double AUTOPILOT_RAIL_STEP_DISTANCE = 0.36D;
     private static final float AUTOPILOT_RAIL_YAW_LERP = 0.35F;
+    private static final double AUTOPILOT_RAIL_SURFACE_CLEARANCE = 0.05D;
+    private static final int AUTOPILOT_RAIL_SURFACE_SEARCH_BELOW = 12;
+    private static final int AUTOPILOT_RAIL_SURFACE_SEARCH_ABOVE = 6;
+    private static final double AUTOPILOT_RAIL_SURFACE_EPSILON = 1.0E-5D;
+    private static final double AUTOPILOT_RAIL_HARD_SNAP_DISTANCE_SQR = 0.25D;
     private static final float AUTOPILOT_TURN_IN_PLACE_DEGREES = 95.0F;
     private static final float AUTOPILOT_SLOW_TURN_DEGREES = 55.0F;
     private static final int NETWORK_LERP_STEPS = 10;
@@ -510,16 +523,22 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         CarriageRailPathFollower.StepResult step = railAutopilotStep(autopilotRoute, position(), autopilotTargetIndex);
         autopilotTargetIndex = step.targetIndex();
         if (step.finished()) {
-            applyRailAutopilotPose(step.position(), step.yaw(), step.position().subtract(position()));
+            LOGGER.info("[CarriageAutopilot] finished entity={} uuid={} pos={} stepPos={} targetIndex={} routeSize={} task={} cargo={}",
+                    getId(), getUUID(), position(), step.position(), autopilotTargetIndex, autopilotRoute.size(), transportTaskKind, hasCargo());
+            Vec3 correctedPosition = railAutopilotSurfacePosition(step.position());
+            applyRailAutopilotPose(correctedPosition, step.yaw(), correctedPosition.subtract(position()));
             finishAutopilot();
             return;
         }
         if (!step.active()) {
+            LOGGER.warn("[CarriageAutopilot] stopped inactive entity={} uuid={} pos={} targetIndex={} routeSize={} task={} routeDockPos={}",
+                    getId(), getUUID(), position(), autopilotTargetIndex, autopilotRoute.size(), transportTaskKind, routeDockPos);
             applyRailAutopilotPose(position(), getYRot(), Vec3.ZERO);
             stopAutopilot();
             return;
         }
-        applyRailAutopilotPose(step.position(), step.yaw(), step.deltaMovement());
+        Vec3 correctedPosition = railAutopilotSurfacePosition(step.position());
+        applyRailAutopilotPose(correctedPosition, step.yaw(), correctedPosition.subtract(position()));
         checkInsideBlocks();
         tickPassengerSoundCue();
     }
@@ -528,24 +547,161 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         Vec3 safePosition = nextPosition == null ? position() : nextPosition;
         Vec3 safeDelta = delta == null ? Vec3.ZERO : delta;
         float poseYaw = railAutopilotPoseYaw(getYRot(), yaw, safeDelta);
+        Vec3 beforeMove = position();
         setYRot(poseYaw);
         setYHeadRot(poseYaw);
         setYBodyRot(poseYaw);
         yRotO = poseYaw;
-        setPos(safePosition.x, safePosition.y, safePosition.z);
-        setDeltaMovement(safeDelta);
-        currentSpeed = (float) Mth.clamp(horizontalDistance(Vec3.ZERO, safeDelta) * 20.0D, 0.0D, CarriageLandDriveModel.MAX_FORWARD_SPEED);
+        moveRailAutopilotEntity(safePosition);
+        Vec3 actualDelta = position().subtract(beforeMove);
+        setDeltaMovement(actualDelta);
+        currentSpeed = railAutopilotCurrentSpeed(actualDelta);
         turnAngle = 0.0F;
         wheelAngle = 0.0F;
-        vehicleMotionX = (float) safeDelta.x;
-        vehicleMotionZ = (float) safeDelta.z;
-        driveState = new CarriageLandDriveModel.State(currentSpeed, turnAngle, wheelAngle, poseYaw, safeDelta);
+        vehicleMotionX = (float) actualDelta.x;
+        vehicleMotionZ = (float) actualDelta.z;
+        driveState = new CarriageLandDriveModel.State(currentSpeed, turnAngle, wheelAngle, poseYaw, actualDelta);
         entityData.set(DATA_CURRENT_SPEED, currentSpeed);
-        entityData.set(DATA_ACCELERATION, safeDelta.lengthSqr() > 1.0E-8D
+        entityData.set(DATA_ACCELERATION, actualDelta.lengthSqr() > 1.0E-8D
                 ? CarriageDriveInput.AccelerationDirection.FORWARD.ordinal()
                 : CarriageDriveInput.AccelerationDirection.NONE.ordinal());
         entityData.set(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
         entityData.set(DATA_TARGET_TURN_ANGLE, 0.0F);
+    }
+
+    private Vec3 railAutopilotSurfacePosition(Vec3 routePosition) {
+        Vec3 safePosition = routePosition == null ? position() : routePosition;
+        RailAutopilotSupport support = findRailAutopilotSupport(safePosition);
+        return support == null ? safePosition : railAutopilotSurfacePosition(safePosition, support.rideY());
+    }
+
+    @Nullable
+    private RailAutopilotSupport findRailAutopilotSupport(Vec3 routePosition) {
+        if (level() == null || routePosition == null) {
+            return null;
+        }
+        int x = Mth.floor(routePosition.x);
+        int z = Mth.floor(routePosition.z);
+        int routeY = Mth.floor(routePosition.y - AUTOPILOT_RAIL_SURFACE_CLEARANCE);
+        int currentY = Mth.floor(getY() - AUTOPILOT_RAIL_SURFACE_CLEARANCE);
+        int heightmapY = level().getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+        int centerMin = Math.min(routeY, Math.min(currentY, heightmapY));
+        int centerMax = Math.max(routeY, Math.max(currentY, heightmapY));
+        int minY = Math.max(level().getMinBuildHeight(), centerMin - AUTOPILOT_RAIL_SURFACE_SEARCH_BELOW);
+        int maxY = Math.min(level().getMaxBuildHeight() - 1, centerMax + AUTOPILOT_RAIL_SURFACE_SEARCH_ABOVE);
+        RailAutopilotSupport fallback = null;
+        for (int y = maxY; y >= minY; y--) {
+            BlockPos pos = new BlockPos(x, y, z);
+            BlockState state = level().getBlockState(pos);
+            if (!isDriveableGroundState(state, level(), pos)) {
+                continue;
+            }
+            RailAutopilotSupport support = new RailAutopilotSupport(
+                    railAutopilotRideYForSupport(state, level(), pos, routePosition.x, routePosition.z),
+                    isRoadSurfaceState(state)
+            );
+            if (support.roadSurface()) {
+                return support;
+            }
+            if (fallback == null) {
+                fallback = support;
+            }
+        }
+        return fallback;
+    }
+
+    private void moveRailAutopilotEntity(Vec3 safePosition) {
+        if (!usesEntityMoveForRailAutopilot()) {
+            setPos(safePosition.x, safePosition.y, safePosition.z);
+            hasImpulse = true;
+            syncRailAutopilotPassengers();
+            return;
+        }
+        Vec3 beforeMove = position();
+        Vec3 movement = railAutopilotMovementDelta(position(), safePosition);
+        move(MoverType.SELF, movement);
+        if (shouldHardSnapRailAutopilot(beforeMove, safePosition, position())) {
+            setPos(safePosition.x, safePosition.y, safePosition.z);
+        }
+        hasImpulse = true;
+        syncRailAutopilotPassengers();
+    }
+
+    private void syncRailAutopilotPassengers() {
+        for (Entity passenger : getPassengers()) {
+            positionRider(passenger, Entity::setPos);
+        }
+    }
+
+    private static boolean usesEntityMoveForRailAutopilot() {
+        return false;
+    }
+
+    private static boolean syncsPassengersAfterRailAutopilotPose() {
+        return true;
+    }
+
+    private static float railAutopilotCurrentSpeed(Vec3 actualDelta) {
+        Vec3 safeDelta = actualDelta == null ? Vec3.ZERO : actualDelta;
+        return (float) Mth.clamp(horizontalDistance(Vec3.ZERO, safeDelta) * 20.0D, 0.0D, CarriageLandDriveModel.MAX_FORWARD_SPEED);
+    }
+
+    private static Vec3 railAutopilotSurfacePosition(Vec3 routePosition, double rideY) {
+        Vec3 safePosition = routePosition == null ? Vec3.ZERO : routePosition;
+        return new Vec3(safePosition.x, rideY, safePosition.z);
+    }
+
+    private static Vec3 railAutopilotMovementDelta(Vec3 currentPosition, Vec3 nextPosition) {
+        Vec3 current = currentPosition == null ? Vec3.ZERO : currentPosition;
+        Vec3 next = nextPosition == null ? current : nextPosition;
+        return next.subtract(current);
+    }
+
+    private static boolean shouldHardSnapRailAutopilot(Vec3 beforeMove, Vec3 targetPosition, Vec3 afterMove) {
+        Vec3 before = beforeMove == null ? Vec3.ZERO : beforeMove;
+        Vec3 target = targetPosition == null ? before : targetPosition;
+        Vec3 after = afterMove == null ? before : afterMove;
+        if (after.distanceToSqr(target) <= AUTOPILOT_RAIL_HARD_SNAP_DISTANCE_SQR) {
+            return false;
+        }
+        return target.y > before.y + LAND_VEHICLE_STEP_HEIGHT || target.y > after.y + LAND_VEHICLE_STEP_HEIGHT;
+    }
+
+    private static double railAutopilotRideYForSupport(BlockState state,
+                                                       BlockGetter level,
+                                                       BlockPos pos,
+                                                       double worldX,
+                                                       double worldZ) {
+        BlockGetter safeLevel = level == null ? EmptyBlockGetter.INSTANCE : level;
+        BlockPos safePos = pos == null ? BlockPos.ZERO : pos;
+        if (state == null) {
+            return safePos.getY() + 1.0D + AUTOPILOT_RAIL_SURFACE_CLEARANCE;
+        }
+        VoxelShape shape = state.getCollisionShape(safeLevel, safePos);
+        double top = collisionTopAt(shape, worldX - safePos.getX(), worldZ - safePos.getZ());
+        if (top < MIN_DRIVEABLE_GROUND_HEIGHT) {
+            top = shape.isEmpty() ? 1.0D : shape.max(Direction.Axis.Y);
+        }
+        return safePos.getY() + top + AUTOPILOT_RAIL_SURFACE_CLEARANCE;
+    }
+
+    private static double collisionTopAt(VoxelShape shape, double localX, double localZ) {
+        if (shape == null || shape.isEmpty()) {
+            return 0.0D;
+        }
+        double clampedX = Mth.clamp(localX, 0.0D, 1.0D);
+        double clampedZ = Mth.clamp(localZ, 0.0D, 1.0D);
+        double top = 0.0D;
+        for (AABB box : shape.toAabbs()) {
+            if (clampedX + AUTOPILOT_RAIL_SURFACE_EPSILON < box.minX
+                    || clampedX - AUTOPILOT_RAIL_SURFACE_EPSILON > box.maxX
+                    || clampedZ + AUTOPILOT_RAIL_SURFACE_EPSILON < box.minZ
+                    || clampedZ - AUTOPILOT_RAIL_SURFACE_EPSILON > box.maxZ) {
+                continue;
+            }
+            top = Math.max(top, box.maxY);
+        }
+        return top;
     }
 
     private static float railAutopilotPoseYaw(float currentYaw, float routeYaw, Vec3 delta) {
@@ -785,10 +941,19 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         passengerSoundStateInitialized = true;
     }
 
+    @Override
+    public boolean isControlledByLocalInstance() {
+        // autopilot 时交还服务端权威，让 vanilla 正常同步服务端位置到客户端（否则带不动玩家）。
+        return isLocalInstanceControlAuthoritative(super.isControlledByLocalInstance(), isAutopilotActive());
+    }
+
     private void tickNetworkLerp() {
+        boolean autopilotNetworkAuthoritative = isAutopilotActive();
         if (isControlledByLocalInstance()) {
-            lerpSteps = lerpStepsAfterLocalControl(lerpSteps);
-            syncPacketPositionCodec(getX(), getY(), getZ());
+            lerpSteps = lerpStepsAfterLocalControl(lerpSteps, autopilotNetworkAuthoritative);
+            if (!autopilotNetworkAuthoritative) {
+                syncPacketPositionCodec(getX(), getY(), getZ());
+            }
         }
 
         if (lerpSteps > 0) {
@@ -1034,6 +1199,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     public void remove(RemovalReason reason) {
+        if (!level().isClientSide) {
+            String message = "[CarriageEntity] remove entity={} uuid={} reason={} pos={} autopilot={} paused={} routeSize={} targetIndex={} task={} cargo={}";
+            if (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED || reason == RemovalReason.CHANGED_DIMENSION) {
+                LOGGER.warn(message, getId(), getUUID(), reason, position(), isAutopilotActive(), isAutopilotPaused(), autopilotRoute.size(), autopilotTargetIndex, transportTaskKind, hasCargo());
+            } else {
+                LOGGER.info(message, getId(), getUUID(), reason, position(), isAutopilotActive(), isAutopilotPaused(), autopilotRoute.size(), autopilotTargetIndex, transportTaskKind, hasCargo());
+            }
+        }
         if (!level().isClientSide && reason == RemovalReason.KILLED) {
             Containers.dropContents(level(), blockPosition(), container);
             container.clearContent();
@@ -1309,9 +1482,25 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return false;
         }
         Vec3 snappedStart = railAutopilotStartPosition(autopilotRoute, position(), routeDockPos);
+        Vec3 beforeStart = position();
+        LOGGER.info("[CarriageAutopilot] start entity={} uuid={} pos={} routeName={} routeDockPos={} routeSize={} first={} second={} last={} snappedStart={} task={} cargo={}",
+                getId(),
+                getUUID(),
+                beforeStart,
+                route.name(),
+                routeDockPos,
+                autopilotRoute.size(),
+                autopilotRoute.isEmpty() ? null : autopilotRoute.get(0),
+                autopilotRoute.size() > 1 ? autopilotRoute.get(1) : null,
+                autopilotRoute.isEmpty() ? null : autopilotRoute.get(autopilotRoute.size() - 1),
+                snappedStart,
+                transportTaskKind,
+                hasCargo());
         if (snappedStart != null && horizontalDistance(position(), snappedStart) > 1.0E-6D) {
             setPos(snappedStart.x, snappedStart.y, snappedStart.z);
             setDeltaMovement(Vec3.ZERO);
+            LOGGER.info("[CarriageAutopilot] snapped start entity={} uuid={} from={} to={}",
+                    getId(), getUUID(), beforeStart, snappedStart);
         }
         autopilotTargetIndex = 1;
         autopilotRouteName = route.name() == null || route.name().isBlank() ? "Route-" + (selectedRouteIndex + 1) : route.name();
@@ -1636,8 +1825,45 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return lerpStepsAfterLocalControl(currentLerpSteps);
     }
 
+    public static int lerpStepsAfterLocalControlForTest(int currentLerpSteps, boolean autopilotActive) {
+        return lerpStepsAfterLocalControl(currentLerpSteps, autopilotActive);
+    }
+
+    public static boolean isLocalInstanceControlAuthoritativeForTest(boolean autopilotActive) {
+        // 前提：vanilla 本地控制为 true（玩家坐在驾驶位）。验证 autopilot 是否交还服务端权威。
+        return isLocalInstanceControlAuthoritative(true, autopilotActive);
+    }
+
     public static boolean isDriveableGroundStateForTest(BlockState state) {
         return isDriveableGroundState(state, EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+    }
+
+    static double railAutopilotRideYForSupportForTest(BlockState state, BlockPos pos, double worldX, double worldZ) {
+        return railAutopilotRideYForSupport(state, EmptyBlockGetter.INSTANCE, pos, worldX, worldZ);
+    }
+
+    static Vec3 railAutopilotSurfacePositionForTest(Vec3 routePosition, double rideY) {
+        return railAutopilotSurfacePosition(routePosition, rideY);
+    }
+
+    static Vec3 railAutopilotDeltaForCorrectedSurfaceForTest(Vec3 currentPosition, Vec3 routePosition, double rideY) {
+        return railAutopilotMovementDelta(currentPosition, railAutopilotSurfacePosition(routePosition, rideY));
+    }
+
+    static boolean usesEntityMoveForRailAutopilotForTest() {
+        return usesEntityMoveForRailAutopilot();
+    }
+
+    static boolean syncsPassengersAfterRailAutopilotPoseForTest() {
+        return syncsPassengersAfterRailAutopilotPose();
+    }
+
+    static float railAutopilotCurrentSpeedForDeltaForTest(Vec3 actualDelta) {
+        return railAutopilotCurrentSpeed(actualDelta);
+    }
+
+    static boolean shouldHardSnapRailAutopilotForTest(Vec3 beforeMove, Vec3 targetPosition, Vec3 afterMove) {
+        return shouldHardSnapRailAutopilot(beforeMove, targetPosition, afterMove);
     }
 
     public static float landVehicleStepHeightForTest() {
@@ -2370,12 +2596,18 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (routeCopy.isEmpty() || currentPosition == null) {
             return routeCopy;
         }
-        if (dockPos != null) {
-            return routeCopy;
-        }
         Vec3 first = routeCopy.get(0);
         if (horizontalDistance(currentPosition, first) <= 1.0E-6D) {
-            return routeCopy;
+            if (Math.abs(currentPosition.y - first.y) <= 0.75D) {
+                return routeCopy;
+            }
+            if (routeCopy.size() == 1) {
+                return List.of(currentPosition);
+            }
+            List<Vec3> runtimeRoute = new ArrayList<>(routeCopy.size());
+            runtimeRoute.add(currentPosition);
+            runtimeRoute.addAll(routeCopy.subList(1, routeCopy.size()));
+            return List.copyOf(runtimeRoute);
         }
         List<Vec3> runtimeRoute = new ArrayList<>(routeCopy.size() + 1);
         runtimeRoute.add(currentPosition);
@@ -2496,7 +2728,21 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     private static int lerpStepsAfterLocalControl(int currentLerpSteps) {
-        return 0;
+        return lerpStepsAfterLocalControl(currentLerpSteps, false);
+    }
+
+    private static int lerpStepsAfterLocalControl(int currentLerpSteps, boolean autopilotActive) {
+        return autopilotActive ? currentLerpSteps : 0;
+    }
+
+    /**
+     * 自动驾驶时载具由服务端权威驱动（rail autopilot 在服务端 move/setPos）。
+     * 若仍把它当客户端本地控制（玩家作为乘客时 vanilla 默认如此），服务端权威位置不会同步到
+     * 客户端，导致车有动画/特效却原地不动、带不动玩家。autopilot 激活时必须交还服务端权威。
+     * 手动驾驶时保留 vanilla 本地控制以维持客户端预测手感。
+     */
+    private static boolean isLocalInstanceControlAuthoritative(boolean vanillaLocalControl, boolean autopilotActive) {
+        return !autopilotActive && vanillaLocalControl;
     }
 
     private void spawnMovementParticles() {

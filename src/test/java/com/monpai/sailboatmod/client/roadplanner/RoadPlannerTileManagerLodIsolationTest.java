@@ -110,8 +110,8 @@ class RoadPlannerTileManagerLodIsolationTest {
 
         var file = rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_1").resolve("2_-3.png").toFile();
         try (var image = com.mojang.blaze3d.platform.NativeImage.read(java.nio.file.Files.readAllBytes(file.toPath()))) {
-            assertEquals(0xFF0000CC, image.getPixelRGBA(0, 0));
-            assertEquals(0xFF00AA00, image.getPixelRGBA(32, 32));
+            assertEquals(nativeColor(0xFF0000CC), image.getPixelRGBA(0, 0));
+            assertEquals(nativeColor(0xFF00AA00), image.getPixelRGBA(32, 32));
         }
     }
 
@@ -196,8 +196,8 @@ class RoadPlannerTileManagerLodIsolationTest {
 
         var file = rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("2_-3.png").toFile();
         try (var image = com.mojang.blaze3d.platform.NativeImage.read(java.nio.file.Files.readAllBytes(file.toPath()))) {
-            assertEquals(0xFF556677, image.getPixelRGBA(0, 0));
-            assertEquals(0xFF556677, image.getPixelRGBA(128, 128));
+            assertEquals(nativeColor(0xFF556677), image.getPixelRGBA(0, 0));
+            assertEquals(nativeColor(0xFF556677), image.getPixelRGBA(128, 128));
         }
     }
 
@@ -232,5 +232,9 @@ class RoadPlannerTileManagerLodIsolationTest {
         assertEquals(0, applied);
         assertEquals(0, manager.loadedTileCount());
         assertFalse(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("2_-3.png").toFile().exists());
+    }
+
+    private static int nativeColor(int argb) {
+        return com.monpai.sailboatmod.roadplanner.map.MapBlockColors.argbToNativeAbgr(argb);
     }
 }

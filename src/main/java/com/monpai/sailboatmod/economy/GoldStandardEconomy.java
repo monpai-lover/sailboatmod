@@ -19,12 +19,7 @@ public final class GoldStandardEconomy {
     public static long goldItemMarketValue(net.minecraft.world.item.ItemStack stack) {
         if (stack == null || stack.isEmpty()) return 0;
         if (!stack.is(Items.GOLD_INGOT) && !stack.is(Items.GOLD_BLOCK) && !stack.is(Items.GOLD_NUGGET)) return 0;
-        try {
-            com.monpai.sailboatmod.market.commodity.CommodityMarketService svc = new com.monpai.sailboatmod.market.commodity.CommodityMarketService();
-            int unitPrice = svc.ensureCommodity(stack).state().basePrice();
-            return (long) unitPrice * stack.getCount();
-        } catch (Exception ignored) {}
-        // fallback to fixed rate
+        // 金作硬通货，双向换算统一用固定率，杜绝"高估值存、固定率取"的套利刷金。
         int unitValue = stack.is(Items.GOLD_BLOCK) ? BALANCE_PER_GOLD_BLOCK
                 : stack.is(Items.GOLD_INGOT) ? BALANCE_PER_GOLD_INGOT : BALANCE_PER_GOLD_NUGGET;
         return (long) unitValue * stack.getCount();

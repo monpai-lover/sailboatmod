@@ -1,8 +1,8 @@
-[185月2026 09:40:28.810] [Test worker/ERROR] [com.monpai.sailboatmod.ServerEvents/]: Failed to initialize sqlite
+[146月2026 18:39:21.447] [Test worker/ERROR] [com.monpai.sailboatmod.ServerEvents/]: Failed to initialize sqlite
 java.lang.NoClassDefFoundError: org/sqlite/core/NativeDB
 	at com.monpai.sailboatmod.ServerEventsTest.lambda$startupTaskWrapperCatchesLinkageErrors$0(ServerEventsTest.java:12) ~[test/:?]
-	at com.monpai.sailboatmod.ServerEvents.runStartupTaskSafely(ServerEvents.java:128) ~[main/:?]
-	at com.monpai.sailboatmod.ServerEvents.runStartupTaskSafelyForTest(ServerEvents.java:120) ~[main/:?]
+	at com.monpai.sailboatmod.ServerEvents.runStartupTaskSafely(ServerEvents.java:164) ~[main/:?]
+	at com.monpai.sailboatmod.ServerEvents.runStartupTaskSafelyForTest(ServerEvents.java:148) ~[main/:?]
 	at com.monpai.sailboatmod.ServerEventsTest.startupTaskWrapperCatchesLinkageErrors(ServerEventsTest.java:11) ~[test/:?]
 	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method) ~[?:?]
 	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77) ~[?:?]
@@ -88,19 +88,17 @@ java.lang.NoClassDefFoundError: org/sqlite/core/NativeDB
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:65) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) ~[gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) ~[gradle-worker.jar:?]
-[185月2026 09:40:28.867] [Test worker/DEBUG] [io.netty.util.internal.logging.InternalLoggerFactory/]: Using SLF4J as the default logging framework
-[185月2026 09:40:28.869] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.level: simple
-[185月2026 09:40:28.869] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.targetRecords: 4
-[185月2026 09:40:32.543] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=4 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
-[185月2026 09:40:32.549] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=0 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
-[185月2026 09:40:32.550] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=1,0 visibleCenterBefore=0,0 terrainCount=0 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
-[185月2026 09:40:32.682] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: -Dio.netty.noUnsafe: false
-[185月2026 09:40:32.683] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: Java version: 17
-[185月2026 09:40:32.683] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.theUnsafe: available
-[185月2026 09:40:32.684] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.copyMemory: available
-[185月2026 09:40:32.684] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.storeFence: available
-[185月2026 09:40:32.684] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.Buffer.address: available
-[185月2026 09:40:32.684] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: direct buffer constructor: unavailable
+[146月2026 18:39:21.610] [Test worker/DEBUG] [io.netty.util.internal.logging.InternalLoggerFactory/]: Using SLF4J as the default logging framework
+[146月2026 18:39:21.614] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.level: simple
+[146月2026 18:39:21.614] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.targetRecords: 4
+[146月2026 18:39:26.475] [Test worker/INFO] [com.monpai.sailboatmod.client.screen.town.TownHomeScreen/]: [TownClaimPreview] updateData previewCenter=234,-648 visibleCenterBefore=-2147483648,-2147483648 terrainCount=1 nearbyClaims=0 pending=-2147483648,-2147483648 queued=-2147483648,-2147483648 resetPending=false
+[146月2026 18:39:30.323] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: -Dio.netty.noUnsafe: false
+[146月2026 18:39:30.323] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: Java version: 17
+[146月2026 18:39:30.324] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.theUnsafe: available
+[146月2026 18:39:30.325] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.copyMemory: available
+[146月2026 18:39:30.325] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.storeFence: available
+[146月2026 18:39:30.325] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.Buffer.address: available
+[146月2026 18:39:30.326] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: direct buffer constructor: unavailable
 java.lang.UnsupportedOperationException: Reflective setAccessible(true) disabled
 	at io.netty.util.internal.ReflectionUtil.trySetAccessible(ReflectionUtil.java:31) ~[netty-common-4.1.82.Final.jar:4.1.82.Final]
 	at io.netty.util.internal.PlatformDependent0$5.run(PlatformDependent0.java:288) ~[netty-common-4.1.82.Final.jar:4.1.82.Final]
@@ -110,7 +108,7 @@ java.lang.UnsupportedOperationException: Reflective setAccessible(true) disabled
 	at io.netty.util.internal.PlatformDependent.<clinit>(PlatformDependent.java:88) ~[netty-common-4.1.82.Final.jar:4.1.82.Final]
 	at io.netty.buffer.UnpooledByteBufAllocator.<clinit>(UnpooledByteBufAllocator.java:37) ~[netty-buffer-4.1.82.Final.jar:4.1.82.Final]
 	at io.netty.buffer.Unpooled.<clinit>(Unpooled.java:75) ~[netty-buffer-4.1.82.Final.jar:4.1.82.Final]
-	at com.monpai.sailboatmod.network.packet.ClaimMapViewportPacketRoundTripTest.requestPacketRoundTripsAllFields(ClaimMapViewportPacketRoundTripTest.java:36) ~[test/:?]
+	at com.monpai.sailboatmod.network.packet.CarriageControlInputPacketTest.roundTripsDriveState(CarriageControlInputPacketTest.java:19) ~[test/:?]
 	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method) ~[?:?]
 	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77) ~[?:?]
 	at jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43) ~[?:?]
@@ -195,8 +193,8 @@ java.lang.UnsupportedOperationException: Reflective setAccessible(true) disabled
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:65) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) ~[gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) ~[gradle-worker.jar:?]
-[185月2026 09:40:32.688] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.Bits.unaligned: available, true
-[185月2026 09:40:32.688] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: jdk.internal.misc.Unsafe.allocateUninitializedArray(int): unavailable
+[146月2026 18:39:30.332] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.Bits.unaligned: available, true
+[146月2026 18:39:30.333] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: jdk.internal.misc.Unsafe.allocateUninitializedArray(int): unavailable
 java.lang.IllegalAccessException: class io.netty.util.internal.PlatformDependent0$7 cannot access class jdk.internal.misc.Unsafe (in module java.base) because module java.base does not export jdk.internal.misc to unnamed module @3e27aa33
 	at jdk.internal.reflect.Reflection.newIllegalAccessException(Reflection.java:392) ~[?:?]
 	at java.lang.reflect.AccessibleObject.checkAccess(AccessibleObject.java:674) ~[?:?]
@@ -208,7 +206,7 @@ java.lang.IllegalAccessException: class io.netty.util.internal.PlatformDependent
 	at io.netty.util.internal.PlatformDependent.<clinit>(PlatformDependent.java:88) ~[netty-common-4.1.82.Final.jar:4.1.82.Final]
 	at io.netty.buffer.UnpooledByteBufAllocator.<clinit>(UnpooledByteBufAllocator.java:37) ~[netty-buffer-4.1.82.Final.jar:4.1.82.Final]
 	at io.netty.buffer.Unpooled.<clinit>(Unpooled.java:75) ~[netty-buffer-4.1.82.Final.jar:4.1.82.Final]
-	at com.monpai.sailboatmod.network.packet.ClaimMapViewportPacketRoundTripTest.requestPacketRoundTripsAllFields(ClaimMapViewportPacketRoundTripTest.java:36) ~[test/:?]
+	at com.monpai.sailboatmod.network.packet.CarriageControlInputPacketTest.roundTripsDriveState(CarriageControlInputPacketTest.java:19) ~[test/:?]
 	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method) ~[?:?]
 	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77) ~[?:?]
 	at jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43) ~[?:?]
@@ -293,33 +291,33 @@ java.lang.IllegalAccessException: class io.netty.util.internal.PlatformDependent
 	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:65) ~[?:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69) ~[gradle-worker.jar:?]
 	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74) ~[gradle-worker.jar:?]
-[185月2026 09:40:32.692] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.DirectByteBuffer.<init>(long, int): unavailable
-[185月2026 09:40:32.692] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: sun.misc.Unsafe: available
-[185月2026 09:40:32.692] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: maxDirectMemory: 536870912 bytes (maybe)
-[185月2026 09:40:32.693] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.tmpdir: C:\Users\24908\AppData\Local\Temp (java.io.tmpdir)
-[185月2026 09:40:32.693] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.bitMode: 64 (sun.arch.data.model)
-[185月2026 09:40:32.693] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: Platform: Windows
-[185月2026 09:40:32.694] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.maxDirectMemory: -1 bytes
-[185月2026 09:40:32.695] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.uninitializedArrayAllocationThreshold: -1
-[185月2026 09:40:32.696] [Test worker/DEBUG] [io.netty.util.internal.CleanerJava9/]: java.nio.ByteBuffer.cleaner(): available
-[185月2026 09:40:32.696] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.noPreferDirect: false
-[185月2026 09:40:32.704] [Test worker/DEBUG] [io.netty.buffer.AbstractByteBuf/]: -Dio.netty.buffer.checkAccessible: true
-[185月2026 09:40:32.705] [Test worker/DEBUG] [io.netty.buffer.AbstractByteBuf/]: -Dio.netty.buffer.checkBounds: true
-[185月2026 09:40:32.706] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetectorFactory/]: Loaded default ResourceLeakDetector: io.netty.util.ResourceLeakDetector@5d39797a
-[185月2026 09:40:32.711] [Test worker/DEBUG] [io.netty.util.internal.InternalThreadLocalMap/]: -Dio.netty.threadLocalMap.stringBuilder.initialSize: 1024
-[185月2026 09:40:32.711] [Test worker/DEBUG] [io.netty.util.internal.InternalThreadLocalMap/]: -Dio.netty.threadLocalMap.stringBuilder.maxSize: 4096
-[185月2026 09:40:32.713] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.numHeapArenas: 21
-[185月2026 09:40:32.713] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.numDirectArenas: 21
-[185月2026 09:40:32.713] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.pageSize: 8192
-[185月2026 09:40:32.713] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.maxOrder: 9
-[185月2026 09:40:32.713] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.chunkSize: 4194304
-[185月2026 09:40:32.713] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.smallCacheSize: 256
-[185月2026 09:40:32.713] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.normalCacheSize: 64
-[185月2026 09:40:32.714] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.maxCachedBufferCapacity: 32768
-[185月2026 09:40:32.714] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.cacheTrimInterval: 8192
-[185月2026 09:40:32.714] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.cacheTrimIntervalMillis: 0
-[185月2026 09:40:32.714] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.useCacheForAllThreads: false
-[185月2026 09:40:32.714] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.maxCachedByteBuffersPerChunk: 1023
-[185月2026 09:40:32.721] [Test worker/DEBUG] [io.netty.buffer.ByteBufUtil/]: -Dio.netty.allocator.type: pooled
-[185月2026 09:40:32.721] [Test worker/DEBUG] [io.netty.buffer.ByteBufUtil/]: -Dio.netty.threadLocalDirectBufferSize: 0
-[185月2026 09:40:32.721] [Test worker/DEBUG] [io.netty.buffer.ByteBufUtil/]: -Dio.netty.maxThreadLocalCharBufferSize: 16384
+[146月2026 18:39:30.339] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.DirectByteBuffer.<init>(long, int): unavailable
+[146月2026 18:39:30.339] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: sun.misc.Unsafe: available
+[146月2026 18:39:30.339] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: maxDirectMemory: 536870912 bytes (maybe)
+[146月2026 18:39:30.340] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.tmpdir: C:\Users\24908\AppData\Local\Temp (java.io.tmpdir)
+[146月2026 18:39:30.340] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.bitMode: 64 (sun.arch.data.model)
+[146月2026 18:39:30.341] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: Platform: Windows
+[146月2026 18:39:30.343] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.maxDirectMemory: -1 bytes
+[146月2026 18:39:30.343] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.uninitializedArrayAllocationThreshold: -1
+[146月2026 18:39:30.345] [Test worker/DEBUG] [io.netty.util.internal.CleanerJava9/]: java.nio.ByteBuffer.cleaner(): available
+[146月2026 18:39:30.345] [Test worker/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.noPreferDirect: false
+[146月2026 18:39:30.351] [Test worker/DEBUG] [io.netty.buffer.AbstractByteBuf/]: -Dio.netty.buffer.checkAccessible: true
+[146月2026 18:39:30.351] [Test worker/DEBUG] [io.netty.buffer.AbstractByteBuf/]: -Dio.netty.buffer.checkBounds: true
+[146月2026 18:39:30.353] [Test worker/DEBUG] [io.netty.util.ResourceLeakDetectorFactory/]: Loaded default ResourceLeakDetector: io.netty.util.ResourceLeakDetector@3b5b6df4
+[146月2026 18:39:30.370] [Test worker/DEBUG] [io.netty.util.internal.InternalThreadLocalMap/]: -Dio.netty.threadLocalMap.stringBuilder.initialSize: 1024
+[146月2026 18:39:30.370] [Test worker/DEBUG] [io.netty.util.internal.InternalThreadLocalMap/]: -Dio.netty.threadLocalMap.stringBuilder.maxSize: 4096
+[146月2026 18:39:30.372] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.numHeapArenas: 21
+[146月2026 18:39:30.373] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.numDirectArenas: 21
+[146月2026 18:39:30.373] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.pageSize: 8192
+[146月2026 18:39:30.373] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.maxOrder: 9
+[146月2026 18:39:30.374] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.chunkSize: 4194304
+[146月2026 18:39:30.374] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.smallCacheSize: 256
+[146月2026 18:39:30.374] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.normalCacheSize: 64
+[146月2026 18:39:30.374] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.maxCachedBufferCapacity: 32768
+[146月2026 18:39:30.374] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.cacheTrimInterval: 8192
+[146月2026 18:39:30.374] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.cacheTrimIntervalMillis: 0
+[146月2026 18:39:30.375] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.useCacheForAllThreads: false
+[146月2026 18:39:30.375] [Test worker/DEBUG] [io.netty.buffer.PooledByteBufAllocator/]: -Dio.netty.allocator.maxCachedByteBuffersPerChunk: 1023
+[146月2026 18:39:30.385] [Test worker/DEBUG] [io.netty.buffer.ByteBufUtil/]: -Dio.netty.allocator.type: pooled
+[146月2026 18:39:30.385] [Test worker/DEBUG] [io.netty.buffer.ByteBufUtil/]: -Dio.netty.threadLocalDirectBufferSize: 0
+[146月2026 18:39:30.385] [Test worker/DEBUG] [io.netty.buffer.ByteBufUtil/]: -Dio.netty.maxThreadLocalCharBufferSize: 16384

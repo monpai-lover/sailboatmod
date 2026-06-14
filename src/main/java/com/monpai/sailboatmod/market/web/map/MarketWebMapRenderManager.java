@@ -6,6 +6,7 @@ import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.ModConfig;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 
@@ -16,11 +17,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -34,13 +37,20 @@ public final class MarketWebMapRenderManager {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
     private static final String PROGRESS_FILE = "render_progress.json";
+    private static final String DIRTY_CHUNKS_FILE = "dirty_chunks.json";
+    private static final String DIRTY_REGIONS_FILE = "dirty_regions.json";
     private static final int CHUNKS_PER_REGION_AXIS = MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS;
+    private static final int CHUNKS_PER_REGION = CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
 
     private final MarketWebMapRegionRenderer regionRenderer = new MarketWebMapRegionRenderer();
     private final MarketWebSquareMapImageIOExecutor imageIO = new MarketWebSquareMapImageIOExecutor();
+    private final MarketWebMapDirtyChunkQueue dirtyChunks = new MarketWebMapDirtyChunkQueue();
+    private final MarketWebMapDirtyRegionQueue dirtyRegions = new MarketWebMapDirtyRegionQueue();
     private final Map<Long, RegionState> regionStates = new LinkedHashMap<>();
+    private final Map<Long, List<Integer>> expectedRegionChunks = new LinkedHashMap<>();
     private final LinkedHashMap<Long, int[][]> bottomRowCache = new LinkedHashMap<>();
     private final AtomicInteger renderingRegions = new AtomicInteger();
+    private final AtomicInteger failedChunks = new AtomicInteger();
     private final ExecutorService renderExecutor;
     private MarketWebMapSnapshotManager snapshotManager;
     private ServerLevel snapshotLevel;
@@ -66,7 +76,7 @@ public final class MarketWebMapRenderManager {
         RenderJob job;
         synchronized (this) {
             job = activeJob;
-            if (job == null || paused) {
+            if (paused) {
                 return;
             }
             tickCounter++;
@@ -76,28 +86,39 @@ public final class MarketWebMapRenderManager {
             }
         }
         int budget = Math.max(1, configuredInt(ModConfig::marketWebBackgroundMaxChunksPerInterval, 512));
-        boolean completedRegion = false;
         synchronized (this) {
-            int queued = 0;
-            while (queued < budget && activeJob == job && !job.done()) {
-                int chunkX = job.chunkX();
-                int chunkZ = job.chunkZ();
-                if (queue.enqueue(MarketWebMapConstants.OVERWORLD, chunkX, chunkZ, nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN)) {
-                    queued++;
-                    job.processedChunks++;
+            if (job != null) {
+                int attempted = 0;
+                while (attempted < budget && activeJob == job && !job.done()) {
+                    MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk = job.chunk();
+                    queue.enqueue(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ(), nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                    job.advance();
+                    job.processedChunks = job.completedChunkCount();
+                    attempted++;
                 }
-                if (job.advance()) {
-                    job.processedRegions++;
-                    completedRegion = true;
+                if (attempted > 0) {
+                    job.processedRegions = job.completedRegionCount();
+                    int saveInterval = Math.max(1, configuredInt(ModConfig::marketWebProgressSaveIntervalChunks, 512));
+                    if (job.done() || job.processedChunks - job.lastSavedChunkIndex >= saveInterval) {
+                        job.lastSavedChunkIndex = job.processedChunks;
+                        saveProgress(level, job);
+                    }
                 }
-            }
-            if (completedRegion) {
-                saveProgress(level, job);
-            }
-            if (job.done()) {
-                clearProgress(level);
-                activeJob = null;
-                paused = false;
+                if (job.done()) {
+                    clearProgress(level);
+                    activeJob = null;
+                    expectedRegionChunks.clear();
+                    paused = false;
+                }
+            } else {
+                expandDirtyRegions(level);
+                List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> dirty = dirtyChunks.poll(budget);
+                for (MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk : dirty) {
+                    queue.enqueue(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ(), nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                }
+                if (!dirty.isEmpty()) {
+                    saveDirtyChunks(level);
+                }
             }
         }
     }
@@ -117,8 +138,16 @@ public final class MarketWebMapRenderManager {
                 task.chunkX(),
                 task.chunkZ(),
                 task.quality());
-        future.thenAccept(optional -> optional.ifPresent(snapshot ->
-                acceptSnapshot(cache, snapshot, task.quality(), nowMillis)));
+        future.whenComplete((optional, failure) -> {
+            if (failure != null || optional == null || optional.isEmpty()) {
+                if (failure != null) {
+                    failedChunks.incrementAndGet();
+                }
+                acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
+                return;
+            }
+            acceptSnapshot(cache, optional.get(), task.quality(), nowMillis);
+        });
     }
 
     public synchronized boolean startFullRender(ServerLevel level) {
@@ -131,9 +160,14 @@ public final class MarketWebMapRenderManager {
             return false;
         }
         activeJob = RenderJob.full(regions);
+        expectedRegionChunks.clear();
+        for (MarketWebMapRegionScanService.RegionFile region : regions) {
+            expectedRegionChunks.put(packRegion(region.regionX(), region.regionZ()), region.localChunks());
+        }
         restoreProgress(level, activeJob);
         paused = false;
         tickCounter = 0;
+        activeJob.lastSavedChunkIndex = activeJob.processedChunks;
         saveProgress(level, activeJob);
         return true;
     }
@@ -146,22 +180,68 @@ public final class MarketWebMapRenderManager {
         int maxChunkX = Math.floorDiv(centerBlockX + radiusBlocks, MarketWebMapConstants.CHUNK_SIZE);
         int minChunkZ = Math.floorDiv(centerBlockZ - radiusBlocks, MarketWebMapConstants.CHUNK_SIZE);
         int maxChunkZ = Math.floorDiv(centerBlockZ + radiusBlocks, MarketWebMapConstants.CHUNK_SIZE);
-        int minRegionX = Math.floorDiv(minChunkX, CHUNKS_PER_REGION_AXIS);
-        int maxRegionX = Math.floorDiv(maxChunkX, CHUNKS_PER_REGION_AXIS);
-        int minRegionZ = Math.floorDiv(minChunkZ, CHUNKS_PER_REGION_AXIS);
-        int maxRegionZ = Math.floorDiv(maxChunkZ, CHUNKS_PER_REGION_AXIS);
-        List<MarketWebMapRegionScanService.RegionFile> regions = new ArrayList<>();
-        for (int regionZ = minRegionZ; regionZ <= maxRegionZ; regionZ++) {
-            for (int regionX = minRegionX; regionX <= maxRegionX; regionX++) {
-                regions.add(new MarketWebMapRegionScanService.RegionFile(regionX, regionZ));
-            }
+        int centerChunkX = Math.floorDiv(centerBlockX, MarketWebMapConstants.CHUNK_SIZE);
+        int centerChunkZ = Math.floorDiv(centerBlockZ, MarketWebMapConstants.CHUNK_SIZE);
+        int radiusChunks = Math.max(
+                Math.abs(minChunkX - centerChunkX),
+                Math.max(Math.abs(maxChunkX - centerChunkX),
+                        Math.max(Math.abs(minChunkZ - centerChunkZ), Math.abs(maxChunkZ - centerChunkZ))));
+        List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks =
+                MarketWebMapSpiralChunkIterator.squareSpiral(MarketWebMapConstants.OVERWORLD, centerChunkX, centerChunkZ, radiusChunks);
+        if (chunks.isEmpty()) {
+            return false;
         }
+        activeJob = RenderJob.radius(chunks, radiusBlocks);
+        expectedRegionChunks.clear();
+        paused = false;
+        tickCounter = 0;
+        saveProgress(level, activeJob);
+        return true;
+    }
+
+    public synchronized boolean startAreaRender(ServerLevel level, int x1, int z1, int x2, int z2) {
+        if (level == null || activeJob != null) {
+            return false;
+        }
+        List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks = areaChunks(x1, z1, x2, z2);
+        if (chunks.isEmpty()) {
+            return false;
+        }
+        activeJob = RenderJob.area(chunks);
+        prepareExpectedRegionChunks(chunks);
+        paused = false;
+        tickCounter = 0;
+        saveProgress(level, activeJob);
+        return true;
+    }
+
+    public synchronized boolean startWorldBorderRender(ServerLevel level) {
+        if (level == null || activeJob != null) {
+            return false;
+        }
+        WorldBorder border = level.getWorldBorder();
+        if (border == null) {
+            return false;
+        }
+        BlockBounds bounds = blockBoundsFromWorldBorder(border);
+        List<MarketWebMapRegionScanService.RegionFile> regions = filterRegionFilesToBlockBounds(
+                new MarketWebMapRegionScanService(null).scanRegions(level, Integer.MAX_VALUE),
+                bounds.minX(),
+                bounds.minZ(),
+                bounds.maxX(),
+                bounds.maxZ());
         if (regions.isEmpty()) {
             return false;
         }
-        activeJob = RenderJob.radius(regions, radiusBlocks);
+        activeJob = RenderJob.border(regions);
+        expectedRegionChunks.clear();
+        for (MarketWebMapRegionScanService.RegionFile region : regions) {
+            expectedRegionChunks.put(packRegion(region.regionX(), region.regionZ()), region.localChunks());
+        }
+        restoreProgress(level, activeJob);
         paused = false;
         tickCounter = 0;
+        activeJob.lastSavedChunkIndex = activeJob.processedChunks;
         saveProgress(level, activeJob);
         return true;
     }
@@ -187,6 +267,7 @@ public final class MarketWebMapRenderManager {
             return false;
         }
         activeJob = null;
+        expectedRegionChunks.clear();
         paused = false;
         if (level != null) {
             clearProgress(level);
@@ -204,20 +285,44 @@ public final class MarketWebMapRenderManager {
                 manager == null ? 0 : manager.activeRequests(),
                 manager == null ? 0 : manager.pendingRequests(),
                 manager == null ? 0 : manager.cachedSnapshots(),
+                dirtyRegions.size(),
+                dirtyChunks.size(),
                 regionStates.size(),
                 renderingRegions.get(),
                 imageIO.pendingTasks(),
+                failedChunks.get(),
+                job == null ? 0 : job.currentRegionX(),
+                job == null ? 0 : job.currentRegionZ(),
+                job == null ? 0 : job.currentLocalChunk(),
                 job == null ? 0 : job.processedChunks,
                 job == null ? 0 : job.totalChunks(),
                 job == null ? 0 : job.processedRegions,
-                job == null ? 0 : job.regions.size());
+                job == null ? 0 : job.totalRegions());
     }
 
     public int pendingTasks() {
         MarketWebMapSnapshotManager manager = snapshotManager;
         return (manager == null ? 0 : manager.activeRequests() + manager.pendingRequests())
+                + dirtyRegions.size()
+                + dirtyChunks.size()
                 + renderingRegions.get()
                 + imageIO.pendingTasks();
+    }
+
+    public synchronized void loadDirtyChunks(ServerLevel level) {
+        dirtyChunks.load(dirtyChunksFile(level));
+        dirtyRegions.load(dirtyRegionsFile(level));
+    }
+
+    public synchronized void saveDirtyChunks(ServerLevel level) {
+        dirtyChunks.save(dirtyChunksFile(level));
+        dirtyRegions.save(dirtyRegionsFile(level));
+    }
+
+    public synchronized int markRegionDirty(int regionX, int regionZ) {
+        boolean marked = dirtyRegions.markDirty(MarketWebMapConstants.OVERWORLD, regionX, regionZ);
+        dirtyRegions.trimToMaxRegions(configuredInt(ModConfig::marketWebMaxDirtyChunks, 200000) / CHUNKS_PER_REGION);
+        return marked ? 1 : 0;
     }
 
     public void shutdown() {
@@ -229,21 +334,72 @@ public final class MarketWebMapRenderManager {
                                 MarketWebMapChunkSnapshot snapshot,
                                 MarketWebMapTileQuality quality,
                                 long nowMillis) {
-        RegionState ready = null;
+        List<RegionState> readyStates = new ArrayList<>();
         synchronized (this) {
             long key = packRegion(regionX(snapshot.chunkX()), regionZ(snapshot.chunkZ()));
-            RegionState state = regionStates.computeIfAbsent(key, ignored -> new RegionState(
+            RegionState state = regionStates.computeIfAbsent(key, ignored -> newRegionState(
                     snapshot.dimensionId(),
                     regionX(snapshot.chunkX()),
                     regionZ(snapshot.chunkZ())));
             state.put(snapshot, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
-            if (state.complete() && !state.renderScheduled) {
+            int partialFlushChunks = effectivePartialRegionFlushChunks(
+                    state.bestQuality(),
+                    configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
+            if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled) {
                 state.renderScheduled = true;
-                ready = state;
+                readyStates.add(state);
+                regionStates.remove(key);
             }
+            collectOverflowRegionStates(readyStates);
         }
-        if (ready != null) {
+        for (RegionState ready : readyStates) {
             scheduleRegionRender(cache, ready, nowMillis);
+        }
+    }
+
+    private void acceptMissingSnapshot(MarketWebMapTileCache cache,
+                                       String dimensionId,
+                                       int chunkX,
+                                       int chunkZ,
+                                       MarketWebMapTileQuality quality,
+                                       long nowMillis) {
+        List<RegionState> readyStates = new ArrayList<>();
+        synchronized (this) {
+            long key = packRegion(regionX(chunkX), regionZ(chunkZ));
+            RegionState state = regionStates.computeIfAbsent(key, ignored -> newRegionState(
+                    dimensionId,
+                    regionX(chunkX),
+                    regionZ(chunkZ)));
+            state.missing(chunkX, chunkZ, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
+            int partialFlushChunks = effectivePartialRegionFlushChunks(
+                    state.bestQuality(),
+                    configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
+            if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled) {
+                state.renderScheduled = true;
+                readyStates.add(state);
+                regionStates.remove(key);
+            }
+            collectOverflowRegionStates(readyStates);
+        }
+        for (RegionState ready : readyStates) {
+            scheduleRegionRender(cache, ready, nowMillis);
+        }
+    }
+
+    private void collectOverflowRegionStates(List<RegionState> readyStates) {
+        int maxTracked = Math.max(1, configuredInt(ModConfig::marketWebMaxTrackedRegionStates, 512));
+        while (regionStates.size() > maxTracked) {
+            Iterator<Map.Entry<Long, RegionState>> iterator = regionStates.entrySet().iterator();
+            if (!iterator.hasNext()) {
+                return;
+            }
+            Map.Entry<Long, RegionState> eldest = iterator.next();
+            iterator.remove();
+            RegionState state = eldest.getValue();
+            if (state != null && state.complete() && !state.renderScheduled) {
+                state.renderScheduled = true;
+                readyStates.add(state);
+            }
         }
     }
 
@@ -255,16 +411,21 @@ public final class MarketWebMapRenderManager {
                 for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
                     int[] lastY = seedLastY(state.regionX, state.regionZ, localX);
                     for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
-                        MarketWebMapChunkSnapshot snapshot = state.snapshot(localX, localZ);
+                        MarketWebMapChunkSnapshot snapshot = state.snapshotOrNull(localX, localZ);
+                        if (snapshot == null) {
+                            if (state.accounted(localX, localZ) || !state.expected(localX, localZ)) {
+                                image.markChunkSkipped(
+                                        state.regionX * CHUNKS_PER_REGION_AXIS + localX,
+                                        state.regionZ * CHUNKS_PER_REGION_AXIS + localZ);
+                            }
+                            continue;
+                        }
                         image.putChunkPixels(snapshot.chunkX(), snapshot.chunkZ(), regionRenderer.renderChunk(snapshot, lastY));
                     }
                 }
                 cacheBottomRows(state);
                 imageIO.submit(() -> {
-                    image.writeIfComplete(cache, state.bestQuality(), nowMillis);
-                    synchronized (MarketWebMapRenderManager.this) {
-                        regionStates.remove(packRegion(state.regionX, state.regionZ));
-                    }
+                    image.writeDirty(cache, state.bestQuality(), nowMillis);
                 });
             } catch (RuntimeException exception) {
                 LOGGER.warn("Market web map region render failed for {},{}", state.regionX, state.regionZ, exception);
@@ -272,6 +433,14 @@ public final class MarketWebMapRenderManager {
                 renderingRegions.decrementAndGet();
             }
         });
+    }
+
+    private synchronized RegionState newRegionState(String dimensionId, int regionX, int regionZ) {
+        return new RegionState(
+                dimensionId,
+                regionX,
+                regionZ,
+                expectedRegionChunks.get(packRegion(regionX, regionZ)));
     }
 
     private int[] seedLastY(int regionX, int regionZ, int localX) {
@@ -324,7 +493,10 @@ public final class MarketWebMapRenderManager {
                     packRegion(state.regionX, state.regionZ),
                     ignored -> new int[CHUNKS_PER_REGION_AXIS][]);
             for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
-                rows[localX] = regionRenderer.lastYFromBottomRow(state.snapshot(localX, CHUNKS_PER_REGION_AXIS - 1));
+                MarketWebMapChunkSnapshot snapshot = state.snapshotOrNull(localX, CHUNKS_PER_REGION_AXIS - 1);
+                if (snapshot != null) {
+                    rows[localX] = regionRenderer.lastYFromBottomRow(snapshot);
+                }
             }
             while (bottomRowCache.size() > 512) {
                 Iterator<Long> iterator = bottomRowCache.keySet().iterator();
@@ -398,10 +570,25 @@ public final class MarketWebMapRenderManager {
             if (json == null || !job.type.equals(json.has("type") ? json.get("type").getAsString() : "")) {
                 return;
             }
-            job.regionIndex = Math.max(0, json.has("regionIndex") ? json.get("regionIndex").getAsInt() : 0);
-            job.nextLocalChunk = Math.max(0, json.has("nextLocalChunk") ? json.get("nextLocalChunk").getAsInt() : 0);
-            job.processedChunks = Math.max(0, json.has("processedChunks") ? json.get("processedChunks").getAsInt() : 0);
-            job.processedRegions = Math.max(0, json.has("processedRegions") ? json.get("processedRegions").getAsInt() : 0);
+            int chunkIndex = Math.max(0, json.has("chunkIndex") ? json.get("chunkIndex").getAsInt() : 0);
+            if (job.fullRender()) {
+                int regionIndex = Math.max(0, json.has("regionIndex") ? json.get("regionIndex").getAsInt() : Math.floorDiv(chunkIndex, CHUNKS_PER_REGION));
+                int localChunkIndex = Math.max(0, json.has("localChunkIndex") ? json.get("localChunkIndex").getAsInt() : Math.floorMod(chunkIndex, CHUNKS_PER_REGION));
+                job.regionIndex = Math.min(regionIndex, job.regions.size());
+                job.localChunkIndex = Math.min(localChunkIndex, job.currentRegionChunkCount());
+                if (job.regionIndex >= job.regions.size()) {
+                    job.localChunkIndex = 0;
+                } else if (job.localChunkIndex >= job.currentRegionChunkCount()) {
+                    job.localChunkIndex = 0;
+                    job.regionIndex++;
+                }
+            } else {
+                job.chunkIndex = Math.min(chunkIndex, job.totalChunks());
+            }
+            job.processedChunks = Math.min(job.completedChunkCount(), Math.max(0,
+                    json.has("processedChunks") ? json.get("processedChunks").getAsInt() : job.completedChunkCount()));
+            job.processedRegions = job.completedRegionCount();
+            job.lastSavedChunkIndex = job.processedChunks;
         } catch (RuntimeException | IOException exception) {
             LOGGER.warn("Failed to read market web map render progress", exception);
         }
@@ -414,12 +601,13 @@ public final class MarketWebMapRenderManager {
         }
         JsonObject json = new JsonObject();
         json.addProperty("type", job.type);
+        json.addProperty("chunkIndex", job.completedChunkCount());
         json.addProperty("regionIndex", job.regionIndex);
-        json.addProperty("nextLocalChunk", job.nextLocalChunk);
+        json.addProperty("localChunkIndex", job.localChunkIndex);
         json.addProperty("processedChunks", job.processedChunks);
         json.addProperty("processedRegions", job.processedRegions);
         json.addProperty("totalChunks", job.totalChunks());
-        json.addProperty("totalRegions", job.regions.size());
+        json.addProperty("totalRegions", job.totalRegions());
         try {
             Files.createDirectories(file.getParent());
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
@@ -456,12 +644,57 @@ public final class MarketWebMapRenderManager {
                 .normalize();
     }
 
+    private Path dirtyChunksFile(ServerLevel level) {
+        if (level == null || level.getServer() == null) {
+            return null;
+        }
+        return level.getServer()
+                .getWorldPath(LevelResource.ROOT)
+                .resolve("data")
+                .resolve(MarketWebMapConstants.CACHE_DATA_DIR)
+                .resolve(DIRTY_CHUNKS_FILE)
+                .normalize();
+    }
+
+    private Path dirtyRegionsFile(ServerLevel level) {
+        if (level == null || level.getServer() == null) {
+            return null;
+        }
+        return level.getServer()
+                .getWorldPath(LevelResource.ROOT)
+                .resolve("data")
+                .resolve(MarketWebMapConstants.CACHE_DATA_DIR)
+                .resolve(DIRTY_REGIONS_FILE)
+                .normalize();
+    }
+
+    private void expandDirtyRegions(ServerLevel level) {
+        int maxDirtyChunks = Math.max(1, configuredInt(ModConfig::marketWebMaxDirtyChunks, 200000));
+        int available = maxDirtyChunks - dirtyChunks.size();
+        if (available <= 0) {
+            return;
+        }
+        int budget = Math.min(available, Math.max(1, configuredInt(ModConfig::marketWebDirtyRegionChunksPerInterval, 512)));
+        List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks = dirtyRegions.expandChunks(budget);
+        if (chunks.isEmpty()) {
+            return;
+        }
+        for (MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk : chunks) {
+            dirtyChunks.markDirty(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ());
+        }
+        saveDirtyChunks(level);
+    }
+
     private static int configuredRenderThreads() {
         int configured = configuredInt(ModConfig::marketWebRenderThreads, 0);
         if (configured > 0) {
             return configured;
         }
         return Math.max(1, Runtime.getRuntime().availableProcessors() / 3);
+    }
+
+    static int effectivePartialRegionFlushChunks(MarketWebMapTileQuality quality, int configuredValue) {
+        return CHUNKS_PER_REGION;
     }
 
     private static int configuredInt(IntSupplier supplier, int fallback) {
@@ -484,15 +717,166 @@ public final class MarketWebMapRenderManager {
         return ((long) regionX & 0xFFFFFFFFL) | (((long) regionZ & 0xFFFFFFFFL) << 32);
     }
 
+    static List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> areaChunksForTest(int x1, int z1, int x2, int z2) {
+        return areaChunks(x1, z1, x2, z2);
+    }
+
+    private static List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> areaChunks(int x1, int z1, int x2, int z2) {
+        int minBlockX = Math.min(x1, x2);
+        int maxBlockX = Math.max(x1, x2);
+        int minBlockZ = Math.min(z1, z2);
+        int maxBlockZ = Math.max(z1, z2);
+        int minChunkX = Math.floorDiv(minBlockX, MarketWebMapConstants.CHUNK_SIZE);
+        int maxChunkX = Math.floorDiv(maxBlockX, MarketWebMapConstants.CHUNK_SIZE);
+        int minChunkZ = Math.floorDiv(minBlockZ, MarketWebMapConstants.CHUNK_SIZE);
+        int maxChunkZ = Math.floorDiv(maxBlockZ, MarketWebMapConstants.CHUNK_SIZE);
+        return chunkRectangle(MarketWebMapConstants.OVERWORLD, minChunkX, minChunkZ, maxChunkX, maxChunkZ);
+    }
+
+    private static List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunkRectangle(String dimensionId,
+                                                                                   int minChunkX,
+                                                                                   int minChunkZ,
+                                                                                   int maxChunkX,
+                                                                                   int maxChunkZ) {
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)
+                || minChunkX > maxChunkX
+                || minChunkZ > maxChunkZ) {
+            return List.of();
+        }
+        List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks = new ArrayList<>();
+        int minRegionX = regionX(minChunkX);
+        int maxRegionX = regionX(maxChunkX);
+        int minRegionZ = regionZ(minChunkZ);
+        int maxRegionZ = regionZ(maxChunkZ);
+        for (int regionZ = minRegionZ; regionZ <= maxRegionZ; regionZ++) {
+            int regionMinChunkZ = Math.max(minChunkZ, regionZ * CHUNKS_PER_REGION_AXIS);
+            int regionMaxChunkZ = Math.min(maxChunkZ, regionZ * CHUNKS_PER_REGION_AXIS + CHUNKS_PER_REGION_AXIS - 1);
+            for (int regionX = minRegionX; regionX <= maxRegionX; regionX++) {
+                int regionMinChunkX = Math.max(minChunkX, regionX * CHUNKS_PER_REGION_AXIS);
+                int regionMaxChunkX = Math.min(maxChunkX, regionX * CHUNKS_PER_REGION_AXIS + CHUNKS_PER_REGION_AXIS - 1);
+                for (int chunkZ = regionMinChunkZ; chunkZ <= regionMaxChunkZ; chunkZ++) {
+                    for (int chunkX = regionMinChunkX; chunkX <= regionMaxChunkX; chunkX++) {
+                        chunks.add(new MarketWebMapDirtyChunkQueue.ChunkCoordinate(dimensionId, chunkX, chunkZ));
+                    }
+                }
+            }
+        }
+        return List.copyOf(chunks);
+    }
+
+    private void prepareExpectedRegionChunks(List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks) {
+        expectedRegionChunks.clear();
+        if (chunks == null || chunks.isEmpty()) {
+            return;
+        }
+        Map<Long, List<Integer>> byRegion = new LinkedHashMap<>();
+        for (MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk : chunks) {
+            if (chunk == null || !MarketWebMapConstants.OVERWORLD.equals(chunk.dimensionId())) {
+                continue;
+            }
+            int regionX = regionX(chunk.chunkX());
+            int regionZ = regionZ(chunk.chunkZ());
+            int localX = Math.floorMod(chunk.chunkX(), CHUNKS_PER_REGION_AXIS);
+            int localZ = Math.floorMod(chunk.chunkZ(), CHUNKS_PER_REGION_AXIS);
+            byRegion.computeIfAbsent(packRegion(regionX, regionZ), ignored -> new ArrayList<>())
+                    .add(localZ * CHUNKS_PER_REGION_AXIS + localX);
+        }
+        expectedRegionChunks.putAll(byRegion);
+    }
+
+    private static List<MarketWebMapRegionScanService.RegionFile> filterRegionFilesToBlockBounds(
+            List<MarketWebMapRegionScanService.RegionFile> regions,
+            int minBlockX,
+            int minBlockZ,
+            int maxBlockX,
+            int maxBlockZ) {
+        if (regions == null || regions.isEmpty()) {
+            return List.of();
+        }
+        int minChunkX = Math.floorDiv(Math.min(minBlockX, maxBlockX), MarketWebMapConstants.CHUNK_SIZE);
+        int maxChunkX = Math.floorDiv(Math.max(minBlockX, maxBlockX), MarketWebMapConstants.CHUNK_SIZE);
+        int minChunkZ = Math.floorDiv(Math.min(minBlockZ, maxBlockZ), MarketWebMapConstants.CHUNK_SIZE);
+        int maxChunkZ = Math.floorDiv(Math.max(minBlockZ, maxBlockZ), MarketWebMapConstants.CHUNK_SIZE);
+        List<MarketWebMapRegionScanService.RegionFile> filtered = new ArrayList<>();
+        for (MarketWebMapRegionScanService.RegionFile region : regions) {
+            if (region == null || region.localChunks().isEmpty()) {
+                continue;
+            }
+            int baseChunkX = region.regionX() * CHUNKS_PER_REGION_AXIS;
+            int baseChunkZ = region.regionZ() * CHUNKS_PER_REGION_AXIS;
+            List<Integer> localChunks = new ArrayList<>();
+            for (Integer localChunk : region.localChunks()) {
+                if (localChunk == null) {
+                    continue;
+                }
+                int localX = Math.floorMod(localChunk, CHUNKS_PER_REGION_AXIS);
+                int localZ = Math.floorDiv(localChunk, CHUNKS_PER_REGION_AXIS);
+                int chunkX = baseChunkX + localX;
+                int chunkZ = baseChunkZ + localZ;
+                if (chunkX >= minChunkX && chunkX <= maxChunkX && chunkZ >= minChunkZ && chunkZ <= maxChunkZ) {
+                    localChunks.add(localChunk);
+                }
+            }
+            if (!localChunks.isEmpty()) {
+                filtered.add(new MarketWebMapRegionScanService.RegionFile(region.regionX(), region.regionZ(), localChunks));
+            }
+        }
+        return List.copyOf(filtered);
+    }
+
+    private static BlockBounds blockBoundsFromWorldBorder(WorldBorder border) {
+        return new BlockBounds(
+                floorToIntClamped(border.getMinX()),
+                floorToIntClamped(border.getMinZ()),
+                ceilMinusOneToIntClamped(border.getMaxX()),
+                ceilMinusOneToIntClamped(border.getMaxZ()));
+    }
+
+    private static int floorToIntClamped(double value) {
+        if (Double.isNaN(value)) {
+            return 0;
+        }
+        if (value <= Integer.MIN_VALUE) {
+            return Integer.MIN_VALUE;
+        }
+        if (value >= Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+        }
+        return (int) Math.floor(value);
+    }
+
+    private static int ceilMinusOneToIntClamped(double value) {
+        if (Double.isNaN(value)) {
+            return 0;
+        }
+        double block = Math.ceil(value) - 1.0D;
+        if (block <= Integer.MIN_VALUE) {
+            return Integer.MIN_VALUE;
+        }
+        if (block >= Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+        }
+        return (int) block;
+    }
+
+    private record BlockBounds(int minX, int minZ, int maxX, int maxZ) {
+    }
+
     public record RenderStatus(String activeJob,
                                boolean paused,
                                int queueSize,
                                int activeSnapshotRequests,
                                int pendingSnapshotRequests,
                                int cachedSnapshots,
+                               int dirtyRegions,
+                               int dirtyChunks,
                                int trackedRegions,
                                int renderingRegions,
                                int pendingImageIo,
+                               int failedChunks,
+                               int currentRegionX,
+                               int currentRegionZ,
+                               int currentLocalChunk,
                                int processedChunks,
                                int totalChunks,
                                int processedRegions,
@@ -505,9 +889,15 @@ public final class MarketWebMapRenderManager {
             json.addProperty("activeSnapshotRequests", activeSnapshotRequests);
             json.addProperty("pendingSnapshotRequests", pendingSnapshotRequests);
             json.addProperty("cachedSnapshots", cachedSnapshots);
+            json.addProperty("dirtyRegions", dirtyRegions);
+            json.addProperty("dirtyChunks", dirtyChunks);
             json.addProperty("trackedRegions", trackedRegions);
             json.addProperty("renderingRegions", renderingRegions);
             json.addProperty("pendingImageIo", pendingImageIo);
+            json.addProperty("failedChunks", failedChunks);
+            json.addProperty("currentRegionX", currentRegionX);
+            json.addProperty("currentRegionZ", currentRegionZ);
+            json.addProperty("currentLocalChunk", currentLocalChunk);
             json.addProperty("processedChunks", processedChunks);
             json.addProperty("totalChunks", totalChunks);
             json.addProperty("processedRegions", processedRegions);
@@ -521,14 +911,34 @@ public final class MarketWebMapRenderManager {
         private final int regionX;
         private final int regionZ;
         private final MarketWebMapChunkSnapshot[] snapshots = new MarketWebMapChunkSnapshot[CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS];
+        private final boolean[] accountedChunks = new boolean[CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS];
+        private final boolean[] expectedChunks;
+        private final int expectedCount;
         private MarketWebMapTileQuality bestQuality = MarketWebMapTileQuality.UNKNOWN;
         private int count;
         private boolean renderScheduled;
 
-        private RegionState(String dimensionId, int regionX, int regionZ) {
+        private RegionState(String dimensionId, int regionX, int regionZ, List<Integer> expectedLocalChunks) {
             this.dimensionId = dimensionId;
             this.regionX = regionX;
             this.regionZ = regionZ;
+            if (expectedLocalChunks == null || expectedLocalChunks.isEmpty()) {
+                this.expectedChunks = null;
+                this.expectedCount = snapshots.length;
+            } else {
+                this.expectedChunks = new boolean[snapshots.length];
+                int expected = 0;
+                for (Integer localChunk : expectedLocalChunks) {
+                    if (localChunk == null || localChunk < 0 || localChunk >= snapshots.length) {
+                        continue;
+                    }
+                    if (!this.expectedChunks[localChunk]) {
+                        this.expectedChunks[localChunk] = true;
+                        expected++;
+                    }
+                }
+                this.expectedCount = expected <= 0 ? snapshots.length : expected;
+            }
         }
 
         private void put(MarketWebMapChunkSnapshot snapshot, MarketWebMapTileQuality quality) {
@@ -538,8 +948,9 @@ public final class MarketWebMapRenderManager {
                 return;
             }
             int index = localZ * CHUNKS_PER_REGION_AXIS + localX;
-            if (snapshots[index] == null) {
+            if (!accountedChunks[index]) {
                 count++;
+                accountedChunks[index] = true;
             }
             snapshots[index] = snapshot;
             if (quality != null && quality.priority() > bestQuality.priority()) {
@@ -547,8 +958,28 @@ public final class MarketWebMapRenderManager {
             }
         }
 
+        private void missing(int chunkX, int chunkZ, MarketWebMapTileQuality quality) {
+            int localX = chunkX - regionX * CHUNKS_PER_REGION_AXIS;
+            int localZ = chunkZ - regionZ * CHUNKS_PER_REGION_AXIS;
+            if (localX < 0 || localX >= CHUNKS_PER_REGION_AXIS || localZ < 0 || localZ >= CHUNKS_PER_REGION_AXIS) {
+                return;
+            }
+            int index = localZ * CHUNKS_PER_REGION_AXIS + localX;
+            if (!accountedChunks[index]) {
+                accountedChunks[index] = true;
+                count++;
+            }
+            if (quality != null && quality.priority() > bestQuality.priority()) {
+                bestQuality = quality;
+            }
+        }
+
         private boolean complete() {
-            return count >= snapshots.length;
+            return count >= expectedCount;
+        }
+
+        private int count() {
+            return count;
         }
 
         private MarketWebMapChunkSnapshot snapshot(int localX, int localZ) {
@@ -566,6 +997,20 @@ public final class MarketWebMapRenderManager {
             return snapshots[localZ * CHUNKS_PER_REGION_AXIS + localX];
         }
 
+        private boolean accounted(int localX, int localZ) {
+            if (localX < 0 || localX >= CHUNKS_PER_REGION_AXIS || localZ < 0 || localZ >= CHUNKS_PER_REGION_AXIS) {
+                return false;
+            }
+            return accountedChunks[localZ * CHUNKS_PER_REGION_AXIS + localX];
+        }
+
+        private boolean expected(int localX, int localZ) {
+            if (localX < 0 || localX >= CHUNKS_PER_REGION_AXIS || localZ < 0 || localZ >= CHUNKS_PER_REGION_AXIS) {
+                return false;
+            }
+            return expectedChunks == null || expectedChunks[localZ * CHUNKS_PER_REGION_AXIS + localX];
+        }
+
         private MarketWebMapTileQuality bestQuality() {
             return bestQuality == MarketWebMapTileQuality.UNKNOWN ? MarketWebMapTileQuality.SERVER_REGION_SCAN : bestQuality;
         }
@@ -574,50 +1019,169 @@ public final class MarketWebMapRenderManager {
     private static final class RenderJob {
         private final String type;
         private final List<MarketWebMapRegionScanService.RegionFile> regions;
+        private final List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks;
         private final int radiusBlocks;
+        private final int totalRegions;
         private int regionIndex;
-        private int nextLocalChunk;
+        private int localChunkIndex;
+        private int chunkIndex;
         private int processedChunks;
         private int processedRegions;
+        private int lastSavedChunkIndex;
 
-        private RenderJob(String type, List<MarketWebMapRegionScanService.RegionFile> regions, int radiusBlocks) {
+        private RenderJob(String type,
+                          List<MarketWebMapRegionScanService.RegionFile> regions,
+                          List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks,
+                          int radiusBlocks) {
             this.type = type;
-            this.regions = List.copyOf(regions);
+            this.regions = regions == null ? List.of() : List.copyOf(regions);
+            this.chunks = chunks == null ? List.of() : List.copyOf(chunks);
             this.radiusBlocks = radiusBlocks;
+            this.totalRegions = this.regions.isEmpty() ? countRegions(this.chunks) : this.regions.size();
         }
 
         private static RenderJob full(List<MarketWebMapRegionScanService.RegionFile> regions) {
-            return new RenderJob("fullrender", regions, 0);
+            return new RenderJob("fullrender", regions, null, 0);
         }
 
-        private static RenderJob radius(List<MarketWebMapRegionScanService.RegionFile> regions, int radiusBlocks) {
-            return new RenderJob("radiusrender", regions, radiusBlocks);
+        private static RenderJob radius(List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks, int radiusBlocks) {
+            return new RenderJob("radiusrender", null, chunks, radiusBlocks);
         }
 
-        private int chunkX() {
-            return regions.get(regionIndex).regionX() * CHUNKS_PER_REGION_AXIS + Math.floorMod(nextLocalChunk, CHUNKS_PER_REGION_AXIS);
+        private static RenderJob area(List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks) {
+            return new RenderJob("arearender", null, chunks, 0);
         }
 
-        private int chunkZ() {
-            return regions.get(regionIndex).regionZ() * CHUNKS_PER_REGION_AXIS + Math.floorDiv(nextLocalChunk, CHUNKS_PER_REGION_AXIS);
+        private static RenderJob border(List<MarketWebMapRegionScanService.RegionFile> regions) {
+            return new RenderJob("borderrender", regions, null, 0);
         }
 
-        private boolean advance() {
-            nextLocalChunk++;
-            if (nextLocalChunk < CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS) {
-                return false;
+        private MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk() {
+            if (fullRender()) {
+                MarketWebMapRegionScanService.RegionFile region = regions.get(regionIndex);
+                int localChunk = region.localChunks().get(localChunkIndex);
+                int localX = Math.floorMod(localChunk, CHUNKS_PER_REGION_AXIS);
+                int localZ = Math.floorDiv(localChunk, CHUNKS_PER_REGION_AXIS);
+                return new MarketWebMapDirtyChunkQueue.ChunkCoordinate(
+                        MarketWebMapConstants.OVERWORLD,
+                        region.regionX() * CHUNKS_PER_REGION_AXIS + localX,
+                        region.regionZ() * CHUNKS_PER_REGION_AXIS + localZ);
             }
-            nextLocalChunk = 0;
-            regionIndex++;
-            return true;
+            return chunks.get(chunkIndex);
+        }
+
+        private void advance() {
+            if (fullRender()) {
+                localChunkIndex++;
+                if (localChunkIndex >= currentRegionChunkCount()) {
+                    localChunkIndex = 0;
+                    regionIndex++;
+                }
+                return;
+            }
+            chunkIndex++;
         }
 
         private boolean done() {
-            return regionIndex >= regions.size();
+            if (fullRender()) {
+                return regionIndex >= regions.size();
+            }
+            return chunkIndex >= chunks.size();
         }
 
         private int totalChunks() {
-            return regions.size() * CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
+            if (fullRender()) {
+                int total = 0;
+                for (MarketWebMapRegionScanService.RegionFile region : regions) {
+                    total += region.localChunks().size();
+                }
+                return total;
+            }
+            return chunks.size();
+        }
+
+        private int totalRegions() {
+            return totalRegions;
+        }
+
+        private int completedRegionCount() {
+            if (fullRender()) {
+                return Math.min(regionIndex, regions.size());
+            }
+            return countRegions(chunks.subList(0, Math.min(chunkIndex, chunks.size())));
+        }
+
+        private int completedChunkCount() {
+            if (fullRender()) {
+                return Math.min(totalChunks(), completedChunksBeforeRegion(regionIndex) + localChunkIndex);
+            }
+            return Math.min(chunkIndex, chunks.size());
+        }
+
+        private int currentRegionX() {
+            if (fullRender()) {
+                return done() || regions.isEmpty() ? 0 : regions.get(regionIndex).regionX();
+            }
+            if (done() || chunks.isEmpty()) {
+                return 0;
+            }
+            return regionX(chunks.get(Math.min(chunkIndex, chunks.size() - 1)).chunkX());
+        }
+
+        private int currentRegionZ() {
+            if (fullRender()) {
+                return done() || regions.isEmpty() ? 0 : regions.get(regionIndex).regionZ();
+            }
+            if (done() || chunks.isEmpty()) {
+                return 0;
+            }
+            return regionZ(chunks.get(Math.min(chunkIndex, chunks.size() - 1)).chunkZ());
+        }
+
+        private int currentLocalChunk() {
+            if (fullRender()) {
+                return done() ? 0 : regions.get(regionIndex).localChunks().get(localChunkIndex);
+            }
+            if (done() || chunks.isEmpty()) {
+                return 0;
+            }
+            MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk = chunks.get(Math.min(chunkIndex, chunks.size() - 1));
+            int localX = Math.floorMod(chunk.chunkX(), CHUNKS_PER_REGION_AXIS);
+            int localZ = Math.floorMod(chunk.chunkZ(), CHUNKS_PER_REGION_AXIS);
+            return localZ * CHUNKS_PER_REGION_AXIS + localX;
+        }
+
+        private boolean fullRender() {
+            return !regions.isEmpty();
+        }
+
+        private int currentRegionChunkCount() {
+            if (!fullRender() || regionIndex < 0 || regionIndex >= regions.size()) {
+                return 0;
+            }
+            return regions.get(regionIndex).localChunks().size();
+        }
+
+        private int completedChunksBeforeRegion(int endRegionIndex) {
+            int total = 0;
+            int limit = Math.min(Math.max(0, endRegionIndex), regions.size());
+            for (int i = 0; i < limit; i++) {
+                total += regions.get(i).localChunks().size();
+            }
+            return total;
+        }
+
+        @SuppressWarnings("unused")
+        private int radiusBlocks() {
+            return radiusBlocks;
+        }
+
+        private static int countRegions(List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks) {
+            Set<Long> regions = new HashSet<>();
+            for (MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk : chunks) {
+                regions.add(packRegion(regionX(chunk.chunkX()), regionZ(chunk.chunkZ())));
+            }
+            return regions.size();
         }
     }
 }

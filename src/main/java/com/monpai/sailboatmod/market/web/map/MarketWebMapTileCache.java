@@ -30,7 +30,7 @@ import java.util.stream.Stream;
 public final class MarketWebMapTileCache {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
-    public static final int RENDER_VERSION = 4;
+    public static final int RENDER_VERSION = 5;
     private static final int METADATA_VERSION = 2;
 
     private final Path root;

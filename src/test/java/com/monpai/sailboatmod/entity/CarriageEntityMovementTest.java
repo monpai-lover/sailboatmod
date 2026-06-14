@@ -59,6 +59,17 @@ class CarriageEntityMovementTest {
     }
 
     @Test
+    void autopilotYieldsLocalInstanceControlBackToServerEvenWithRider() {
+        // 自动驾驶时载具必须交还服务端权威，否则玩家作为乘客会让客户端把它当本地控制，
+        // 服务端权威位置不被同步 → 车有动画/特效却原地不动（带不动玩家）。
+        assertFalse(CarriageEntity.isLocalInstanceControlAuthoritativeForTest(true),
+                "autopilot must not be treated as client-local-controlled (server is authoritative)");
+        // 手动驾驶时保留客户端本地控制（保持客户端预测手感）。
+        assertTrue(CarriageEntity.isLocalInstanceControlAuthoritativeForTest(false),
+                "manual driving should keep client-local control for prediction");
+    }
+
+    @Test
     void carriageStillPredictsLandDriveOnClientForLocalRider() {
         assertTrue(CarriageEntity.simulatesLandDriveOnClientForTest());
     }
@@ -77,6 +88,12 @@ class CarriageEntityMovementTest {
     @Test
     void carriageUsesImmediateNetworkLerpForAutopilotRailPose() {
         assertEquals(1, CarriageEntity.networkLerpStepsForAutopilotForTest(3));
+    }
+
+    @Test
+    void carriageKeepsServerAutopilotLerpForLocalRider() {
+        assertEquals(1, CarriageEntity.lerpStepsAfterLocalControlForTest(1, true));
+        assertEquals(0, CarriageEntity.lerpStepsAfterLocalControlForTest(10, false));
     }
 
     @Test
@@ -114,6 +131,84 @@ class CarriageEntityMovementTest {
         assertTrue(CarriageEntity.isDriveableGroundStateForTest(Blocks.STONE_BRICK_STAIRS.defaultBlockState()));
         assertFalse(CarriageEntity.isDriveableGroundStateForTest(Blocks.WATER.defaultBlockState()));
         assertFalse(CarriageEntity.isDriveableGroundStateForTest(Blocks.AIR.defaultBlockState()));
+    }
+
+    @Test
+    void railAutopilotRideHeightUsesRoadBlockCollisionTop() {
+        BlockPos surface = new BlockPos(0, 64, 0);
+
+        assertEquals(65.05D, CarriageEntity.railAutopilotRideYForSupportForTest(
+                Blocks.STONE_BRICKS.defaultBlockState(),
+                surface,
+                0.5D,
+                0.5D
+        ), 1.0E-6D);
+        assertEquals(64.55D, CarriageEntity.railAutopilotRideYForSupportForTest(
+                Blocks.STONE_BRICK_SLAB.defaultBlockState(),
+                surface,
+                0.5D,
+                0.5D
+        ), 1.0E-6D);
+        assertTrue(CarriageEntity.railAutopilotRideYForSupportForTest(
+                Blocks.STONE_BRICK_STAIRS.defaultBlockState(),
+                surface,
+                0.5D,
+                0.5D
+        ) >= 64.55D);
+    }
+
+    @Test
+    void railAutopilotSurfaceSnapKeepsBuriedRoutePointsOnRoadSurface() {
+        Vec3 lowRoutePoint = new Vec3(12.5D, 58.0D, 20.5D);
+
+        Vec3 corrected = CarriageEntity.railAutopilotSurfacePositionForTest(lowRoutePoint, 65.05D);
+
+        assertEquals(12.5D, corrected.x, 1.0E-6D);
+        assertEquals(65.05D, corrected.y, 1.0E-6D);
+        assertEquals(20.5D, corrected.z, 1.0E-6D);
+    }
+
+    @Test
+    void railAutopilotDeltaUsesSurfaceCorrectedYInsteadOfRouteY() {
+        Vec3 current = new Vec3(10.5D, 65.05D, 20.5D);
+        Vec3 lowRoutePoint = new Vec3(12.5D, 58.0D, 20.5D);
+
+        Vec3 delta = CarriageEntity.railAutopilotDeltaForCorrectedSurfaceForTest(current, lowRoutePoint, 65.05D);
+
+        assertEquals(2.0D, delta.x, 1.0E-6D);
+        assertEquals(0.0D, delta.y, 1.0E-6D);
+        assertEquals(0.0D, delta.z, 1.0E-6D);
+    }
+
+    @Test
+    void railAutopilotUsesSurfaceValidatedDirectPoseSoStepsDoNotCancelMovement() {
+        assertFalse(CarriageEntity.usesEntityMoveForRailAutopilotForTest());
+    }
+
+    @Test
+    void railAutopilotStillSyncsPassengersAfterDirectPoseMove() {
+        assertTrue(CarriageEntity.syncsPassengersAfterRailAutopilotPoseForTest());
+    }
+
+    @Test
+    void railAutopilotSpeedUsesRoutePoseDeltaInsteadOfCollisionClippedMotion() {
+        assertEquals(7.2F, CarriageEntity.railAutopilotCurrentSpeedForDeltaForTest(
+                new Vec3(0.36D, 0.0D, 0.0D)
+        ), 1.0E-5F);
+    }
+
+    @Test
+    void railAutopilotHardSnapsBackToRoadSurfaceWhenCollisionLeavesItBuried() {
+        Vec3 buriedStart = new Vec3(10.5D, 58.0D, 20.5D);
+        Vec3 roadSurfaceTarget = new Vec3(10.9D, 65.05D, 20.5D);
+        Vec3 blockedAfterMove = new Vec3(10.6D, 58.0D, 20.5D);
+
+        assertTrue(CarriageEntity.shouldHardSnapRailAutopilotForTest(buriedStart, roadSurfaceTarget, blockedAfterMove));
+        assertFalse(CarriageEntity.shouldHardSnapRailAutopilotForTest(
+                buriedStart,
+                roadSurfaceTarget,
+                new Vec3(10.9D, 65.05D, 20.5D)
+        ));
     }
 
     @Test
@@ -291,24 +386,46 @@ class CarriageEntityMovementTest {
                 stationPos
         );
 
-        assertEquals(firstRoadWaypoint, runtimeRoute.get(0));
+        assertEquals(currentParkingPoint, runtimeRoute.get(0));
+        assertEquals(firstRoadWaypoint, runtimeRoute.get(1));
         assertFalse(runtimeRoute.contains(stationBlockWaypoint));
-        assertFalse(runtimeRoute.contains(currentParkingPoint));
     }
 
     @Test
-    void carriageAutopilotSnapsStationDepartureOntoRoadCenterline() {
+    void carriageAutopilotDoesNotTeleportStationDepartureAwayFromCurrentParkingPoint() {
         Vec3 currentParkingPoint = new Vec3(7.5D, 65.05D, 4.5D);
         List<Vec3> runtimeRoute = List.of(
+                currentParkingPoint,
                 new Vec3(16.5D, 65.05D, 0.5D),
                 new Vec3(32.5D, 65.05D, 0.5D)
         );
 
         Vec3 snapped = CarriageEntity.railAutopilotStartPositionForTest(runtimeRoute, currentParkingPoint, new BlockPos(0, 64, 0));
 
-        assertEquals(16.5D, snapped.x, 1.0E-6D);
+        assertEquals(currentParkingPoint.x, snapped.x, 1.0E-6D);
         assertEquals(65.05D, snapped.y, 1.0E-6D);
-        assertEquals(0.5D, snapped.z, 1.0E-6D);
+        assertEquals(currentParkingPoint.z, snapped.z, 1.0E-6D);
+    }
+
+    @Test
+    void carriageAutopilotReplacesSameColumnLowStartWaypointWithCurrentHeight() {
+        Vec3 currentParkingPoint = new Vec3(7.5D, 65.05D, 4.5D);
+        Vec3 buriedStartWaypoint = new Vec3(7.5D, 58.0D, 4.5D);
+        Vec3 firstRoadWaypoint = new Vec3(16.5D, 65.05D, 0.5D);
+
+        List<Vec3> runtimeRoute = CarriageEntity.autopilotRouteWithCurrentStartForTest(
+                List.of(buriedStartWaypoint, firstRoadWaypoint),
+                currentParkingPoint,
+                new BlockPos(0, 64, 0)
+        );
+        Vec3 snapped = CarriageEntity.railAutopilotStartPositionForTest(runtimeRoute, currentParkingPoint, new BlockPos(0, 64, 0));
+        CarriageRailPathFollower.StepResult firstStep = CarriageRailPathFollower.step(runtimeRoute, currentParkingPoint, 1, 0.36D);
+
+        assertEquals(currentParkingPoint, runtimeRoute.get(0));
+        assertFalse(runtimeRoute.contains(buriedStartWaypoint));
+        assertEquals(currentParkingPoint.y, snapped.y, 1.0E-6D);
+        assertTrue(firstStep.active());
+        assertTrue(firstStep.position().y > 64.0D);
     }
 
     @Test

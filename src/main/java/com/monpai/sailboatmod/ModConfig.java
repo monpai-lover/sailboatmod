@@ -18,6 +18,14 @@ public final class ModConfig {
     public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_MAX_ACTIVE_SNAPSHOT_REQUESTS;
     public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_MAX_CHUNKS_PER_INTERVAL;
     public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_PARTIAL_REGION_FLUSH_CHUNKS;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_MAX_TRACKED_REGION_STATES;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_MAX_DIRTY_CHUNKS;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_DIRTY_REGION_CHUNKS_PER_INTERVAL;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_PROGRESS_SAVE_INTERVAL_CHUNKS;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_IMAGE_IO_BACKLOG_WARNING_THRESHOLD;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_TASKS_PER_TICK;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SAME_TILE_BURST_LIMIT;
     public static final ForgeConfigSpec.BooleanValue MARKET_WEB_MAP_BIOME_COLORS_ENABLED;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_RETENTION_DAYS;
@@ -84,6 +92,30 @@ public final class ModConfig {
         MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS = builder
                 .comment("Ticks between market web map background render enqueue passes.")
                 .defineInRange("webMapBackgroundIntervalTicks", 200, 1, 72000);
+        MARKET_WEB_MAP_PARTIAL_REGION_FLUSH_CHUNKS = builder
+                .comment("Chunks collected in a region before writing a partial square map tile.")
+                .defineInRange("webMapPartialRegionFlushChunks", 32, 1, 1024);
+        MARKET_WEB_MAP_MAX_TRACKED_REGION_STATES = builder
+                .comment("Maximum in-memory partial region render states before the oldest are flushed/evicted.")
+                .defineInRange("webMapMaxTrackedRegionStates", 512, 16, 65536);
+        MARKET_WEB_MAP_MAX_DIRTY_CHUNKS = builder
+                .comment("Maximum persistent dirty chunks retained for market web map background rendering.")
+                .defineInRange("webMapMaxDirtyChunks", 200000, 1024, 5000000);
+        MARKET_WEB_MAP_DIRTY_REGION_CHUNKS_PER_INTERVAL = builder
+                .comment("Maximum chunks expanded from dirty regions per background interval.")
+                .defineInRange("webMapDirtyRegionChunksPerInterval", 512, 1, 65536);
+        MARKET_WEB_MAP_PROGRESS_SAVE_INTERVAL_CHUNKS = builder
+                .comment("Chunk interval between full/radius render progress saves.")
+                .defineInRange("webMapProgressSaveIntervalChunks", 512, 1, 65536);
+        MARKET_WEB_MAP_IMAGE_IO_BACKLOG_WARNING_THRESHOLD = builder
+                .comment("Warn when market web map ImageIO pending tasks exceed this value.")
+                .defineInRange("webMapImageIoBacklogWarningThreshold", 100, 1, 100000);
+        MARKET_WEB_MAP_SNAPSHOT_TASKS_PER_TICK = builder
+                .comment("Market web map snapshot tasks consumed from the queue per server tick.")
+                .defineInRange("webMapSnapshotTasksPerTick", 4, 1, 1024);
+        MARKET_WEB_MAP_SAME_TILE_BURST_LIMIT = builder
+                .comment("Maximum same-square-tile snapshot tasks consumed in one coalesced tick burst.")
+                .defineInRange("webMapSameTileBurstLimit", 8, 1, 4096);
         MARKET_WEB_MAP_BIOME_COLORS_ENABLED = builder
                 .comment("Enable biome color tinting for market web map terrain. Disabled by default to preserve Sailboat's fixed palette.")
                 .define("webMapBiomeColorsEnabled", false);
@@ -181,6 +213,38 @@ public final class ModConfig {
 
     public static int marketWebBackgroundIntervalTicks() {
         return MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS.get();
+    }
+
+    public static int marketWebPartialRegionFlushChunks() {
+        return MARKET_WEB_MAP_PARTIAL_REGION_FLUSH_CHUNKS.get();
+    }
+
+    public static int marketWebMaxTrackedRegionStates() {
+        return MARKET_WEB_MAP_MAX_TRACKED_REGION_STATES.get();
+    }
+
+    public static int marketWebMaxDirtyChunks() {
+        return MARKET_WEB_MAP_MAX_DIRTY_CHUNKS.get();
+    }
+
+    public static int marketWebDirtyRegionChunksPerInterval() {
+        return MARKET_WEB_MAP_DIRTY_REGION_CHUNKS_PER_INTERVAL.get();
+    }
+
+    public static int marketWebProgressSaveIntervalChunks() {
+        return MARKET_WEB_MAP_PROGRESS_SAVE_INTERVAL_CHUNKS.get();
+    }
+
+    public static int marketWebImageIoBacklogWarningThreshold() {
+        return MARKET_WEB_MAP_IMAGE_IO_BACKLOG_WARNING_THRESHOLD.get();
+    }
+
+    public static int marketWebSnapshotTasksPerTick() {
+        return MARKET_WEB_MAP_SNAPSHOT_TASKS_PER_TICK.get();
+    }
+
+    public static int marketWebSameTileBurstLimit() {
+        return MARKET_WEB_MAP_SAME_TILE_BURST_LIMIT.get();
     }
 
     public static boolean marketWebBiomeColorsEnabled() {

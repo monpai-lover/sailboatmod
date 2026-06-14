@@ -185,6 +185,10 @@ public final class MarketWebService {
         );
         MarketSavedData marketData = MarketSavedData.get(resolved.level());
 
+        // 未登录访客身份为 (null,"",null)；个人字段（钱包/现金/我的订单）只对已认证身份返回，
+        // 防止越权暴露。判定标准：已认证 = playerUuid 非 null。
+        boolean authenticated = identity.playerUuid() != null;
+
         JsonObject root = new JsonObject();
         root.addProperty("marketId", marketId);
         root.addProperty("marketName", overview.marketName());
@@ -197,13 +201,20 @@ public final class MarketWebService {
         root.addProperty("linkedWarehouseName", overview.linkedDockName());
         root.addProperty("linkedWarehousePos", overview.linkedDockPosText());
         root.addProperty("canManage", overview.canManage());
-        root.addProperty("walletBalance", overview.walletAvailableBalance());
-        root.addProperty("walletAvailableBalance", overview.walletAvailableBalance());
-        root.addProperty("walletReservedBalance", overview.walletReservedBalance());
-        root.addProperty("walletTotalBalance", overview.walletTotalBalance());
+        if (authenticated) {
+            root.addProperty("walletBalance", overview.walletAvailableBalance());
+            root.addProperty("walletAvailableBalance", overview.walletAvailableBalance());
+            root.addProperty("walletReservedBalance", overview.walletReservedBalance());
+            root.addProperty("walletTotalBalance", overview.walletTotalBalance());
+        } else {
+            root.addProperty("walletBalance", 0L);
+            root.addProperty("walletAvailableBalance", 0L);
+            root.addProperty("walletReservedBalance", 0L);
+            root.addProperty("walletTotalBalance", 0L);
+        }
         root.addProperty("treasuryBalance", overview.treasuryBalance());
         root.addProperty("canTransferTreasury", overview.canTransferTreasury());
-        root.addProperty("cashBalance", cashBalance(identity));
+        root.addProperty("cashBalance", authenticated ? cashBalance(identity) : 0L);
         root.addProperty("walletOnline", identity.onlinePlayer() != null);
         root.addProperty("walletCurrency", GoldStandardEconomy.LEDGER_CURRENCY);
         root.addProperty("pendingCredits", overview.pendingCredits());
@@ -227,7 +238,11 @@ public final class MarketWebService {
         root.add("impactSnapshots", impactSnapshots(overview));
         root.add("analyticsSeries", analyticsSeries(overview));
         root.add("chartCapabilities", chartCapabilities(overview));
-        root.add("myOrders", myOrders(marketData, identity.playerUuidString()));
+        if (authenticated) {
+            root.add("myOrders", myOrders(marketData, identity.playerUuidString()));
+        } else {
+            root.add("myOrders", new com.google.gson.JsonArray());
+        }
         root.add("sourceOrders", sourceOrders(overview));
         root.add("shippingEntries", shippingEntries(overview));
         root.add("stockpilePreviewLines", strings(overview.stockpilePreviewLines()));
@@ -313,13 +328,19 @@ public final class MarketWebService {
         if (amount <= 0L) {
             return ActionResult.failure("invalid_amount", "Invalid amount");
         }
-        Boolean withdrawn = identity.onlinePlayer() != null
+        // 三态：null=无 Vault，true=Vault 已扣，false=Vault 余额不足
+        Boolean vaultWithdrawn = identity.onlinePlayer() != null
                 ? GoldStandardEconomy.tryWithdraw(identity.onlinePlayer(), amount)
                 : GoldStandardEconomy.tryWithdrawByIdentity(identity.playerUuid(), playerName, amount);
-        if (!Boolean.TRUE.equals(withdrawn)
-                && !MarketWalletGoldSource.withdrawFromLinkedWarehouse(resolved.market(), identity.playerUuid(), amount)) {
+        boolean withdrew = Boolean.TRUE.equals(vaultWithdrawn);
+        if (!withdrew) {
+            // Vault 不可用或不足 → 必须从绑定仓库真扣到，才算扣源成功
+            withdrew = MarketWalletGoldSource.withdrawFromLinkedWarehouse(resolved.market(), identity.playerUuid(), amount);
+        }
+        if (!withdrew) {
             return ActionResult.failure("insufficient_cash", "Insufficient cash");
         }
+        // 仅在确凿扣源成功后加钱包
         MarketWalletService.deposit(resolved.level(), playerUuid, playerName, amount);
         return ActionResult.success();
     }
@@ -339,6 +360,7 @@ public final class MarketWebService {
         if (deposited == null && MarketWalletGoldSource.depositToLinkedWarehouse(resolved.market(), identity.playerUuid(), amount)) {
             return ActionResult.success();
         }
+        // rollback wallet: 给付未成功，把已扣的钱包额精确退回，避免黑洞
         MarketWalletService.deposit(resolved.level(), playerUuid, playerName, amount);
         return ActionResult.failure("cash_deposit_unavailable", "Cash deposit is unavailable");
     }

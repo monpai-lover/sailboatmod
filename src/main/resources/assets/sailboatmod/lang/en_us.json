@@ -379,7 +379,7 @@
     "screen.sailboatmod.market.finance.flow":  "Cashflow",
     "screen.sailboatmod.market.finance.town":  "Town: %s",
     "screen.sailboatmod.market.finance.no_town":  "No town economy linked.",
-    "screen.sailboatmod.market.wallet.available": "Wallet",
+    "screen.sailboatmod.market.wallet.available": "My Wallet",
     "screen.sailboatmod.market.wallet.reserved": "Reserved",
     "screen.sailboatmod.market.wallet.treasury": "Treasury",
     "screen.sailboatmod.market.wallet.amount": "Transfer amount",

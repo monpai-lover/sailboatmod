@@ -367,6 +367,8 @@ class MarketWebAppResourceTest {
     @Test
     void serverWebMapHasSquaremapStyleManagersAndRenderStatusApi() throws IOException {
         String renderService = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapRenderService.java"), StandardCharsets.UTF_8);
+        String renderManager = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapRenderManager.java"), StandardCharsets.UTF_8);
+        String imageIo = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebSquareMapImageIOExecutor.java"), StandardCharsets.UTF_8);
         String server = Files.readString(MARKET_WEB_SERVER, StandardCharsets.UTF_8);
         String service = Files.readString(MARKET_WEB_SERVICE, StandardCharsets.UTF_8);
         String commands = Files.readString(MARKET_WEB_COMMANDS, StandardCharsets.UTF_8);
@@ -380,6 +382,12 @@ class MarketWebAppResourceTest {
                 "web map needs a region renderer that keeps continuous lastY height shading");
         assertTrue(Files.isRegularFile(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapRenderManager.java")),
                 "web map needs a render lifecycle manager for full/radius/background jobs");
+        assertTrue(Files.isRegularFile(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapDirtyChunkQueue.java")),
+                "web map needs a persistent dirty chunk queue like squaremap");
+        assertTrue(Files.isRegularFile(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapDirtyRegionQueue.java")),
+                "web map needs a persistent dirty region queue so region watcher events do not expand into 1024 chunks immediately");
+        assertTrue(Files.isRegularFile(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapSpiralChunkIterator.java")),
+                "radius render should use a center-out chunk spiral instead of rendering whole region bounding boxes");
         assertTrue(renderService.contains("MarketWebMapRenderManager"),
                 "tick service should delegate long-running Squaremap-style jobs to the render manager");
         assertTrue(server.contains("createContext(\"/api/map/render/status\""),
@@ -392,8 +400,36 @@ class MarketWebAppResourceTest {
                 "admin commands should expose fullrender");
         assertTrue(commands.contains("radiusrender"),
                 "admin commands should expose radiusrender");
+        assertTrue(commands.contains("arearender"),
+                "admin commands should expose arearender");
+        assertTrue(commands.contains("borderrender"),
+                "admin commands should expose borderrender");
         assertTrue(commands.contains("pause") && commands.contains("resume") && commands.contains("cancel"),
                 "admin commands should expose pause/resume/cancel for long renders");
+        assertTrue(commands.contains("Dirty regions/chunks") && commands.contains("currentRegionX()"),
+                "admin render status should expose dirty queue and current cursor diagnostics");
+        assertTrue(renderService.contains("loadDirtyChunks") && renderService.contains("saveDirtyChunks"),
+                "render service should persist dirty chunk state across restarts");
+        assertTrue(renderService.contains("markRegionDirty"),
+                "region watcher events should feed the persistent dirty chunk queue");
+        assertTrue(renderManager.contains("writeDirty"),
+                "region output should write partial images instead of waiting for all 1024 chunks");
+        assertTrue(renderManager.contains("squareSpiral"),
+                "radiusrender should enqueue precise spiral chunks rather than a region bounding box");
+        assertTrue(renderManager.contains("RenderJob.full(regions)") && renderManager.contains("regionIndex") && renderManager.contains("localChunkIndex"),
+                "fullrender should persist a streaming region/local chunk cursor instead of retaining every chunk coordinate");
+        assertFalse(renderManager.contains("RenderJob.full(chunksForRegions(regions))"),
+                "fullrender must not eagerly expand all region files into one huge chunk list");
+        assertTrue(renderManager.contains("dirtyRegions"),
+                "dirty region state should be tracked separately from dirty chunks");
+        assertTrue(renderManager.contains("failedChunks"),
+                "render status should expose failed snapshot/read attempts for long-running diagnostics");
+        assertTrue(renderManager.contains("currentRegionX") && renderManager.contains("currentRegionZ") && renderManager.contains("currentLocalChunk"),
+                "render status should expose the current fullrender cursor");
+        assertTrue(renderManager.contains("marketWebMaxTrackedRegionStates"),
+                "tracked in-memory partial region states should be bounded by config");
+        assertTrue(imageIo.contains("marketWebImageIoBacklogWarningThreshold"),
+                "ImageIO backlog warning threshold should be configurable");
         assertTrue(config.contains("webMapRenderThreads"),
                 "config should expose webMapRenderThreads");
         assertTrue(config.contains("webMapSnapshotCacheSize"),
@@ -406,6 +442,22 @@ class MarketWebAppResourceTest {
                 "config should expose webMapBackgroundIntervalTicks");
         assertTrue(config.contains("webMapBiomeColorsEnabled"),
                 "config should expose webMapBiomeColorsEnabled");
+        assertTrue(config.contains("webMapPartialRegionFlushChunks"),
+                "config should expose webMapPartialRegionFlushChunks");
+        assertTrue(config.contains("webMapMaxTrackedRegionStates"),
+                "config should expose webMapMaxTrackedRegionStates");
+        assertTrue(config.contains("webMapMaxDirtyChunks"),
+                "config should expose webMapMaxDirtyChunks");
+        assertTrue(config.contains("webMapDirtyRegionChunksPerInterval"),
+                "config should expose webMapDirtyRegionChunksPerInterval");
+        assertTrue(config.contains("webMapProgressSaveIntervalChunks"),
+                "config should expose webMapProgressSaveIntervalChunks");
+        assertTrue(config.contains("webMapImageIoBacklogWarningThreshold"),
+                "config should expose webMapImageIoBacklogWarningThreshold");
+        assertTrue(config.contains("webMapSnapshotTasksPerTick"),
+                "config should expose webMapSnapshotTasksPerTick");
+        assertTrue(config.contains("webMapSameTileBurstLimit"),
+                "config should expose webMapSameTileBurstLimit");
         assertFalse(renderService.contains("getChunkFuture"),
                 "render service must not use chunk futures that can force chunk loads");
         assertFalse(renderService.contains("forceChunk"),
@@ -483,10 +535,10 @@ class MarketWebAppResourceTest {
                 "market detail JSON should expose cash/plugin balance separately from market wallet");
         assertTrue(service.contains("GoldStandardEconomy.getBalance"),
                 "cashBalance should still use the physical/Vault gold-standard balance");
-        assertTrue(appJs.contains("wallet_balance: \"Market wallet\""),
-                "English locale should label the market wallet balance");
-        assertTrue(appJs.contains("wallet_balance: \"\u5e02\u573a\u94b1\u5305\""),
-                "Chinese locale should label the market wallet balance");
+        assertTrue(appJs.contains("wallet_balance: \"My wallet\""),
+                "English locale should label the wallet as the player's own, not a shared market account");
+        assertTrue(appJs.contains("wallet_balance: \"\u6211\u7684\u94b1\u5305\""),
+                "Chinese locale should label the wallet as the player's own, not a shared market account");
         assertTrue(appJs.contains("wallet_balance_hint"),
                 "the UI should explain purchases and buy orders use this wallet");
         assertTrue(appJs.contains("wallet_transfer_placeholder: \"输入转账金额\""),

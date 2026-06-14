@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.market.web.map;
 
 import com.mojang.logging.LogUtils;
+import com.monpai.sailboatmod.ModConfig;
 import org.slf4j.Logger;
 
 import java.util.concurrent.ExecutorService;
@@ -14,7 +15,7 @@ import java.util.concurrent.locks.LockSupport;
  */
 public final class MarketWebSquareMapImageIOExecutor {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final int IMAGE_IO_MAX_TASKS = 100;
+    private static final int DEFAULT_IMAGE_IO_MAX_TASKS = 100;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "SailboatMarketWebMap-ImageIO");
@@ -23,6 +24,7 @@ public final class MarketWebSquareMapImageIOExecutor {
     });
     private final AtomicLong submittedTasks = new AtomicLong();
     private final AtomicLong executedTasks = new AtomicLong();
+    private final AtomicLong lastBacklogWarningAt = new AtomicLong();
 
     public void submit(Runnable task) {
         if (task == null || executor.isShutdown()) {
@@ -55,7 +57,9 @@ public final class MarketWebSquareMapImageIOExecutor {
     }
 
     private void throttleIfBehind() {
-        for (int failures = 1; pendingTasks() >= IMAGE_IO_MAX_TASKS; failures++) {
+        int threshold = imageIoBacklogWarningThreshold();
+        for (int failures = 1; pendingTasks() >= threshold; failures++) {
+            warnIfBehind(threshold);
             boolean interrupted = Thread.interrupted();
             Thread.yield();
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(Math.min(25, failures)));
@@ -63,6 +67,23 @@ public final class MarketWebSquareMapImageIOExecutor {
                 Thread.currentThread().interrupt();
                 return;
             }
+        }
+    }
+
+    private void warnIfBehind(int threshold) {
+        long now = System.currentTimeMillis();
+        long previous = lastBacklogWarningAt.get();
+        if (now - previous < 30_000L || !lastBacklogWarningAt.compareAndSet(previous, now)) {
+            return;
+        }
+        LOGGER.warn("Market web map ImageIO backlog is {} tasks (threshold {})", pendingTasks(), threshold);
+    }
+
+    private static int imageIoBacklogWarningThreshold() {
+        try {
+            return Math.max(1, ModConfig.marketWebImageIoBacklogWarningThreshold());
+        } catch (IllegalStateException exception) {
+            return DEFAULT_IMAGE_IO_MAX_TASKS;
         }
     }
 }

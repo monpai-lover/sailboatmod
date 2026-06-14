@@ -121,7 +121,7 @@ final class MarketWebMapNbtChunkSnapshotReader {
         if (entry.contains("Properties", Tag.TAG_COMPOUND)) {
             waterlogged = "true".equalsIgnoreCase(entry.getCompound("Properties").getString("waterlogged"));
         }
-        return new OfflineBlockState(blockId, waterlogged || isWaterBlock(blockId));
+        return new OfflineBlockState(blockId, waterlogged || isWaterBlock(blockId) || isAquaticPlantBlock(blockId));
     }
 
     private static int heightOrFallback(int[] firstAvailableHeights, int localX, int localZ, int fallback) {
@@ -154,6 +154,13 @@ final class MarketWebMapNbtChunkSnapshotReader {
     private static boolean isWaterBlock(String blockId) {
         return "minecraft:water".equals(blockId)
                 || "minecraft:bubble_column".equals(blockId);
+    }
+
+    private static boolean isAquaticPlantBlock(String blockId) {
+        return "minecraft:seagrass".equals(blockId)
+                || "minecraft:tall_seagrass".equals(blockId)
+                || "minecraft:kelp".equals(blockId)
+                || "minecraft:kelp_plant".equals(blockId);
     }
 
     private static RoadMapColumnSample unavailableSample(int worldX, int worldZ) {

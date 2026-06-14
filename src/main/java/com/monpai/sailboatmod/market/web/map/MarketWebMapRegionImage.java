@@ -12,6 +12,7 @@ import java.util.Arrays;
 public final class MarketWebMapRegionImage {
     public static final int CHUNKS_PER_REGION_AXIS = 32;
     public static final int SIZE = MarketWebMapTileCoordinate.BASE_TILE_SIZE;
+    private static final int UNTOUCHED = Integer.MIN_VALUE;
 
     private final String dimensionId;
     private final int regionX;
@@ -25,6 +26,7 @@ public final class MarketWebMapRegionImage {
         this.dimensionId = dimensionId == null ? "" : dimensionId;
         this.regionX = regionX;
         this.regionZ = regionZ;
+        Arrays.fill(pixels, UNTOUCHED);
     }
 
     public boolean putChunkPixels(int chunkX, int chunkZ, int[] chunkPixels) {
@@ -55,6 +57,25 @@ public final class MarketWebMapRegionImage {
         return true;
     }
 
+    public boolean markChunkSkipped(int chunkX, int chunkZ) {
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
+            return false;
+        }
+        int localChunkX = chunkX - regionX * CHUNKS_PER_REGION_AXIS;
+        int localChunkZ = chunkZ - regionZ * CHUNKS_PER_REGION_AXIS;
+        if (localChunkX < 0 || localChunkX >= CHUNKS_PER_REGION_AXIS
+                || localChunkZ < 0 || localChunkZ >= CHUNKS_PER_REGION_AXIS) {
+            return false;
+        }
+        int chunkIndex = localChunkZ * CHUNKS_PER_REGION_AXIS + localChunkX;
+        if (!chunks[chunkIndex]) {
+            chunks[chunkIndex] = true;
+            completedChunks++;
+            written = false;
+        }
+        return true;
+    }
+
     public boolean complete() {
         return completedChunks >= CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
     }
@@ -66,21 +87,34 @@ public final class MarketWebMapRegionImage {
     public boolean writeIfComplete(MarketWebMapTileCache cache,
                                    MarketWebMapTileQuality quality,
                                    long nowMillis) {
+        return writeDirty(cache, quality, nowMillis);
+    }
+
+    public boolean writeDirty(MarketWebMapTileCache cache,
+                              MarketWebMapTileQuality quality,
+                              long nowMillis) {
         if (cache == null || !complete()) {
             return false;
         }
         if (written) {
             return true;
         }
-        boolean wrote = cache.writeSquareTilePixels(dimensionId, 0, regionX, regionZ, Arrays.copyOf(pixels, pixels.length));
-        for (int zoom = 1; zoom <= MarketWebMapPyramidWriter.MAX_ZOOM; zoom++) {
-            wrote |= writeZoomTile(cache, zoom);
+        int[] base = cache.readSquareTilePixels(dimensionId, 0, regionX, regionZ);
+        boolean changed = mergeTouchedPixels(base, pixels);
+        boolean wrote = changed && cache.writeSquareTilePixels(dimensionId, 0, regionX, regionZ, base);
+        if (complete()) {
+            for (int zoom = 1; zoom <= MarketWebMapPyramidWriter.MAX_ZOOM; zoom++) {
+                wrote |= writeZoomTile(cache, zoom, base);
+            }
         }
         written = wrote;
         return wrote;
     }
 
-    private boolean writeZoomTile(MarketWebMapTileCache cache, int zoom) {
+    private boolean writeZoomTile(MarketWebMapTileCache cache, int zoom, int[] regionPixels) {
+        if (regionPixels == null || regionPixels.length != pixels.length) {
+            return false;
+        }
         int scale = 1 << Math.max(0, zoom);
         int tileX = Math.floorDiv(regionX, scale);
         int tileZ = Math.floorDiv(regionZ, scale);
@@ -93,7 +127,7 @@ public final class MarketWebMapRegionImage {
             int sourceZ = z * scale;
             int dstOffset = (baseZ + z) * SIZE + baseX;
             for (int x = 0; x < scaledSize; x++) {
-                int color = pixels[sourceZ * SIZE + x * scale];
+                int color = regionPixels[sourceZ * SIZE + x * scale];
                 int index = dstOffset + x;
                 if (tile[index] != color) {
                     tile[index] = color;
@@ -102,5 +136,23 @@ public final class MarketWebMapRegionImage {
             }
         }
         return changed && cache.writeSquareTilePixels(dimensionId, zoom, tileX, tileZ, tile);
+    }
+
+    private static boolean mergeTouchedPixels(int[] target, int[] source) {
+        if (target == null || source == null || target.length != source.length) {
+            return false;
+        }
+        boolean changed = false;
+        for (int i = 0; i < source.length; i++) {
+            int color = source[i];
+            if (color == UNTOUCHED) {
+                continue;
+            }
+            if (target[i] != color) {
+                target[i] = color;
+                changed = true;
+            }
+        }
+        return changed;
     }
 }

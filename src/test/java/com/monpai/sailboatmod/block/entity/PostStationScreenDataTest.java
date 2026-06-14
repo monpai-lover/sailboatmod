@@ -58,6 +58,32 @@ class PostStationScreenDataTest {
     }
 
     @Test
+    void dispatchUsesVisibleVehicleEntityIdInsteadOfUnstableListIndex() {
+        List<Integer> serverVehicleIdsAfterRefresh = List.of(7, 42, 99);
+
+        int selected = PostStationBlockEntity.selectedVehicleIndexForEntityIdForTest(
+                serverVehicleIdsAfterRefresh,
+                42,
+                0
+        );
+
+        assertEquals(1, selected);
+    }
+
+    @Test
+    void dispatchRejectsWhenVisibleVehicleEntityIdNoLongerExists() {
+        List<Integer> serverVehicleIdsAfterRefresh = List.of(7, 99);
+
+        int selected = PostStationBlockEntity.selectedVehicleIndexForEntityIdForTest(
+                serverVehicleIdsAfterRefresh,
+                42,
+                0
+        );
+
+        assertEquals(-1, selected);
+    }
+
+    @Test
     void postStationMarketDispatchAlsoAllowsPassengerOccupiedVehicles() {
         assertTrue(PostStationBlockEntity.isVehicleEligibleForPostStationMarketDispatchForTest(
                 true, true, false, false, true, true));

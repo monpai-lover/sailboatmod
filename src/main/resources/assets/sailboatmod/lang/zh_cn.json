@@ -379,7 +379,7 @@
     "screen.sailboatmod.market.finance.flow": "现金流",
     "screen.sailboatmod.market.finance.town": "城镇：%s",
     "screen.sailboatmod.market.finance.no_town": "当前没有关联城镇经济。",
-    "screen.sailboatmod.market.wallet.available": "钱包",
+    "screen.sailboatmod.market.wallet.available": "我的钱包",
     "screen.sailboatmod.market.wallet.reserved": "冻结",
     "screen.sailboatmod.market.wallet.treasury": "国库",
     "screen.sailboatmod.market.wallet.amount": "转账金额",
