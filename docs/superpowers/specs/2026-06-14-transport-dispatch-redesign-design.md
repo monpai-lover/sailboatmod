@@ -212,14 +212,14 @@ UI 框架：**Elementa**（`gg.essential.elementa`）。现状 `MarketPage.DISPA
 ```
 
 - **可存入来源自动检测**：有 Vault 插件（`VaultEconomyBridge.getBalanceByIdentity` 非空）→ 显示"插件钱包"及余额；无插件 → 显示"仓库金"及**绑定仓库**金等值。
-- **仓库金等值（新增）**：遍历绑定仓库库存，用 `GoldStandardEconomy.goldItemMarketValue(stack)`（金粒=2/金锭=18/金块=162）累加。只算账本页显示的那个**已绑定仓库**，不含玩家背包。需在 `TownWarehouseBlockEntity` 或服务端加 `goldEquivalentValue()` 查询，填入 `MarketOverviewData`。
-- **存入/提回方向**：存入=仓库金/插件钱包→市场钱包；提回=市场钱包→**放回绑定仓库**（无插件时生成实物金放仓库槽位，与存入对称）/ 插件钱包。
+- **仓库金等值（复用现有后端）**：`MarketWalletGoldSource` 已有 `withdrawFromLinkedWarehouse`/`depositToLinkedWarehouse` 和 `planRemoval` 里的"绑定仓库金盘点"（`countMatchingStock × unitValue` 累加）。只需**把该盘点提取为公开方法** `linkedWarehouseGoldValue(market, ownerId)`（只算账本页那个已绑定仓库，不含玩家背包），供两端 UI 显示。无需全新实现。
+- **存入/提回方向**：存入=仓库金/插件钱包→市场钱包（`MarketWalletGoldSource.withdrawFromLinkedWarehouse`）；提回=市场钱包→**放回绑定仓库**（`depositToLinkedWarehouse`，已实现）/ 插件钱包。
 - **金额输入框默认填可存入上限**，玩家可改。
 - **修 `%s` bug**：`待领款`/`净收支`/`收入` 等 metric 用 `Component.translatable(key, value)` 正确填参，而非把含 `%s` 的翻译当纯文本。
 
 #### 4. 数据
 
-扩展 `MarketOverviewData`：OrderEntry 加 履约方式/调度状态（卖家发货区用）；新增"我的买家物流"条目列表（买家物流区用，含来源/状态/履约）；钱包区加 `depositSourceKind`(VAULT/WAREHOUSE_GOLD)、`depositableAmount`。`DispatchOption` 体现拼车/接货。改 `MarketBlockEntity.buildOverview` 填充。
+扩展 `MarketOverviewData`：OrderEntry 加 履约方式/调度状态（卖家发货区用）；新增"我的买家物流"条目列表（买家物流区用，含来源/状态/履约）；钱包区加 `depositSourceKind`(VAULT/WAREHOUSE_GOLD)、`depositableAmount`（来自 `linkedWarehouseGoldValue` 或 Vault 余额）。`DispatchOption` 体现拼车/接货。改 `MarketBlockEntity.buildOverview` 填充。**游戏内与网页端共用此数据**，钱包升级两端同步受益。
 
 ### 网页端 market web（仓储页新增发货内容）
 
@@ -232,9 +232,19 @@ UI 框架：**Elementa**（`gg.essential.elementa`）。现状 `MarketPage.DISPA
 - 前端：在 `app.js` 仓储渲染（`renderStorageChoiceGrid` 附近）下方加发货子区块，沿用现有卡片样式
 - 后端：`MarketWebService` 对应 endpoint 返回发货/调度状态
 
+### 网页端钱包升级（与游戏内同逻辑）
+
+现状：网页端已有钱包区（`app.js` 的 `wallet-dock`、转账输入框，后端 `MarketWebService.transferWallet` 含 CASH_TO_WALLET/WALLET_TO_CASH 等动作，`MarketWalletGoldSource` 已实现仓库金存取）。但与游戏内同样的痛点：**可存入数值不显式**，玩家看不出能存多少、来源是什么。
+
+按游戏内同一套设计升级（共用 `MarketWalletGoldSource.linkedWarehouseGoldValue` + Vault 检测）：
+- **显式"可存入来源"卡片**：`/api/markets/{id}` 返回的 `depositSourceKind`(VAULT/WAREHOUSE_GOLD) + `depositableAmount`，前端展示"来源：插件钱包/仓库金"及实时数值。
+- **存入/提回按钮**：复用现有 `transferWallet` 的 CASH_TO_WALLET（存入）/ WALLET_TO_CASH（提回放回绑定仓库）动作；转账输入框默认填 `depositableAmount`。
+- **数据同源**：`depositSourceKind`/`depositableAmount` 已在 `MarketOverviewData`（见上"数据"小节），游戏内与网页端共用，无需各算一套。
+- 注意：网页前端代码在 `market/web/` 与 `marketweb/`，与当前进行中的 webmarket 工作重叠——此项需与 webmarket 协调或在其完成后实现。
+
 ### UI 共用数据
 
-游戏内和网页端都基于 `MarketOverviewData`（同源）。本次扩展该数据结构（履约方式、调度状态、拼车/接货摘要）后两端同时受益，避免各写一套。
+游戏内和网页端都基于 `MarketOverviewData`（同源）。本次扩展该数据结构（履约方式、调度状态、拼车/接货摘要、钱包可存入来源/数值）后两端同时受益，避免各写一套。
 
 ---
 
@@ -255,7 +265,7 @@ UI 框架：**Elementa**（`gg.essential.elementa`）。现状 `MarketPage.DISPA
 | 运费 | 不算 |
 | 站点顺序 | 贪心最近下一站 |
 | 适用载具 | **马车 + 帆船统一** |
-| UI | 发运页重构为上卖家发货/下买家物流双区；购买弹窗选发货方式；结算页钱包存取入口显式化（仓库金等值/Vault 自动检测）；修 %s 占位符 bug。两端都改 |
+| UI | 发运页重构为上卖家发货/下买家物流双区；购买弹窗选发货方式；游戏内+网页钱包存取入口显式化（仓库金等值/Vault 自动检测，复用 MarketWalletGoldSource）；修 %s 占位符 bug。两端都改 |
 
 ---
 
@@ -299,4 +309,4 @@ UI 框架：**Elementa**（`gg.essential.elementa`）。现状 `MarketPage.DISPA
 4. 买家自提（系统代开-任意终端载具空驶接货 + 亲自开进 zone 装货）
 5. 多产地接货执行层"到接货站装货"分支
 6. UI（游戏内 Elementa）：发运页重构为上卖家发货/下买家物流双区（载具图标区分马车/帆船）+ 购买弹窗选发货方式 + 结算页钱包存取重构（仓库金等值查询新增、Vault 自动检测、修 %s bug）
-7. UI（网页端，与 webmarket 协调）：仓储页新增发货区块
+7. UI（网页端，与 webmarket 协调）：仓储页新增发货区块 + 钱包升级（可存入来源/数值显式化，复用 MarketWalletGoldSource）
