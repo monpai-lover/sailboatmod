@@ -64,6 +64,7 @@ public final class ServerEvents {
 
     private static int cleanupTickCounter;
     private static int loanTickCounter;
+    private static int dispatchTickCounter;
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
@@ -93,6 +94,10 @@ public final class ServerEvents {
             if (++cleanupTickCounter >= 6000) {
                 cleanupTickCounter = 0;
                 cleanupOrphanClaims(server);
+            }
+            if (++dispatchTickCounter >= 300) { // 15s @20tps：后台运输调度
+                dispatchTickCounter = 0;
+                com.monpai.sailboatmod.market.logistics.TransportDispatchService.globalTick(server);
             }
         }
     }

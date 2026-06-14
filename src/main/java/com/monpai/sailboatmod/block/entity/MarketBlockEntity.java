@@ -111,7 +111,16 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (level != null && !level.isClientSide) {
             bindNearestDockIfAbsent();
             syncTerminalRegistry();
+            com.monpai.sailboatmod.market.MarketRegistry.register(level, worldPosition);
         }
+    }
+
+    @Override
+    public void setRemoved() {
+        if (level != null && !level.isClientSide) {
+            com.monpai.sailboatmod.market.MarketRegistry.unregister(level, worldPosition);
+        }
+        super.setRemoved();
     }
 
     public void initializeOwnerIfAbsent(Player player) {
@@ -1029,6 +1038,30 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return market.getListing(listingId);
     }
 
+    /** 后台自动发货入口（由 TransportDispatchService 定时调用）：发本市场所有需车的待发订单。 */
+    public void runBackgroundAutoDispatch() {
+        if (level == null || level.isClientSide || linkedDockPos == null) {
+            return;
+        }
+        if (getLinkedWarehouse() == null) {
+            return;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        boolean hasDispatchable = false;
+        for (PurchaseOrder order : market.getOpenOrdersForSourceDock(linkedDockPos)) {
+            if (com.monpai.sailboatmod.market.logistics.TransportDispatchService
+                    .isBackgroundDispatchable(order.status(), order.fulfillment())) {
+                hasDispatchable = true;
+                break;
+            }
+        }
+        if (!hasDispatchable) {
+            return;
+        }
+        // 复用现成自动发货链路（AUTO 模式自动选港口/驿站、船/马车统一）；无车则内部 return false、订单留队列。
+        tryAutoDispatchOrders("", "", null, linkedDockPos, TransportTerminalKind.AUTO);
+    }
+
     private boolean tryAutoDispatchOrders(String shipperUuid, String shipperName, @Nullable Player player, BlockPos sourceDockPos,
                                           TransportTerminalKind terminalKind) {
         if (level == null || level.isClientSide || sourceDockPos == null) {
@@ -1070,6 +1103,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (order.sourceDockPos().equals(order.targetDockPos())) {
                 continue;
             }
+            if (!FulfillmentMode.fromString(order.fulfillment()).needsVehicleDispatch()) {
+                continue; // 真人自提不进调度发车（系统/手动均不代发）
+            }
             byTargetWarehouse.computeIfAbsent(order.targetDockPos(), ignored -> new ArrayList<>()).add(order);
         }
         for (Map.Entry<BlockPos, List<PurchaseOrder>> entry : byTargetWarehouse.entrySet()) {
@@ -1107,6 +1143,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         for (PurchaseOrder order : market.getOpenOrdersForSourceDock(sourceWarehouse.getBlockPos())) {
             if (order.sourceDockPos().equals(order.targetDockPos())) {
                 continue;
+            }
+            if (!FulfillmentMode.fromString(order.fulfillment()).needsVehicleDispatch()) {
+                continue; // 真人自提不进调度发车（系统/手动均不代发）
             }
             byTargetWarehouse.computeIfAbsent(order.targetDockPos(), ignored -> new ArrayList<>()).add(order);
         }
