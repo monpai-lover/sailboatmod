@@ -40,7 +40,10 @@ public final class ShippingTraceService {
                 0,
                 0.0D,
                 gameTime,
-                gameTime
+                gameTime,
+                0.0D,
+                0.0D,
+                false
         ));
     }
 
@@ -120,13 +123,62 @@ public final class ShippingTraceService {
                 trace.targetName(),
                 points,
                 trace.completedPointCount(),
-                trace.progressRatio()
+                trace.progressRatio(),
+                new MarketWebMapDtos.Point(trace.currentX(), trace.currentZ()),
+                trace.manual()
         );
     }
 
     public static boolean isMapVisibleStatus(String status) {
         String normalized = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
         return "SAILING".equals(normalized) || "IN_TRANSIT".equals(normalized) || "ARRIVED".equals(normalized);
+    }
+
+    /** 手动发车的稳定 trace id，与订单 id 不冲突。 */
+    public static String manualTraceId(java.util.UUID vehicleUuid) {
+        return "manual-" + (vehicleUuid == null ? "unknown" : vehicleUuid.toString());
+    }
+
+    /**
+     * 为手动发车的载具建/更新一条 manual Trace（无市场订单）。
+     * @param waypoints 载具 autopilotRoute 路点；少于 2 点不建
+     * @param transportMode "PORT"(水) / "LAND"(陆)；status 可见状态 "SAILING"/"IN_TRANSIT"
+     */
+    public static void createOrUpdateManualTrace(Level level, java.util.UUID vehicleUuid,
+                                                 List<Vec3> waypoints, String shipperUuid, String nationId,
+                                                 String transportMode, String status,
+                                                 double currentX, double currentZ) {
+        if (level == null || level.isClientSide() || vehicleUuid == null
+                || waypoints == null || waypoints.size() < 2) {
+            return;
+        }
+        long gameTime = level.getGameTime();
+        ShippingTraceRecord rec = new ShippingTraceRecord(
+                manualTraceId(vehicleUuid), shipperUuid == null ? "" : shipperUuid,
+                MarketWebMapConstants.OVERWORLD, transportMode, status,
+                nationId == null ? "" : nationId, "", "手动", "手动",
+                waypoints, 0, 0.0D, gameTime, gameTime, currentX, currentZ, true);
+        ShippingTraceSavedData.get(level).putTrace(rec);
+    }
+
+    /** 写入载具实时坐标（调度车/手动车通用）。 */
+    public static void updateLivePosition(Level level, String traceId, double x, double z) {
+        if (level == null || level.isClientSide() || traceId == null || traceId.isBlank()) {
+            return;
+        }
+        ShippingTraceSavedData data = ShippingTraceSavedData.get(level);
+        ShippingTraceRecord trace = data.getTrace(traceId);
+        if (trace != null) {
+            data.putTrace(trace.withLivePosition(x, z, level.getGameTime()));
+        }
+    }
+
+    /** 移除指定 trace（autopilot 结束清理用）。 */
+    public static void removeTrace(Level level, String traceId) {
+        if (level == null || level.isClientSide() || traceId == null || traceId.isBlank()) {
+            return;
+        }
+        ShippingTraceSavedData.get(level).removeTrace(traceId);
     }
 
     private static NationScope scopeFor(ServerLevel level, int chunkX, int chunkZ) {

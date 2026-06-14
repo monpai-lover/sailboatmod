@@ -197,6 +197,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private double autopilotShipmentDistanceMeters = 0.0D;
     private boolean autopilotAllowNonOrderAutoReturn = false;
     private boolean autopilotAllowNonOrderAutoUnload = true;
+    private static final int TRACE_LIVE_SYNC_INTERVAL_TICKS = 40; // 2s @20tps
+    private int traceLiveSyncTicks = 0;
     private boolean autopilotReturnTrip = false;
     private final List<ShipmentManifestEntry> autopilotShipmentManifest = new ArrayList<>();
     private BlockPos autopilotDestinationDockHintPos = null;
@@ -397,6 +399,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!level().isClientSide && isAutopilotActive() && isAutopilotPaused() && !(captain instanceof Player)) {
             resumeAutopilot();
             autopilotControl = !isAutopilotPaused() && hasAutopilotRoute();
+        }
+        // webmap: 航行中每 2 秒把实时坐标推给轨迹（订单车用订单 id，手动车用 manual id）
+        if (autopilotControl && ++traceLiveSyncTicks >= TRACE_LIVE_SYNC_INTERVAL_TICKS) {
+            traceLiveSyncTicks = 0;
+            String traceId = (autopilotShipmentShippingOrderId == null || autopilotShipmentShippingOrderId.isBlank())
+                    ? com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID())
+                    : autopilotShipmentShippingOrderId;
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePosition(
+                    level(), traceId, getX(), getZ());
         }
         if (!level().isClientSide && !isAutopilotActive() && awaitingNextLegPort != null) {
             tryResumeAwaitedWaterLeg();
@@ -1329,7 +1340,21 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         updateRouteSyncData();
         forwardPressedLastTick = false;
         reversePressedLastTick = false;
+        // webmap: 手动发车（无市场订单）建一条 manual 轨迹，供地图显示
+        if (autopilotShipmentShippingOrderId == null || autopilotShipmentShippingOrderId.isBlank()) {
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.createOrUpdateManualTrace(
+                    level(), getUUID(), new java.util.ArrayList<>(autopilotRoute),
+                    traceShipperUuid(), "",
+                    "PORT", "SAILING", getX(), getZ());
+        }
         return true;
+    }
+
+    /** 手动轨迹归属：当前驾驶玩家 uuid（无则空，仅影响可见性）。 */
+    private String traceShipperUuid() {
+        return getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver
+                ? driver.getUUID().toString()
+                : "";
     }
 
     private int determineInitialAutopilotTargetIndex() {
@@ -1351,6 +1376,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (level().isClientSide) {
             return;
         }
+        // webmap: 清理本载具的手动轨迹（订单轨迹由订单生命周期管理，不在此删）
+        com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
+                level(), com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID()));
         if (rollbackShipment) {
             rollbackMarketShipment();
         }

@@ -6,7 +6,7 @@
   const MIN_ZOOM = 0.25;
   const MAX_ZOOM = 8;
   const MAX_TILE_ZOOM = 4;
-  const SHIPMENT_REFRESH_MS = 5000;
+  const SHIPMENT_REFRESH_MS = 2000;
   const DESKTOP_TILE_CACHE_LIMIT = 320;
   const MOBILE_TILE_CACHE_LIMIT = 96;
   const TILE_OVERDRAW_PIXELS = 1;
@@ -904,6 +904,45 @@
     }
   }
 
+  function lerp(a, b, t) {
+    return a + (b - a) * Math.max(0, Math.min(1, t));
+}
+
+  // 实时位置插值：在两次轮询之间按时间补间，载具图标平滑跟走。
+  function shipmentLivePoint(shipment) {
+    if (shipment._toX === undefined) {
+      return null;
+    }
+    const t = (performance.now() - (shipment._lerpStartMs || 0)) / SHIPMENT_REFRESH_MS;
+    return {
+      x: lerp(shipment._fromX || 0, shipment._toX || 0, t),
+      z: lerp(shipment._fromZ || 0, shipment._toZ || 0, t)
+    };
+  }
+
+  // 用新一帧 shipments 的 current 作插值终点，旧帧终点作起点，供 shipmentLivePoint 平滑补间。
+  function applyShipmentInterpolation(next) {
+    const prevById = {};
+    for (const s of (state.shipments || [])) {
+      prevById[s.shippingOrderId] = s;
+    }
+    const now = performance.now();
+    for (const s of (next || [])) {
+      const prev = prevById[s.shippingOrderId];
+      const cur = s.current
+        || (s.points && s.points.length
+            ? s.points[Math.min(Number(s.completedPointCount) || 0, s.points.length - 1)]
+            : null);
+      const from = (prev && prev._toX !== undefined) ? { x: prev._toX, z: prev._toZ } : cur;
+      s._fromX = from ? from.x : (cur ? cur.x : 0);
+      s._fromZ = from ? from.z : (cur ? cur.z : 0);
+      s._toX = cur ? cur.x : s._fromX;
+      s._toZ = cur ? cur.z : s._fromZ;
+      s._lerpStartMs = now;
+    }
+    return next || [];
+  }
+
   function drawShipments(ctx) {
     if (!state.layers.shipments) {
       return;
@@ -914,8 +953,11 @@
         continue;
       }
       const completed = clamp(Number(shipment.completedPointCount) || 0, 0, points.length - 1);
-      drawRoute(ctx, points.slice(0, completed + 1), false, "#0ea5e9", 4);
-      drawRoute(ctx, points.slice(completed), true, "#2563eb", 3);
+      const isManual = !!shipment.manual;
+      const doneColor = isManual ? "#f59e0b" : "#0ea5e9";
+      const pendColor = isManual ? "#b45309" : "#2563eb";
+      drawRoute(ctx, points.slice(0, completed + 1), false, doneColor, 4);
+      drawRoute(ctx, points.slice(completed), true, pendColor, 3);
       drawShipmentVehicleIcon(ctx, shipment, points, completed);
     }
   }
@@ -937,19 +979,38 @@
   }
 
   function drawShipmentVehicleIcon(ctx, shipment, points, completedPointCount) {
-    const pose = shipmentIconPose(points, completedPointCount);
-    if (!pose) {
+    const fallbackPose = shipmentIconPose(points, completedPointCount);
+    // 优先用实时插值坐标跟走；无实时数据时回退到路点定位。
+    const live = shipmentLivePoint(shipment);
+    let posePoint;
+    let angle;
+    if (live) {
+      posePoint = normalizePoint(live);
+      angle = Math.atan2((shipment._toZ || 0) - (shipment._fromZ || 0),
+                         (shipment._toX || 0) - (shipment._fromX || 0));
+    } else if (fallbackPose) {
+      posePoint = fallbackPose.point;
+      angle = fallbackPose.angle;
+    } else {
       return;
     }
-    const screen = worldToScreen(pose.point);
+    const screen = worldToScreen(posePoint);
     if (screen.x < -40 || screen.y < -40 || screen.x > state.canvas.width + 40 || screen.y > state.canvas.height + 40) {
       return;
     }
     const size = clamp(18 + state.zoom * 2, 18, 28);
     const mode = String(shipment.transportMode || "").toUpperCase();
+    // 脉动光晕：随时间正弦呼吸，手动车暖色、调度车冷色。
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350);
     ctx.save();
     ctx.translate(screen.x, screen.y);
-    ctx.rotate(pose.angle);
+    ctx.globalAlpha = 0.18 + 0.16 * pulse;
+    ctx.fillStyle = shipment.manual ? "#f59e0b" : "#0ea5e9";
+    ctx.beginPath();
+    ctx.arc(0, 0, size * (0.7 + 0.25 * pulse), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.rotate(angle);
     if (mode.includes("PORT") || mode.includes("WATER") || mode.includes("SEA") || mode.includes("SAIL") || mode.includes("BOAT")) {
       drawSailboatIcon(ctx, size);
     } else {
@@ -1142,6 +1203,13 @@
     drawShipments(ctx);
     drawMarkets(ctx);
     drawHoverHighlight(ctx);
+    // 有在途运输时持续重绘，让实时插值动画连续推进
+    if (state.layers.shipments && (state.shipments || []).length > 0 && !state.animationFrame) {
+      state.animationFrame = requestAnimationFrame(() => {
+        state.animationFrame = 0;
+        renderCanvas();
+      });
+    }
   }
 
   function scheduleRender() {
@@ -1378,7 +1446,7 @@
     state.snapshot = snapshot;
     state.markets = markets.markets || [];
     state.territories = territories.territories || [];
-    state.shipments = shipments.shipments || [];
+    state.shipments = applyShipmentInterpolation(shipments.shipments || []);
     applySnapshotFocus();
     redrawSquaremapTerrain();
     renderLayerToggles();
@@ -1390,7 +1458,7 @@
 
   async function loadShipments() {
     const data = await fetchOptionalJson("/api/map/shipments", { shipments: state.shipments || [] });
-    state.shipments = data.shipments || [];
+    state.shipments = applyShipmentInterpolation(data.shipments || []);
     renderShipments();
     renderSelection();
     scheduleRender();

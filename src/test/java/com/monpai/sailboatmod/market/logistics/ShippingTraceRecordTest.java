@@ -14,7 +14,7 @@ class ShippingTraceRecordTest {
                 "ship-1", "shipper-1", "minecraft:overworld", "PORT", "SAILING",
                 "crimea", "port", "source", "target",
                 List.of(new Vec3(0.5, 64.0, 0.5), new Vec3(16.5, 64.0, 16.5)),
-                1, 0.5D, 100L, 200L);
+                1, 0.5D, 100L, 200L, 0.0D, 0.0D, false);
 
         ShippingTraceRecord loaded = ShippingTraceRecord.load(record.save());
 

@@ -270,6 +270,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private boolean autoReturnOnArrival = true;
     private TransportTaskKind transportTaskKind = TransportTaskKind.NONE;
     private boolean unloadOnArrival = true;
+    private static final int TRACE_LIVE_SYNC_INTERVAL_TICKS = 40; // 2s @20tps
+    private int traceLiveSyncTicks = 0;
     private int pendingReturnDelayTicks = 0;
     private int rentalPrice = SailboatEntity.DEFAULT_RENTAL_PRICE;
     private int lastPassengerCount = 0;
@@ -543,7 +545,29 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         Vec3 correctedPosition = railAutopilotSurfacePosition(step.position());
         applyRailAutopilotPose(correctedPosition, step.yaw(), correctedPosition.subtract(position()));
         checkInsideBlocks();
+        // webmap: 航行中每 2 秒把实时坐标推给轨迹
+        if (++traceLiveSyncTicks >= TRACE_LIVE_SYNC_INTERVAL_TICKS) {
+            traceLiveSyncTicks = 0;
+            String traceId = traceIdForLiveSync();
+            if (traceId != null && !traceId.isBlank()) {
+                com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePosition(
+                        level(), traceId, getX(), getZ());
+            }
+        }
         tickPassengerSoundCue();
+    }
+
+    /** 当前航行对应的 trace id：订单车用 manifest 的 shippingOrderId，手动车用 manual id。 */
+    private String traceIdForLiveSync() {
+        List<ShipmentManifestEntry> manifest = getPendingShipmentManifest();
+        if (hasTransportOrder(manifest)) {
+            for (ShipmentManifestEntry entry : manifest) {
+                if (entry != null && entry.shippingOrderId() != null && !entry.shippingOrderId().isBlank()) {
+                    return entry.shippingOrderId();
+                }
+            }
+        }
+        return com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID());
     }
 
     private void applyRailAutopilotPose(Vec3 nextPosition, float yaw, Vec3 delta) {
@@ -1511,13 +1535,30 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         entityData.set(DATA_AUTOPILOT_ACTIVE, true);
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
         updateRouteSyncData();
+        // webmap: 手动发车（manifest 无市场订单）建一条 manual 轨迹
+        if (!hasTransportOrder(getPendingShipmentManifest())) {
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.createOrUpdateManualTrace(
+                    level(), getUUID(), new java.util.ArrayList<>(autopilotRoute),
+                    traceShipperUuid(), "",
+                    "LAND", "IN_TRANSIT", getX(), getZ());
+        }
         return true;
+    }
+
+    /** 手动轨迹归属：当前驾驶玩家 uuid（无则空，仅影响可见性）。 */
+    private String traceShipperUuid() {
+        return getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver
+                ? driver.getUUID().toString()
+                : "";
     }
 
     public void stopAutopilot() {
         if (level().isClientSide) {
             return;
         }
+        // webmap: 清理本载具的手动轨迹（订单轨迹由订单生命周期管理）
+        com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
+                level(), com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID()));
         clearDelayedAutoReturn();
         entityData.set(DATA_AUTOPILOT_ACTIVE, false);
         entityData.set(DATA_AUTOPILOT_PAUSED, false);

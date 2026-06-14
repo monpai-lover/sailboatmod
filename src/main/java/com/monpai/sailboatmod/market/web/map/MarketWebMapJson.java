@@ -93,6 +93,13 @@ public final class MarketWebMapJson {
         json.add("points", points(shipment.points()));
         json.addProperty("completedPointCount", shipment.completedPointCount());
         json.addProperty("progressRatio", shipment.progressRatio());
+        json.addProperty("manual", shipment.manual());
+        if (shipment.current() != null) {
+            JsonObject current = new JsonObject();
+            current.addProperty("x", shipment.current().x());
+            current.addProperty("z", shipment.current().z());
+            json.add("current", current);
+        }
         return json;
     }
 

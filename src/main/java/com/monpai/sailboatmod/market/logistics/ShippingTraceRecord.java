@@ -22,7 +22,10 @@ public record ShippingTraceRecord(String shippingOrderId,
                                   int completedPointCount,
                                   double progressRatio,
                                   long startedGameTime,
-                                  long updatedGameTime) {
+                                  long updatedGameTime,
+                                  double currentX,
+                                  double currentZ,
+                                  boolean manual) {
     private static final int MAX_WAYPOINTS = 2048;
 
     public ShippingTraceRecord {
@@ -40,18 +43,28 @@ public record ShippingTraceRecord(String shippingOrderId,
         progressRatio = Math.max(0.0D, Math.min(1.0D, progressRatio));
         startedGameTime = Math.max(0L, startedGameTime);
         updatedGameTime = Math.max(0L, updatedGameTime);
+        if (currentX == 0.0D && currentZ == 0.0D && !waypoints.isEmpty()) {
+            currentX = waypoints.get(0).x;
+            currentZ = waypoints.get(0).z;
+        }
     }
 
     public ShippingTraceRecord withStatus(String nextStatus, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, nextStatus,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime);
+                startedGameTime, gameTime, currentX, currentZ, manual);
     }
 
     public ShippingTraceRecord withProgress(int nextCompletedPointCount, double nextProgressRatio, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, nextCompletedPointCount, nextProgressRatio,
-                startedGameTime, gameTime);
+                startedGameTime, gameTime, currentX, currentZ, manual);
+    }
+
+    public ShippingTraceRecord withLivePosition(double nextX, double nextZ, long gameTime) {
+        return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
+                nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
+                startedGameTime, gameTime, nextX, nextZ, manual);
     }
 
     public CompoundTag save() {
@@ -78,6 +91,9 @@ public record ShippingTraceRecord(String shippingOrderId,
         tag.putDouble("ProgressRatio", progressRatio);
         tag.putLong("StartedGameTime", startedGameTime);
         tag.putLong("UpdatedGameTime", updatedGameTime);
+        tag.putDouble("CurrentX", currentX);
+        tag.putDouble("CurrentZ", currentZ);
+        tag.putBoolean("Manual", manual);
         return tag;
     }
 
@@ -103,7 +119,10 @@ public record ShippingTraceRecord(String shippingOrderId,
                 tag.getInt("CompletedPointCount"),
                 tag.getDouble("ProgressRatio"),
                 tag.getLong("StartedGameTime"),
-                tag.getLong("UpdatedGameTime")
+                tag.getLong("UpdatedGameTime"),
+                tag.contains("CurrentX") ? tag.getDouble("CurrentX") : 0.0D,
+                tag.contains("CurrentZ") ? tag.getDouble("CurrentZ") : 0.0D,
+                tag.contains("Manual") && tag.getBoolean("Manual")
         );
     }
 

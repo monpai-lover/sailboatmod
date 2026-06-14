@@ -49,7 +49,9 @@ public final class MarketWebMapDtos {
                                 String targetName,
                                 List<Point> points,
                                 int completedPointCount,
-                                double progressRatio) {
+                                double progressRatio,
+                                Point current,
+                                boolean manual) {
         public ShipmentTrace {
             points = points == null ? List.of() : List.copyOf(points);
         }
