@@ -31,3 +31,6 @@ forge*changelog.txt
 # macOS
 .DS_Store
 *.DS_Store
+
+# 测试产物（roadplanner 草稿）
+roadplanner_drafts_test/
