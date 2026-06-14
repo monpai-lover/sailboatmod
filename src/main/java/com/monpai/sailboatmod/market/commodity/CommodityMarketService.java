@@ -360,21 +360,42 @@ public final class CommodityMarketService {
     public static final int REFERENCE_TRADE_SAMPLE_SIZE = 20;
 
     /**
-     * 参考价 = 最近 N 笔成交均价；无成交记录时回退到基准价（estimateBaseUnitPrice）作初始锚。
-     * 仅用于上架价格保护与建议价，不驱动任何实际成交价。
+     * 参考价回退决策（纯函数，可单测）：
+     * 最近成交均价(>0) → 在售最低价(>0) → 基准价 basePrice（定价模型兜底，至少 1）。
      */
-    public int referencePrice(ItemStack itemStack) {
-        int fallback = Math.max(1, estimateBaseUnitPrice(itemStack));
-        if (itemStack == null || itemStack.isEmpty()) {
-            return fallback;
+    public static int resolveReferencePrice(int recentTradeAverage, int lowestActiveAsk, int basePrice) {
+        if (recentTradeAverage > 0) {
+            return recentTradeAverage;
         }
+        if (lowestActiveAsk > 0) {
+            return lowestActiveAsk;
+        }
+        return Math.max(1, basePrice);
+    }
+
+    /**
+     * 参考价 = 最近 N 笔成交均价 → 在售最低价 → 基准价（定价模型兜底）。
+     * 仅用于上架价格保护、建议价、求购单/建筑成本定价，不驱动任何实际成交价。
+     * lowestActiveAsk：调用方从市场活跃挂单扫出的该商品最低单价；无则传 0。
+     */
+    public int referencePrice(ItemStack itemStack, int lowestActiveAsk) {
+        int basePrice = Math.max(1, estimateBaseUnitPrice(itemStack));
+        if (itemStack == null || itemStack.isEmpty()) {
+            return resolveReferencePrice(0, lowestActiveAsk, basePrice);
+        }
+        int avg = 0;
         try {
             String commodityKey = CommodityKeyResolver.resolve(itemStack);
-            int avg = repository.recentTradeAveragePrice(commodityKey, REFERENCE_TRADE_SAMPLE_SIZE);
-            return avg > 0 ? avg : fallback;
-        } catch (SQLException exception) {
-            return fallback;
+            avg = repository.recentTradeAveragePrice(commodityKey, REFERENCE_TRADE_SAMPLE_SIZE);
+        } catch (SQLException ignored) {
+            avg = 0;
         }
+        return resolveReferencePrice(avg, lowestActiveAsk, basePrice);
+    }
+
+    /** 无在售挂单信息时的参考价：成交均价 → 基准价。 */
+    public int referencePrice(ItemStack itemStack) {
+        return referencePrice(itemStack, 0);
     }
 
     private CommodityMarketState defaultState(CommodityDefinition definition) {

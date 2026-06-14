@@ -103,6 +103,32 @@ public class MarketSavedData extends SavedData {
         return out;
     }
 
+    /** 在售最低价：扫描活跃挂单中匹配该 commodityKey 的最低 unitPrice；无匹配返回 0。 */
+    public int lowestActiveAsk(String commodityKey) {
+        return lowestUnitPriceForCommodity(getListings(), commodityKey);
+    }
+
+    /** 纯函数：给定挂单列表，取匹配 commodityKey 的最低 unitPrice；无匹配返回 0。 */
+    public static int lowestUnitPriceForCommodity(List<MarketListing> activeListings, String commodityKey) {
+        if (activeListings == null || activeListings.isEmpty() || commodityKey == null || commodityKey.isBlank()) {
+            return 0;
+        }
+        int lowest = 0;
+        for (MarketListing listing : activeListings) {
+            if (listing == null || listing.itemStack() == null || listing.itemStack().isEmpty()) {
+                continue;
+            }
+            if (!commodityKey.equals(com.monpai.sailboatmod.market.commodity.CommodityKeyResolver.resolve(listing.itemStack()))) {
+                continue;
+            }
+            int unit = Math.max(0, listing.unitPrice());
+            if (unit > 0 && (lowest == 0 || unit < lowest)) {
+                lowest = unit;
+            }
+        }
+        return lowest;
+    }
+
     public List<PurchaseOrder> getOrdersForBuyer(String buyerUuid) {
         List<PurchaseOrder> out = new ArrayList<>();
         for (PurchaseOrder order : purchaseOrders.values()) {

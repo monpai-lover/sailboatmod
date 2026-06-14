@@ -56,10 +56,14 @@ public class CreateBuyOrderPacket {
                 String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
                 int safeQuantity = Math.max(1, packet.quantity);
                 int reserveBp = Math.max(packet.minPriceBp, packet.maxPriceBp);
+                // pricing: buy-order unit price uses market reference price (trade-avg -> lowest ask -> basePrice)
+                int lowestAsk = com.monpai.sailboatmod.market.MarketSavedData.get(player.level())
+                        .lowestActiveAsk(com.monpai.sailboatmod.market.commodity.CommodityKeyResolver.resolve(itemStack));
+                int referenceUnitPrice = service.referencePrice(itemStack, lowestAsk);
                 long reservedBalance = player.getAbilities().instabuild
                         ? 0L
                         : CommodityMarketService.reservedBalanceForBuyOrder(
-                        service.quote(itemStack, safeQuantity, playerUuid).buyUnitPrice(),
+                        referenceUnitPrice,
                         safeQuantity,
                         reserveBp
                 );

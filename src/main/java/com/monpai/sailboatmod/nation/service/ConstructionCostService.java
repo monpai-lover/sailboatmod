@@ -183,12 +183,9 @@ public final class ConstructionCostService {
         if (stack == null || stack.isEmpty() || quantity <= 0) {
             return 0L;
         }
-        try {
-            CommodityQuote quote = COMMODITY_MARKET.quote(stack, quantity);
-            return quote.buyPrice();
-        } catch (SQLException ignored) {
-            return (long) quantity * defaultUnitPrice(stack);
-        }
+        // pricing: construction cost uses market reference price (trade-avg -> basePrice; no market ctx for lowest ask here)
+        int unitPrice = COMMODITY_MARKET.referencePrice(stack);
+        return (long) unitPrice * quantity;
     }
 
     private static void applyCommodityPurchase(ServerLevel level, ServerPlayer player, ItemStack stack, int quantity) {

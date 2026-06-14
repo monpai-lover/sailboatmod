@@ -468,10 +468,13 @@ public final class MarketWebService {
             }
             int safeQuantity = Math.max(1, quantity);
             int reserveBp = Math.max(minPriceBp, maxPriceBp);
-            CommodityQuote quote = COMMODITY_MARKET.quote(stack, safeQuantity, identity.playerUuidString());
+            // pricing: buy-order unit price uses market reference price (trade-avg -> lowest ask -> basePrice)
+            int lowestAsk = MarketSavedData.get(resolved.level())
+                    .lowestActiveAsk(com.monpai.sailboatmod.market.commodity.CommodityKeyResolver.resolve(stack));
+            int referenceUnitPrice = COMMODITY_MARKET.referencePrice(stack, lowestAsk);
             long reservedBalance = identity.onlinePlayer() != null && identity.onlinePlayer().getAbilities().instabuild
                     ? 0L
-                    : CommodityMarketService.reservedBalanceForBuyOrder(quote.buyUnitPrice(), safeQuantity, reserveBp);
+                    : CommodityMarketService.reservedBalanceForBuyOrder(referenceUnitPrice, safeQuantity, reserveBp);
             if (reservedBalance > 0L
                     && !MarketWalletService.reserve(resolved.level(), identity.playerUuidString(), identity.playerName(), reservedBalance).success()) {
                 return false;

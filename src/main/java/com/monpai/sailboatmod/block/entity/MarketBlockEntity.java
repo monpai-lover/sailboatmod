@@ -2044,8 +2044,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     private ListingPriceWindow listingPriceWindow(ItemStack stack, int quantity, int requestedUnitPrice) {
-        // pricing: protection band is reference-price +/-50%, not dynamic-quote bp
-        int referenceUnitPrice = COMMODITY_MARKET.referencePrice(stack);
+        // pricing: protection band is reference-price +/-50%; reference falls back trade-avg -> lowest ask -> basePrice
+        int lowestAsk = (level == null || level.isClientSide)
+                ? 0
+                : MarketSavedData.get(level).lowestActiveAsk(CommodityKeyResolver.resolve(stack));
+        int referenceUnitPrice = COMMODITY_MARKET.referencePrice(stack, lowestAsk);
         return MarketPricePolicy.referencePriceWindow(referenceUnitPrice, requestedUnitPrice);
     }
 
