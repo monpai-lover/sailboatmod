@@ -295,7 +295,8 @@ public final class TownService {
                     NationClaimAccessLevel.MEMBER.id(),
                     NationClaimAccessLevel.MEMBER.id(),
                     NationClaimAccessLevel.MEMBER.id(),
-                    System.currentTimeMillis()
+                    System.currentTimeMillis(),
+                    NationClaimRecord.SOURCE_TOWN_CORE
             ));
         } else {
             data.putClaim(new NationClaimRecord(
@@ -316,9 +317,13 @@ public final class TownService {
         }
 
         if (relocating) {
+            if (!sameCoreChunk(previousCoreDimension, previousCorePos, updated.coreDimension(), updated.corePos())) {
+                removePreviousTownCoreClaim(data, selectedTown, previousCoreDimension, previousCorePos);
+            }
             removePreviousTownCoreBlock(actor, previousCoreDimension, previousCorePos);
             refundRelocationCore(actor, ModBlocks.TOWN_CORE_BLOCK.get());
         }
+        ClaimHighlightSyncService.syncAll(actor.getServer());
 
         return NationResult.success(Component.translatable(
                 relocating
@@ -355,8 +360,10 @@ public final class TownService {
                 town.cultureId()
         );
         data.putTown(updated);
+        removePreviousTownCoreClaim(data, town, town.coreDimension(), town.corePos());
         suppressCoreRemoval(actor.level(), pos);
         actor.level().removeBlock(pos, false);
+        ClaimHighlightSyncService.syncAll(actor.getServer());
 
         ItemStack relocatedCore = new ItemStack(ModBlocks.TOWN_CORE_BLOCK.get());
         CompoundTag tag = relocatedCore.getOrCreateTag();
@@ -383,6 +390,7 @@ public final class TownService {
                 continue;
             }
             removeDependentNationCore(level, data, town);
+            removePreviousTownCoreClaim(data, town, town.coreDimension(), town.corePos());
             TownRecord updated = new TownRecord(
                     town.townId(),
                     town.nationId(),
@@ -395,6 +403,7 @@ public final class TownService {
                     town.cultureId()
             );
             data.putTown(updated);
+            ClaimHighlightSyncService.syncAll(net.minecraftforge.server.ServerLifecycleHooks.getCurrentServer());
             return;
         }
     }
@@ -1239,7 +1248,8 @@ public final class TownService {
                 claim.breakAccessLevel(), claim.placeAccessLevel(), claim.useAccessLevel(),
                 claim.containerAccessLevel(), claim.redstoneAccessLevel(),
                 claim.entityUseAccessLevel(), claim.entityDamageAccessLevel(),
-                claim.claimedAt()
+                claim.claimedAt(),
+                claim.claimSource()
         );
     }
 
@@ -1248,6 +1258,10 @@ public final class TownService {
                                                      boolean corePresent,
                                                      Supplier<NationResult> pickup) {
         return finishTownCoreRemoval(sameDimension, chunkLoaded, corePresent, pickup);
+    }
+
+    static boolean removePreviousTownCoreClaimForTest(NationSavedData data, TownRecord town, String dimensionId, long corePos) {
+        return removePreviousTownCoreClaim(data, town, dimensionId, corePos);
     }
 
     private static NationResult finishTownCoreRemoval(boolean sameDimension,
@@ -1311,7 +1325,8 @@ public final class TownService {
                     NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
                     NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
                     NationClaimAccessLevel.MEMBER.id(), NationClaimAccessLevel.MEMBER.id(),
-                    NationClaimAccessLevel.MEMBER.id(), System.currentTimeMillis()));
+                    NationClaimAccessLevel.MEMBER.id(), System.currentTimeMillis(),
+                    NationClaimRecord.SOURCE_TOWN_CORE));
         }
     }
 
@@ -1328,8 +1343,41 @@ public final class TownService {
             return;
         }
         if (coreLevel.getBlockState(oldPos).is(ModBlocks.TOWN_CORE_BLOCK.get())) {
+            suppressCoreRemoval(coreLevel, oldPos);
             coreLevel.removeBlock(oldPos, false);
         }
+    }
+
+    private static boolean removePreviousTownCoreClaim(NationSavedData data, TownRecord town, String dimensionId, long corePos) {
+        if (data == null || town == null || dimensionId == null || dimensionId.isBlank() || corePos == TownRecord.noCorePos()) {
+            return false;
+        }
+        BlockPos oldPos = BlockPos.of(corePos);
+        ChunkPos oldChunk = new ChunkPos(oldPos);
+        NationClaimRecord claim = data.getClaim(dimensionId, oldChunk.x, oldChunk.z);
+        if (claim == null || !town.townId().equals(claim.townId())) {
+            return false;
+        }
+        if (!NationClaimRecord.SOURCE_TOWN_CORE.equals(claim.claimSource())) {
+            return false;
+        }
+        if (!claim.nationId().isBlank() && !town.nationId().isBlank() && !claim.nationId().equals(town.nationId())) {
+            return false;
+        }
+        data.removeClaim(dimensionId, oldChunk.x, oldChunk.z);
+        return true;
+    }
+
+    private static boolean sameCoreChunk(String leftDimension, long leftPos, String rightDimension, long rightPos) {
+        if (leftDimension == null || rightDimension == null || leftPos == TownRecord.noCorePos() || rightPos == TownRecord.noCorePos()) {
+            return false;
+        }
+        if (!leftDimension.equalsIgnoreCase(rightDimension)) {
+            return false;
+        }
+        ChunkPos leftChunk = new ChunkPos(BlockPos.of(leftPos));
+        ChunkPos rightChunk = new ChunkPos(BlockPos.of(rightPos));
+        return leftChunk.x == rightChunk.x && leftChunk.z == rightChunk.z;
     }
 
     private static void refundRelocationCore(ServerPlayer actor, net.minecraft.world.level.block.Block block) {

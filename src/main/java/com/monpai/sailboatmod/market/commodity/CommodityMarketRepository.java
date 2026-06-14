@@ -240,8 +240,8 @@ public final class CommodityMarketRepository {
     public void createBuyOrder(BuyOrder order) throws SQLException {
         try (PreparedStatement statement = connection().prepareStatement(
                 """
-                INSERT INTO buy_order (order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, created_at, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO buy_order (order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, reserved_balance, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
             statement.setString(1, order.orderId());
             statement.setString(2, order.buyerUuid());
@@ -250,30 +250,34 @@ public final class CommodityMarketRepository {
             statement.setInt(5, order.quantity());
             statement.setInt(6, order.minPriceBp());
             statement.setInt(7, order.maxPriceBp());
-            statement.setLong(8, order.createdAt());
-            statement.setString(9, order.status());
+            statement.setLong(8, order.reservedBalance());
+            statement.setLong(9, order.createdAt());
+            statement.setString(10, order.status());
             statement.executeUpdate();
+        }
+    }
+
+    public BuyOrder getBuyOrder(String orderId) throws SQLException {
+        if (orderId == null || orderId.isBlank()) {
+            return null;
+        }
+        try (PreparedStatement statement = connection().prepareStatement(
+                "SELECT order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, reserved_balance, created_at, status FROM buy_order WHERE order_id = ?")) {
+            statement.setString(1, orderId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? readBuyOrder(resultSet) : null;
+            }
         }
     }
 
     public java.util.List<BuyOrder> listActiveBuyOrders(String commodityKey) throws SQLException {
         try (PreparedStatement statement = connection().prepareStatement(
-                "SELECT order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, created_at, status FROM buy_order WHERE commodity_key = ? AND status = 'ACTIVE' ORDER BY created_at DESC")) {
+                "SELECT order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, reserved_balance, created_at, status FROM buy_order WHERE commodity_key = ? AND status = 'ACTIVE' ORDER BY created_at DESC")) {
             statement.setString(1, commodityKey);
             try (ResultSet resultSet = statement.executeQuery()) {
                 java.util.List<BuyOrder> orders = new java.util.ArrayList<>();
                 while (resultSet.next()) {
-                    orders.add(new BuyOrder(
-                            resultSet.getString("order_id"),
-                            resultSet.getString("buyer_uuid"),
-                            resultSet.getString("buyer_name"),
-                            resultSet.getString("commodity_key"),
-                            resultSet.getInt("quantity"),
-                            resultSet.getInt("min_price_bp"),
-                            resultSet.getInt("max_price_bp"),
-                            resultSet.getLong("created_at"),
-                            resultSet.getString("status")
-                    ));
+                    orders.add(readBuyOrder(resultSet));
                 }
                 return orders;
             }
@@ -282,24 +286,64 @@ public final class CommodityMarketRepository {
 
     public java.util.List<BuyOrder> listActiveBuyOrdersForBuyer(String buyerUuid) throws SQLException {
         try (PreparedStatement statement = connection().prepareStatement(
-                "SELECT order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, created_at, status FROM buy_order WHERE buyer_uuid = ? AND status = 'ACTIVE' ORDER BY created_at DESC")) {
+                "SELECT order_id, buyer_uuid, buyer_name, commodity_key, quantity, min_price_bp, max_price_bp, reserved_balance, created_at, status FROM buy_order WHERE buyer_uuid = ? AND status = 'ACTIVE' ORDER BY created_at DESC")) {
             statement.setString(1, buyerUuid);
             try (ResultSet resultSet = statement.executeQuery()) {
                 java.util.List<BuyOrder> orders = new java.util.ArrayList<>();
                 while (resultSet.next()) {
-                    orders.add(new BuyOrder(
-                            resultSet.getString("order_id"),
-                            resultSet.getString("buyer_uuid"),
-                            resultSet.getString("buyer_name"),
-                            resultSet.getString("commodity_key"),
-                            resultSet.getInt("quantity"),
-                            resultSet.getInt("min_price_bp"),
-                            resultSet.getInt("max_price_bp"),
-                            resultSet.getLong("created_at"),
-                            resultSet.getString("status")
-                    ));
+                    orders.add(readBuyOrder(resultSet));
                 }
                 return orders;
+            }
+        }
+    }
+
+    private static BuyOrder readBuyOrder(ResultSet resultSet) throws SQLException {
+        return new BuyOrder(
+                resultSet.getString("order_id"),
+                resultSet.getString("buyer_uuid"),
+                resultSet.getString("buyer_name"),
+                resultSet.getString("commodity_key"),
+                resultSet.getInt("quantity"),
+                resultSet.getInt("min_price_bp"),
+                resultSet.getInt("max_price_bp"),
+                resultSet.getLong("reserved_balance"),
+                resultSet.getLong("created_at"),
+                resultSet.getString("status")
+        );
+    }
+
+    public List<CommodityDefinition> listActiveBuyOrderCommodityDefinitions() throws SQLException {
+        try (PreparedStatement statement = connection().prepareStatement(
+                """
+                SELECT DISTINCT
+                    d.commodity_key, d.item_id, d.variant_key, d.display_name, d.unit_size,
+                    d.category, d.trade_enabled, d.rarity, d.importance, d.volume,
+                    d.elasticity, d.base_volatility
+                FROM buy_order b
+                JOIN commodity_definition d ON d.commodity_key = b.commodity_key
+                WHERE b.status = 'ACTIVE'
+                ORDER BY d.display_name COLLATE NOCASE ASC
+                """)) {
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<CommodityDefinition> definitions = new ArrayList<>();
+                while (resultSet.next()) {
+                    definitions.add(new CommodityDefinition(
+                            resultSet.getString("commodity_key"),
+                            resultSet.getString("item_id"),
+                            resultSet.getString("variant_key"),
+                            resultSet.getString("display_name"),
+                            resultSet.getInt("unit_size"),
+                            resultSet.getString("category"),
+                            resultSet.getInt("trade_enabled") == 1,
+                            resultSet.getInt("rarity"),
+                            resultSet.getInt("importance"),
+                            resultSet.getInt("volume"),
+                            resultSet.getInt("elasticity"),
+                            resultSet.getInt("base_volatility")
+                    ));
+                }
+                return definitions;
             }
         }
     }

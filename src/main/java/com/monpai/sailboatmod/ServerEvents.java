@@ -45,6 +45,21 @@ public final class ServerEvents {
         SharedMapServerState.onServerStarted(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
         RoadPlannerMapPreloadService.onServerStarted(event.getServer());
+        runStartupTaskSafely("road graph reconcile", () -> reconcileRoadGraphs(event.getServer()));
+    }
+
+    // 把已有的道路记录(RoadNetworkRecord)一次性补建进路由图，修复"驿站找不到已建道路、必须先开道路规划器"的问题。
+    private static void reconcileRoadGraphs(MinecraftServer server) {
+        if (server == null) {
+            return;
+        }
+        int total = 0;
+        for (net.minecraft.server.level.ServerLevel level : server.getAllLevels()) {
+            total += com.monpai.sailboatmod.roadplanner.graph.RoadGraphSync.reconcile(level);
+        }
+        if (total > 0) {
+            LOGGER.info("Reconciled {} road(s) into the routing graph on startup.", total);
+        }
     }
 
     private static int cleanupTickCounter;
@@ -95,6 +110,9 @@ public final class ServerEvents {
         for (com.monpai.sailboatmod.nation.model.NationClaimRecord claim : toRemove) {
             data.removeClaim(claim.dimensionId(), claim.chunkX(), claim.chunkZ());
         }
+        if (shouldSyncAfterOrphanClaimCleanup(toRemove.size())) {
+            com.monpai.sailboatmod.nation.service.ClaimHighlightSyncService.syncAll(server);
+        }
     }
 
     @SubscribeEvent
@@ -128,6 +146,14 @@ public final class ServerEvents {
 
     static boolean runStartupTaskSafelyForTest(String taskName, StartupTask task) {
         return runStartupTaskSafely(taskName, task);
+    }
+
+    static boolean shouldSyncAfterOrphanClaimCleanupForTest(int removedClaimCount) {
+        return shouldSyncAfterOrphanClaimCleanup(removedClaimCount);
+    }
+
+    private static boolean shouldSyncAfterOrphanClaimCleanup(int removedClaimCount) {
+        return removedClaimCount > 0;
     }
 
     private static boolean runStartupTaskSafely(String taskName, StartupTask task) {

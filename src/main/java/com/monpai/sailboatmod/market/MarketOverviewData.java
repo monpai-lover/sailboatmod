@@ -14,6 +14,11 @@ public record MarketOverviewData(
         String ownerUuid,
         String viewerUuid,
         int pendingCredits,
+        long walletAvailableBalance,
+        long walletReservedBalance,
+        long walletTotalBalance,
+        long treasuryBalance,
+        boolean canTransferTreasury,
         boolean linkedDock,
         String linkedDockName,
         String linkedDockPosText,
@@ -43,6 +48,7 @@ public record MarketOverviewData(
         List<ListingEntry> listingEntries,
         List<OrderEntry> orderEntries,
         List<ShippingEntry> shippingEntries,
+        List<DispatchOption> availableDispatchOptions,
         List<BuyOrderEntry> buyOrderEntries,
         List<PriceChartSeries> priceChartSeries,
         List<CommodityBuyBook> commodityBuyBooks,
@@ -64,6 +70,7 @@ public record MarketOverviewData(
         listingEntries = listingEntries == null ? List.of() : List.copyOf(listingEntries);
         orderEntries = orderEntries == null ? List.of() : List.copyOf(orderEntries);
         shippingEntries = shippingEntries == null ? List.of() : List.copyOf(shippingEntries);
+        availableDispatchOptions = availableDispatchOptions == null ? List.of() : List.copyOf(availableDispatchOptions);
         buyOrderEntries = buyOrderEntries == null ? List.of() : List.copyOf(buyOrderEntries);
         priceChartSeries = priceChartSeries == null ? List.of() : List.copyOf(priceChartSeries);
         commodityBuyBooks = commodityBuyBooks == null ? List.of() : List.copyOf(commodityBuyBooks);
@@ -138,7 +145,7 @@ public record MarketOverviewData(
 
     public record StorageEntry(String label, String commodityKey, String itemName, int quantity, int suggestedUnitPrice,
                                int minAllowedUnitPrice, int maxAllowedUnitPrice,
-                               String detail, String category, int rarity) {
+                               boolean priceConstrained, String detail, String category, int rarity) {
     }
 
     public record ListingEntry(String listingId, String label, String commodityKey, String itemName, int availableCount, int reservedCount,

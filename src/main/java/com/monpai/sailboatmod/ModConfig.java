@@ -13,6 +13,12 @@ public final class ModConfig {
     public static final ForgeConfigSpec.IntValue MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES;
     public static final ForgeConfigSpec.BooleanValue MARKET_WEB_DEV_MODE;
     public static final ForgeConfigSpec.ConfigValue<String> MARKET_WEB_DEV_ROOT;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_RENDER_THREADS;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_CACHE_SIZE;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_MAX_ACTIVE_SNAPSHOT_REQUESTS;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_MAX_CHUNKS_PER_INTERVAL;
+    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS;
+    public static final ForgeConfigSpec.BooleanValue MARKET_WEB_MAP_BIOME_COLORS_ENABLED;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_RETENTION_DAYS;
     public static final ForgeConfigSpec.BooleanValue BANK_PERSONAL_LOANS_ENABLED;
@@ -63,6 +69,24 @@ public final class ModConfig {
         MARKET_WEB_DEV_ROOT = builder
                 .comment("Optional disk directory for market web dev assets. Use an absolute path or leave blank to auto-detect common source folders.")
                 .define("webDevRoot", "", value -> value instanceof String);
+        MARKET_WEB_MAP_RENDER_THREADS = builder
+                .comment("Market web map render worker threads. 0 means auto.")
+                .defineInRange("webMapRenderThreads", 0, 0, 64);
+        MARKET_WEB_MAP_SNAPSHOT_CACHE_SIZE = builder
+                .comment("Market web map snapshot FIFO cache size.")
+                .defineInRange("webMapSnapshotCacheSize", 2048, 128, 65536);
+        MARKET_WEB_MAP_MAX_ACTIVE_SNAPSHOT_REQUESTS = builder
+                .comment("Maximum active market web map snapshot reads. 0 means renderThreads * 48.")
+                .defineInRange("webMapMaxActiveSnapshotRequests", 0, 0, 65536);
+        MARKET_WEB_MAP_BACKGROUND_MAX_CHUNKS_PER_INTERVAL = builder
+                .comment("Maximum chunks enqueued by market web map background jobs per interval.")
+                .defineInRange("webMapBackgroundMaxChunksPerInterval", 512, 1, 65536);
+        MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS = builder
+                .comment("Ticks between market web map background render enqueue passes.")
+                .defineInRange("webMapBackgroundIntervalTicks", 200, 1, 72000);
+        MARKET_WEB_MAP_BIOME_COLORS_ENABLED = builder
+                .comment("Enable biome color tinting for market web map terrain. Disabled by default to preserve Sailboat's fixed palette.")
+                .define("webMapBiomeColorsEnabled", false);
         MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES = builder
                 .comment("How often market analytics snapshots are recorded into SQLite.")
                 .defineInRange("analyticsSnapshotIntervalMinutes", 60, 5, 1440);
@@ -137,6 +161,30 @@ public final class ModConfig {
 
     public static String marketWebDevRoot() {
         return MARKET_WEB_DEV_ROOT.get();
+    }
+
+    public static int marketWebRenderThreads() {
+        return MARKET_WEB_MAP_RENDER_THREADS.get();
+    }
+
+    public static int marketWebSnapshotCacheSize() {
+        return MARKET_WEB_MAP_SNAPSHOT_CACHE_SIZE.get();
+    }
+
+    public static int marketWebMaxActiveSnapshotRequests() {
+        return MARKET_WEB_MAP_MAX_ACTIVE_SNAPSHOT_REQUESTS.get();
+    }
+
+    public static int marketWebBackgroundMaxChunksPerInterval() {
+        return MARKET_WEB_MAP_BACKGROUND_MAX_CHUNKS_PER_INTERVAL.get();
+    }
+
+    public static int marketWebBackgroundIntervalTicks() {
+        return MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS.get();
+    }
+
+    public static boolean marketWebBiomeColorsEnabled() {
+        return MARKET_WEB_MAP_BIOME_COLORS_ENABLED.get();
     }
 
     public static int marketAnalyticsSnapshotIntervalMinutes() {

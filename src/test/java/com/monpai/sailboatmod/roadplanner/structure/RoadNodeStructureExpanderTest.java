@@ -7,6 +7,7 @@ import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import org.junit.jupiter.api.BeforeAll;
@@ -154,6 +155,70 @@ class RoadNodeStructureExpanderTest {
         assertTrue(result.centerline().stream().anyMatch(point -> point.targetY() < point.terrainY()));
     }
 
+    @Test
+    void roadAcrossShallowPitKeepsGradeAndFillsDepression() {
+        RoadTerrainSampler shallowPit = (x, z) -> x >= 8 && x <= 11 ? 60 : 64;
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                shallowPit,
+                RoadStructureMode.BUILD
+        );
+
+        List<RoadCenterlinePoint> pitCenterline = result.centerline().stream()
+                .filter(point -> point.pos().getX() >= 8 && point.pos().getX() <= 11)
+                .toList();
+        assertFalse(pitCenterline.isEmpty());
+        assertTrue(pitCenterline.stream().allMatch(point -> point.targetY() == 64),
+                "road tool should fill shallow ground pits instead of lowering the road grade: " + pitCenterline);
+
+        List<BuildStep> pitSurfaces = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.SURFACE)
+                .filter(step -> step.pos().getX() >= 8 && step.pos().getX() <= 11)
+                .filter(step -> step.pos().getZ() == 0)
+                .toList();
+        assertFalse(pitSurfaces.isEmpty());
+        assertTrue(pitSurfaces.stream().allMatch(step -> step.pos().getY() == 63),
+                "surface blocks over shallow pits should stay at the surrounding road height: " + pitSurfaces);
+        assertTrue(result.buildSteps().stream()
+                        .anyMatch(step -> step.phase() == BuildPhase.FOUNDATION
+                                && !step.state().isAir()
+                                && step.pos().getX() >= 8
+                                && step.pos().getX() <= 11
+                                && step.pos().getZ() == 0
+                                && step.pos().getY() < 63),
+                "shallow pit should be handled by foundation fill below the road surface");
+    }
+
+    @Test
+    void roadAcrossNarrowDeepHoleKeepsGradeInsteadOfDivingIntoTunnel() {
+        RoadTerrainSampler narrowHole = (x, z) -> x >= 8 && x <= 10 ? 56 : 64;
+        RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                RoadPlannerBuildSettings.DEFAULTS,
+                narrowHole,
+                RoadStructureMode.BUILD
+        );
+
+        List<RoadCenterlinePoint> holeCenterline = result.centerline().stream()
+                .filter(point -> point.pos().getX() >= 8 && point.pos().getX() <= 10)
+                .toList();
+        assertFalse(holeCenterline.isEmpty());
+        assertTrue(holeCenterline.stream().allMatch(point -> point.targetY() == 64),
+                "normal road tool should fill narrow holes instead of smoothing the grade down into them: " + holeCenterline);
+
+        List<BuildStep> holeSurfaces = result.buildSteps().stream()
+                .filter(step -> step.phase() == BuildPhase.SURFACE)
+                .filter(step -> step.pos().getX() >= 8 && step.pos().getX() <= 10)
+                .filter(step -> step.pos().getZ() == 0)
+                .toList();
+        assertFalse(holeSurfaces.isEmpty());
+        assertTrue(holeSurfaces.stream().allMatch(step -> step.pos().getY() == 63),
+                "road surface over a narrow hole should remain at surrounding ground height: " + holeSurfaces);
+    }
+
 
     @Test
     void flatRoadEmitsFoundationAndSurfaceSteps() {
@@ -211,6 +276,34 @@ class RoadNodeStructureExpanderTest {
 
         assertTrue(surface.contains(new BlockPos(3, 63, 1)), surface.toString());
         assertTrue(surface.contains(new BlockPos(4, 63, 2)), surface.toString());
+    }
+
+    @Test
+    void roadStreetlightsArePlacedOutsideRoadSurfaceColumnsAtTurns() {
+        List<RoadCenterlinePoint> turn = List.of(
+                point(0, 64, 0, 0.0D, RoadPlannerSegmentType.ROAD),
+                point(4, 64, 0, 4.0D, RoadPlannerSegmentType.ROAD),
+                point(4, 64, 4, 8.0D, RoadPlannerSegmentType.ROAD)
+        );
+        List<BuildStep> steps = RoadSurfaceStepEmitter.emit(
+                turn,
+                List.of(new RoadSpan(RoadSpanType.ROAD, 0, 2, RoadPlannerSegmentType.ROAD)),
+                RoadPlannerBuildSettings.DEFAULTS,
+                0
+        );
+
+        Set<Long> roadColumns = steps.stream()
+                .filter(step -> step.phase() == BuildPhase.SURFACE)
+                .map(step -> columnKey(step.pos()))
+                .collect(java.util.stream.Collectors.toSet());
+        List<BuildStep> lampPosts = steps.stream()
+                .filter(step -> step.phase() == BuildPhase.STREETLIGHT)
+                .filter(step -> step.state().is(Blocks.OAK_FENCE))
+                .toList();
+
+        assertFalse(lampPosts.isEmpty(), "turning road should still emit streetlight posts");
+        assertTrue(lampPosts.stream().noneMatch(step -> roadColumns.contains(columnKey(step.pos()))),
+                "streetlight posts must be pushed outside the rasterized road surface columns: " + lampPosts);
     }
 
     @Test
@@ -2024,6 +2117,10 @@ class RoadNodeStructureExpanderTest {
             return step.pos().getY() * 2 + (step.state().getValue(SlabBlock.TYPE) == SlabType.TOP ? 2 : 1);
         }
         return step.pos().getY() * 2 + 2;
+    }
+
+    private static long columnKey(BlockPos pos) {
+        return (((long) pos.getX()) << 32) ^ (pos.getZ() & 0xffffffffL);
     }
 
     private static RoadCenterlinePoint point(int x, int y, int z, double distance, RoadPlannerSegmentType segmentType) {

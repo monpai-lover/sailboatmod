@@ -43,21 +43,41 @@ public final class ClaimHighlightSyncService {
         NationSavedData data = NationSavedData.get(server.overworld());
         List<SailboatClaimHighlightEntry> entries = new ArrayList<>();
         for (NationClaimRecord claim : data.getAllClaims()) {
-            NationRecord nation = data.getNation(claim.nationId());
             TownRecord town = data.getTown(claim.townId());
-            entries.add(new SailboatClaimHighlightEntry(
-                    claim.dimensionId(),
-                    claim.chunkX(),
-                    claim.chunkZ(),
-                    claim.nationId(),
-                    nation == null ? claim.nationId() : nation.name(),
-                    claim.townId(),
-                    town == null ? claim.townId() : town.name(),
-                    nation == null ? FALLBACK_PRIMARY_COLOR : nation.primaryColorRgb(),
-                    nation == null ? FALLBACK_SECONDARY_COLOR : nation.secondaryColorRgb()
-            ));
+            NationRecord claimNation = data.getNation(claim.nationId());
+            NationRecord townNation = town == null || town.nationId().isBlank() ? null : data.getNation(town.nationId());
+            entries.add(entryFor(claim, claimNation, town, townNation));
         }
         return new SyncClaimHighlightsPacket(entries);
+    }
+
+    static SailboatClaimHighlightEntry entryForTest(NationClaimRecord claim,
+                                                    NationRecord claimNation,
+                                                    TownRecord town,
+                                                    NationRecord townNation) {
+        return entryFor(claim, claimNation, town, townNation);
+    }
+
+    private static SailboatClaimHighlightEntry entryFor(NationClaimRecord claim,
+                                                        NationRecord claimNation,
+                                                        TownRecord town,
+                                                        NationRecord townNation) {
+        NationRecord ownerNation = townNation != null ? townNation : claimNation;
+        String nationId = ownerNation == null
+                ? town != null && !town.nationId().isBlank() ? town.nationId() : claim.nationId()
+                : ownerNation.nationId();
+        String nationName = ownerNation == null ? nationId : ownerNation.name();
+        return new SailboatClaimHighlightEntry(
+                claim.dimensionId(),
+                claim.chunkX(),
+                claim.chunkZ(),
+                nationId,
+                nationName,
+                claim.townId(),
+                town == null ? claim.townId() : town.name(),
+                ownerNation == null ? FALLBACK_PRIMARY_COLOR : ownerNation.primaryColorRgb(),
+                ownerNation == null ? FALLBACK_SECONDARY_COLOR : ownerNation.secondaryColorRgb()
+        );
     }
 
     private ClaimHighlightSyncService() {

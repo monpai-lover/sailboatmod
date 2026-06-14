@@ -41,7 +41,7 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
                     level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX - 1, worldZ));
             MapColor mapColor = state.getMapColor(level, pos);
             int fallback = mapColor == null ? UNKNOWN_ARGB : mapColor.calculateRGBColor(MapColor.Brightness.NORMAL);
-            int argb = MapBlockColors.colorFor(state, fallback);
+            int argb = water ? MapBlockColors.waterArgb() : MapBlockColors.colorFor(state, fallback);
             return new RoadMapColumnSample(worldX, surfaceY, worldZ, argb, water, waterDepth, reliefBaseY);
         } catch (RuntimeException ignored) {
             return unavailableSample(worldX, worldZ);

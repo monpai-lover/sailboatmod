@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,7 +78,61 @@ class TownServiceTest {
         assertFalse(pickedUp.get());
     }
 
+    @Test
+    void previousTownCoreClaimCleanupRemovesAutoCoreClaimOnly() {
+        NationSavedData data = new NationSavedData();
+        UUID mayorUuid = UUID.randomUUID();
+        net.minecraft.core.BlockPos oldCore = new net.minecraft.core.BlockPos(1024, 64, 1024);
+        net.minecraft.world.level.ChunkPos oldChunk = new net.minecraft.world.level.ChunkPos(oldCore);
+        TownRecord town = new TownRecord("crimea", "alpha", "Crimea Port", mayorUuid, 1L,
+                "minecraft:overworld", oldCore.asLong(), "", "european");
+        data.putTown(town);
+        data.putClaim(claim(oldChunk.x, oldChunk.z, "alpha", "crimea", NationClaimRecord.SOURCE_TOWN_CORE));
+        data.putClaim(claim(99, 99, "alpha", "crimea"));
+
+        assertTrue(TownService.removePreviousTownCoreClaimForTest(data, town, "minecraft:overworld", oldCore.asLong()));
+
+        assertNull(data.getClaim("minecraft:overworld", oldChunk.x, oldChunk.z));
+        assertNotNull(data.getClaim("minecraft:overworld", 99, 99));
+    }
+
+    @Test
+    void previousTownCoreClaimCleanupKeepsManualTownClaim() {
+        NationSavedData data = new NationSavedData();
+        UUID mayorUuid = UUID.randomUUID();
+        net.minecraft.core.BlockPos oldCore = new net.minecraft.core.BlockPos(1024, 64, 1024);
+        net.minecraft.world.level.ChunkPos oldChunk = new net.minecraft.world.level.ChunkPos(oldCore);
+        TownRecord town = new TownRecord("crimea", "alpha", "Crimea Port", mayorUuid, 1L,
+                "minecraft:overworld", oldCore.asLong(), "", "european");
+        data.putTown(town);
+        data.putClaim(claim(oldChunk.x, oldChunk.z, "alpha", "crimea"));
+
+        assertFalse(TownService.removePreviousTownCoreClaimForTest(data, town, "minecraft:overworld", oldCore.asLong()));
+
+        assertNotNull(data.getClaim("minecraft:overworld", oldChunk.x, oldChunk.z));
+    }
+
+    @Test
+    void previousTownCoreClaimCleanupDoesNotRemoveOtherTownClaim() {
+        NationSavedData data = new NationSavedData();
+        UUID mayorUuid = UUID.randomUUID();
+        net.minecraft.core.BlockPos oldCore = new net.minecraft.core.BlockPos(1024, 64, 1024);
+        net.minecraft.world.level.ChunkPos oldChunk = new net.minecraft.world.level.ChunkPos(oldCore);
+        TownRecord town = new TownRecord("crimea", "alpha", "Crimea Port", mayorUuid, 1L,
+                "minecraft:overworld", oldCore.asLong(), "", "european");
+        data.putTown(town);
+        data.putClaim(claim(oldChunk.x, oldChunk.z, "alpha", "other", NationClaimRecord.SOURCE_TOWN_CORE));
+
+        assertFalse(TownService.removePreviousTownCoreClaimForTest(data, town, "minecraft:overworld", oldCore.asLong()));
+
+        assertNotNull(data.getClaim("minecraft:overworld", oldChunk.x, oldChunk.z));
+    }
+
     private static NationClaimRecord claim(int chunkX, int chunkZ, String nationId, String townId) {
+        return claim(chunkX, chunkZ, nationId, townId, NationClaimRecord.SOURCE_MANUAL);
+    }
+
+    private static NationClaimRecord claim(int chunkX, int chunkZ, String nationId, String townId, String source) {
         return new NationClaimRecord(
                 "minecraft:overworld",
                 chunkX,
@@ -91,7 +146,8 @@ class TownServiceTest {
                 "member",
                 "member",
                 "member",
-                1L
+                1L,
+                source
         );
     }
 }

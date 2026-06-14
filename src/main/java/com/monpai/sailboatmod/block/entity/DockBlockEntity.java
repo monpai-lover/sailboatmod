@@ -15,6 +15,7 @@ import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
+import com.monpai.sailboatmod.market.logistics.ShippingTraceService;
 import com.monpai.sailboatmod.nation.service.DockTownResolver;
 import com.monpai.sailboatmod.nation.service.TownDeliveryService;
 import com.monpai.sailboatmod.nation.service.TownStockpileService;
@@ -952,7 +953,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (!(level.getBlockEntity(order.targetDockPos()) instanceof TownWarehouseBlockEntity warehouse)) {
             return false;
         }
-        if (!warehouse.insertCargo(cargo)) {
+        UUID buyerId = parseUuid(order.buyerUuid());
+        if (buyerId == null || !warehouse.insertCargo(buyerId, cargo)) {
             return false;
         }
         int deliveredQuantity = 0;
@@ -997,6 +999,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                         shippingOrder.rentalFee(),
                         "DELIVERED"
                 ));
+                ShippingTraceService.updateStatus(level, shippingOrder.shippingOrderId(), "DELIVERED");
             }
         }
         ProcurementService.markDeliveredByOrder(
@@ -1109,6 +1112,99 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         pool.removeIf(ItemStack::isEmpty);
         return extracted;
+    }
+
+    /** 按"目的地是否为当前到达站"把运单拆成本站交付与留车两组，用于多站连运。 */
+    public record ManifestSplit(List<ShipmentManifestEntry> deliverHere, List<ShipmentManifestEntry> keepOnboard) {
+        public ManifestSplit {
+            deliverHere = deliverHere == null ? List.of() : List.copyOf(deliverHere);
+            keepOnboard = keepOnboard == null ? List.of() : List.copyOf(keepOnboard);
+        }
+    }
+
+    /**
+     * 根据每个运单条目的目的地站点，把整份 manifest 拆成"应在当前站卸下"与"留车继续运"两组。
+     * 目的地无法解析（非订单货或单据缺失）的条目归入本站交付，保持与旧行为兼容。
+     */
+    public static ManifestSplit splitManifestByDestination(Level level,
+                                                           BlockPos arrivalStationPos,
+                                                           List<ShipmentManifestEntry> manifest) {
+        List<ShipmentManifestEntry> deliverHere = new ArrayList<>();
+        List<ShipmentManifestEntry> keepOnboard = new ArrayList<>();
+        if (manifest == null || manifest.isEmpty()) {
+            return new ManifestSplit(deliverHere, keepOnboard);
+        }
+        MarketSavedData market = (level == null || level.isClientSide) ? null : MarketSavedData.get(level);
+        for (ShipmentManifestEntry entry : manifest) {
+            if (entry == null) {
+                continue;
+            }
+            BlockPos dest = resolveEntryStationDestination(market, entry);
+            if (dest == null || arrivalStationPos == null || dest.equals(arrivalStationPos)) {
+                deliverHere.add(entry);
+            } else {
+                keepOnboard.add(entry);
+            }
+        }
+        return new ManifestSplit(deliverHere, keepOnboard);
+    }
+
+    /**
+     * 解析一个运单条目"车辆应停靠的站点"坐标：优先用运输单(ShippingOrder)的目的港/驿站，
+     * 回退采购单(PurchaseOrder)的目的站；都不可用时返回 null（按本站交付处理）。
+     * 注意：这与买家收货仓库(PurchaseOrder.targetDockPos 用于 tryDeliverManifestEntryToWarehouse)是不同语义。
+     */
+    @Nullable
+    private static BlockPos resolveEntryStationDestination(@Nullable MarketSavedData market, ShipmentManifestEntry entry) {
+        if (market == null || entry == null) {
+            return null;
+        }
+        ShippingOrder shipping = market.getShippingOrder(entry.shippingOrderId());
+        if (shipping != null && shipping.targetDockPos() != null && !shipping.targetDockPos().equals(BlockPos.ZERO)) {
+            return shipping.targetDockPos();
+        }
+        PurchaseOrder purchase = market.getPurchaseOrder(entry.purchaseOrderId());
+        if (purchase != null && purchase.targetDockPos() != null && !purchase.targetDockPos().equals(BlockPos.ZERO)) {
+            return purchase.targetDockPos();
+        }
+        return null;
+    }
+
+    /**
+     * 从货物池中按给定运单条目精确抽出对应物品（类型+NBT 匹配、按数量扣除），返回抽出的货。
+     * 调用后 {@code pool} 原地缩减，剩余即为留车货物。
+     */
+    public static List<ItemStack> selectCargoForEntries(List<ItemStack> pool, List<ShipmentManifestEntry> entries) {
+        List<ItemStack> selected = new ArrayList<>();
+        if (pool == null || pool.isEmpty() || entries == null || entries.isEmpty()) {
+            return selected;
+        }
+        for (ShipmentManifestEntry entry : entries) {
+            if (entry == null || entry.itemStack() == null || entry.itemStack().isEmpty() || entry.quantity() <= 0) {
+                continue;
+            }
+            selected.addAll(extractMatchingCargo(pool, entry.itemStack(), entry.quantity()));
+        }
+        return selected;
+    }
+
+    /** 取留车运单里第一个可解析目的地的站点，作为多站连运的下一站。 */
+    @Nullable
+    public static BlockPos nextStationDestination(Level level, List<ShipmentManifestEntry> keepOnboard) {
+        if (keepOnboard == null || keepOnboard.isEmpty()) {
+            return null;
+        }
+        MarketSavedData market = (level == null || level.isClientSide) ? null : MarketSavedData.get(level);
+        if (market == null) {
+            return null;
+        }
+        for (ShipmentManifestEntry entry : keepOnboard) {
+            BlockPos dest = resolveEntryStationDestination(market, entry);
+            if (dest != null && !dest.equals(BlockPos.ZERO)) {
+                return dest;
+            }
+        }
+        return null;
     }
 
     public int getStorageSize() {
@@ -1799,6 +1895,18 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 .toList();
     }
 
+    @Nullable
+    private static UUID parseUuid(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
     private String buildBoatDisplayName(TransportEntity boat, Player viewer) {
         String boatName = boat.getTransportName().getString();
         String route = boat.isAutopilotActive() ? boat.getAutopilotRouteName() : boat.getSelectedRouteName();
@@ -1994,6 +2102,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                         order.rentalFee(),
                         "DELIVERED"
                 ));
+                ShippingTraceService.updateStatus(level, order.shippingOrderId(), "DELIVERED");
             }
         }
     }
@@ -2018,6 +2127,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     order.targetDockName(),
                     "CLAIMED"
             ));
+            if (entry.shippingOrderId != null && !entry.shippingOrderId.isBlank()) {
+                ShippingTraceService.updateStatus(level, entry.shippingOrderId, "CLAIMED");
+            }
         }
     }
 

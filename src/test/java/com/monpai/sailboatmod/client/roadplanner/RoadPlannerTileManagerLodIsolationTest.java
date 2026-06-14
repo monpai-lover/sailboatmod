@@ -116,6 +116,51 @@ class RoadPlannerTileManagerLodIsolationTest {
     }
 
     @Test
+    void mergedTileSnapshotKeepsKnownPixelsAfterPartialSync() {
+        File rootDir = tempDir.toFile();
+        RoadPlannerTileManager manager = RoadPlannerTileManager.forTest(rootDir, "world_a", "minecraft:overworld");
+        int[] knownPixels = new int[RoadPlannerTile.TILE_PIXEL_SIZE * RoadPlannerTile.TILE_PIXEL_SIZE];
+        Arrays.fill(knownPixels, 0xFF00AA00);
+        manager.applyTileSync(new RoadPlannerMapTileSyncPacket(
+                UUID.randomUUID(),
+                42L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_1,
+                2,
+                -3,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                knownPixels));
+
+        int[] forcePixels = new int[RoadPlannerTile.TILE_PIXEL_SIZE * RoadPlannerTile.TILE_PIXEL_SIZE];
+        Arrays.fill(forcePixels, 0xFF000000);
+        boolean[] coverageMask = new boolean[forcePixels.length];
+        coverageMask[0] = true;
+        forcePixels[0] = 0xFF0000CC;
+        RoadPlannerMapTileSyncPacket partialPacket = new RoadPlannerMapTileSyncPacket(
+                UUID.randomUUID(),
+                43L,
+                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER,
+                "world_a",
+                "minecraft:overworld",
+                MapLod.LOD_1,
+                2,
+                -3,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                RoadPlannerTile.TILE_PIXEL_SIZE,
+                forcePixels,
+                coverageMask);
+        manager.applyTileSync(partialPacket);
+
+        int[] snapshot = manager.copyTilePixels(partialPacket);
+
+        assertEquals(0xFF0000CC, snapshot[0]);
+        assertEquals(0xFF00AA00, snapshot[32 * RoadPlannerTile.TILE_PIXEL_SIZE + 32]);
+    }
+
+    @Test
     void builtRoadRefreshOverwritesOldBlackLodCache() throws IOException {
         File rootDir = tempDir.toFile();
         RoadPlannerTileManager manager = RoadPlannerTileManager.forTest(rootDir, "world_a", "minecraft:overworld");

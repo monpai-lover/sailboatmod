@@ -11,6 +11,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpContext;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.storage.LevelResource;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.forgespi.language.IModFileInfo;
 import org.slf4j.Logger;
@@ -39,13 +40,13 @@ import java.util.function.Supplier;
 public final class MarketWebServer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
-    private static final String ICON_CACHE_VERSION = "marketweb-icons-v5";
+    private static final String ICON_CACHE_VERSION = "marketweb-icons-v7";
     private static volatile MarketWebServer INSTANCE;
 
     private final MinecraftServer minecraftServer;
     private final MarketWebAuthManager auth;
     private final MarketWebService service = new MarketWebService();
-    private final MarketWebIconService icons = new MarketWebIconService();
+    private final MarketWebIconService icons;
     private final AtomicLong resourceVersion = new AtomicLong(initialResourceVersion());
     private HttpServer httpServer;
     private ExecutorService executor;
@@ -53,6 +54,7 @@ public final class MarketWebServer {
     private MarketWebServer(MinecraftServer minecraftServer) {
         this.minecraftServer = minecraftServer;
         this.auth = new MarketWebAuthManager(minecraftServer);
+        this.icons = new MarketWebIconService(downloadedIconAssetRoot(minecraftServer));
     }
 
     public static synchronized void start(MinecraftServer minecraftServer) {
@@ -106,6 +108,17 @@ public final class MarketWebServer {
         return Math.max(1L, System.currentTimeMillis());
     }
 
+    private static Path downloadedIconAssetRoot(MinecraftServer minecraftServer) {
+        if (minecraftServer == null) {
+            return null;
+        }
+        return minecraftServer.getWorldPath(LevelResource.ROOT)
+                .resolve("data")
+                .resolve("sailboatmod_market")
+                .resolve("web_assets")
+                .resolve("1.20.1");
+    }
+
     public void reload() {
         icons.clearCache();
         long version = resourceVersion.incrementAndGet();
@@ -125,6 +138,15 @@ public final class MarketWebServer {
         createContext("/api/session/me", this::handleSessionMe);
         createContext("/api/debug/version", this::handleDebugVersion);
         createContext("/api/markets", this::handleMarkets);
+        createContext("/api/map/snapshot", this::handleMapSnapshot);
+        createContext("/api/map/markets", this::handleMapMarkets);
+        createContext("/api/map/territories", this::handleMapTerritories);
+        createContext("/api/map/shipments", this::handleMapShipments);
+        createContext("/api/map/render/status", this::handleMapRenderStatus);
+        createContext("/api/map/square/tile", this::handleSquareMapTile);
+        createContext("/api/map/tile", this::handleMapTile);
+        createContext("/api/map/flags", this::handleMapFlag);
+        createContext("/api/items/resolve", this::handleItemResolve);
         createContext("/api/icons/batch", this::handleIconBatch);
         createContext("/api/icons", this::handleIcon);
         createContext("/", this::handleStatic);
@@ -305,6 +327,15 @@ public final class MarketWebServer {
                 ok = callOnServerThread(() -> service.cancelListing(minecraftServer, identity, marketId, path.get(4)));
             } else if (path.size() == 5 && "credits".equals(path.get(3)) && "claim".equals(path.get(4))) {
                 ok = callOnServerThread(() -> service.claimCredits(minecraftServer, identity, marketId));
+            } else if (path.size() == 5 && "wallet".equals(path.get(3)) && "transfer".equals(path.get(4))) {
+                actionResult = callOnServerThread(() -> service.transferWallet(
+                        minecraftServer,
+                        identity,
+                        marketId,
+                        stringValue(body, "action"),
+                        longValue(body, "amount", 0L)
+                ));
+                ok = actionResult != null && actionResult.ok();
             } else if (path.size() == 4 && "buy-orders".equals(path.get(3))) {
                 ok = callOnServerThread(() -> service.createBuyOrder(
                         minecraftServer,
@@ -347,6 +378,149 @@ public final class MarketWebServer {
         writeJson(exchange, 404, error("not_found", "Endpoint not found"));
     }
 
+    private void handleMapSnapshot(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
+        String focusedMarketId = queryParam(exchange, "focusedMarketId");
+        JsonObject out = callOnServerThread(() -> service.mapSnapshot(minecraftServer, identity, focusedMarketId));
+        writeJson(exchange, 200, out == null ? error("map_unavailable", "Map unavailable") : out);
+    }
+
+    private void handleMapMarkets(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
+        JsonObject out = callOnServerThread(() -> {
+            JsonObject json = success();
+            json.add("markets", service.mapMarkets(minecraftServer, identity));
+            return json;
+        });
+        writeJson(exchange, 200, out);
+    }
+
+    private void handleMapTerritories(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
+        JsonObject out = callOnServerThread(() -> {
+            JsonObject json = success();
+            json.add("territories", service.mapTerritories(minecraftServer, identity));
+            return json;
+        });
+        writeJson(exchange, 200, out);
+    }
+
+    private void handleMapShipments(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        MarketPlayerIdentity identity = requireIdentity(exchange);
+        if (identity == null) {
+            return;
+        }
+        JsonObject out = callOnServerThread(() -> {
+            JsonObject json = success();
+            json.add("shipments", service.mapShipments(minecraftServer, identity));
+            return json;
+        });
+        writeJson(exchange, 200, out);
+    }
+
+    private void handleMapTile(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        List<String> path = pathParts(exchange.getRequestURI().getPath());
+        if (path.size() != 6) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        String lod = path.get(3);
+        Integer tileX = parseInt(path.get(4));
+        Integer tileZ = parsePngInt(path.get(5));
+        if (tileX == null || tileZ == null) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        byte[] bytes = callOnServerThread(() -> service.mapTile(minecraftServer, lod, tileX, tileZ));
+        if (bytes == null || bytes.length == 0) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Cache-Control", "no-cache, max-age=0");
+        writeBytes(exchange, 200, "image/png", bytes);
+    }
+
+    private void handleSquareMapTile(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        List<String> path = pathParts(exchange.getRequestURI().getPath());
+        if (path.size() != 7) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        String dimension = path.get(4);
+        Integer zoom = parseInt(path.get(5));
+        TileName tile = parseTileName(path.get(6));
+        if (zoom == null || tile == null) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        byte[] bytes = callOnServerThread(() -> service.squareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z()));
+        if (bytes == null || bytes.length == 0) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Cache-Control", "no-cache, max-age=0");
+        writeBytes(exchange, 200, "image/png", bytes);
+    }
+
+    private void handleMapRenderStatus(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        JsonObject json = callOnServerThread(() -> service.mapRenderStatus(minecraftServer));
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Cache-Control", "no-cache, max-age=0");
+        writeJson(exchange, 200, json);
+    }
+
+    private void handleMapFlag(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        List<String> path = pathParts(exchange.getRequestURI().getRawPath());
+        if (path.size() != 4 || !path.get(3).endsWith(".png")) {
+            writeJson(exchange, 404, error("not_found", "Flag not found"));
+            return;
+        }
+        String rawFlagId = path.get(3).substring(0, path.get(3).length() - ".png".length());
+        String flagId = URLDecoder.decode(rawFlagId, StandardCharsets.UTF_8);
+        byte[] bytes = callOnServerThread(() -> service.mapFlag(minecraftServer, flagId));
+        if (bytes == null || bytes.length == 0) {
+            writeJson(exchange, 404, error("not_found", "Flag not found"));
+            return;
+        }
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Cache-Control", "public, max-age=300");
+        writeBytes(exchange, 200, "image/png", bytes);
+    }
+
     private void handleStatic(HttpExchange exchange) throws IOException {
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
             writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
@@ -357,7 +531,7 @@ public final class MarketWebServer {
             writeStatic(exchange, "marketweb/index.html", "text/html; charset=utf-8");
             return;
         }
-        if ("/browse".equals(path) || "/inventory".equals(path) || "/sell".equals(path) || "/buy".equals(path) || "/chart".equals(path) || "/index".equals(path)) {
+        if ("/browse".equals(path) || "/inventory".equals(path) || "/sell".equals(path) || "/buy".equals(path) || "/demand".equals(path) || "/chart".equals(path) || "/index".equals(path) || "/map".equals(path)) {
             writeStatic(exchange, "marketweb/index.html", "text/html; charset=utf-8");
             return;
         }
@@ -367,6 +541,10 @@ public final class MarketWebServer {
         }
         if ("/app.css".equals(path)) {
             writeStatic(exchange, "marketweb/app.css", "text/css; charset=utf-8");
+            return;
+        }
+        if ("/map.js".equals(path)) {
+            writeStatic(exchange, "marketweb/map.js", "application/javascript; charset=utf-8");
             return;
         }
         if ("/config.json".equals(path)) {
@@ -384,6 +562,44 @@ public final class MarketWebServer {
             return;
         }
         writeJson(exchange, 404, error("not_found", "Not found"));
+    }
+
+    private void handleItemResolve(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        String itemId = queryParam(exchange, "itemId");
+        if (itemId.isBlank()) {
+            itemId = queryParam(exchange, "commodityKey");
+        }
+        if (itemId.isBlank()) {
+            writeJson(exchange, 400, error("missing_item_id", "Missing itemId"));
+            return;
+        }
+        String resolvedItemId = itemId;
+        MarketWebService.ItemPreview preview = callOnServerThread(() -> MarketWebService.resolveItemPreview(resolvedItemId));
+        if (preview == null) {
+            writeJson(exchange, 404, error("item_not_found", "Item not found"));
+            return;
+        }
+
+        JsonObject out = success();
+        out.addProperty("commodityKey", preview.commodityKey());
+        out.addProperty("itemId", preview.itemId());
+        out.addProperty("displayName", preview.displayName());
+        out.addProperty("category", preview.category());
+        out.addProperty("suggestedUnitPrice", preview.suggestedUnitPrice());
+
+        byte[] icon = icons.loadIcon(preview.commodityKey());
+        if (icon != null && icon.length > 0) {
+            out.addProperty("icon", "data:image/png;base64," + Base64.getEncoder().encodeToString(icon));
+        }
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Cache-Control", "public, max-age=60");
+        headers.set("X-Icon-Cache-Version", ICON_CACHE_VERSION);
+        headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
+        writeJson(exchange, 200, out);
     }
 
     private void handleIcon(HttpExchange exchange) throws IOException {
@@ -715,6 +931,16 @@ public final class MarketWebServer {
         }
     }
 
+    private static void writeBytes(HttpExchange exchange, int status, String contentType, byte[] bytes) throws IOException {
+        byte[] safeBytes = bytes == null ? new byte[0] : bytes;
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Content-Type", contentType == null || contentType.isBlank() ? "application/octet-stream" : contentType);
+        exchange.sendResponseHeaders(status, safeBytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(safeBytes);
+        }
+    }
+
     private static JsonObject success() {
         JsonObject out = new JsonObject();
         out.addProperty("ok", true);
@@ -745,12 +971,55 @@ public final class MarketWebServer {
                 .toList();
     }
 
+    private static Integer parseInt(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static Integer parsePngInt(String value) {
+        if (value == null || !value.endsWith(".png")) {
+            return null;
+        }
+        return parseInt(value.substring(0, value.length() - ".png".length()));
+    }
+
+    private static TileName parseTileName(String value) {
+        if (value == null || !value.endsWith(".png")) {
+            return null;
+        }
+        String name = value.substring(0, value.length() - ".png".length());
+        int split = name.lastIndexOf('_');
+        if (split <= 0 || split >= name.length() - 1) {
+            return null;
+        }
+        Integer x = parseInt(name.substring(0, split));
+        Integer z = parseInt(name.substring(split + 1));
+        return x == null || z == null ? null : new TileName(x, z);
+    }
+
+    private record TileName(int x, int z) {
+    }
+
     private static int intValue(JsonObject body, String key, int fallback) {
         if (body == null || !body.has(key)) {
             return fallback;
         }
         try {
             return body.get(key).getAsInt();
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static long longValue(JsonObject body, String key, long fallback) {
+        if (body == null || !body.has(key)) {
+            return fallback;
+        }
+        try {
+            return body.get(key).getAsLong();
         } catch (Exception ignored) {
             return fallback;
         }

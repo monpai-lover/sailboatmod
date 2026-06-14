@@ -2025,10 +2025,27 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (destination != null) {
             dockedStationPos = destination.getBlockPos().immutable();
             dockedTownId = DockTownResolver.resolveTownForArrival(level(), destination.getBlockPos());
-            List<ItemStack> cargo = unloadAllCargo();
-            if (!cargo.isEmpty()) {
+
+            // 按目的地拆分运单：只卸"目的地==本站"的货，其余留车继续运（多站连运）。
+            List<ItemStack> allCargo = unloadAllCargo();
+            DockBlockEntity.ManifestSplit split = DockBlockEntity.splitManifestByDestination(
+                    level(), destination.getBlockPos(), getPendingShipmentManifest());
+            List<ItemStack> pool = new ArrayList<>(allCargo);
+            List<ItemStack> deliverCargo = DockBlockEntity.selectCargoForEntries(pool, split.deliverHere());
+            if (!pool.isEmpty()) {
+                loadCargo(pool); // 留车货物退回库存
+            }
+            if (!deliverCargo.isEmpty()) {
                 destination.receiveShipment(this, getAutopilotRouteName(), pendingShipperName, "-", destination.getDockName(),
-                        System.currentTimeMillis(), 0L, 0.0D, cargo, getPendingShipmentManifest());
+                        System.currentTimeMillis(), 0L, 0.0D, deliverCargo, split.deliverHere());
+            }
+            setPendingShipmentManifest(split.keepOnboard()); // 剪枝：移除已交付条目
+
+            // 仍有未送达运单 → 自动开往下一站，逐站连运。
+            if (!split.keepOnboard().isEmpty()
+                    && destination instanceof PostStationBlockEntity here
+                    && tryStartLandLegToNextStation(here, split.keepOnboard())) {
+                return;
             }
         }
         if (destination != null) {
@@ -2041,6 +2058,31 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             transportTaskKind = TransportTaskKind.NONE;
             stopAutopilot();
         }
+    }
+
+    /** 多站连运：从当前驿站规划并发车前往下一个未送达运单的目的驿站。 */
+    private boolean tryStartLandLegToNextStation(PostStationBlockEntity here, List<ShipmentManifestEntry> keepOnboard) {
+        if (here == null || !(level() instanceof ServerLevel serverLevel)) {
+            return false;
+        }
+        BlockPos nextPos = DockBlockEntity.nextStationDestination(level(), keepOnboard);
+        if (nextPos == null || !(level().getBlockEntity(nextPos) instanceof PostStationBlockEntity next)) {
+            return false;
+        }
+        LandTransportNetworkService service = new LandTransportNetworkService();
+        LandTransportNetworkService.RouteAvailability availability = service.planRouteBetweenStations(
+                serverLevel,
+                service.stationRef(level(), here),
+                service.stationRef(level(), next),
+                ALLOW_TERRAIN_FALLBACK_FOR_LAND_RETURN
+        );
+        if (!availability.reachable() || availability.plan() == null) {
+            return false;
+        }
+        setRouteCatalog(List.of(availability.plan().route()), 0, here.getBlockPos());
+        // 沿用原 autoReturnOnArrival：只有最后一站（无留车货）到达时才真正触发返航。
+        setLandTransportTask(availability.plan(), autoReturnOnArrival, TransportTaskKind.DISPATCH);
+        return startAutopilot();
     }
 
     private boolean tryStartLandReturnTrip(PostStationBlockEntity currentStation) {
@@ -2280,6 +2322,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
         String name = routeCatalog.get(index).name();
         entityData.set(DATA_ROUTE_NAME, name == null || name.isBlank() ? "Route-" + (index + 1) : name);
+    }
+
+    public List<Vec3> getMarketWebActiveRoutePoints() {
+        return List.copyOf(autopilotRoute);
+    }
+
+    public int getMarketWebActiveRouteTargetIndex() {
+        return autopilotTargetIndex;
     }
 
     private boolean hasAutopilotRoute() {

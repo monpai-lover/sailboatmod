@@ -113,6 +113,43 @@ class RoadPlannerRouteExpanderTest {
     }
 
     @Test
+    void zeroDepthUnknownColumnsDoNotPromoteFlatRoadToBridge() {
+        RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                (x, z) -> x < 8 || x > 32,
+                (x, z) -> 64,
+                (x, z) -> 0
+        );
+
+        assertTrue(expanded.success());
+        assertTrue(expanded.segmentTypes().stream().allMatch(type -> type == RoadPlannerSegmentType.ROAD),
+                "unknown client terrain with zero water depth must not be rendered as bridge: " + expanded.segmentTypes());
+    }
+
+    @Test
+    void serverTerrainSamplesOverrideUnknownClientLandProbe() {
+        RoadPlannerTerrainSampleIndex samples = RoadPlannerTerrainSampleIndex.from(List.of(
+                new RoadPlannerTerrainSample(0, 0, 64, 0, RoadPlannerTerrainSample.Kind.LAND),
+                new RoadPlannerTerrainSample(20, 0, 64, 0, RoadPlannerTerrainSample.Kind.LAND),
+                new RoadPlannerTerrainSample(40, 0, 64, 0, RoadPlannerTerrainSample.Kind.LAND)
+        ));
+
+        RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
+                List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
+                (x, z) -> samples.isLand(x, z, (fx, fz) -> false),
+                (x, z) -> samples.heightAt(x, z, (fx, fz) -> 0),
+                (x, z) -> samples.waterDepthAt(x, z, (fx, fz) -> 0)
+        );
+
+        assertTrue(expanded.success());
+        assertTrue(expanded.segmentTypes().stream().allMatch(type -> type == RoadPlannerSegmentType.ROAD),
+                "server land samples must keep unloaded-client route as road: " + expanded.segmentTypes());
+        assertTrue(expanded.nodes().stream().allMatch(pos -> pos.getY() == 64));
+    }
+
+    @Test
     void narrowWaterCrossingUsesSmallBridgeSegment() {
         RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)),

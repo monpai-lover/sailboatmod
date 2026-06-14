@@ -32,6 +32,11 @@ public class OpenMarketScreenPacket {
         PacketStringCodec.writeUtfSafe(buffer, data.ownerUuid(), 64);
         PacketStringCodec.writeUtfSafe(buffer, data.viewerUuid(), 64);
         buffer.writeVarInt(data.pendingCredits());
+        buffer.writeLong(data.walletAvailableBalance());
+        buffer.writeLong(data.walletReservedBalance());
+        buffer.writeLong(data.walletTotalBalance());
+        buffer.writeLong(data.treasuryBalance());
+        buffer.writeBoolean(data.canTransferTreasury());
         buffer.writeBoolean(data.linkedDock());
         PacketStringCodec.writeUtfSafe(buffer, data.linkedDockName(), 64);
         PacketStringCodec.writeUtfSafe(buffer, data.linkedDockPosText(), 64);
@@ -61,6 +66,7 @@ public class OpenMarketScreenPacket {
         writeListingEntries(buffer, data.listingEntries());
         writeOrderEntries(buffer, data.orderEntries());
         writeShippingEntries(buffer, data.shippingEntries());
+        writeDispatchOptions(buffer, data.availableDispatchOptions());
         writeBuyOrderEntries(buffer, data.buyOrderEntries());
         writePriceChartSeries(buffer, data.priceChartSeries());
         writeCommodityBuyBooks(buffer, data.commodityBuyBooks());
@@ -76,6 +82,11 @@ public class OpenMarketScreenPacket {
         String ownerUuid = buffer.readUtf(64);
         String viewerUuid = buffer.readUtf(64);
         int pendingCredits = buffer.readVarInt();
+        long walletAvailableBalance = buffer.readLong();
+        long walletReservedBalance = buffer.readLong();
+        long walletTotalBalance = buffer.readLong();
+        long treasuryBalance = buffer.readLong();
+        boolean canTransferTreasury = buffer.readBoolean();
         boolean linkedDock = buffer.readBoolean();
         String linkedDockName = buffer.readUtf(64);
         String linkedDockPosText = buffer.readUtf(64);
@@ -105,6 +116,7 @@ public class OpenMarketScreenPacket {
         List<MarketOverviewData.ListingEntry> listingEntries = readListingEntries(buffer);
         List<MarketOverviewData.OrderEntry> orderEntries = readOrderEntries(buffer);
         List<MarketOverviewData.ShippingEntry> shippingEntries = readShippingEntries(buffer);
+        List<MarketOverviewData.DispatchOption> availableDispatchOptions = readDispatchOptions(buffer);
         List<MarketOverviewData.BuyOrderEntry> buyOrderEntries = readBuyOrderEntries(buffer);
         List<MarketOverviewData.PriceChartSeries> priceChartSeries = readPriceChartSeries(buffer);
         List<MarketOverviewData.CommodityBuyBook> commodityBuyBooks = readCommodityBuyBooks(buffer);
@@ -118,6 +130,11 @@ public class OpenMarketScreenPacket {
                 ownerUuid,
                 viewerUuid,
                 pendingCredits,
+                walletAvailableBalance,
+                walletReservedBalance,
+                walletTotalBalance,
+                treasuryBalance,
+                canTransferTreasury,
                 linkedDock,
                 linkedDockName,
                 linkedDockPosText,
@@ -147,6 +164,7 @@ public class OpenMarketScreenPacket {
                 listingEntries,
                 orderEntries,
                 shippingEntries,
+                availableDispatchOptions,
                 buyOrderEntries,
                 priceChartSeries,
                 commodityBuyBooks,
@@ -160,6 +178,10 @@ public class OpenMarketScreenPacket {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> MarketClientHooks.openOrUpdate(packet.data)));
         context.setPacketHandled(true);
+    }
+
+    MarketOverviewData dataForTest() {
+        return data;
     }
 
     private static void writeLines(FriendlyByteBuf buffer, List<String> lines, int maxLen) {
@@ -188,6 +210,7 @@ public class OpenMarketScreenPacket {
             buffer.writeVarInt(entry.suggestedUnitPrice());
             buffer.writeVarInt(entry.minAllowedUnitPrice());
             buffer.writeVarInt(entry.maxAllowedUnitPrice());
+            buffer.writeBoolean(entry.priceConstrained());
             PacketStringCodec.writeUtfSafe(buffer, entry.detail(), 192);
             PacketStringCodec.writeUtfSafe(buffer, entry.category(), 48);
             buffer.writeVarInt(entry.rarity());
@@ -206,6 +229,7 @@ public class OpenMarketScreenPacket {
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
+                    buffer.readBoolean(),
                     buffer.readUtf(192),
                     buffer.readUtf(48),
                     buffer.readVarInt()

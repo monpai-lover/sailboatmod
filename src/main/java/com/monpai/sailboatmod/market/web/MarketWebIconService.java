@@ -19,6 +19,7 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -27,8 +28,10 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +51,24 @@ final class MarketWebIconService {
     private final Map<String, byte[]> iconCache = new ConcurrentHashMap<>();
     private final Map<String, BufferedImage> textureCache = new ConcurrentHashMap<>();
     private final Map<String, Optional<byte[]>> externalResourceCache = new ConcurrentHashMap<>();
+    private final Path downloadedAssetRoot;
+    private final String minecraftAssetBaseUrl;
+
+    MarketWebIconService() {
+        this(null, MINECRAFT_ASSET_BASE_URL);
+    }
+
+    MarketWebIconService(Path downloadedAssetRoot) {
+        this(downloadedAssetRoot, MINECRAFT_ASSET_BASE_URL);
+    }
+
+    MarketWebIconService(Path downloadedAssetRoot, String minecraftAssetBaseUrl) {
+        this.downloadedAssetRoot = downloadedAssetRoot == null ? null : downloadedAssetRoot.toAbsolutePath().normalize();
+        String baseUrl = minecraftAssetBaseUrl == null || minecraftAssetBaseUrl.isBlank()
+                ? MINECRAFT_ASSET_BASE_URL
+                : minecraftAssetBaseUrl.trim();
+        this.minecraftAssetBaseUrl = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+    }
 
     byte[] loadIcon(String commodityKey) {
         if (commodityKey == null || commodityKey.isBlank()) {
@@ -77,17 +98,23 @@ final class MarketWebIconService {
     }
 
     private BufferedImage resolveIcon(ResourceLocation itemId) {
-        List<ResolvedModelCandidate> candidates = new ArrayList<>();
-        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "item", itemId.getPath()), new HashSet<>()), itemId.getNamespace(), CandidateType.ITEM_MODEL);
-        addCandidate(candidates, loadBlockStateModel(itemId), itemId.getNamespace(), CandidateType.BLOCKSTATE_MODEL);
-        addCandidate(candidates, loadModel(new ModelRef(itemId.getNamespace(), "block", itemId.getPath()), new HashSet<>()), itemId.getNamespace(), CandidateType.BLOCK_MODEL);
-        for (ResolvedModelCandidate candidate : candidates) {
-            BufferedImage icon = renderResolvedModel(candidate);
-            if (icon != null) {
-                return icon;
-            }
+        BufferedImage itemIcon = resolveCandidateIcon(
+                loadModel(new ModelRef(itemId.getNamespace(), "item", itemId.getPath()), new HashSet<>()),
+                itemId.getNamespace(),
+                CandidateType.ITEM_MODEL
+        );
+        if (itemIcon != null) {
+            return itemIcon;
         }
-        return hasBuiltinEntityParent(candidates) ? buildBuiltinEntityPlaceholderIcon() : null;
+        BufferedImage blockStateIcon = resolveCandidateIcon(loadBlockStateModel(itemId), itemId.getNamespace(), CandidateType.BLOCKSTATE_MODEL);
+        if (blockStateIcon != null) {
+            return blockStateIcon;
+        }
+        return resolveCandidateIcon(
+                loadModel(new ModelRef(itemId.getNamespace(), "block", itemId.getPath()), new HashSet<>()),
+                itemId.getNamespace(),
+                CandidateType.BLOCK_MODEL
+        );
     }
 
     private void addCandidate(List<ResolvedModelCandidate> candidates, ResolvedModel model, String fallbackNamespace, CandidateType type) {
@@ -101,6 +128,20 @@ final class MarketWebIconService {
             }
         }
         candidates.add(new ResolvedModelCandidate(model, fallbackNamespace, type));
+    }
+
+    private BufferedImage resolveCandidateIcon(ResolvedModel model, String fallbackNamespace, CandidateType type) {
+        if (model == null) {
+            return null;
+        }
+        ResolvedModelCandidate candidate = new ResolvedModelCandidate(model, fallbackNamespace, type);
+        BufferedImage icon = renderResolvedModel(candidate);
+        if (icon != null) {
+            return icon;
+        }
+        return type == CandidateType.ITEM_MODEL && hasBuiltinEntityParent(List.of(candidate))
+                ? buildBuiltinEntityPlaceholderIcon()
+                : null;
     }
 
     private BufferedImage renderResolvedModel(ResolvedModelCandidate candidate) {
@@ -319,7 +360,7 @@ final class MarketWebIconService {
         String parentValue = string(json, "parent");
         if (!parentValue.isBlank()) {
             parentChain.add(parentValue);
-            ModelRef parentRef = parseModelRef(parentValue, ref.namespace(), ref.type());
+            ModelRef parentRef = isBuiltinEntityParent(parentValue) ? null : parseModelRef(parentValue, ref.namespace(), ref.type());
             if (parentRef != null) {
                 ResolvedModel parent = loadModel(parentRef, visited);
                 if (parent != null) {
@@ -338,6 +379,10 @@ final class MarketWebIconService {
             }
         }
         return new ResolvedModel(mergedTextures, parentChain);
+    }
+
+    private static boolean isBuiltinEntityParent(String parentValue) {
+        return "builtin/entity".equals(parentValue) || parentValue.endsWith(":builtin/entity");
     }
 
     private ResolvedModel loadBlockStateModel(ResourceLocation itemId) {
@@ -602,10 +647,18 @@ final class MarketWebIconService {
         if (modResource != null) {
             return modResource;
         }
+        InputStream classpathResource = classpathResource(path);
+        if (classpathResource != null) {
+            return classpathResource;
+        }
         InputStream externalResource = externalResource(path);
         if (externalResource != null) {
             return externalResource;
         }
+        return null;
+    }
+
+    private InputStream classpathResource(String path) {
         ClassLoader loader = MarketWebIconService.class.getClassLoader();
         if (loader != null) {
             InputStream stream = loader.getResourceAsStream(path);
@@ -651,14 +704,156 @@ final class MarketWebIconService {
         if (!normalized.startsWith("assets/minecraft/")) {
             return null;
         }
+        InputStream local = localMinecraftAsset(normalized);
+        if (local != null) {
+            return local;
+        }
+        InputStream downloaded = downloadedMinecraftAsset(normalized);
+        if (downloaded != null) {
+            return downloaded;
+        }
         Optional<byte[]> cached = externalResourceCache.computeIfAbsent(normalized, this::downloadExternalResource);
         return cached.map(ByteArrayInputStream::new).orElse(null);
+    }
+
+    private InputStream downloadedMinecraftAsset(String normalized) {
+        Path assetPath = downloadedAssetPath(normalized);
+        if (assetPath == null || !Files.isRegularFile(assetPath)) {
+            return null;
+        }
+        try {
+            return Files.newInputStream(assetPath);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private InputStream localMinecraftAsset(String normalized) {
+        for (Path assetsRoot : minecraftAssetRoots()) {
+            InputStream direct = directAsset(assetsRoot, normalized);
+            if (direct != null) {
+                return direct;
+            }
+            InputStream indexed = indexedAsset(assetsRoot, normalized);
+            if (indexed != null) {
+                return indexed;
+            }
+        }
+        return null;
+    }
+
+    private List<Path> minecraftAssetRoots() {
+        LinkedHashSet<Path> roots = new LinkedHashSet<>();
+        addConfiguredAssetRoots(roots, System.getProperty("sailboatmod.marketweb.assetsRoot"));
+        addConfiguredAssetRoots(roots, System.getProperty("sailboatmod.minecraftAssetsDir"));
+        String appData = System.getenv("APPDATA");
+        if (appData != null && !appData.isBlank()) {
+            addAssetRoot(roots, Path.of(appData).resolve(".minecraft").resolve("assets"));
+        }
+        String userHome = System.getProperty("user.home");
+        if (userHome != null && !userHome.isBlank()) {
+            addAssetRoot(roots, Path.of(userHome).resolve(".minecraft").resolve("assets"));
+        }
+        addAssetRoot(roots, Path.of(".").toAbsolutePath().normalize().resolve("assets"));
+        return List.copyOf(roots);
+    }
+
+    private void addConfiguredAssetRoots(Set<Path> roots, String rawValue) {
+        if (rawValue == null || rawValue.isBlank()) {
+            return;
+        }
+        for (String part : rawValue.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+            if (part == null || part.isBlank()) {
+                continue;
+            }
+            Path path = Path.of(part.trim());
+            addAssetRoot(roots, path);
+            if (!"assets".equalsIgnoreCase(String.valueOf(path.getFileName()))) {
+                addAssetRoot(roots, path.resolve("assets"));
+            }
+        }
+    }
+
+    private void addAssetRoot(Set<Path> roots, Path path) {
+        if (path == null) {
+            return;
+        }
+        roots.add(path.toAbsolutePath().normalize());
+    }
+
+    private InputStream directAsset(Path assetsRoot, String normalized) {
+        Path path = assetsRoot.resolve(normalized).normalize();
+        if (!path.startsWith(assetsRoot) || !Files.isRegularFile(path)) {
+            return null;
+        }
+        try {
+            return Files.newInputStream(path);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private InputStream indexedAsset(Path assetsRoot, String normalized) {
+        Path indexes = assetsRoot.resolve("indexes").normalize();
+        Path objectsRoot = assetsRoot.resolve("objects").normalize();
+        if (!indexes.startsWith(assetsRoot) || !objectsRoot.startsWith(assetsRoot) || !Files.isDirectory(indexes)) {
+            return null;
+        }
+        List<Path> indexFiles = new ArrayList<>();
+        indexFiles.add(indexes.resolve("1.20.1.json"));
+        indexFiles.add(indexes.resolve("1.20.json"));
+        try (java.util.stream.Stream<Path> discovered = Files.list(indexes)) {
+            discovered
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .forEach(indexFiles::add);
+        } catch (IOException ignored) {
+        }
+        for (Path indexFile : indexFiles) {
+            InputStream stream = indexedAsset(indexFile, objectsRoot, normalized);
+            if (stream != null) {
+                return stream;
+            }
+        }
+        return null;
+    }
+
+    private InputStream indexedAsset(Path indexFile, Path objectsRoot, String normalized) {
+        JsonObject index = readJsonFile(indexFile);
+        JsonObject objects = object(index, "objects");
+        JsonObject entry = object(objects, normalized);
+        String hash = string(entry, "hash");
+        if (hash.length() < 3) {
+            return null;
+        }
+        Path object = objectsRoot.resolve(hash.substring(0, 2)).resolve(hash).normalize();
+        if (!object.startsWith(objectsRoot) || !Files.isRegularFile(object)) {
+            return null;
+        }
+        try {
+            return Files.newInputStream(object);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private JsonObject readJsonFile(Path path) {
+        if (path == null || !Files.isRegularFile(path)) {
+            return null;
+        }
+        try (InputStream input = Files.newInputStream(path);
+             InputStreamReader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
+            JsonElement parsed = JsonParser.parseReader(reader);
+            return parsed != null && parsed.isJsonObject() ? parsed.getAsJsonObject() : null;
+        } catch (IOException ignored) {
+            return null;
+        }
     }
 
     private Optional<byte[]> downloadExternalResource(String path) {
         HttpURLConnection connection = null;
         try {
-            URL url = new URL(MINECRAFT_ASSET_BASE_URL + path);
+            URL url = new URL(minecraftAssetBaseUrl + path);
             connection = (HttpURLConnection) url.openConnection();
             connection.setInstanceFollowRedirects(true);
             connection.setConnectTimeout(3000);
@@ -674,7 +869,12 @@ final class MarketWebIconService {
             }
             try (InputStream input = connection.getInputStream()) {
                 byte[] bytes = input.readAllBytes();
-                return bytes.length == 0 ? Optional.empty() : Optional.of(bytes);
+                if (!isValidDownloadedAsset(path, bytes)) {
+                    LOGGER.debug("Downloaded minecraft asset {} failed validation", path);
+                    return Optional.empty();
+                }
+                persistDownloadedAsset(path, bytes);
+                return Optional.of(bytes);
             }
         } catch (IOException exception) {
             LOGGER.debug("Failed to download external minecraft asset {}", path, exception);
@@ -684,6 +884,75 @@ final class MarketWebIconService {
                 connection.disconnect();
             }
         }
+    }
+
+    private boolean isValidDownloadedAsset(String path, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            return false;
+        }
+        String normalized = path == null ? "" : path.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.endsWith(".json")) {
+            try {
+                JsonElement parsed = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8));
+                return parsed != null && parsed.isJsonObject();
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        if (normalized.endsWith(".png")) {
+            if (bytes.length < 8
+                    || bytes[0] != (byte) 0x89
+                    || bytes[1] != 0x50
+                    || bytes[2] != 0x4E
+                    || bytes[3] != 0x47
+                    || bytes[4] != 0x0D
+                    || bytes[5] != 0x0A
+                    || bytes[6] != 0x1A
+                    || bytes[7] != 0x0A) {
+                return false;
+            }
+            try {
+                return ImageIO.read(new ByteArrayInputStream(bytes)) != null;
+            } catch (IOException ignored) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private void persistDownloadedAsset(String normalized, byte[] bytes) {
+        Path assetPath = downloadedAssetPath(normalized);
+        if (assetPath == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(assetPath.getParent());
+            Path temp = Files.createTempFile(assetPath.getParent(), assetPath.getFileName().toString(), ".tmp");
+            Files.write(temp, bytes);
+            moveDownloadedAsset(temp, assetPath);
+        } catch (IOException exception) {
+            LOGGER.debug("Failed to persist downloaded minecraft asset {}", normalized, exception);
+        }
+    }
+
+    private void moveDownloadedAsset(Path temp, Path target) throws IOException {
+        try {
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException atomicMoveFailure) {
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private Path downloadedAssetPath(String normalized) {
+        if (downloadedAssetRoot == null || normalized == null || normalized.isBlank()) {
+            return null;
+        }
+        String safe = normalized.replace('\\', '/');
+        if (!safe.startsWith("assets/minecraft/") || safe.contains("..")) {
+            return null;
+        }
+        Path path = downloadedAssetRoot.resolve(safe).normalize();
+        return path.startsWith(downloadedAssetRoot) ? path : null;
     }
 
     private record ModelRef(String namespace, String type, String path) {

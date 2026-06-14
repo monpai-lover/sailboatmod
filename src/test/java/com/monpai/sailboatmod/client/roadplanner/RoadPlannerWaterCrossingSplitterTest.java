@@ -52,6 +52,13 @@ class RoadPlannerWaterCrossingSplitterTest {
         assertFalse(result.nodes().stream().anyMatch(node -> node.segmentType() == RoadPlannerSegmentType.BRIDGE_MAJOR));
     }
 
+    @Test
+    void zeroDepthUnknownSpanDoesNotCreateBridge() {
+        RoadPlannerWaterCrossingSplitter.SplitResult result = splitAcrossWater(8, 32, 0);
+
+        assertFalse(result.didSplit());
+    }
+
     private static RoadPlannerWaterCrossingSplitter.SplitResult splitAcrossWater(int waterStartX, int waterEndX, int waterDepth) {
         RoadPlannerBridgeRuleService.LandProbe landProbe = (x, z) -> x < waterStartX || x > waterEndX;
         RoadPlannerHeightSampler heightSampler = (x, z) -> 64;

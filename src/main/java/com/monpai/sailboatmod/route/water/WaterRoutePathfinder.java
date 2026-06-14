@@ -53,14 +53,18 @@ public final class WaterRoutePathfinder {
         }
         int expandedThisStep = 0;
         int nodeBudget = Math.max(1, maxNodeExpansions);
-        int chunkBudget = Math.max(0, maxChunkLoads);
+        int chunkBudget = Math.max(1, maxChunkLoads);
+        int chunkLoadsAtStepStart = world.consumedChunkLoads();
         while (!open.isEmpty() && expandedThisStep < nodeBudget) {
             if (expandedNodes >= policy.maxExpandedNodes()) {
                 fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED);
                 return status;
             }
-            if (world.consumedChunkLoads() > policy.maxChunkLoads() || !world.canLoadMoreChunks(chunkBudget)) {
+            if (world.consumedChunkLoads() > policy.maxChunkLoads()) {
                 fail(WaterRouteFailureReason.CHUNK_BUDGET_EXCEEDED);
+                return status;
+            }
+            if (!hasStepChunkBudget(chunkLoadsAtStepStart, chunkBudget)) {
                 return status;
             }
 
@@ -73,11 +77,31 @@ public final class WaterRoutePathfinder {
             expandedThisStep++;
 
             if (isGoal(current.pos)) {
-                complete(current);
-                return status;
+                SampleResult goalSample = sampleWithinStepBudget(goal.getX(), goal.getZ(), chunkLoadsAtStepStart, chunkBudget);
+                if (goalSample.paused()) {
+                    closed.remove(currentKey);
+                    open.add(current);
+                    return status;
+                }
+                SegmentCheck finalSegment = goalSample.column() != null && goalSample.column().passable()
+                        ? segmentPassable(current.pos, goal, chunkLoadsAtStepStart, chunkBudget)
+                        : SegmentCheck.BLOCKED;
+                if (finalSegment == SegmentCheck.PAUSED) {
+                    closed.remove(currentKey);
+                    open.add(current);
+                    return status;
+                }
+                if (finalSegment == SegmentCheck.PASSABLE) {
+                    complete(current);
+                    return status;
+                }
             }
 
-            expand(current);
+            if (expand(current, chunkLoadsAtStepStart, chunkBudget) == ExpansionResult.PAUSED) {
+                closed.remove(currentKey);
+                open.add(current);
+                return status;
+            }
         }
         if (open.isEmpty()) {
             fail(WaterRouteFailureReason.NO_WATER_PATH);
@@ -85,7 +109,7 @@ public final class WaterRoutePathfinder {
         return status;
     }
 
-    private void expand(Node current) {
+    private ExpansionResult expand(Node current, int chunkLoadsAtStepStart, int chunkBudget) {
         int step = Math.max(1, policy.stepSize());
         int[] dx = {0, step, 0, -step, step, step, -step, -step};
         int[] dz = {step, 0, -step, 0, step, -step, step, -step};
@@ -95,12 +119,32 @@ public final class WaterRoutePathfinder {
             if (!withinSearchRadius(nx, nz)) {
                 continue;
             }
-            WaterColumn column = world.sample(nx, nz, policy);
+            SampleResult sample = sampleWithinStepBudget(nx, nz, chunkLoadsAtStepStart, chunkBudget);
+            if (sample.paused()) {
+                return ExpansionResult.PAUSED;
+            }
+            WaterColumn column = sample.column();
             if (column == null || !column.passable() || column.surfacePos() == null) {
                 continue;
             }
-            if (dx[i] != 0 && dz[i] != 0 && !diagonalCorridorPassable(current.pos, nx, nz)) {
+            SegmentCheck segmentCheck = segmentPassable(current.pos, column.surfacePos(), chunkLoadsAtStepStart, chunkBudget);
+            if (segmentCheck == SegmentCheck.PAUSED) {
+                return ExpansionResult.PAUSED;
+            }
+            if (segmentCheck == SegmentCheck.BLOCKED) {
                 continue;
+            }
+            if (dx[i] != 0 && dz[i] != 0) {
+                SegmentCheck corridorCheck = diagonalCorridorPassable(current.pos, nx, nz, chunkLoadsAtStepStart, chunkBudget);
+                if (corridorCheck == SegmentCheck.PAUSED) {
+                    return ExpansionResult.PAUSED;
+                }
+                if (corridorCheck == SegmentCheck.BLOCKED) {
+                    continue;
+                }
+            }
+            if (!hasStepChunkBudget(chunkLoadsAtStepStart, chunkBudget)) {
+                return ExpansionResult.PAUSED;
             }
             double cost = current.gCost + current.pos.distSqr(column.surfacePos()) + column.extraCost();
             long key = key(column.surfacePos());
@@ -112,12 +156,71 @@ public final class WaterRoutePathfinder {
             bestNodes.put(key, next);
             open.add(next);
         }
+        return ExpansionResult.CONTINUE;
     }
 
-    private boolean diagonalCorridorPassable(BlockPos current, int nx, int nz) {
-        WaterColumn left = world.sample(nx, current.getZ(), policy);
-        WaterColumn right = world.sample(current.getX(), nz, policy);
-        return left != null && left.passable() && right != null && right.passable();
+    private SegmentCheck diagonalCorridorPassable(BlockPos current, int nx, int nz, int chunkLoadsAtStepStart, int chunkBudget) {
+        SampleResult left = sampleWithinStepBudget(nx, current.getZ(), chunkLoadsAtStepStart, chunkBudget);
+        if (left.paused()) {
+            return SegmentCheck.PAUSED;
+        }
+        SampleResult right = sampleWithinStepBudget(current.getX(), nz, chunkLoadsAtStepStart, chunkBudget);
+        if (right.paused()) {
+            return SegmentCheck.PAUSED;
+        }
+        return left.column() != null && left.column().passable()
+                && right.column() != null && right.column().passable()
+                ? SegmentCheck.PASSABLE
+                : SegmentCheck.BLOCKED;
+    }
+
+    private SegmentCheck segmentPassable(BlockPos from, BlockPos to, int chunkLoadsAtStepStart, int chunkBudget) {
+        if (from == null || to == null) {
+            return SegmentCheck.BLOCKED;
+        }
+        int dx = to.getX() - from.getX();
+        int dz = to.getZ() - from.getZ();
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        int spacing = Math.max(1, Math.min(2, policy.stepSize()));
+        int samples = Math.max(1, (int) Math.ceil(distance / spacing));
+        for (int step = 1; step < samples; step++) {
+            double t = step / (double) samples;
+            int x = (int) Math.round(from.getX() + dx * t);
+            int z = (int) Math.round(from.getZ() + dz * t);
+            SampleResult sample = sampleWithinStepBudget(x, z, chunkLoadsAtStepStart, chunkBudget);
+            if (sample.paused()) {
+                return SegmentCheck.PAUSED;
+            }
+            WaterColumn column = sample.column();
+            if (column == null || !column.passable()) {
+                return SegmentCheck.BLOCKED;
+            }
+        }
+        return SegmentCheck.PASSABLE;
+    }
+
+    private SampleResult sampleWithinStepBudget(int x, int z, int chunkLoadsAtStepStart, int chunkBudget) {
+        if (!hasStepChunkBudget(chunkLoadsAtStepStart, chunkBudget)) {
+            return SampleResult.pausedResult();
+        }
+        int remaining = Math.max(0, chunkBudget - chunkLoadsThisStep(chunkLoadsAtStepStart));
+        if (!world.canLoadMoreChunks(remaining)) {
+            return SampleResult.pausedResult();
+        }
+        WaterColumn column = world.sample(x, z, policy);
+        if (world.consumedChunkLoads() > policy.maxChunkLoads()) {
+            fail(WaterRouteFailureReason.CHUNK_BUDGET_EXCEEDED);
+            return SampleResult.pausedResult();
+        }
+        return SampleResult.of(column);
+    }
+
+    private boolean hasStepChunkBudget(int chunkLoadsAtStepStart, int chunkBudget) {
+        return chunkLoadsThisStep(chunkLoadsAtStepStart) < Math.max(1, chunkBudget);
+    }
+
+    private int chunkLoadsThisStep(int chunkLoadsAtStepStart) {
+        return Math.max(0, world.consumedChunkLoads() - chunkLoadsAtStepStart);
     }
 
     private boolean withinSearchRadius(int x, int z) {
@@ -205,6 +308,27 @@ public final class WaterRoutePathfinder {
         RUNNING,
         SUCCESS,
         FAILED
+    }
+
+    private enum ExpansionResult {
+        CONTINUE,
+        PAUSED
+    }
+
+    private enum SegmentCheck {
+        PASSABLE,
+        BLOCKED,
+        PAUSED
+    }
+
+    private record SampleResult(WaterColumn column, boolean paused) {
+        private static SampleResult pausedResult() {
+            return new SampleResult(null, true);
+        }
+
+        private static SampleResult of(WaterColumn column) {
+            return new SampleResult(column, false);
+        }
     }
 
     private static final class Node implements Comparable<Node> {

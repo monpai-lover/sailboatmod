@@ -9,7 +9,12 @@ public enum CommodityCategories {
     GEMS("gems", 3, 1, 1, 3, 200),
     SPICES("spices", 2, 1, 1, 2, 150),
     TOOLS("tools", 1, 2, 2, 1, 100),
-    LUXURY("luxury", 2, 0, 1, 3, 180);
+    LUXURY("luxury", 2, 0, 1, 3, 180),
+    WEAPON("weapon", 1, 2, 2, 1, 120),
+    ARMOR("armor", 1, 2, 3, 1, 120),
+    UTILITY("utility", 0, 2, 2, 1, 90),
+    MATERIAL("material", 0, 2, 2, 1, 90),
+    OTHER("other", 0, 1, 2, 1, 80);
 
     private final String id;
     private final int rarity;
@@ -57,6 +62,6 @@ public enum CommodityCategories {
                 return category;
             }
         }
-        return FOOD;
+        return OTHER;
     }
 }

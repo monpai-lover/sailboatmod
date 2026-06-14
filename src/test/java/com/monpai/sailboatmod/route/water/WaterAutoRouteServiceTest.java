@@ -50,6 +50,19 @@ class WaterAutoRouteServiceTest {
     }
 
     @Test
+    void candidateCheckFailsWhenDockDistanceExceedsSearchRange() {
+        WaterRoutePolicy shortRange = new WaterRoutePolicy(8, 2, 1, 2, 32, 5000, 512, 64, 64, 200);
+        WaterRouteResult<WaterAutoRouteService.BerthPair> result = WaterAutoRouteService.canListCandidate(
+                dock("Source", new BlockPos(0, 64, 0), "town-a", "nation-a"),
+                dock("Target", new BlockPos(96, 64, 0), "town-b", "nation-a"),
+                new TestBerthWorld().waterRect(-12, -8, 108, 8),
+                relation(Map.of()),
+                shortRange);
+
+        assertEquals(WaterRouteFailureReason.RANGE_EXCEEDED, result.reason());
+    }
+
+    @Test
     void completedPathBuildsNamedRouteDefinition() {
         RouteDefinition route = WaterAutoRouteService.routeDefinitionFromPath(
                 dock("Source Dock", new BlockPos(0, 64, 0), "town-a", "nation-a"),
@@ -68,6 +81,21 @@ class WaterAutoRouteServiceTest {
         assertEquals(32.0D, route.routeLengthMeters(), 0.001D);
     }
 
+    @Test
+    void autoRouteUpsertReplacesExistingRouteForSameTargetDock() {
+        RouteDefinition oldRoute = route("Water Auto: Target Dock", "Source Dock", "Target Dock", 32.0D);
+        RouteDefinition manualRoute = route("Manual Harbor Loop", "Source Dock", "Other Dock", 12.0D);
+        RouteDefinition newRoute = route("Water Auto: Target Dock", "Source Dock", "Target Dock", 48.0D);
+
+        List<RouteDefinition> merged = WaterAutoRouteService.upsertAutoRouteForTest(
+                List.of(oldRoute, manualRoute),
+                newRoute);
+
+        assertEquals(2, merged.size());
+        assertEquals(manualRoute, merged.get(0));
+        assertEquals(newRoute, merged.get(1));
+    }
+
     private static WaterAutoRouteService.DockSnapshot dock(String name, BlockPos pos, String townId, String nationId) {
         return new WaterAutoRouteService.DockSnapshot(
                 pos,
@@ -75,6 +103,18 @@ class WaterAutoRouteServiceTest {
                 townId,
                 nationId,
                 new DockBerthResolver.DockZone(pos, -12, 12, -8, 8));
+    }
+
+    private static RouteDefinition route(String name, String sourceName, String targetName, double length) {
+        return new RouteDefinition(
+                name,
+                List.of(new net.minecraft.world.phys.Vec3(0.5D, 64.0D, 0.5D)),
+                "Tester",
+                "uuid",
+                1L,
+                length,
+                sourceName,
+                targetName);
     }
 
     private static WaterRoutePolicy policy() {

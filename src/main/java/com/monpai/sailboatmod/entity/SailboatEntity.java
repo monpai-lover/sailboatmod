@@ -1,17 +1,19 @@
 package com.monpai.sailboatmod.entity;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
-import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
+import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.market.logistics.ShippingTraceService;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
+import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
@@ -131,6 +133,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final float AUTOPILOT_TURN_IN_PLACE_DEGREES = 95.0F;
     private static final float AUTOPILOT_SLOW_TURN_DEGREES = 55.0F;
     private static final int AUTOPILOT_NO_PROGRESS_TICKS_LIMIT = 70;
+    // 多站连运：等待自动航线生成的最长停泊时长（约 30 秒），超时则放弃续运、货留船。
+    private static final int WATER_LEG_GENERATION_TIMEOUT_TICKS = 600;
     private static final double AUTOPILOT_PROGRESS_EPSILON = 0.08D;
     private static final double AUTOPILOT_STALL_SKIP_RADIUS = 48.0D;
     private static final double DOCK_PARKING_EDGE_PADDING = 1.5D;
@@ -202,6 +206,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     @Nullable
     private Vec3 dockHoldPos = null;
     private float dockHoldYaw = Float.NaN;
+    // 多站连运：到港后若无现成航线，提交自动航线生成并停泊等待，命中后续运到下一港。
+    @Nullable
+    private BlockPos awaitingNextLegPort = null;
+    @Nullable
+    private BlockPos awaitingNextLegFromDock = null;
+    private int awaitingNextLegTicks = 0;
     private String ownerName = "";
     private String ownerUuid = "";
     private int rentalPrice = DEFAULT_RENTAL_PRICE;
@@ -387,6 +397,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!level().isClientSide && isAutopilotActive() && isAutopilotPaused() && !(captain instanceof Player)) {
             resumeAutopilot();
             autopilotControl = !isAutopilotPaused() && hasAutopilotRoute();
+        }
+        if (!level().isClientSide && !isAutopilotActive() && awaitingNextLegPort != null) {
+            tryResumeAwaitedWaterLeg();
         }
         if (!level().isClientSide && !isAutopilotActive() && dockHoldTicks > 0) {
             dockHoldTicks--;
@@ -1641,6 +1654,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         return autopilotTargetIndex;
     }
 
+    public List<Vec3> getMarketWebActiveRoutePoints() {
+        return List.copyOf(autopilotRoute);
+    }
+
+    public int getMarketWebActiveRouteTargetIndex() {
+        return autopilotTargetIndex;
+    }
+
     private double computeAutopilotSlowdownRadius(boolean finalTarget) {
         if (finalTarget) {
             return AUTOPILOT_FINAL_SLOWDOWN_RADIUS;
@@ -2076,18 +2097,34 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         String returnBuyerUuid = manifest.isEmpty() ? autopilotShipmentRecipientUuid : manifest.get(0).recipientUuid();
         String returnBuyerName = manifest.isEmpty() ? autopilotShipmentRecipientName : manifest.get(0).recipientName();
 
+        List<ShipmentManifestEntry> keepOnboard = manifest;
         if (allowUnload) {
-            List<ItemStack> cargo = drainAllCargo();
-            if (!cargo.isEmpty()) {
+            List<ItemStack> allCargo = drainAllCargo();
+            DockBlockEntity.ManifestSplit split = DockBlockEntity.splitManifestByDestination(
+                    level(), destinationDock.getBlockPos(), manifest);
+            keepOnboard = split.keepOnboard();
+            List<ItemStack> pool = new ArrayList<>(allCargo);
+            List<ItemStack> deliverCargo = DockBlockEntity.selectCargoForEntries(pool, split.deliverHere());
+            if (!pool.isEmpty()) {
+                loadCargo(pool); // 留车货物退回库存
+            }
+            if (!deliverCargo.isEmpty()) {
                 long depart = autopilotShipmentDepartureEpochMillis > 0L ? autopilotShipmentDepartureEpochMillis : System.currentTimeMillis();
                 long elapsed = Math.max(0L, System.currentTimeMillis() - depart);
                 double distance = autopilotShipmentDistanceMeters > 0.0D ? autopilotShipmentDistanceMeters : computeRouteLengthMeters(autopilotRoute);
                 String routeName = autopilotRouteName == null || autopilotRouteName.isBlank() ? getSelectedRouteName() : autopilotRouteName;
                 destinationDock.receiveShipment(this, routeName, autopilotShipmentShipperName, autopilotShipmentStartDockName,
-                        autopilotShipmentEndDockName, depart, elapsed, distance, cargo, manifest);
+                        autopilotShipmentEndDockName, depart, elapsed, distance, deliverCargo, split.deliverHere());
             }
+            setPendingShipmentManifest(split.keepOnboard()); // 剪枝：移除已交付条目
         }
-        if (!returnTrip && allowReturn && tryStartReturnTrip(destinationDock, previousSourceDockPos, returnBuyerUuid, returnBuyerName)) {
+
+        // 仍有未送达运单 → 自动开往下一港，逐港连运（去程才续运，返航不续）。
+        if (!returnTrip && !keepOnboard.isEmpty() && tryStartWaterLegToNextPort(destinationDock, keepOnboard)) {
+            return;
+        }
+        if (!returnTrip && allowReturn && keepOnboard.isEmpty()
+                && tryStartReturnTrip(destinationDock, previousSourceDockPos, returnBuyerUuid, returnBuyerName)) {
             return;
         }
         applyDockHoldState(destinationDock);
@@ -2184,38 +2221,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return;
         }
         MarketSavedData market = MarketSavedData.get(level());
+        boolean rolledBackToMarket = canRestoreMarketShipment(market);
         List<ItemStack> cargo = drainAllCargo();
-        boolean rolledBackToDock = false;
-        TownWarehouseBlockEntity rollbackWarehouse = null;
-        DockBlockEntity rollbackDock = null;
-        for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
-            PurchaseOrder purchaseOrder = market.getPurchaseOrder(entry.purchaseOrderId());
-            if (purchaseOrder == null) {
-                continue;
-            }
-            if (level().getBlockEntity(purchaseOrder.sourceDockPos()) instanceof TownWarehouseBlockEntity sourceWarehouse) {
-                rollbackWarehouse = sourceWarehouse;
-                break;
-            }
-            if (level().getBlockEntity(purchaseOrder.sourceDockPos()) instanceof DockBlockEntity sourceDock) {
-                rollbackDock = sourceDock;
-                break;
-            }
-        }
-        if (rollbackWarehouse != null) {
-            if (cargo.isEmpty()) {
-                rolledBackToDock = true;
-            } else {
-                rolledBackToDock = rollbackWarehouse.insertCargo(cargo);
-            }
-        } else if (rollbackDock != null) {
-            if (cargo.isEmpty()) {
-                rolledBackToDock = true;
-            } else {
-                rolledBackToDock = rollbackDock.insertCargo(cargo);
-            }
-        }
-        if (!rolledBackToDock && !cargo.isEmpty()) {
+        if (!rolledBackToMarket && !cargo.isEmpty()) {
             loadCargo(cargo);
         }
         for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
@@ -2224,7 +2232,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             }
             PurchaseOrder purchaseOrder = market.getPurchaseOrder(entry.purchaseOrderId());
             if (purchaseOrder != null) {
-                String nextStatus = rolledBackToDock ? "WAITING_SHIPMENT" : "FAILED";
+                String nextStatus = rolledBackToMarket ? "WAITING_SHIPMENT" : "FAILED";
                 market.putPurchaseOrder(new PurchaseOrder(
                         purchaseOrder.orderId(),
                         purchaseOrder.listingId(),
@@ -2239,7 +2247,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                         nextStatus
                 ));
                 MarketListing listing = market.getListing(purchaseOrder.listingId());
-                if (listing != null && rolledBackToDock) {
+                if (listing != null && rolledBackToMarket) {
                     market.putListing(new MarketListing(
                             listing.listingId(),
                             listing.sellerUuid(),
@@ -2278,10 +2286,26 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                         shippingOrder.distanceMeters(),
                         shippingOrder.etaSeconds(),
                         shippingOrder.rentalFee(),
-                        rolledBackToDock ? "FAILED_ROLLBACK" : "FAILED"
+                        rolledBackToMarket ? "FAILED_ROLLBACK" : "FAILED"
                 ));
+                ShippingTraceService.updateStatus(level(), shippingOrder.shippingOrderId(), rolledBackToMarket ? "FAILED_ROLLBACK" : "FAILED");
             }
         }
+    }
+
+    private boolean canRestoreMarketShipment(MarketSavedData market) {
+        boolean hasMarketOrder = false;
+        for (ShipmentManifestEntry entry : autopilotShipmentManifest) {
+            if (!entry.isMarketOrder()) {
+                continue;
+            }
+            hasMarketOrder = true;
+            PurchaseOrder purchaseOrder = market.getPurchaseOrder(entry.purchaseOrderId());
+            if (purchaseOrder == null || market.getListing(purchaseOrder.listingId()) == null) {
+                return false;
+            }
+        }
+        return hasMarketOrder;
     }
 
     private List<ItemStack> drainAllCargo() {
@@ -2322,6 +2346,91 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         setRouteCatalog(List.of(reverseRoute), 0, endDockPosOrCurrent(currentDock));
         autopilotReturnTrip = true;
         return startAutopilot();
+    }
+
+    /**
+     * 多站连运：从当前港规划并发往下一个未送达运单的目的港。
+     * 优先复用当前港已存的航线；没有则提交自动航线生成并停泊等待（异步），命中后由 {@link #tryResumeAwaitedWaterLeg()} 续运。
+     */
+    private boolean tryStartWaterLegToNextPort(DockBlockEntity here, List<ShipmentManifestEntry> keepOnboard) {
+        if (here == null || level().isClientSide || !(level() instanceof ServerLevel)) {
+            return false;
+        }
+        BlockPos nextPort = DockBlockEntity.nextStationDestination(level(), keepOnboard);
+        if (nextPort == null || !(level().getBlockEntity(nextPort) instanceof DockBlockEntity nextDock)
+                || nextDock instanceof PostStationBlockEntity) {
+            return false;
+        }
+        RouteDefinition leg = pickRouteToDock(here.getRoutesForMap(), nextPort);
+        if (leg != null) {
+            beginWaterLeg(here, leg);
+            return true;
+        }
+        // 无现成航线 → 异步生成去下一港的水路，停泊等待。
+        WaterAutoRouteService.submitAutoRoute((ServerLevel) level(), here, nextDock, null);
+        awaitingNextLegPort = nextPort.immutable();
+        awaitingNextLegFromDock = here.getBlockPos().immutable();
+        awaitingNextLegTicks = WATER_LEG_GENERATION_TIMEOUT_TICKS;
+        applyDockHoldState(here);
+        stopAutopilot(false);
+        return true;
+    }
+
+    /** 停泊等待期间轮询：去下一港的航线已生成则续运，超时则放弃（货留船等人工）。 */
+    private void tryResumeAwaitedWaterLeg() {
+        if (level().isClientSide || awaitingNextLegPort == null || awaitingNextLegFromDock == null) {
+            return;
+        }
+        if (awaitingNextLegTicks-- <= 0) {
+            clearAwaitingWaterLeg();
+            return;
+        }
+        if (!(level().getBlockEntity(awaitingNextLegFromDock) instanceof DockBlockEntity here)) {
+            clearAwaitingWaterLeg();
+            return;
+        }
+        RouteDefinition leg = pickRouteToDock(here.getRoutesForMap(), awaitingNextLegPort);
+        if (leg == null) {
+            return; // 继续等待生成完成
+        }
+        clearAwaitingWaterLeg();
+        beginWaterLeg(here, leg);
+    }
+
+    private void beginWaterLeg(DockBlockEntity here, RouteDefinition leg) {
+        // 续运：保持去程状态（autopilotReturnTrip=false），剩余运单已在卸货阶段剪枝。
+        setAllowNonOrderAutoReturn(autopilotAllowNonOrderAutoReturn);
+        setRouteCatalog(List.of(leg), 0, here.getBlockPos());
+        autopilotReturnTrip = false;
+        dockHoldTicks = 0;
+        startAutopilot();
+    }
+
+    private void clearAwaitingWaterLeg() {
+        awaitingNextLegPort = null;
+        awaitingNextLegFromDock = null;
+        awaitingNextLegTicks = 0;
+    }
+
+    @Nullable
+    private RouteDefinition pickRouteToDock(List<RouteDefinition> routes, BlockPos targetDockPos) {
+        if (routes == null || targetDockPos == null) {
+            return null;
+        }
+        for (RouteDefinition route : routes) {
+            if (route == null || route.waypoints().size() < 2) {
+                continue;
+            }
+            Vec3 end = route.waypoints().get(route.waypoints().size() - 1);
+            BlockPos endDock = findTransportHubZoneContains(end);
+            if (endDock == null) {
+                endDock = findNearestRegisteredTransportHub(end, 64.0D);
+            }
+            if (targetDockPos.equals(endDock)) {
+                return route;
+            }
+        }
+        return null;
     }
 
     private BlockPos endDockPosOrCurrent(DockBlockEntity dock) {

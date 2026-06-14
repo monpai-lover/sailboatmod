@@ -72,7 +72,7 @@ public final class RoadPlannerWaterCrossingSplitter {
                 }
                 int spanEnd = i - 1;
                 int spanBlocks = Math.max(1, spanEnd - spanStart + 1) * SAMPLE_SPACING;
-                if (spanBlocks >= MIN_BRIDGE_WATER_BLOCKS) {
+                if (spanBlocks >= MIN_BRIDGE_WATER_BLOCKS && maxDepth > 0) {
                     RoadPlannerSegmentType bridgeType = spanBlocks > SMALL_BRIDGE_MAX_BLOCKS
                             ? RoadPlannerSegmentType.BRIDGE_MAJOR
                             : RoadPlannerSegmentType.BRIDGE_SMALL;

@@ -23,12 +23,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 public final class MarketWebMapTileCache {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
-    public static final int RENDER_VERSION = 3;
+    public static final int RENDER_VERSION = 4;
     private static final int METADATA_VERSION = 2;
 
     private final Path root;
@@ -53,6 +55,19 @@ public final class MarketWebMapTileCache {
             return Optional.of(Files.readAllBytes(path));
         } catch (IOException exception) {
             LOGGER.warn("Failed to read market web map tile {}", path, exception);
+            return Optional.empty();
+        }
+    }
+
+    public Optional<byte[]> readSquareTile(String dimensionId, int zoom, int tileX, int tileZ) {
+        Path path = squareTilePath(dimensionId, zoom, tileX, tileZ);
+        if (path == null || !path.startsWith(root) || !Files.isRegularFile(path)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Files.readAllBytes(path));
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to read market web square map tile {}", path, exception);
             return Optional.empty();
         }
     }
@@ -183,6 +198,24 @@ public final class MarketWebMapTileCache {
         }
         MarketWebMapTileMetadata updated = metadata.withSource(localChunkX, localChunkZ, incoming, nowMillis, Math.max(0, rendererVersion));
         return writeTileAndMetadata(dimensionId, tileX, tileZ, tilePixels, updated);
+    }
+
+    public boolean mergeChunkPyramid(String dimensionId,
+                                     int chunkX,
+                                     int chunkZ,
+                                     int[] chunkPixels,
+                                     MarketWebMapTileQuality quality,
+                                     long nowMillis) {
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)
+                || chunkPixels == null
+                || chunkPixels.length != MarketWebMapConstants.CHUNK_SIZE * MarketWebMapConstants.CHUNK_SIZE) {
+            return false;
+        }
+        MarketWebMapTileQuality incoming = quality == null ? MarketWebMapTileQuality.UNKNOWN : quality;
+        if (incoming.priority() < MarketWebMapTileQuality.SERVER_LOADED_CHUNK.priority()) {
+            return true;
+        }
+        return new MarketWebMapPyramidWriter().mergeChunk(this, dimensionId, chunkX, chunkZ, chunkPixels);
     }
 
     public int repairLegacyMetadata() {
@@ -355,7 +388,7 @@ public final class MarketWebMapTileCache {
     public int clearAllTiles() {
         Path dir = root.resolve("overworld").resolve("lod_1").normalize();
         if (!dir.startsWith(root) || !Files.isDirectory(dir)) {
-            return 0;
+            return clearSquareTiles();
         }
         int cleared = 0;
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.png")) {
@@ -386,7 +419,7 @@ public final class MarketWebMapTileCache {
         } catch (IOException exception) {
             LOGGER.warn("Failed to clear orphan market web map tile metadata under {}", dir, exception);
         }
-        return cleared;
+        return cleared + clearSquareTiles();
     }
 
     public static byte[] encodePng(int pixelWidth, int pixelHeight, int[] argbPixels) {
@@ -484,6 +517,37 @@ public final class MarketWebMapTileCache {
         return readPng(dimensionId, tileX, tileZ)
                 .flatMap(MarketWebMapTileCache::decodeArgb)
                 .orElseGet(() -> new int[MarketWebMapConstants.TILE_SIZE * MarketWebMapConstants.TILE_SIZE]);
+    }
+
+    int[] readSquareTilePixels(String dimensionId, int zoom, int tileX, int tileZ) {
+        return readSquareTile(dimensionId, zoom, tileX, tileZ)
+                .flatMap(MarketWebMapTileCache::decodeSquareArgb)
+                .orElseGet(() -> new int[MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE]);
+    }
+
+    boolean writeSquareTilePixels(String dimensionId, int zoom, int tileX, int tileZ, int[] argbPixels) {
+        Path pngPath = squareTilePath(dimensionId, zoom, tileX, tileZ);
+        if (pngPath == null
+                || !pngPath.startsWith(root)
+                || argbPixels == null
+                || argbPixels.length != MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE) {
+            return false;
+        }
+        byte[] pngBytes = encodeSquarePng(argbPixels);
+        if (!isValidPngBytes(pngBytes)) {
+            return false;
+        }
+        try {
+            Files.createDirectories(pngPath.getParent());
+            if (isSamePng(pngPath, pngBytes)) {
+                return true;
+            }
+            writeBytesAtomically(pngPath, pngBytes);
+            return true;
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to write market web square map tile {}", pngPath, exception);
+            return false;
+        }
     }
 
     private boolean writeTileAndMetadata(String dimensionId,
@@ -668,6 +732,43 @@ public final class MarketWebMapTileCache {
                 .normalize();
     }
 
+    private Path squareTilePath(String dimensionId, int zoom, int tileX, int tileZ) {
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId) || zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return null;
+        }
+        return root.resolve("overworld")
+                .resolve("square")
+                .resolve(Integer.toString(zoom))
+                .resolve(tileX + "_" + tileZ + ".png")
+                .normalize();
+    }
+
+    private int clearSquareTiles() {
+        Path dir = root.resolve("overworld").resolve("square").normalize();
+        if (!dir.startsWith(root) || !Files.exists(dir)) {
+            return 0;
+        }
+        int[] cleared = {0};
+        try (Stream<Path> stream = Files.walk(dir)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                if (!path.startsWith(root)) {
+                    return;
+                }
+                try {
+                    if (Files.isRegularFile(path) && path.getFileName().toString().endsWith(".png")) {
+                        cleared[0]++;
+                    }
+                    Files.deleteIfExists(path);
+                } catch (IOException exception) {
+                    LOGGER.warn("Failed to delete market web square map tile {}", path, exception);
+                }
+            });
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to clear market web square map tile cache under {}", dir, exception);
+        }
+        return cleared[0];
+    }
+
     private TileName parseTileName(Path path) {
         if (path == null || path.getFileName() == null) {
             return null;
@@ -708,6 +809,47 @@ public final class MarketWebMapTileCache {
         } catch (IOException exception) {
             return Optional.empty();
         }
+    }
+
+    private static Optional<int[]> decodeSquareArgb(byte[] pngBytes) {
+        if (!isValidPngBytes(pngBytes)) {
+            return Optional.empty();
+        }
+        try {
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(pngBytes));
+            if (image == null
+                    || image.getWidth() != MarketWebMapTileCoordinate.BASE_TILE_SIZE
+                    || image.getHeight() != MarketWebMapTileCoordinate.BASE_TILE_SIZE) {
+                return Optional.empty();
+            }
+            int[] pixels = new int[MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE];
+            image.getRGB(0, 0,
+                    MarketWebMapTileCoordinate.BASE_TILE_SIZE,
+                    MarketWebMapTileCoordinate.BASE_TILE_SIZE,
+                    pixels,
+                    0,
+                    MarketWebMapTileCoordinate.BASE_TILE_SIZE);
+            return Optional.of(pixels);
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private static byte[] encodeSquarePng(int[] argbPixels) {
+        if (argbPixels == null || argbPixels.length != MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE) {
+            return new byte[0];
+        }
+        BufferedImage image = new BufferedImage(
+                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
+                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
+                BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0,
+                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
+                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
+                argbPixels,
+                0,
+                MarketWebMapTileCoordinate.BASE_TILE_SIZE);
+        return writePngBytes(image);
     }
 
     private static boolean isSamePng(Path path, byte[] pngBytes) throws IOException {

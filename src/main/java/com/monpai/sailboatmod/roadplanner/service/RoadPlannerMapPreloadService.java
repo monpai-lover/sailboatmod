@@ -253,7 +253,7 @@ public final class RoadPlannerMapPreloadService {
 
     private boolean prepareCoveredChunks(ServerLevel level, RoadPlannerTileKey key, ActiveJob active) {
         if (level == null || key == null || active == null || active.job == null
-                || active.job.purpose() != RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER) {
+                || !forcesMissingChunks(active.job.purpose())) {
             return true;
         }
         Set<Long> forcedForTile = active.forcedChunks.computeIfAbsent(key, ignored -> new LinkedHashSet<>());
@@ -343,6 +343,15 @@ public final class RoadPlannerMapPreloadService {
         } catch (RuntimeException ignored) {
             return false;
         }
+    }
+
+    private static boolean forcesMissingChunks(RoadPlannerMapPreloadRequestPacket.Purpose purpose) {
+        return purpose == RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER
+                || purpose == RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD;
+    }
+
+    static boolean forcesMissingChunksForTest(RoadPlannerMapPreloadRequestPacket.Purpose purpose) {
+        return forcesMissingChunks(purpose);
     }
 
     private static BlockPos forceOwnerPosition(RoadPlannerTileKey key, ServerLevel level) {

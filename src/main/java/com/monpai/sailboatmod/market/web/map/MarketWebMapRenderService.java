@@ -1,55 +1,58 @@
 package com.monpai.sailboatmod.market.web.map;
 
-import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
-import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.common.world.ForgeChunkManager;
-import org.slf4j.Logger;
 
-import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class MarketWebMapRenderService {
-    private static final Logger LOGGER = LogUtils.getLogger();
     private static final int MAX_QUEUE_TASKS = 4096;
-    private static final int CHUNKS_PER_TICK = 3;
+    private static final int SNAPSHOTS_PER_TICK = 4;
+    private static final int SAME_TILE_BURST_LIMIT = 8;
+    private static final int REGION_CHUNK_CHECKS_PER_TICK = 128;
     private static final int PLAYER_SCAN_INTERVAL_TICKS = 80;
     private static final int POINT_SCAN_INTERVAL_TICKS = 400;
     private static final int REGION_SCAN_INTERVAL_TICKS = 1200;
     private static final int PLAYER_SCAN_RADIUS_CHUNKS = 3;
     private static final int POINT_SCAN_RADIUS_CHUNKS = 1;
     private static final int REGION_SCAN_REGIONS_PER_PASS = 4;
+    private static final int TILE_MISS_MAX_CHUNK_CHECKS = 256;
+    private static final int TILE_MISS_MAX_QUEUED_CHUNKS = 64;
+    private static final int SQUARE_TILE_CURSOR_CHUNKS_PER_TICK = 128;
+    private static final int MAX_SQUARE_TILE_CURSORS = 128;
+    private static final int GENERATED_READ_COMPLETIONS_PER_TICK = 4;
+    private static final int MAX_PENDING_GENERATED_READS = 1024;
+    private static final long GENERATED_READ_TTL_MILLIS = 30_000L;
     private static final int CHUNKS_PER_REGION_AXIS = 32;
-    /** 每 tick 最多强制加载多少个脏区块（与 RoadPlannerMapPreloadService 一致）。 */
-    private static final int MAX_FORCE_CHUNKS_PER_TICK = 8;
-    /** 待强制加载的脏区块上限，超出丢弃最旧的，避免无界增长。 */
-    private static final int MAX_DIRTY_CHUNKS = 65536;
+    private static final int MAX_REGION_CURSORS = 512;
+
     private static final MarketWebMapRenderService GLOBAL = new MarketWebMapRenderService(
-            new MarketWebMapRenderQueue(MAX_QUEUE_TASKS),
-            new MarketWebLoadedChunkTileRenderer());
+            new MarketWebMapRenderQueue(MAX_QUEUE_TASKS));
 
     private final MarketWebMapRenderQueue queue;
-    private final MarketWebLoadedChunkTileRenderer renderer;
     private final MarketWebMapRegionScanService regionScanner;
     private final MarketWebMapRegionWatcher regionWatcher = new MarketWebMapRegionWatcher();
-    /** 等待强制加载的脏区块（来自磁盘 region 监听），打包为 ChunkPos.asLong。 */
-    private final LinkedHashSet<Long> dirtyChunks = new LinkedHashSet<>();
-    /** 已经 forceChunk(true)、等待加载完成后采样并释放的区块。 */
-    private final LinkedHashSet<Long> forcedChunks = new LinkedHashSet<>();
+    private final LinkedHashMap<Long, RegionCursor> regionCursors = new LinkedHashMap<>();
+    private final LinkedHashMap<TileCursorKey, TileCursor> squareTileCursors = new LinkedHashMap<>();
+    private final LinkedHashMap<Long, PendingGeneratedRead> pendingGeneratedReads = new LinkedHashMap<>();
+    private MarketWebMapRenderManager renderManager = new MarketWebMapRenderManager();
+    private ExecutorService generatedDecodeExecutor = newGeneratedDecodeExecutor();
+    private MarketWebSquareMapRenderer squareRenderer = new MarketWebSquareMapRenderer();
     private int tickCounter;
 
-    public MarketWebMapRenderService(MarketWebMapRenderQueue queue, MarketWebLoadedChunkTileRenderer renderer) {
+    public MarketWebMapRenderService(MarketWebMapRenderQueue queue) {
         this.queue = queue == null ? new MarketWebMapRenderQueue(MAX_QUEUE_TASKS) : queue;
-        this.renderer = renderer == null ? new MarketWebLoadedChunkTileRenderer() : renderer;
         this.regionScanner = new MarketWebMapRegionScanService(this.queue);
     }
 
@@ -57,7 +60,6 @@ public final class MarketWebMapRenderService {
         return GLOBAL;
     }
 
-    /** 服务器启动时调用：启动磁盘 region 文件监听。 */
     public void startRegionWatcher(MinecraftServer server) {
         if (server == null) {
             return;
@@ -68,19 +70,23 @@ public final class MarketWebMapRenderService {
         }
     }
 
-    /** 服务器停止时调用：停止监听并释放仍被强制加载的区块。 */
     public void stopRegionWatcher(MinecraftServer server) {
         regionWatcher.stop();
-        synchronized (dirtyChunks) {
-            dirtyChunks.clear();
+        synchronized (regionCursors) {
+            regionCursors.clear();
         }
-        if (server != null) {
-            ServerLevel level = server.getLevel(Level.OVERWORLD);
-            if (level != null) {
-                releaseAllForcedChunks(level);
-            }
+        synchronized (squareTileCursors) {
+            squareTileCursors.clear();
         }
-        forcedChunks.clear();
+        synchronized (pendingGeneratedReads) {
+            pendingGeneratedReads.clear();
+        }
+        generatedDecodeExecutor.shutdownNow();
+        generatedDecodeExecutor = newGeneratedDecodeExecutor();
+        squareRenderer.shutdown();
+        squareRenderer = new MarketWebSquareMapRenderer();
+        renderManager.shutdown();
+        renderManager = new MarketWebMapRenderManager();
     }
 
     public void enqueueTileRequest(MinecraftServer server, String lod, int tileX, int tileZ) {
@@ -91,7 +97,35 @@ public final class MarketWebMapRenderService {
         if (level == null) {
             return;
         }
-        enqueueLoadedChunksInTile(level, tileX, tileZ, System.currentTimeMillis());
+        enqueueTileChunksForTest(
+                queue,
+                MarketWebMapConstants.OVERWORLD,
+                tileX,
+                tileZ,
+                System.currentTimeMillis(),
+                (chunkX, chunkZ) -> isChunkLoaded(level, chunkX, chunkZ));
+    }
+
+    public void enqueueSquareTileRequest(MinecraftServer server, String dimensionId, int zoom, int tileX, int tileZ) {
+        if (server == null
+                || !MarketWebMapConstants.OVERWORLD.equals(dimensionId)
+                || zoom < 0
+                || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return;
+        }
+        ServerLevel level = server.getLevel(Level.OVERWORLD);
+        if (level == null) {
+            return;
+        }
+        addSquareTileCursor(dimensionId, zoom, tileX, tileZ);
+        enqueueSquareTileChunksForTest(
+                queue,
+                dimensionId,
+                zoom,
+                tileX,
+                tileZ,
+                System.currentTimeMillis(),
+                (chunkX, chunkZ) -> isChunkLoaded(level, chunkX, chunkZ));
     }
 
     public void tick(MinecraftServer server) {
@@ -111,105 +145,207 @@ public final class MarketWebMapRenderService {
             enqueueImportantPoints(level, now);
         }
         if (tickCounter % REGION_SCAN_INTERVAL_TICKS == 0) {
-            regionScanner.enqueueRepairScan(level, REGION_SCAN_REGIONS_PER_PASS, now);
+            enqueueRegionRepairScan(level, REGION_SCAN_REGIONS_PER_PASS);
         }
-        intakeDirtyRegions();
-        processForcedChunks(level, now);
-        processBudgeted(level, now);
+        renderManager.tickBackground(level, queue, now);
+        drainDirtyRegions();
+        processSquareTileCursors(now);
+        processRegionCursors(level, now);
+        processSnapshotBudget(level, now);
     }
 
     public int queueSize() {
-        return queue.size();
+        return scheduledQueueSize() + renderManager.pendingTasks() + squareRenderer.pendingTasks();
+    }
+
+    public MarketWebMapRenderManager.RenderStatus renderStatus() {
+        return renderManager.status(scheduledQueueSize());
+    }
+
+    public boolean startFullRender(ServerLevel level) {
+        return renderManager.startFullRender(level);
+    }
+
+    public boolean startRadiusRender(ServerLevel level, int centerBlockX, int centerBlockZ, int radiusBlocks) {
+        return renderManager.startRadiusRender(level, centerBlockX, centerBlockZ, radiusBlocks);
+    }
+
+    public boolean pauseRender() {
+        return renderManager.pause();
+    }
+
+    public boolean resumeRender() {
+        return renderManager.resume();
+    }
+
+    public boolean cancelRender(ServerLevel level) {
+        return renderManager.cancel(level);
+    }
+
+    private int scheduledQueueSize() {
+        synchronized (squareTileCursors) {
+            synchronized (regionCursors) {
+                synchronized (pendingGeneratedReads) {
+                    return queue.size()
+                            + squareTileCursors.size()
+                            + regionCursors.size()
+                            + pendingGeneratedReads.size();
+                }
+            }
+        }
     }
 
     public int enqueueRegionRepairScan(ServerLevel level, int maxRegions) {
-        return regionScanner.enqueueRepairScan(level, maxRegions, System.currentTimeMillis());
+        int added = 0;
+        for (MarketWebMapRegionScanService.RegionFile region : regionScanner.scanRegions(level, maxRegions)) {
+            if (addRegionCursor(region.regionX(), region.regionZ())) {
+                added++;
+            }
+        }
+        return added;
     }
 
-    /** 取出监听器累积的脏 region，把其 32×32 区块塞入待强制加载队列。 */
-    private void intakeDirtyRegions() {
-        Set<Long> regions = regionWatcher.drainDirtyRegions();
-        if (regions.isEmpty()) {
-            return;
-        }
-        synchronized (dirtyChunks) {
-            for (long packedRegion : regions) {
-                int baseChunkX = MarketWebMapRegionWatcher.unpackRegionX(packedRegion) * CHUNKS_PER_REGION_AXIS;
-                int baseChunkZ = MarketWebMapRegionWatcher.unpackRegionZ(packedRegion) * CHUNKS_PER_REGION_AXIS;
-                for (int dz = 0; dz < CHUNKS_PER_REGION_AXIS; dz++) {
-                    for (int dx = 0; dx < CHUNKS_PER_REGION_AXIS; dx++) {
-                        dirtyChunks.add(ChunkPos.asLong(baseChunkX + dx, baseChunkZ + dz));
-                    }
-                }
-            }
-            while (dirtyChunks.size() > MAX_DIRTY_CHUNKS) {
-                Iterator<Long> it = dirtyChunks.iterator();
-                if (!it.hasNext()) {
-                    break;
-                }
-                it.next();
-                it.remove();
-            }
+    private void drainDirtyRegions() {
+        for (long packedRegion : regionWatcher.drainDirtyRegions()) {
+            addRegionCursor(
+                    MarketWebMapRegionWatcher.unpackRegionX(packedRegion),
+                    MarketWebMapRegionWatcher.unpackRegionZ(packedRegion));
         }
     }
 
-    /**
-     * 处理脏区块：已加载完成的强制加载区块 → 用 region-scan 质量重渲（可覆盖旧 client_upload/legacy 红水）→ 释放；
-     * 仍未加载的脏区块 → forceChunk 触发加载（预算化，每 tick 限量）。
-     */
-    private void processForcedChunks(ServerLevel level, long nowMillis) {
-        BlockPos owner = forceOwner(level);
-        // 1. 已加载的强制区块：重渲并释放
-        for (Iterator<Long> it = forcedChunks.iterator(); it.hasNext(); ) {
-            long chunkKey = it.next();
-            int chunkX = ChunkPos.getX(chunkKey);
-            int chunkZ = ChunkPos.getZ(chunkKey);
-            if (!isChunkLoaded(level, chunkX, chunkZ)) {
+    private void processSquareTileCursors(long nowMillis) {
+        int checked = 0;
+        while (checked < SQUARE_TILE_CURSOR_CHUNKS_PER_TICK) {
+            TileCursorKey key;
+            TileCursor cursor;
+            synchronized (squareTileCursors) {
+                Iterator<TileCursorKey> keys = squareTileCursors.keySet().iterator();
+                if (!keys.hasNext()) {
+                    return;
+                }
+                key = keys.next();
+                cursor = squareTileCursors.remove(key);
+            }
+            int advanced = cursor.enqueue(queue, nowMillis, SQUARE_TILE_CURSOR_CHUNKS_PER_TICK - checked);
+            checked += advanced;
+            if (!cursor.done()) {
+                synchronized (squareTileCursors) {
+                    squareTileCursors.put(key, cursor);
+                }
+            }
+            if (advanced <= 0) {
+                return;
+            }
+        }
+    }
+
+    private void processRegionCursors(ServerLevel level, long nowMillis) {
+        int checked = 0;
+        while (checked < REGION_CHUNK_CHECKS_PER_TICK) {
+            RegionCursor cursor;
+            long key;
+            synchronized (regionCursors) {
+                Iterator<Long> keys = regionCursors.keySet().iterator();
+                if (!keys.hasNext()) {
+                    return;
+                }
+                key = keys.next();
+                cursor = regionCursors.remove(key);
+            }
+            while (checked < REGION_CHUNK_CHECKS_PER_TICK && !cursor.done()) {
+                int chunkX = cursor.chunkX();
+                int chunkZ = cursor.chunkZ();
+                queue.enqueue(
+                        MarketWebMapConstants.OVERWORLD,
+                        chunkX,
+                        chunkZ,
+                        nowMillis,
+                        MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                cursor.advance();
+                checked++;
+            }
+            if (!cursor.done()) {
+                synchronized (regionCursors) {
+                    regionCursors.put(key, cursor);
+                }
+            }
+        }
+    }
+
+    private void processSnapshotBudget(ServerLevel level, long nowMillis) {
+        MarketWebMapTileCache cache = MarketWebMapTileCache.forServer(level.getServer());
+        for (MarketWebMapRenderQueue.Task task : queue.pollCoalesced(SNAPSHOTS_PER_TICK, SAME_TILE_BURST_LIMIT, nowMillis)) {
+            if (!MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
                 continue;
             }
-            try {
-                renderer.renderLoadedChunk(level, chunkX, chunkZ).ifPresent(pixels ->
-                        MarketWebMapTileCache.forServer(level.getServer()).mergeChunkArgb(
-                                MarketWebMapConstants.OVERWORLD,
-                                chunkX, chunkZ, pixels,
-                                MarketWebMapTileQuality.SERVER_REGION_SCAN,
-                                nowMillis));
-            } catch (RuntimeException exception) {
-                LOGGER.warn("Failed to repaint dirty market web map chunk {},{}", chunkX, chunkZ, exception);
-            }
-            ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, false, false);
-            it.remove();
+            renderManager.submitSnapshot(level, cache, task, nowMillis);
         }
-        // 2. 从脏队列补充新的强制加载（预算化）
-        int started = 0;
-        synchronized (dirtyChunks) {
-            Iterator<Long> it = dirtyChunks.iterator();
-            while (it.hasNext() && started < MAX_FORCE_CHUNKS_PER_TICK) {
-                long chunkKey = it.next();
-                int chunkX = ChunkPos.getX(chunkKey);
-                int chunkZ = ChunkPos.getZ(chunkKey);
-                it.remove();
-                if (isChunkLoaded(level, chunkX, chunkZ)) {
-                    // 已加载：直接走常规队列即可，无需强制
-                    queue.enqueue(MarketWebMapConstants.OVERWORLD, chunkX, chunkZ, nowMillis);
-                    continue;
+    }
+
+    private void enqueueGeneratedRead(ServerLevel level, MarketWebMapRenderQueue.Task task, long nowMillis) {
+        long key = ChunkPos.asLong(task.chunkX(), task.chunkZ());
+        synchronized (pendingGeneratedReads) {
+            if (pendingGeneratedReads.containsKey(key) || pendingGeneratedReads.size() >= MAX_PENDING_GENERATED_READS) {
+                return;
+            }
+            CompletableFuture<Optional<MarketWebMapChunkSnapshot>> future;
+            try {
+                int minBuildHeight = level.getMinBuildHeight();
+                int maxBuildHeight = level.getMaxBuildHeight();
+                future = level.getChunkSource()
+                        .chunkMap
+                        .read(new ChunkPos(task.chunkX(), task.chunkZ()))
+                        .thenApplyAsync(tag -> tag.flatMap(value -> MarketWebMapNbtChunkSnapshotReader.capture(
+                                        task.dimensionId(),
+                                        task.chunkX(),
+                                        task.chunkZ(),
+                                        value,
+                                        minBuildHeight,
+                                        maxBuildHeight)),
+                                generatedDecodeExecutor);
+            } catch (RuntimeException exception) {
+                return;
+            }
+            pendingGeneratedReads.put(key, new PendingGeneratedRead(
+                    task.dimensionId(),
+                    task.chunkX(),
+                    task.chunkZ(),
+                    task.quality(),
+                    nowMillis,
+                    future));
+            while (pendingGeneratedReads.size() > MAX_PENDING_GENERATED_READS) {
+                Iterator<Long> keys = pendingGeneratedReads.keySet().iterator();
+                if (!keys.hasNext()) {
+                    break;
                 }
-                if (forcedChunks.contains(chunkKey)) {
-                    continue;
-                }
-                if (ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false)) {
-                    forcedChunks.add(chunkKey);
-                    started++;
-                }
+                keys.next();
+                keys.remove();
             }
         }
     }
 
-    private void releaseAllForcedChunks(ServerLevel level) {
-        BlockPos owner = forceOwner(level);
-        for (long chunkKey : forcedChunks) {
-            ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner,
-                    ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey), false, false);
+    private void processCompletedGeneratedReads(ServerLevel level, MarketWebMapTileCache cache, long nowMillis) {
+        int processed = 0;
+        synchronized (pendingGeneratedReads) {
+            Iterator<PendingGeneratedRead> iterator = pendingGeneratedReads.values().iterator();
+            while (iterator.hasNext() && processed < GENERATED_READ_COMPLETIONS_PER_TICK) {
+                PendingGeneratedRead read = iterator.next();
+                if (!read.future().isDone()) {
+                    if (nowMillis - read.createdAtMillis() > GENERATED_READ_TTL_MILLIS) {
+                        iterator.remove();
+                    }
+                    continue;
+                }
+                iterator.remove();
+                processed++;
+                try {
+                    read.future()
+                            .getNow(Optional.empty())
+                            .ifPresent(snapshot -> squareRenderer.submit(cache, snapshot, read.quality(), nowMillis));
+                } catch (RuntimeException ignored) {
+                    // Bad or partially-written region data should not break the server tick.
+                }
+            }
         }
     }
 
@@ -238,14 +374,57 @@ public final class MarketWebMapRenderService {
         return queued;
     }
 
-    private void enqueueLoadedChunksInTile(ServerLevel level, int tileX, int tileZ, long nowMillis) {
-        enqueueTileChunksForTest(
-                queue,
-                MarketWebMapConstants.OVERWORLD,
-                tileX,
-                tileZ,
-                nowMillis,
-                (chunkX, chunkZ) -> isChunkLoaded(level, chunkX, chunkZ));
+    static int enqueueSquareTileChunksForTest(MarketWebMapRenderQueue queue,
+                                              String dimensionId,
+                                              int zoom,
+                                              int tileX,
+                                              int tileZ,
+                                              long nowMillis,
+                                              ChunkLoadedPredicate loadedPredicate) {
+        if (queue == null
+                || loadedPredicate == null
+                || !MarketWebMapConstants.OVERWORLD.equals(dimensionId)
+                || zoom < 0
+                || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return 0;
+        }
+        int scale = 1 << zoom;
+        int chunksPerAxis = MarketWebMapTileCoordinate.CHUNKS_PER_BASE_TILE_AXIS * scale;
+        int baseChunkX = tileX * chunksPerAxis;
+        int baseChunkZ = tileZ * chunksPerAxis;
+        int queued = 0;
+        int checked = 0;
+        for (int localZ = 0; localZ < chunksPerAxis && checked < TILE_MISS_MAX_CHUNK_CHECKS; localZ++) {
+            for (int localX = 0; localX < chunksPerAxis && checked < TILE_MISS_MAX_CHUNK_CHECKS; localX++) {
+                int chunkX = baseChunkX + localX;
+                int chunkZ = baseChunkZ + localZ;
+                checked++;
+                if (loadedPredicate.isLoaded(chunkX, chunkZ)
+                        && queue.enqueue(dimensionId, chunkX, chunkZ, nowMillis, MarketWebMapTileQuality.SERVER_LOADED_CHUNK)) {
+                    queued++;
+                    if (queued >= TILE_MISS_MAX_QUEUED_CHUNKS) {
+                        return queued;
+                    }
+                }
+            }
+        }
+        return queued;
+    }
+
+    static int enqueueSquareTileRegionScanForTest(MarketWebMapRenderQueue queue,
+                                                  String dimensionId,
+                                                  int zoom,
+                                                  int tileX,
+                                                  int tileZ,
+                                                  long nowMillis,
+                                                  int maxChunks) {
+        if (queue == null
+                || !MarketWebMapConstants.OVERWORLD.equals(dimensionId)
+                || zoom < 0
+                || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return 0;
+        }
+        return new TileCursor(dimensionId, zoom, tileX, tileZ).enqueue(queue, nowMillis, Math.max(0, maxChunks));
     }
 
     private void enqueuePlayerAreas(ServerLevel level, long nowMillis) {
@@ -279,28 +458,102 @@ public final class MarketWebMapRenderService {
         }
     }
 
-    private void processBudgeted(ServerLevel level, long nowMillis) {
-        for (MarketWebMapRenderQueue.Task task : queue.poll(CHUNKS_PER_TICK, nowMillis)) {
-            if (!MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
-                continue;
-            }
-            try {
-                renderer.renderLoadedChunk(level, task.chunkX(), task.chunkZ()).ifPresent(pixels ->
-                        MarketWebMapTileCache.forServer(level.getServer()).mergeChunkArgb(
-                                task.dimensionId(),
-                                task.chunkX(),
-                                task.chunkZ(),
-                                pixels,
-                                MarketWebMapTileQuality.SERVER_LOADED_CHUNK,
-                                nowMillis));
-            } catch (RuntimeException exception) {
-                LOGGER.warn("Failed to render market web map chunk {},{}", task.chunkX(), task.chunkZ(), exception);
+    private void addChunkRangeAsRegions(int minChunkX, int minChunkZ, int maxChunkX, int maxChunkZ) {
+        int minRegionX = Math.floorDiv(Math.min(minChunkX, maxChunkX), CHUNKS_PER_REGION_AXIS);
+        int maxRegionX = Math.floorDiv(Math.max(minChunkX, maxChunkX), CHUNKS_PER_REGION_AXIS);
+        int minRegionZ = Math.floorDiv(Math.min(minChunkZ, maxChunkZ), CHUNKS_PER_REGION_AXIS);
+        int maxRegionZ = Math.floorDiv(Math.max(minChunkZ, maxChunkZ), CHUNKS_PER_REGION_AXIS);
+        for (int regionZ = minRegionZ; regionZ <= maxRegionZ; regionZ++) {
+            for (int regionX = minRegionX; regionX <= maxRegionX; regionX++) {
+                addRegionCursor(regionX, regionZ);
             }
         }
     }
 
-    private static BlockPos forceOwner(ServerLevel level) {
-        return new BlockPos(0, level == null ? 0 : level.getMinBuildHeight(), 0);
+    private boolean addSquareTileCursor(String dimensionId, int zoom, int tileX, int tileZ) {
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)
+                || zoom < 0
+                || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return false;
+        }
+        TileCursorKey key = new TileCursorKey(dimensionId, zoom, tileX, tileZ);
+        synchronized (squareTileCursors) {
+            if (squareTileCursors.containsKey(key)) {
+                return false;
+            }
+            squareTileCursors.put(key, new TileCursor(dimensionId, zoom, tileX, tileZ));
+            while (squareTileCursors.size() > MAX_SQUARE_TILE_CURSORS) {
+                Iterator<TileCursorKey> keys = squareTileCursors.keySet().iterator();
+                if (!keys.hasNext()) {
+                    break;
+                }
+                keys.next();
+                keys.remove();
+            }
+            return true;
+        }
+    }
+
+    private boolean addRegionCursor(int regionX, int regionZ) {
+        long key = MarketWebMapRegionWatcher.packRegion(regionX, regionZ);
+        synchronized (regionCursors) {
+            if (regionCursors.containsKey(key)) {
+                return false;
+            }
+            regionCursors.put(key, new RegionCursor(regionX, regionZ));
+            while (regionCursors.size() > MAX_REGION_CURSORS) {
+                Iterator<Long> keys = regionCursors.keySet().iterator();
+                if (!keys.hasNext()) {
+                    break;
+                }
+                keys.next();
+                keys.remove();
+            }
+            return true;
+        }
+    }
+
+    private record TileCursorKey(String dimensionId, int zoom, int tileX, int tileZ) {
+    }
+
+    private static final class TileCursor {
+        private final String dimensionId;
+        private final int baseChunkX;
+        private final int baseChunkZ;
+        private final int chunksPerAxis;
+        private int nextLocal;
+
+        private TileCursor(String dimensionId, int zoom, int tileX, int tileZ) {
+            this.dimensionId = dimensionId;
+            int scale = 1 << Math.max(0, Math.min(MarketWebMapPyramidWriter.MAX_ZOOM, zoom));
+            this.chunksPerAxis = MarketWebMapTileCoordinate.CHUNKS_PER_BASE_TILE_AXIS * scale;
+            this.baseChunkX = tileX * chunksPerAxis;
+            this.baseChunkZ = tileZ * chunksPerAxis;
+        }
+
+        private int enqueue(MarketWebMapRenderQueue queue, long nowMillis, int budget) {
+            if (queue == null || budget <= 0 || done()) {
+                return 0;
+            }
+            int advanced = 0;
+            while (advanced < budget && !done()) {
+                int localX = Math.floorMod(nextLocal, chunksPerAxis);
+                int localZ = Math.floorDiv(nextLocal, chunksPerAxis);
+                queue.enqueue(
+                        dimensionId,
+                        baseChunkX + localX,
+                        baseChunkZ + localZ,
+                        nowMillis,
+                        MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                nextLocal++;
+                advanced++;
+            }
+            return advanced;
+        }
+
+        private boolean done() {
+            return nextLocal >= chunksPerAxis * chunksPerAxis;
+        }
     }
 
     private static boolean isChunkLoaded(ServerLevel level, int chunkX, int chunkZ) {
@@ -311,8 +564,51 @@ public final class MarketWebMapRenderService {
         }
     }
 
+    private static ExecutorService newGeneratedDecodeExecutor() {
+        return Executors.newFixedThreadPool(1, runnable -> {
+            Thread thread = new Thread(runnable, "SailboatMarketWebMap-GeneratedDecode");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
     @FunctionalInterface
     interface ChunkLoadedPredicate {
         boolean isLoaded(int chunkX, int chunkZ);
+    }
+
+    private static final class RegionCursor {
+        private final int regionX;
+        private final int regionZ;
+        private int nextLocal;
+
+        private RegionCursor(int regionX, int regionZ) {
+            this.regionX = regionX;
+            this.regionZ = regionZ;
+        }
+
+        private int chunkX() {
+            return regionX * CHUNKS_PER_REGION_AXIS + Math.floorMod(nextLocal, CHUNKS_PER_REGION_AXIS);
+        }
+
+        private int chunkZ() {
+            return regionZ * CHUNKS_PER_REGION_AXIS + Math.floorDiv(nextLocal, CHUNKS_PER_REGION_AXIS);
+        }
+
+        private void advance() {
+            nextLocal++;
+        }
+
+        private boolean done() {
+            return nextLocal >= CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
+        }
+    }
+
+    private record PendingGeneratedRead(String dimensionId,
+                                        int chunkX,
+                                        int chunkZ,
+                                        MarketWebMapTileQuality quality,
+                                        long createdAtMillis,
+                                        CompletableFuture<Optional<MarketWebMapChunkSnapshot>> future) {
     }
 }

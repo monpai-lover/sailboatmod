@@ -172,6 +172,26 @@ class RoadPlannerScreenBehaviorTest {
     }
 
     @Test
+    void autoCompleteTerrainSamplesStayAvailableForManualRoadDecisions() {
+        RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
+        BlockPos start = new BlockPos(0, 64, 0);
+        BlockPos end = new BlockPos(32, 64, 0);
+
+        screen.applyAutoCompleteResult(screen.state().sessionId(), true,
+                List.of(start, end),
+                List.of(RoadPlannerSegmentType.ROAD),
+                "done",
+                List.of(
+                        new RoadPlannerTerrainSample(0, 0, 64, 0, RoadPlannerTerrainSample.Kind.LAND),
+                        new RoadPlannerTerrainSample(16, 0, 64, 0, RoadPlannerTerrainSample.Kind.LAND),
+                        new RoadPlannerTerrainSample(32, 0, 64, 0, RoadPlannerTerrainSample.Kind.LAND)
+                ));
+
+        assertEquals(RoadPlannerSegmentType.ROAD,
+                screen.manualSegmentTypeForTest(end, RoadPlannerSegmentType.ROAD));
+    }
+
+    @Test
     void forceRenderSelectionTriggersForceRenderPreloadRequest() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();

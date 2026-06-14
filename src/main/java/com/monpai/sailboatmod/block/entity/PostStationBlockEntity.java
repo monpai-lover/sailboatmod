@@ -342,7 +342,8 @@ public class PostStationBlockEntity extends DockBlockEntity {
                                                                  boolean hasCargo,
                                                                  boolean manualControl,
                                                                  boolean operatorAllowed) {
-        return alive && inZone && !autopilotActive && !hasCargo && !manualControl && operatorAllowed;
+        // 驿站的用途就是运货：装载了货物的马车允许手动发车，因此不再要求空载（hasCargo 仅保留参数以兼容市场派单等调用方）。
+        return alive && inZone && !autopilotActive && operatorAllowed;
     }
 
     static boolean isVehicleEligibleForPostStationMarketDispatchForTest(boolean alive,

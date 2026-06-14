@@ -30,16 +30,17 @@ class PostStationScreenDataTest {
     }
 
     @Test
-    void postStationDispatchRejectsVehiclesThatAreBusyLoadedManualOrUnauthorized() {
+    void postStationDispatchAllowsPassengersAndLoadedVehiclesButRejectsBusyOrUnauthorizedVehicles() {
         assertTrue(PostStationBlockEntity.isVehicleEligibleForPostStationDispatchForTest(
                 true, true, false, false, false, true));
+        assertTrue(PostStationBlockEntity.isVehicleEligibleForPostStationDispatchForTest(
+                true, true, false, false, true, true));
+        // 驿站用于运货：装载了货物的马车也应允许手动发车。
+        assertTrue(PostStationBlockEntity.isVehicleEligibleForPostStationDispatchForTest(
+                true, true, false, true, false, true));
 
         assertFalse(PostStationBlockEntity.isVehicleEligibleForPostStationDispatchForTest(
                 true, true, true, false, false, true));
-        assertFalse(PostStationBlockEntity.isVehicleEligibleForPostStationDispatchForTest(
-                true, true, false, true, false, true));
-        assertFalse(PostStationBlockEntity.isVehicleEligibleForPostStationDispatchForTest(
-                true, true, false, false, true, true));
         assertFalse(PostStationBlockEntity.isVehicleEligibleForPostStationDispatchForTest(
                 true, true, false, false, false, false));
     }
@@ -57,8 +58,8 @@ class PostStationScreenDataTest {
     }
 
     @Test
-    void postStationMarketDispatchUsesSameManualControlEligibility() {
-        assertFalse(PostStationBlockEntity.isVehicleEligibleForPostStationMarketDispatchForTest(
+    void postStationMarketDispatchAlsoAllowsPassengerOccupiedVehicles() {
+        assertTrue(PostStationBlockEntity.isVehicleEligibleForPostStationMarketDispatchForTest(
                 true, true, false, false, true, true));
     }
 

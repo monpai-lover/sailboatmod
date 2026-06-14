@@ -2,10 +2,13 @@ package com.monpai.sailboatmod.market.commodity;
 
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.registries.ForgeRegistries;
+import org.jetbrains.annotations.Nullable;
 
 import java.sql.SQLException;
+import java.util.UUID;
 
 public final class CommodityMarketService {
     private static final int INT_SCALE = 10_000;
@@ -152,10 +155,91 @@ public final class CommodityMarketService {
                 quantity,
                 minPriceBp,
                 maxPriceBp,
+                0L,
                 System.currentTimeMillis(),
                 "ACTIVE"
         );
         repository.createBuyOrder(order);
+        return order;
+    }
+
+    public BuyOrder createFundedBuyOrder(ItemStack itemStack, int quantity, int minPriceBp, int maxPriceBp,
+                                         String buyerUuid, String buyerName, @Nullable Player onlinePlayer) throws SQLException {
+        CommoditySnapshot snapshot = ensureCommodity(itemStack);
+        int safeQuantity = Math.max(1, quantity);
+        int reserveBp = Math.max(minPriceBp, maxPriceBp);
+        CommodityQuote quote = quote(itemStack, safeQuantity, buyerUuid);
+        long reservedBalance = onlinePlayer != null && onlinePlayer.getAbilities().instabuild
+                ? 0L
+                : reservedBalanceForBuyOrder(quote.buyUnitPrice(), safeQuantity, reserveBp);
+        if (reservedBalance > Integer.MAX_VALUE) {
+            return null;
+        }
+        if (reservedBalance > 0L && !withdrawBuyer(buyerUuid, buyerName, onlinePlayer, reservedBalance)) {
+            return null;
+        }
+        String orderId = java.util.UUID.randomUUID().toString();
+        BuyOrder order = new BuyOrder(
+                orderId,
+                buyerUuid,
+                buyerName,
+                snapshot.definition().commodityKey(),
+                safeQuantity,
+                minPriceBp,
+                maxPriceBp,
+                reservedBalance,
+                System.currentTimeMillis(),
+                "ACTIVE"
+        );
+        try {
+            repository.createBuyOrder(order);
+            return order;
+        } catch (SQLException exception) {
+            refundBuyer(buyerUuid, buyerName, onlinePlayer, reservedBalance);
+            throw exception;
+        }
+    }
+
+    public BuyOrder createReservedBuyOrder(ItemStack itemStack, int quantity, int minPriceBp, int maxPriceBp,
+                                           String buyerUuid, String buyerName, long reservedBalance) throws SQLException {
+        CommoditySnapshot snapshot = ensureCommodity(itemStack);
+        int safeQuantity = Math.max(1, quantity);
+        String orderId = java.util.UUID.randomUUID().toString();
+        BuyOrder order = new BuyOrder(
+                orderId,
+                buyerUuid,
+                buyerName,
+                snapshot.definition().commodityKey(),
+                safeQuantity,
+                minPriceBp,
+                maxPriceBp,
+                Math.max(0L, reservedBalance),
+                System.currentTimeMillis(),
+                "ACTIVE"
+        );
+        repository.createBuyOrder(order);
+        return order;
+    }
+
+    public boolean cancelBuyOrderForBuyer(String orderId, String buyerUuid, String buyerName, @Nullable Player onlinePlayer) throws SQLException {
+        BuyOrder order = repository.getBuyOrder(orderId);
+        if (order == null || !order.isActive() || buyerUuid == null || !buyerUuid.trim().equals(order.buyerUuid())) {
+            return false;
+        }
+        repository.updateBuyOrderStatus(order.orderId(), "CANCELLED");
+        if (!refundBuyer(buyerUuid, buyerName, onlinePlayer, order.reservedBalance())) {
+            repository.updateBuyOrderStatus(order.orderId(), "ACTIVE");
+            return false;
+        }
+        return true;
+    }
+
+    public BuyOrder cancelBuyOrderForBuyerReturningOrder(String orderId, String buyerUuid) throws SQLException {
+        BuyOrder order = repository.getBuyOrder(orderId);
+        if (order == null || !order.isActive() || buyerUuid == null || !buyerUuid.trim().equals(order.buyerUuid())) {
+            return null;
+        }
+        repository.updateBuyOrderStatus(order.orderId(), "CANCELLED");
         return order;
     }
 
@@ -167,8 +251,51 @@ public final class CommodityMarketService {
         return repository.listActiveBuyOrdersForBuyer(buyerUuid);
     }
 
+    public java.util.List<CommodityDefinition> listActiveBuyOrderCommodityDefinitions() throws SQLException {
+        return repository.listActiveBuyOrderCommodityDefinitions();
+    }
+
     public void cancelBuyOrder(String orderId) throws SQLException {
         repository.updateBuyOrderStatus(orderId, "CANCELLED");
+    }
+
+    public static long reservedBalanceForBuyOrder(long referenceUnitPrice, int quantity, int maxPriceBp) {
+        long safeUnitPrice = Math.max(1L, referenceUnitPrice);
+        int safeQuantity = Math.max(1, quantity);
+        int safeBp = Math.max(-5000, Math.min(5000, maxPriceBp));
+        double multiplier = 1.0D + safeBp / 10000.0D;
+        return Math.max(1L, Math.round(safeUnitPrice * safeQuantity * multiplier));
+    }
+
+    private static boolean withdrawBuyer(String buyerUuid, String buyerName, @Nullable Player player, long amount) {
+        if (amount <= 0L) {
+            return true;
+        }
+        if (player != null) {
+            return Boolean.TRUE.equals(GoldStandardEconomy.tryWithdraw(player, amount));
+        }
+        return Boolean.TRUE.equals(GoldStandardEconomy.tryWithdrawByIdentity(parseUuid(buyerUuid), buyerName, amount));
+    }
+
+    private static boolean refundBuyer(String buyerUuid, String buyerName, @Nullable Player player, long amount) {
+        if (amount <= 0L) {
+            return true;
+        }
+        if (player != null) {
+            return Boolean.TRUE.equals(GoldStandardEconomy.tryDeposit(player, amount));
+        }
+        return Boolean.TRUE.equals(GoldStandardEconomy.tryDepositByIdentity(parseUuid(buyerUuid), buyerName, amount));
+    }
+
+    private static UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     public java.util.List<CommodityPriceChartPoint> listPriceChart(String commodityKey) throws SQLException {

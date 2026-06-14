@@ -17,6 +17,7 @@ import com.monpai.sailboatmod.network.packet.CreateBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
 import com.monpai.sailboatmod.network.packet.MarketGuiActionPacket;
+import com.monpai.sailboatmod.network.packet.MarketWalletActionPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import gg.essential.elementa.ElementaVersion;
 import gg.essential.elementa.UIComponent;
@@ -118,6 +119,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String buyOrderQtyValue = "1";
     private String buyOrderMinPriceValue = "-1000";
     private String buyOrderMaxPriceValue = "1000";
+    private String walletAmountValue = "";
     private String priceFilterMinValue = "";
     private String priceFilterMaxValue = "";
     private GoodsCatalogSort goodsCatalogSort = GoodsCatalogSort.PRICE_DESC;
@@ -671,7 +673,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         int leftWidth = Math.min(300, width / 3);
         int centerWidth = Math.min(240, width / 3);
         int rightWidth = width - leftWidth - centerWidth - SECTION_GAP * 2;
-        int topHeight = 140;
+        int topHeight = 184;
         int bottomHeight = height - topHeight - SECTION_GAP;
 
         UIRoundedRectangle summary = createSection(parent, x, y, leftWidth, topHeight,
@@ -1940,14 +1942,18 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private void buildFinanceSummary(UIComponent panel, int width) {
         int tileWidth = (width - 42) / 2;
-        buildMetricTile(panel, 14, 48, tileWidth, 46, Component.translatable("screen.sailboatmod.market.pending").getString(),
+        buildMetricTile(panel, 14, 48, tileWidth, 36, Component.translatable("screen.sailboatmod.market.pending").getString(),
                 formatCompactLong(data.pendingCredits()), ACCENT);
-        buildMetricTile(panel, 14 + tileWidth + 10, 48, tileWidth, 46, Component.translatable("screen.sailboatmod.econbar.net").getString(),
+        buildMetricTile(panel, 14 + tileWidth + 10, 48, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.available").getString(),
+                formatCompactLong(data.walletAvailableBalance()), POSITIVE);
+        buildMetricTile(panel, 14, 90, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.reserved").getString(),
+                formatCompactLong(data.walletReservedBalance()), ACCENT_DIM);
+        buildMetricTile(panel, 14 + tileWidth + 10, 90, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.treasury").getString(),
+                formatCompactLong(data.treasuryBalance()), new Color(117, 170, 219));
+        buildMetricTile(panel, 14, 132, tileWidth, 36, Component.translatable("screen.sailboatmod.econbar.net").getString(),
                 formatSignedLong(data.netBalance()), data.netBalance() >= 0 ? POSITIVE : NEGATIVE);
-        buildMetricTile(panel, 14, 102, tileWidth, 46, Component.translatable("screen.sailboatmod.econbar.income").getString(),
+        buildMetricTile(panel, 14 + tileWidth + 10, 132, tileWidth, 36, Component.translatable("screen.sailboatmod.econbar.income").getString(),
                 formatCompactLong(data.totalIncome()), POSITIVE);
-        buildMetricTile(panel, 14 + tileWidth + 10, 102, tileWidth, 46, Component.translatable("screen.sailboatmod.econbar.expense").getString(),
-                formatCompactLong(data.totalExpense()), NEGATIVE);
     }
 
     private void buildFinanceEconomy(UIComponent panel, int width) {
@@ -1962,10 +1968,33 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private void buildFinanceAction(UIComponent panel, int width) {
         int innerWidth = width - 28;
-        buildTextStack(panel, 14, 48, innerWidth, buildFinanceActionLines(), TEXT_MUTED);
-        createButton(panel, 14, 100, innerWidth, 30,
-                Component.translatable("screen.sailboatmod.market.claim").getString(),
-                data.pendingCredits() > 0, false, this::claimCredits);
+        createText(panel, 14, 48, Component.translatable("screen.sailboatmod.market.wallet.amount").getString(), 0.7f, TEXT_SOFT);
+        createInput(panel, 14, 62, innerWidth, 24,
+                Component.translatable("screen.sailboatmod.market.wallet.amount_placeholder").getString(),
+                walletAmountValue,
+                value -> walletAmountValue = value);
+        int buttonGap = 6;
+        int buttonWidth = (innerWidth - buttonGap) / 2;
+        createButton(panel, 14, 92, buttonWidth, 22,
+                Component.translatable("screen.sailboatmod.market.wallet.cash_to_wallet").getString(),
+                parsePositive(walletAmountValue, 0) > 0, false,
+                () -> sendWalletAction(MarketWalletActionPacket.Action.CASH_TO_WALLET));
+        createButton(panel, 14 + buttonWidth + buttonGap, 92, buttonWidth, 22,
+                Component.translatable("screen.sailboatmod.market.wallet.wallet_to_cash").getString(),
+                parsePositive(walletAmountValue, 0) > 0, true,
+                () -> sendWalletAction(MarketWalletActionPacket.Action.WALLET_TO_CASH));
+        createButton(panel, 14, 120, buttonWidth, 22,
+                Component.translatable("screen.sailboatmod.market.wallet.wallet_to_treasury").getString(),
+                parsePositive(walletAmountValue, 0) > 0 && data.hasTownEconomy(), true,
+                () -> sendWalletAction(MarketWalletActionPacket.Action.WALLET_TO_TREASURY));
+        createButton(panel, 14 + buttonWidth + buttonGap, 120, buttonWidth, 22,
+                Component.translatable("screen.sailboatmod.market.wallet.treasury_to_wallet").getString(),
+                parsePositive(walletAmountValue, 0) > 0 && data.canTransferTreasury(), true,
+                () -> sendWalletAction(MarketWalletActionPacket.Action.TREASURY_TO_WALLET));
+        createButton(panel, 14, 150, innerWidth, 22,
+                Component.translatable("screen.sailboatmod.market.wallet.claim_to_wallet").getString(),
+                data.pendingCredits() > 0, false,
+                () -> sendWalletAction(MarketWalletActionPacket.Action.CLAIM_CREDITS_TO_WALLET));
     }
 
     private void buildPreviewBlock(UIComponent panel, List<String> lines, int width) {
@@ -2665,8 +2694,13 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     formatCompactLong(entry.suggestedUnitPrice()), ACCENT));
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.manual_price").getString(),
                     formatCompactLong(selectedStorageRequestedUnitPrice()), ACCENT_DIM));
-            metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.derived_bp").getString(),
-                    Integer.toString(selectedStorageDerivedPriceAdjustmentBp()) + " bp", new Color(95, 162, 198)));
+            if (entry.priceConstrained()) {
+                metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.derived_bp").getString(),
+                        Integer.toString(selectedStorageDerivedPriceAdjustmentBp()) + " bp", new Color(95, 162, 198)));
+            } else {
+                metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.info.free_price").getString(),
+                        formatCompactLong(selectedStorageRequestedUnitPrice()), new Color(95, 162, 198)));
+            }
         }
         return metrics;
     }
@@ -2702,8 +2736,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     Integer.toString(parsePositive(listingQtyValue, 1)), POSITIVE));
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.manual_price").getString(),
                     formatCompactLong(selectedStorageRequestedUnitPrice()), ACCENT));
-            metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.derived_bp").getString(),
-                    Integer.toString(selectedStorageDerivedPriceAdjustmentBp()) + " bp", ACCENT_DIM));
+            MarketOverviewData.StorageEntry entry = selectedStorage();
+            if (entry != null && !entry.priceConstrained()) {
+                metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.info.free_price").getString(),
+                        formatCompactLong(selectedStorageRequestedUnitPrice()), ACCENT_DIM));
+            } else {
+                metrics.add(metric(Component.translatable("screen.sailboatmod.market.sell.derived_bp").getString(),
+                        Integer.toString(selectedStorageDerivedPriceAdjustmentBp()) + " bp", ACCENT_DIM));
+            }
         }
         return metrics;
     }
@@ -2990,9 +3030,13 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             lines.add(Component.translatable("screen.sailboatmod.market.action.post_manual_price",
                     parsePositive(listingQtyValue, 1),
                     formatCompactLong(selectedStorageRequestedUnitPrice())).getString());
-            lines.add(Component.translatable("screen.sailboatmod.market.sell.info.allowed_price_range",
-                    formatCompactLong(entry.minAllowedUnitPrice()),
-                    formatCompactLong(entry.maxAllowedUnitPrice())).getString());
+            if (entry.priceConstrained()) {
+                lines.add(Component.translatable("screen.sailboatmod.market.sell.info.allowed_price_range",
+                        formatCompactLong(entry.minAllowedUnitPrice()),
+                        formatCompactLong(entry.maxAllowedUnitPrice())).getString());
+            } else {
+                lines.add(Component.translatable("screen.sailboatmod.market.sell.info.free_price").getString());
+            }
             return lines;
         }
         lines.add(Component.translatable("screen.sailboatmod.market.storage_empty").getString());
@@ -3006,11 +3050,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             lines.add(Component.translatable("screen.sailboatmod.market.sell.info.source", entry.detail()).getString());
             lines.add(Component.translatable("screen.sailboatmod.market.sell.info.stock", entry.quantity()).getString());
             lines.add(Component.translatable("screen.sailboatmod.market.sell.info.suggested_price", formatCompactLong(entry.suggestedUnitPrice())).getString());
-            lines.add(Component.translatable("screen.sailboatmod.market.sell.info.allowed_price_range",
-                    formatCompactLong(entry.minAllowedUnitPrice()),
-                    formatCompactLong(entry.maxAllowedUnitPrice())).getString());
-            lines.add(Component.translatable("screen.sailboatmod.market.sell.info.derived_bp",
-                    selectedStorageDerivedPriceAdjustmentBp()).getString());
+            if (entry.priceConstrained()) {
+                lines.add(Component.translatable("screen.sailboatmod.market.sell.info.allowed_price_range",
+                        formatCompactLong(entry.minAllowedUnitPrice()),
+                        formatCompactLong(entry.maxAllowedUnitPrice())).getString());
+                lines.add(Component.translatable("screen.sailboatmod.market.sell.info.derived_bp",
+                        selectedStorageDerivedPriceAdjustmentBp()).getString());
+            } else {
+                lines.add(Component.translatable("screen.sailboatmod.market.sell.info.free_price").getString());
+            }
         } else {
             lines.add(Component.translatable("screen.sailboatmod.market.storage_empty").getString());
         }
@@ -3054,16 +3102,20 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         MarketOverviewData.StorageEntry entry = selectedStorage();
         if (entry != null) {
             if (!isSelectedStoragePriceValid()) {
-                lines.add(Component.translatable("screen.sailboatmod.market.error.listing_price_out_of_range",
-                        formatCompactLong(entry.minAllowedUnitPrice()),
-                        formatCompactLong(entry.maxAllowedUnitPrice()),
-                        formatCompactLong(entry.suggestedUnitPrice())).getString());
+                if (entry.priceConstrained()) {
+                    lines.add(Component.translatable("screen.sailboatmod.market.error.listing_price_out_of_range",
+                            formatCompactLong(entry.minAllowedUnitPrice()),
+                            formatCompactLong(entry.maxAllowedUnitPrice()),
+                            formatCompactLong(entry.suggestedUnitPrice())).getString());
+                } else {
+                    lines.add(Component.translatable("screen.sailboatmod.market.error.listing_price_invalid").getString());
+                }
             } else {
                 lines.add(Component.translatable("screen.sailboatmod.market.action.post_manual_price",
                         parsePositive(listingQtyValue, 1),
                         formatCompactLong(selectedStorageRequestedUnitPrice())).getString());
             }
-            lines.add(Component.translatable("screen.sailboatmod.market.sell.manual_price_help").getString());
+            lines.add(Component.translatable(listingPriceHelpKey(entry)).getString());
             return lines;
         }
         lines.add(Component.translatable("screen.sailboatmod.market.storage_empty").getString());
@@ -3133,7 +3185,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.detail.goods").getString(), entry.itemName(), TEXT_PRIMARY));
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.detail.stock").getString(), "x" + entry.quantity(), POSITIVE));
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.detail.unit_price").getString(), formatCompactLong(selectedStorageRequestedUnitPrice()), ACCENT));
-        rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.derived_bp").getString(), selectedStorageDerivedPriceAdjustmentBp() + " bp", ACCENT_DIM));
+        if (entry.priceConstrained()) {
+            rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.derived_bp").getString(), selectedStorageDerivedPriceAdjustmentBp() + " bp", ACCENT_DIM));
+        } else {
+            rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.sell.info.free_price").getString(), formatCompactLong(selectedStorageRequestedUnitPrice()), ACCENT_DIM));
+        }
         return rows;
     }
 
@@ -3363,10 +3419,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private void createListing() {
         if (!isSelectedStoragePriceValid()) {
-            applyNotice(Component.translatable("screen.sailboatmod.market.error.listing_price_out_of_range",
+            MarketOverviewData.StorageEntry entry = selectedStorage();
+            String notice = entry != null && !entry.priceConstrained()
+                    ? Component.translatable("screen.sailboatmod.market.error.listing_price_invalid").getString()
+                    : Component.translatable("screen.sailboatmod.market.error.listing_price_out_of_range",
                     formatCompactLong(selectedStorageMinAllowedUnitPrice()),
                     formatCompactLong(selectedStorageMaxAllowedUnitPrice()),
-                    formatCompactLong(selectedStorageSuggestedUnitPrice())).getString(), false);
+                    formatCompactLong(selectedStorageSuggestedUnitPrice())).getString();
+            applyNotice(notice, false);
             rebuildUi();
             return;
         }
@@ -3428,6 +3488,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private void claimCredits() {
         rememberScrollState();
         ModNetwork.CHANNEL.sendToServer(new ClaimMarketCreditsPacket(data.marketPos()));
+    }
+
+    private void sendWalletAction(MarketWalletActionPacket.Action action) {
+        rememberScrollState();
+        long amount = action == MarketWalletActionPacket.Action.CLAIM_CREDITS_TO_WALLET
+                ? 0L
+                : parsePositive(walletAmountValue, 0);
+        ModNetwork.CHANNEL.sendToServer(new MarketWalletActionPacket(data.marketPos(), action, amount));
     }
 
     private void createBuyOrder() {
@@ -4335,7 +4403,21 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return parsePositive(listingUnitPriceValue, selectedStorageSuggestedUnitPrice());
     }
 
+    private boolean selectedStoragePriceConstrained() {
+        MarketOverviewData.StorageEntry entry = selectedStorage();
+        return entry == null || entry.priceConstrained();
+    }
+
+    private String listingPriceHelpKey(MarketOverviewData.StorageEntry entry) {
+        return entry != null && !entry.priceConstrained()
+                ? "screen.sailboatmod.market.sell.manual_price_free_help"
+                : "screen.sailboatmod.market.sell.manual_price_help";
+    }
+
     private int selectedStorageDerivedPriceAdjustmentBp() {
+        if (!selectedStoragePriceConstrained()) {
+            return 0;
+        }
         int referencePrice = selectedStorageSuggestedUnitPrice();
         int requestedPrice = selectedStorageRequestedUnitPrice();
         if (referencePrice <= 0 || requestedPrice <= 0) {
@@ -4350,6 +4432,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             return false;
         }
         int requestedPrice = selectedStorageRequestedUnitPrice();
+        if (!entry.priceConstrained()) {
+            return requestedPrice > 0;
+        }
         int derivedBp = selectedStorageDerivedPriceAdjustmentBp();
         return requestedPrice >= selectedStorageMinAllowedUnitPrice()
                 && requestedPrice <= selectedStorageMaxAllowedUnitPrice()
@@ -4392,8 +4477,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             if (!data.dockStorageAccessible()) {
                 return Component.translatable("screen.sailboatmod.market.status.owner_required").getString();
             }
-            return selectedStorage() == null ? Component.translatable("screen.sailboatmod.market.empty").getString()
-                    : Component.translatable("screen.sailboatmod.market.sell.manual_price_help").getString();
+            MarketOverviewData.StorageEntry entry = selectedStorage();
+            return entry == null ? Component.translatable("screen.sailboatmod.market.empty").getString()
+                    : Component.translatable(listingPriceHelpKey(entry)).getString();
         }
         return "";
     }
@@ -4602,7 +4688,20 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private List<MarketOverviewData.DispatchOption> currentDispatchOptions() {
         MarketOverviewData.OrderEntry order = selectedOrder();
-        return order == null ? List.of() : order.dispatchOptions();
+        return dispatchOptionsForPanel(order, data.availableDispatchOptions());
+    }
+
+    static List<MarketOverviewData.DispatchOption> dispatchOptionsForPanelForTest(MarketOverviewData.OrderEntry order,
+                                                                                  List<MarketOverviewData.DispatchOption> availableDispatchOptions) {
+        return dispatchOptionsForPanel(order, availableDispatchOptions);
+    }
+
+    private static List<MarketOverviewData.DispatchOption> dispatchOptionsForPanel(MarketOverviewData.OrderEntry order,
+                                                                                   List<MarketOverviewData.DispatchOption> availableDispatchOptions) {
+        if (order != null) {
+            return order.dispatchOptions();
+        }
+        return availableDispatchOptions == null ? List.of() : availableDispatchOptions;
     }
 
     private MarketOverviewData.DispatchOption selectedShipping() {
@@ -4980,11 +5079,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private MarketOverviewData empty(BlockPos pos) {
-        return new MarketOverviewData(pos, "Market", "-", "", "", 0, false, "-", "-", false, false,
+        return new MarketOverviewData(pos, "Market", "-", "", "", 0, 0L, 0L, 0L, 0L, false, false, "-", "-", false, false,
                 "", "", 0, 0, 0, 0, 0, 0L, 0L, 0L, 0.0F,
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
     }
 
     private enum MarketPage {

@@ -5,6 +5,7 @@ import net.minecraft.world.level.ChunkPos;
 
 import java.util.ArrayDeque;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Queue;
 import java.util.Set;
 
@@ -15,14 +16,31 @@ public class RoadPlannerForceRenderQueue {
     private int completedChunks;
 
     public void enqueueCorridor(BlockPos start, BlockPos destination, int corridorHalfWidthBlocks, String label) {
+        enqueueRoute(List.of(start, destination), corridorHalfWidthBlocks, label);
+    }
+
+    public void enqueueRoute(List<BlockPos> nodes, int corridorHalfWidthBlocks, String label) {
         pending.clear();
         this.label = label == null ? "地图预渲染" : label;
         this.completedChunks = 0;
         Set<ChunkPos> chunks = new LinkedHashSet<>();
+        int radiusChunks = Math.max(0, corridorHalfWidthBlocks / 16);
+        if (nodes != null && nodes.size() >= 2) {
+            for (int index = 1; index < nodes.size(); index++) {
+                addSegmentChunks(chunks, nodes.get(index - 1), nodes.get(index), radiusChunks);
+            }
+        }
+        pending.addAll(chunks);
+        totalChunks = pending.size();
+    }
+
+    private void addSegmentChunks(Set<ChunkPos> chunks, BlockPos start, BlockPos destination, int radiusChunks) {
+        if (chunks == null || start == null || destination == null) {
+            return;
+        }
         int dx = destination.getX() - start.getX();
         int dz = destination.getZ() - start.getZ();
         int steps = Math.max(1, Math.max(Math.abs(dx), Math.abs(dz)) / 16);
-        int radiusChunks = Math.max(1, corridorHalfWidthBlocks / 16);
         for (int step = 0; step <= steps; step++) {
             double t = step / (double) steps;
             int x = (int) Math.round(start.getX() + dx * t) >> 4;
@@ -33,8 +51,6 @@ public class RoadPlannerForceRenderQueue {
                 }
             }
         }
-        pending.addAll(chunks);
-        totalChunks = pending.size();
     }
 
     public void enqueueSelection(BlockPos a, BlockPos b, String label) {

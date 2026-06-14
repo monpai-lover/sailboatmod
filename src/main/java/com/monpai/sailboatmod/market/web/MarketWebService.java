@@ -2,7 +2,9 @@ package com.monpai.sailboatmod.market.web;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.MarketListing;
@@ -15,9 +17,30 @@ import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import com.monpai.sailboatmod.market.commodity.BuyOrder;
+import com.monpai.sailboatmod.market.commodity.CommodityConfigLoader;
+import com.monpai.sailboatmod.market.commodity.CommodityDefinition;
+import com.monpai.sailboatmod.market.commodity.CommodityInitializer;
+import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
+import com.monpai.sailboatmod.market.web.map.MarketWebFlagService;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapJson;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapLayerService;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapPyramidWriter;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapRenderService;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache;
+import com.monpai.sailboatmod.market.wallet.MarketWalletGoldSource;
+import com.monpai.sailboatmod.market.wallet.MarketWalletService;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.NationPermission;
+import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
+import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.nation.service.NationService;
+import com.monpai.sailboatmod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
@@ -32,9 +55,16 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 public final class MarketWebService {
     private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
+    private final MarketWebMapLayerService mapLayers = new MarketWebMapLayerService();
+    private final MarketWebFlagService mapFlags = new MarketWebFlagService();
+
+    public record ItemPreview(String commodityKey, String itemId, String displayName, String category,
+                              int suggestedUnitPrice) {
+    }
 
     public record ActionResult(boolean ok, String errorCode, String message) {
         public static ActionResult success() {
@@ -44,6 +74,27 @@ public final class MarketWebService {
         public static ActionResult failure(String errorCode, String message) {
             return new ActionResult(false, errorCode == null ? "action_failed" : errorCode, message == null ? "Action failed" : message);
         }
+    }
+
+    public static ItemPreview resolveItemPreview(String itemId) {
+        ItemStack stack = resolveItemStack(itemId);
+        if (stack.isEmpty()) {
+            return null;
+        }
+        String commodityKey = CommodityKeyResolver.resolve(stack);
+        String displayName = stack.getHoverName().getString();
+        CommodityDefinition definition = CommodityConfigLoader.apply(CommodityInitializer.createDefault(
+                commodityKey,
+                commodityKey,
+                displayName
+        ));
+        return new ItemPreview(
+                definition.commodityKey(),
+                definition.itemId(),
+                definition.displayName(),
+                definition.category(),
+                CommodityMarketService.estimateBaseUnitPrice(stack)
+        );
     }
 
     public JsonArray listMarkets(MinecraftServer server, MarketPlayerIdentity identity) {
@@ -66,6 +117,60 @@ public final class MarketWebService {
             out.add(json);
         }
         return out;
+    }
+
+    public JsonObject mapSnapshot(MinecraftServer server, MarketPlayerIdentity identity, String focusedMarketId) {
+        return MarketWebMapJson.snapshot(mapLayers.snapshot(server, identity, focusedMarketId));
+    }
+
+    public JsonArray mapMarkets(MinecraftServer server, MarketPlayerIdentity identity) {
+        return MarketWebMapJson.markets(mapLayers.markets(server));
+    }
+
+    public JsonArray mapTerritories(MinecraftServer server, MarketPlayerIdentity identity) {
+        return MarketWebMapJson.territories(mapLayers.territories(server));
+    }
+
+    public JsonArray mapShipments(MinecraftServer server, MarketPlayerIdentity identity) {
+        return MarketWebMapJson.shipments(mapLayers.shipments(server, identity));
+    }
+
+    public byte[] mapTile(MinecraftServer server, String lod, int tileX, int tileZ) {
+        if (server == null || !"lod_1".equals(lod)) {
+            return null;
+        }
+        MarketWebMapRenderService.global().enqueueTileRequest(server, lod, tileX, tileZ);
+        return MarketWebMapTileCache.forServer(server)
+                .readPng(MarketWebMapConstants.OVERWORLD, tileX, tileZ)
+                .orElse(null);
+    }
+
+    public byte[] squareMapTile(MinecraftServer server, String dimension, int zoom, int tileX, int tileZ) {
+        if (server == null || zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return null;
+        }
+        String dimensionId = "overworld".equals(dimension) ? MarketWebMapConstants.OVERWORLD : dimension;
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
+            return null;
+        }
+        MarketWebMapRenderService.global().enqueueSquareTileRequest(server, dimensionId, zoom, tileX, tileZ);
+        return MarketWebMapTileCache.forServer(server)
+                .readSquareTile(dimensionId, zoom, tileX, tileZ)
+                .orElse(null);
+    }
+
+    public JsonObject mapRenderStatus(MinecraftServer server) {
+        JsonObject json = MarketWebMapRenderService.global().renderStatus().toJson();
+        json.addProperty("rendererVersion", MarketWebMapTileCache.RENDER_VERSION);
+        json.addProperty("serverOnline", server != null);
+        return json;
+    }
+
+    public byte[] mapFlag(MinecraftServer server, String flagId) {
+        if (server == null || server.overworld() == null) {
+            return null;
+        }
+        return mapFlags.readFlag(server.overworld(), flagId).orElse(null);
     }
 
     public JsonObject marketDetail(MinecraftServer server, MarketPlayerIdentity identity, String marketId) {
@@ -92,6 +197,15 @@ public final class MarketWebService {
         root.addProperty("linkedWarehouseName", overview.linkedDockName());
         root.addProperty("linkedWarehousePos", overview.linkedDockPosText());
         root.addProperty("canManage", overview.canManage());
+        root.addProperty("walletBalance", overview.walletAvailableBalance());
+        root.addProperty("walletAvailableBalance", overview.walletAvailableBalance());
+        root.addProperty("walletReservedBalance", overview.walletReservedBalance());
+        root.addProperty("walletTotalBalance", overview.walletTotalBalance());
+        root.addProperty("treasuryBalance", overview.treasuryBalance());
+        root.addProperty("canTransferTreasury", overview.canTransferTreasury());
+        root.addProperty("cashBalance", cashBalance(identity));
+        root.addProperty("walletOnline", identity.onlinePlayer() != null);
+        root.addProperty("walletCurrency", GoldStandardEconomy.LEDGER_CURRENCY);
         root.addProperty("pendingCredits", overview.pendingCredits());
         root.addProperty("townName", overview.townName());
         root.addProperty("townId", overview.townId());
@@ -121,6 +235,16 @@ public final class MarketWebService {
         root.add("procurementPreviewLines", strings(overview.procurementPreviewLines()));
         root.add("financePreviewLines", strings(overview.financePreviewLines()));
         return root;
+    }
+
+    private static long cashBalance(MarketPlayerIdentity identity) {
+        if (identity == null) {
+            return 0L;
+        }
+        if (identity.onlinePlayer() != null) {
+            return GoldStandardEconomy.getBalance(identity.onlinePlayer());
+        }
+        return GoldStandardEconomy.getBalanceByIdentity(identity.playerUuid(), identity.playerName());
     }
 
     public ActionResult createListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int storageIndex, int quantity, int unitPrice, String sellerNote) {
@@ -166,6 +290,137 @@ public final class MarketWebService {
                 && resolved.market().claimPendingCredits(identity.playerUuidString(), identity.playerName(), identity.onlinePlayer());
     }
 
+    public ActionResult transferWallet(MinecraftServer server, MarketPlayerIdentity identity, String marketId, String action, long amount) {
+        ResolvedMarket resolved = resolveMarket(server, marketId);
+        if (resolved == null || identity == null || identity.playerUuid() == null) {
+            return ActionResult.failure("market_not_found", "Market not found");
+        }
+        String normalizedAction = action == null ? "" : action.trim().toUpperCase(Locale.ROOT);
+        long safeAmount = Math.max(0L, amount);
+        String playerUuid = identity.playerUuidString();
+        String playerName = identity.playerName();
+        return switch (normalizedAction) {
+            case "CASH_TO_WALLET" -> cashToWallet(resolved, identity, playerUuid, playerName, safeAmount);
+            case "WALLET_TO_CASH" -> walletToCash(resolved, identity, playerUuid, playerName, safeAmount);
+            case "WALLET_TO_TREASURY" -> walletToTreasury(resolved, identity, playerUuid, playerName, safeAmount);
+            case "TREASURY_TO_WALLET" -> treasuryToWallet(resolved, identity, playerUuid, playerName, safeAmount);
+            case "CLAIM_CREDITS_TO_WALLET" -> claimCreditsToWallet(resolved, playerUuid, playerName);
+            default -> ActionResult.failure("invalid_wallet_action", "Invalid wallet action");
+        };
+    }
+
+    private ActionResult cashToWallet(ResolvedMarket resolved, MarketPlayerIdentity identity, String playerUuid, String playerName, long amount) {
+        if (amount <= 0L) {
+            return ActionResult.failure("invalid_amount", "Invalid amount");
+        }
+        Boolean withdrawn = identity.onlinePlayer() != null
+                ? GoldStandardEconomy.tryWithdraw(identity.onlinePlayer(), amount)
+                : GoldStandardEconomy.tryWithdrawByIdentity(identity.playerUuid(), playerName, amount);
+        if (!Boolean.TRUE.equals(withdrawn)
+                && !MarketWalletGoldSource.withdrawFromLinkedWarehouse(resolved.market(), identity.playerUuid(), amount)) {
+            return ActionResult.failure("insufficient_cash", "Insufficient cash");
+        }
+        MarketWalletService.deposit(resolved.level(), playerUuid, playerName, amount);
+        return ActionResult.success();
+    }
+
+    private ActionResult walletToCash(ResolvedMarket resolved, MarketPlayerIdentity identity, String playerUuid, String playerName, long amount) {
+        if (amount <= 0L) {
+            return ActionResult.failure("invalid_amount", "Invalid amount");
+        }
+        MarketWalletService.AccountResult withdrawn = MarketWalletService.withdraw(resolved.level(), playerUuid, playerName, amount);
+        if (!withdrawn.success()) {
+            return ActionResult.failure("insufficient_wallet", "Insufficient market wallet balance");
+        }
+        Boolean deposited = GoldStandardEconomy.tryDepositByIdentity(identity.playerUuid(), playerName, amount);
+        if (Boolean.TRUE.equals(deposited)) {
+            return ActionResult.success();
+        }
+        if (deposited == null && MarketWalletGoldSource.depositToLinkedWarehouse(resolved.market(), identity.playerUuid(), amount)) {
+            return ActionResult.success();
+        }
+        MarketWalletService.deposit(resolved.level(), playerUuid, playerName, amount);
+        return ActionResult.failure("cash_deposit_unavailable", "Cash deposit is unavailable");
+    }
+
+    private ActionResult walletToTreasury(ResolvedMarket resolved, MarketPlayerIdentity identity, String playerUuid, String playerName, long amount) {
+        if (amount <= 0L) {
+            return ActionResult.failure("invalid_amount", "Invalid amount");
+        }
+        String nationId = resolveNationId(resolved);
+        if (nationId.isBlank()) {
+            return ActionResult.failure("treasury_not_found", "Treasury not found");
+        }
+        MarketWalletService.AccountResult withdrawn = MarketWalletService.withdraw(resolved.level(), playerUuid, playerName, amount);
+        if (!withdrawn.success()) {
+            return ActionResult.failure("insufficient_wallet", "Insufficient market wallet balance");
+        }
+        NationSavedData data = NationSavedData.get(resolved.level());
+        NationTreasuryRecord treasury = data.getOrCreateTreasury(nationId);
+        data.putTreasury(treasury.withBalance(saturatedAdd(treasury.currencyBalance(), amount)));
+        return ActionResult.success();
+    }
+
+    private ActionResult treasuryToWallet(ResolvedMarket resolved, MarketPlayerIdentity identity, String playerUuid, String playerName, long amount) {
+        if (amount <= 0L) {
+            return ActionResult.failure("invalid_amount", "Invalid amount");
+        }
+        String nationId = resolveNationId(resolved);
+        if (nationId.isBlank()) {
+            return ActionResult.failure("treasury_not_found", "Treasury not found");
+        }
+        UUID uuid = identity.playerUuid();
+        if (!NationService.hasPermission(resolved.level(), uuid, NationPermission.MANAGE_TREASURY)) {
+            return ActionResult.failure("no_treasury_permission", "No treasury permission");
+        }
+        NationSavedData data = NationSavedData.get(resolved.level());
+        NationTreasuryRecord treasury = data.getOrCreateTreasury(nationId);
+        if (treasury.currencyBalance() < amount) {
+            return ActionResult.failure("insufficient_treasury", "Insufficient treasury balance");
+        }
+        data.putTreasury(treasury.withBalance(treasury.currencyBalance() - amount));
+        MarketWalletService.deposit(resolved.level(), playerUuid, playerName, amount);
+        return ActionResult.success();
+    }
+
+    private ActionResult claimCreditsToWallet(ResolvedMarket resolved, String playerUuid, String playerName) {
+        MarketSavedData marketData = MarketSavedData.get(resolved.level());
+        int pending = marketData.clearPendingCredits(playerUuid);
+        if (pending <= 0) {
+            return ActionResult.failure("no_pending_credits", "No pending credits");
+        }
+        MarketWalletService.deposit(resolved.level(), playerUuid, playerName, pending);
+        return ActionResult.success();
+    }
+
+    private static String resolveNationId(ResolvedMarket resolved) {
+        if (resolved == null) {
+            return "";
+        }
+        TownWarehouseBlockEntity warehouse = resolved.market().getLinkedWarehouse();
+        TownRecord town = null;
+        if (warehouse != null) {
+            String townId = warehouse.getTownId();
+            if (townId != null && !townId.isBlank()) {
+                town = NationSavedData.get(resolved.level()).getTown(townId);
+            }
+            if (town == null) {
+                town = TownService.getTownAt(resolved.level(), warehouse.getBlockPos());
+            }
+        }
+        if (town == null) {
+            town = TownService.getTownAt(resolved.level(), resolved.market().getBlockPos());
+        }
+        return town == null ? "" : town.nationId();
+    }
+
+    private static long saturatedAdd(long left, long right) {
+        if (right > 0L && left > Long.MAX_VALUE - right) {
+            return Long.MAX_VALUE;
+        }
+        return left + right;
+    }
+
     public boolean retryDispatch(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int orderIndex, String terminalType) {
         ResolvedMarket resolved = resolveMarket(server, marketId);
         return resolved != null && identity != null
@@ -189,27 +444,58 @@ public final class MarketWebService {
             if (stack.isEmpty()) {
                 return false;
             }
-            COMMODITY_MARKET.createBuyOrder(
-                    stack,
-                    quantity,
-                    minPriceBp,
-                    maxPriceBp,
-                    identity.playerUuidString(),
-                    identity.playerName()
-            );
-            return true;
+            int safeQuantity = Math.max(1, quantity);
+            int reserveBp = Math.max(minPriceBp, maxPriceBp);
+            CommodityQuote quote = COMMODITY_MARKET.quote(stack, safeQuantity, identity.playerUuidString());
+            long reservedBalance = identity.onlinePlayer() != null && identity.onlinePlayer().getAbilities().instabuild
+                    ? 0L
+                    : CommodityMarketService.reservedBalanceForBuyOrder(quote.buyUnitPrice(), safeQuantity, reserveBp);
+            if (reservedBalance > 0L
+                    && !MarketWalletService.reserve(resolved.level(), identity.playerUuidString(), identity.playerName(), reservedBalance).success()) {
+                return false;
+            }
+            try {
+                BuyOrder created = COMMODITY_MARKET.createReservedBuyOrder(
+                        stack,
+                        safeQuantity,
+                        minPriceBp,
+                        maxPriceBp,
+                        identity.playerUuidString(),
+                        identity.playerName(),
+                        reservedBalance
+                );
+                return created != null;
+            } catch (Exception createException) {
+                if (reservedBalance > 0L) {
+                    MarketWalletService.releaseReserved(resolved.level(), identity.playerUuidString(), identity.playerName(), reservedBalance);
+                }
+                return false;
+            }
         } catch (Exception ignored) {
             return false;
         }
     }
 
     public boolean cancelBuyOrder(MinecraftServer server, MarketPlayerIdentity identity, String marketId, String orderId) {
-        if (resolveMarket(server, marketId) == null || identity == null || orderId == null || orderId.isBlank()) {
+        ResolvedMarket resolved = resolveMarket(server, marketId);
+        if (resolved == null || identity == null || orderId == null || orderId.isBlank()) {
             return false;
         }
         try {
-            COMMODITY_MARKET.cancelBuyOrder(orderId);
-            return true;
+            BuyOrder cancelled = COMMODITY_MARKET.cancelBuyOrderForBuyerReturningOrder(
+                    orderId,
+                    identity.playerUuidString()
+            );
+            if (cancelled == null) {
+                return false;
+            }
+            return cancelled.reservedBalance() <= 0L
+                    || MarketWalletService.releaseReserved(
+                    resolved.level(),
+                    identity.playerUuidString(),
+                    identity.playerName(),
+                    cancelled.reservedBalance()
+            ).success();
         } catch (Exception ignored) {
             return false;
         }
@@ -272,6 +558,7 @@ public final class MarketWebService {
             json.addProperty("suggestedUnitPrice", entry.suggestedUnitPrice());
             json.addProperty("minAllowedUnitPrice", entry.minAllowedUnitPrice());
             json.addProperty("maxAllowedUnitPrice", entry.maxAllowedUnitPrice());
+            json.addProperty("priceConstrained", entry.priceConstrained());
             json.addProperty("detail", entry.detail());
             json.addProperty("category", entry.category());
             json.addProperty("rarity", entry.rarity());
@@ -533,6 +820,9 @@ public final class MarketWebService {
             return ItemStack.EMPTY;
         }
         Item item = ForgeRegistries.ITEMS.getValue(itemId);
+        if (item == null) {
+            item = BuiltInRegistries.ITEM.getOptional(itemId).orElse(null);
+        }
         return item == null ? ItemStack.EMPTY : new ItemStack(item);
     }
 

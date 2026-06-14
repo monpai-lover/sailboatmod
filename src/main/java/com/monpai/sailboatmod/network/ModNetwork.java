@@ -24,6 +24,7 @@ import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
 import com.monpai.sailboatmod.network.packet.DockGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.FinalizeRouteNamePacket;
 import com.monpai.sailboatmod.network.packet.MarketGuiActionPacket;
+import com.monpai.sailboatmod.network.packet.MarketWalletActionPacket;
 import com.monpai.sailboatmod.network.packet.MarketStatusNoticePacket;
 import com.monpai.sailboatmod.network.packet.NationGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.NationToastPacket;
@@ -69,6 +70,7 @@ import com.monpai.sailboatmod.network.packet.TownGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.ToggleSailPacket;
 import com.monpai.sailboatmod.network.packet.UploadNationFlagChunkPacket;
 import com.monpai.sailboatmod.network.packet.UploadTownFlagChunkPacket;
+import com.monpai.sailboatmod.network.packet.marketweb.MarketWebMapTileUploadPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadDemolitionSelectionPacket;
@@ -106,7 +108,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "7";
+    private static final String PROTOCOL_VERSION = "8";
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(SailboatMod.MODID, "main"),
             () -> PROTOCOL_VERSION,
@@ -289,6 +291,13 @@ public final class ModNetwork {
                 ClaimMarketCreditsPacket::encode,
                 ClaimMarketCreditsPacket::decode,
                 ClaimMarketCreditsPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                MarketWalletActionPacket.class,
+                MarketWalletActionPacket::encode,
+                MarketWalletActionPacket::decode,
+                MarketWalletActionPacket::handle
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -652,6 +661,14 @@ public final class ModNetwork {
                 RoadPlannerMapTileSyncPacket::decode,
                 RoadPlannerMapTileSyncPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                MarketWebMapTileUploadPacket.class,
+                MarketWebMapTileUploadPacket::encode,
+                MarketWebMapTileUploadPacket::decode,
+                MarketWebMapTileUploadPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,

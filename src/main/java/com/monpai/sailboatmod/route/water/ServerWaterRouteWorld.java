@@ -32,7 +32,7 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
 
     @Override
     public boolean canLoadMoreChunks(int requested) {
-        return true;
+        return requested > 0;
     }
 
     @Override

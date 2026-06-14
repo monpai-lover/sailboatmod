@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
+import com.monpai.sailboatmod.market.commodity.BuyOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.wallet.MarketWalletService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -37,7 +39,15 @@ public class CancelBuyOrderPacket {
                 return;
             }
             try {
-                new com.monpai.sailboatmod.market.commodity.CommodityMarketService().cancelBuyOrder(packet.orderId);
+                String playerUuid = player.getUUID().toString();
+                String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+                BuyOrder cancelled = new CommodityMarketService().cancelBuyOrderForBuyerReturningOrder(
+                        packet.orderId,
+                        playerUuid
+                );
+                if (cancelled != null && cancelled.reservedBalance() > 0L) {
+                    MarketWalletService.releaseReserved(player.level(), playerUuid, playerName, cancelled.reservedBalance());
+                }
             } catch (Exception ignored) {
             }
             ModNetwork.CHANNEL.send(

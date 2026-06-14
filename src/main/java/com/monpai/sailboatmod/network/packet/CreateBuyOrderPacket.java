@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.wallet.MarketWalletService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -50,14 +51,37 @@ public class CreateBuyOrderPacket {
                 if (itemStack.isEmpty()) {
                     return;
                 }
-                new com.monpai.sailboatmod.market.commodity.CommodityMarketService().createBuyOrder(
+                CommodityMarketService service = new CommodityMarketService();
+                String playerUuid = player.getUUID().toString();
+                String playerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+                int safeQuantity = Math.max(1, packet.quantity);
+                int reserveBp = Math.max(packet.minPriceBp, packet.maxPriceBp);
+                long reservedBalance = player.getAbilities().instabuild
+                        ? 0L
+                        : CommodityMarketService.reservedBalanceForBuyOrder(
+                        service.quote(itemStack, safeQuantity, playerUuid).buyUnitPrice(),
+                        safeQuantity,
+                        reserveBp
+                );
+                if (reservedBalance > 0L
+                        && !MarketWalletService.reserve(player.level(), playerUuid, playerName, reservedBalance).success()) {
+                    return;
+                }
+                try {
+                    service.createReservedBuyOrder(
                         itemStack,
-                        packet.quantity,
+                        safeQuantity,
                         packet.minPriceBp,
                         packet.maxPriceBp,
-                        player.getUUID().toString(),
-                        player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName()
-                );
+                        playerUuid,
+                        playerName,
+                        reservedBalance
+                    );
+                } catch (Exception createException) {
+                    if (reservedBalance > 0L) {
+                        MarketWalletService.releaseReserved(player.level(), playerUuid, playerName, reservedBalance);
+                    }
+                }
             } catch (Exception ignored) {
             }
             ModNetwork.CHANNEL.send(
@@ -71,6 +95,9 @@ public class CreateBuyOrderPacket {
     private static net.minecraft.world.item.ItemStack resolveItemStack(String commodityKey) {
         net.minecraft.resources.ResourceLocation itemId = new net.minecraft.resources.ResourceLocation(commodityKey);
         net.minecraft.world.item.Item item = net.minecraftforge.registries.ForgeRegistries.ITEMS.getValue(itemId);
+        if (item == null) {
+            item = net.minecraft.core.registries.BuiltInRegistries.ITEM.getOptional(itemId).orElse(null);
+        }
         return item == null ? net.minecraft.world.item.ItemStack.EMPTY : new net.minecraft.world.item.ItemStack(item);
     }
 }

@@ -16,8 +16,9 @@ public final class SailboatClaimHighlightIndex {
     public static final SailboatClaimHighlightIndex INSTANCE = new SailboatClaimHighlightIndex();
 
     private static final int REGION_CHUNK_SHIFT = 5;
-    private static final int FILL_ALPHA = 0x66000000;
-    private static final int BORDER_ALPHA = 0xCC000000;
+    private static final int REGION_CHUNK_SIZE = 1 << REGION_CHUNK_SHIFT;
+    private static final int FILL_ALPHA = 0x66;
+    private static final int BORDER_ALPHA = 0xCC;
 
     private final Map<String, DimensionClaims> dimensions = new HashMap<>();
     private long revision;
@@ -85,23 +86,20 @@ public final class SailboatClaimHighlightIndex {
             return null;
         }
 
-        int fill = FILL_ALPHA | claim.primaryColorRgb();
+        int fill = xaeroColor(claim.primaryColorRgb(), FILL_ALPHA);
         int borderRgb = claim.secondaryColorRgb() == 0 ? claim.primaryColorRgb() : claim.secondaryColorRgb();
-        int border = BORDER_ALPHA | borderRgb;
+        int border = xaeroColor(borderRgb, BORDER_ALPHA);
         return new int[] {
                 fill,
-                sameOwner(claim, claims.byChunk.get(chunkKey(chunkX, chunkZ - 1))) ? fill : border,
-                sameOwner(claim, claims.byChunk.get(chunkKey(chunkX + 1, chunkZ))) ? fill : border,
-                sameOwner(claim, claims.byChunk.get(chunkKey(chunkX, chunkZ + 1))) ? fill : border,
-                sameOwner(claim, claims.byChunk.get(chunkKey(chunkX - 1, chunkZ))) ? fill : border
+                sameTerritory(claim, claims.byChunk.get(chunkKey(chunkX, chunkZ - 1))) ? fill : border,
+                sameTerritory(claim, claims.byChunk.get(chunkKey(chunkX + 1, chunkZ))) ? fill : border,
+                sameTerritory(claim, claims.byChunk.get(chunkKey(chunkX, chunkZ + 1))) ? fill : border,
+                sameTerritory(claim, claims.byChunk.get(chunkKey(chunkX - 1, chunkZ))) ? fill : border
         };
     }
 
     public synchronized Component tooltipFor(String dimensionId, int chunkX, int chunkZ) {
         SailboatClaimHighlightEntry claim = claimAt(dimensionId, chunkX, chunkZ).orElse(null);
-        if (claim == null) {
-            claim = claimAt(dimensionId, chunkX >> 4, chunkZ >> 4).orElse(null);
-        }
         if (claim == null) {
             return null;
         }
@@ -142,24 +140,78 @@ public final class SailboatClaimHighlightIndex {
                 byRegion.computeIfAbsent(regionKey(regionX, regionZ), ignored -> new ArrayList<>()).add(entry);
             }
             for (Map.Entry<Long, List<SailboatClaimHighlightEntry>> region : byRegion.entrySet()) {
-                region.getValue().sort(Comparator
+                long regionKey = region.getKey();
+                int regionX = regionX(regionKey);
+                int regionZ = regionZ(regionKey);
+                List<SailboatClaimHighlightEntry> hashEntries = new ArrayList<>(region.getValue());
+                addBorderEntries(hashEntries, byRegion, regionX, regionZ);
+                hashEntries.sort(Comparator
                         .comparingInt(SailboatClaimHighlightEntry::chunkX)
-                        .thenComparingInt(SailboatClaimHighlightEntry::chunkZ));
+                        .thenComparingInt(SailboatClaimHighlightEntry::chunkZ)
+                        .thenComparing(SailboatClaimHighlightIndex::territoryKey));
                 int hash = 1;
-                for (SailboatClaimHighlightEntry entry : region.getValue()) {
+                for (SailboatClaimHighlightEntry entry : hashEntries) {
                     hash = 31 * hash + entry.chunkX();
                     hash = 31 * hash + entry.chunkZ();
-                    hash = 31 * hash + entry.ownerKey().hashCode();
+                    hash = 31 * hash + territoryKey(entry).hashCode();
                     hash = 31 * hash + entry.primaryColorRgb();
                     hash = 31 * hash + entry.secondaryColorRgb();
                 }
-                claims.regions.put(region.getKey(), hash == 0 ? 1 : hash);
+                claims.regions.put(regionKey, hash == 0 ? 1 : hash);
             }
         }
     }
 
-    private static boolean sameOwner(SailboatClaimHighlightEntry claim, SailboatClaimHighlightEntry neighbor) {
-        return neighbor != null && claim.ownerKey().equals(neighbor.ownerKey());
+    private static void addBorderEntries(List<SailboatClaimHighlightEntry> target,
+                                         Map<Long, List<SailboatClaimHighlightEntry>> byRegion,
+                                         int regionX,
+                                         int regionZ) {
+        int minX = regionX << REGION_CHUNK_SHIFT;
+        int maxX = minX + REGION_CHUNK_SIZE - 1;
+        int minZ = regionZ << REGION_CHUNK_SHIFT;
+        int maxZ = minZ + REGION_CHUNK_SIZE - 1;
+        addMatching(target, byRegion.get(regionKey(regionX, regionZ - 1)), minX, maxX, minZ - 1, minZ - 1);
+        addMatching(target, byRegion.get(regionKey(regionX + 1, regionZ)), maxX + 1, maxX + 1, minZ, maxZ);
+        addMatching(target, byRegion.get(regionKey(regionX, regionZ + 1)), minX, maxX, maxZ + 1, maxZ + 1);
+        addMatching(target, byRegion.get(regionKey(regionX - 1, regionZ)), minX - 1, minX - 1, minZ, maxZ);
+    }
+
+    private static void addMatching(List<SailboatClaimHighlightEntry> target,
+                                    List<SailboatClaimHighlightEntry> candidates,
+                                    int minX,
+                                    int maxX,
+                                    int minZ,
+                                    int maxZ) {
+        if (candidates == null) {
+            return;
+        }
+        for (SailboatClaimHighlightEntry entry : candidates) {
+            if (entry.chunkX() >= minX && entry.chunkX() <= maxX && entry.chunkZ() >= minZ && entry.chunkZ() <= maxZ) {
+                target.add(entry);
+            }
+        }
+    }
+
+    private static boolean sameTerritory(SailboatClaimHighlightEntry claim, SailboatClaimHighlightEntry neighbor) {
+        return neighbor != null && territoryKey(claim).equals(territoryKey(neighbor));
+    }
+
+    private static String territoryKey(SailboatClaimHighlightEntry claim) {
+        if (!claim.nationId().isBlank()) {
+            return "nation:" + claim.nationId();
+        }
+        if (!claim.townId().isBlank()) {
+            return "town:" + claim.townId();
+        }
+        return claim.ownerKey();
+    }
+
+    private static int xaeroColor(int rgb, int alpha) {
+        int clampedRgb = rgb & 0x00FFFFFF;
+        return ((clampedRgb & 0x0000FF) << 24)
+                | ((clampedRgb & 0x00FF00) << 8)
+                | ((clampedRgb & 0xFF0000) >> 8)
+                | (alpha & 0xFF);
     }
 
     static long chunkKey(int chunkX, int chunkZ) {
@@ -168,6 +220,14 @@ public final class SailboatClaimHighlightIndex {
 
     static long regionKey(int regionX, int regionZ) {
         return ((long) regionX << 32) ^ (regionZ & 0xFFFFFFFFL);
+    }
+
+    private static int regionX(long regionKey) {
+        return (int) (regionKey >> 32);
+    }
+
+    private static int regionZ(long regionKey) {
+        return (int) regionKey;
     }
 
     private static String normalizeDimension(String dimensionId) {

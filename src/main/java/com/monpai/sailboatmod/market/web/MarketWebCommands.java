@@ -4,7 +4,9 @@ import com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapRenderService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.CommandDispatcher;
+import net.minecraft.core.BlockPos;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ClickEvent;
@@ -47,6 +49,22 @@ public final class MarketWebCommands {
                                 .executes(context -> clearAllMapCache(context.getSource())))
                         .then(Commands.literal("repaintall")
                                 .executes(context -> repaintAllMapCache(context.getSource())))
+                        .then(Commands.literal("fullrender")
+                                .then(Commands.literal("start")
+                                        .executes(context -> startFullMapRender(context.getSource())))
+                                .then(Commands.literal("pause")
+                                        .executes(context -> pauseMapRender(context.getSource())))
+                                .then(Commands.literal("resume")
+                                        .executes(context -> resumeMapRender(context.getSource())))
+                                .then(Commands.literal("cancel")
+                                        .executes(context -> cancelMapRender(context.getSource())))
+                                .then(Commands.literal("status")
+                                        .executes(context -> showMapRenderStatus(context.getSource()))))
+                        .then(Commands.literal("radiusrender")
+                                .then(Commands.argument("radiusBlocks", IntegerArgumentType.integer(1))
+                                        .executes(context -> startRadiusMapRender(
+                                                context.getSource(),
+                                                IntegerArgumentType.getInteger(context, "radiusBlocks")))))
                         .then(Commands.literal("scan")
                                 .executes(context -> enqueueMapRegionScan(context.getSource())))
                         .then(Commands.literal("status")
@@ -129,19 +147,82 @@ public final class MarketWebCommands {
         int total = clearedUploads + clearedLegacy + clearedStale;
         source.sendSuccess(() -> Component.literal(
                 "Market web map repaint: cleared " + total + " stale/upload tiles, queued " + queued
-                        + " loaded chunks. Walk through old areas to let the disk watcher repaint them."), true);
-        return total;
+                        + " saved regions for background repaint. Generated chunks will be rebuilt gradually without HTTP force-loading."), true);
+        return total + queued;
     }
 
     private static int enqueueMapRegionScan(CommandSourceStack source) {
         int queued = MarketWebMapRenderService.global().enqueueRegionRepairScan(source.getServer().overworld(), 16);
-        source.sendSuccess(() -> Component.literal("Market web map region scan queued loaded chunks: " + queued), true);
+        source.sendSuccess(() -> Component.literal("Market web map region scan queued saved regions: " + queued), true);
         return queued;
     }
 
+    private static int startFullMapRender(CommandSourceStack source) {
+        boolean started = MarketWebMapRenderService.global().startFullRender(source.getServer().overworld());
+        if (!started) {
+            source.sendFailure(Component.literal("Market web map fullrender could not start. A render may already be active or no region files were found."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Market web map fullrender started. Chunks will be queued gradually without force-loading."), true);
+        return 1;
+    }
+
+    private static int startRadiusMapRender(CommandSourceStack source, int radiusBlocks) {
+        BlockPos center = BlockPos.containing(source.getPosition());
+        boolean started = MarketWebMapRenderService.global().startRadiusRender(
+                source.getLevel(),
+                center.getX(),
+                center.getZ(),
+                radiusBlocks);
+        if (!started) {
+            source.sendFailure(Component.literal("Market web map radiusrender could not start. A render may already be active."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Market web map radiusrender started for radius " + radiusBlocks + " blocks."), true);
+        return 1;
+    }
+
+    private static int pauseMapRender(CommandSourceStack source) {
+        boolean paused = MarketWebMapRenderService.global().pauseRender();
+        if (!paused) {
+            source.sendFailure(Component.literal("No market web map render is active."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Market web map render paused."), true);
+        return 1;
+    }
+
+    private static int resumeMapRender(CommandSourceStack source) {
+        boolean resumed = MarketWebMapRenderService.global().resumeRender();
+        if (!resumed) {
+            source.sendFailure(Component.literal("No market web map render is active."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Market web map render resumed."), true);
+        return 1;
+    }
+
+    private static int cancelMapRender(CommandSourceStack source) {
+        boolean canceled = MarketWebMapRenderService.global().cancelRender(source.getServer().overworld());
+        if (!canceled) {
+            source.sendFailure(Component.literal("No market web map render is active."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Market web map render canceled."), true);
+        return 1;
+    }
+
     private static int showMapRenderStatus(CommandSourceStack source) {
-        int queueSize = MarketWebMapRenderService.global().queueSize();
-        source.sendSuccess(() -> Component.literal("Market web map render queue: " + queueSize), false);
+        MarketWebMapRenderService service = MarketWebMapRenderService.global();
+        int queueSize = service.queueSize();
+        var status = service.renderStatus();
+        source.sendSuccess(() -> Component.literal("Market web map render job: " + status.activeJob()
+                + " paused=" + status.paused()), false);
+        source.sendSuccess(() -> Component.literal("Market web map render queue: " + queueSize
+                + " snapshots(active/pending)=" + status.activeSnapshotRequests() + "/" + status.pendingSnapshotRequests()
+                + " imageIO=" + status.pendingImageIo()), false);
+        source.sendSuccess(() -> Component.literal("Progress chunks: " + status.processedChunks() + "/" + status.totalChunks()
+                + " regions: " + status.processedRegions() + "/" + status.totalRegions()), false);
         source.sendSuccess(() -> Component.literal("Renderer version: " + MarketWebMapTileCache.RENDER_VERSION), false);
         return queueSize;
     }

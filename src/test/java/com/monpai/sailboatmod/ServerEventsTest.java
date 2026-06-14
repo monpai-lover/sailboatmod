@@ -18,4 +18,10 @@ class ServerEventsTest {
         assertTrue(ServerEvents.runStartupTaskSafelyForTest("sqlite", () -> {
         }));
     }
+
+    @Test
+    void orphanClaimCleanupSyncsHighlightsOnlyWhenClaimsWereRemoved() {
+        assertFalse(ServerEvents.shouldSyncAfterOrphanClaimCleanupForTest(0));
+        assertTrue(ServerEvents.shouldSyncAfterOrphanClaimCleanupForTest(2));
+    }
 }

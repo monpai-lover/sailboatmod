@@ -9,6 +9,7 @@ public class RoadPlannerAutoCompleteService {
     private final PathfinderRunner pathfinderRunner;
     private final SegmentClassifier segmentClassifier;
     private final RoadPlannerBridgeRuleService.LandProbe landProbe;
+    private final TerrainSampler terrainSampler;
 
     public RoadPlannerAutoCompleteService() {
         this(null, null);
@@ -25,9 +26,17 @@ public class RoadPlannerAutoCompleteService {
     public RoadPlannerAutoCompleteService(PathfinderRunner pathfinderRunner,
                                           SegmentClassifier segmentClassifier,
                                           RoadPlannerBridgeRuleService.LandProbe landProbe) {
+        this(pathfinderRunner, segmentClassifier, landProbe, null);
+    }
+
+    public RoadPlannerAutoCompleteService(PathfinderRunner pathfinderRunner,
+                                          SegmentClassifier segmentClassifier,
+                                          RoadPlannerBridgeRuleService.LandProbe landProbe,
+                                          TerrainSampler terrainSampler) {
         this.pathfinderRunner = pathfinderRunner;
         this.segmentClassifier = segmentClassifier;
         this.landProbe = landProbe == null ? (x, z) -> true : landProbe;
+        this.terrainSampler = terrainSampler == null ? nodes -> List.of() : terrainSampler;
     }
 
     public RoadPlannerAutoCompleteResult complete(BlockPos start,
@@ -51,7 +60,21 @@ public class RoadPlannerAutoCompleteService {
         List<BlockPos> mergedNodes = mergeManualPrefix(manualNodes, suffixNodes);
         List<RoadPlannerSegmentType> segmentTypes = classifySegments(mergedNodes);
         RoadPlannerBridgeSegmentNormalizer.Result normalized = RoadPlannerBridgeSegmentNormalizer.normalize(mergedNodes, segmentTypes, landProbe);
-        return new RoadPlannerAutoCompleteResult(true, normalized.nodes(), normalized.segmentTypes(), "自动补全完成: " + normalized.nodes().size() + " 节点");
+        return new RoadPlannerAutoCompleteResult(
+                true,
+                normalized.nodes(),
+                normalized.segmentTypes(),
+                "自动补全完成: " + normalized.nodes().size() + " 节点",
+                sampleTerrain(normalized.nodes()));
+    }
+
+    private List<RoadPlannerTerrainSample> sampleTerrain(List<BlockPos> nodes) {
+        try {
+            List<RoadPlannerTerrainSample> samples = terrainSampler.sample(nodes);
+            return samples == null ? List.of() : List.copyOf(samples);
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
     }
 
     private List<BlockPos> mergeManualPrefix(List<BlockPos> manualNodes, List<BlockPos> suffixNodes) {
@@ -150,5 +173,10 @@ public class RoadPlannerAutoCompleteService {
     @FunctionalInterface
     public interface SegmentClassifier {
         List<RoadPlannerSegmentType> classify(List<BlockPos> nodes);
+    }
+
+    @FunctionalInterface
+    public interface TerrainSampler {
+        List<RoadPlannerTerrainSample> sample(List<BlockPos> nodes);
     }
 }

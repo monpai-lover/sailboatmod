@@ -175,6 +175,12 @@ final class MarketSchemaManager {
                             """,
                             "CREATE INDEX IF NOT EXISTS idx_market_analytics_series_time ON market_analytics_snapshot (series_type, series_key, bucket_at DESC)"
                     )
+            ),
+            new SchemaPatch(
+                    "008_buy_order_reserved_balance",
+                    List.of(
+                            "ALTER TABLE buy_order ADD COLUMN reserved_balance INTEGER NOT NULL DEFAULT 0"
+                    )
             )
     );
 

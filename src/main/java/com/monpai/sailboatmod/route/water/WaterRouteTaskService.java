@@ -39,10 +39,18 @@ public final class WaterRouteTaskService {
     }
 
     public void tick() {
-        tick(null);
+        tickDimension(null);
     }
 
     public void tick(ServerLevel level) {
+        tickDimension(level == null ? null : level.dimension().location().toString());
+    }
+
+    void tick(String dimensionId) {
+        tickDimension(dimensionId);
+    }
+
+    private void tickDimension(String dimensionId) {
         if (pendingTasks.isEmpty()) {
             return;
         }
@@ -51,10 +59,10 @@ public final class WaterRouteTaskService {
         int advanced = 0;
         while (iterator.hasNext() && advanced < tasksPerTick) {
             WaterRouteTask task = iterator.next();
-            advanced++;
-            if (level != null && !task.dimensionId().equals(level.dimension().location().toString())) {
+            if (dimensionId != null && !task.dimensionId().equals(dimensionId)) {
                 continue;
             }
+            advanced++;
             if (task.advance()) {
                 completedKeys.add(task.key());
             }

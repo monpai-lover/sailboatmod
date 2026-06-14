@@ -9,6 +9,8 @@ import com.monpai.sailboatmod.entity.TransportEntity;
 import com.monpai.sailboatmod.market.MarketDispatchPlanner;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketOverviewData;
+import com.monpai.sailboatmod.market.MarketPricePolicy;
+import com.monpai.sailboatmod.market.MarketPricePolicy.ListingPriceWindow;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.ProcurementRecord;
 import com.monpai.sailboatmod.market.ProcurementService;
@@ -17,20 +19,27 @@ import com.monpai.sailboatmod.market.ShipmentManifestEntry;
 import com.monpai.sailboatmod.market.ShippingOrder;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
+import com.monpai.sailboatmod.market.commodity.CommodityConfigLoader;
+import com.monpai.sailboatmod.market.commodity.CommodityDefinition;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import com.monpai.sailboatmod.market.commodity.CommodityPriceChartPoint;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.commodity.MarketTradeSide;
+import com.monpai.sailboatmod.market.logistics.ShippingTraceService;
 import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
+import com.monpai.sailboatmod.market.wallet.MarketWalletService;
 import com.monpai.sailboatmod.menu.MarketMenu;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.DockTownBindingRecord;
+import com.monpai.sailboatmod.nation.model.NationPermission;
+import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.DockTownResolver;
+import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.TownEconomySnapshotService;
 import com.monpai.sailboatmod.nation.service.TownFinanceLedgerService;
 import com.monpai.sailboatmod.nation.service.TownService;
@@ -93,14 +102,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
-    private record ListingPriceWindow(int referenceUnitPrice,
-                                      int requestedUnitPrice,
-                                      int derivedPriceAdjustmentBp,
-                                      int minAllowedUnitPrice,
-                                      int maxAllowedUnitPrice,
-                                      boolean valid) {
-    }
-
     public MarketBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.MARKET_BLOCK_ENTITY.get(), pos, state);
     }
@@ -158,6 +159,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     public MarketOverviewData buildOverviewForIdentity(String playerUuid, String playerName, @Nullable Player onlinePlayer) {
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
+        long walletAvailableBalance = 0L;
+        long walletReservedBalance = 0L;
+        long walletTotalBalance = 0L;
+        long treasuryBalance = 0L;
+        boolean canTransferTreasury = false;
         String dockName = "-";
         String dockPosText = "-";
         String townId = "";
@@ -189,6 +195,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (town != null) {
                 townId = town.townId();
                 townName = town.name().isBlank() ? fallbackTownLabel(townId) : town.name();
+                if (!town.nationId().isBlank()) {
+                    NationSavedData nationData = NationSavedData.get(level);
+                    NationTreasuryRecord treasury = nationData.getOrCreateTreasury(town.nationId());
+                    treasuryBalance = treasury.currencyBalance();
+                    UUID viewerUuidForPermission = parseUuid(safePlayerUuid);
+                    canTransferTreasury = viewerUuidForPermission != null
+                            && NationService.hasPermission(level, viewerUuidForPermission, NationPermission.MANAGE_TREASURY);
+                }
             } else {
                 townName = warehouse.getTownName();
             }
@@ -208,12 +222,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 procurementPreviewLines = economy.procurementPreviewLines();
                 financePreviewLines = economy.financePreviewLines();
             }
-            dockStorageAccessible = canManageMarket(safePlayerUuid);
-            dockStorageLines = dockStorageAccessible ? warehouse.getVisibleStorageLines() : List.of();
+            UUID viewerUuid = parseUuid(safePlayerUuid);
+            dockStorageAccessible = viewerUuid != null && canManageMarket(safePlayerUuid);
+            dockStorageLines = dockStorageAccessible ? warehouse.getVisibleStorageLines(viewerUuid) : List.of();
             if (dockStorageAccessible) {
-                int storageCount = warehouse.getVisibleStorageCount();
+                int storageCount = warehouse.getVisibleStorageCount(viewerUuid);
                 for (int i = 0; i < storageCount; i++) {
-                    ItemStack stack = warehouse.getStorageItemForVisibleIndex(i);
+                    ItemStack stack = warehouse.getStorageItemForVisibleIndex(viewerUuid, i);
                     if (stack.isEmpty()) {
                         continue;
                     }
@@ -232,6 +247,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                             suggestedUnitPrice,
                             priceWindow.minAllowedUnitPrice(),
                             priceWindow.maxAllowedUnitPrice(),
+                            priceWindow.constrained(),
                             Component.translatable("screen.sailboatmod.market.storage_at", warehouse.getDisplayName().getString()).getString(),
                             resolveListingCategory(stack),
                             resolveListingRarity(stack)
@@ -246,7 +262,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         List<String> orderLines = new ArrayList<>();
         List<MarketOverviewData.OrderEntry> orderEntries = new ArrayList<>();
         List<String> shippingLines = new ArrayList<>();
+        List<MarketOverviewData.DispatchOption> availableDispatchOptions = new ArrayList<>();
         if (level != null && !level.isClientSide) {
+            if (!safePlayerUuid.isBlank()) {
+                var walletAccount = MarketWalletService.getAccount(level, safePlayerUuid, playerName);
+                walletAvailableBalance = walletAccount.availableBalance();
+                walletReservedBalance = walletAccount.reservedBalance();
+                walletTotalBalance = walletAccount.totalBalance();
+            }
             MarketSavedData market = MarketSavedData.get(level);
             for (MarketListing listing : market.getListings()) {
                 if (!isListingVisibleToTown(townId, listing)) {
@@ -284,6 +307,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             }
             List<PurchaseOrder> openOrders = linkedDockPos == null ? List.<PurchaseOrder>of() : market.getOpenOrdersForSourceDock(linkedDockPos);
             TownWarehouseBlockEntity linkedWarehouse = getLinkedWarehouse();
+            availableDispatchOptions.addAll(buildAvailableDispatchOptions(linkedWarehouse, onlinePlayer));
             for (PurchaseOrder order : openOrders) {
                 String line = order.toSummaryLine();
                 orderLines.add(line);
@@ -330,6 +354,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
 
         if (level != null && !level.isClientSide) {
+            try {
+                addBuyOrderCommodityDisplayNames(chartDisplayNames, COMMODITY_MARKET.listActiveBuyOrderCommodityDefinitions());
+            } catch (SQLException exception) {
+                MARKET_LOGGER.debug("Failed to load active buy order commodity definitions for market overview", exception);
+            }
             for (Map.Entry<String, String> entry : chartDisplayNames.entrySet()) {
                 try {
                     List<CommodityPriceChartPoint> points = COMMODITY_MARKET.listPriceChart(entry.getKey());
@@ -379,6 +408,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 getOwnerUuid(),
                 safePlayerUuid,
                 safePlayerUuid.isBlank() || level == null || level.isClientSide ? 0 : MarketSavedData.get(level).getPendingCredits(safePlayerUuid),
+                walletAvailableBalance,
+                walletReservedBalance,
+                walletTotalBalance,
+                treasuryBalance,
+                canTransferTreasury,
                 linked,
                 dockName,
                 dockPosText,
@@ -408,6 +442,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listingEntries,
                 orderEntries,
                 shippingEntries,
+                availableDispatchOptions,
                 buyOrderEntries,
                 priceChartSeries,
                 commodityBuyBooks,
@@ -455,7 +490,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (level == null || level.isClientSide || warehouse == null || safePlayerUuid.isBlank() || !canManageMarket(safePlayerUuid)) {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
-        ItemStack selected = warehouse.getStorageItemForVisibleIndex(visibleStorageIndex);
+        UUID sellerId = parseUuid(safePlayerUuid);
+        if (sellerId == null) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+        ItemStack selected = warehouse.getStorageItemForVisibleIndex(sellerId, visibleStorageIndex);
         if (selected.isEmpty()) {
             return CreateListingResult.failure("screen.sailboatmod.market.storage_empty");
         }
@@ -466,8 +505,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (requestedUnitPrice <= 0) {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_price_invalid");
         }
-        int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listed), requestedUnitPrice);
-        int price = currentCommodityUnitPrice(listed, 1, fallbackPrice);
         ListingPriceWindow priceWindow = listingPriceWindow(listed, amount, requestedUnitPrice);
         if (!priceWindow.valid()) {
             return CreateListingResult.failure(
@@ -477,7 +514,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     priceWindow.referenceUnitPrice()
             );
         }
-        if (!warehouse.extractVisibleStorage(visibleStorageIndex, amount)) {
+        if (!warehouse.extractVisibleStorage(sellerId, visibleStorageIndex, amount)) {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
         adjustCommoditySupply(listed, amount);
@@ -501,7 +538,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 warehouse.getDisplayName().getString(),
                 listingTownId,
                 listingNationId,
-                priceWindow.derivedPriceAdjustmentBp(),
+                priceWindow.constrained() ? priceWindow.derivedPriceAdjustmentBp() : 0,
                 sellerNote
         ));
         syncTerminalRegistry();
@@ -678,6 +715,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (!safePlayerUuid.equals(listing.sellerUuid())) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_not_owner");
         }
+        UUID sellerId = parseUuid(safePlayerUuid);
+        if (sellerId == null) {
+            return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_not_owner");
+        }
         if (listing.availableCount() <= 0) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_no_stock");
         }
@@ -686,7 +727,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return targetWarehouseSelection.result();
         }
         List<ItemStack> cargo = splitCargo(listing.itemStack(), listing.availableCount());
-        if (!targetWarehouseSelection.warehouse().insertCargo(cargo)) {
+        if (!targetWarehouseSelection.warehouse().insertCargo(sellerId, cargo)) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_storage_full");
         }
         adjustCommoditySupply(listing.itemStack(), -listing.availableCount());
@@ -1048,7 +1089,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private boolean deliverOrderLocally(TownWarehouseBlockEntity warehouse, MarketSavedData market, PurchaseOrder order, MarketListing listing) {
         List<ItemStack> cargo = splitCargo(listing.itemStack(), order.quantity());
-        if (!warehouse.insertCargo(cargo)) {
+        UUID buyerId = parseUuid(order.buyerUuid());
+        if (buyerId == null || !warehouse.insertCargo(buyerId, cargo)) {
             return false;
         }
         applyListingReservationDeltas(market, Map.of(listing.listingId(), order.quantity()));
@@ -1249,6 +1291,52 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
         return List.copyOf(rankedCandidates);
+    }
+
+    private List<MarketOverviewData.DispatchOption> buildAvailableDispatchOptions(@Nullable TownWarehouseBlockEntity sourceWarehouse,
+                                                                                  @Nullable Player player) {
+        if (sourceWarehouse == null) {
+            return List.of();
+        }
+        List<MarketOverviewData.DispatchOption> options = new ArrayList<>();
+        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.PORT, player, options);
+        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.POST_STATION, player, options);
+        return List.copyOf(options);
+    }
+
+    private void collectAvailableDispatchOptions(TownWarehouseBlockEntity sourceWarehouse,
+                                                 TransportTerminalKind terminalKind,
+                                                 @Nullable Player player,
+                                                 List<MarketOverviewData.DispatchOption> options) {
+        if (sourceWarehouse == null || terminalKind == null || options == null) {
+            return;
+        }
+        for (DockBlockEntity terminal : terminalsForTown(sourceWarehouse.getTownId(), terminalKind)) {
+            List<TransportEntity> carriers = availableDispatchBoats(terminal, player);
+            for (TransportEntity carrier : carriers) {
+                options.add(new MarketOverviewData.DispatchOption(
+                        terminalKind.name(),
+                        dispatchTerminalPreviewLabel(terminal, terminalKind),
+                        carrier.getTransportName().getString(),
+                        "",
+                        terminal.getDockName(),
+                        "",
+                        0,
+                        0,
+                        true,
+                        "Ready",
+                        terminal.getDockName()
+                ));
+            }
+        }
+    }
+
+    private String dispatchTerminalPreviewLabel(DockBlockEntity terminal, TransportTerminalKind terminalKind) {
+        String terminalName = terminal == null ? "" : terminal.getDockName();
+        if (terminalName != null && !terminalName.isBlank()) {
+            return terminalName;
+        }
+        return terminalKind == TransportTerminalKind.POST_STATION ? "Post Station" : "Port";
     }
 
     private List<MarketOverviewData.DispatchOption> buildDispatchOptionsForOrder(@Nullable TownWarehouseBlockEntity sourceWarehouse,
@@ -1686,19 +1774,19 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         boat.setPendingShipmentManifest(manifest);
         if (plan.generatedRoute() != null) {
             if (!(boat instanceof CarriageEntity carriage)) {
-                sourceDock.insertCargo(boat.unloadAllCargo());
+                clearTemporaryShipmentCargo(boat);
                 boat.clearPendingMarketDelivery();
                 return false;
             }
             boat.setRouteCatalog(List.of(plan.generatedRoute()), 0, sourceDock.getBlockPos());
             carriage.setLandTransportTask(plan.landPlan(), true, CarriageEntity.TransportTaskKind.MARKET_ORDER);
             if (!boat.startAutopilotFromRouteStart()) {
-                sourceDock.insertCargo(boat.unloadAllCargo());
+                clearTemporaryShipmentCargo(boat);
                 boat.clearPendingMarketDelivery();
                 return false;
             }
         } else if (!sourceDock.assignLoadedBoatToRouteIndex(boat, plan.routeIndex(), true, player)) {
-                sourceDock.insertCargo(boat.unloadAllCargo());
+                clearTemporaryShipmentCargo(boat);
                 boat.clearPendingMarketDelivery();
                 return false;
         }
@@ -1725,9 +1813,16 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         applyListingReservationDeltas(market, listingReservationDeltas);
         for (ShippingOrder shippingOrder : shippingOrders) {
             market.putShippingOrder(shippingOrder);
+            ShippingTraceService.createOrUpdateTrace(level, shippingOrder, route);
             ProcurementService.markInTransit(level, shippingOrder.purchaseOrderId(), shippingOrder.shippingOrderId());
         }
         return true;
+    }
+
+    private void clearTemporaryShipmentCargo(TransportEntity carrier) {
+        if (carrier != null) {
+            carrier.unloadAllCargo();
+        }
     }
 
     @Nullable
@@ -1897,7 +1992,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return cargo;
     }
 
-    private static boolean chargePlayer(String playerUuid, String playerName, @Nullable Player player, int amount) {
+    private boolean chargePlayer(String playerUuid, String playerName, @Nullable Player player, int amount) {
         if (amount <= 0) {
             return true;
         }
@@ -1905,17 +2000,17 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (player.getAbilities().instabuild) {
                 return true;
             }
-            return Boolean.TRUE.equals(GoldStandardEconomy.tryWithdraw(player, amount));
         }
-        return Boolean.TRUE.equals(GoldStandardEconomy.tryWithdrawByIdentity(parseUuid(playerUuid), playerName, amount));
+        return level != null
+                && MarketWalletService.withdraw(level, playerUuid, playerName, amount).success();
     }
 
     private void paySeller(MarketSavedData market, String sellerUuid, String sellerName, int amount) {
         if (amount <= 0 || market == null || sellerUuid == null || sellerUuid.isBlank()) {
             return;
         }
-        Boolean deposited = GoldStandardEconomy.tryDepositByIdentity(parseUuid(sellerUuid), sellerName, amount);
-        if (deposited != null && deposited) {
+        if (level != null) {
+            MarketWalletService.deposit(level, sellerUuid, sellerName, amount);
             return;
         }
         market.addPendingCredits(sellerUuid, amount);
@@ -1959,27 +2054,21 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private ListingPriceWindow listingPriceWindow(ItemStack stack, int quantity, int requestedUnitPrice) {
         int referenceUnitPrice = currentCommodityUnitPrice(stack, quantity, CommodityMarketService.estimateBaseUnitPrice(stack));
-        int safeRequestedUnitPrice = Math.max(1, requestedUnitPrice);
-        int minAllowedUnitPrice = applyPriceAdjustment(referenceUnitPrice, MIN_LISTING_PRICE_BP);
-        int maxAllowedUnitPrice = applyPriceAdjustment(referenceUnitPrice, MAX_LISTING_PRICE_BP);
-        int derivedPriceAdjustmentBp = derivePriceAdjustmentBp(referenceUnitPrice, safeRequestedUnitPrice);
-        boolean valid = safeRequestedUnitPrice >= minAllowedUnitPrice
-                && safeRequestedUnitPrice <= maxAllowedUnitPrice
-                && derivedPriceAdjustmentBp >= MIN_LISTING_PRICE_BP
-                && derivedPriceAdjustmentBp <= MAX_LISTING_PRICE_BP;
-        return new ListingPriceWindow(
+        return MarketPricePolicy.listingWindow(
+                hasConstrainedListingPrice(stack),
                 referenceUnitPrice,
-                safeRequestedUnitPrice,
-                derivedPriceAdjustmentBp,
-                minAllowedUnitPrice,
-                maxAllowedUnitPrice,
-                valid
+                requestedUnitPrice,
+                MIN_LISTING_PRICE_BP,
+                MAX_LISTING_PRICE_BP
         );
     }
 
     private int currentListingUnitPrice(MarketListing listing, int quantity) {
         if (listing == null) {
             return 0;
+        }
+        if (!hasConstrainedListingPrice(listing.itemStack())) {
+            return Math.max(1, listing.unitPrice());
         }
         CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
         int fallbackPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listing.itemStack()), listing.unitPrice());
@@ -1991,6 +2080,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (listing == null) {
             return 0;
         }
+        if (!hasConstrainedListingPrice(listing.itemStack())) {
+            return safeTotalPrice(listing.unitPrice(), quantity);
+        }
         CommodityQuote quote = quoteCommodity(listing.itemStack(), Math.max(1, quantity));
         int fallbackUnitPrice = Math.max(CommodityMarketService.estimateBaseUnitPrice(listing.itemStack()), listing.unitPrice());
         int baseTotal = quote == null
@@ -2000,15 +2092,20 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     private int applyPriceAdjustment(int basePrice, int priceAdjustmentBp) {
-        return Math.max(1, (int) Math.round(basePrice * (1 + priceAdjustmentBp / 10000.0D)));
+        return MarketPricePolicy.applyPriceAdjustment(basePrice, priceAdjustmentBp);
     }
 
     private int derivePriceAdjustmentBp(int basePrice, int requestedUnitPrice) {
-        if (basePrice <= 0 || requestedUnitPrice <= 0) {
-            return 0;
-        }
-        double ratio = (requestedUnitPrice / (double) Math.max(1, basePrice)) - 1.0D;
-        return (int) Math.round(ratio * 10000.0D);
+        return MarketPricePolicy.derivePriceAdjustmentBp(basePrice, requestedUnitPrice);
+    }
+
+    private boolean hasConstrainedListingPrice(ItemStack stack) {
+        return CommodityConfigLoader.hasExplicitBasePrice(CommodityKeyResolver.resolve(stack));
+    }
+
+    private int safeTotalPrice(int unitPrice, int quantity) {
+        long total = (long) Math.max(1, unitPrice) * Math.max(1, quantity);
+        return total > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) total;
     }
 
     @Nullable
@@ -2073,9 +2170,30 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (player != null) {
             return sourceDock.getAvailableSailboatsForDispatch(player);
         }
-        return sourceDock.getAvailableSailboatsForDispatch(null).stream()
-                .filter(boat -> sourceDock.getOwnerUuid().equals(boat.getOwnerUuid()))
-                .toList();
+        return sourceDock.getAvailableSailboatsForDispatch(null);
+    }
+
+    static boolean includeCarrierInOfflineDispatchOverviewForTest(UUID dockOwner, UUID carrierOwner) {
+        return true;
+    }
+
+    static void addBuyOrderCommodityDisplayNamesForTest(Map<String, String> displayNames, List<CommodityDefinition> definitions) {
+        addBuyOrderCommodityDisplayNames(displayNames, definitions);
+    }
+
+    private static void addBuyOrderCommodityDisplayNames(Map<String, String> displayNames, List<CommodityDefinition> definitions) {
+        if (displayNames == null || definitions == null || definitions.isEmpty()) {
+            return;
+        }
+        for (CommodityDefinition definition : definitions) {
+            if (definition == null || definition.commodityKey().isBlank()) {
+                continue;
+            }
+            String displayName = !definition.displayName().isBlank()
+                    ? definition.displayName()
+                    : (!definition.itemId().isBlank() ? definition.itemId() : definition.commodityKey());
+            displayNames.putIfAbsent(definition.commodityKey(), displayName);
+        }
     }
 
     private WarehouseSelectionResult resolveCancelListingWarehouse(String playerUuid, MarketListing listing) {

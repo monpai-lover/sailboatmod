@@ -20,6 +20,8 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
+import java.util.Locale;
+import java.util.stream.Stream;
 
 public final class NationFlagStorage {
     private static final int MAX_WIDTH = 512;
@@ -64,22 +66,14 @@ public final class NationFlagStorage {
         if (record != null) {
             return resolveFlagPath(level, record);
         }
-        return legacyFlagPath(level, flagId);
+        return resolveFlagPath(flagsDirectory(level), null, flagId);
     }
 
     public static Path resolveFlagPath(ServerLevel level, NationFlagRecord record) throws IOException {
         if (record == null) {
             return flagsDirectory(level);
         }
-        Path sharedPath = sharedFlagPath(level, record.sha256());
-        if (Files.exists(sharedPath) && Files.isRegularFile(sharedPath)) {
-            return sharedPath;
-        }
-        Path legacyPath = legacyFlagPath(level, record.flagId());
-        if (Files.exists(legacyPath) && Files.isRegularFile(legacyPath)) {
-            return legacyPath;
-        }
-        return sharedPath;
+        return resolveFlagPath(flagsDirectory(level), record, record.flagId());
     }
 
     public static void deleteFlag(ServerLevel level, NationSavedData data, String flagId) throws IOException {
@@ -87,7 +81,7 @@ public final class NationFlagStorage {
             return;
         }
         NationFlagRecord record = data == null ? null : data.getFlag(flagId);
-        Path legacyPath = legacyFlagPath(level, flagId);
+        Path legacyPath = legacyFlagPath(flagsDirectory(level), flagId);
         Files.deleteIfExists(legacyPath);
         if (record == null || record.sha256().isBlank()) {
             return;
@@ -126,15 +120,73 @@ public final class NationFlagStorage {
     }
 
     private static Path sharedFlagPath(ServerLevel level, String sha256) throws IOException {
+        return sharedFlagPath(flagsDirectory(level), sha256);
+    }
+
+    private static Path sharedFlagPath(Path directory, String sha256) throws IOException {
         String safeSha = sha256 == null ? "" : sha256.trim().toLowerCase();
         if (safeSha.isBlank()) {
             throw new IOException("Missing flag hash");
         }
-        return flagsDirectory(level).resolve(safeSha + ".png");
+        return directory.resolve(safeSha + ".png");
     }
 
     private static Path legacyFlagPath(ServerLevel level, String flagId) throws IOException {
-        return flagsDirectory(level).resolve(flagId + ".png");
+        return legacyFlagPath(flagsDirectory(level), flagId);
+    }
+
+    private static Path legacyFlagPath(Path directory, String flagId) {
+        return directory.resolve((flagId == null ? "" : flagId.trim().toLowerCase(Locale.ROOT)) + ".png");
+    }
+
+    static Path resolveFlagPathForTest(Path directory, String flagId) throws IOException {
+        return resolveFlagPath(directory, null, flagId);
+    }
+
+    private static Path resolveFlagPath(Path directory, NationFlagRecord record, String flagId) throws IOException {
+        Path safeDirectory = directory.toAbsolutePath().normalize();
+        if (record != null && !record.sha256().isBlank()) {
+            Path sharedPath = sharedFlagPath(safeDirectory, record.sha256());
+            if (Files.isRegularFile(sharedPath)) {
+                return sharedPath;
+            }
+        }
+        Path prefixSharedPath = sharedFlagPathByFlagIdPrefix(safeDirectory, record == null ? flagId : record.flagId());
+        if (prefixSharedPath != null) {
+            return prefixSharedPath;
+        }
+        Path legacyPath = legacyFlagPath(safeDirectory, record == null ? flagId : record.flagId());
+        if (Files.isRegularFile(legacyPath)) {
+            return legacyPath;
+        }
+        return record != null && !record.sha256().isBlank()
+                ? sharedFlagPath(safeDirectory, record.sha256())
+                : legacyPath;
+    }
+
+    private static Path sharedFlagPathByFlagIdPrefix(Path directory, String flagId) throws IOException {
+        String normalized = flagId == null ? "" : flagId.trim().toLowerCase(Locale.ROOT);
+        int split = normalized.lastIndexOf('_');
+        if (split < 0 || split >= normalized.length() - 1) {
+            return null;
+        }
+        String shaPrefix = normalized.substring(split + 1);
+        if (!shaPrefix.matches("[0-9a-f]{12,64}")) {
+            return null;
+        }
+        if (!Files.isDirectory(directory)) {
+            return null;
+        }
+        try (Stream<Path> files = Files.list(directory)) {
+            return files
+                    .filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                        return fileName.endsWith(".png") && fileName.startsWith(shaPrefix);
+                    })
+                    .findFirst()
+                    .orElse(null);
+        }
     }
 
     private static void migrateLegacyFlag(ServerLevel level, String flagId, String sha256) throws IOException {

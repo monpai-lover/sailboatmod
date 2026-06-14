@@ -54,6 +54,9 @@ public final class WaterAutoRouteService {
         if (target == null) {
             return WaterRouteResult.failure(WaterRouteFailureReason.MISSING_TARGET_DOCK);
         }
+        if (isOutOfRange(source.pos(), target.pos(), policy)) {
+            return WaterRouteResult.failure(WaterRouteFailureReason.RANGE_EXCEEDED);
+        }
         WaterRouteResult<Void> permission = WaterRoutePermissionService.evaluate(
                 source.access(),
                 target.access(),
@@ -147,9 +150,9 @@ public final class WaterAutoRouteService {
                 playerName(player),
                 player == null ? "" : player.getUUID().toString(),
                 System.currentTimeMillis());
-        List<RouteDefinition> routes = new ArrayList<>(source.getRoutesForMap());
-        routes.add(route);
-        source.setRoutes(routes, routes.size() - 1);
+        List<RouteDefinition> routes = upsertAutoRoute(source.getRoutesForMap(), route);
+        int selectedIndex = Math.max(0, routes.indexOf(route));
+        source.setRoutes(routes, selectedIndex);
         if (player != null) {
             player.sendSystemMessage(Component.translatable(
                     "message.sailboatmod.auto_route.water.created",
@@ -186,6 +189,57 @@ public final class WaterAutoRouteService {
                 routeLength,
                 source == null ? "" : source.name(),
                 targetName);
+    }
+
+    static List<RouteDefinition> upsertAutoRouteForTest(List<RouteDefinition> existingRoutes, RouteDefinition route) {
+        return upsertAutoRoute(existingRoutes, route);
+    }
+
+    private static List<RouteDefinition> upsertAutoRoute(List<RouteDefinition> existingRoutes, RouteDefinition route) {
+        if (route == null) {
+            return existingRoutes == null ? List.of() : List.copyOf(existingRoutes);
+        }
+        List<RouteDefinition> routes = new ArrayList<>();
+        if (existingRoutes != null) {
+            for (RouteDefinition existing : existingRoutes) {
+                if (isSameGeneratedWaterRoute(existing, route)) {
+                    continue;
+                }
+                routes.add(existing);
+            }
+        }
+        routes.add(route);
+        return List.copyOf(routes);
+    }
+
+    private static boolean isSameGeneratedWaterRoute(RouteDefinition existing, RouteDefinition replacement) {
+        if (existing == null || replacement == null) {
+            return false;
+        }
+        return isGeneratedWaterRoute(existing)
+                && safeEquals(existing.startDockName(), replacement.startDockName())
+                && safeEquals(existing.endDockName(), replacement.endDockName());
+    }
+
+    private static boolean isGeneratedWaterRoute(RouteDefinition route) {
+        return route != null && route.name() != null && route.name().startsWith("Water Auto: ");
+    }
+
+    private static boolean isOutOfRange(BlockPos source, BlockPos target, WaterRoutePolicy policy) {
+        if (source == null || target == null) {
+            return false;
+        }
+        WaterRoutePolicy effective = policy == null ? WaterRoutePolicy.defaults() : policy;
+        long dx = source.getX() - target.getX();
+        long dz = source.getZ() - target.getZ();
+        long radius = Math.max(1, effective.maxSearchRadius());
+        return dx * dx + dz * dz > radius * radius;
+    }
+
+    private static boolean safeEquals(String left, String right) {
+        String safeLeft = left == null ? "" : left;
+        String safeRight = right == null ? "" : right;
+        return safeLeft.equals(safeRight);
     }
 
     public static Component messageFor(WaterRouteFailureReason reason) {

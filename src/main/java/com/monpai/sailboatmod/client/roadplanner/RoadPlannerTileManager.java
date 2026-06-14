@@ -248,6 +248,20 @@ public class RoadPlannerTileManager implements AutoCloseable {
         return 1;
     }
 
+    public int[] copyTilePixels(RoadPlannerMapTileSyncPacket packet) {
+        if (packet == null) {
+            return new int[0];
+        }
+        if (!packet.worldId().isBlank() && !packet.worldId().equals(worldId)) {
+            return new int[0];
+        }
+        if (!packet.dimensionId().isBlank() && !packet.dimensionId().equals(dimensionId)) {
+            return new int[0];
+        }
+        RoadPlannerTile tile = loadedTiles.get(new RoadPlannerTileKey(worldId, dimensionId, packet.lod(), packet.tileX(), packet.tileZ()));
+        return tile == null ? new int[0] : tile.copyPixels();
+    }
+
     private boolean shouldSkipMissingBaseTileRefresh(RoadPlannerMapTileSyncPacket packet,
                                                      RoadPlannerTileKey key,
                                                      RoadPlannerTile loaded) {

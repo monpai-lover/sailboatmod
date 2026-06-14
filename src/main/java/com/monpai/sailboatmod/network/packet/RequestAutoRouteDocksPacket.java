@@ -51,8 +51,7 @@ public class RequestAutoRouteDocksPacket {
             for (BlockPos dockPos : candidates) {
                 if (dockPos.equals(msg.sourceDockPos)) continue;
 
-                // Force-load chunk to access dock block entity
-                serverLevel.getChunkSource().getChunk(dockPos.getX() >> 4, dockPos.getZ() >> 4, net.minecraft.world.level.chunk.ChunkStatus.FULL, true);
+                if (!shouldInspectCandidateChunk(serverLevel.hasChunkAt(dockPos))) continue;
                 if (!(serverLevel.getBlockEntity(dockPos) instanceof DockBlockEntity targetDock)) continue;
 
                 boolean canCreate = postStationMode
@@ -81,5 +80,13 @@ public class RequestAutoRouteDocksPacket {
         NationSavedData data = NationSavedData.get(level);
         var nation = data.getNation(dock.getNationId());
         return nation == null ? "-" : nation.name();
+    }
+
+    static boolean shouldInspectCandidateChunkForTest(boolean chunkLoaded) {
+        return shouldInspectCandidateChunk(chunkLoaded);
+    }
+
+    private static boolean shouldInspectCandidateChunk(boolean chunkLoaded) {
+        return chunkLoaded;
     }
 }

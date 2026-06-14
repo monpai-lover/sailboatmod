@@ -1244,6 +1244,8 @@ public final class StructureConstructionManager {
                 continue;
             }
             data.putRoadNetwork(road);
+            com.monpai.sailboatmod.roadplanner.graph.RoadGraphSync.syncRoad(
+                    com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraphSavedData.get(level), road);
             scheduleRoadConstruction(level, road, null, null, "", "");
         }
     }
@@ -1515,6 +1517,8 @@ public final class StructureConstructionManager {
             return;
         }
         NationSavedData.get(level).putRoadNetwork(road);
+        com.monpai.sailboatmod.roadplanner.graph.RoadGraphSync.syncRoad(
+                com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraphSavedData.get(level), road);
         scheduleRoadConstruction(level, road, plan, ownerUuid, sourceTownName, targetTownName);
     }
 
@@ -1571,6 +1575,8 @@ public final class StructureConstructionManager {
                 .map(BlockPos::asLong)
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         NationSavedData.get(level).putRoadNetwork(road);
+        com.monpai.sailboatmod.roadplanner.graph.RoadGraphSync.syncRoad(
+                com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraphSavedData.get(level), road);
         persistRoadConstruction(
                 level,
                 road.roadId(),

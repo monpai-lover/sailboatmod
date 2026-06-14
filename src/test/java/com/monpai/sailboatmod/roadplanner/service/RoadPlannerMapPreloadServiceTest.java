@@ -23,6 +23,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoadPlannerMapPreloadServiceTest {
     @Test
+    void routePreloadForcesMissingChunksForRoadTiles() {
+        assertTrue(RoadPlannerMapPreloadService.forcesMissingChunksForTest(
+                RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD));
+        assertTrue(RoadPlannerMapPreloadService.forcesMissingChunksForTest(
+                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER));
+    }
+
+    @Test
     void replacingActiveForceRenderJobReleasesForcedChunksFromPreviousJob() throws Exception {
         RoadPlannerMapPreloadService service = new RoadPlannerMapPreloadService();
         UUID sessionId = UUID.randomUUID();

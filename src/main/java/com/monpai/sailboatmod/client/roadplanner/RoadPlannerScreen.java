@@ -94,6 +94,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private final RoadPlannerMinimapRequestScheduler mapRequestScheduler = new RoadPlannerMinimapRequestScheduler(350L);
     private final RoadPlannerAutoCompleteService autoCompleteService = new RoadPlannerAutoCompleteService();
     private final RoadPlannerBridgeRuleService bridgeRuleService = new RoadPlannerBridgeRuleService(RoadPlannerScreen::isClientLand);
+    private RoadPlannerTerrainSampleIndex manualTerrainSamples = RoadPlannerTerrainSampleIndex.from(List.of());
     private final RoadPlannerNodeHitTester nodeHitTester = new RoadPlannerNodeHitTester(8.0D);
     private final RoadPlannerRouteHitTester routeHitTester = new RoadPlannerRouteHitTester(8.0D, 6.0D);
     private final RoadPlannerEraseTool eraseTool = new RoadPlannerEraseTool();
@@ -324,6 +325,23 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         return depth;
     }
 
+    private static boolean isManualRoadPassable(int x, int z) {
+        return RoadPlannerManualTerrainRules.isRoadPassable(
+                x,
+                z,
+                RoadPlannerScreen::isClientLand,
+                RoadPlannerScreen::clientWaterDepth);
+    }
+
+    private static boolean manualSpanRequiresBridge(BlockPos from, BlockPos to, boolean testMode) {
+        return RoadPlannerManualTerrainRules.requiresBridgeForSpan(
+                from,
+                to,
+                RoadPlannerScreen::isClientLand,
+                testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth,
+                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain());
+    }
+
     private static int clientRoadSurfaceY(ClientLevel level, int x, int z) {
         int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
         while (y > level.getMinBuildHeight()
@@ -452,6 +470,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     public String statusLineForTest() {
         return statusLine;
+    }
+
+    public RoadPlannerSegmentType manualSegmentTypeForTest(BlockPos target, RoadPlannerSegmentType fallback) {
+        return segmentTypeForConnection(target, fallback);
     }
 
     public String editingRoadIdForTest() {
@@ -1124,6 +1146,15 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                                         List<BlockPos> nodes,
                                         List<RoadPlannerSegmentType> segmentTypes,
                                         String message) {
+        applyAutoCompleteResult(sessionId, success, nodes, segmentTypes, message, List.of());
+    }
+
+    public void applyAutoCompleteResult(UUID sessionId,
+                                        boolean success,
+                                        List<BlockPos> nodes,
+                                        List<RoadPlannerSegmentType> segmentTypes,
+                                        String message,
+                                        List<RoadPlannerTerrainSample> terrainSamples) {
         if (!state.sessionId().equals(sessionId)) {
             return;
         }
@@ -1133,11 +1164,12 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         clearMergeCandidateState();
         clearStartReuseSpan();
-        RoadPlannerRouteExpander.Result expanded = expandRoute(nodes, segmentTypes);
+        manualTerrainSamples = RoadPlannerTerrainSampleIndex.from(terrainSamples);
+        RoadPlannerRouteExpander.Result expanded = expandRoute(nodes, segmentTypes, manualTerrainSamples);
         linePlan.replaceWith(expanded.nodes(), expanded.segmentTypes());
         saveDraft();
         if (expanded.nodes().size() >= 2) {
-            forceRenderQueue.enqueueCorridor(expanded.nodes().get(0), expanded.nodes().get(expanded.nodes().size() - 1), 64, "\u81ea\u52a8\u8def\u7ebf\u7f13\u5b58");
+            forceRenderQueue.enqueueRoute(expanded.nodes(), 64, "\u81ea\u52a8\u8def\u7ebf\u7f13\u5b58");
         }
         requestRoutePreload(expanded.nodes());
         requestMergeCandidates(lastNode(), lastSegmentType());
@@ -2295,7 +2327,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (RoadPlannerTopToolbar.ACTION_AUTO_COMPLETE.equals(label)) {
             if (testMode) {
                 RoadPlannerAutoCompleteResult result = autoCompleteService.complete(startTownPos, destinationTownPos, linePlan.nodes(), 24);
-                applyAutoCompleteResult(state.sessionId(), result.success(), result.nodes(), result.segmentTypes(), result.message());
+                applyAutoCompleteResult(state.sessionId(), result.success(), result.nodes(), result.segmentTypes(), result.message(), result.terrainSamples());
                 return;
             }
             if (minecraft != null && minecraft.getConnection() != null) {
@@ -2592,12 +2624,24 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     private RoadPlannerRouteExpander.Result expandRoute(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
+        return expandRoute(nodes, segmentTypes, RoadPlannerTerrainSampleIndex.from(List.of()));
+    }
+
+    private RoadPlannerRouteExpander.Result expandRoute(List<BlockPos> nodes,
+                                                        List<RoadPlannerSegmentType> segmentTypes,
+                                                        RoadPlannerTerrainSampleIndex terrainSamples) {
+        RoadPlannerTerrainSampleIndex sampleIndex = terrainSamples == null
+                ? RoadPlannerTerrainSampleIndex.from(List.of())
+                : terrainSamples;
+        RoadPlannerBridgeRuleService.LandProbe clientLandProbe = RoadPlannerScreen::isClientLand;
+        RoadPlannerHeightSampler clientHeightSampler = testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain();
+        RoadPlannerWaterDepthProbe clientWaterDepthProbe = testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth;
         return RoadPlannerRouteExpander.expand(
                 nodes,
                 segmentTypes,
-                RoadPlannerScreen::isClientLand,
-                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain(),
-                testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth
+                (x, z) -> sampleIndex.isLand(x, z, clientLandProbe),
+                (x, z) -> sampleIndex.heightAt(x, z, clientHeightSampler),
+                (x, z) -> sampleIndex.waterDepthAt(x, z, clientWaterDepthProbe)
         );
     }
 
@@ -2611,9 +2655,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         RoadPlannerWaterCrossingSplitter.SplitResult split = RoadPlannerWaterCrossingSplitter.split(
                 from,
                 target,
-                RoadPlannerScreen::isClientLand,
-                testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain(),
-                testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth
+                manualLandProbe(),
+                manualHeightSampler(),
+                manualWaterDepthProbe()
         );
         if (!split.didSplit()) {
             linePlan.addClickNode(target, segmentTypeForConnection(target, segmentType));
@@ -2633,7 +2677,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     private RoadPlannerBridgeSegmentNormalizer.Result normalizeBridgeSegments(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes) {
-        return RoadPlannerBridgeSegmentNormalizer.normalize(nodes, segmentTypes, RoadPlannerScreen::isClientLand);
+        return RoadPlannerBridgeSegmentNormalizer.normalize(nodes, segmentTypes, manualLandProbe());
     }
 
     private void resetLineToStartNode() {
@@ -2747,17 +2791,36 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     private RoadPlannerSegmentType segmentTypeForConnection(BlockPos target, RoadPlannerSegmentType fallback) {
-        RoadPlannerSegmentType safeFallback = fallback == null ? RoadPlannerSegmentType.ROAD : fallback;
-        if (safeFallback == RoadPlannerSegmentType.BRIDGE_MAJOR || safeFallback == RoadPlannerSegmentType.BRIDGE_SMALL || safeFallback == RoadPlannerSegmentType.TUNNEL) {
-            return safeFallback;
-        }
-        if (requiresBridgeTool(target)) {
-            return RoadPlannerSegmentType.BRIDGE_MAJOR;
-        }
-        if (!isClientLand(target.getX(), target.getZ())) {
-            return RoadPlannerSegmentType.BRIDGE_MAJOR;
-        }
-        return safeFallback;
+        BlockPos from = linePlan.nodeCount() == 0 ? null : linePlan.nodes().get(linePlan.nodeCount() - 1);
+        return RoadPlannerManualTerrainRules.segmentTypeForConnection(
+                from,
+                target,
+                fallback,
+                manualLandProbe(),
+                manualWaterDepthProbe(),
+                manualHeightSampler());
+    }
+
+    private RoadPlannerBridgeRuleService.LandProbe manualLandProbe() {
+        RoadPlannerTerrainSampleIndex samples = manualTerrainSamples;
+        RoadPlannerWaterDepthProbe fallbackDepth = testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth;
+        return (x, z) -> RoadPlannerManualTerrainRules.isRoadPassable(
+                x,
+                z,
+                (px, pz) -> samples.isLand(px, pz, RoadPlannerScreen::isClientLand),
+                (px, pz) -> samples.waterDepthAt(px, pz, fallbackDepth));
+    }
+
+    private RoadPlannerWaterDepthProbe manualWaterDepthProbe() {
+        RoadPlannerTerrainSampleIndex samples = manualTerrainSamples;
+        RoadPlannerWaterDepthProbe fallback = testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth;
+        return (x, z) -> samples.waterDepthAt(x, z, fallback);
+    }
+
+    private RoadPlannerHeightSampler manualHeightSampler() {
+        RoadPlannerTerrainSampleIndex samples = manualTerrainSamples;
+        RoadPlannerHeightSampler fallback = testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain();
+        return (x, z) -> samples.heightAt(x, z, fallback);
     }
 
     private boolean showsHoverPreviewLine() {
@@ -2797,25 +2860,18 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             int z = (int) Math.round(oneMinusT * oneMinusT * start.getZ() + 2.0D * oneMinusT * t * controlZ + t * t * target.getZ());
             BlockPos sample = new BlockPos(x, y, z);
             if (!sample.equals(linePlan.nodes().get(linePlan.nodeCount() - 1))) {
-                RoadPlannerSegmentType sampleType = segmentTypeForConnection(sample, segmentTypeForCurveSample(sample, segmentType));
-                if (!isClientLand(sample.getX(), sample.getZ())) {
-                    sampleType = RoadPlannerSegmentType.BRIDGE_MAJOR;
-                }
+                RoadPlannerSegmentType sampleType = segmentTypeForConnection(sample, segmentType);
                 linePlan.addClickNode(sample, sampleType);
             }
         }
     }
 
     private RoadPlannerSegmentType segmentTypeForCurveSample(BlockPos sample, RoadPlannerSegmentType fallback) {
-        RoadPlannerBridgeRuleService.Decision roadDecision = bridgeRuleService.evaluateRoadTool(linePlan.nodes(), sample);
-        if (!roadDecision.accepted()) {
-            return RoadPlannerSegmentType.BRIDGE_MAJOR;
-        }
-        return fallback == null ? RoadPlannerSegmentType.ROAD : fallback;
+        return segmentTypeForConnection(sample, fallback);
     }
 
     private boolean requiresBridgeTool(BlockPos target) {
-        return !bridgeRuleService.evaluateRoadTool(linePlan.nodes(), target).accepted();
+        return segmentTypeForConnection(target, RoadPlannerSegmentType.ROAD) == RoadPlannerSegmentType.BRIDGE_MAJOR;
     }
 
     private boolean legacyToolbarHitTestingEnabled() {

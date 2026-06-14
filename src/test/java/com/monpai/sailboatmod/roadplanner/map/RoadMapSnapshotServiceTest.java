@@ -20,6 +20,18 @@ class RoadMapSnapshotServiceTest {
     }
 
     @Test
+    void colorizerNormalizesWaterSamplesBeforeStyling() {
+        RoadMapColorizer colorizer = new RoadMapColorizer();
+        RoadMapColumnSample waterloggedRedBlock = new RoadMapColumnSample(0, 62, 0, 0xFFFF0000, true, 1, 62);
+
+        int color = colorizer.color(waterloggedRedBlock);
+
+        int red = (color >>> 16) & 0xFF;
+        int blue = color & 0xFF;
+        assertTrue(blue > red, "water samples must stay blue even if the sampled waterlogged block is red");
+    }
+
+    @Test
     void colorizerUsesReliefForLandBrightness() {
         RoadMapColorizer colorizer = new RoadMapColorizer();
         RoadMapColumnSample ridge = new RoadMapColumnSample(0, 70, 0, 0xFF669933, false, 0, 64);

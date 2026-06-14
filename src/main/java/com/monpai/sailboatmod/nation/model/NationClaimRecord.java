@@ -17,8 +17,46 @@ public record NationClaimRecord(
         String redstoneAccessLevel,
         String entityUseAccessLevel,
         String entityDamageAccessLevel,
-        long claimedAt
+        long claimedAt,
+        String claimSource
 ) {
+    public static final String SOURCE_MANUAL = "manual";
+    public static final String SOURCE_TOWN_CORE = "town_core";
+    public static final String SOURCE_NATION_CORE = "nation_core";
+
+    public NationClaimRecord(
+            String dimensionId,
+            int chunkX,
+            int chunkZ,
+            String nationId,
+            String townId,
+            String breakAccessLevel,
+            String placeAccessLevel,
+            String useAccessLevel,
+            String containerAccessLevel,
+            String redstoneAccessLevel,
+            String entityUseAccessLevel,
+            String entityDamageAccessLevel,
+            long claimedAt
+    ) {
+        this(
+                dimensionId,
+                chunkX,
+                chunkZ,
+                nationId,
+                townId,
+                breakAccessLevel,
+                placeAccessLevel,
+                useAccessLevel,
+                containerAccessLevel,
+                redstoneAccessLevel,
+                entityUseAccessLevel,
+                entityDamageAccessLevel,
+                claimedAt,
+                SOURCE_MANUAL
+        );
+    }
+
     public NationClaimRecord {
         dimensionId = normalize(dimensionId);
         nationId = normalize(nationId);
@@ -30,6 +68,7 @@ public record NationClaimRecord(
         redstoneAccessLevel = normalizeAccessLevel(redstoneAccessLevel);
         entityUseAccessLevel = normalizeAccessLevel(entityUseAccessLevel);
         entityDamageAccessLevel = normalizeAccessLevel(entityDamageAccessLevel);
+        claimSource = normalizeSource(claimSource);
     }
 
     public CompoundTag save() {
@@ -47,6 +86,7 @@ public record NationClaimRecord(
         tag.putString("EntityUseAccessLevel", entityUseAccessLevel);
         tag.putString("EntityDamageAccessLevel", entityDamageAccessLevel);
         tag.putLong("ClaimedAt", claimedAt);
+        tag.putString("ClaimSource", claimSource);
         return tag;
     }
 
@@ -64,7 +104,8 @@ public record NationClaimRecord(
                 tag.contains("RedstoneAccessLevel") ? tag.getString("RedstoneAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
                 tag.contains("EntityUseAccessLevel") ? tag.getString("EntityUseAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
                 tag.contains("EntityDamageAccessLevel") ? tag.getString("EntityDamageAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
-                tag.getLong("ClaimedAt")
+                tag.getLong("ClaimedAt"),
+                tag.contains("ClaimSource") ? tag.getString("ClaimSource") : SOURCE_MANUAL
         );
     }
 
@@ -75,7 +116,8 @@ public record NationClaimRecord(
                 placeLevel == null ? placeAccessLevel : placeLevel.id(),
                 useLevel == null ? useAccessLevel : useLevel.id(),
                 containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel,
-                claimedAt
+                claimedAt,
+                claimSource
         );
     }
 
@@ -83,13 +125,13 @@ public record NationClaimRecord(
         if (actionId == null || level == null) return this;
         String levelId = level.id();
         return switch (actionId.toLowerCase(Locale.ROOT)) {
-            case "break" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, levelId, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt);
-            case "place" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, levelId, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt);
-            case "use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, levelId, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt);
-            case "container" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, levelId, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt);
-            case "redstone" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, levelId, entityUseAccessLevel, entityDamageAccessLevel, claimedAt);
-            case "entity_use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, levelId, entityDamageAccessLevel, claimedAt);
-            case "entity_damage" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, levelId, claimedAt);
+            case "break" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, levelId, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
+            case "place" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, levelId, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
+            case "use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, levelId, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
+            case "container" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, levelId, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
+            case "redstone" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, levelId, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
+            case "entity_use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, levelId, entityDamageAccessLevel, claimedAt, claimSource);
+            case "entity_damage" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, levelId, claimedAt, claimSource);
             default -> this;
         };
     }
@@ -110,6 +152,11 @@ public record NationClaimRecord(
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeSource(String value) {
+        String normalized = normalize(value);
+        return normalized.isBlank() ? SOURCE_MANUAL : normalized;
     }
 
     private static String normalizeAccessLevel(String value) {

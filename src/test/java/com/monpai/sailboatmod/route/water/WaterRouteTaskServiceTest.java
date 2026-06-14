@@ -76,7 +76,33 @@ class WaterRouteTaskServiceTest {
         assertEquals(0, service.pendingCount());
     }
 
+    @Test
+    void skippedDimensionTasksDoNotConsumePerTickTaskBudget() {
+        WaterRouteTaskService service = new WaterRouteTaskService(1);
+        AtomicInteger overworldCompletions = new AtomicInteger();
+        WaterRouteTask netherTask = task(
+                "minecraft:the_nether",
+                new BlockPos(0, 64, 0),
+                new BlockPos(0, 64, 0),
+                result -> {});
+        WaterRouteTask overworldTask = task(
+                "minecraft:overworld",
+                new BlockPos(0, 64, 16),
+                new BlockPos(0, 64, 16),
+                result -> overworldCompletions.incrementAndGet());
+
+        service.submit(netherTask);
+        service.submit(overworldTask);
+        service.tick("minecraft:overworld");
+
+        assertEquals(1, overworldCompletions.get());
+    }
+
     private static WaterRouteTask task(BlockPos source, BlockPos target, WaterRouteTask.CompletionHandler callback) {
+        return task("minecraft:overworld", source, target, callback);
+    }
+
+    private static WaterRouteTask task(String dimensionId, BlockPos source, BlockPos target, WaterRouteTask.CompletionHandler callback) {
         WaterRoutePolicy policy = new WaterRoutePolicy(8, 2, 1, 2, 256, 5000, 512, 1, 64, 200);
         WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(
                 new TestWaterWorld().waterRect(0, -16, 128, 16),
@@ -84,7 +110,7 @@ class WaterRouteTaskServiceTest {
                 target,
                 policy);
         return new WaterRouteTask(
-                "minecraft:overworld",
+                dimensionId,
                 source,
                 target,
                 source,

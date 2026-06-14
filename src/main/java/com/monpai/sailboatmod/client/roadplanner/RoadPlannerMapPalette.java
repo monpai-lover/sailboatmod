@@ -1,19 +1,17 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
 public final class RoadPlannerMapPalette {
-    private static final int TERRAIN_TARGET = 0xFFE8F0D8;
-    private static final int WATER_TARGET = 0xFF7FCBFF;
     private static final int LOADING_TARGET = 0xFF5A5A5A;
 
     private RoadPlannerMapPalette() {
     }
 
     public static int softenTerrain(int argb) {
-        return mixWith(argb, TERRAIN_TARGET, 0.42D);
+        return argb;
     }
 
     public static int softenWater(int argb) {
-        return mixWith(argb, WATER_TARGET, 0.58D);
+        return argb;
     }
 
     public static int softenLoading(int argb) {

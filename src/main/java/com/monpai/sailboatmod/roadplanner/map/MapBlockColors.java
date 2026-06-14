@@ -425,6 +425,11 @@ public final class MapBlockColors {
         return 0xFF000000 | (fallback & 0x00FFFFFF);
     }
 
+    public static int waterArgb() {
+        Integer water = COLORS.get("minecraft:water");
+        return water == null ? 0xFF3F76C4 : water;
+    }
+
     /**
      * 仅供测试 / 直接按注册名查色。返回 null 表示表中无此方块。
      */

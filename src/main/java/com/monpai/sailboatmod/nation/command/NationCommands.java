@@ -1,8 +1,10 @@
 package com.monpai.sailboatmod.nation.command;
 
 import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.nation.service.ClaimHighlightSyncService;
 import com.monpai.sailboatmod.nation.service.NationAdminService;
 import com.monpai.sailboatmod.nation.service.NationClaimService;
 import com.monpai.sailboatmod.nation.service.NationDiplomacyService;
@@ -11,6 +13,7 @@ import com.monpai.sailboatmod.nation.service.NationResult;
 import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.NationTreasuryService;
 import com.monpai.sailboatmod.nation.service.NationWarService;
+import com.monpai.sailboatmod.nation.service.TownClaimService;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.network.packet.NationToastPacket;
 import com.mojang.brigadier.CommandDispatcher;
@@ -186,10 +189,16 @@ public final class NationCommands {
                                                 .executes(context -> sendResult(context.getSource(), NationService.setOfficePermission(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "office"), StringArgumentType.getString(context, "permission"), BoolArgumentType.getBool(context, "value")))))))));
 
         nation.then(Commands.literal("claim")
-                .executes(context -> sendResult(context.getSource(), NationClaimService.claimChunk(context.getSource().getPlayerOrException(), new ChunkPos(context.getSource().getPlayerOrException().blockPosition())))));
+                .executes(context -> sendResultAndMaybeSyncClaims(
+                        context.getSource(),
+                        NationClaimService.claimChunk(context.getSource().getPlayerOrException(), new ChunkPos(context.getSource().getPlayerOrException().blockPosition())),
+                        "nation_claim")));
 
         nation.then(Commands.literal("unclaim")
-                .executes(context -> sendResult(context.getSource(), NationClaimService.unclaimChunk(context.getSource().getPlayerOrException(), new ChunkPos(context.getSource().getPlayerOrException().blockPosition())))));
+                .executes(context -> sendResultAndMaybeSyncClaims(
+                        context.getSource(),
+                        NationClaimService.unclaimChunk(context.getSource().getPlayerOrException(), new ChunkPos(context.getSource().getPlayerOrException().blockPosition())),
+                        "nation_unclaim")));
 
         nation.then(Commands.literal("claimperm")
                 .then(Commands.literal("info")
@@ -209,13 +218,22 @@ public final class NationCommands {
 
         nation.then(Commands.literal("color")
                 .then(Commands.argument("hex", StringArgumentType.greedyString())
-                        .executes(context -> sendResult(context.getSource(), NationService.setPrimaryColor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "hex")))))
+                        .executes(context -> sendResultAndMaybeSyncClaims(
+                                context.getSource(),
+                                NationService.setPrimaryColor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "hex")),
+                                "nation_color")))
                 .then(Commands.literal("primary")
                         .then(Commands.argument("hex", StringArgumentType.greedyString())
-                                .executes(context -> sendResult(context.getSource(), NationService.setPrimaryColor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "hex"))))))
+                                .executes(context -> sendResultAndMaybeSyncClaims(
+                                        context.getSource(),
+                                        NationService.setPrimaryColor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "hex")),
+                                        "nation_color"))))
                 .then(Commands.literal("secondary")
                         .then(Commands.argument("hex", StringArgumentType.greedyString())
-                                .executes(context -> sendResult(context.getSource(), NationService.setSecondaryColor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "hex")))))));
+                                .executes(context -> sendResultAndMaybeSyncClaims(
+                                        context.getSource(),
+                                        NationService.setSecondaryColor(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "hex")),
+                                        "nation_color")))));
 
         nation.then(Commands.literal("flag")
                 .then(Commands.literal("import")
@@ -290,6 +308,14 @@ public final class NationCommands {
                         .executes(context -> sendNationInfo(context.getSource(), NationService.findNation(context.getSource().getLevel(), StringArgumentType.getString(context, "nation"))))));
 
         dispatcher.register(nation);
+        dispatcher.register(Commands.literal("townunclaim")
+                .executes(context -> {
+                    ServerPlayer player = context.getSource().getPlayerOrException();
+                    return sendResultAndMaybeSyncClaims(
+                            context.getSource(),
+                            townUnclaimCurrentChunk(player),
+                            "townunclaim");
+                }));
         dispatcher.register(Commands.literal("nationadmin")
                 .requires(source -> source.hasPermission(2))
                 .then(Commands.literal("disband")
@@ -342,6 +368,65 @@ public final class NationCommands {
         }
         source.sendFailure(result.message());
         return 0;
+    }
+
+    private static int sendResultAndMaybeSyncClaims(CommandSourceStack source, NationResult result, String commandId) {
+        int commandResult = sendResult(source, result);
+        if (result.success() && shouldSyncClaimHighlightsAfterCommand(commandId)) {
+            ClaimHighlightSyncService.syncAll(source.getServer());
+        }
+        return commandResult;
+    }
+
+    private static NationResult townUnclaimCurrentChunk(ServerPlayer player) {
+        ChunkPos chunkPos = new ChunkPos(player.blockPosition());
+        NationSavedData data = NationSavedData.get(player.level());
+        String townId = resolveTownUnclaimTownId(data, player.level().dimension().location().toString(), chunkPos);
+        if (townId.isBlank()) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.claim.not_owned"));
+        }
+        return TownClaimService.unclaimChunk(player, townId, chunkPos);
+    }
+
+    static String resolveTownUnclaimTownIdForTest(NationSavedData data, String dimensionId, ChunkPos chunkPos) {
+        return resolveTownUnclaimTownId(data, dimensionId, chunkPos);
+    }
+
+    private static String resolveTownUnclaimTownId(NationSavedData data, String dimensionId, ChunkPos chunkPos) {
+        if (data == null || dimensionId == null || dimensionId.isBlank() || chunkPos == null) {
+            return "";
+        }
+        NationClaimRecord claim = data.getClaim(dimensionId, chunkPos.x, chunkPos.z);
+        if (claim == null) {
+            return "";
+        }
+        if (!claim.townId().isBlank()) {
+            TownRecord town = data.getTown(claim.townId());
+            if (town != null) {
+                return town.townId();
+            }
+        }
+        if (!claim.nationId().isBlank()) {
+            TownRecord capitalTown = TownService.getCapitalTown(data, data.getNation(claim.nationId()));
+            if (capitalTown != null) {
+                return capitalTown.townId();
+            }
+        }
+        return "";
+    }
+
+    static boolean shouldSyncClaimHighlightsAfterCommandForTest(String commandId) {
+        return shouldSyncClaimHighlightsAfterCommand(commandId);
+    }
+
+    private static boolean shouldSyncClaimHighlightsAfterCommand(String commandId) {
+        return switch (commandId == null ? "" : commandId) {
+            case "nation_claim",
+                 "nation_unclaim",
+                 "townunclaim",
+                 "nation_color" -> true;
+            default -> false;
+        };
     }
 
     private static int sendLines(CommandSourceStack source, List<Component> lines) {

@@ -46,7 +46,7 @@ public final class CommodityConfigLoader {
             JsonArray overrides = root.getAsJsonArray("overrides");
             for (JsonElement el : overrides) {
                 JsonObject o = el.getAsJsonObject();
-                String itemId = o.get("itemId").getAsString();
+                String itemId = normalizeItemId(o.get("itemId").getAsString());
                 int rarity = o.has("rarity") ? o.get("rarity").getAsInt() : -1;
                 int importance = o.has("importance") ? o.get("importance").getAsInt() : -1;
                 int elasticity = o.has("elasticity") ? o.get("elasticity").getAsInt() : -1;
@@ -64,7 +64,7 @@ public final class CommodityConfigLoader {
 
     /** Apply JSON overrides on top of a base definition. Returns base if no override exists. */
     public static CommodityDefinition apply(CommodityDefinition base) {
-        Override ov = OVERRIDES.get(base.itemId());
+        Override ov = OVERRIDES.get(normalizeItemId(base.itemId()));
         if (ov == null) return base;
         return new CommodityDefinition(
                 base.commodityKey(),
@@ -83,17 +83,22 @@ public final class CommodityConfigLoader {
     }
 
     public static int getBasePrice(String itemId, int fallback) {
-        Override ov = OVERRIDES.get(itemId);
+        Override ov = OVERRIDES.get(normalizeItemId(itemId));
         return (ov != null && ov.basePrice() >= 0) ? ov.basePrice() : fallback;
+    }
+
+    public static boolean hasExplicitBasePrice(String itemId) {
+        Override ov = OVERRIDES.get(normalizeItemId(itemId));
+        return ov != null && ov.basePrice() >= 0;
     }
 
     private static void applyBuiltinHotfixes() {
         for (String itemId : EXTRAORDINARY_ITEMS) {
-            Override override = OVERRIDES.get(itemId);
+            Override override = OVERRIDES.get(normalizeItemId(itemId));
             if (override != null && override.rarity() >= 5) {
                 continue;
             }
-            OVERRIDES.put(itemId, new Override(
+            OVERRIDES.put(normalizeItemId(itemId), new Override(
                     5,
                     override == null ? -1 : override.importance(),
                     override == null ? -1 : override.elasticity(),
@@ -104,10 +109,14 @@ public final class CommodityConfigLoader {
         }
 
         // Sailboats should always have an explicit market model instead of falling back to FOOD.
-        Override sailboat = OVERRIDES.get(SAILBOAT_ITEM_ID);
+        Override sailboat = OVERRIDES.get(normalizeItemId(SAILBOAT_ITEM_ID));
         if (sailboat == null) {
-            OVERRIDES.put(SAILBOAT_ITEM_ID, new Override(2, -1, -1, -1, 200, "luxury"));
+            OVERRIDES.put(normalizeItemId(SAILBOAT_ITEM_ID), new Override(2, -1, -1, -1, 200, "luxury"));
         }
+    }
+
+    private static String normalizeItemId(String itemId) {
+        return itemId == null ? "" : itemId.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private static String defaultJson() {

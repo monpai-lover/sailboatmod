@@ -58,7 +58,13 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
             }
             RoadPlannerAutoCompleteResult result = service.complete(packet.start(), packet.destination(), packet.manualNodes(), packet.spacingBlocks());
             ModNetwork.CHANNEL.sendTo(
-                    new RoadPlannerAutoCompleteResultPacket(packet.sessionId(), result.success(), result.nodes(), result.segmentTypes(), result.message()),
+                    new RoadPlannerAutoCompleteResultPacket(
+                            packet.sessionId(),
+                            result.success(),
+                            result.nodes(),
+                            result.segmentTypes(),
+                            result.message(),
+                            result.terrainSamples()),
                     player.connection.connection,
                     NetworkDirection.PLAY_TO_CLIENT
             );

@@ -7,7 +7,9 @@
   selectedMarketId: "",
   selectedCommodityKey: "",
   activeProductTab: "browse",
-  accessPanelOpen: localStorage.getItem("marketWebAccessPanelOpen") !== "0",
+  browseOrderView: localStorage.getItem("marketWebBrowseOrderView") || "purchase",
+  accessPanelOpen: localStorage.getItem("marketWebAccessPanelOpenV2") === "1",
+  walletCollapsed: localStorage.getItem("marketWebWalletCollapsed") !== "0",
   activeChartTimeframe: localStorage.getItem("marketWebChartTimeframe") || "1h",
   chartIndicators: loadStoredJson("marketWebChartIndicators", {
     ma5: true,
@@ -77,7 +79,10 @@ const commodityIconCache = new Map();
 const commodityIconRequests = new Map();
 const commodityIconBatchRequests = new Map();
 const COMMODITY_ICON_BATCH_SIZE = 24;
-const PAGE_ROUTES = new Set(["browse", "inventory", "sell", "buy", "chart", "index"]);
+let buyOrderResolveTimer = 0;
+let buyOrderResolveSequence = 0;
+const PAGE_ROUTES = new Set(["browse", "inventory", "sell", "buy", "demand", "chart", "index", "map"]);
+const BROWSE_ORDER_VIEWS = new Set(["purchase", "demand"]);
 const CATALOG_SORT_MODES = new Set(["name", "price", "time", "quantity"]);
 const CATALOG_CATEGORY_ORDER = ["wood", "luxury", "food", "fishery", "livestock", "ore", "gems", "metal", "tools", "spices", "plant", "crop", "textile", "material", "construction", "building", "decoration", "furniture", "lighting", "flooring", "landscaping", "machinery", "mob_drop", "alchemy", "magic", "nether", "end", "treasure", "redstone", "utility", "weapon", "armor", "other"];
 const CATALOG_CATEGORY_GROUP_ORDER = ["resource", "building", "trade", "combat", "mystic", "other"];
@@ -152,6 +157,7 @@ const els = {
   accessToggle: document.querySelector("#access-toggle"),
   accessToggleLabel: document.querySelector("#access-toggle-label"),
   sessionStatusInline: document.querySelector("#session-status-inline"),
+  walletDock: document.querySelector("#wallet-dock"),
   accessPanel: document.querySelector("#access-panel"),
   portalKicker: document.querySelector("#portal-kicker"),
   authTitle: document.querySelector("#auth-title"),
@@ -210,7 +216,8 @@ function persistCatalogFilters() {
 
 function setAccessPanelOpen(open) {
   state.accessPanelOpen = !!open;
-  localStorage.setItem("marketWebAccessPanelOpen", state.accessPanelOpen ? "1" : "0");
+  localStorage.setItem("marketWebAccessPanelOpenV2", state.accessPanelOpen ? "1" : "0");
+  localStorage.removeItem("marketWebAccessPanelOpen");
   if (els.accessPanel) {
     els.accessPanel.hidden = !state.accessPanelOpen;
   }
@@ -225,6 +232,16 @@ function setAccessPanelOpen(open) {
 function normalizePageRoute(value) {
   const route = String(value || "").trim().toLowerCase();
   return PAGE_ROUTES.has(route) ? route : "browse";
+}
+
+function normalizeBrowseOrderView(value) {
+  const view = String(value || "").trim().toLowerCase();
+  return BROWSE_ORDER_VIEWS.has(view) ? view : "purchase";
+}
+
+function setBrowseOrderView(view) {
+  state.browseOrderView = normalizeBrowseOrderView(view);
+  localStorage.setItem("marketWebBrowseOrderView", state.browseOrderView);
 }
 
 function routePath(route = state.activeProductTab) {
@@ -407,15 +424,38 @@ const I18N = {
     market_overview: "Market Overview",
     explore_tab: "Explore",
     trade_tab: "Trade",
+    demand_tab: "Buy Orders",
     analytics_tab: "Analytics",
+    map_tab: "MAP",
     explore_hint: "Browse catalog, compare prices, and jump between goods.",
     trade_hint: "Buy, list, claim credits, and manage demand from one lane.",
+    demand_hint: "Create buy orders directly by item id and actual unit price.",
     inventory_hint: "Inspect stock that can be listed or dispatched.",
     analytics_hint: "Read price history, index movement, and macro signals.",
+    map_hint: "Reserved for the world map, territories, market locations, and logistics tracking.",
+    map_reserved_kicker: "Map Module",
+    map_reserved_title: "World market map reserved",
+    map_reserved_body: "The map page is reserved for the next phase. It will use sampled minimap data only, with territory overlays and active logistics traces when the backend layer is ready.",
+    map_reserved_unknown: "Unknown terrain will stay black.",
+    map_reserved_markets: "Market markers will appear here.",
+    map_reserved_routes: "Active land and sea logistics will be tracked here.",
+    map_live_title: "World Trade Map",
+    map_layer_terrain: "Terrain",
+    map_layer_territories: "Territories",
+    map_layer_markets: "Markets",
+    map_layer_shipments: "Logistics",
+    map_focus_market: "Focus market",
+    map_no_shipments: "No active shipments.",
+    map_unknown_tile: "Unknown terrain",
     signin_status_guest: "Sign in",
     signin_status_ready: "Account Center",
     browse_goods: "Browse Goods",
     commodity_shelf: "Commodity Shelf",
+    browse_order_mode: "Browse order type",
+    browse_purchase_orders: "Purchase",
+    browse_demand_orders: "Buy Requests",
+    no_purchase_rows: "No active sell listings match this filter.",
+    no_demand_rows: "No active buy requests match this filter.",
     search_placeholder: "Search item name or commodity key",
     price_range: "Price Range",
     min_price: "Min Price",
@@ -487,6 +527,17 @@ const I18N = {
     sell_item: "Sell Item",
     create_listing: "Create listing",
     create_buy_order: "Create buy order",
+    buy_order_item_id: "Item ID",
+    buy_order_item_help: "Enter any registered item id, even if it has never appeared in this market.",
+    buy_order_item_preview: "Resolved item",
+    buy_order_item_resolving: "Resolving item...",
+    buy_order_item_not_found: "No registered item matches this id.",
+    buy_order_item_valid: "Ready for buy order",
+    buy_order_tab: "Buy Orders",
+    buy_order_quantity_label: "Buy order quantity",
+    buy_order_unit_price: "Buy order unit price",
+    buy_order_price_help: "Enter the actual unit price you want to pay. The system converts it to bp automatically.",
+    buy_order_bp_preview: "Derived bp",
     claim_credits: "Claim credits",
     retry_dispatch: "Retry dispatch",
     terminal_type_label: "Dispatch terminal",
@@ -505,9 +556,11 @@ const I18N = {
     seller_note: "Seller note",
     manual_price: "Manual unit price",
     manual_price_help: "Enter your own unit price. The server converts it to a bp offset and only accepts prices inside the allowed range.",
+    manual_price_free_help: "This item has no configured price model. You can choose any unit price above 0.",
     listing_price_preview: "Unit price",
     listing_bp_preview: "Derived bp",
     listing_price_range: "Allowed range",
+    listing_price_free: "Free pricing",
     listing_price_invalid: "Price is out of range.",
     suggested_word: "suggested",
     min_bp: "Min bp",
@@ -586,6 +639,23 @@ const I18N = {
     stock_rows: "storage rows",
     owner_word: "Owner",
     town_word: "Town",
+    wallet_balance: "Market wallet",
+    wallet_balance_hint: "Purchases and buy orders spend the market wallet. Move funds between cash, wallet, and treasury here.",
+    wallet_reserved: "Reserved",
+    wallet_total: "Wallet total",
+    cash_balance: "Cash",
+    treasury_balance: "Treasury",
+    wallet_transfer_amount: "Transfer amount",
+    wallet_transfer_placeholder: "Enter transfer amount",
+    wallet_transfer_hint: "Withdrawals go to the economy plugin when available. Without one, they become gold in your private warehouse storage.",
+    wallet_topbar_hint: "Selected market account",
+    wallet_expand: "Expand wallet",
+    wallet_collapse: "Collapse wallet",
+    wallet_cash_to_wallet: "Cash/Warehouse gold -> Wallet",
+    wallet_wallet_to_cash: "Wallet -> Cash",
+    wallet_wallet_to_treasury: "Wallet -> Treasury",
+    wallet_treasury_to_wallet: "Treasury -> Wallet",
+    wallet_claim_to_wallet: "Claim credits -> Wallet",
     pending_credits: "Pending credits",
     commodity_types: "Commodity types",
     storage_units: "Storage units",
@@ -665,15 +735,38 @@ Object.assign(I18N["zh-CN"], I18N["en-US"], {
   market_overview: "市场概览",
   explore_tab: "浏览",
   trade_tab: "交易",
+  demand_tab: "求购",
   analytics_tab: "分析",
+  map_tab: "MAP",
   explore_hint: "浏览目录、比较价格并快速切换商品。",
   trade_hint: "集中处理购买、上架、领款和求购操作。",
+  demand_hint: "直接按物品 ID 和实际单价创建求购单。",
   inventory_hint: "查看可上架或可发运的库存。",
   analytics_hint: "查看价格走势、指数变化和宏观信号。",
+  map_hint: "预留给世界地图、领地范围、市场位置和物流追踪。",
+  map_reserved_kicker: "地图模块",
+  map_reserved_title: "世界市场地图已预留",
+  map_reserved_body: "这个 MAP 大分页先作为下一阶段入口保留。后续会只复用已采样的小地图数据，接入领地覆盖层和进行中的物流轨迹。",
+  map_reserved_unknown: "未知地形保持黑色。",
+  map_reserved_markets: "市场标记会显示在这里。",
+  map_reserved_routes: "陆路和水路进行中物流会在这里追踪。",
+  map_live_title: "世界贸易地图",
+  map_layer_terrain: "地形",
+  map_layer_territories: "领地",
+  map_layer_markets: "市场",
+  map_layer_shipments: "物流",
+  map_focus_market: "聚焦市场",
+  map_no_shipments: "暂无进行中的物流。",
+  map_unknown_tile: "未知地形",
   signin_status_guest: "立即登录",
   signin_status_ready: "账户中心",
   browse_goods: "浏览商品",
   commodity_shelf: "商品货架",
+  browse_order_mode: "浏览订单类型",
+  browse_purchase_orders: "购买",
+  browse_demand_orders: "求购",
+  no_purchase_rows: "没有符合筛选条件的在售商品。",
+  no_demand_rows: "没有符合筛选条件的求购订单。",
   search_placeholder: "搜索物品名或商品编号",
   price_range: "价格区间",
   min_price: "最低价",
@@ -745,6 +838,17 @@ Object.assign(I18N["zh-CN"], I18N["en-US"], {
   sell_item: "上架商品",
   create_listing: "创建挂单",
   create_buy_order: "创建求购",
+  buy_order_item_id: "物品 ID",
+  buy_order_item_help: "可以输入任意已注册物品 ID，即使它从未在市场出现过。",
+  buy_order_item_preview: "已识别物品",
+  buy_order_item_resolving: "正在识别物品...",
+  buy_order_item_not_found: "没有找到这个已注册物品 ID。",
+  buy_order_item_valid: "可以创建求购",
+  buy_order_tab: "求购",
+  buy_order_quantity_label: "求购数量",
+  buy_order_unit_price: "求购单价",
+  buy_order_price_help: "输入你愿意支付的实际单价，系统会自动换算为 bp。",
+  buy_order_bp_preview: "系统换算 bp",
   claim_credits: "领取货款",
   retry_dispatch: "重试发货",
   terminal_type_label: "发货终端",
@@ -763,9 +867,11 @@ Object.assign(I18N["zh-CN"], I18N["en-US"], {
   seller_note: "卖家备注",
   manual_price: "手动单价",
   manual_price_help: "直接输入想要的单价。服务端会自动换算为 bp 偏移，并只接受允许范围内的价格。",
+  manual_price_free_help: "该物品没有配置价格模型。玩家可以输入任意大于 0 的单价。",
   listing_price_preview: "单价预览",
   listing_bp_preview: "推导 bp",
   listing_price_range: "允许范围",
+  listing_price_free: "自由定价",
   listing_price_invalid: "定价不在允许范围内。",
   suggested_word: "建议",
   min_bp: "最低 bp",
@@ -844,6 +950,23 @@ Object.assign(I18N["zh-CN"], I18N["en-US"], {
   stock_rows: "库存条目",
   owner_word: "所有者",
   town_word: "城镇",
+  wallet_balance: "市场钱包",
+  wallet_balance_hint: "购买商品和发布求购都会从市场钱包扣款，可在这里和现金、国库互转。",
+  wallet_reserved: "冻结余额",
+  wallet_total: "钱包合计",
+  cash_balance: "现金",
+  treasury_balance: "国库",
+  wallet_transfer_amount: "转账金额",
+  wallet_transfer_placeholder: "输入转账金额",
+  wallet_transfer_hint: "提现到个人账户时，有经济插件会进入插件余额；没有插件则转成金存入绑定仓库的私人仓储。",
+  wallet_topbar_hint: "当前市场账户",
+  wallet_expand: "展开钱包",
+  wallet_collapse: "收起钱包",
+  wallet_cash_to_wallet: "现金/仓库金 -> 钱包",
+  wallet_wallet_to_cash: "钱包 -> 现金",
+  wallet_wallet_to_treasury: "钱包 -> 国库",
+  wallet_treasury_to_wallet: "国库 -> 钱包",
+  wallet_claim_to_wallet: "待领款 -> 钱包",
   pending_credits: "待领货款",
   commodity_types: "商品种类",
   storage_units: "仓储总量",
@@ -1118,15 +1241,48 @@ async function login() {
   }
 }
 
+function fallbackCopyText(value) {
+  const text = String(value || "");
+  if (!text || !document?.body) {
+    return false;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (_) {
+    copied = false;
+  }
+  textarea.remove();
+  return copied;
+}
+
 async function copyText(value, successMessage) {
   if (!value) {
     return;
   }
   try {
+    if (!navigator?.clipboard?.writeText) {
+      throw new Error("Clipboard API unavailable");
+    }
     await navigator.clipboard.writeText(value);
     setStatus(successMessage || t("copied"));
   } catch (_) {
-    setStatus(t("clipboard_failed"), true);
+    if (fallbackCopyText(value)) {
+      setStatus(successMessage || t("copied"));
+    } else {
+      setStatus(t("clipboard_failed"), true);
+    }
   }
 }
 
@@ -1242,164 +1398,6 @@ async function postMarketAction(suffix, payload = {}) {
   }
 }
 
-function renderSession() {
-  if (!state.session) {
-    els.sessionStatus.textContent = `${t("not_signed_in")} ${t("guest_mode_ready")}`;
-    if (els.sessionPill) {
-      els.sessionPill.textContent = t("guest_word");
-    }
-    return;
-  }
-
-  const accountPart = state.session.accountBound && state.session.accountUsername
-    ? ` 路 @${state.session.accountUsername}`
-    : "";
-  els.sessionStatus.textContent = `${state.session.playerName} (${state.session.online ? t("online_word") : t("offline_word")})${accountPart}`;
-  if (els.sessionPill) {
-    els.sessionPill.textContent = state.session.online ? `${state.session.playerName} ${t("online_word")}` : `${state.session.playerName} ${t("connected_word")}`;
-  }
-}
-
-function renderMarkets() {
-  if (!state.markets.length) {
-    els.marketList.innerHTML = `<div class="empty-state">${escapeHtml(t("no_markets"))}</div>`;
-    return;
-  }
-
-  els.marketList.innerHTML = state.markets.map((market) => `
-    <button type="button" class="market-card ${market.marketId === state.selectedMarketId ? "active" : ""}" data-market-id="${escapeHtml(market.marketId)}">
-      <p class="panel-meta">${market.loaded ? t("live_terminal") : t("chunk_cold")}</p>
-      <h3>${escapeHtml(market.marketName)}</h3>
-      <div class="muted">${escapeHtml(market.ownerName || "-")}</div>
-      <div class="muted">${escapeHtml(market.dimensionId)} @ ${escapeHtml(market.position)}</div>
-      <div class="market-meta">
-        ${market.canManage ? `<span class="pill success">${escapeHtml(t("manage"))}</span>` : `<span class="pill">${escapeHtml(t("view"))}</span>`}
-        ${market.loaded ? `<span class="pill">${escapeHtml(t("loaded"))}</span>` : `<span class="pill warning">${escapeHtml(t("cold"))}</span>`}
-      </div>
-    </button>
-  `).join("");
-
-  document.querySelectorAll("[data-market-id]").forEach((node) => {
-    node.addEventListener("click", () => {
-      state.commodityQuery = "";
-      state.activeProductTab = "browse";
-      state.selectedCommodityKey = "";
-      state.catalogHoverGroup = "all";
-      state.catalogExpandedGroup = currentCatalogActiveGroup();
-      loadMarketDetail(node.getAttribute("data-market-id") || "", "push");
-    });
-  });
-}
-
-function renderDetail() {
-  const bars = [];
-  if (state.status) {
-    bars.push(`<div class="status-bar">${escapeHtml(state.status)}</div>`);
-  }
-  if (state.error) {
-    bars.push(`<div class="status-bar error">${escapeHtml(state.error)}</div>`);
-  }
-
-  if (!state.detail) {
-    els.marketDetail.innerHTML = `${bars.join("")}<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`;
-    return;
-  }
-
-  const detail = state.detail;
-  const canManage = !!detail.canManage;
-  if (state.activeProductTab === "inventory" && !canManage) {
-    state.activeProductTab = "browse";
-  }
-  const canAct = !!state.session;
-  const catalog = buildCommodityCatalog(detail);
-  const inventoryCatalog = canManage ? buildInventoryCatalog(detail) : [];
-  const browseCatalog = filterCatalog(catalog);
-  const inventoryFilteredCatalog = filterCatalog(inventoryCatalog);
-  const inventorySelectedCommodity = findCommodityByKey(inventoryCatalog, state.selectedCommodityKey);
-  const selectedCommodity = state.activeProductTab === "inventory"
-    ? findCommodityByKey(catalog, state.selectedCommodityKey)
-    : getSelectedCommodity(browseCatalog, catalog);
-  syncRouteUrl(true);
-
-  const routeNav = `
-    <div class="tab-strip route-strip">
-      ${routeButton("browse", t("browse_tab"))}
-      ${canManage ? routeButton("inventory", t("inventory_tab")) : ""}
-      ${routeButton("buy", t("buying"))}
-      ${routeButton("sell", t("selling"))}
-      ${routeButton("chart", t("chart_tab"))}
-      ${routeButton("index", t("market_index_tab"))}
-    </div>
-  `;
-
-  const browseSection = renderCatalogShelf({
-    catalog,
-    filteredCatalog: browseCatalog,
-    kicker: t("browse_goods"),
-    title: t("commodity_shelf"),
-    emptyMessage: t("no_match"),
-    cardRenderer: (commodity) => renderCommodityCard(commodity)
-  });
-  const inventorySection = renderCatalogShelf({
-    catalog: inventoryCatalog,
-    filteredCatalog: inventoryFilteredCatalog,
-    kicker: t("inventory_tab"),
-    title: t("inventory_title"),
-    emptyMessage: t("no_inventory_rows"),
-    cardRenderer: (commodity) => renderInventoryCard(commodity)
-  });
-
-  els.marketDetail.innerHTML = `
-    ${bars.join("")}
-    <div class="market-shell">
-      <section class="market-overview">
-        <div class="overview-banner">
-          <div class="detail-header">
-            <div class="overview-title">
-              <p class="section-kicker">${escapeHtml(t("market_overview"))}</p>
-              <h2>${escapeHtml(detail.marketName)}</h2>
-              <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} 路 ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} 路 ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
-            </div>
-            <div class="market-meta">
-              <span class="pill ${detail.linkedDock ? "success" : "warning"}">${detail.linkedDock ? escapeHtml(t("dock_linked")) : escapeHtml(t("no_linked_dock"))}</span>
-              <span class="pill">${canManage ? escapeHtml(t("manager_access")) : escapeHtml(t("read_only"))}</span>
-              <span class="pill">${canAct ? escapeHtml(t("manage")) : escapeHtml(t("browse_only"))}</span>
-              <span class="pill">${number((detail.listings || []).length)} ${escapeHtml(t("listings_word"))}</span>
-            </div>
-          </div>
-          <div class="metric-strip">
-            ${metricBox(t("pending_credits"), number(detail.pendingCredits))}
-            ${metricBox(t("commodity_types"), number(catalog.length))}
-            ${metricBox(t("storage_units"), number(detail.stockpileTotalUnits))}
-            ${metricBox(t("open_demand"), number(detail.openDemandUnits))}
-            ${metricBox(t("my_buy_orders_metric"), number((detail.buyOrderEntries || []).length))}
-            ${state.settings.showTownEconomySummary ? metricBox(t("net_balance"), number(detail.netBalance)) : ""}
-          </div>
-        </div>
-      </section>
-
-      ${canAct ? "" : `<div class="status-bar">${escapeHtml(t("guest_mode_ready"))} ${escapeHtml(t("sign_in_to_trade"))}</div>`}
-
-      <section class="goods-market">
-        ${routeNav}
-        ${state.activeProductTab === "browse"
-          ? browseSection
-          : (state.activeProductTab === "inventory"
-            ? (inventorySelectedCommodity
-              ? renderInventoryDetailPage(inventorySelectedCommodity, detail, canManage, canAct)
-              : inventorySection)
-          : (selectedCommodity
-            ? renderCommodityDetailPage(selectedCommodity, detail, canManage, canAct)
-            : `<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`))}
-      </section>
-    </div>
-  `;
-
-  bindDetailActions();
-  hydrateCommodityIcons();
-  hydrateLightweightChart();
-}
-
 function bindDetailActions() {
   const search = document.querySelector("#commodity-search");
   if (search) {
@@ -1424,14 +1422,10 @@ function bindDetailActions() {
         state.catalogExpandedGroup = "all";
         state.catalogHoverGroup = "all";
       } else {
-        const hoverEnabled = supportsCatalogGroupHover();
-        const isSameExpanded = normalizeCatalogGroup(state.catalogExpandedGroup) === group;
-        const isSameGroupFilter = normalizeCatalogGroup(state.catalogFilters.categoryGroup) === group
-          && normalizeCatalogCategory(state.catalogFilters.category) === "all";
         state.catalogFilters.categoryGroup = group;
         state.catalogFilters.category = "all";
-        state.catalogExpandedGroup = !hoverEnabled && isSameExpanded && isSameGroupFilter ? "all" : group;
-        state.catalogHoverGroup = hoverEnabled ? group : "all";
+        state.catalogExpandedGroup = group;
+        state.catalogHoverGroup = "all";
       }
       persistCatalogFilters();
       renderDetailPreservingScroll();
@@ -1445,36 +1439,11 @@ function bindDetailActions() {
       state.catalogFilters.categoryGroup = group;
       state.catalogFilters.category = category;
       state.catalogExpandedGroup = group;
-      state.catalogHoverGroup = supportsCatalogGroupHover() ? group : "all";
+      state.catalogHoverGroup = "all";
       persistCatalogFilters();
       renderDetailPreservingScroll();
     });
   });
-
-  document.querySelectorAll("[data-catalog-group]").forEach((node) => {
-    node.addEventListener("mouseenter", () => {
-      if (!supportsCatalogGroupHover()) {
-        return;
-      }
-      const group = normalizeCatalogGroup(node.getAttribute("data-catalog-group") || "all");
-      if (group === "all" || state.catalogHoverGroup === group) {
-        return;
-      }
-      state.catalogHoverGroup = group;
-      renderDetailPreservingScroll();
-    });
-  });
-
-  const groupStrip = document.querySelector("#catalog-group-strip");
-  if (groupStrip) {
-    groupStrip.addEventListener("mouseleave", () => {
-      if (!supportsCatalogGroupHover() || normalizeCatalogGroup(state.catalogHoverGroup) === "all") {
-        return;
-      }
-      state.catalogHoverGroup = "all";
-      renderDetailPreservingScroll();
-    });
-  }
 
   document.querySelectorAll("[data-catalog-rarity]").forEach((node) => {
     node.addEventListener("click", () => {
@@ -1501,6 +1470,15 @@ function bindDetailActions() {
       renderDetailPreservingScroll();
     });
   }
+
+  document.querySelectorAll("[data-browse-order-view]").forEach((node) => {
+    node.addEventListener("click", () => {
+      setBrowseOrderView(node.getAttribute("data-browse-order-view") || "purchase");
+      state.activeProductTab = "browse";
+      syncRouteUrl(false);
+      renderDetailPreservingScroll();
+    });
+  });
 
   document.querySelectorAll("[data-card-commodity-key]").forEach((node) => {
     node.addEventListener("click", () => {
@@ -1620,12 +1598,28 @@ function bindDetailActions() {
 
   const buyOrderButton = document.querySelector("#buy-order-button");
   if (buyOrderButton) {
-    buyOrderButton.addEventListener("click", () => postMarketAction("/buy-orders", {
-      commodityKey: valueOf("#buy-order-key"),
-      quantity: numberValue("#buy-order-quantity", 1),
-      minPriceBp: numberValue("#buy-order-min", -1000),
-      maxPriceBp: numberValue("#buy-order-max", 1000)
-    }));
+    attachBuyOrderItemResolver();
+    buyOrderButton.addEventListener("click", () => {
+      const resolvedKey = normalizeCommodityKey(buyOrderButton.getAttribute("data-resolved-commodity-key") || valueOf("#buy-order-key"));
+      if (buyOrderButton.getAttribute("data-item-valid") !== "true" || !resolvedKey) {
+        setBuyOrderPreviewError(t("buy_order_item_not_found"));
+        return;
+      }
+      const referencePrice = numberValue("#buy-order-reference-price", 1);
+      const unitPrice = numberValue("#buy-order-unit-price", referencePrice);
+      const derivedBp = buyOrderPriceToBp(unitPrice, referencePrice);
+      postMarketAction("/buy-orders", {
+        commodityKey: resolvedKey,
+        quantity: numberValue("#buy-order-quantity", 1),
+        minPriceBp: derivedBp,
+        maxPriceBp: derivedBp
+      });
+    });
+  }
+  const buyOrderUnitPrice = document.querySelector("#buy-order-unit-price");
+  if (buyOrderUnitPrice) {
+    buyOrderUnitPrice.addEventListener("input", updateBuyOrderPricePreview);
+    updateBuyOrderPricePreview();
   }
 
   const claimCreditsButton = document.querySelector("#claim-credits-button");
@@ -1706,12 +1700,6 @@ function normalizeCatalogGroup(value) {
     return "all";
   }
   return CATALOG_CATEGORY_GROUP_ORDER.includes(normalized) ? normalized : "other";
-}
-
-function supportsCatalogGroupHover() {
-  return typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 }
 
 function normalizeCatalogRarity(value) {
@@ -1885,12 +1873,9 @@ function currentCatalogActiveGroup() {
 }
 
 function resolvedCatalogExpandedGroup(catalog) {
-  const hovered = supportsCatalogGroupHover() ? normalizeCatalogGroup(state.catalogHoverGroup) : "all";
   const explicit = normalizeCatalogGroup(state.catalogExpandedGroup);
   const active = currentCatalogActiveGroup();
-  const candidate = hovered !== "all"
-    ? hovered
-    : (explicit !== "all" ? explicit : active);
+  const candidate = explicit !== "all" ? explicit : active;
   return candidate !== "all" && categoriesForGroup(candidate, catalog).length ? candidate : "all";
 }
 
@@ -1923,8 +1908,83 @@ function rarityLabel(rarity) {
   return rarity === "all" ? t("all_rarities") : t(`rarity_${rarityKey(rarity)}`);
 }
 
+function catalogFallbackIconType(commodityKey) {
+  const key = normalizeCommodityKey(commodityKey).toLowerCase();
+  if (!key || key.includes("chest") || key.includes("bundle")) {
+    return "storage";
+  }
+  if (key.includes("sword") || key.includes("axe") || key.includes("bow") || key.includes("trident")) {
+    return "weapon";
+  }
+  if (key.includes("helmet") || key.includes("chestplate") || key.includes("leggings") || key.includes("boots") || key.includes("shield")) {
+    return "armor";
+  }
+  if (key.includes("ore") || key.includes("coal")) {
+    return "ore";
+  }
+  if (key.includes("diamond") || key.includes("emerald") || key.includes("amethyst")) {
+    return "gem";
+  }
+  if (key.includes("ingot") || key.includes("nugget")) {
+    return "metal";
+  }
+  if (key.includes("log") || key.includes("wood") || key.includes("sapling")) {
+    return "wood";
+  }
+  if (key.includes("bread") || key.includes("apple") || key.includes("wheat") || key.includes("sugar")) {
+    return "food";
+  }
+  if (key.includes("cod") || key.includes("salmon") || key.includes("fish")) {
+    return "fish";
+  }
+  if (key.includes("brick") || key.includes("stone")) {
+    return "building";
+  }
+  if (key.includes("redstone")) {
+    return "redstone";
+  }
+  if (key.includes("bottle") || key.includes("potion")) {
+    return "alchemy";
+  }
+  if (key.includes("enchant") || key.includes("ender") || key.includes("blaze")) {
+    return "mystic";
+  }
+  return "default";
+}
+
+function catalogFallbackIconPath(type) {
+  const paths = {
+    storage: '<path d="M6.5 9.5h11v8h-11z"/><path d="M8 9.5V7l1.3-1.2h5.4L16 7v2.5"/><path d="M7.5 12h9"/>',
+    weapon: '<path d="M14.6 4.8l4.6 4.6-1.8 1.8-1.5-1.5-6.8 6.8-2.6.9.9-2.6 6.8-6.8-1.4-1.4z"/><path d="M5.3 18.7l3 3"/><path d="M11.9 9.1l3 3"/>',
+    armor: '<path d="M8 5.5l4-1.5 4 1.5 2 3.5-1.7 1.1V19H7.7v-8.9L6 9z"/><path d="M9.4 6.1c.4 1.2 1.3 2 2.6 2s2.2-.8 2.6-2"/>',
+    ore: '<path d="M6.3 8.4l4.1-3.1 5.1.8 2.2 4.5-1.8 5.2-5.4 2.2-4.7-3.1z"/><path d="M10.1 9.1l2.3-.9 1.5 1.8-.8 2.2-2.4.7-1.6-1.6z"/>',
+    gem: '<path d="M8.4 5.5h7.2l2.9 4-6.5 9-6.5-9z"/><path d="M8.4 5.5l3.6 13 3.6-13"/><path d="M5.5 9.5h13"/>',
+    metal: '<path d="M7 9.2l2.1-3.7h5.8L17 9.2 15.2 18H8.8z"/><path d="M8.2 12h7.6"/><path d="M9 15h6"/>',
+    wood: '<path d="M7.5 6.5h9v11h-9z"/><path d="M10 7v10"/><path d="M13.8 7v10"/><path d="M8.7 10.5h6.6"/><path d="M8.7 14.2h6.6"/>',
+    food: '<path d="M6.5 13c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5v4.5h-11z"/><path d="M8.2 12.8h7.6"/><path d="M10 7.7c0-1.6.8-2.6 2-3.2"/>',
+    fish: '<path d="M5 12s3-4 7.2-4c3 0 5.4 2.2 6.8 4-1.4 1.8-3.8 4-6.8 4C8 16 5 12 5 12z"/><path d="M5 12l-2.2-2.2v4.4z"/><circle cx="15" cy="11" r=".8"/>',
+    building: '<path d="M5.5 7.5h13v10h-13z"/><path d="M5.5 11h13"/><path d="M5.5 14.5h13"/><path d="M9.5 7.5v3.5"/><path d="M14.5 11v3.5"/><path d="M9.5 14.5v3"/>',
+    redstone: '<path d="M12 4.5l6.5 4v7L12 19.5l-6.5-4v-7z"/><path d="M12 8.2v7.6"/><path d="M8.7 10.1l6.6 3.8"/><path d="M15.3 10.1l-6.6 3.8"/>',
+    alchemy: '<path d="M10 4.5h4"/><path d="M11 4.5v4.1l-4 6.5c-1 1.7.2 3.9 2.2 3.9h5.6c2 0 3.2-2.2 2.2-3.9l-4-6.5V4.5"/><path d="M8.4 15h7.2"/>',
+    mystic: '<path d="M12 4.5l1.7 4.2 4.3.3-3.3 2.8 1.1 4.2-3.8-2.3L8.2 16l1.1-4.2L6 9l4.3-.3z"/>',
+    default: '<path d="M6.5 7.5h11v10h-11z"/><path d="M8.5 9.5h7"/><path d="M8.5 12h7"/><path d="M8.5 14.5h4.5"/>'
+  };
+  return paths[type] || paths.default;
+}
+
+function renderCatalogFallbackIconSvg(commodityKey, label) {
+  const type = catalogFallbackIconType(commodityKey);
+  return `
+    <svg class="catalog-fallback-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        ${catalogFallbackIconPath(type)}
+      </g>
+    </svg>
+    <span class="sr-only">${escapeHtml(label)}</span>
+  `;
+}
+
 function renderCatalogIconShell(commodityKey, label, className = "catalog-category-icon") {
-  const fallback = escapeHtml(iconLetter(label));
   const cached = commodityIconCache.get(commodityKey);
   if (cached?.status === "loaded" && cached.src) {
     return `
@@ -1935,7 +1995,7 @@ function renderCatalogIconShell(commodityKey, label, className = "catalog-catego
   }
   return `
       <span class="${escapeHtml(className)} icon-pending" data-icon-shell data-commodity-key="${escapeHtml(commodityKey)}" data-display-name="${escapeHtml(label)}">
-        <span class="goods-art-fallback">${fallback}</span>
+        ${renderCatalogFallbackIconSvg(commodityKey, label)}
       </span>
   `;
 }
@@ -1993,7 +2053,23 @@ function renderCatalogRarityButton(rarity, catalog) {
   `;
 }
 
-function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMessage, cardRenderer }) {
+function renderBrowseOrderModeSwitch(purchaseCount, demandCount) {
+  const current = normalizeBrowseOrderView(state.browseOrderView);
+  return `
+    <div class="browse-order-mode" role="tablist" aria-label="${escapeHtml(t("browse_order_mode"))}">
+      <button type="button" class="${current === "purchase" ? "active" : ""}" data-browse-order-view="purchase" role="tab" aria-selected="${current === "purchase" ? "true" : "false"}">
+        <span>${escapeHtml(t("browse_purchase_orders"))}</span>
+        <strong>${number(purchaseCount)}</strong>
+      </button>
+      <button type="button" class="${current === "demand" ? "active" : ""}" data-browse-order-view="demand" role="tab" aria-selected="${current === "demand" ? "true" : "false"}">
+        <span>${escapeHtml(t("browse_demand_orders"))}</span>
+        <strong>${number(demandCount)}</strong>
+      </button>
+    </div>
+  `;
+}
+
+function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMessage, cardRenderer, headExtra = "" }) {
   const groups = catalogGroups(catalog);
   const expandedGroup = resolvedCatalogExpandedGroup(catalog);
   const subcategories = expandedGroup === "all" ? [] : categoriesForGroup(expandedGroup, catalog);
@@ -2004,9 +2080,10 @@ function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMess
           <p class="section-kicker">${escapeHtml(kicker)}</p>
           <h3>${escapeHtml(title)}</h3>
         </div>
+        ${headExtra}
       </div>
       <div class="catalog-navigation">
-        <div id="catalog-group-strip" class="catalog-category-strip ${supportsCatalogGroupHover() ? "hover-enabled" : "tap-enabled"}">
+        <div id="catalog-group-strip" class="catalog-category-strip tap-enabled">
           ${renderCatalogGroupButton("all", catalog)}
           ${groups.map((group) => renderCatalogGroupButton(group, catalog)).join("")}
         </div>
@@ -2014,7 +2091,7 @@ function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMess
           <div class="catalog-subcategory-strip" data-catalog-subcategory-strip>
             <div class="catalog-subcategory-head">
               <span class="toolbar-label">${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
-              <span class="catalog-subcategory-hint">${escapeHtml(t("all_types"))} 路 ${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
+              <span class="catalog-subcategory-hint">${escapeHtml(t("all_types"))} · ${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
             </div>
             <div class="catalog-subcategory-grid">
               ${subcategories.map((category) => renderCatalogSubcategoryButton(category, catalog)).join("")}
@@ -2259,6 +2336,24 @@ function filterCatalog(catalog) {
   return sortCatalog(filtered);
 }
 
+function purchaseBrowseCatalog(catalog) {
+  return (catalog || []).filter((commodity) => Number(commodity.sellUnits || 0) > 0 || Number(commodity.totalListings || 0) > 0);
+}
+
+function demandBrowseCatalog(catalog) {
+  return (catalog || []).filter((commodity) =>
+    Number(commodity.demandUnits || 0) > 0
+    || (commodity.buyBookEntries || []).length > 0
+    || (commodity.myBuyOrders || []).length > 0
+  );
+}
+
+function activeBrowseCatalog(catalog) {
+  return normalizeBrowseOrderView(state.browseOrderView) === "demand"
+    ? demandBrowseCatalog(catalog)
+    : purchaseBrowseCatalog(catalog);
+}
+
 function commodityChangeRatio(commodity) {
   const points = normalizedChartPoints(primaryChartSeriesForTimeframe(commodity, "1d"));
   if (points.length < 2) {
@@ -2496,7 +2591,7 @@ async function requestCommodityIconBatch(keys) {
           return;
         }
         if (missing.has(commodityKey)) {
-          commodityIconCache.set(commodityKey, { status: "failed", src: "" });
+          commodityIconCache.set(commodityKey, { status: "batch-missing", src: "" });
         }
       });
     }).catch(() => {
@@ -2590,6 +2685,7 @@ function applyCommodityIcon(shell, src) {
   if (fallback) {
     fallback.remove();
   }
+  shell.querySelectorAll(".catalog-fallback-svg").forEach((node) => node.remove());
   shell.classList.add("has-image");
 }
 
@@ -2629,9 +2725,9 @@ async function hydrateCommodityIcons() {
   });
 }
 
-function renderCommodityCard(commodity) {
+function renderCommodityBrowseCard(commodity, route, footerValue, footerLabel, extraBadge) {
   return `
-    <button type="button" class="goods-card ${commodity.commodityKey === state.selectedCommodityKey ? "active" : ""}" data-card-commodity-key="${escapeHtml(commodity.commodityKey)}" data-card-route="buy">
+    <button type="button" class="goods-card ${commodity.commodityKey === state.selectedCommodityKey && state.activeProductTab === route ? "active" : ""}" data-card-commodity-key="${escapeHtml(commodity.commodityKey)}" data-card-route="${escapeHtml(route)}">
       ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
       <div class="goods-card-topline">
         <span class="goods-category-tag">${escapeHtml(categoryLabel(commodity.category))}</span>
@@ -2642,14 +2738,38 @@ function renderCommodityCard(commodity) {
       <div class="goods-summary">
         <span class="goods-badge">${number(commodity.totalListings)} ${escapeHtml(t("selling"))}</span>
         <span class="goods-badge">${number(commodity.demandUnits)} ${escapeHtml(t("buying"))}</span>
-        <span class="goods-badge">${number(commodity.storageUnits)} ${escapeHtml(t("in_storage"))}</span>
+        <span class="goods-badge">${escapeHtml(extraBadge)}</span>
       </div>
       <div class="goods-card-footer">
-        <strong>${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
-        <span>${escapeHtml(t("lowest_sell"))}</span>
+        <strong>${footerValue == null ? "--" : number(footerValue)}</strong>
+        <span>${escapeHtml(footerLabel)}</span>
       </div>
     </button>
   `;
+}
+
+function renderPurchaseCommodityCard(commodity) {
+  return renderCommodityBrowseCard(
+    commodity,
+    "sell",
+    commodity.bestSell,
+    t("lowest_sell"),
+    `${number(commodity.sellUnits)} ${t("units_live")}`
+  );
+}
+
+function renderDemandCommodityCard(commodity) {
+  return renderCommodityBrowseCard(
+    commodity,
+    "demand",
+    commodity.bestBuy,
+    t("highest_buy"),
+    `${number(commodity.demandUnits)} ${t("units_wanted")}`
+  );
+}
+
+function renderCommodityCard(commodity) {
+  return renderPurchaseCommodityCard(commodity);
 }
 
 function renderInventoryCard(commodity) {
@@ -2690,6 +2810,21 @@ function preferredStorageEntry(storageEntries) {
   return (storageEntries || []).find((entry) => Number(entry?.quantity || 0) > 0) || (storageEntries || [])[0] || null;
 }
 
+function isPriceConstrained(entry) {
+  return entry?.priceConstrained !== false;
+}
+
+function listingPriceHelpKey(entry) {
+  return isPriceConstrained(entry) ? "manual_price_help" : "manual_price_free_help";
+}
+
+function listingPriceRangeText(entry, minAllowedUnitPrice, maxAllowedUnitPrice) {
+  if (!isPriceConstrained(entry)) {
+    return t("listing_price_free");
+  }
+  return `${t("listing_price_range")} ${number(minAllowedUnitPrice)} - ${number(maxAllowedUnitPrice)}`;
+}
+
 function renderStorageChoiceGrid(storageEntries, selectedStorageIndex, emptyMessage) {
   if (!(storageEntries || []).length) {
     return `<div class="empty-state compact">${escapeHtml(emptyMessage)}</div>`;
@@ -2728,6 +2863,7 @@ function renderCreateListingPanel(commodity, detail, canManage, canAct) {
   const suggestedUnitPrice = Math.max(1, Number(preferredStorage?.suggestedUnitPrice) || Number(commodity?.suggestedUnitPrice) || Number(commodity?.referencePrice) || 1);
   const minAllowedUnitPrice = Math.max(1, Number(preferredStorage?.minAllowedUnitPrice) || suggestedUnitPrice);
   const maxAllowedUnitPrice = Math.max(minAllowedUnitPrice, Number(preferredStorage?.maxAllowedUnitPrice) || minAllowedUnitPrice);
+  const priceRangeText = listingPriceRangeText(preferredStorage, minAllowedUnitPrice, maxAllowedUnitPrice);
   return `
     <div class="action-box">
       <div class="panel-head">
@@ -2739,13 +2875,13 @@ function renderCreateListingPanel(commodity, detail, canManage, canAct) {
       </div>
       ${matchingStorage.length ? `
         <div class="stack">
-          <div class="summary-note">${escapeHtml(commodity.displayName)} 路 ${number(sumBy(matchingStorage, "quantity"))} ${escapeHtml(t("in_storage"))}.</div>
+          <div class="summary-note">${escapeHtml(commodity.displayName)} · ${number(sumBy(matchingStorage, "quantity"))} ${escapeHtml(t("in_storage"))}.</div>
           <input id="create-listing-storage" type="hidden" value="${escapeHtml(String(selectedStorageIndex))}">
-          <div class="summary-note">${escapeHtml(t("manual_price_help"))}</div>
+          <div class="summary-note">${escapeHtml(t(listingPriceHelpKey(preferredStorage)))}</div>
           ${renderStorageChoiceGrid(matchingStorage, selectedStorageIndex, t("no_storage_match"))}
           <input id="create-listing-quantity" type="number" min="1" value="${escapeHtml(String(state.settings.defaultListingQuantity || 1))}" placeholder="${escapeHtml(t("quantity"))}">
           <input id="create-listing-price" type="number" min="1" value="${escapeHtml(String(suggestedUnitPrice))}" placeholder="${escapeHtml(t("manual_price"))}">
-          <div id="create-listing-price-preview" class="summary-note">${escapeHtml(t("listing_price_preview"))} ${number(suggestedUnitPrice)} | ${escapeHtml(t("listing_price_range"))} ${number(minAllowedUnitPrice)} - ${number(maxAllowedUnitPrice)}</div>
+          <div id="create-listing-price-preview" class="summary-note">${escapeHtml(t("listing_price_preview"))} ${number(suggestedUnitPrice)} | ${escapeHtml(priceRangeText)}</div>
           <textarea id="create-listing-note" placeholder="${escapeHtml(t("seller_note"))}"></textarea>
           <div class="actions">
             <button type="button" id="create-listing-button" data-can-create="${canManage && canAct ? "true" : "false"}" ${canManage && canAct ? "" : "disabled"}>${escapeHtml(t("create_listing"))}</button>
@@ -2826,79 +2962,8 @@ function renderInventoryDetailPage(commodity, detail, canManage, canAct) {
   `;
 }
 
-function renderCommodityDetailPage(commodity, detail, canManage, canAct) {
-  const activeSeries = primaryChartSeries(commodity);
-  const latestPoint = latestChartPoint(activeSeries);
-  const chartStats = chartSummary(activeSeries);
-  return `
-    <div class="goods-detail">
-      <div class="crumb-strip">
-        <span>${escapeHtml(t("market"))}</span>
-        <span>/</span>
-        <span>${escapeHtml(detail.marketName)}</span>
-        <span>/</span>
-        <strong>${escapeHtml(commodity.displayName)}</strong>
-      </div>
-
-      <section class="goods-hero">
-        ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
-        <div class="goods-main">
-          <div class="tiny-label">${escapeHtml(t("selected_commodity"))}</div>
-          <h2>${escapeHtml(commodity.displayName)}</h2>
-          <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
-          <div class="price-line">
-            ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}
-            <span class="minor">${escapeHtml(t("lowest_sell"))}${commodity.bestBuy == null ? "" : ` 路 ${escapeHtml(t("highest_buy"))} ${number(commodity.bestBuy)} bp`}</span>
-          </div>
-          <div class="goods-stats">
-            ${metricBox(t("sell_listings"), number(commodity.totalListings))}
-            ${metricBox(t("on_sale"), number(commodity.sellUnits))}
-            ${metricBox(t("buying_demand"), number(commodity.demandUnits))}
-            ${metricBox(t("in_storage"), number(commodity.storageUnits))}
-          </div>
-        </div>
-        <div class="quote-panel">
-          <div class="quote-box">
-            <span class="quote-label">${escapeHtml(t("lowest_sell"))}</span>
-            <strong>${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
-          </div>
-          <div class="quote-box buy">
-            <span class="quote-label">${escapeHtml(t("highest_buy"))}</span>
-            <strong>${commodity.bestBuy == null ? "--" : number(commodity.bestBuy)}</strong>
-          </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("avg_24h"))}</span>
-            <strong>${latestPoint ? number(latestPoint.averageUnitPrice) : "--"}</strong>
-          </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("trades_24h"))}</span>
-            <strong>${number(chartStats.tradeCount)}</strong>
-          </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("reference_price"))}</span>
-            <strong>${commodity.referencePrice == null ? "--" : number(commodity.referencePrice)}</strong>
-          </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("liquidity_score"))}</span>
-            <strong>${number(commodity.liquidityScore)}</strong>
-          </div>
-        </div>
-      </section>
-
-      <div class="tab-strip">
-        ${routeButton("buy", t("buying"))}
-        ${routeButton("sell", t("selling"))}
-        ${routeButton("chart", t("chart_tab"))}
-        ${routeButton("index", t("market_index_tab"))}
-      </div>
-
-      ${renderCommodityPage(commodity, detail, canManage, canAct)}
-    </div>
-  `;
-}
-
 function renderCommodityPage(commodity, detail, canManage, canAct) {
-  if (state.activeProductTab === "buy") {
+  if (state.activeProductTab === "buy" || state.activeProductTab === "demand") {
     return renderBuyingTab(commodity, canManage, canAct);
   }
   if (state.activeProductTab === "chart") {
@@ -2949,8 +3014,8 @@ function renderBrowseTab(commodity, detail) {
           </div>
           <div class="summary-note">${escapeHtml(t("lowest_sell"))} ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}.</div>
           <div class="summary-note">${escapeHtml(t("highest_buy"))} ${commodity.bestBuy == null ? "--" : number(commodity.bestBuy)}.</div>
-          <div class="summary-note">${escapeHtml(t("avg_24h"))} ${latestPoint ? number(latestPoint.averageUnitPrice) : "--"} 路 ${escapeHtml(t("trades_24h"))} ${number(chartStats.tradeCount)}.</div>
-          <div class="summary-note">${escapeHtml(t("in_storage"))} ${number(commodity.storageUnits)} 路 ${escapeHtml(t("open_demand"))} ${number(commodity.demandUnits)}.</div>
+          <div class="summary-note">${escapeHtml(t("avg_24h"))} ${latestPoint ? number(latestPoint.averageUnitPrice) : "--"} · ${escapeHtml(t("trades_24h"))} ${number(chartStats.tradeCount)}.</div>
+          <div class="summary-note">${escapeHtml(t("in_storage"))} ${number(commodity.storageUnits)} · ${escapeHtml(t("open_demand"))} ${number(commodity.demandUnits)}.</div>
           <div class="summary-note">${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))}.</div>
         </div>
 
@@ -2979,6 +3044,7 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
   const suggestedUnitPrice = Math.max(1, Number(preferredStorage?.suggestedUnitPrice) || Number(commodity?.suggestedUnitPrice) || Number(commodity?.referencePrice) || 1);
   const minAllowedUnitPrice = Math.max(1, Number(preferredStorage?.minAllowedUnitPrice) || suggestedUnitPrice);
   const maxAllowedUnitPrice = Math.max(minAllowedUnitPrice, Number(preferredStorage?.maxAllowedUnitPrice) || minAllowedUnitPrice);
+  const priceRangeText = listingPriceRangeText(preferredStorage, minAllowedUnitPrice, maxAllowedUnitPrice);
 
   return `
     <div class="detail-grid">
@@ -3017,7 +3083,7 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
             <span class="pill">${number(matchingStorage.length)} ${escapeHtml(t("storage_rows"))}</span>
           </div>
           <div class="summary-note">${escapeHtml(t("dock_stock"))} ${number(dockStorage.length)} ${escapeHtml(t("storage_rows"))} / ${number(sumBy(dockStorage, "quantity"))}.</div>
-          <div class="summary-note">${preferredStorage ? `${escapeHtml(commodity.displayName)} x${number(preferredStorage.quantity)} 路 ${escapeHtml(t("suggested_word"))} ${number(preferredStorage.suggestedUnitPrice)}` : escapeHtml(t("no_storage_match"))}</div>
+          <div class="summary-note">${preferredStorage ? `${escapeHtml(commodity.displayName)} x${number(preferredStorage.quantity)} · ${escapeHtml(t("suggested_word"))} ${number(preferredStorage.suggestedUnitPrice)}` : escapeHtml(t("no_storage_match"))}</div>
           ${canManage ? `<div class="actions"><button type="button" class="secondary" data-route="inventory">${escapeHtml(t("inventory_tab"))}</button></div>` : ""}
         </div>
 
@@ -3033,11 +3099,11 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
             <div class="stack">
               ${renderStorageChoiceGrid(matchingStorage, selectedStorageIndex, t("no_storage_match"))}
               <input id="create-listing-storage" type="hidden" value="${escapeHtml(String(selectedStorageIndex))}">
-              <div class="summary-note">${escapeHtml(t("manual_price_help"))}</div>
-              <div class="summary-note">${escapeHtml(t("listing_price_range"))} ${number(minAllowedUnitPrice)} - ${number(maxAllowedUnitPrice)} | ${escapeHtml(t("suggested_word"))} ${number(suggestedUnitPrice)}</div>
+              <div class="summary-note">${escapeHtml(t(listingPriceHelpKey(preferredStorage)))}</div>
+              <div class="summary-note">${escapeHtml(priceRangeText)} | ${escapeHtml(t("suggested_word"))} ${number(suggestedUnitPrice)}</div>
               <input id="create-listing-quantity" type="number" min="1" value="${escapeHtml(String(state.settings.defaultListingQuantity || 1))}" placeholder="${escapeHtml(t("quantity"))}">
               <input id="create-listing-price" type="number" min="1" value="${escapeHtml(String(suggestedUnitPrice))}" placeholder="${escapeHtml(t("manual_price"))}">
-              <div id="create-listing-price-preview" class="summary-note">${escapeHtml(t("listing_price_preview"))} ${number(suggestedUnitPrice)} | ${escapeHtml(t("listing_price_range"))} ${number(minAllowedUnitPrice)} - ${number(maxAllowedUnitPrice)}</div>
+              <div id="create-listing-price-preview" class="summary-note">${escapeHtml(t("listing_price_preview"))} ${number(suggestedUnitPrice)} | ${escapeHtml(priceRangeText)}</div>
               <textarea id="create-listing-note" placeholder="${escapeHtml(t("seller_note"))}"></textarea>
               <div class="actions">
                 <button type="button" id="create-listing-button" data-can-create="${canManage && canAct ? "true" : "false"}" ${canManage && canAct ? "" : "disabled"}>${escapeHtml(t("create_listing"))}</button>
@@ -3055,7 +3121,7 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
             </div>
           </div>
           <div class="summary-note">${escapeHtml(t("lowest_sell"))} ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}. ${number(commodity.sellUnits)} / ${number(commodity.totalListings)}.</div>
-          <div class="summary-note">${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))} 路 ${escapeHtml(detail.linkedDockName || "-")}.</div>
+          <div class="summary-note">${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))} · ${escapeHtml(detail.linkedDockName || "-")}.</div>
           <div class="summary-note">${escapeHtml(t("dock_stock"))} ${number(dockStorage.length)} ${escapeHtml(t("storage_rows"))} / ${number(sumBy(dockStorage, "quantity"))}.</div>
           <div class="summary-note">${escapeHtml(canManage ? t("manager_access") : t("read_only"))}.</div>
           <div class="summary-note">${escapeHtml(canAct ? t("manage") : t("browse_only"))}.</div>
@@ -3066,11 +3132,14 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
 }
 
 function renderBuyingTab(commodity, canManage, canAct) {
+  const pureDemandPage = state.activeProductTab === "demand";
   const buyRows = commodity.buyBookEntries || [];
   const ownRows = commodity.myBuyOrders || [];
   const dispatchOrders = Array.isArray(state.detail?.sourceOrders) ? state.detail.sourceOrders : [];
   const dispatchOrder = selectedDispatchOrder(state.detail);
   const dispatchOption = selectedDispatchOption(dispatchOrder);
+  const buyOrderReference = buyOrderReferencePrice(commodity);
+  const buyOrderDefaultPrice = buyOrderReference;
 
   return `
     <div class="detail-grid">
@@ -3115,38 +3184,47 @@ function renderBuyingTab(commodity, canManage, canAct) {
             <span class="pill">${number(buyRows.length)} ${escapeHtml(t("live_requests"))}</span>
           </div>
           <div class="stack">
-            <input id="buy-order-key" type="text" value="${escapeHtml(commodity.commodityKey)}" placeholder="minecraft:oak_log">
+            <label class="tiny-label" for="buy-order-key">${escapeHtml(t("buy_order_item_id"))}</label>
+            <input id="buy-order-key" type="text" value="${escapeHtml(commodity.commodityKey)}" placeholder="minecraft:oak_log" aria-describedby="buy-order-preview buy-order-item-help">
+            <div id="buy-order-item-help" class="summary-note">${escapeHtml(t("buy_order_item_help"))}</div>
+            ${renderBuyOrderItemPreview(commodity)}
+            <label class="tiny-label" for="buy-order-quantity">${escapeHtml(t("buy_order_quantity_label"))}</label>
             <input id="buy-order-quantity" type="number" min="1" value="${escapeHtml(String(state.settings.defaultBuyOrderQuantity || 1))}" placeholder="${escapeHtml(t("quantity"))}">
-            <input id="buy-order-min" type="number" value="${escapeHtml(String(state.settings.defaultBuyOrderMinPriceBp ?? -1000))}" placeholder="${escapeHtml(t("min_bp"))}">
-            <input id="buy-order-max" type="number" value="${escapeHtml(String(state.settings.defaultBuyOrderMaxPriceBp ?? 1000))}" placeholder="${escapeHtml(t("max_bp"))}">
-            <label class="tiny-label" for="dispatch-order-index">Dispatch order</label>
-            <select id="dispatch-order-index">
-              ${dispatchOrders.length
-                ? dispatchOrders.map((entry, index) => `<option value="${index}" ${index === Number(state.selectedDispatchOrderIndex || 0) ? "selected" : ""}>${escapeHtml(entry.targetDockName || entry.label || `Order ${index + 1}`)} x${number(entry.quantity)}</option>`).join("")
-                : `<option value="0">No open orders</option>`}
-            </select>
-            <label class="tiny-label" for="dispatch-terminal-type">${escapeHtml(t("terminal_type_label"))}</label>
-            <select id="dispatch-terminal-type">
-              <option value="PORT" ${String(state.selectedDispatchTerminal).toUpperCase() === "PORT" ? "selected" : ""}>${escapeHtml(t("terminal_type_port"))}</option>
-              <option value="POST_STATION" ${String(state.selectedDispatchTerminal).toUpperCase() === "POST_STATION" ? "selected" : ""}>${escapeHtml(t("terminal_type_post_station"))}</option>
-            </select>
-            <div class="dispatch-preview">
-              ${dispatchOrder ? `
-                <div class="dispatch-preview-line"><strong>${escapeHtml(dispatchOrder.sourceDockName || "-")}</strong> -> <strong>${escapeHtml(dispatchOrder.targetDockName || "-")}</strong></div>
-                <div class="dispatch-preview-line">${number(dispatchOrder.quantity)} units | ${escapeHtml(dispatchOrder.status || "-")}</div>
-                <div class="dispatch-preview-line">${escapeHtml(dispatchOption?.terminalLabel || "-")} | ${escapeHtml(dispatchOption?.availability || "-")}</div>
-                <div class="dispatch-preview-line">${escapeHtml(dispatchOption?.routeName || "-")}</div>
-                <div class="dispatch-preview-meta">
-                  <span>${escapeHtml(dispatchOption?.carrierName || "-")}</span>
-                  <span>${escapeHtml(formatDistanceMeters(dispatchOption?.distanceMeters))}</span>
-                  <span>${escapeHtml(formatEtaSeconds(dispatchOption?.etaSeconds))}</span>
-                </div>
-                ${dispatchOption?.detail ? `<div class="summary-note">${escapeHtml(dispatchOption.detail)}</div>` : ""}
-              ` : `<div class="summary-note">No open orders to dispatch.</div>`}
-            </div>
+            <label class="tiny-label" for="buy-order-unit-price">${escapeHtml(t("buy_order_unit_price"))}</label>
+            <input id="buy-order-unit-price" type="number" min="1" value="${escapeHtml(String(buyOrderDefaultPrice))}" placeholder="${escapeHtml(t("buy_order_unit_price"))}">
+            <input id="buy-order-reference-price" type="hidden" value="${escapeHtml(String(buyOrderReference))}">
+            <div id="buy-order-price-help" class="summary-note">${escapeHtml(t("buy_order_price_help"))}</div>
+            <div id="buy-order-bp-preview" class="summary-note">${escapeHtml(buyOrderBpPreviewText(buyOrderDefaultPrice, buyOrderReference))}</div>
+            ${pureDemandPage ? "" : `
+              <label class="tiny-label" for="dispatch-order-index">Dispatch order</label>
+              <select id="dispatch-order-index">
+                ${dispatchOrders.length
+                  ? dispatchOrders.map((entry, index) => `<option value="${index}" ${index === Number(state.selectedDispatchOrderIndex || 0) ? "selected" : ""}>${escapeHtml(entry.targetDockName || entry.label || `Order ${index + 1}`)} x${number(entry.quantity)}</option>`).join("")
+                  : `<option value="0">No open orders</option>`}
+              </select>
+              <label class="tiny-label" for="dispatch-terminal-type">${escapeHtml(t("terminal_type_label"))}</label>
+              <select id="dispatch-terminal-type">
+                <option value="PORT" ${String(state.selectedDispatchTerminal).toUpperCase() === "PORT" ? "selected" : ""}>${escapeHtml(t("terminal_type_port"))}</option>
+                <option value="POST_STATION" ${String(state.selectedDispatchTerminal).toUpperCase() === "POST_STATION" ? "selected" : ""}>${escapeHtml(t("terminal_type_post_station"))}</option>
+              </select>
+              <div class="dispatch-preview">
+                ${dispatchOrder ? `
+                  <div class="dispatch-preview-line"><strong>${escapeHtml(dispatchOrder.sourceDockName || "-")}</strong> -> <strong>${escapeHtml(dispatchOrder.targetDockName || "-")}</strong></div>
+                  <div class="dispatch-preview-line">${number(dispatchOrder.quantity)} units | ${escapeHtml(dispatchOrder.status || "-")}</div>
+                  <div class="dispatch-preview-line">${escapeHtml(dispatchOption?.terminalLabel || "-")} | ${escapeHtml(dispatchOption?.availability || "-")}</div>
+                  <div class="dispatch-preview-line">${escapeHtml(dispatchOption?.routeName || "-")}</div>
+                  <div class="dispatch-preview-meta">
+                    <span>${escapeHtml(dispatchOption?.carrierName || "-")}</span>
+                    <span>${escapeHtml(formatDistanceMeters(dispatchOption?.distanceMeters))}</span>
+                    <span>${escapeHtml(formatEtaSeconds(dispatchOption?.etaSeconds))}</span>
+                  </div>
+                  ${dispatchOption?.detail ? `<div class="summary-note">${escapeHtml(dispatchOption.detail)}</div>` : ""}
+                ` : `<div class="summary-note">No open orders to dispatch.</div>`}
+              </div>
+            `}
             <div class="actions">
-              <button type="button" id="buy-order-button" ${canAct ? "" : "disabled"}>${escapeHtml(t("create_buy_order"))}</button>
-              <button type="button" id="dispatch-button" class="warn" ${canManage && canAct && dispatchOrder && dispatchOption?.available ? "" : "disabled"}>${escapeHtml(t("retry_dispatch"))}</button>
+              <button type="button" id="buy-order-button" data-can-create="${canAct ? "true" : "false"}" data-item-valid="true" data-resolved-commodity-key="${escapeHtml(commodity.commodityKey)}" ${canAct ? "" : "disabled"}>${escapeHtml(t("create_buy_order"))}</button>
+              ${pureDemandPage ? "" : `<button type="button" id="dispatch-button" class="warn" ${canManage && canAct && dispatchOrder && dispatchOption?.available ? "" : "disabled"}>${escapeHtml(t("retry_dispatch"))}</button>`}
             </div>
           </div>
         </div>
@@ -3336,11 +3414,11 @@ function renderIndexTab(commodity, detail) {
           </div>
           <div class="chart-row">
             <strong>${escapeHtml(t("reference_price"))}</strong>
-            <div class="muted-inline">${impact?.referenceUnitPrice ? number(impact.referenceUnitPrice) : "--"} 路 ${escapeHtml(t("liquidity_score"))} ${number(impact?.liquidityScore || 0)}</div>
+            <div class="muted-inline">${impact?.referenceUnitPrice ? number(impact.referenceUnitPrice) : "--"} · ${escapeHtml(t("liquidity_score"))} ${number(impact?.liquidityScore || 0)}</div>
           </div>
           <div class="chart-row">
             <strong>${escapeHtml(t("pressure_model"))}</strong>
-            <div class="muted-inline">${escapeHtml(t("inventory_pressure"))} ${number(impact?.inventoryPressureBp || 0)} bp 路 ${escapeHtml(t("buy_pressure"))} ${number(impact?.buyPressureBp || 0)} bp 路 ${escapeHtml(t("volatility_word"))} ${number(impact?.volatilityBp || 0)} bp</div>
+            <div class="muted-inline">${escapeHtml(t("inventory_pressure"))} ${number(impact?.inventoryPressureBp || 0)} bp · ${escapeHtml(t("buy_pressure"))} ${number(impact?.buyPressureBp || 0)} bp · ${escapeHtml(t("volatility_word"))} ${number(impact?.volatilityBp || 0)} bp</div>
           </div>
           <div class="chart-row">
             <strong>${escapeHtml(t("terminal_status"))}</strong>
@@ -3375,6 +3453,114 @@ function tableSection(title, headers, rows, emptyMessage) {
 
 function metricBox(label, value) {
   return `<div class="metric-box"><span class="label">${escapeHtml(label)}</span><span class="value">${escapeHtml(String(value))}</span></div>`;
+}
+
+function renderTopbarWallet() {
+  if (!els.walletDock) {
+    return;
+  }
+  const detail = state.detail;
+  if (!detail) {
+    els.walletDock.hidden = true;
+    els.walletDock.innerHTML = "";
+    return;
+  }
+
+  const canAct = !!state.session;
+  const collapsed = !!state.walletCollapsed;
+  const amountDisabled = canAct ? "" : "disabled";
+  const treasuryEnabled = canAct && detail?.canTransferTreasury;
+  const pendingEnabled = canAct && Number(detail?.pendingCredits || 0) > 0;
+  const total = detail?.walletTotalBalance ?? detail?.walletBalance ?? 0;
+  const selectedName = detail?.marketName || t("selected_market");
+  els.walletDock.hidden = false;
+  els.walletDock.innerHTML = `
+    <div class="wallet-dock-card">
+      <button id="wallet-dock-toggle" type="button" class="wallet-dock-toggle" aria-expanded="${collapsed ? "false" : "true"}">
+        <span>
+          <span class="hero-chip-label">${escapeHtml(t("wallet_balance"))}</span>
+          <strong>${escapeHtml(number(total))}</strong>
+        </span>
+        <small>${escapeHtml(t("wallet_topbar_hint"))} · ${escapeHtml(selectedName)}</small>
+        <span class="wallet-dock-caret" aria-hidden="true">${collapsed ? "+" : "-"}</span>
+      </button>
+      <div class="wallet-dock-panel" ${collapsed ? "hidden" : ""}>
+        <div class="wallet-dock-metrics">
+          ${metricBox(t("wallet_reserved"), number(detail?.walletReservedBalance || 0))}
+          ${metricBox(t("cash_balance"), number(detail?.cashBalance || 0))}
+          ${metricBox(t("treasury_balance"), number(detail?.treasuryBalance || 0))}
+        </div>
+        <label class="tiny-label" for="wallet-transfer-amount">${escapeHtml(t("wallet_transfer_amount"))}</label>
+        <div class="wallet-dock-transfer-row">
+          <input id="wallet-transfer-amount" type="number" min="1" step="1" placeholder="${escapeHtml(t("wallet_transfer_placeholder"))}" aria-label="${escapeHtml(t("wallet_transfer_amount"))}" ${amountDisabled}>
+          <div class="wallet-transfer-buttons wallet-dock-buttons">
+            <button type="button" data-wallet-action="CASH_TO_WALLET" ${canAct ? "" : "disabled"}>${escapeHtml(t("wallet_cash_to_wallet"))}</button>
+            <button type="button" data-wallet-action="WALLET_TO_CASH" ${canAct ? "" : "disabled"}>${escapeHtml(t("wallet_wallet_to_cash"))}</button>
+            <button type="button" class="secondary" data-wallet-action="WALLET_TO_TREASURY" ${canAct ? "" : "disabled"}>${escapeHtml(t("wallet_wallet_to_treasury"))}</button>
+            <button type="button" class="secondary" data-wallet-action="TREASURY_TO_WALLET" ${treasuryEnabled ? "" : "disabled"}>${escapeHtml(t("wallet_treasury_to_wallet"))}</button>
+            <button type="button" class="secondary wallet-claim-button" data-wallet-action="CLAIM_CREDITS_TO_WALLET" ${pendingEnabled ? "" : "disabled"}>${escapeHtml(t("wallet_claim_to_wallet"))}</button>
+          </div>
+        </div>
+        <p class="wallet-dock-hint">${escapeHtml(t("wallet_transfer_hint"))}</p>
+      </div>
+    </div>
+  `;
+
+  const toggle = els.walletDock.querySelector("#wallet-dock-toggle");
+  if (toggle) {
+    toggle.setAttribute("aria-label", t(collapsed ? "wallet_expand" : "wallet_collapse"));
+    toggle.addEventListener("click", () => {
+      state.walletCollapsed = !state.walletCollapsed;
+      localStorage.setItem("marketWebWalletCollapsed", state.walletCollapsed ? "1" : "0");
+      renderTopbarWallet();
+    });
+  }
+  bindWalletTransferActions(els.walletDock);
+}
+
+function bindWalletTransferActions(root = document) {
+  root.querySelectorAll("[data-wallet-action]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const action = node.getAttribute("data-wallet-action") || "";
+      const amount = action === "CLAIM_CREDITS_TO_WALLET"
+        ? 0
+        : numberValue("#wallet-transfer-amount", 0);
+      postMarketAction("/wallet/transfer", { action, amount });
+    });
+  });
+}
+
+function renderWalletTransferPanel(detail, canAct) {
+  const amountDisabled = canAct ? "" : "disabled";
+  const treasuryEnabled = canAct && detail?.canTransferTreasury;
+  const pendingEnabled = canAct && Number(detail?.pendingCredits || 0) > 0;
+  return `
+    <div class="wallet-transfer-panel">
+      <div class="wallet-transfer-head">
+        <div>
+          <strong>${escapeHtml(t("wallet_balance"))}</strong>
+          <span>${escapeHtml(t("wallet_transfer_hint"))}</span>
+        </div>
+        <div class="wallet-transfer-total">${escapeHtml(number(detail?.walletTotalBalance ?? detail?.walletBalance ?? 0))}</div>
+      </div>
+      <div class="wallet-transfer-metrics">
+        ${metricBox(t("wallet_reserved"), number(detail?.walletReservedBalance || 0))}
+        ${metricBox(t("cash_balance"), number(detail?.cashBalance || 0))}
+        ${metricBox(t("treasury_balance"), number(detail?.treasuryBalance || 0))}
+      </div>
+      <div class="wallet-transfer-controls">
+        <label class="tiny-label" for="wallet-transfer-amount">${escapeHtml(t("wallet_transfer_amount"))}</label>
+        <input id="wallet-transfer-amount" type="number" min="1" step="1" placeholder="${escapeHtml(t("wallet_transfer_placeholder"))}" aria-label="${escapeHtml(t("wallet_transfer_amount"))}" ${amountDisabled}>
+        <div class="wallet-transfer-buttons">
+          <button type="button" data-wallet-action="CASH_TO_WALLET" ${canAct ? "" : "disabled"}>${escapeHtml(t("wallet_cash_to_wallet"))}</button>
+          <button type="button" data-wallet-action="WALLET_TO_CASH" ${canAct ? "" : "disabled"}>${escapeHtml(t("wallet_wallet_to_cash"))}</button>
+          <button type="button" class="secondary" data-wallet-action="WALLET_TO_TREASURY" ${canAct ? "" : "disabled"}>${escapeHtml(t("wallet_wallet_to_treasury"))}</button>
+          <button type="button" class="secondary" data-wallet-action="TREASURY_TO_WALLET" ${treasuryEnabled ? "" : "disabled"}>${escapeHtml(t("wallet_treasury_to_wallet"))}</button>
+          <button type="button" class="secondary wallet-claim-button" data-wallet-action="CLAIM_CREDITS_TO_WALLET" ${pendingEnabled ? "" : "disabled"}>${escapeHtml(t("wallet_claim_to_wallet"))}</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function routeButton(key, label) {
@@ -3556,7 +3742,7 @@ function renderIndexRow(series) {
   return `
     <div class="chart-row">
       <strong>${escapeHtml(series.displayName || series.scopeKey || "-")}</strong>
-      <div class="muted-inline">${last ? number(last.value) : "--"} 路 ${sign}${number(delta)} 路 ${t("trades_24h")} ${number(last?.tradeCount || 0)}</div>
+      <div class="muted-inline">${last ? number(last.value) : "--"} · ${sign}${number(delta)} · ${t("trades_24h")} ${number(last?.tradeCount || 0)}</div>
     </div>
   `;
 }
@@ -3739,12 +3925,12 @@ function hydrateLightweightChart() {
   const cpiSeries = analyticsSeries(detail, "MACRO_INDEX", "cpi");
   if (!points.length) {
     setChartFailure("no-buckets", `${commodity.commodityKey} has no chart buckets for timeframe ${state.activeChartTimeframe}.`);
-    renderChartFallbackMessage(container, "no_chart_buckets", `${commodity.displayName} 路 ${state.activeChartTimeframe.toUpperCase()}`);
+    renderChartFallbackMessage(container, "no_chart_buckets", `${commodity.displayName} · ${state.activeChartTimeframe.toUpperCase()}`);
     return;
   }
   if (typeof LightweightCharts === "undefined") {
     setChartFailure("library-missing", "window.LightweightCharts is undefined.");
-    renderChartFallbackMessage(container, "chart_library_missing", `${commodity.displayName} 路 ${state.activeChartTimeframe.toUpperCase()}`);
+    renderChartFallbackMessage(container, "chart_library_missing", `${commodity.displayName} · ${state.activeChartTimeframe.toUpperCase()}`);
     renderFallbackKlineChart(container, points);
     return;
   }
@@ -3778,7 +3964,7 @@ function hydrateLightweightChart() {
   } catch (error) {
     console.warn("Failed to initialize lightweight chart, using fallback renderer.", error);
     setChartFailure("init-failed", error?.stack || error?.message || String(error));
-    renderChartFallbackMessage(container, "chart_init_failed", `${commodity.displayName} 路 ${state.activeChartTimeframe.toUpperCase()}`);
+    renderChartFallbackMessage(container, "chart_init_failed", `${commodity.displayName} · ${state.activeChartTimeframe.toUpperCase()}`);
     renderFallbackKlineChart(container, points);
     hydrateMacroCharts(detail, commodity);
     return;
@@ -4018,6 +4204,31 @@ function estimateBidSentence(referencePrice, minPriceBp, maxPriceBp) {
   return t("around_current_ask", { range: estimateBidText(referencePrice, minPriceBp, maxPriceBp) });
 }
 
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function buyOrderReferencePrice(commodity) {
+  const catalogReference = commodityFilterPrice(commodity);
+  return Math.max(1, Math.round(
+    Number(catalogReference)
+    || Number(commodity?.suggestedUnitPrice)
+    || Number(commodity?.referencePrice)
+    || 1
+  ));
+}
+
+function buyOrderPriceToBp(unitPrice, referencePrice) {
+  const price = Math.max(1, Number(unitPrice) || 1);
+  const reference = Math.max(1, Number(referencePrice) || 1);
+  return clampNumber(Math.round(((price / reference) - 1) * 10000), -5000, 5000);
+}
+
+function buyOrderBpPreviewText(unitPrice, referencePrice) {
+  const bp = buyOrderPriceToBp(unitPrice, referencePrice);
+  return `${t("buy_order_bp_preview")} ${number(bp)} bp · ${t("reference_price")} ${number(referencePrice)}`;
+}
+
 function valueOf(selector) {
   return document.querySelector(selector)?.value?.trim() || "";
 }
@@ -4044,6 +4255,9 @@ function selectedCreateListingPrice() {
 
 function selectedCreateListingDerivedBp() {
   const entry = selectedCreateListingStorageEntry();
+  if (!isPriceConstrained(entry)) {
+    return 0;
+  }
   const referencePrice = Math.max(1, Number(entry?.suggestedUnitPrice) || 1);
   const requestedPrice = selectedCreateListingPrice();
   return Math.round(((requestedPrice / referencePrice) - 1) * 10000);
@@ -4055,6 +4269,9 @@ function selectedCreateListingPriceValid() {
     return false;
   }
   const requestedPrice = selectedCreateListingPrice();
+  if (!isPriceConstrained(entry)) {
+    return requestedPrice > 0;
+  }
   const minAllowed = Math.max(1, Number(entry.minAllowedUnitPrice) || 1);
   const maxAllowed = Math.max(minAllowed, Number(entry.maxAllowedUnitPrice) || minAllowed);
   const derivedBp = selectedCreateListingDerivedBp();
@@ -4088,6 +4305,16 @@ function updateCreateListingFormState() {
   const derivedBp = selectedCreateListingDerivedBp();
   const minAllowed = Math.max(1, Number(entry.minAllowedUnitPrice) || 1);
   const maxAllowed = Math.max(minAllowed, Number(entry.maxAllowedUnitPrice) || minAllowed);
+  if (!isPriceConstrained(entry)) {
+    if (!valid) {
+      preview.textContent = `${t("listing_price_invalid")} ${t("listing_price_free")}`;
+      preview.classList.add("error");
+      return;
+    }
+    preview.textContent = `${t("listing_price_preview")} ${number(requestedPrice)} | ${t("listing_price_free")}`;
+    preview.classList.remove("error");
+    return;
+  }
   if (!valid) {
     preview.textContent = `${t("listing_price_invalid")} ${number(minAllowed)} - ${number(maxAllowed)} | ${t("suggested_word")} ${number(entry.suggestedUnitPrice)}`;
     preview.classList.add("error");
@@ -4096,6 +4323,211 @@ function updateCreateListingFormState() {
 
   preview.textContent = `${t("listing_price_preview")} ${number(requestedPrice)} | ${t("listing_bp_preview")} ${number(derivedBp)} bp | ${t("listing_price_range")} ${number(minAllowed)} - ${number(maxAllowed)}`;
   preview.classList.remove("error");
+}
+
+function renderBuyOrderItemPreview(item) {
+  const commodityKey = normalizeCommodityKey(item?.commodityKey);
+  const displayName = item?.displayName || commodityKey || "-";
+  const category = item?.category ? categoryLabel(item.category) : t("category_other");
+  const suggested = Number(item?.suggestedUnitPrice ?? item?.referencePrice ?? item?.bestSell ?? 0);
+  return `
+    <div id="buy-order-preview" class="buy-order-preview ready" data-item-valid="${commodityKey ? "true" : "false"}" data-resolved-commodity-key="${escapeHtml(commodityKey)}">
+      ${renderCommodityIcon(commodityKey, displayName)}
+      <div class="buy-order-preview-copy">
+        <span class="tiny-label">${escapeHtml(t("buy_order_item_preview"))}</span>
+        <strong>${escapeHtml(displayName)}</strong>
+        <span class="muted-inline">${escapeHtml(commodityKey || "-")}</span>
+        <span class="muted-inline">${escapeHtml(category)}${suggested > 0 ? ` | ${escapeHtml(t("suggested_word"))} ${number(suggested)}` : ""}</span>
+      </div>
+      <span class="pill success">${escapeHtml(t("buy_order_item_valid"))}</span>
+    </div>
+  `;
+}
+
+function renderDemandOnlyPage(commodity, canAct) {
+  const ownRows = commodity.myBuyOrders || [];
+  const buyOrderReference = buyOrderReferencePrice(commodity);
+  const buyOrderDefaultPrice = buyOrderReference;
+
+  return `
+    <div class="demand-only-grid">
+      ${tableSection(
+        t("my_buy_orders"),
+        [t("quantity"), t("price_band"), t("status"), t("actions")],
+        ownRows.map((entry) => `
+          <tr>
+            <td>${number(entry.quantity)}</td>
+            <td>${number(entry.minPriceBp)} ${escapeHtml(t("to_word"))} ${number(entry.maxPriceBp)} bp</td>
+            <td>${escapeHtml(entry.status || "-")}</td>
+            <td><button type="button" class="danger" data-cancel-buy-order="${escapeHtml(entry.orderId || "")}" ${canAct ? "" : "disabled"}>${escapeHtml(t("cancel"))}</button></td>
+          </tr>
+        `).join(""),
+        t("no_my_buy_rows")
+      )}
+
+      <div class="action-box">
+        <div class="panel-head">
+          <div>
+            <p class="section-kicker">${escapeHtml(t("create_buy_order"))}</p>
+            <h3>${escapeHtml(t("buying_demand"))}</h3>
+          </div>
+          <span class="pill">${number(ownRows.length)} ${escapeHtml(t("my_buy_orders"))}</span>
+        </div>
+        <div class="stack">
+          <label class="tiny-label" for="buy-order-key">${escapeHtml(t("buy_order_item_id"))}</label>
+          <input id="buy-order-key" type="text" value="${escapeHtml(commodity.commodityKey)}" placeholder="minecraft:oak_log" aria-describedby="buy-order-preview buy-order-item-help">
+          <div id="buy-order-item-help" class="summary-note">${escapeHtml(t("buy_order_item_help"))}</div>
+          ${renderBuyOrderItemPreview(commodity)}
+          <label class="tiny-label" for="buy-order-quantity">${escapeHtml(t("buy_order_quantity_label"))}</label>
+          <input id="buy-order-quantity" type="number" min="1" value="${escapeHtml(String(state.settings.defaultBuyOrderQuantity || 1))}" placeholder="${escapeHtml(t("quantity"))}">
+          <label class="tiny-label" for="buy-order-unit-price">${escapeHtml(t("buy_order_unit_price"))}</label>
+          <input id="buy-order-unit-price" type="number" min="1" value="${escapeHtml(String(buyOrderDefaultPrice))}" placeholder="${escapeHtml(t("buy_order_unit_price"))}">
+          <input id="buy-order-reference-price" type="hidden" value="${escapeHtml(String(buyOrderReference))}">
+          <div id="buy-order-price-help" class="summary-note">${escapeHtml(t("buy_order_price_help"))}</div>
+          <div id="buy-order-bp-preview" class="summary-note">${escapeHtml(buyOrderBpPreviewText(buyOrderDefaultPrice, buyOrderReference))}</div>
+          <div class="actions">
+            <button type="button" id="buy-order-button" data-can-create="${canAct ? "true" : "false"}" data-item-valid="true" data-resolved-commodity-key="${escapeHtml(commodity.commodityKey)}" ${canAct ? "" : "disabled"}>${escapeHtml(t("create_buy_order"))}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setBuyOrderButtonState(valid, commodityKey = "") {
+  const button = document.querySelector("#buy-order-button");
+  if (!button) {
+    return;
+  }
+  const canCreate = button.getAttribute("data-can-create") === "true";
+  button.disabled = !canCreate || !valid;
+  button.setAttribute("data-item-valid", valid ? "true" : "false");
+  button.setAttribute("data-resolved-commodity-key", valid ? normalizeCommodityKey(commodityKey) : "");
+}
+
+function setBuyOrderPreviewPending(message) {
+  const preview = document.querySelector("#buy-order-preview");
+  const input = document.querySelector("#buy-order-key");
+  if (!preview) {
+    return;
+  }
+  preview.classList.remove("ready", "error");
+  preview.classList.add("pending");
+  preview.setAttribute("data-item-valid", "false");
+  preview.setAttribute("data-resolved-commodity-key", "");
+  preview.innerHTML = `
+    <div class="goods-art"><span class="goods-art-fallback">${escapeHtml(iconLetter(input?.value || "?"))}</span></div>
+    <div class="buy-order-preview-copy">
+      <span class="tiny-label">${escapeHtml(t("buy_order_item_preview"))}</span>
+      <strong>${escapeHtml(message)}</strong>
+      <span class="muted-inline">${escapeHtml(input?.value || "-")}</span>
+    </div>
+  `;
+  setBuyOrderButtonState(false);
+}
+
+function setBuyOrderPreviewError(message) {
+  const preview = document.querySelector("#buy-order-preview");
+  const input = document.querySelector("#buy-order-key");
+  if (!preview) {
+    return;
+  }
+  preview.classList.remove("ready", "pending");
+  preview.classList.add("error");
+  preview.setAttribute("data-item-valid", "false");
+  preview.setAttribute("data-resolved-commodity-key", "");
+  preview.innerHTML = `
+    <div class="goods-art"><span class="goods-art-fallback">${escapeHtml(iconLetter(input?.value || "?"))}</span></div>
+    <div class="buy-order-preview-copy">
+      <span class="tiny-label">${escapeHtml(t("buy_order_item_preview"))}</span>
+      <strong>${escapeHtml(message)}</strong>
+      <span class="muted-inline">${escapeHtml(input?.value || "-")}</span>
+    </div>
+  `;
+  setBuyOrderButtonState(false);
+}
+
+function setBuyOrderPreviewResolved(item) {
+  const preview = document.querySelector("#buy-order-preview");
+  if (!preview || !item?.commodityKey) {
+    setBuyOrderPreviewError(t("buy_order_item_not_found"));
+    return;
+  }
+  if (item.icon) {
+    commodityIconCache.set(item.commodityKey, { status: "loaded", src: item.icon });
+  }
+  preview.outerHTML = renderBuyOrderItemPreview(item);
+  const reference = Math.max(1, Math.round(Number(item.suggestedUnitPrice ?? item.referencePrice ?? item.bestSell ?? 1) || 1));
+  const referenceInput = document.querySelector("#buy-order-reference-price");
+  const priceInput = document.querySelector("#buy-order-unit-price");
+  if (referenceInput) {
+    referenceInput.value = String(reference);
+  }
+  if (priceInput) {
+    priceInput.value = String(reference);
+  }
+  setBuyOrderButtonState(true, item.commodityKey);
+  updateBuyOrderPricePreview();
+  hydrateCommodityIcons();
+}
+
+function updateBuyOrderPricePreview() {
+  const preview = document.querySelector("#buy-order-bp-preview");
+  if (!preview) {
+    return;
+  }
+  const referencePrice = numberValue("#buy-order-reference-price", 1);
+  const unitPrice = numberValue("#buy-order-unit-price", referencePrice);
+  preview.textContent = buyOrderBpPreviewText(unitPrice, referencePrice);
+}
+
+async function resolveBuyOrderItemInput(sequence) {
+  const input = document.querySelector("#buy-order-key");
+  if (!input) {
+    return;
+  }
+  const itemId = normalizeCommodityKey(input.value);
+  if (!itemId || !itemId.includes(":")) {
+    setBuyOrderPreviewError(t("buy_order_item_not_found"));
+    return;
+  }
+  setBuyOrderPreviewPending(t("buy_order_item_resolving"));
+  try {
+    const item = await api(`/api/items/resolve?itemId=${encodeURIComponent(itemId)}`);
+    if (sequence !== buyOrderResolveSequence) {
+      return;
+    }
+    if (item?.commodityKey && input.value.trim() !== item.commodityKey) {
+      input.value = item.commodityKey;
+    }
+    setBuyOrderPreviewResolved(item);
+  } catch (_) {
+    if (sequence === buyOrderResolveSequence) {
+      setBuyOrderPreviewError(t("buy_order_item_not_found"));
+    }
+  }
+}
+
+function attachBuyOrderItemResolver() {
+  const input = document.querySelector("#buy-order-key");
+  const preview = document.querySelector("#buy-order-preview");
+  if (!input || !preview) {
+    return;
+  }
+  const initialKey = normalizeCommodityKey(preview.getAttribute("data-resolved-commodity-key"));
+  setBuyOrderButtonState(preview.getAttribute("data-item-valid") === "true", initialKey);
+  input.addEventListener("input", () => {
+    window.clearTimeout(buyOrderResolveTimer);
+    buyOrderResolveSequence += 1;
+    const sequence = buyOrderResolveSequence;
+    setBuyOrderPreviewPending(t("buy_order_item_resolving"));
+    buyOrderResolveTimer = window.setTimeout(() => resolveBuyOrderItemInput(sequence), 360);
+  });
+  input.addEventListener("change", () => {
+    window.clearTimeout(buyOrderResolveTimer);
+    buyOrderResolveSequence += 1;
+    resolveBuyOrderItemInput(buyOrderResolveSequence);
+  });
 }
 
 function normalizeCommodityKey(value) {
@@ -4178,6 +4610,12 @@ function shortTime(epochMs) {
 
 function activeWorkspaceSection(route = state.activeProductTab) {
   const normalized = normalizePageRoute(route);
+  if (normalized === "map") {
+    return "map";
+  }
+  if (normalized === "demand") {
+    return "demand";
+  }
   if (normalized === "inventory") {
     return "inventory";
   }
@@ -4191,6 +4629,12 @@ function activeWorkspaceSection(route = state.activeProductTab) {
 }
 
 function workspaceTargetRoute(section) {
+  if (section === "map") {
+    return "map";
+  }
+  if (section === "demand") {
+    return "demand";
+  }
   if (section === "trade") {
     return state.activeProductTab === "buy" ? "buy" : "sell";
   }
@@ -4204,6 +4648,12 @@ function workspaceTargetRoute(section) {
 }
 
 function workspaceHint(section) {
+  if (section === "map") {
+    return t("map_hint");
+  }
+  if (section === "demand") {
+    return t("demand_hint");
+  }
   if (section === "trade") {
     return t("trade_hint");
   }
@@ -4286,11 +4736,12 @@ function renderSession() {
     if (els.sessionPill) {
       els.sessionPill.textContent = t("guest_word");
     }
+    renderTopbarWallet();
     return;
   }
 
   const accountPart = state.session.accountBound && state.session.accountUsername
-    ? ` 路 @${state.session.accountUsername}`
+    ? ` · @${state.session.accountUsername}`
     : "";
   const sessionSummary = `${state.session.playerName} (${state.session.online ? t("online_word") : t("offline_word")})${accountPart}`;
   if (els.sessionStatus) {
@@ -4302,6 +4753,7 @@ function renderSession() {
   if (els.sessionPill) {
     els.sessionPill.textContent = state.session.online ? `${state.session.playerName} ${t("online_word")}` : `${state.session.playerName} ${t("connected_word")}`;
   }
+  renderTopbarWallet();
 }
 
 function renderMarkets() {
@@ -4363,6 +4815,65 @@ function renderWorkspaceRail(detail, catalog, canAct, canManage) {
   `;
 }
 
+function renderMarketMapPlaceholder(detail, canAct, canManage) {
+  const selectedName = detail?.marketName || t("selected_market");
+  const selectedTown = detail?.townName || "-";
+  const selectedWarehouse = detail?.linkedWarehouseName || detail?.linkedDockName || "-";
+  const focusedMarketId = detail?.marketId || state.selectedMarketId || "";
+  return `
+    <section
+      class="market-map-reserved market-map-workspace map-panel-left-collapsed map-panel-right-collapsed"
+      aria-label="${escapeHtml(t("map_tab"))}"
+      data-market-map-root
+      data-focused-market="${escapeHtml(focusedMarketId)}"
+      data-selected-name="${escapeHtml(selectedName)}"
+      data-selected-town="${escapeHtml(selectedTown)}"
+      data-selected-warehouse="${escapeHtml(selectedWarehouse)}"
+      data-can-act="${canAct ? "true" : "false"}"
+      data-can-manage="${canManage ? "true" : "false"}">
+      <aside class="map-side-panel map-side-panel-left">
+        <button type="button" class="map-panel-collapse map-panel-collapse-left" data-map-panel-toggle="left" aria-label="切换地图图层栏" aria-pressed="true">☰</button>
+        <div class="map-panel-section">
+          <p class="section-kicker">${escapeHtml(t("map_tab"))}</p>
+          <h2>${escapeHtml(t("map_live_title"))}</h2>
+          <p>${escapeHtml(t("map_reserved_body"))}</p>
+        </div>
+        <div class="map-layer-toggles" data-map-layer-toggles></div>
+        <div class="map-market-list" data-map-market-list></div>
+      </aside>
+      <div class="map-canvas-shell">
+        <div class="squaremap-leaflet" data-square-map></div>
+        <canvas class="market-map-canvas" data-market-map-canvas width="1280" height="720"></canvas>
+        <div class="map-floating-toolbar" data-map-toolbar></div>
+        <div class="map-tooltip" data-map-tooltip hidden></div>
+      </div>
+      <aside class="map-side-panel map-side-panel-right">
+        <button type="button" class="map-panel-collapse map-panel-collapse-right" data-map-panel-toggle="right" aria-label="切换地图详情栏" aria-pressed="true">⌕</button>
+        <div class="map-selection-detail" data-map-selection-detail></div>
+        <div class="map-shipment-list" data-map-shipment-list></div>
+      </aside>
+    </section>
+  `;
+}
+
+function mountMarketMapIfNeeded() {
+  const root = document.querySelector("[data-market-map-root]");
+  const mapApi = window.SailboatSquareMap || window.SailboatMarketMap;
+  if (!root || state.activeProductTab !== "map") {
+    if (mapApi && typeof mapApi.unmount === "function") {
+      mapApi.unmount();
+    }
+    return;
+  }
+  if (mapApi && typeof mapApi.mount === "function") {
+    mapApi.mount(root, {
+      focusedMarketId: root.getAttribute("data-focused-market") || state.selectedMarketId || "",
+      locale: state.locale || "zh-CN",
+      apiBase: ""
+    });
+  }
+}
+
 function renderDetail() {
   const bars = [];
   if (state.status) {
@@ -4377,14 +4888,19 @@ function renderDetail() {
       <div class="workspace-switch">
         ${workspaceButton("explore", t("explore_tab"))}
         ${workspaceButton("trade", t("trade_tab"))}
+        ${workspaceButton("demand", t("buy_order_tab"))}
         ${state.detail?.canManage ? workspaceButton("inventory", t("inventory_tab")) : ""}
         ${workspaceButton("analytics", t("analytics_tab"))}
+        ${workspaceButton("map", t("map_tab"))}
       </div>
     </div>
   `;
 
   if (!state.detail) {
-    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${workspaceNav}<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div></div>`;
+    renderTopbarWallet();
+    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${workspaceNav}${state.activeProductTab === "map" ? renderMarketMapPlaceholder(null, !!state.session, false) : `<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`}</div>`;
+    bindDetailActions();
+    mountMarketMapIfNeeded();
     return;
   }
 
@@ -4394,9 +4910,13 @@ function renderDetail() {
     state.activeProductTab = "browse";
   }
   const canAct = !!state.session;
+  renderTopbarWallet();
   const catalog = buildCommodityCatalog(detail);
   const inventoryCatalog = canManage ? buildInventoryCatalog(detail) : [];
-  const browseCatalog = filterCatalog(catalog);
+  const purchaseCatalog = purchaseBrowseCatalog(catalog);
+  const demandCatalog = demandBrowseCatalog(catalog);
+  const browseSourceCatalog = activeBrowseCatalog(catalog);
+  const browseCatalog = filterCatalog(browseSourceCatalog);
   const inventoryFilteredCatalog = filterCatalog(inventoryCatalog);
   const inventorySelectedCommodity = findCommodityByKey(inventoryCatalog, state.selectedCommodityKey);
   const selectedCommodity = state.activeProductTab === "inventory"
@@ -4405,12 +4925,15 @@ function renderDetail() {
   syncRouteUrl(true);
 
   const browseSection = renderCatalogShelf({
-    catalog,
+    catalog: browseSourceCatalog,
     filteredCatalog: browseCatalog,
     kicker: t("browse_goods"),
-    title: t("commodity_shelf"),
-    emptyMessage: t("no_match"),
-    cardRenderer: (commodity) => renderCommodityCard(commodity)
+    title: normalizeBrowseOrderView(state.browseOrderView) === "demand" ? t("browse_demand_orders") : t("browse_purchase_orders"),
+    emptyMessage: normalizeBrowseOrderView(state.browseOrderView) === "demand" ? t("no_demand_rows") : t("no_purchase_rows"),
+    cardRenderer: (commodity) => normalizeBrowseOrderView(state.browseOrderView) === "demand"
+      ? renderDemandCommodityCard(commodity)
+      : renderPurchaseCommodityCard(commodity),
+    headExtra: renderBrowseOrderModeSwitch(purchaseCatalog.length, demandCatalog.length)
   });
   const inventorySection = renderCatalogShelf({
     catalog: inventoryCatalog,
@@ -4433,7 +4956,7 @@ function renderDetail() {
                 <div class="overview-title">
                   <p class="section-kicker">${escapeHtml(t("market_overview"))}</p>
                   <h2>${escapeHtml(detail.marketName)}</h2>
-                  <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} 路 ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} 路 ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
+                  <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} · ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} · ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
                 </div>
                 <div class="market-meta">
                   <span class="pill ${detail.linkedDock ? "success" : "warning"}">${detail.linkedDock ? escapeHtml(t("dock_linked")) : escapeHtml(t("no_linked_dock"))}</span>
@@ -4443,6 +4966,9 @@ function renderDetail() {
                 </div>
               </div>
               <div class="metric-strip">
+                ${metricBox(t("wallet_balance"), number(detail.walletBalance))}
+                ${metricBox(t("wallet_reserved"), number(detail.walletReservedBalance || 0))}
+                ${metricBox(t("treasury_balance"), number(detail.treasuryBalance || 0))}
                 ${metricBox(t("pending_credits"), number(detail.pendingCredits))}
                 ${metricBox(t("commodity_types"), number(catalog.length))}
                 ${metricBox(t("storage_units"), number(detail.stockpileTotalUnits))}
@@ -4450,6 +4976,7 @@ function renderDetail() {
                 ${metricBox(t("my_buy_orders_metric"), number((detail.buyOrderEntries || []).length))}
                 ${state.settings.showTownEconomySummary ? metricBox(t("net_balance"), number(detail.netBalance)) : ""}
               </div>
+              <div class="summary-note">${escapeHtml(t("wallet_balance_hint"))}</div>
             </div>
             ${renderWorkspaceRail(detail, catalog, canAct, canManage)}
           </div>
@@ -4457,7 +4984,9 @@ function renderDetail() {
       </section>
 
       <section class="goods-market">
-        ${state.activeProductTab === "browse"
+        ${state.activeProductTab === "map"
+          ? renderMarketMapPlaceholder(detail, canAct, canManage)
+          : (state.activeProductTab === "browse"
           ? browseSection
           : (state.activeProductTab === "inventory"
             ? (inventorySelectedCommodity
@@ -4465,7 +4994,7 @@ function renderDetail() {
               : inventorySection)
             : (selectedCommodity
               ? renderCommodityDetailPage(selectedCommodity, detail, canManage, canAct)
-              : browseSection))}
+              : browseSection)))}
       </section>
     </div>
   `;
@@ -4473,15 +5002,21 @@ function renderDetail() {
   bindDetailActions();
   hydrateCommodityIcons();
   hydrateLightweightChart();
+  mountMarketMapIfNeeded();
 }
 
 function renderCommodityDetailPage(commodity, detail, canManage, canAct) {
+  if (state.activeProductTab === "demand" || activeWorkspaceSection() === "demand") {
+    return renderDemandOnlyPage(commodity, canAct);
+  }
   const activeSeries = primaryChartSeries(commodity);
   const latestPoint = latestChartPoint(activeSeries);
   const chartStats = chartSummary(activeSeries);
   const workspaceSection = activeWorkspaceSection();
   const detailNav = workspaceSection === "trade"
     ? `<div class="tab-strip">${routeButton("sell", t("selling"))}${routeButton("buy", t("buying"))}</div>`
+    : workspaceSection === "demand"
+      ? `<div class="tab-strip">${routeButton("demand", t("buy_order_tab"))}</div>`
     : workspaceSection === "analytics"
       ? `<div class="tab-strip">${routeButton("chart", t("chart_tab"))}${routeButton("index", t("market_index_tab"))}</div>`
       : `<div class="tab-strip">${routeButton("browse", t("browse_tab"))}${routeButton("sell", t("selling"))}${routeButton("chart", t("chart_tab"))}</div>`;
@@ -4504,7 +5039,7 @@ function renderCommodityDetailPage(commodity, detail, canManage, canAct) {
           <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
           <div class="price-line">
             ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}
-            <span class="minor">${escapeHtml(t("lowest_sell"))}${commodity.bestBuy == null ? "" : ` 路 ${escapeHtml(t("highest_buy"))} ${number(commodity.bestBuy)} bp`}</span>
+            <span class="minor">${escapeHtml(t("lowest_sell"))}${commodity.bestBuy == null ? "" : ` · ${escapeHtml(t("highest_buy"))} ${number(commodity.bestBuy)} bp`}</span>
           </div>
           <div class="goods-stats">
             ${metricBox(t("sell_listings"), number(commodity.totalListings))}

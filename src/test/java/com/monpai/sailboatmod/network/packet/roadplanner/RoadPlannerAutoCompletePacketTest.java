@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTerrainSample;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import io.netty.buffer.Unpooled;
@@ -18,7 +19,8 @@ class RoadPlannerAutoCompletePacketTest {
                 UUID.randomUUID(), true,
                 List.of(BlockPos.ZERO, new BlockPos(8, 64, 8)),
                 List.of(RoadPlannerSegmentType.BRIDGE_SMALL),
-                "ok"
+                "ok",
+                List.of(new RoadPlannerTerrainSample(8, 8, 64, 3, RoadPlannerTerrainSample.Kind.WATER))
         );
 
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
@@ -29,5 +31,6 @@ class RoadPlannerAutoCompletePacketTest {
         assertEquals(packet.nodes(), decoded.nodes());
         assertEquals(packet.segmentTypes(), decoded.segmentTypes());
         assertEquals(packet.message(), decoded.message());
+        assertEquals(packet.terrainSamples(), decoded.terrainSamples());
     }
 }

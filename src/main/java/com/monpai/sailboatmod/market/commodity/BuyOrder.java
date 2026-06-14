@@ -8,6 +8,7 @@ public record BuyOrder(
         int quantity,
         int minPriceBp,
         int maxPriceBp,
+        long reservedBalance,
         long createdAt,
         String status
 ) {
@@ -19,6 +20,7 @@ public record BuyOrder(
         quantity = Math.max(1, quantity);
         minPriceBp = Math.max(-5000, Math.min(5000, minPriceBp));
         maxPriceBp = Math.max(-5000, Math.min(5000, maxPriceBp));
+        reservedBalance = Math.max(0L, reservedBalance);
         status = status == null ? "ACTIVE" : status;
     }
 

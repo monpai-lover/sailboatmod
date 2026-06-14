@@ -34,7 +34,9 @@ public final class RoadPlannerPathfinderRunnerFactory {
         };
         return new RoadPlannerAutoCompleteService(
                 runner,
-                new RoadPlannerTerrainSegmentClassifier(cache, new RoadConfig().getBridge())
+                new RoadPlannerTerrainSegmentClassifier(cache, new RoadConfig().getBridge()),
+                (x, z) -> !cache.isWater(x, z) || cache.getWaterDepth(x, z) <= 0,
+                nodes -> RoadPlannerTerrainSampleCollector.collect(cache, nodes)
         );
     }
 }

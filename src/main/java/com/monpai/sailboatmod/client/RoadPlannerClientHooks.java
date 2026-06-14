@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerScreen;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerClaimOverlay;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTerrainSample;
 import com.monpai.sailboatmod.client.screen.RoadPlannerConfigScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerActionMenuScreen;
 import com.monpai.sailboatmod.client.screen.RoadPlannerDemolitionSelectionScreen;
@@ -226,9 +227,18 @@ public final class RoadPlannerClientHooks {
                                                List<BlockPos> nodes,
                                                List<RoadPlannerSegmentType> segmentTypes,
                                                String message) {
+        applyAutoCompleteResult(sessionId, success, nodes, segmentTypes, message, List.of());
+    }
+
+    public static void applyAutoCompleteResult(UUID sessionId,
+                                               boolean success,
+                                               List<BlockPos> nodes,
+                                               List<RoadPlannerSegmentType> segmentTypes,
+                                               String message,
+                                               List<RoadPlannerTerrainSample> terrainSamples) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof RoadPlannerScreen screen) {
-            screen.applyAutoCompleteResult(sessionId, success, nodes, segmentTypes, message);
+            screen.applyAutoCompleteResult(sessionId, success, nodes, segmentTypes, message, terrainSamples);
         }
     }
 

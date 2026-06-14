@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTerrainSample;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
@@ -17,12 +18,22 @@ public record RoadPlannerAutoCompleteResultPacket(UUID sessionId,
                                                   boolean success,
                                                   List<BlockPos> nodes,
                                                   List<RoadPlannerSegmentType> segmentTypes,
-                                                  String message) {
+                                                  String message,
+                                                  List<RoadPlannerTerrainSample> terrainSamples) {
+    public RoadPlannerAutoCompleteResultPacket(UUID sessionId,
+                                               boolean success,
+                                               List<BlockPos> nodes,
+                                               List<RoadPlannerSegmentType> segmentTypes,
+                                               String message) {
+        this(sessionId, success, nodes, segmentTypes, message, List.of());
+    }
+
     public RoadPlannerAutoCompleteResultPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
         nodes = nodes == null ? List.of() : nodes.stream().map(BlockPos::immutable).toList();
         segmentTypes = segmentTypes == null ? List.of() : List.copyOf(segmentTypes);
         message = message == null ? "" : message;
+        terrainSamples = terrainSamples == null ? List.of() : List.copyOf(terrainSamples);
     }
 
     public static void encode(RoadPlannerAutoCompleteResultPacket packet, FriendlyByteBuf buffer) {
@@ -34,6 +45,17 @@ public record RoadPlannerAutoCompleteResultPacket(UUID sessionId,
             buffer.writeEnum(type == null ? RoadPlannerSegmentType.ROAD : type);
         }
         RoadPlannerPacketCodec.writeString(buffer, packet.message(), 128);
+        buffer.writeVarInt(packet.terrainSamples().size());
+        for (RoadPlannerTerrainSample sample : packet.terrainSamples()) {
+            RoadPlannerTerrainSample safe = sample == null
+                    ? new RoadPlannerTerrainSample(0, 0, 0, 0, RoadPlannerTerrainSample.Kind.UNKNOWN)
+                    : sample;
+            buffer.writeVarInt(safe.x());
+            buffer.writeVarInt(safe.z());
+            buffer.writeVarInt(safe.surfaceY());
+            buffer.writeVarInt(safe.waterDepth());
+            buffer.writeEnum(safe.kind());
+        }
     }
 
     public static RoadPlannerAutoCompleteResultPacket decode(FriendlyByteBuf buffer) {
@@ -45,12 +67,33 @@ public record RoadPlannerAutoCompleteResultPacket(UUID sessionId,
         for (int index = 0; index < segmentCount; index++) {
             segmentTypes.add(buffer.readEnum(RoadPlannerSegmentType.class));
         }
-        return new RoadPlannerAutoCompleteResultPacket(sessionId, success, nodes, segmentTypes, buffer.readUtf(128));
+        String message = buffer.readUtf(128);
+        List<RoadPlannerTerrainSample> terrainSamples = List.of();
+        if (buffer.isReadable()) {
+            int sampleCount = Math.max(0, buffer.readVarInt());
+            List<RoadPlannerTerrainSample> decodedSamples = new ArrayList<>(sampleCount);
+            for (int index = 0; index < sampleCount; index++) {
+                decodedSamples.add(new RoadPlannerTerrainSample(
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readVarInt(),
+                        buffer.readEnum(RoadPlannerTerrainSample.Kind.class)));
+            }
+            terrainSamples = List.copyOf(decodedSamples);
+        }
+        return new RoadPlannerAutoCompleteResultPacket(sessionId, success, nodes, segmentTypes, message, terrainSamples);
     }
 
     public static void handle(RoadPlannerAutoCompleteResultPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         contextSupplier.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
-                RoadPlannerClientHooks.applyAutoCompleteResult(packet.sessionId(), packet.success(), packet.nodes(), packet.segmentTypes(), packet.message())));
+                RoadPlannerClientHooks.applyAutoCompleteResult(
+                        packet.sessionId(),
+                        packet.success(),
+                        packet.nodes(),
+                        packet.segmentTypes(),
+                        packet.message(),
+                        packet.terrainSamples())));
         contextSupplier.get().setPacketHandled(true);
     }
 }

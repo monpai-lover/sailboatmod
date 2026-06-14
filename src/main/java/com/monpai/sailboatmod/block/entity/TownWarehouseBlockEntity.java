@@ -156,6 +156,38 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         return new PersonalWarehouseContainer(ownerId);
     }
 
+    public List<String> getVisibleStorageLines(UUID ownerId) {
+        List<String> lines = new ArrayList<>();
+        for (StorageGroup group : getVisibleStorageGroups(ownerId)) {
+            String itemName = group.displayName();
+            lines.add(clampUtf(itemName + " x" + group.totalCount(), 150));
+        }
+        return lines;
+    }
+
+    public int getVisibleStorageCount(UUID ownerId) {
+        return getVisibleStorageGroups(ownerId).size();
+    }
+
+    public ItemStack getStorageItemForVisibleIndex(UUID ownerId, int visibleIndex) {
+        List<StorageGroup> groups = getVisibleStorageGroups(ownerId);
+        if (visibleIndex < 0 || visibleIndex >= groups.size()) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack stack = groups.get(visibleIndex).displayStack().copy();
+        stack.setCount(groups.get(visibleIndex).totalCount());
+        return stack;
+    }
+
+    public boolean extractVisibleStorage(UUID ownerId, int visibleIndex, int quantity) {
+        ItemStack stack = getStorageItemForVisibleIndex(ownerId, visibleIndex);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        int amount = Math.max(1, Math.min(quantity, countMatchingStock(ownerId, stack)));
+        return extractMatchingStock(ownerId, stack, amount);
+    }
+
     public List<String> getVisibleStorageLines() {
         List<String> lines = new ArrayList<>();
         for (StorageGroup group : getVisibleStorageGroups()) {
@@ -188,11 +220,49 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         return extractMatchingStock(stack, amount);
     }
 
+    public int countMatchingStock(UUID ownerId, ItemStack sample) {
+        if (ownerId == null || sample == null || sample.isEmpty()) {
+            return 0;
+        }
+        int total = 0;
+        for (ItemStack stack : getOrCreatePlayerStorage(ownerId)) {
+            if (!stack.isEmpty() && ItemStack.isSameItemSameTags(stack, sample)) {
+                total += stack.getCount();
+            }
+        }
+        return total;
+    }
+
     public int countMatchingStock(ItemStack sample) {
         if (sample == null || sample.isEmpty() || level == null || getTownId().isBlank()) {
             return 0;
         }
         return TownStockpileService.getAvailable(level, getTownId(), commodityKey(sample));
+    }
+
+    public boolean extractMatchingStock(UUID ownerId, ItemStack sample, int quantity) {
+        if (ownerId == null || sample == null || sample.isEmpty() || quantity <= 0) {
+            return false;
+        }
+        NonNullList<ItemStack> storage = getOrCreatePlayerStorage(ownerId);
+        if (countMatchingStock(ownerId, sample) < quantity) {
+            return false;
+        }
+        int remaining = quantity;
+        for (int i = 0; i < storage.size() && remaining > 0; i++) {
+            ItemStack slot = storage.get(i);
+            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, sample)) {
+                continue;
+            }
+            int removed = Math.min(remaining, slot.getCount());
+            slot.shrink(removed);
+            if (slot.isEmpty()) {
+                storage.set(i, ItemStack.EMPTY);
+            }
+            remaining -= removed;
+        }
+        setChanged();
+        return true;
     }
 
     public boolean extractMatchingStock(ItemStack sample, int quantity) {
@@ -210,11 +280,35 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         return level != null && !getTownId().isBlank();
     }
 
+    public boolean canInsertCargo(UUID ownerId, List<ItemStack> cargo) {
+        if (ownerId == null || cargo == null) {
+            return false;
+        }
+        NonNullList<ItemStack> staged = copyStorage(getOrCreatePlayerStorage(ownerId));
+        return mergeCargoIntoStorage(cargo, staged);
+    }
+
     public boolean insertCargo(List<ItemStack> cargo) {
         if (level == null || level.isClientSide || getTownId().isBlank() || cargo == null || cargo.isEmpty()) {
             return false;
         }
         TownStockpileService.addCargo(level, getTownId(), cargo);
+        setChanged();
+        return true;
+    }
+
+    public boolean insertCargo(UUID ownerId, List<ItemStack> cargo) {
+        if (ownerId == null || cargo == null || cargo.isEmpty()) {
+            return false;
+        }
+        NonNullList<ItemStack> staged = copyStorage(getOrCreatePlayerStorage(ownerId));
+        if (!mergeCargoIntoStorage(cargo, staged)) {
+            return false;
+        }
+        NonNullList<ItemStack> storage = getOrCreatePlayerStorage(ownerId);
+        for (int i = 0; i < storage.size(); i++) {
+            storage.set(i, staged.get(i));
+        }
         setChanged();
         return true;
     }
@@ -275,6 +369,41 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         return playerStorage.computeIfAbsent(playerId, ignored -> NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY));
     }
 
+    private List<StorageGroup> getVisibleStorageGroups(UUID ownerId) {
+        if (ownerId == null) {
+            return List.of();
+        }
+        return getVisibleStorageGroups(getOrCreatePlayerStorage(ownerId));
+    }
+
+    private List<StorageGroup> getVisibleStorageGroups(NonNullList<ItemStack> storage) {
+        if (storage == null) {
+            return List.of();
+        }
+        List<StorageGroup> groups = new ArrayList<>();
+        for (ItemStack stack : storage) {
+            if (stack.isEmpty()) {
+                continue;
+            }
+            boolean merged = false;
+            for (int i = 0; i < groups.size(); i++) {
+                StorageGroup group = groups.get(i);
+                if (ItemStack.isSameItemSameTags(group.displayStack(), stack)) {
+                    groups.set(i, new StorageGroup(group.displayStack(), group.displayName(), group.totalCount() + stack.getCount()));
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) {
+                ItemStack display = stack.copy();
+                display.setCount(1);
+                groups.add(new StorageGroup(display, stack.getHoverName().getString(), stack.getCount()));
+            }
+        }
+        groups.sort((left, right) -> Integer.compare(right.totalCount(), left.totalCount()));
+        return groups;
+    }
+
     private List<StorageGroup> getVisibleStorageGroups() {
         if (level == null || getTownId().isBlank()) {
             return List.of();
@@ -292,6 +421,64 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         }
         groups.sort((left, right) -> Integer.compare(right.totalCount(), left.totalCount()));
         return groups;
+    }
+
+    private NonNullList<ItemStack> copyStorage(NonNullList<ItemStack> source) {
+        NonNullList<ItemStack> copy = NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY);
+        if (source == null) {
+            return copy;
+        }
+        for (int i = 0; i < Math.min(source.size(), copy.size()); i++) {
+            copy.set(i, source.get(i).copy());
+        }
+        return copy;
+    }
+
+    private boolean mergeCargoIntoStorage(List<ItemStack> cargo, NonNullList<ItemStack> targetStorage) {
+        if (cargo == null || targetStorage == null) {
+            return false;
+        }
+        for (ItemStack incoming : cargo) {
+            if (incoming == null || incoming.isEmpty()) {
+                continue;
+            }
+            ItemStack remaining = incoming.copy();
+            mergeIntoExistingStacks(remaining, targetStorage);
+            mergeIntoEmptySlots(remaining, targetStorage);
+            if (!remaining.isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void mergeIntoExistingStacks(ItemStack remaining, NonNullList<ItemStack> targetStorage) {
+        for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
+            ItemStack slot = targetStorage.get(i);
+            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, remaining)) {
+                continue;
+            }
+            int limit = Math.min(slot.getMaxStackSize(), 64);
+            int move = Math.min(limit - slot.getCount(), remaining.getCount());
+            if (move <= 0) {
+                continue;
+            }
+            slot.grow(move);
+            remaining.shrink(move);
+        }
+    }
+
+    private void mergeIntoEmptySlots(ItemStack remaining, NonNullList<ItemStack> targetStorage) {
+        for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
+            if (!targetStorage.get(i).isEmpty()) {
+                continue;
+            }
+            ItemStack moved = remaining.copy();
+            int move = Math.min(Math.min(moved.getMaxStackSize(), 64), remaining.getCount());
+            moved.setCount(move);
+            targetStorage.set(i, moved);
+            remaining.shrink(move);
+        }
     }
 
     private ItemStack sampleStack(String commodityKey, int amount) {
