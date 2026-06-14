@@ -18,6 +18,7 @@ import com.monpai.sailboatmod.network.packet.OpenTradeScreenPacket;
 import com.monpai.sailboatmod.network.packet.TradeScreenActionPacket;
 import com.monpai.sailboatmod.network.packet.ClaimMarketCreditsPacket;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
+import com.monpai.sailboatmod.network.packet.SetUnloadOnArrivalPacket;
 import com.monpai.sailboatmod.network.packet.CreateBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
@@ -843,6 +844,13 @@ public final class ModNetwork {
                 RoadPlannerRoadOverlaySyncPacket::decode,
                 RoadPlannerRoadOverlaySyncPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                SetUnloadOnArrivalPacket.class,
+                SetUnloadOnArrivalPacket::encode,
+                SetUnloadOnArrivalPacket::decode,
+                SetUnloadOnArrivalPacket::handle
         );
     }
 

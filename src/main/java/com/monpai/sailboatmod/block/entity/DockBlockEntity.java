@@ -1188,6 +1188,34 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return selected;
     }
 
+    /**
+     * 决定本站实际投递的货：
+     * 若 deliverHere 里存在"无物品规格"的条目（itemStack 空或 quantity<=0，如手动发车 setPendingMarketDelivery
+     * 设的占位 manifest），无法精确抽取 → 兜底把整个 pool 全投递（pool 清空）；
+     * 否则按 selectCargoForEntries 精确抽取（保多站连运：只卸本站该投递的量，其余留车）。
+     */
+    public static List<ItemStack> resolveDeliverCargo(List<ItemStack> pool, List<ShipmentManifestEntry> deliverHere) {
+        if (pool == null || pool.isEmpty() || deliverHere == null || deliverHere.isEmpty()) {
+            return new ArrayList<>();
+        }
+        boolean hasUnspecifiedEntry = false;
+        for (ShipmentManifestEntry entry : deliverHere) {
+            if (entry == null) {
+                continue;
+            }
+            if (entry.itemStack() == null || entry.itemStack().isEmpty() || entry.quantity() <= 0) {
+                hasUnspecifiedEntry = true;
+                break;
+            }
+        }
+        if (hasUnspecifiedEntry) {
+            List<ItemStack> all = new ArrayList<>(pool);
+            pool.clear();
+            return all;
+        }
+        return selectCargoForEntries(pool, deliverHere);
+    }
+
     /** 取留车运单里第一个可解析目的地的站点，作为多站连运的下一站。 */
     @Nullable
     public static BlockPos nextStationDestination(Level level, List<ShipmentManifestEntry> keepOnboard) {

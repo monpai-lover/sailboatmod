@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
 import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
+import com.monpai.sailboatmod.network.packet.SetUnloadOnArrivalPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -15,12 +16,13 @@ import net.minecraft.network.chat.Component;
 
 public class CarriageInfoScreen extends Screen {
     private static final int PANEL_W = 236;
-    private static final int PANEL_H = 176;
+    private static final int PANEL_H = 200;
 
     private final CarriageEntity carriage;
     private EditBox nameInput;
     private Button routePrevButton;
     private Button routeNextButton;
+    private Button unloadButton;
 
     public CarriageInfoScreen(CarriageEntity carriage) {
         super(carriage.getInfoScreenTitle());
@@ -64,6 +66,21 @@ public class CarriageInfoScreen extends Screen {
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.route_stop"), b -> {
             ModNetwork.CHANNEL.sendToServer(new ControlAutopilotPacket(carriage.getId(), SailboatEntity.AutopilotControlAction.STOP));
         }).bounds(left + 174, top + 136, 44, 18).build());
+
+        this.unloadButton = this.addRenderableWidget(Button.builder(getUnloadButtonText(), b -> {
+            boolean next = !carriage.isUnloadOnArrival();
+            ModNetwork.CHANNEL.sendToServer(new SetUnloadOnArrivalPacket(carriage.getId(), next));
+            carriage.setAllowNonOrderAutoUnload(next);
+            this.unloadButton.setMessage(getUnloadButtonText());
+        }).bounds(left + 18, top + 160, PANEL_W - 36, 18).build());
+    }
+
+    private Component getUnloadButtonText() {
+        return Component.translatable("screen.sailboatmod.vehicle.unload_on_arrival")
+                .append(": ")
+                .append(Component.translatable(carriage.isUnloadOnArrival()
+                        ? "screen.sailboatmod.toggle.on"
+                        : "screen.sailboatmod.toggle.off"));
     }
 
     @Override

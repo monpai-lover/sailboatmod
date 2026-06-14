@@ -269,6 +269,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private String dockedTownId = "";
     private boolean autoReturnOnArrival = true;
     private TransportTaskKind transportTaskKind = TransportTaskKind.NONE;
+    private boolean unloadOnArrival = true;
     private int pendingReturnDelayTicks = 0;
     private int rentalPrice = SailboatEntity.DEFAULT_RENTAL_PRICE;
     private int lastPassengerCount = 0;
@@ -383,6 +384,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         tag.putString("DestinationTownId", destinationTownId == null ? "" : destinationTownId);
         tag.putString("DockedTownId", dockedTownId == null ? "" : dockedTownId);
         tag.putBoolean("AutoReturnOnArrival", autoReturnOnArrival);
+        tag.putBoolean("UnloadOnArrival", unloadOnArrival);
         tag.putString("TransportTaskKind", transportTaskKind.name());
         if (activeTripStartGameTime >= 0L) {
             tag.putLong(NBT_ACTIVE_TRIP_START_GAME_TIME, activeTripStartGameTime);
@@ -418,6 +420,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         destinationTownId = tag.getString("DestinationTownId");
         dockedTownId = tag.getString("DockedTownId");
         autoReturnOnArrival = !tag.contains("AutoReturnOnArrival") || tag.getBoolean("AutoReturnOnArrival");
+        unloadOnArrival = !tag.contains("UnloadOnArrival") || tag.getBoolean("UnloadOnArrival");
         transportTaskKind = parseTaskKind(tag.getString("TransportTaskKind"));
         activeTripStartGameTime = tag.contains(NBT_ACTIVE_TRIP_START_GAME_TIME)
                 ? Math.max(-1L, tag.getLong(NBT_ACTIVE_TRIP_START_GAME_TIME))
@@ -1618,12 +1621,45 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     public void setAllowNonOrderAutoUnload(boolean allow) {
+        this.unloadOnArrival = allow;
+    }
+
+    public boolean isUnloadOnArrival() {
+        return unloadOnArrival;
     }
 
     @Override
     public boolean hasCargo() {
         for (ItemStack stack : inventory) {
             if (!stack.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 卸货决策：商单（hasOrder）始终卸；非订单看 unloadOnArrival 开关。与帆船 allowUnload 同构。 */
+    private static boolean shouldUnloadAtArrival(boolean hasOrder, boolean unloadOnArrival) {
+        return hasOrder || unloadOnArrival;
+    }
+
+    static boolean shouldUnloadAtArrivalForTest(boolean hasOrder, boolean unloadOnArrival) {
+        return shouldUnloadAtArrival(hasOrder, unloadOnArrival);
+    }
+
+    /** manifest 是否承载市场订单（带 purchaseOrderId/shippingOrderId）。与 SailboatEntity.hasTransportOrder 同逻辑。 */
+    private static boolean hasTransportOrder(List<ShipmentManifestEntry> manifest) {
+        if (manifest == null || manifest.isEmpty()) {
+            return false;
+        }
+        for (ShipmentManifestEntry entry : manifest) {
+            if (entry == null) {
+                continue;
+            }
+            String purchaseOrderId = entry.purchaseOrderId();
+            String shippingOrderId = entry.shippingOrderId();
+            if ((purchaseOrderId != null && !purchaseOrderId.isBlank())
+                    || (shippingOrderId != null && !shippingOrderId.isBlank())) {
                 return true;
             }
         }
@@ -2252,27 +2288,35 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             dockedStationPos = destination.getBlockPos().immutable();
             dockedTownId = DockTownResolver.resolveTownForArrival(level(), destination.getBlockPos());
 
-            // 按目的地拆分运单：只卸"目的地==本站"的货，其余留车继续运（多站连运）。
-            List<ItemStack> allCargo = unloadAllCargo();
-            DockBlockEntity.ManifestSplit split = DockBlockEntity.splitManifestByDestination(
-                    level(), destination.getBlockPos(), getPendingShipmentManifest());
-            List<ItemStack> pool = new ArrayList<>(allCargo);
-            List<ItemStack> deliverCargo = DockBlockEntity.selectCargoForEntries(pool, split.deliverHere());
-            if (!pool.isEmpty()) {
-                loadCargo(pool); // 留车货物退回库存
-            }
-            if (!deliverCargo.isEmpty()) {
-                destination.receiveShipment(this, getAutopilotRouteName(), pendingShipperName, "-", destination.getDockName(),
-                        System.currentTimeMillis(), 0L, 0.0D, deliverCargo, split.deliverHere());
-            }
-            setPendingShipmentManifest(split.keepOnboard()); // 剪枝：移除已交付条目
+            List<ShipmentManifestEntry> manifest = getPendingShipmentManifest();
+            boolean hasOrder = hasTransportOrder(manifest);
+            boolean unload = shouldUnloadAtArrival(hasOrder, unloadOnArrival);
 
-            // 仍有未送达运单 → 自动开往下一站，逐站连运。
-            if (!split.keepOnboard().isEmpty()
-                    && destination instanceof PostStationBlockEntity here
-                    && tryStartLandLegToNextStation(here, split.keepOnboard())) {
-                return;
+            if (unload) {
+                // 按目的地拆分运单：只卸"目的地==本站"的货，其余留车继续运（多站连运）。
+                List<ItemStack> allCargo = unloadAllCargo();
+                DockBlockEntity.ManifestSplit split = DockBlockEntity.splitManifestByDestination(
+                        level(), destination.getBlockPos(), manifest);
+                List<ItemStack> pool = new ArrayList<>(allCargo);
+                // 兜底全卸：manifest 条目无物品规格时投递整池，否则精确抽取（保多站连运）。
+                List<ItemStack> deliverCargo = DockBlockEntity.resolveDeliverCargo(pool, split.deliverHere());
+                if (!pool.isEmpty()) {
+                    loadCargo(pool); // 留车货物退回库存
+                }
+                if (!deliverCargo.isEmpty()) {
+                    destination.receiveShipment(this, getAutopilotRouteName(), pendingShipperName, "-", destination.getDockName(),
+                            System.currentTimeMillis(), 0L, 0.0D, deliverCargo, split.deliverHere());
+                }
+                setPendingShipmentManifest(split.keepOnboard()); // 剪枝：移除已交付条目
+
+                // 仍有未送达运单 → 自动开往下一站，逐站连运。
+                if (!split.keepOnboard().isEmpty()
+                        && destination instanceof PostStationBlockEntity here
+                        && tryStartLandLegToNextStation(here, split.keepOnboard())) {
+                    return;
+                }
             }
+            // unload==false：手动发车 + 开关关 → 不卸货，货留车，玩家自理。
         }
         if (destination != null) {
             beginArrivalFeedback(destination);

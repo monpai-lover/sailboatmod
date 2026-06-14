@@ -196,7 +196,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private long autopilotShipmentDepartureEpochMillis = 0L;
     private double autopilotShipmentDistanceMeters = 0.0D;
     private boolean autopilotAllowNonOrderAutoReturn = false;
-    private boolean autopilotAllowNonOrderAutoUnload = false;
+    private boolean autopilotAllowNonOrderAutoUnload = true;
     private boolean autopilotReturnTrip = false;
     private final List<ShipmentManifestEntry> autopilotShipmentManifest = new ArrayList<>();
     private BlockPos autopilotDestinationDockHintPos = null;
@@ -1222,6 +1222,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotAllowNonOrderAutoUnload = allow;
     }
 
+    public boolean isUnloadOnArrival() {
+        return autopilotAllowNonOrderAutoUnload;
+    }
+
     public boolean loadCargo(List<ItemStack> cargo) {
         if (!canLoadCargo(cargo)) {
             return false;
@@ -2104,7 +2108,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     level(), destinationDock.getBlockPos(), manifest);
             keepOnboard = split.keepOnboard();
             List<ItemStack> pool = new ArrayList<>(allCargo);
-            List<ItemStack> deliverCargo = DockBlockEntity.selectCargoForEntries(pool, split.deliverHere());
+            List<ItemStack> deliverCargo = DockBlockEntity.resolveDeliverCargo(pool, split.deliverHere());
             if (!pool.isEmpty()) {
                 loadCargo(pool); // 留车货物退回库存
             }

@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.network.packet.SetHandlingPresetPacket;
 import com.monpai.sailboatmod.network.packet.SetSailboatRentalPricePacket;
 import com.monpai.sailboatmod.network.packet.ToggleSailPacket;
 import com.monpai.sailboatmod.network.packet.ControlAutopilotPacket;
+import com.monpai.sailboatmod.network.packet.SetUnloadOnArrivalPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -25,6 +26,7 @@ public class SailboatInfoScreen extends Screen {
     private Button sailButton;
     private Button routePrevButton;
     private Button routeNextButton;
+    private Button unloadButton;
     private final Button[] seatButtons = new Button[5];
 
     public SailboatInfoScreen(SailboatEntity sailboat) {
@@ -97,6 +99,21 @@ public class SailboatInfoScreen extends Screen {
                 ModNetwork.CHANNEL.sendToServer(new SelectSailboatSeatPacket(sailboat.getId(), seatId));
             }).bounds(buttonX, buttonY, 96, 20).build());
         }
+
+        this.unloadButton = this.addRenderableWidget(Button.builder(getUnloadButtonText(), b -> {
+            boolean next = !sailboat.isUnloadOnArrival();
+            ModNetwork.CHANNEL.sendToServer(new SetUnloadOnArrivalPacket(sailboat.getId(), next));
+            sailboat.setAllowNonOrderAutoUnload(next);
+            this.unloadButton.setMessage(getUnloadButtonText());
+        }).bounds(centerX - 100, top + 204, 200, 20).build());
+    }
+
+    private Component getUnloadButtonText() {
+        return Component.translatable("screen.sailboatmod.vehicle.unload_on_arrival")
+                .append(": ")
+                .append(Component.translatable(sailboat.isUnloadOnArrival()
+                        ? "screen.sailboatmod.toggle.on"
+                        : "screen.sailboatmod.toggle.off"));
     }
 
     @Override
