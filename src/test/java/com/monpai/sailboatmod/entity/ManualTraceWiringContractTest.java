@@ -45,4 +45,14 @@ class ManualTraceWiringContractTest {
         assertTrue(src.contains("ShippingTraceService.removeTrace("),
                 "carriage should clear its manual trace on stop");
     }
+
+    @Test
+    void manualTraceCarriesDriverNationForSameNationVisibility() throws Exception {
+        String sailboat = sailboat();
+        String carriage = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/CarriageEntity.java"));
+        assertTrue(sailboat.contains("traceShipperNationId()") && sailboat.contains("getMember("),
+                "sailboat manual trace should resolve the driver's nation for same-nation visibility");
+        assertTrue(carriage.contains("traceShipperNationId()") && carriage.contains("getMember("),
+                "carriage manual trace should resolve the driver's nation for same-nation visibility");
+    }
 }

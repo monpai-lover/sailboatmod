@@ -1344,7 +1344,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (autopilotShipmentShippingOrderId == null || autopilotShipmentShippingOrderId.isBlank()) {
             com.monpai.sailboatmod.market.logistics.ShippingTraceService.createOrUpdateManualTrace(
                     level(), getUUID(), new java.util.ArrayList<>(autopilotRoute),
-                    traceShipperUuid(), "",
+                    traceShipperUuid(), traceShipperNationId(),
                     "PORT", "SAILING", getX(), getZ());
         }
         return true;
@@ -1355,6 +1355,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         return getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver
                 ? driver.getUUID().toString()
                 : "";
+    }
+
+    /** 手动轨迹归属国家：驾驶玩家所属国家 id（用于同国可见）；无则空。 */
+    private String traceShipperNationId() {
+        if (level().isClientSide
+                || !(getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver)) {
+            return "";
+        }
+        com.monpai.sailboatmod.nation.model.NationMemberRecord member =
+                com.monpai.sailboatmod.nation.data.NationSavedData.get(level()).getMember(driver.getUUID());
+        return member == null ? "" : member.nationId();
     }
 
     private int determineInitialAutopilotTargetIndex() {
