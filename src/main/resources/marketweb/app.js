@@ -3460,7 +3460,8 @@ function renderTopbarWallet() {
     return;
   }
   const detail = state.detail;
-  if (!detail) {
+  if (!detail || !state.session) {
+    // 未选市场或未登录：钱包是玩家个人的，未登录不得显示任何钱包/余额面板
     els.walletDock.hidden = true;
     els.walletDock.innerHTML = "";
     return;

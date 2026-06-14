@@ -212,12 +212,12 @@ public final class MarketWebService {
             root.addProperty("walletReservedBalance", 0L);
             root.addProperty("walletTotalBalance", 0L);
         }
-        root.addProperty("treasuryBalance", overview.treasuryBalance());
-        root.addProperty("canTransferTreasury", overview.canTransferTreasury());
+        root.addProperty("treasuryBalance", authenticated ? overview.treasuryBalance() : 0L);
+        root.addProperty("canTransferTreasury", authenticated && overview.canTransferTreasury());
         root.addProperty("cashBalance", authenticated ? cashBalance(identity) : 0L);
         root.addProperty("walletOnline", identity.onlinePlayer() != null);
         root.addProperty("walletCurrency", GoldStandardEconomy.LEDGER_CURRENCY);
-        root.addProperty("pendingCredits", overview.pendingCredits());
+        root.addProperty("pendingCredits", authenticated ? overview.pendingCredits() : 0L);
         root.addProperty("townName", overview.townName());
         root.addProperty("townId", overview.townId());
         root.addProperty("stockpileCommodityTypes", overview.stockpileCommodityTypes());
