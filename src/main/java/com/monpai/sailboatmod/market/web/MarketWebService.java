@@ -220,6 +220,8 @@ public final class MarketWebService {
         root.addProperty("pendingCredits", authenticated ? overview.pendingCredits() : 0L);
         root.addProperty("townName", overview.townName());
         root.addProperty("townId", overview.townId());
+        root.addProperty("canChooseReceiving", overview.canChooseReceiving());
+        root.add("receivingWarehouseOptions", receivingWarehouseOptions(overview));
         root.addProperty("stockpileCommodityTypes", overview.stockpileCommodityTypes());
         root.addProperty("stockpileTotalUnits", overview.stockpileTotalUnits());
         root.addProperty("openDemandCount", overview.openDemandCount());
@@ -576,6 +578,19 @@ public final class MarketWebService {
             return null;
         }
         return new ResolvedMarket(level, market);
+    }
+
+    private JsonArray receivingWarehouseOptions(MarketOverviewData overview) {
+        JsonArray out = new JsonArray();
+        for (MarketOverviewData.WarehouseOption opt : overview.receivingWarehouseOptions()) {
+            JsonObject json = new JsonObject();
+            BlockPos pos = opt.pos();
+            json.addProperty("pos", pos.getX() + "," + pos.getY() + "," + pos.getZ());
+            json.addProperty("displayName", opt.displayName());
+            json.addProperty("townName", opt.townName());
+            out.add(json);
+        }
+        return out;
     }
 
     private JsonArray storageEntries(MarketOverviewData overview) {
