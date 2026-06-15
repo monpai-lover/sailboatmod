@@ -202,10 +202,11 @@ public final class NationTradeService {
         NationDiplomacyRecord dipRecord = data.getDiplomacy(ourNation.nationId(), targetNation.nationId());
         String dipStatus = dipRecord != null ? dipRecord.statusId() : "neutral";
 
-        // Target treasury visible only if allied or trade
+        // 对方国库：有贸易/同盟关系才可见，且只露抽象档位（不下发精确金额，避免抓包泄露）。
         boolean showTargetTreasury = "allied".equals(dipStatus) || "trade".equals(dipStatus);
         List<ItemStack> targetItems = showTargetTreasury ? copyTreasuryItems(targetTreasury) : List.of();
-        long targetBalance = showTargetTreasury ? targetTreasury.currencyBalance() : 0L;
+        long targetBalance = 0L; // 对方精确金额不下发
+        String targetTier = showTargetTreasury ? treasuryTier(targetTreasury.currencyBalance()) : "unknown";
 
         // Find existing proposal between these two nations
         TradeProposalRecord proposal = findProposalBetween(data, ourNation.nationId(), targetNation.nationId());
@@ -227,8 +228,17 @@ public final class NationTradeService {
                 hasProposal ? List.copyOf(proposal.offerItems()) : List.of(),
                 hasProposal ? proposal.requestCurrency() : 0L,
                 hasProposal ? List.copyOf(proposal.requestItems()) : List.of(),
-                remainingSec, dipStatus
+                remainingSec, dipStatus, targetTier
         );
+    }
+
+    /** 国库金额 → 抽象档位 key（不露精确数字）。阈值：&lt;1k/&lt;10k/&lt;100k/&lt;1M/≥1M。 */
+    private static String treasuryTier(long balance) {
+        if (balance < 1_000L) return "minimal";
+        if (balance < 10_000L) return "modest";
+        if (balance < 100_000L) return "substantial";
+        if (balance < 1_000_000L) return "wealthy";
+        return "prosperous";
     }
 
     private static List<ItemStack> copyTreasuryItems(NationTreasuryRecord treasury) {

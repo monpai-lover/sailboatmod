@@ -41,6 +41,7 @@ public class OpenTradeScreenPacket {
         writeItemList(buffer, d.requestItems());
         buffer.writeVarInt(d.proposalRemainingSeconds());
         writeUtfSafe(buffer, d.diplomacyStatus(), 24);
+        writeUtfSafe(buffer, d.targetTreasuryTier(), 24);
     }
     public static OpenTradeScreenPacket decode(FriendlyByteBuf buffer) {
         String ourNationId = buffer.readUtf(40);
@@ -63,12 +64,13 @@ public class OpenTradeScreenPacket {
         List<ItemStack> requestItems = readItemList(buffer);
         int proposalRemainingSeconds = buffer.readVarInt();
         String diplomacyStatus = buffer.readUtf(24);
+        String targetTreasuryTier = buffer.readUtf(24);
         return new OpenTradeScreenPacket(new TradeScreenData(
                 ourNationId, ourNationName, ourPrimaryColor, ourTreasuryBalance, ourTreasuryItems, canManageTreasury,
                 targetNationId, targetNationName, targetPrimaryColor, targetTreasuryBalance, targetTreasuryItems,
                 hasExistingProposal, proposalId, weAreProposer,
                 offerCurrency, offerItems, requestCurrency, requestItems,
-                proposalRemainingSeconds, diplomacyStatus
+                proposalRemainingSeconds, diplomacyStatus, targetTreasuryTier
         ));
     }
 

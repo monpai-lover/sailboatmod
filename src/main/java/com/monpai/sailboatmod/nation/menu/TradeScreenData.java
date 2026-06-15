@@ -25,7 +25,8 @@ public record TradeScreenData(
         long requestCurrency,
         List<ItemStack> requestItems,
         int proposalRemainingSeconds,
-        String diplomacyStatus
+        String diplomacyStatus,
+        String targetTreasuryTier
 ) {
     public static final int MAX_TRADE_ITEMS = 9;
     public static final int TREASURY_SLOTS = 54;
@@ -37,6 +38,7 @@ public record TradeScreenData(
         targetNationName = sanitize(targetNationName, 64);
         proposalId = sanitize(proposalId, 16);
         diplomacyStatus = sanitize(diplomacyStatus, 24);
+        targetTreasuryTier = sanitize(targetTreasuryTier, 24);
         if (ourTreasuryItems == null) ourTreasuryItems = List.of();
         if (targetTreasuryItems == null) targetTreasuryItems = List.of();
         if (offerItems == null) offerItems = List.of();
@@ -48,7 +50,7 @@ public record TradeScreenData(
     public static TradeScreenData empty() {
         return new TradeScreenData("", "", 0, 0L, List.of(), false,
                 "", "", 0, 0L, List.of(),
-                false, "", false, 0L, List.of(), 0L, List.of(), 0, "neutral");
+                false, "", false, 0L, List.of(), 0L, List.of(), 0, "neutral", "unknown");
     }
 
     private static String sanitize(String value, int maxLength) {

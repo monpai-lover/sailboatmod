@@ -162,9 +162,8 @@ public class NationTradeWindow extends AbstractSailboatWindow {
         setText("offerTitle", Component.translatable("screen.sailboatmod.trade.our_offer"));
         setText("requestTitle", Component.translatable("screen.sailboatmod.trade.we_request"));
         setText("ourBalance", Component.translatable("screen.sailboatmod.trade.balance", data.ourTreasuryBalance()));
-        setText("targetBalance", targetTreasuryVisible()
-                ? Component.translatable("screen.sailboatmod.trade.balance", data.targetTreasuryBalance())
-                : Component.empty());
+        setText("targetBalance", Component.translatable(
+                "screen.sailboatmod.trade.balance.tier." + tierKey(data.targetTreasuryTier())));
         setText("offerCurrencyLabel", Component.translatable("screen.sailboatmod.trade.currency"));
         setText("requestCurrencyLabel", Component.translatable("screen.sailboatmod.trade.currency"));
         setText("ourTreasuryTitle", Component.translatable("screen.sailboatmod.trade.treasury_preview"));
@@ -372,6 +371,13 @@ public class NationTradeWindow extends AbstractSailboatWindow {
 
     private boolean targetTreasuryVisible() {
         return !data.targetTreasuryItems().isEmpty();
+    }
+
+    private static String tierKey(String tier) {
+        return switch (tier == null ? "" : tier) {
+            case "minimal", "modest", "substantial", "wealthy", "prosperous" -> tier;
+            default -> "unknown";
+        };
     }
 
     private boolean readOnly() {

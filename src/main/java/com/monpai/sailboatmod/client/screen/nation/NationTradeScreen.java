@@ -230,8 +230,9 @@ public class NationTradeScreen extends Screen {
         int halfW = SCREEN_W / 2;
         drawNationHeader(g, left + 12, top + 24, data.ourNationName(), data.ourPrimaryColor(),
                 Component.translatable("screen.sailboatmod.trade.balance", data.ourTreasuryBalance()));
+        // 对方国库只显示抽象档位（不露精确数字）
         drawNationHeader(g, left + halfW + 12, top + 24, data.targetNationName(), data.targetPrimaryColor(),
-                Component.translatable("screen.sailboatmod.trade.balance", data.targetTreasuryBalance()));
+                Component.translatable("screen.sailboatmod.trade.balance.tier." + tierKey(data.targetTreasuryTier())));
 
         // Section labels
         g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.our_offer"),
@@ -269,6 +270,15 @@ public class NationTradeScreen extends Screen {
         // Status text
         drawStatusText(g, left + 12, top + SCREEN_H - 50);
     }
+
+    /** 校验对方国库档位 key，非法时回退 unknown（缺关系/不可见）。 */
+    private static String tierKey(String tier) {
+        return switch (tier == null ? "" : tier) {
+            case "minimal", "modest", "substantial", "wealthy", "prosperous" -> tier;
+            default -> "unknown";
+        };
+    }
+
     private void drawNationHeader(GuiGraphics g, int x, int y, String name, int color, Component balance) {
         // Color swatch
         int rgb = color & 0xFFFFFF;
