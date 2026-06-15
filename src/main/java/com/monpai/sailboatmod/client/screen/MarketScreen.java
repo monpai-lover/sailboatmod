@@ -206,8 +206,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return data.marketPos().equals(pos);
     }
 
-    /** 接收模式可达性探测回包（E3 填实现）。 */
+    /** 接收模式可达性探测回包：仅当前打开的、同一 listing 的弹窗刷新置灰状态。 */
     public void onProbeResult(String listingId, boolean sellerShip, boolean autoPickup, boolean realPickup) {
+        if (!showBuyModal || listingId == null || !listingId.equals(probeListingId)) {
+            return;
+        }
+        modeSellerShipReachable = sellerShip;
+        modeAutoPickupReachable = autoPickup;
+        modeRealPickupReachable = realPickup;
+        rebuildUi();
     }
 
     @Override
@@ -337,6 +344,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private boolean handleEscape() {
+        if (showBuyModal) {
+            showBuyModal = false;
+            rebuildUi();
+            return true;
+        }
         if (showCategoryFilter || showRarityFilter || showPriceFilter) {
             showCategoryFilter = false;
             showRarityFilter = false;
@@ -430,6 +442,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             case BUY_ORDERS -> buildBuyOrdersPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
         }
         buildNotice(mainPanel, panelWidth);
+        if (showBuyModal) {
+            buildBuyModal(overlay);
+        }
         traceScrollState("rebuildUi:end preserve=" + preserveScroll);
     }
 
@@ -1469,6 +1484,117 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             }
         });
         option.onMouseClickConsumer(event -> runPreservingScroll(action));
+    }
+
+    /** 同 createDropdownOption，但 label 为直接显示文本（不经 translatable），用于收货仓显示名等动态文本。 */
+    private void createDropdownOptionRaw(UIComponent parent, int x, int y, int width, String label, boolean selected, Runnable action) {
+        UIRoundedRectangle option = createPanel(parent, x, y, width, 22, 8f, selected ? ROW_SELECTED : CARD_BG_SOFT);
+        option.enableEffect(new OutlineEffect(new Color(255, 255, 255, selected ? 20 : 8), 1f));
+        createText(option, 10, 6, label == null ? "" : label, 0.75f, selected ? ACCENT : TEXT_PRIMARY);
+        option.onMouseEnterRunnable(() -> {
+            if (!selected) {
+                option.setColor(ROW_HOVER);
+            }
+        });
+        option.onMouseLeaveRunnable(() -> {
+            if (!selected) {
+                option.setColor(CARD_BG_SOFT);
+            }
+        });
+        option.onMouseClickConsumer(event -> runPreservingScroll(action));
+    }
+
+    /** 下单确认弹窗：运输模式三选一 + 收货地下拉 + 取消/确认。挂在全屏遮罩上盖住主面板。 */
+    private void buildBuyModal(UIComponent overlay) {
+        int modalWidth = 460;
+        int modalHeight = 340;
+        int modalX = Math.max(0, (width - modalWidth) / 2);
+        int modalY = Math.max(0, (height - modalHeight) / 2);
+
+        // 全屏半透明遮罩：吃掉背景点击，点遮罩空白处关闭弹窗
+        UIBlock scrim = new UIBlock(new Color(0, 0, 0, 140));
+        scrim.setX(new PixelConstraint(0));
+        scrim.setY(new PixelConstraint(0));
+        scrim.setWidth(new PixelConstraint(width));
+        scrim.setHeight(new PixelConstraint(height));
+        scrim.setChildOf(overlay);
+        scrim.onMouseClickConsumer(event -> {
+            showBuyModal = false;
+            rebuildUi();
+        });
+
+        MarketOverviewData.ListingEntry listing = selectedListing();
+        UIRoundedRectangle card = createPanel(scrim, modalX, modalY, modalWidth, modalHeight, 14f, WINDOW_BG);
+        card.enableEffect(new OutlineEffect(BORDER, 1f));
+        // 点卡片本身不冒泡到遮罩（避免点弹窗内部误关）
+        card.onMouseClickConsumer(event -> {
+        });
+
+        int y = 16;
+        createText(card, 20, y, Component.translatable("screen.sailboatmod.market.buy.modal.title").getString(), 1.2f, TEXT_PRIMARY);
+        y += 28;
+        if (listing != null) {
+            createText(card, 20, y, listing.itemName() + "  x" + parsePositive(buyQtyValue, 1), 1.0f, TEXT_MUTED);
+            y += 24;
+        }
+
+        boolean canReceive = data.canChooseReceiving();
+        y = buildModeRow(card, y, "SELLER_SHIP", "screen.sailboatmod.market.buy.modal.mode.seller_ship", modeSellerShipReachable, canReceive);
+        y = buildModeRow(card, y, "AUTO_PICKUP", "screen.sailboatmod.market.buy.modal.mode.auto_pickup", modeAutoPickupReachable, canReceive);
+        y = buildModeRow(card, y, "REAL_PICKUP", "screen.sailboatmod.market.buy.modal.mode.real_pickup", modeRealPickupReachable, true);
+
+        // 收货地下拉（真人自提不需要收货仓）
+        if (!"REAL_PICKUP".equals(buyFulfillment)) {
+            createText(card, 20, y, Component.translatable("screen.sailboatmod.market.buy.modal.receiving.label").getString(), 0.75f, TEXT_SOFT);
+            y += 16;
+            if (data.receivingWarehouseOptions().isEmpty()) {
+                createText(card, 20, y, Component.translatable("screen.sailboatmod.market.buy.modal.receiving.none").getString(), 0.85f, NEGATIVE);
+                y += 22;
+            } else {
+                for (MarketOverviewData.WarehouseOption opt : data.receivingWarehouseOptions()) {
+                    boolean sel = opt.pos().equals(buyReceivingPos);
+                    String label = opt.townName() == null || opt.townName().isBlank()
+                            ? opt.displayName()
+                            : opt.displayName() + " · " + opt.townName();
+                    createDropdownOptionRaw(card, 20, y, modalWidth - 40, label, sel, () -> {
+                        buyReceivingPos = opt.pos();
+                        requestProbe();
+                        rebuildUi();
+                    });
+                    y += 24;
+                }
+            }
+        }
+
+        // 取消 / 确认
+        boolean confirmEnabled = "REAL_PICKUP".equals(buyFulfillment) || canReceive;
+        createButton(card, 20, modalHeight - 38, 160, 26,
+                Component.translatable("screen.sailboatmod.market.buy.modal.cancel").getString(), true, true, () -> {
+                    showBuyModal = false;
+                    rebuildUi();
+                });
+        createButton(card, modalWidth - 180, modalHeight - 38, 160, 26,
+                Component.translatable("screen.sailboatmod.market.buy.modal.confirm").getString(), confirmEnabled, false, this::sendBuy);
+    }
+
+    /** 单个运输模式行：可达且（自提或有收货仓）才可选；不可选时给出原因。返回下一个 y。 */
+    private int buildModeRow(UIRoundedRectangle card, int y, String mode, String labelKey, boolean reachable, boolean hasWarehouse) {
+        boolean isPickup = "REAL_PICKUP".equals(mode);
+        boolean enabled = isPickup ? reachable : (hasWarehouse && reachable);
+        boolean selected = mode.equals(buyFulfillment);
+        createDropdownOption(card, 20, y, 420, labelKey, selected, () -> {
+            if (enabled) {
+                buyFulfillment = mode;
+                rebuildUi();
+            }
+        });
+        if (!enabled && !isPickup) {
+            String reasonKey = !hasWarehouse
+                    ? "screen.sailboatmod.market.buy.modal.mode.need_warehouse"
+                    : "screen.sailboatmod.market.buy.modal.mode.unreachable";
+            createText(card, 300, y + 5, Component.translatable(reasonKey).getString(), 0.65f, NEGATIVE);
+        }
+        return y + 26;
     }
 
     private void buildPriceChartPanel(UIComponent panel, int innerWidth) {
