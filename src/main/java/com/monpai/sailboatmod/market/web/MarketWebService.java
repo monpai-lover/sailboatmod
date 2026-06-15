@@ -843,6 +843,8 @@ public final class MarketWebService {
             json.addProperty("targetDockName", order.targetDockName());
             json.addProperty("quantity", order.quantity());
             json.addProperty("status", order.status());
+            json.addProperty("queuePosition", order.queuePosition());
+            json.addProperty("queueEtaSeconds", order.queueEtaSeconds());
             JsonArray options = new JsonArray();
             for (MarketOverviewData.DispatchOption option : order.dispatchOptions()) {
                 JsonObject dispatch = new JsonObject();

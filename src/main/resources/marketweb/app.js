@@ -3317,6 +3317,7 @@ function renderBuyingTab(commodity, canManage, canAct) {
                 ${dispatchOrder ? `
                   <div class="dispatch-preview-line"><strong>${escapeHtml(dispatchOrder.sourceDockName || "-")}</strong> -> <strong>${escapeHtml(dispatchOrder.targetDockName || "-")}</strong></div>
                   <div class="dispatch-preview-line">${number(dispatchOrder.quantity)} units | ${escapeHtml(dispatchOrder.status || "-")}</div>
+                  ${dispatchOrder.queuePosition > 0 ? `<div class="dispatch-preview-line order-queue">${escapeHtml(t("queue_position").replace("%1", dispatchOrder.queuePosition).replace("%2", Math.max(1, Math.floor((dispatchOrder.queueEtaSeconds || 0) / 60))))}</div>` : ""}
                   <div class="dispatch-preview-line">${escapeHtml(dispatchOption?.terminalLabel || "-")} | ${escapeHtml(dispatchOption?.availability || "-")}</div>
                   <div class="dispatch-preview-line">${escapeHtml(dispatchOption?.routeName || "-")}</div>
                   <div class="dispatch-preview-meta">
