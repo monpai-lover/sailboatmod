@@ -149,6 +149,8 @@
     "screen.sailboatmod.post_station.no_recall_vehicle": "没有可召回的已加载停靠马车。",
     "screen.sailboatmod.post_station.auto_return.on": "自动返回: 开",
     "screen.sailboatmod.post_station.auto_return.off": "自动返回: 关",
+    "screen.sailboatmod.post_station.auto_unload.on": "自动卸货: 开",
+    "screen.sailboatmod.post_station.auto_unload.off": "自动卸货: 关",
     "screen.sailboatmod.post_station.assign": "指派马车",
     "screen.sailboatmod.post_station.ship_cargo": "发货",
     "screen.sailboatmod.post_station.withdraw": "取出",

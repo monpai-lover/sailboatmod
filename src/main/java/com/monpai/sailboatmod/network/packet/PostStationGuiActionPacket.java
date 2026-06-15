@@ -53,6 +53,11 @@ public class PostStationGuiActionPacket {
                         station.togglePostStationAutoReturn();
                     }
                 }
+                case TOGGLE_AUTO_UNLOAD -> {
+                    if (station.canManageDock(player)) {
+                        station.togglePostStationAutoUnload();
+                    }
+                }
                 case DISPATCH_SELECTED -> station.dispatchSelectedDestination(player, packet.value);
                 case RECALL_SELECTED -> station.recallSelectedVehicle(player);
                 case ADV_LOAD_BOOK_FROM_HAND -> {
@@ -107,6 +112,7 @@ public class PostStationGuiActionPacket {
         SELECT_DESTINATION_INDEX,
         SELECT_VEHICLE_INDEX,
         TOGGLE_AUTO_RETURN,
+        TOGGLE_AUTO_UNLOAD,
         DISPATCH_SELECTED,
         RECALL_SELECTED,
         ADV_LOAD_BOOK_FROM_HAND,

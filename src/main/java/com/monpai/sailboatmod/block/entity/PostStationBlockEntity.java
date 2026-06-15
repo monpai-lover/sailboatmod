@@ -42,6 +42,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
     private int selectedDestinationIndex = 0;
     private int selectedVehicleIndex = 0;
     private boolean autoReturnOnDispatch = true;
+    private boolean autoUnloadOnDispatch = true;
 
     public PostStationBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.POST_STATION_BLOCK_ENTITY.get(), pos, state);
@@ -133,6 +134,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
         tag.putInt("SelectedDestinationIndex", selectedDestinationIndex);
         tag.putInt("SelectedVehicleIndex", selectedVehicleIndex);
         tag.putBoolean("AutoReturnOnDispatch", autoReturnOnDispatch);
+        tag.putBoolean("AutoUnloadOnDispatch", autoUnloadOnDispatch);
     }
 
     @Override
@@ -141,6 +143,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
         selectedDestinationIndex = Math.max(0, tag.getInt("SelectedDestinationIndex"));
         selectedVehicleIndex = Math.max(0, tag.getInt("SelectedVehicleIndex"));
         autoReturnOnDispatch = !tag.contains("AutoReturnOnDispatch") || tag.getBoolean("AutoReturnOnDispatch");
+        autoUnloadOnDispatch = !tag.contains("AutoUnloadOnDispatch") || tag.getBoolean("AutoUnloadOnDispatch");
     }
 
     public PostStationScreenData buildPostStationScreenData(Player player) {
@@ -208,6 +211,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
                 vehicleEntries,
                 selectedVehicleIndex,
                 autoReturnOnDispatch,
+                autoUnloadOnDispatch,
                 routeSummary,
                 routeWaypoints,
                 advanced
@@ -226,6 +230,11 @@ public class PostStationBlockEntity extends DockBlockEntity {
 
     public void togglePostStationAutoReturn() {
         autoReturnOnDispatch = !autoReturnOnDispatch;
+        setChanged();
+    }
+
+    public void togglePostStationAutoUnload() {
+        autoUnloadOnDispatch = !autoUnloadOnDispatch;
         setChanged();
     }
 
@@ -302,7 +311,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
                 availability.plan().route().waypoints().size(),
                 vehicle.hasCargo());
         vehicle.setAllowNonOrderAutoReturn(autoReturnOnDispatch);
-        vehicle.setAllowNonOrderAutoUnload(false);
+        vehicle.setAllowNonOrderAutoUnload(autoUnloadOnDispatch);
         vehicle.setPendingShipper(player == null ? null : player.getName().getString());
         vehicle.setRouteCatalog(List.of(availability.plan().route()), 0, worldPosition);
         vehicle.setLandTransportTask(availability.plan(), autoReturnOnDispatch, CarriageEntity.TransportTaskKind.DISPATCH);

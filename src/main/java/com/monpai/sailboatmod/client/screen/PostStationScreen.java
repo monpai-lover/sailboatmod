@@ -36,6 +36,7 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     private Button dispatchButton;
     private Button recallButton;
     private Button autoReturnButton;
+    private Button autoUnloadButton;
     private Button importButton;
     private Button reverseButton;
     private Button deleteButton;
@@ -86,7 +87,9 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
         recallButton = addRenderableWidget(Button.builder(text("recall"), button -> send(PostStationGuiActionPacket.Action.RECALL_SELECTED))
                 .bounds(x + 82, y + 142, 60, 16).build());
         autoReturnButton = addRenderableWidget(Button.builder(Component.empty(), button -> send(PostStationGuiActionPacket.Action.TOGGLE_AUTO_RETURN))
-                .bounds(x + 8, y + 122, 132, 16).build());
+                .bounds(x + 8, y + 122, 64, 16).build());
+        autoUnloadButton = addRenderableWidget(Button.builder(Component.empty(), button -> send(PostStationGuiActionPacket.Action.TOGGLE_AUTO_UNLOAD))
+                .bounds(x + 76, y + 122, 64, 16).build());
         importButton = addRenderableWidget(Button.builder(text("import"), button -> send(PostStationGuiActionPacket.Action.ADV_IMPORT_BOOK))
                 .bounds(x + 146, y + 44, 40, 16).build());
         reverseButton = addRenderableWidget(Button.builder(text("reverse"), button -> send(PostStationGuiActionPacket.Action.ADV_REVERSE_ROUTE))
@@ -308,6 +311,11 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
             autoReturnButton.active = data.canManage();
             autoReturnButton.setMessage(text(data.autoReturnOnDispatch() ? "auto_return.on" : "auto_return.off"));
         }
+        if (autoUnloadButton != null) {
+            autoUnloadButton.visible = dispatch;
+            autoUnloadButton.active = data.canManage();
+            autoUnloadButton.setMessage(text(data.autoUnloadOnDispatch() ? "auto_unload.on" : "auto_unload.off"));
+        }
         if (importButton != null) {
             importButton.visible = advanced && data.canManage();
         }
@@ -435,7 +443,7 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
                 List.of(), List.of(), List.of(), 0, List.of(), 0, List.of(), 0, List.of(), List.of()
         );
         return new PostStationScreenData(
-                pos, "", "", "", false, List.of(), 0, List.of(), 0, true,
+                pos, "", "", "", false, List.of(), 0, List.of(), 0, true, true,
                 PostStationScreenData.RouteSummary.empty(), List.of(), advanced
         );
     }

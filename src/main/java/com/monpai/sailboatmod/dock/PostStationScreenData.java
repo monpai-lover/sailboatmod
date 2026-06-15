@@ -16,6 +16,7 @@ public record PostStationScreenData(
         List<VehicleEntry> vehicles,
         int selectedVehicleIndex,
         boolean autoReturnOnDispatch,
+        boolean autoUnloadOnDispatch,
         RouteSummary selectedRouteSummary,
         List<Vec3> selectedRouteWaypoints,
         DockScreenData advancedData

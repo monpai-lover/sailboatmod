@@ -37,6 +37,7 @@ public class OpenPostStationScreenPacket {
         writeVehicles(buffer, data.vehicles());
         buffer.writeVarInt(data.selectedVehicleIndex());
         buffer.writeBoolean(data.autoReturnOnDispatch());
+        buffer.writeBoolean(data.autoUnloadOnDispatch());
         writeRouteSummary(buffer, data.selectedRouteSummary());
         writeWaypoints(buffer, data.selectedRouteWaypoints());
         OpenDockScreenPacket.encodeData(data.advancedData(), buffer);
@@ -53,6 +54,7 @@ public class OpenPostStationScreenPacket {
         List<PostStationScreenData.VehicleEntry> vehicles = readVehicles(buffer);
         int selectedVehicleIndex = buffer.readVarInt();
         boolean autoReturnOnDispatch = buffer.readBoolean();
+        boolean autoUnloadOnDispatch = buffer.readBoolean();
         PostStationScreenData.RouteSummary routeSummary = readRouteSummary(buffer);
         List<Vec3> selectedRouteWaypoints = readWaypoints(buffer);
         DockScreenData advancedData = OpenDockScreenPacket.decodeData(buffer);
@@ -67,6 +69,7 @@ public class OpenPostStationScreenPacket {
                 vehicles,
                 selectedVehicleIndex,
                 autoReturnOnDispatch,
+                autoUnloadOnDispatch,
                 routeSummary,
                 selectedRouteWaypoints,
                 advancedData

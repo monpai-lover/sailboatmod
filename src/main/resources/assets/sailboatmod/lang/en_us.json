@@ -149,6 +149,8 @@
     "screen.sailboatmod.post_station.no_recall_vehicle": "No loaded parked carriage can be recalled.",
     "screen.sailboatmod.post_station.auto_return.on": "Auto return: ON",
     "screen.sailboatmod.post_station.auto_return.off": "Auto return: OFF",
+    "screen.sailboatmod.post_station.auto_unload.on": "Auto unload: ON",
+    "screen.sailboatmod.post_station.auto_unload.off": "Auto unload: OFF",
     "screen.sailboatmod.post_station.assign":  "Assign Cart",
     "screen.sailboatmod.post_station.ship_cargo":  "Ship Cargo",
     "screen.sailboatmod.post_station.withdraw":  "Withdraw",

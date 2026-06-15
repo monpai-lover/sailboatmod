@@ -57,6 +57,7 @@ class PostStationScreenPacketTest {
                 List.of(new PostStationScreenData.VehicleEntry(42, "Carriage", Vec3.ZERO, "IDLE", true, true, "")),
                 0,
                 true,
+                true,
                 new PostStationScreenData.RouteSummary("Alpha -> Cedar", 100, 20, List.of("Bridge")),
                 List.of(new Vec3(1, 65, 1), new Vec3(100, 65, 0)),
                 advanced
