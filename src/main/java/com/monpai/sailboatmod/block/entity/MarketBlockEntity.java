@@ -887,6 +887,102 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 : "screen.sailboatmod.market.unlist.success");
     }
 
+    /**
+     * 退款并解锁/归还一个订单的货物。幂等：已 CANCELLED 的订单直接跳过，不重复退款。
+     * 退款全额 totalPrice 给买家；若挂单仍存在则把 reservedCount 归还为 availableCount；订单标记 CANCELLED 保留审计。
+     */
+    private void refundAndReleaseOrder(MarketSavedData market, PurchaseOrder order, String reason) {
+        if (market == null || order == null) {
+            return;
+        }
+        if (PurchaseOrder.STATUS_CANCELLED.equals(order.status())) {
+            return; // 幂等守卫：已取消并退过款，不再重复
+        }
+        if (level != null && !level.isClientSide && order.totalPrice() > 0
+                && order.buyerUuid() != null && !order.buyerUuid().isBlank()) {
+            MarketWalletService.deposit(level, order.buyerUuid(), order.buyerName(), order.totalPrice());
+        }
+        // 货物归还：挂单仍在则把本单预留量退回可售量；挂单已删（卖家撤单）则跳过——货物本就回卖家仓。
+        MarketListing listing = market.getListing(order.listingId());
+        if (listing != null) {
+            market.putListing(new MarketListing(
+                    listing.listingId(),
+                    listing.sellerUuid(),
+                    listing.sellerName(),
+                    listing.itemStack(),
+                    listing.unitPrice(),
+                    listing.availableCount() + order.quantity(),
+                    Math.max(0, listing.reservedCount() - order.quantity()),
+                    listing.sourceDockPos(),
+                    listing.sourceDockName(),
+                    listing.townId(),
+                    listing.nationId(),
+                    listing.priceAdjustmentBp(),
+                    listing.sellerNote()
+            ));
+        }
+        market.putPurchaseOrder(new PurchaseOrder(
+                order.orderId(),
+                order.listingId(),
+                order.buyerUuid(),
+                order.buyerName(),
+                order.quantity(),
+                order.totalPrice(),
+                order.sourceDockPos(),
+                order.sourceDockName(),
+                order.targetDockPos(),
+                order.targetDockName(),
+                PurchaseOrder.STATUS_CANCELLED,
+                order.fulfillment(),
+                order.targetWarehousePos()
+        ));
+        MARKET_LOGGER.info("Refunded purchase order {} ({}), returned {} to buyer {}",
+                order.orderId(), reason, order.totalPrice(), order.buyerUuid());
+    }
+
+    /** 买家主动取消未发货订单（场景①）：仅本人、仅未发货态（PAID/WAITING_SHIPMENT/PICKUP_LOCKED）可取消。 */
+    public CancelPurchaseResult cancelPurchaseOrderById(String requesterUuid, String orderId) {
+        if (level == null || level.isClientSide) {
+            return CancelPurchaseResult.failure("screen.sailboatmod.market.order.cancel.failed_missing");
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        PurchaseOrder order = market.getPurchaseOrder(orderId);
+        if (order == null) {
+            return CancelPurchaseResult.failure("screen.sailboatmod.market.order.cancel.failed_missing");
+        }
+        String safeRequester = requesterUuid == null ? "" : requesterUuid.trim();
+        if (!safeRequester.equals(order.buyerUuid())) {
+            return CancelPurchaseResult.failure("screen.sailboatmod.market.order.cancel.failed_not_owner");
+        }
+        String status = order.status();
+        boolean cancellable = "PAID".equals(status)
+                || "WAITING_SHIPMENT".equals(status)
+                || PickupLock.STATUS_LOCKED.equals(status);
+        if (!cancellable) {
+            return CancelPurchaseResult.failure("screen.sailboatmod.market.order.cancel.failed_in_transit");
+        }
+        refundAndReleaseOrder(market, order, "buyer_cancel");
+        return CancelPurchaseResult.success("screen.sailboatmod.market.order.cancel.success");
+    }
+
+    /** 送达失败时自动退款（场景②）：收货仓满/不存在导致入仓失败时由运输层调用。 */
+    public void refundFailedDelivery(PurchaseOrder order, String reason) {
+        if (level == null || level.isClientSide || order == null) {
+            return;
+        }
+        refundAndReleaseOrder(MarketSavedData.get(level), order, reason);
+    }
+
+    public record CancelPurchaseResult(boolean success, String messageKey) {
+        public static CancelPurchaseResult success(String messageKey) {
+            return new CancelPurchaseResult(true, messageKey);
+        }
+
+        public static CancelPurchaseResult failure(String messageKey) {
+            return new CancelPurchaseResult(false, messageKey);
+        }
+    }
+
     public boolean claimPendingCredits(Player player) {
         if (player == null) {
             return false;
