@@ -18,6 +18,7 @@ import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
 import com.monpai.sailboatmod.network.packet.MarketGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.MarketWalletActionPacket;
+import com.monpai.sailboatmod.network.packet.ProbeFulfillmentModesPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import gg.essential.elementa.ElementaVersion;
 import gg.essential.elementa.UIComponent;
@@ -113,6 +114,14 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String listingQtyValue = "1";
     private String listingUnitPriceValue = "";
     private String buyQtyValue = "1";
+    // 下单弹窗状态
+    private boolean showBuyModal = false;
+    private String buyFulfillment = "SELLER_SHIP";
+    private BlockPos buyReceivingPos = null;
+    private boolean modeSellerShipReachable = false;
+    private boolean modeAutoPickupReachable = false;
+    private boolean modeRealPickupReachable = true;
+    private String probeListingId = "";
     private String goodsSearchValue = "";
     private String storageSearchValue = "";
     private String buyOrderCommodityValue = "";
@@ -898,7 +907,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 Component.translatable("screen.sailboatmod.market.buy_qty").getString(), buyQtyValue, value -> buyQtyValue = value);
         qtyInput.onActivate(value -> {
             buyQtyValue = value;
-            sendBuy();
+            openBuyModal();
             return Unit.INSTANCE;
         });
 
@@ -909,7 +918,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         int footerButtonWidth = Math.max(84, (innerWidth - 20 - footerButtonGap * 2) / 3);
         createButton(footer, 10, footerButtonsY, footerButtonWidth, 24,
                 Component.translatable(ownListing ? "screen.sailboatmod.market.unlist" : "screen.sailboatmod.market.buy").getString(),
-                listing != null && (ownListing || data.linkedDock()), ownListing, ownListing ? this::cancelListing : this::sendBuy);
+                listing != null && (ownListing || data.linkedDock()), ownListing, ownListing ? this::cancelListing : this::openBuyModal);
         createButton(footer, 10 + footerButtonWidth + footerButtonGap, footerButtonsY, footerButtonWidth, 24,
                 Component.translatable("screen.sailboatmod.market.goods.go_sell").getString(),
                 true, false, () -> {
@@ -3443,6 +3452,39 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         ));
     }
 
+    private void openBuyModal() {
+        if (isSelectedListingOwnedByViewer()) {
+            applyNotice(Component.translatable("screen.sailboatmod.market.self_buy_denied").getString(), false);
+            rebuildUi();
+            return;
+        }
+        MarketOverviewData.ListingEntry listing = selectedListing();
+        if (listing == null) {
+            return;
+        }
+        showBuyModal = true;
+        buyFulfillment = "SELLER_SHIP";
+        buyReceivingPos = data.receivingWarehouseOptions().isEmpty()
+                ? null : data.receivingWarehouseOptions().get(0).pos();
+        modeSellerShipReachable = false;
+        modeAutoPickupReachable = false;
+        modeRealPickupReachable = true;
+        probeListingId = listing.listingId();
+        requestProbe();
+        rebuildUi();
+    }
+
+    private void requestProbe() {
+        MarketOverviewData.ListingEntry listing = selectedListing();
+        if (listing == null) {
+            return;
+        }
+        ModNetwork.CHANNEL.sendToServer(new ProbeFulfillmentModesPacket(
+                data.marketPos(),
+                listing.listingId(),
+                buyReceivingPos != null ? buyReceivingPos : BlockPos.ZERO));
+    }
+
     private void sendBuy() {
         if (isSelectedListingOwnedByViewer()) {
             applyNotice(Component.translatable("screen.sailboatmod.market.self_buy_denied").getString(), false);
@@ -3457,8 +3499,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         ModNetwork.CHANNEL.sendToServer(new PurchaseMarketListingPacket(
                 data.marketPos(),
                 listing.listingId(),
-                parsePositive(buyQtyValue, 1)
+                parsePositive(buyQtyValue, 1),
+                buyFulfillment,
+                buyReceivingPos != null ? buyReceivingPos : BlockPos.ZERO
         ));
+        showBuyModal = false;
     }
 
     private void backToGoodsListings() {
