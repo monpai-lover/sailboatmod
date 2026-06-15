@@ -774,46 +774,52 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 receivingWarehouse
         );
         market.putPurchaseOrder(createdOrder);
-        String buyerTownId = warehouse.getTownId();
-        String sourceTownId = DockTownResolver.resolveTownForSource(level, listing.sourceDockPos(), listing.townId());
-        ProcurementRecord procurement = ProcurementService.createProcurement(
-                level,
-                buyerTownId,
-                sourceTownId,
-                CommodityKeyResolver.resolve(listing.itemStack()),
-                amount,
-                amount <= 0 ? 0L : total / amount,
-                total,
-                "STOCK_REPLENISH",
-                createdOrder.orderId(),
-                createdOrder.orderId(),
-                "",
-                DockTownResolver.dockId(level, linkedDockPos)
-        );
-        String sourceRef = procurement == null ? createdOrder.orderId() : procurement.procurementId();
-        if (!buyerTownId.isBlank()) {
-            TownFinanceLedgerService.recordExpense(
+        // 订单已落库、钱货已结算。以下采购记录/财务账簿是审计性记账——失败不应回退已完成的交易。
+        try {
+            String buyerTownId = warehouse.getTownId();
+            String sourceTownId = DockTownResolver.resolveTownForSource(level, listing.sourceDockPos(), listing.townId());
+            ProcurementRecord procurement = ProcurementService.createProcurement(
                     level,
                     buyerTownId,
-                    "MARKET_PURCHASE",
-                    total,
-                    GoldStandardEconomy.LEDGER_CURRENCY,
-                    CommodityKeyResolver.resolve(listing.itemStack()),
-                    amount,
-                    sourceRef
-            );
-        }
-        if (!sourceTownId.isBlank()) {
-            TownFinanceLedgerService.recordIncome(
-                    level,
                     sourceTownId,
-                    "MARKET_SALE",
-                    sellerPayout,
-                    GoldStandardEconomy.LEDGER_CURRENCY,
                     CommodityKeyResolver.resolve(listing.itemStack()),
                     amount,
-                    sourceRef
+                    amount <= 0 ? 0L : total / amount,
+                    total,
+                    "STOCK_REPLENISH",
+                    createdOrder.orderId(),
+                    createdOrder.orderId(),
+                    "",
+                    DockTownResolver.dockId(level, linkedDockPos)
             );
+            String sourceRef = procurement == null ? createdOrder.orderId() : procurement.procurementId();
+            if (!buyerTownId.isBlank()) {
+                TownFinanceLedgerService.recordExpense(
+                        level,
+                        buyerTownId,
+                        "MARKET_PURCHASE",
+                        total,
+                        GoldStandardEconomy.LEDGER_CURRENCY,
+                        CommodityKeyResolver.resolve(listing.itemStack()),
+                        amount,
+                        sourceRef
+                );
+            }
+            if (!sourceTownId.isBlank()) {
+                TownFinanceLedgerService.recordIncome(
+                        level,
+                        sourceTownId,
+                        "MARKET_SALE",
+                        sellerPayout,
+                        GoldStandardEconomy.LEDGER_CURRENCY,
+                        CommodityKeyResolver.resolve(listing.itemStack()),
+                        amount,
+                        sourceRef
+                );
+            }
+        } catch (Exception e) {
+            MARKET_LOGGER.error("订单已落库且钱货交易已完成，但采购记录/财务账簿写入失败，orderId={}",
+                    createdOrder.orderId(), e);
         }
         tryAutoDispatchOrders(safePlayerUuid, safePlayerName, onlinePlayer, createdOrder.sourceDockPos(), TransportTerminalKind.AUTO);
         return true;
