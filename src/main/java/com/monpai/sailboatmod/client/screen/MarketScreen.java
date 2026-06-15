@@ -2077,6 +2077,24 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         createButton(panel, 14, 226, innerWidth, 28,
                 Component.translatable("screen.sailboatmod.market.dispatch").getString(),
                 selectedOrder() != null && selectedShipping() != null, false, this::dispatchSelectedOrder);
+        MarketOverviewData.OrderEntry sel = selectedOrder();
+        boolean canCancel = sel != null && sel.cancellable()
+                && data.viewerUuid() != null && data.viewerUuid().equals(sel.buyerUuid());
+        if (canCancel) {
+            createButton(panel, 14, 260, innerWidth, 28,
+                    Component.translatable("screen.sailboatmod.market.order.cancel").getString(),
+                    true, true, this::cancelSelectedOrder);
+        }
+    }
+
+    private void cancelSelectedOrder() {
+        MarketOverviewData.OrderEntry order = selectedOrder();
+        if (order == null || order.orderId() == null || order.orderId().isBlank()) {
+            return;
+        }
+        rememberScrollState();
+        ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPurchaseOrderPacket(
+                data.marketPos(), order.orderId()));
     }
 
     private void buildFinanceSummary(UIComponent panel, int width) {

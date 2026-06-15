@@ -1762,6 +1762,16 @@ function bindDetailActions() {
     }));
   }
 
+  const cancelOrderButton = document.querySelector("#cancel-order-button");
+  if (cancelOrderButton) {
+    cancelOrderButton.addEventListener("click", () => {
+      const orderId = cancelOrderButton.getAttribute("data-order-id");
+      if (orderId) {
+        postMarketAction(`/purchase-orders/${orderId}/cancel`);
+      }
+    });
+  }
+
   const dispatchTerminal = document.querySelector("#dispatch-terminal-type");
   if (dispatchTerminal) {
     dispatchTerminal.addEventListener("change", () => {
@@ -3352,6 +3362,7 @@ function renderBuyingTab(commodity, canManage, canAct) {
             <div class="actions">
               <button type="button" id="buy-order-button" data-can-create="${canAct ? "true" : "false"}" data-item-valid="true" data-resolved-commodity-key="${escapeHtml(commodity.commodityKey)}" ${canAct ? "" : "disabled"}>${escapeHtml(t("create_buy_order"))}</button>
               ${pureDemandPage ? "" : `<button type="button" id="dispatch-button" class="warn" ${canManage && canAct && dispatchOrder && dispatchOption?.available ? "" : "disabled"}>${escapeHtml(t("retry_dispatch"))}</button>`}
+              ${(!pureDemandPage && dispatchOrder && dispatchOrder.cancellable && dispatchOrder.orderId) ? `<button type="button" id="cancel-order-button" class="danger" data-order-id="${escapeHtml(dispatchOrder.orderId)}">${escapeHtml(t("order_cancel"))}</button>` : ""}
             </div>
           </div>
         </div>
