@@ -17,11 +17,11 @@ import java.util.UUID;
 public final class NationTradeService {
     private NationTradeService() {}
 
-    public static NationResult proposeTrade(ServerPlayer actor, String targetNationName, long offerCurrency, long requestCurrency) {
-        return proposeTrade(actor, targetNationName, offerCurrency, List.of(), requestCurrency, List.of());
+    public static NationResult proposeTrade(ServerPlayer actor, String targetNationId, long offerCurrency, long requestCurrency) {
+        return proposeTrade(actor, targetNationId, offerCurrency, List.of(), requestCurrency, List.of());
     }
 
-    public static NationResult proposeTrade(ServerPlayer actor, String targetNationName, long offerCurrency, List<ItemStack> offerItems, long requestCurrency, List<ItemStack> requestItems) {
+    public static NationResult proposeTrade(ServerPlayer actor, String targetNationId, long offerCurrency, List<ItemStack> offerItems, long requestCurrency, List<ItemStack> requestItems) {
         NationSavedData data = NationSavedData.get(actor.level());
         NationMemberRecord member = data.getMember(actor.getUUID());
         if (member == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.invite.no_nation"));
@@ -30,8 +30,9 @@ public final class NationTradeService {
 
         NationRecord nation = data.getNation(member.nationId());
         if (nation == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.data_missing"));
-        NationRecord target = NationService.findNation(actor.level(), targetNationName);
-        if (target == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.target_not_found", targetNationName));
+        // 客户端传来的是 nationId（32hex），按 id 查；不再按名字查（findNation 会因 id≠名字而失败报 Nation not found）。
+        NationRecord target = data.getNation(targetNationId);
+        if (target == null) return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.target_not_found", targetNationId));
         if (nation.nationId().equals(target.nationId()))
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.diplomacy.self"));
 
@@ -52,7 +53,8 @@ public final class NationTradeService {
                 nation.nationId(), target.nationId(),
                 offerCurrency, List.copyOf(offerItems),
                 requestCurrency, List.copyOf(requestItems),
-                System.currentTimeMillis());
+                System.currentTimeMillis(),
+                TradeProposalRecord.STATUS_PENDING);
         data.putTradeProposal(proposal);
 
         // Notify target
@@ -136,6 +138,17 @@ public final class NationTradeService {
         data.putTreasury(proposerTreasury);
         data.putTreasury(targetTreasury);
 
+        // 接受后才建立贸易伙伴关系（握手完成）。已是同盟则不降级为贸易。
+        NationDiplomacyRecord existingDip = data.getDiplomacy(proposal.proposerNationId(), proposal.targetNationId());
+        boolean alreadyAllied = existingDip != null && NationDiplomacyStatus.ALLIED.id().equals(existingDip.statusId());
+        if (!alreadyAllied) {
+            data.putDiplomacy(new NationDiplomacyRecord(
+                    proposal.proposerNationId(),
+                    proposal.targetNationId(),
+                    NationDiplomacyStatus.TRADE.id(),
+                    System.currentTimeMillis()));
+        }
+
         data.removeTradeProposal(proposal.proposalId());
         return NationResult.success(Component.translatable("command.sailboatmod.nation.trade.accepted"));
     }
@@ -179,9 +192,6 @@ public final class NationTradeService {
         NationRecord ourNation = data.getNation(member.nationId());
         if (ourNation == null) return TradeScreenData.empty();
         NationRecord targetNation = data.getNation(targetNationId);
-        if (targetNation == null) {
-            targetNation = NationService.findNation(actor.level(), targetNationId);
-        }
         if (targetNation == null) return TradeScreenData.empty();
 
         NationTreasuryRecord ourTreasury = data.getOrCreateTreasury(ourNation.nationId());

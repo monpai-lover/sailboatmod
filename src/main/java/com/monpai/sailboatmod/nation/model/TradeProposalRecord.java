@@ -17,9 +17,14 @@ public record TradeProposalRecord(
         List<ItemStack> offerItems,
         long requestCurrency,
         List<ItemStack> requestItems,
-        long createdAt
+        long createdAt,
+        String status
 ) {
     public static final long EXPIRY_MILLIS = 300_000L;
+    /** 待对方接受。 */
+    public static final String STATUS_PENDING = "PENDING";
+    /** 已被对方接受（交易已执行）。 */
+    public static final String STATUS_ACCEPTED = "ACCEPTED";
 
     public TradeProposalRecord {
         proposalId = proposalId == null ? "" : proposalId.trim();
@@ -29,6 +34,11 @@ public record TradeProposalRecord(
         requestCurrency = Math.max(0L, requestCurrency);
         if (offerItems == null) offerItems = List.of();
         if (requestItems == null) requestItems = List.of();
+        status = status == null || status.isBlank() ? STATUS_PENDING : status.trim();
+    }
+
+    public boolean isPending() {
+        return STATUS_PENDING.equals(status);
     }
 
     public boolean isExpired() {
@@ -49,6 +59,7 @@ public record TradeProposalRecord(
         tag.putLong("OfferCurrency", offerCurrency);
         tag.putLong("RequestCurrency", requestCurrency);
         tag.putLong("CreatedAt", createdAt);
+        tag.putString("Status", status);
         ListTag offerList = new ListTag();
         for (ItemStack item : offerItems) { if (!item.isEmpty()) offerList.add(item.save(new CompoundTag())); }
         tag.put("OfferItems", offerList);
@@ -69,6 +80,7 @@ public record TradeProposalRecord(
                 tag.getString("Id"), tag.getString("Proposer"), tag.getString("Target"),
                 tag.getLong("OfferCurrency"), offerItems,
                 tag.getLong("RequestCurrency"), requestItems,
-                tag.getLong("CreatedAt"));
+                tag.getLong("CreatedAt"),
+                tag.contains("Status") ? tag.getString("Status") : STATUS_PENDING);
     }
 }
