@@ -602,7 +602,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return purchaseListingResolved(playerUuid, playerName, onlinePlayer, listing, quantity, fulfillment, targetWarehousePos);
     }
 
-    /** 买家可用的收货仓库坐标列表：经其 nation 的各 town → town 仓库。供 UI 下拉与下单回退。 */
+    /** 买家当前所属 town 内、其可写入的收货仓坐标列表（默认仓首位）。供下单回退与下拉同源。 */
     public java.util.List<BlockPos> receivingWarehouseCandidatesFor(String buyerUuid) {
         java.util.List<BlockPos> out = new java.util.ArrayList<>();
         if (level == null || level.isClientSide || buyerUuid == null || buyerUuid.isBlank()) {
@@ -615,17 +615,43 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return out;
         }
         NationSavedData nations = NationSavedData.get(level);
-        com.monpai.sailboatmod.nation.model.NationMemberRecord member = nations.getMember(uuid);
-        if (member == null || member.nationId() == null || member.nationId().isBlank()) {
-            return out;
-        }
-        for (TownRecord town : nations.getTownsForNation(member.nationId())) {
-            BlockPos warehousePos = TownWarehouseRegistry.get(level, town.townId());
+        // 镇民体系：玩家先加入 town，收货候选收窄为其所属 town 的仓库（而非整个 nation 的所有 town）
+        for (String townId : nations.getTownsForPlayer(uuid)) {
+            BlockPos warehousePos = TownWarehouseRegistry.get(level, townId);
             if (warehousePos != null && !out.contains(warehousePos)) {
                 out.add(warehousePos);
             }
         }
         return out;
+    }
+
+    /** 收货下拉同源数据：买家当前 town 可写入仓库，每项含显示名 + townName，默认仓首位。 */
+    public java.util.List<MarketOverviewData.WarehouseOption> receivingWarehouseOptionsForViewer(String buyerUuid) {
+        java.util.List<MarketOverviewData.WarehouseOption> out = new java.util.ArrayList<>();
+        if (level == null || level.isClientSide) {
+            return out;
+        }
+        NationSavedData nations = NationSavedData.get(level);
+        TownWarehouseBlockEntity linked = getLinkedWarehouse();
+        for (BlockPos pos : receivingWarehouseCandidatesFor(buyerUuid)) {
+            String display = linked != null ? warehouseDisplayNameFor(pos, linked) : posLabel(pos);
+            String townName = townNameForWarehouse(nations, pos);
+            out.add(new MarketOverviewData.WarehouseOption(pos, display, townName));
+        }
+        return out;
+    }
+
+    private String posLabel(BlockPos pos) {
+        return pos == null ? "" : pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    }
+
+    private String townNameForWarehouse(NationSavedData nations, BlockPos pos) {
+        if (level != null && level.getBlockEntity(pos) instanceof TownWarehouseBlockEntity w) {
+            String townId = w.getTownId();
+            TownRecord town = townId == null ? null : nations.getTown(townId);
+            return town == null ? "" : town.name();
+        }
+        return "";
     }
 
     /** 买家默认收货仓：候选列表第一个；无则返回 null（下单回退由调用方处理）。 */
