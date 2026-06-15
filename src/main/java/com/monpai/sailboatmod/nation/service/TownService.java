@@ -663,6 +663,9 @@ public final class TownService {
         );
         data.putTown(town);
 
+        data.putTownMember(new TownMemberRecord(
+                actor.getUUID(), town.townId(), TownMemberRecord.OFFICE_MEMBER, now));
+
         if (!nationId.isBlank()) {
             NationRecord nation = data.getNation(nationId);
             if (nation != null && nation.capitalTownId().isBlank()) {
