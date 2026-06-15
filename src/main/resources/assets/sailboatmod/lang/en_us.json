@@ -158,6 +158,8 @@
     "screen.sailboatmod.post_station.non_order_unload.off":  "Auto Unload: OFF",
     "screen.sailboatmod.post_station.take":  "Take",
     "screen.sailboatmod.post_station.refresh":  "Refresh",
+    "screen.sailboatmod.post_station.rename.hint":  "Station name",
+    "screen.sailboatmod.post_station.rename.save":  "Rename",
     "screen.sailboatmod.post_station.import":  "Load",
     "screen.sailboatmod.post_station.reverse":  "Swap",
     "screen.sailboatmod.post_station.delete":  "Del",

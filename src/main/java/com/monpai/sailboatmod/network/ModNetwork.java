@@ -44,6 +44,7 @@ import com.monpai.sailboatmod.network.packet.ProbeFulfillmentModesResultPacket;
 import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.RenameDockPacket;
+import com.monpai.sailboatmod.network.packet.RenamePostStationPacket;
 import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 import com.monpai.sailboatmod.network.packet.RenameSailboatPacket;
 import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
@@ -877,6 +878,13 @@ public final class ModNetwork {
                 CancelPurchaseOrderPacket::encode,
                 CancelPurchaseOrderPacket::decode,
                 CancelPurchaseOrderPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                RenamePostStationPacket.class,
+                RenamePostStationPacket::encode,
+                RenamePostStationPacket::decode,
+                RenamePostStationPacket::handle
         );
     }
 

@@ -6,8 +6,10 @@ import com.monpai.sailboatmod.dock.PostStationScreenData;
 import com.monpai.sailboatmod.menu.PostStationMenu;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.PostStationGuiActionPacket;
+import com.monpai.sailboatmod.network.packet.RenamePostStationPacket;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -39,6 +41,8 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     private Button deleteButton;
     private Button takeStorageButton;
     private Button takeWaybillButton;
+    private EditBox nameInput;
+    private Button renameButton;
 
     public PostStationScreen(PostStationMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -93,6 +97,13 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
                 .bounds(x + 146, y + 92, 40, 16).build());
         takeWaybillButton = addRenderableWidget(Button.builder(text("take"), button -> send(PostStationGuiActionPacket.Action.ADV_TAKE_SELECTED_WAYBILL))
                 .bounds(x + 146, y + 116, 40, 16).build());
+        nameInput = new EditBox(this.font, x + 8, y + 102, 100, 16, text("rename.hint"));
+        nameInput.setMaxLength(64);
+        nameInput.setValue(data.stationName());
+        addRenderableWidget(nameInput);
+        renameButton = addRenderableWidget(Button.builder(text("rename.save"), button ->
+                        ModNetwork.CHANNEL.sendToServer(new RenamePostStationPacket(data.stationPos(), nameInput.getValue())))
+                .bounds(x + 110, y + 102, 30, 16).build());
         send(PostStationGuiActionPacket.Action.REFRESH);
     }
 
@@ -311,6 +322,13 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
         }
         if (takeWaybillButton != null) {
             takeWaybillButton.visible = advanced;
+        }
+        if (nameInput != null) {
+            nameInput.visible = advanced && data.canManage();
+        }
+        if (renameButton != null) {
+            renameButton.visible = advanced && data.canManage();
+            renameButton.active = advanced && data.canManage();
         }
     }
 

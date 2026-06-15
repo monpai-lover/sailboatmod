@@ -158,6 +158,8 @@
     "screen.sailboatmod.post_station.non_order_unload.off": "自动卸货：关",
     "screen.sailboatmod.post_station.take": "取出",
     "screen.sailboatmod.post_station.refresh": "刷新",
+    "screen.sailboatmod.post_station.rename.hint": "驿站名称",
+    "screen.sailboatmod.post_station.rename.save": "改名",
     "screen.sailboatmod.post_station.import": "装载",
     "screen.sailboatmod.post_station.reverse": "调换",
     "screen.sailboatmod.post_station.delete": "删除",
