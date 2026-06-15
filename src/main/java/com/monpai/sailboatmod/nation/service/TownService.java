@@ -1233,6 +1233,36 @@ public final class TownService {
         bindTownToNation(data, town, nationId);
     }
 
+    public static void syncPlayerNationWithTown(NationSavedData data, UUID playerUuid, TownRecord town) {
+        if (data == null || playerUuid == null || town == null || !town.hasNation()) {
+            return;  // 独立 town：只写镇民，不挂 nation
+        }
+        String nationId = town.nationId();
+        NationMemberRecord existing = data.getMember(playerUuid);
+        if (existing == null || !nationId.equals(existing.nationId())) {
+            data.putMember(new NationMemberRecord(
+                    playerUuid,
+                    nameForTownMember(data, playerUuid, existing),
+                    nationId,
+                    NationOfficeIds.MEMBER,
+                    System.currentTimeMillis()));
+        }
+    }
+
+    public static void demotePlayerNationIfOrphaned(NationSavedData data, UUID playerUuid, TownRecord leftTown) {
+        if (data == null || playerUuid == null || leftTown == null || !leftTown.hasNation()) {
+            return;
+        }
+        String nationId = leftTown.nationId();
+        if (stillInNationViaOtherTown(data, playerUuid, nationId, leftTown.townId())) {
+            return;
+        }
+        NationMemberRecord existing = data.getMember(playerUuid);
+        if (existing != null && nationId.equals(existing.nationId())) {
+            data.removeMember(playerUuid);
+        }
+    }
+
     private static void unbindTownFromNation(NationSavedData data, TownRecord town) {
         String leavingNationId = town.nationId();  // 重写前先取
         List<NationClaimRecord> claims = managedClaimsForNationRewrite(data, town, town);
