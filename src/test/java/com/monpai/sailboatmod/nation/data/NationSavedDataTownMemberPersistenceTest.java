@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -32,10 +31,11 @@ class NationSavedDataTownMemberPersistenceTest {
     }
 
     @Test
-    void oldSaveWithoutTownMemberTagsLoadsEmptyAndUnmigrated() {
+    void oldSaveWithoutTownMemberTagsLoadsEmptyThenMigrates() {
         NationSavedData loaded = NationSavedData.load(new CompoundTag());
 
+        // 空档无 town/成员可补，迁移仍跑过一次并置标记，townMembers 保持空
         assertTrue(loaded.getTownMembersForTown("crimea").isEmpty());
-        assertFalse(loaded.isTownMembersMigratedForTest());
+        assertTrue(loaded.isTownMembersMigratedForTest());
     }
 }

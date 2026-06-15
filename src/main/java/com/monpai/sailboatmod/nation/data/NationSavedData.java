@@ -285,6 +285,8 @@ public class NationSavedData extends SavedData {
 
         data.townMembersMigrated = tag.getBoolean("townMembersMigrated");
 
+        TownMemberMigration.runOnce(data);
+
         return data;
     }
 
