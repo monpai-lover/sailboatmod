@@ -140,7 +140,7 @@ showBuyModal = false;
 
 ## 4. 网页端下单弹窗
 
-### 4.1 后端两处（B1）
+### 4.1 后端四处（B1）
 1. **overview JSON 下发新字段**（`MarketWebService`，`root.add*` 批旁）：
    - `root.addProperty("canChooseReceiving", overview.canChooseReceiving())`
    - 新增 `receivingWarehouseOptions(overview)` 辅助方法产 `JsonArray`，每项 `{pos:"x,y,z", displayName, townName}`，`root.add("receivingWarehouseOptions", ...)`。
@@ -156,14 +156,14 @@ showBuyModal = false;
 3. **新增 `/probe-modes` 端点**：body 带 `listingIndex` + `targetWarehouse`，转后端 `probeFulfillmentModes`，返回 `{sellerShip, autoPickup, realPickup}` 三布尔 JSON（realPickup 恒 true）。
 4. **订单数组补排队字段**：overview 的 `sourceOrders`/订单序列化里每项加 `queuePosition`、`queueEtaSeconds`（来自 `OrderEntry` 新字段）。
 
-### 4.2 前端两处（`app.js`）
-3. **purchase 按钮改为开弹窗**：click 不再直发，改 `openPurchaseModal(listingIndex)`。
-4. **新增 purchase modal**（app.js 无现成 modal，新建轻量组件）：固定定位遮罩 + 居中卡片，DOM 动态插入，沿用现有 `escapeHtml`/`t()`/`number()` 习惯。内容：商品名/单价、数量输入（默认 `state.settings.defaultPurchaseQuantity||1`）、运输模式三选一、收货地下拉（option value=pos 字符串、文本=displayName）。
+### 4.2 前端三处（`app.js`）
+1. **purchase 按钮改为开弹窗**：click 不再直发，改 `openPurchaseModal(listingIndex)`。
+2. **新增 purchase modal**（app.js 无现成 modal，新建轻量组件）：固定定位遮罩 + 居中卡片，DOM 动态插入，沿用现有 `escapeHtml`/`t()`/`number()` 习惯。内容：商品名/单价、数量输入（默认 `state.settings.defaultPurchaseQuantity||1`）、运输模式三选一、收货地下拉（option value=pos 字符串、文本=displayName）。
    - 打开弹窗与切换收货下拉时，POST `/probe-modes`（带 listingIndex + 当前 targetWarehouse），回包刷新三模式可选性。
    - `canChooseReceiving===false` 或某模式探测不可达：②③ 对应项禁用 + 提示（「无可用收货仓库」或「无可达航线/道路」），① 恒可选。
    - 模式=① 真人自提：隐藏收货下拉。
    - 确认 → `postMarketAction("/purchase", { listingIndex, quantity, fulfillment, targetWarehouse })`，成功关弹窗；取消关弹窗。
-5. **订单列表排队展示**：渲染订单时，若 `queuePosition > 0`，在该行显示「排第 N 位 · 约 X 分钟」（`queueEtaSeconds` 折算分钟）；否则照旧。仅卖家发货排队单会有非零值。
+3. **订单列表排队展示**：渲染订单时，若 `queuePosition > 0`，在该行显示「排第 N 位 · 约 X 分钟」（`queueEtaSeconds` 折算分钟）；否则照旧。仅卖家发货排队单会有非零值。
 
 **state 缓存**：加载 overview 时把 JSON 的 `receivingWarehouseOptions` 与 `canChooseReceiving` 存进 `state`，弹窗读 `state`，不重新请求——网页端消费同源下发的落点。
 
