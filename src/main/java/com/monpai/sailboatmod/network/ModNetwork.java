@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.CancelPurchaseOrderPacket;
 import com.monpai.sailboatmod.network.packet.CarriageControlInputPacket;
 import com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket;
 import com.monpai.sailboatmod.network.packet.CloseClaimMapViewportPacket;
@@ -869,6 +870,13 @@ public final class ModNetwork {
                 ProbeFulfillmentModesResultPacket::decode,
                 ProbeFulfillmentModesResultPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                CancelPurchaseOrderPacket.class,
+                CancelPurchaseOrderPacket::encode,
+                CancelPurchaseOrderPacket::decode,
+                CancelPurchaseOrderPacket::handle
         );
     }
 
