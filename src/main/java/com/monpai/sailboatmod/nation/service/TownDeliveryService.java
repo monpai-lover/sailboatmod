@@ -23,6 +23,10 @@ public final class TownDeliveryService {
         String townId = DockTownResolver.resolveTownForArrival(level, dockPos, declaredTownId);
         if (!townId.isBlank()) {
             TownStockpileService.addCargo(level, townId, cargo);
+        } else if (level.getBlockEntity(dockPos)
+                instanceof com.monpai.sailboatmod.block.entity.DockBlockEntity dock) {
+            // 目的地不属任何 town（没检查到 town 仓库）：卸到到达码头/驿站方块自身的库存，避免货物丢失。
+            dock.insertCargo(cargo);
         }
         if (manifest != null) {
             for (ShipmentManifestEntry entry : manifest) {
