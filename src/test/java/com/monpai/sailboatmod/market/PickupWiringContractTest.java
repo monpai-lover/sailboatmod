@@ -42,6 +42,27 @@ class PickupWiringContractTest {
     }
 
     @Test
+    void marketForwardsAutoPickupToBuyerWarehouse() throws Exception {
+        String src = marketBlockEntity();
+        assertTrue(src.contains("FulfillmentMode.AUTO_PICKUP"),
+                "pickup loading should branch on AUTO_PICKUP to auto-depart the loaded vehicle");
+        assertTrue(src.contains("routeLoadedVehicleToTarget("),
+                "auto-pickup should reuse a 'send already-loaded vehicle to target warehouse' router (no re-load)");
+        assertTrue(src.contains("resolveDispatchTerminalPlan("),
+                "auto-pickup forwarding should reuse the seller-ship terminal/route planning");
+    }
+
+    @Test
+    void dockExposesBuyerOwnedVehicleFilter() throws Exception {
+        String src = Files.readString(
+                Path.of("src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java"));
+        assertTrue(src.contains("availableBuyerVehiclesForPickup("),
+                "dock should expose the buyer-owned idle vehicles available for auto-pickup dispatch");
+        assertTrue(src.contains("PickupLock.vehicleBelongsToBuyer("),
+                "buyer-owned vehicle filter should use PickupLock ownership matching");
+    }
+
+    @Test
     void vehiclesTriggerPickupLoadInZone() throws Exception {
         String sb = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/SailboatEntity.java"));
         String cr = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/CarriageEntity.java"));

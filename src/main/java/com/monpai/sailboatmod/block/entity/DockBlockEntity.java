@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.item.TransportRouteBook;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketSavedData;
+import com.monpai.sailboatmod.market.PickupLock;
 import com.monpai.sailboatmod.market.ProcurementService;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
@@ -664,6 +665,20 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public List<TransportEntity> getAvailableSailboatsForDispatch(Player player) {
         return getNearbySailboats(player).stream()
                 .filter(boat -> isBoatAvailableForDispatch(boat, player))
+                .toList();
+    }
+
+    /**
+     * 本终端 zone 内、属于该买家、可派（空闲无货、未自动驾驶）的载具。
+     * 供自动自提空驶调度（Task6）挑选买家自己的空车开往产地，用 {@link PickupLock#vehicleBelongsToBuyer} 做归属匹配。
+     */
+    public List<TransportEntity> availableBuyerVehiclesForPickup(String buyerUuid) {
+        if (buyerUuid == null || buyerUuid.isBlank()) {
+            return List.of();
+        }
+        return getNearbySailboats(null).stream()
+                .filter(boat -> isBoatAvailableForDispatch(boat, null))
+                .filter(boat -> PickupLock.vehicleBelongsToBuyer(boat.getOwnerUuid(), buyerUuid))
                 .toList();
     }
 

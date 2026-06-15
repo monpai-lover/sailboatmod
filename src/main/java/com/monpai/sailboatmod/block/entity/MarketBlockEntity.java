@@ -1884,23 +1884,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             ));
         }
         boat.setPendingShipmentManifest(manifest);
-        if (plan.generatedRoute() != null) {
-            if (!(boat instanceof CarriageEntity carriage)) {
-                clearTemporaryShipmentCargo(boat);
-                boat.clearPendingMarketDelivery();
-                return false;
-            }
-            boat.setRouteCatalog(List.of(plan.generatedRoute()), 0, sourceDock.getBlockPos());
-            carriage.setLandTransportTask(plan.landPlan(), true, CarriageEntity.TransportTaskKind.MARKET_ORDER);
-            if (!boat.startAutopilotFromRouteStart()) {
-                clearTemporaryShipmentCargo(boat);
-                boat.clearPendingMarketDelivery();
-                return false;
-            }
-        } else if (!sourceDock.assignLoadedBoatToRouteIndex(boat, plan.routeIndex(), true, player)) {
-                clearTemporaryShipmentCargo(boat);
-                boat.clearPendingMarketDelivery();
-                return false;
+        if (!routeLoadedVehicleToTarget(boat, sourceDock, plan.generatedRoute(), plan.landPlan(), plan.routeIndex(), player)) {
+            return false;
         }
 
         for (ShipmentOrderSelection selection : plan.selections()) {
@@ -1929,6 +1914,43 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             market.putShippingOrder(shippingOrder);
             ShippingTraceService.createOrUpdateTrace(level, shippingOrder, route);
             ProcurementService.markInTransit(level, shippingOrder.purchaseOrderId(), shippingOrder.shippingOrderId());
+        }
+        return true;
+    }
+
+    /**
+     * 把"已装好货"的载具从产地终端发往目标。只负责发车（路线编排 + 自动驾驶启动），不再装货，
+     * 供 SELLER_SHIP 调度与自动自提续发共用。失败时回滚临时货与待派状态。
+     *
+     * @param generatedRoute 临时生成路线（陆运/驿站走这条，配 landPlan）；为 null 表示走源终端既有航线索引
+     * @param landPlan       陆运任务计划（仅 generatedRoute != null 时使用）
+     * @param routeIndex     源终端既有航线索引（仅 generatedRoute == null 时使用，港口）
+     * @return 是否成功发车
+     */
+    private boolean routeLoadedVehicleToTarget(TransportEntity boat, DockBlockEntity sourceDock,
+                                               @Nullable RouteDefinition generatedRoute,
+                                               @Nullable LandTransportNetworkService.LandRoutePlan landPlan,
+                                               int routeIndex, @Nullable Player player) {
+        if (boat == null || sourceDock == null) {
+            return false;
+        }
+        if (generatedRoute != null) {
+            if (!(boat instanceof CarriageEntity carriage)) {
+                clearTemporaryShipmentCargo(boat);
+                boat.clearPendingMarketDelivery();
+                return false;
+            }
+            boat.setRouteCatalog(List.of(generatedRoute), 0, sourceDock.getBlockPos());
+            carriage.setLandTransportTask(landPlan, true, CarriageEntity.TransportTaskKind.MARKET_ORDER);
+            if (!boat.startAutopilotFromRouteStart()) {
+                clearTemporaryShipmentCargo(boat);
+                boat.clearPendingMarketDelivery();
+                return false;
+            }
+        } else if (!sourceDock.assignLoadedBoatToRouteIndex(boat, routeIndex, true, player)) {
+            clearTemporaryShipmentCargo(boat);
+            boat.clearPendingMarketDelivery();
+            return false;
         }
         return true;
     }
@@ -1984,7 +2006,50 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
         List<ShipmentManifestEntry> manifest = applyPickupSelections(market, selections);
         boat.setPendingShipmentManifest(manifest);
+        forwardAutoPickupIfNeeded(boat, selections);
         return true;
+    }
+
+    /**
+     * 自动自提续发：货已装在买家自己的车上、停在产地终端；若装上的订单含 AUTO_PICKUP，
+     * 把车自动发往该订单的买家收货仓（复用 SELLER_SHIP 的终端/路线规划 + 已装货发车逻辑）。
+     * 真人自提（REAL_PICKUP）不续发——玩家自己把车开走。续发失败不回滚装货（货仍在车上，
+     * 玩家可手动驾驶送达），仅记为未自动发车。
+     */
+    private void forwardAutoPickupIfNeeded(TransportEntity boat, List<ShipmentOrderSelection> selections) {
+        if (level == null || level.isClientSide || boat == null || selections == null || selections.isEmpty()) {
+            return;
+        }
+        PurchaseOrder autoOrder = null;
+        for (ShipmentOrderSelection selection : selections) {
+            PurchaseOrder order = selection.dispatchOrder();
+            if (FulfillmentMode.fromString(order.fulfillment()) == FulfillmentMode.AUTO_PICKUP) {
+                autoOrder = order;
+                break;
+            }
+        }
+        if (autoOrder == null || autoOrder.targetWarehousePos() == null) {
+            return;
+        }
+        TownWarehouseBlockEntity sourceWarehouse = getLinkedWarehouse();
+        if (sourceWarehouse == null) {
+            return;
+        }
+        TransportTerminalKind terminalKind = boat instanceof CarriageEntity
+                ? TransportTerminalKind.POST_STATION
+                : TransportTerminalKind.PORT;
+        DispatchTerminalPlan terminalPlan = resolveDispatchTerminalPlan(
+                sourceWarehouse, autoOrder.targetWarehousePos(), terminalKind, null);
+        if (terminalPlan == null) {
+            return;
+        }
+        routeLoadedVehicleToTarget(
+                boat,
+                terminalPlan.sourceTerminal(),
+                terminalPlan.generatedRoute(),
+                terminalPlan.landPlan(),
+                terminalPlan.routeIndex(),
+                null);
     }
 
     /** 本市场产地（linkedDockPos）的该买家 PICKUP_LOCKED 自提订单。 */
