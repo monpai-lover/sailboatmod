@@ -83,7 +83,9 @@ class OpenMarketScreenPacketTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                List.of()
+                List.of(),
+                List.of(),
+                false
         );
     }
 }

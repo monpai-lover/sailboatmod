@@ -52,6 +52,15 @@ class ReceivingWarehouseContractTest {
     }
 
     @Test
+    void overviewCarriesReceivingFields() throws Exception {
+        String src = overviewData();
+        assertTrue(src.contains("List<WarehouseOption> receivingWarehouseOptions"),
+                "overview record should carry receivingWarehouseOptions");
+        assertTrue(src.contains("boolean canChooseReceiving"),
+                "overview record should carry canChooseReceiving");
+    }
+
+    @Test
     void shippedModesRejectWhenNoReceivingWarehouse() throws Exception {
         String src = marketBlockEntity();
         int idx = src.indexOf("private boolean purchaseListingResolved(");

@@ -5083,7 +5083,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 "", "", 0, 0, 0, 0, 0, 0L, 0L, 0L, 0.0F,
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), false);
     }
 
     private enum MarketPage {

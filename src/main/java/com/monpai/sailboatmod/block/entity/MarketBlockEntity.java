@@ -411,6 +411,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             analyticsSeries = MARKET_ANALYTICS.loadAnalyticsSeries(level instanceof net.minecraft.server.level.ServerLevel serverLevel ? serverLevel : null, collectCategories(listingEntries));
         }
 
+        java.util.List<MarketOverviewData.WarehouseOption> receivingOptions = receivingWarehouseOptionsForViewer(safePlayerUuid);
+
         return new MarketOverviewData(
                 worldPosition,
                 getMarketName(),
@@ -458,7 +460,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 commodityBuyBooks,
                 candleSeries,
                 impactSnapshots,
-                analyticsSeries
+                analyticsSeries,
+                receivingOptions,
+                !receivingOptions.isEmpty()
         );
     }
 

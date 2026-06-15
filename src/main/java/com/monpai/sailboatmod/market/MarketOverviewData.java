@@ -54,7 +54,9 @@ public record MarketOverviewData(
         List<CommodityBuyBook> commodityBuyBooks,
         List<CommodityCandleSeries> candleSeries,
         List<CommodityImpactSnapshot> commodityImpactSnapshots,
-        List<MarketAnalyticsSeries> analyticsSeries
+        List<MarketAnalyticsSeries> analyticsSeries,
+        List<WarehouseOption> receivingWarehouseOptions,
+        boolean canChooseReceiving
 ) {
     public MarketOverviewData {
         dockStorageLines = dockStorageLines == null ? List.of() : List.copyOf(dockStorageLines);
@@ -77,6 +79,8 @@ public record MarketOverviewData(
         candleSeries = candleSeries == null ? List.of() : List.copyOf(candleSeries);
         commodityImpactSnapshots = commodityImpactSnapshots == null ? List.of() : List.copyOf(commodityImpactSnapshots);
         analyticsSeries = analyticsSeries == null ? List.of() : List.copyOf(analyticsSeries);
+        receivingWarehouseOptions = receivingWarehouseOptions == null ? List.of() : List.copyOf(receivingWarehouseOptions);
+        canChooseReceiving = receivingWarehouseOptions != null && !receivingWarehouseOptions.isEmpty();
     }
 
     public boolean hasTownEconomy() {

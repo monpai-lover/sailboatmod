@@ -170,7 +170,9 @@ public class OpenMarketScreenPacket {
                 commodityBuyBooks,
                 candleSeries,
                 impactSnapshots,
-                analyticsSeries
+                analyticsSeries,
+                java.util.List.of(),
+                false
         ));
     }
 
