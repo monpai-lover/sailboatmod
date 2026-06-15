@@ -258,13 +258,14 @@ class CarriageEntityMovementTest {
     }
 
     @Test
-    void carriageAutopilotUsesSlowGearOnTerrainConnectorSegments() {
+    void carriageAutopilotUsesCruiseGearOnTerrainConnectorSegments() {
         CarriageRoutePlan.Segment segment = new CarriageRoutePlan.Segment(
                 CarriageRoutePlan.SegmentKind.TERRAIN_CONNECTOR,
                 java.util.List.of(new net.minecraft.core.BlockPos(0, 64, 0), new net.minecraft.core.BlockPos(1, 64, 0))
         );
 
-        assertTrue(CarriageEntity.autopilotGearForSegmentForTest(segment) == SailboatEntity.EngineGear.ONE_THIRD_AHEAD);
+        // 非道路（首尾段）巡航也用 TWO_THIRDS，避免离开道路时慢到几乎不动；减速由接近目标/大转向处理。
+        assertTrue(CarriageEntity.autopilotGearForSegmentForTest(segment) == SailboatEntity.EngineGear.TWO_THIRDS_AHEAD);
     }
 
     @Test

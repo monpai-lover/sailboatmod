@@ -2040,9 +2040,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     static SailboatEntity.EngineGear autopilotGearForSegmentForTest(@Nullable CarriageRoutePlan.Segment segment) {
-        return segment != null && segment.kind() == CarriageRoutePlan.SegmentKind.ROAD_CORRIDOR
-                ? SailboatEntity.EngineGear.TWO_THIRDS_AHEAD
-                : SailboatEntity.EngineGear.ONE_THIRD_AHEAD;
+        // 巡航段统一用 TWO_THIRDS：非道路（首尾段离开道路）不再额外降到 ONE_THIRD，
+        // 仅靠地面 surface modifier(0.62) 自然减速，避免首尾段慢到几乎不动。接近目标的减速由调用方处理。
+        return SailboatEntity.EngineGear.TWO_THIRDS_AHEAD;
     }
 
     static SailboatEntity.EngineGear autopilotGearForHeadingForTest(boolean finalTarget, double dist, float absYawError) {
