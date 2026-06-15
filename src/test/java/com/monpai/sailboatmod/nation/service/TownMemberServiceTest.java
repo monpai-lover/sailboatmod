@@ -132,4 +132,43 @@ class TownMemberServiceTest {
         assertNull(data.getTownMember("crimea", player));
         assertNotNull(data.getMember(player));  // 仍在 kerch（同 nation）→ 保留
     }
+
+    @Test
+    void acceptApplyByMayorAddsMember() {
+        NationSavedData data = new NationSavedData();
+        UUID mayor = UUID.randomUUID();
+        UUID player = UUID.randomUUID();
+        standaloneTown(data, mayor);
+        TownMemberService.applyToTownForTest(data, player, "crimea");
+
+        TownMemberService.acceptApplyForTest(data, mayor, "crimea", player);
+
+        assertNotNull(data.getTownMember("crimea", player));
+        assertNull(data.getTownMemberInvite("crimea", player));
+    }
+
+    @Test
+    void rejectApplyByMayorClearsRequestNoMember() {
+        NationSavedData data = new NationSavedData();
+        UUID mayor = UUID.randomUUID();
+        UUID player = UUID.randomUUID();
+        standaloneTown(data, mayor);
+        TownMemberService.applyToTownForTest(data, player, "crimea");
+
+        TownMemberService.rejectApplyForTest(data, mayor, "crimea", player);
+
+        assertNull(data.getTownMember("crimea", player));
+        assertNull(data.getTownMemberInvite("crimea", player));
+    }
+
+    @Test
+    void listMyTownsReturnsJoinedTowns() {
+        NationSavedData data = new NationSavedData();
+        UUID player = UUID.randomUUID();
+        data.putTown(new TownRecord("crimea", "", "Crimea", UUID.randomUUID(), 1L, "", TownRecord.noCorePos(), "", "european"));
+        data.putTownMember(new TownMemberRecord(player, "crimea", TownMemberRecord.OFFICE_MEMBER, 1L));
+
+        java.util.List<net.minecraft.network.chat.Component> lines = TownMemberService.listMyTownsForTest(data, player);
+        assertTrue(lines.size() >= 1);
+    }
 }
