@@ -158,10 +158,15 @@ public record MarketOverviewData(
     }
 
     public record OrderEntry(String orderId, String label, String sourceDockName, String targetDockName, int quantity, String status,
-                             int queuePosition, int queueEtaSeconds,
+                             int queuePosition, int queueEtaSeconds, String buyerUuid,
                              List<DispatchOption> dispatchOptions) {
         public OrderEntry {
             dispatchOptions = dispatchOptions == null ? List.of() : List.copyOf(dispatchOptions);
+        }
+
+        /** 该订单是否仍可被买家取消（未发货态）。 */
+        public boolean cancellable() {
+            return "PAID".equals(status) || "WAITING_SHIPMENT".equals(status) || "PICKUP_LOCKED".equals(status);
         }
     }
 

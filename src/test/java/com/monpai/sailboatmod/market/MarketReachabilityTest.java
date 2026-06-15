@@ -26,7 +26,7 @@ class MarketReachabilityTest {
     @Test
     void orderEntryCarriesStableOrderId() {
         MarketOverviewData.OrderEntry entry = new MarketOverviewData.OrderEntry(
-                "order-1", "Oak x4", "A", "C", 4, "WAITING_SHIPMENT", 0, 0, List.of());
+                "order-1", "Oak x4", "A", "C", 4, "WAITING_SHIPMENT", 0, 0, "buyer-uuid", List.of());
 
         assertEquals("order-1", entry.orderId());
     }

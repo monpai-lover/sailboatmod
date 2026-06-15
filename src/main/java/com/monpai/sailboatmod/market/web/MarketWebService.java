@@ -851,6 +851,9 @@ public final class MarketWebService {
             json.addProperty("status", order.status());
             json.addProperty("queuePosition", order.queuePosition());
             json.addProperty("queueEtaSeconds", order.queueEtaSeconds());
+            json.addProperty("orderId", order.orderId());
+            json.addProperty("buyerUuid", order.buyerUuid());
+            json.addProperty("cancellable", order.cancellable());
             JsonArray options = new JsonArray();
             for (MarketOverviewData.DispatchOption option : order.dispatchOptions()) {
                 JsonObject dispatch = new JsonObject();

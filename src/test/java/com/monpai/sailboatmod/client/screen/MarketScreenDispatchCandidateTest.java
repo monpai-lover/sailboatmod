@@ -47,6 +47,7 @@ class MarketScreenDispatchCandidateTest {
                 "WAITING",
                 0,
                 0,
+                "buyer-uuid",
                 List.of(orderCarrier)
         );
 

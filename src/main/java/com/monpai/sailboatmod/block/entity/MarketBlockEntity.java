@@ -342,6 +342,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         order.status(),
                         queuePos,
                         queueEta,
+                        order.buyerUuid(),
                         buildDispatchOptionsForOrder(linkedWarehouse, order, onlinePlayer)
                 ));
             }
