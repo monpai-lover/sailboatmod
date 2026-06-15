@@ -966,10 +966,16 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         if (!(level.getBlockEntity(order.targetDockPos()) instanceof TownWarehouseBlockEntity warehouse)) {
+            // 收货仓已不存在：货物无法入买家仓，退款给买家（货物由上层兜底存入镇仓）。
+            com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(
+                    level, market, order, "delivery_failed_no_warehouse", true);
             return false;
         }
         UUID buyerId = parseUuid(order.buyerUuid());
         if (buyerId == null || !warehouse.insertCargo(buyerId, cargo)) {
+            // 收货仓已满或买家身份无效：退款给买家（货物由上层兜底存入镇仓）。
+            com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(
+                    level, market, order, "delivery_failed_full", true);
             return false;
         }
         int deliveredQuantity = 0;

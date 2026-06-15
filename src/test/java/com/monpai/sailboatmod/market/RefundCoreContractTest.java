@@ -11,25 +11,15 @@ class RefundCoreContractTest {
     }
 
     @Test
-    void refundCoreExistsAndRefundsFullAmount() throws Exception {
+    void refundCoreDelegatesToSharedService() throws Exception {
         String src = marketBlockEntity();
         int idx = src.indexOf("private void refundAndReleaseOrder(");
         assertTrue(idx >= 0, "refundAndReleaseOrder should exist");
         int end = src.indexOf("\n    }", idx);
         String body = src.substring(idx, end);
-        // 幂等守卫：已 CANCELLED 直接返回
-        assertTrue(body.contains("STATUS_CANCELLED.equals(order.status())"),
-                "refund should be idempotent - skip already-cancelled orders");
-        // 全额退款给买家
-        assertTrue(body.contains("MarketWalletService.deposit(level, order.buyerUuid(), order.buyerName(), order.totalPrice())"),
-                "refund should deposit full totalPrice back to buyer");
-        // 货物归还：reserved 退回 available
-        assertTrue(body.contains("listing.availableCount() + order.quantity()")
-                        && body.contains("listing.reservedCount() - order.quantity()"),
-                "refund should return reserved cargo to available when listing still exists");
-        // 订单标记 CANCELLED
-        assertTrue(body.contains("PurchaseOrder.STATUS_CANCELLED"),
-                "refund should mark order CANCELLED");
+        // 退款核心逻辑统一在 MarketRefundService（DRY），此处委托
+        assertTrue(body.contains("MarketRefundService.refundAndReleaseOrder(level, market, order, reason, returnCargo)"),
+                "refundAndReleaseOrder should delegate to the shared MarketRefundService");
     }
 
     @Test

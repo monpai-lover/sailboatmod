@@ -893,58 +893,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     /**
-     * 退款并（可选）归还一个订单的货物。幂等：已 CANCELLED 的订单直接跳过，不重复退款。
-     * 退款全额 totalPrice 给买家；订单标记 CANCELLED 保留审计。
-     * {@code returnCargo=true}（买家取消/送达失败）时把本单 reservedCount 退回挂单 availableCount；
-     * {@code false}（卖家撤单）时不碰挂单——货物随撤单已回卖家仓，只退钱。
+     * 退款并（可选）归还一个订单的货物。委托给 {@link com.monpai.sailboatmod.market.MarketRefundService}。
+     * {@code returnCargo=true}（买家取消/送达失败）归还货物到挂单；{@code false}（卖家撤单）只退钱。
      */
     private void refundAndReleaseOrder(MarketSavedData market, PurchaseOrder order, String reason, boolean returnCargo) {
-        if (market == null || order == null) {
-            return;
-        }
-        if (PurchaseOrder.STATUS_CANCELLED.equals(order.status())) {
-            return; // 幂等守卫：已取消并退过款，不再重复
-        }
-        if (level != null && !level.isClientSide && order.totalPrice() > 0
-                && order.buyerUuid() != null && !order.buyerUuid().isBlank()) {
-            MarketWalletService.deposit(level, order.buyerUuid(), order.buyerName(), order.totalPrice());
-        }
-        // 货物归还：仅 returnCargo 且挂单仍在时，把本单预留量退回可售量。
-        MarketListing listing = returnCargo ? market.getListing(order.listingId()) : null;
-        if (listing != null) {
-            market.putListing(new MarketListing(
-                    listing.listingId(),
-                    listing.sellerUuid(),
-                    listing.sellerName(),
-                    listing.itemStack(),
-                    listing.unitPrice(),
-                    listing.availableCount() + order.quantity(),
-                    Math.max(0, listing.reservedCount() - order.quantity()),
-                    listing.sourceDockPos(),
-                    listing.sourceDockName(),
-                    listing.townId(),
-                    listing.nationId(),
-                    listing.priceAdjustmentBp(),
-                    listing.sellerNote()
-            ));
-        }
-        market.putPurchaseOrder(new PurchaseOrder(
-                order.orderId(),
-                order.listingId(),
-                order.buyerUuid(),
-                order.buyerName(),
-                order.quantity(),
-                order.totalPrice(),
-                order.sourceDockPos(),
-                order.sourceDockName(),
-                order.targetDockPos(),
-                order.targetDockName(),
-                PurchaseOrder.STATUS_CANCELLED,
-                order.fulfillment(),
-                order.targetWarehousePos()
-        ));
-        MARKET_LOGGER.info("Refunded purchase order {} ({}), returned {} to buyer {}",
-                order.orderId(), reason, order.totalPrice(), order.buyerUuid());
+        com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(level, market, order, reason, returnCargo);
     }
 
     /** 买家主动取消未发货订单（场景①）：仅本人、仅未发货态（PAID/WAITING_SHIPMENT/PICKUP_LOCKED）可取消。 */
