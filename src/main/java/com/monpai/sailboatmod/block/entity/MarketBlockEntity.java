@@ -1268,6 +1268,16 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     @Nullable
     private DispatchTerminalPlan resolveDispatchTerminalPlan(TownWarehouseBlockEntity sourceWarehouse, BlockPos targetWarehousePos,
                                                              TransportTerminalKind terminalKind, @Nullable Player player) {
+        return resolveDispatchTerminalPlan(sourceWarehouse, targetWarehousePos, terminalKind, player, true);
+    }
+
+    /**
+     * 解析一对终端的派发计划。{@code requireAvailableBoat=true}（派发用）要求源终端当前有空闲船/车；
+     * {@code false}（仅探测路网/航线连通性用）跳过有车检查——卖家暂无空闲车不代表线路不通，订单可进队列等车。
+     */
+    private DispatchTerminalPlan resolveDispatchTerminalPlan(TownWarehouseBlockEntity sourceWarehouse, BlockPos targetWarehousePos,
+                                                             TransportTerminalKind terminalKind, @Nullable Player player,
+                                                             boolean requireAvailableBoat) {
         if (level == null || sourceWarehouse == null || targetWarehousePos == null || terminalKind == null || terminalKind == TransportTerminalKind.AUTO) {
             return null;
         }
@@ -1279,7 +1289,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         List<DockBlockEntity> targetTerminals = terminalsForTown(targetWarehouse.getTownId(), terminalKind);
         DispatchTerminalPlan best = null;
         for (DockBlockEntity sourceTerminal : sourceTerminals) {
-            if (availableDispatchBoats(sourceTerminal, player).isEmpty()) {
+            if (requireAvailableBoat && availableDispatchBoats(sourceTerminal, player).isEmpty()) {
                 continue;
             }
             for (DockBlockEntity targetTerminal : targetTerminals) {
@@ -1323,6 +1333,25 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
         return best;
+    }
+
+    /** 三模式可达性：③卖家发货、②自动自提、①真人自提（恒可达）。供两端弹窗置灰。 */
+    public ModeReachability probeFulfillmentModes(String buyerUuid, @Nullable BlockPos targetWarehousePos, @Nullable Player player) {
+        boolean realPickup = true; // 玩家自己驾车去取，恒可达
+        if (level == null || level.isClientSide || targetWarehousePos == null || targetWarehousePos.equals(BlockPos.ZERO)) {
+            return new ModeReachability(false, false, realPickup);
+        }
+        TownWarehouseBlockEntity sellerWarehouse = getLinkedWarehouse();
+        // 只探路网/航线连通性（requireAvailableBoat=false）：卖家暂无空闲车不代表线路不通，订单可进队列等车。
+        boolean sellerShip = sellerWarehouse != null && (
+                resolveDispatchTerminalPlan(sellerWarehouse, targetWarehousePos, TransportTerminalKind.PORT, player, false) != null
+                || resolveDispatchTerminalPlan(sellerWarehouse, targetWarehousePos, TransportTerminalKind.POST_STATION, player, false) != null);
+        // ② 自动自提：买家空驶去源仓装货再回收货仓，路网/航线可达性判据同 ③（同一对终端的真路由存在性）。
+        boolean autoPickup = sellerShip;
+        return new ModeReachability(sellerShip, autoPickup, realPickup);
+    }
+
+    public record ModeReachability(boolean sellerShip, boolean autoPickup, boolean realPickup) {
     }
 
     private boolean dispatchBestSelectedOrder(String shipperUuid, String shipperName, @Nullable Player player,

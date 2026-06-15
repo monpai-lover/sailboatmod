@@ -61,6 +61,24 @@ class ReceivingWarehouseContractTest {
     }
 
     @Test
+    void probeModesExistsAndReusesPlanner() throws Exception {
+        String src = marketBlockEntity();
+        assertTrue(src.contains("probeFulfillmentModes("),
+                "market should expose probeFulfillmentModes for mode reachability");
+        int idx = src.indexOf("public ModeReachability probeFulfillmentModes(");
+        assertTrue(idx >= 0, "probeFulfillmentModes should be public and return ModeReachability");
+        int end = src.indexOf("\n    }", idx);
+        String body = src.substring(idx, end);
+        assertTrue(body.contains("resolveDispatchTerminalPlan("),
+                "probe should reuse resolveDispatchTerminalPlan for reachability");
+        assertTrue(body.contains("TransportTerminalKind.PORT") && body.contains("TransportTerminalKind.POST_STATION"),
+                "probe should try both terminal kinds");
+        // 探测只看路网/航线连通性，不要求卖家当前有空闲车（与排队机制一致）
+        assertTrue(body.contains("false"),
+                "probe should call the planner with requireAvailableBoat=false (reachability ignores idle-vehicle availability)");
+    }
+
+    @Test
     void shippedModesRejectWhenNoReceivingWarehouse() throws Exception {
         String src = marketBlockEntity();
         int idx = src.indexOf("private boolean purchaseListingResolved(");
