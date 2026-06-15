@@ -1398,6 +1398,113 @@ async function postMarketAction(suffix, payload = {}) {
   }
 }
 
+function renderPurchaseModalInner(options, canReceive, fulfillment, targetWarehouse, modes) {
+  const row = (mode, key, reachable) => {
+    const disabled = mode === "REAL_PICKUP" ? !reachable : !(canReceive && reachable);
+    const reason = !canReceive ? t("mode_need_warehouse") : t("mode_unreachable");
+    return `<div class="purchase-modal-mode${fulfillment === mode ? " is-selected" : ""}${disabled ? " is-disabled" : ""}" data-mode="${mode}" data-disabled="${disabled ? "1" : "0"}">` +
+        `<span>${escapeHtml(t(key))}</span>` +
+        (disabled && mode !== "REAL_PICKUP" ? `<small>${escapeHtml(reason)}</small>` : "") +
+        `</div>`;
+  };
+  let html = `<h3>${escapeHtml(t("buy_modal_title"))}</h3>`;
+  html += `<input class="purchase-modal-qty" data-qty type="number" min="1" value="${(state.settings && state.settings.defaultPurchaseQuantity) || 1}">`;
+  html += row("SELLER_SHIP", "mode_seller_ship", modes.sellerShip);
+  html += row("AUTO_PICKUP", "mode_auto_pickup", modes.autoPickup);
+  html += row("REAL_PICKUP", "mode_real_pickup", modes.realPickup);
+  if (fulfillment !== "REAL_PICKUP") {
+    if (!options.length) {
+      html += `<div class="purchase-modal-warning">${escapeHtml(t("receiving_none"))}</div>`;
+    } else {
+      html += `<label class="purchase-modal-label">${escapeHtml(t("receiving_label"))}</label>`;
+      html += `<select class="purchase-modal-receiving" data-receiving>` +
+          options.map((o) => `<option value="${escapeHtml(o.pos)}"${o.pos === targetWarehouse ? " selected" : ""}>` +
+              `${escapeHtml(o.displayName + (o.townName ? " · " + o.townName : ""))}</option>`).join("") +
+          `</select>`;
+    }
+  }
+  html += `<div class="purchase-modal-actions">` +
+      `<button class="secondary" data-cancel>${escapeHtml(t("cancel"))}</button>` +
+      `<button data-confirm>${escapeHtml(t("confirm"))}</button></div>`;
+  return html;
+}
+
+function openPurchaseModal(listingIndex) {
+  const overview = state.detail || {};
+  const options = overview.receivingWarehouseOptions || [];
+  const canReceive = !!overview.canChooseReceiving;
+  let fulfillment = "SELLER_SHIP";
+  let targetWarehouse = options.length ? options[0].pos : "";
+  const modes = { sellerShip: false, autoPickup: false, realPickup: true };
+
+  const scrim = document.createElement("div");
+  scrim.className = "purchase-modal-scrim";
+  const card = document.createElement("div");
+  card.className = "purchase-modal-card";
+  scrim.appendChild(card);
+  document.body.appendChild(scrim);
+
+  function close() {
+    scrim.remove();
+  }
+  function refresh() {
+    card.innerHTML = renderPurchaseModalInner(options, canReceive, fulfillment, targetWarehouse, modes);
+    bind();
+  }
+  async function probe() {
+    try {
+      const res = await api(`/api/markets/${state.selectedMarketId}/probe-modes`, {
+        method: "POST",
+        body: JSON.stringify({ listingIndex, targetWarehouse })
+      });
+      if (res && typeof res === "object") {
+        modes.sellerShip = !!res.sellerShip;
+        modes.autoPickup = !!res.autoPickup;
+        modes.realPickup = res.realPickup !== false;
+        refresh();
+      }
+    } catch (error) {
+      /* 探测失败保持全置灰，不阻断真人自提 */
+    }
+  }
+  function bind() {
+    card.querySelectorAll("[data-mode]").forEach((el) => el.addEventListener("click", () => {
+      if (el.getAttribute("data-disabled") === "1") {
+        return;
+      }
+      fulfillment = el.getAttribute("data-mode");
+      refresh();
+    }));
+    const sel = card.querySelector("[data-receiving]");
+    if (sel) {
+      sel.addEventListener("change", () => {
+        targetWarehouse = sel.value;
+        probe();
+      });
+    }
+    const cancel = card.querySelector("[data-cancel]");
+    if (cancel) {
+      cancel.addEventListener("click", close);
+    }
+    const confirm = card.querySelector("[data-confirm]");
+    if (confirm) {
+      confirm.addEventListener("click", async () => {
+        const qtyInput = card.querySelector("[data-qty]");
+        const qty = parseInt(qtyInput && qtyInput.value, 10) || 1;
+        await postMarketAction("/purchase", { listingIndex, quantity: qty, fulfillment, targetWarehouse });
+        close();
+      });
+    }
+  }
+  scrim.addEventListener("click", (event) => {
+    if (event.target === scrim) {
+      close();
+    }
+  });
+  refresh();
+  probe();
+}
+
 function bindDetailActions() {
   const search = document.querySelector("#commodity-search");
   if (search) {
@@ -1653,10 +1760,9 @@ function bindDetailActions() {
   }
 
   document.querySelectorAll("[data-purchase-index]").forEach((node) => {
-    node.addEventListener("click", () => postMarketAction("/purchase", {
-      listingIndex: Number(node.getAttribute("data-purchase-index") || "-1"),
-      quantity: state.settings.defaultPurchaseQuantity || 1
-    }));
+    node.addEventListener("click", () => openPurchaseModal(
+      Number(node.getAttribute("data-purchase-index") || "-1")
+    ));
   });
 
   document.querySelectorAll("[data-cancel-listing]").forEach((node) => {
