@@ -1311,6 +1311,31 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         setChanged();
     }
 
+    /**
+     * 进-zone 装货委托（真人自提/自动自提共用）：一辆车进入本终端 zone 时触发。
+     * dock 无到市场的反指针，故广播给本维度所有市场——只有"车主买家在该市场产地有 PICKUP_LOCKED 锁定货"的市场会真装货
+     * （市场侧按 sourceDockPos+buyerUuid 过滤，不会误装）。装到货即停。
+     *
+     * @return 是否有市场为此车装了货
+     */
+    public boolean tryLoadPickupCargo(TransportEntity boat) {
+        if (level == null || level.isClientSide || boat == null) {
+            return false;
+        }
+        String dimensionId = level.dimension().location().toString();
+        for (com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData.MarketTerminalEntry entry
+                : com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData.get(level).entries()) {
+            if (!dimensionId.equals(entry.dimensionId())) {
+                continue;
+            }
+            if (level.getBlockEntity(entry.marketPos()) instanceof MarketBlockEntity market
+                    && market.tryLoadPickupCargo(boat)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public int countMatchingStock(ItemStack sample) {
         if (sample == null || sample.isEmpty()) {
             return 0;

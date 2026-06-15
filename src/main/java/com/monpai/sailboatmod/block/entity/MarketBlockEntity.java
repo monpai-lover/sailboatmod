@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.entity.TransportEntity;
 import com.monpai.sailboatmod.market.MarketDispatchPlanner;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.FulfillmentMode;
+import com.monpai.sailboatmod.market.PickupLock;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketPricePolicy;
 import com.monpai.sailboatmod.market.MarketPricePolicy.ListingPriceWindow;
@@ -698,7 +699,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sellerNote()
         ));
         BlockPos receivingWarehouse = resolveBuyerTargetWarehouse(safePlayerUuid, targetWarehousePos);
-        String fulfillmentMode = FulfillmentMode.fromString(fulfillment).name();
+        FulfillmentMode resolvedMode = FulfillmentMode.fromString(fulfillment);
+        String fulfillmentMode = resolvedMode.name();
+        // 自提（真人/自动）下单即把货为买家锁定（PICKUP_LOCKED，不被后台发货）；卖家发货走待发。
+        String orderStatus = (resolvedMode == FulfillmentMode.REAL_PICKUP || resolvedMode == FulfillmentMode.AUTO_PICKUP)
+                ? PickupLock.STATUS_LOCKED
+                : "WAITING_SHIPMENT";
         PurchaseOrder createdOrder = new PurchaseOrder(
                 market.nextId(),
                 listing.listingId(),
@@ -710,7 +716,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sourceDockName(),
                 receivingWarehouse,
                 warehouseDisplayNameFor(receivingWarehouse, warehouse),
-                "WAITING_SHIPMENT",
+                orderStatus,
                 fulfillmentMode,
                 receivingWarehouse
         );
@@ -1925,6 +1931,113 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             ProcurementService.markInTransit(level, shippingOrder.purchaseOrderId(), shippingOrder.shippingOrderId());
         }
         return true;
+    }
+
+    /**
+     * 进-zone 装货核心（真人自提=玩家车触发；自动自提=系统车触发）。
+     * 找车主买家在本产地（本市场 linkedDockPos）的 PICKUP_LOCKED 自提订单，按 listing 模板生成货装车
+     * （splitCargo + splitOrderForShipment 拆单，与 SELLER_SHIP 同一装货模型——货已在上架时扣出仓库，此处按模板兑现），
+     * 装上的订单转 IN_TRANSIT + 设 manifest（装不下的留余量继续锁定）。
+     *
+     * @param boat 进入本产地终端 zone 的载具
+     * @return 是否装了货（供自动自提判断"装完续发收货仓"，见 Task5）
+     */
+    public boolean tryLoadPickupCargo(TransportEntity boat) {
+        if (level == null || level.isClientSide || boat == null || linkedDockPos == null) {
+            return false;
+        }
+        String buyerUuid = boat.getOwnerUuid();
+        if (buyerUuid == null || buyerUuid.isBlank()) {
+            return false;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        List<PurchaseOrder> lockedOrders = pickupOrdersForBuyerAtThisSource(market, buyerUuid);
+        if (lockedOrders.isEmpty()) {
+            return false;
+        }
+        List<ItemStack> cargo = new ArrayList<>();
+        List<ShipmentOrderSelection> selections = new ArrayList<>();
+        for (PurchaseOrder order : lockedOrders) {
+            MarketListing listing = findListingById(market, order.listingId());
+            if (listing == null) {
+                continue;
+            }
+            int shippable = findMaxLoadableQuantity(boat, cargo, listing.itemStack(), order.quantity());
+            if (shippable <= 0) {
+                if (!cargo.isEmpty()) {
+                    break; // 车满了，停止继续装
+                }
+                continue;
+            }
+            PurchaseSplit split = splitOrderForShipment(market, order, shippable);
+            if (split == null) {
+                continue;
+            }
+            cargo.addAll(splitCargo(listing.itemStack(), split.shipped().quantity()));
+            selections.add(new ShipmentOrderSelection(split.shipped(), split.remainder(), listing));
+        }
+        if (cargo.isEmpty() || selections.isEmpty()) {
+            return false;
+        }
+        if (!boat.canLoadCargo(cargo) || !boat.loadCargo(cargo)) {
+            return false;
+        }
+        List<ShipmentManifestEntry> manifest = applyPickupSelections(market, selections);
+        boat.setPendingShipmentManifest(manifest);
+        return true;
+    }
+
+    /** 本市场产地（linkedDockPos）的该买家 PICKUP_LOCKED 自提订单。 */
+    private List<PurchaseOrder> pickupOrdersForBuyerAtThisSource(MarketSavedData market, String buyerUuid) {
+        List<PurchaseOrder> out = new ArrayList<>();
+        for (PurchaseOrder order : market.getOrdersForBuyer(buyerUuid)) {
+            if (!PickupLock.isPickupOrder(order.status(), order.fulfillment())) {
+                continue;
+            }
+            if (linkedDockPos.equals(order.sourceDockPos())) {
+                out.add(order);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 把已装车的自提 selection 落库：dispatchOrder 转 IN_TRANSIT、remainderOrder 留库（继续锁定），返回 manifest。
+     * 复用 dispatchShipmentPlan 的 selection→manifest 模型，去掉 SELLER_SHIP 专有的 ShippingOrder/route 部分。
+     */
+    private List<ShipmentManifestEntry> applyPickupSelections(MarketSavedData market, List<ShipmentOrderSelection> selections) {
+        List<ShipmentManifestEntry> manifest = new ArrayList<>();
+        for (ShipmentOrderSelection selection : selections) {
+            PurchaseOrder order = selection.dispatchOrder();
+            manifest.add(new ShipmentManifestEntry(
+                    selection.listing().listingId(),
+                    selection.listing().itemStack(),
+                    order.orderId(),
+                    "",
+                    order.buyerUuid(),
+                    order.buyerName(),
+                    order.quantity()
+            ));
+            market.putPurchaseOrder(new PurchaseOrder(
+                    order.orderId(),
+                    order.listingId(),
+                    order.buyerUuid(),
+                    order.buyerName(),
+                    order.quantity(),
+                    order.totalPrice(),
+                    order.sourceDockPos(),
+                    order.sourceDockName(),
+                    order.targetDockPos(),
+                    order.targetDockName(),
+                    "IN_TRANSIT",
+                    order.fulfillment(),
+                    order.targetWarehousePos()
+            ));
+            if (selection.remainderOrder() != null) {
+                market.putPurchaseOrder(selection.remainderOrder());
+            }
+        }
+        return manifest;
     }
 
     private void clearTemporaryShipmentCargo(TransportEntity carrier) {
