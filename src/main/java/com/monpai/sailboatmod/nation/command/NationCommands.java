@@ -14,6 +14,7 @@ import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.NationTreasuryService;
 import com.monpai.sailboatmod.nation.service.NationWarService;
 import com.monpai.sailboatmod.nation.service.TownClaimService;
+import com.monpai.sailboatmod.nation.service.TownMemberService;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.network.packet.NationToastPacket;
 import com.mojang.brigadier.CommandDispatcher;
@@ -308,6 +309,65 @@ public final class NationCommands {
                         .executes(context -> sendNationInfo(context.getSource(), NationService.findNation(context.getSource().getLevel(), StringArgumentType.getString(context, "nation"))))));
 
         dispatcher.register(nation);
+
+        LiteralArgumentBuilder<CommandSourceStack> town = Commands.literal("town");
+
+        town.then(Commands.literal("apply")
+                .then(Commands.argument("town", StringArgumentType.greedyString())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.applyToTown(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))));
+
+        town.then(Commands.literal("invite")
+                .then(Commands.argument("player", EntityArgument.player())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.invitePlayer(context.getSource().getPlayerOrException(), EntityArgument.getPlayer(context, "player"))))));
+
+        town.then(Commands.literal("accept")
+                .then(Commands.argument("player", EntityArgument.player())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.acceptApply(context.getSource().getPlayerOrException(), EntityArgument.getPlayer(context, "player"))))));
+
+        town.then(Commands.literal("reject")
+                .then(Commands.argument("player", EntityArgument.player())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.rejectApply(context.getSource().getPlayerOrException(), EntityArgument.getPlayer(context, "player"))))));
+
+        town.then(Commands.literal("join")
+                .then(Commands.argument("town", StringArgumentType.greedyString())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.joinTown(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))));
+
+        town.then(Commands.literal("decline")
+                .then(Commands.argument("town", StringArgumentType.greedyString())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.declineInvite(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))));
+
+        town.then(Commands.literal("leave")
+                .then(Commands.argument("town", StringArgumentType.greedyString())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.leaveTown(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))));
+
+        town.then(Commands.literal("kick")
+                .then(Commands.argument("player", EntityArgument.player())
+                        .executes(context -> sendResult(context.getSource(),
+                                TownMemberService.kickMember(context.getSource().getPlayerOrException(), EntityArgument.getPlayer(context, "player"))))));
+
+        town.then(Commands.literal("list")
+                .executes(context -> sendLines(context.getSource(),
+                        TownMemberService.listMyTowns(context.getSource().getPlayerOrException()))));
+
+        town.then(Commands.literal("members")
+                .executes(context -> sendLines(context.getSource(),
+                        TownMemberService.listMembers(context.getSource().getPlayerOrException(), "")))
+                .then(Commands.argument("town", StringArgumentType.greedyString())
+                        .executes(context -> sendLines(context.getSource(),
+                                TownMemberService.listMembers(context.getSource().getPlayerOrException(), StringArgumentType.getString(context, "town"))))));
+
+        town.then(Commands.literal("requests")
+                .executes(context -> sendLines(context.getSource(),
+                        TownMemberService.listRequests(context.getSource().getPlayerOrException()))));
+
+        dispatcher.register(town);
         dispatcher.register(Commands.literal("townunclaim")
                 .executes(context -> {
                     ServerPlayer player = context.getSource().getPlayerOrException();
