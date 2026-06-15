@@ -863,6 +863,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_storage_full");
         }
         adjustCommoditySupply(listing.itemStack(), -listing.availableCount());
+        // 场景③：卖家撤单时，挂单下未发货的买家订单已无法履约——退款给买家（货物随撤单已回卖家仓，不再归还）。
+        List<PurchaseOrder> strandedOrders = market.getActiveOrdersForListing(listing.listingId());
         if (listing.reservedCount() <= 0) {
             market.removeListing(listing.listingId());
         } else {
@@ -882,16 +884,21 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sellerNote()
             ));
         }
+        for (PurchaseOrder stranded : strandedOrders) {
+            refundAndReleaseOrder(market, stranded, "seller_cancel", false);
+        }
         return CancelListingResult.success(targetWarehouseSelection.usedLinkedWarehouseFallback()
                 ? "screen.sailboatmod.market.unlist.success_linked_dock"
                 : "screen.sailboatmod.market.unlist.success");
     }
 
     /**
-     * 退款并解锁/归还一个订单的货物。幂等：已 CANCELLED 的订单直接跳过，不重复退款。
-     * 退款全额 totalPrice 给买家；若挂单仍存在则把 reservedCount 归还为 availableCount；订单标记 CANCELLED 保留审计。
+     * 退款并（可选）归还一个订单的货物。幂等：已 CANCELLED 的订单直接跳过，不重复退款。
+     * 退款全额 totalPrice 给买家；订单标记 CANCELLED 保留审计。
+     * {@code returnCargo=true}（买家取消/送达失败）时把本单 reservedCount 退回挂单 availableCount；
+     * {@code false}（卖家撤单）时不碰挂单——货物随撤单已回卖家仓，只退钱。
      */
-    private void refundAndReleaseOrder(MarketSavedData market, PurchaseOrder order, String reason) {
+    private void refundAndReleaseOrder(MarketSavedData market, PurchaseOrder order, String reason, boolean returnCargo) {
         if (market == null || order == null) {
             return;
         }
@@ -902,8 +909,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 && order.buyerUuid() != null && !order.buyerUuid().isBlank()) {
             MarketWalletService.deposit(level, order.buyerUuid(), order.buyerName(), order.totalPrice());
         }
-        // 货物归还：挂单仍在则把本单预留量退回可售量；挂单已删（卖家撤单）则跳过——货物本就回卖家仓。
-        MarketListing listing = market.getListing(order.listingId());
+        // 货物归还：仅 returnCargo 且挂单仍在时，把本单预留量退回可售量。
+        MarketListing listing = returnCargo ? market.getListing(order.listingId()) : null;
         if (listing != null) {
             market.putListing(new MarketListing(
                     listing.listingId(),
@@ -961,7 +968,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (!cancellable) {
             return CancelPurchaseResult.failure("screen.sailboatmod.market.order.cancel.failed_in_transit");
         }
-        refundAndReleaseOrder(market, order, "buyer_cancel");
+        refundAndReleaseOrder(market, order, "buyer_cancel", true);
         return CancelPurchaseResult.success("screen.sailboatmod.market.order.cancel.success");
     }
 
@@ -970,7 +977,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (level == null || level.isClientSide || order == null) {
             return;
         }
-        refundAndReleaseOrder(MarketSavedData.get(level), order, reason);
+        refundAndReleaseOrder(MarketSavedData.get(level), order, reason, true);
     }
 
     public record CancelPurchaseResult(boolean success, String messageKey) {
