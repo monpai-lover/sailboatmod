@@ -67,6 +67,7 @@ public class SailboatItem extends Item implements GeoItem {
             }
 
             if (!level.isClientSide) {
+                sailboat.initializeOwnerIfAbsent(player);
                 level.addFreshEntity(sailboat);
                 if (!player.getAbilities().instabuild) {
                     itemstack.shrink(1);

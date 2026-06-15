@@ -1389,21 +1389,37 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         return true;
     }
 
-    /** 手动轨迹归属：当前驾驶玩家 uuid（无则空，仅影响可见性）。 */
+    /** 手动轨迹归属：当前驾驶玩家 uuid；无人驾驶（码头派发空驶）时回退船主 uuid，保证地图可见。 */
     private String traceShipperUuid() {
-        return getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver
-                ? driver.getUUID().toString()
-                : "";
+        if (getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver) {
+            return driver.getUUID().toString();
+        }
+        return getOwnerUuid();
     }
 
-    /** 手动轨迹归属国家：驾驶玩家所属国家 id（用于同国可见）；无则空。 */
+    /** 手动轨迹归属国家：驾驶玩家或船主所属国家 id（用于同国可见）；无则空。 */
     private String traceShipperNationId() {
-        if (level().isClientSide
-                || !(getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver)) {
+        if (level().isClientSide) {
+            return "";
+        }
+        java.util.UUID shipperId = null;
+        if (getControllingPassenger() instanceof net.minecraft.world.entity.player.Player driver) {
+            shipperId = driver.getUUID();
+        } else {
+            String owner = getOwnerUuid();
+            if (owner != null && !owner.isBlank()) {
+                try {
+                    shipperId = java.util.UUID.fromString(owner);
+                } catch (IllegalArgumentException ignored) {
+                    return "";
+                }
+            }
+        }
+        if (shipperId == null) {
             return "";
         }
         com.monpai.sailboatmod.nation.model.NationMemberRecord member =
-                com.monpai.sailboatmod.nation.data.NationSavedData.get(level()).getMember(driver.getUUID());
+                com.monpai.sailboatmod.nation.data.NationSavedData.get(level()).getMember(shipperId);
         return member == null ? "" : member.nationId();
     }
 
