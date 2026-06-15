@@ -460,6 +460,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 hasManualInput = playerWantsForward || playerWantsReverse || playerWantsTurn;
                 if (AutopilotPassengerInputPolicy.shouldUseAutopilotCommand(autopilotControl, hasManualInput)) {
                     // Keep route control authoritative while riders are aboard; stop/pause stays explicit.
+                    // 清掉乘客残留输入，避免玩家在自动航行中操作导致转向/齿轮抖动。
+                    manualInputState.clear();
                     AutopilotCommand autopilotCommand = computeAutopilotCommand();
                     if (autopilotCommand.active) {
                         if (autopilotCommand.yawStep != 0.0F) {
