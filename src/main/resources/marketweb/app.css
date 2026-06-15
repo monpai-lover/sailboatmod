@@ -5798,3 +5798,94 @@ textarea,
         grid-template-columns: 1fr;
     }
 }
+
+/* ===== 下单确认弹窗 ===== */
+.purchase-modal-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 20, 27, 0.42);
+    backdrop-filter: blur(8px) saturate(1.1);
+    animation: purchaseModalFade 120ms ease-out;
+}
+@keyframes purchaseModalFade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.purchase-modal-card {
+    width: min(460px, calc(100vw - 32px));
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    padding: 22px 24px;
+    animation: purchaseModalRise 140ms ease-out;
+}
+@keyframes purchaseModalRise {
+    from { transform: translateY(8px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+.purchase-modal-card h3 {
+    margin: 0 0 14px;
+    color: var(--text);
+    border-left: 3px solid var(--accent);
+    padding-left: 10px;
+}
+.purchase-modal-qty {
+    width: 120px;
+    margin-bottom: 14px;
+}
+.purchase-modal-mode {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--panel-soft);
+    transition: background 140ms, border-color 140ms;
+}
+.purchase-modal-mode.is-selected {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent-strong);
+}
+.purchase-modal-mode.is-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.purchase-modal-mode small {
+    color: var(--warning);
+    font-size: 11px;
+}
+.purchase-modal-label {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    margin: 8px 0 4px;
+}
+.purchase-modal-receiving {
+    width: 100%;
+    margin-bottom: 14px;
+}
+.purchase-modal-warning {
+    color: var(--warning);
+    font-size: 12px;
+    margin: 8px 0 14px;
+}
+.purchase-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 8px;
+}
+.order-queue {
+    color: var(--accent-strong);
+    font-size: 12px;
+    margin-left: 8px;
+}
