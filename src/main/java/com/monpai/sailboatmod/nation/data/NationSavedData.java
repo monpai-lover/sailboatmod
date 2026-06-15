@@ -261,6 +261,30 @@ public class NationSavedData extends SavedData {
             }
         }
 
+        ListTag townMemberTag = tag.getList("TownMembers", Tag.TAG_COMPOUND);
+        for (Tag raw : townMemberTag) {
+            if (raw instanceof CompoundTag compound) {
+                TownMemberRecord member = TownMemberRecord.load(compound);
+                String key = townMemberKey(member.townId(), member.playerUuid());
+                if (!key.isBlank()) {
+                    data.townMembers.put(key, member);
+                }
+            }
+        }
+
+        ListTag townMemberInviteTag = tag.getList("TownMemberRequests", Tag.TAG_COMPOUND);
+        for (Tag raw : townMemberInviteTag) {
+            if (raw instanceof CompoundTag compound) {
+                TownMemberInviteRecord invite = TownMemberInviteRecord.load(compound);
+                String key = townMemberKey(invite.townId(), invite.playerUuid());
+                if (!key.isBlank()) {
+                    data.townMemberInvites.put(key, invite);
+                }
+            }
+        }
+
+        data.townMembersMigrated = tag.getBoolean("townMembersMigrated");
+
         return data;
     }
 
@@ -383,6 +407,20 @@ public class NationSavedData extends SavedData {
             personalLoanTag.add(loan.save());
         }
         tag.put("PersonalLoans", personalLoanTag);
+
+        ListTag townMemberTag = new ListTag();
+        for (TownMemberRecord member : townMembers.values()) {
+            townMemberTag.add(member.save());
+        }
+        tag.put("TownMembers", townMemberTag);
+
+        ListTag townMemberInviteTag = new ListTag();
+        for (TownMemberInviteRecord invite : townMemberInvites.values()) {
+            townMemberInviteTag.add(invite.save());
+        }
+        tag.put("TownMemberRequests", townMemberInviteTag);
+
+        tag.putBoolean("townMembersMigrated", townMembersMigrated);
         return tag;
     }
 
@@ -739,6 +777,69 @@ public class NationSavedData extends SavedData {
             }
         }
         return result;
+    }
+
+    public TownMemberInviteRecord getTownMemberInvite(String townId, UUID playerUuid) {
+        String key = townMemberKey(townId, playerUuid);
+        return key.isBlank() ? null : townMemberInvites.get(key);
+    }
+
+    public void putTownMemberInvite(TownMemberInviteRecord invite) {
+        if (invite == null) {
+            return;
+        }
+        String key = townMemberKey(invite.townId(), invite.playerUuid());
+        if (key.isBlank()) {
+            return;
+        }
+        townMemberInvites.put(key, invite);
+        setDirty();
+    }
+
+    public void removeTownMemberInvite(String townId, UUID playerUuid) {
+        String key = townMemberKey(townId, playerUuid);
+        if (!key.isBlank() && townMemberInvites.remove(key) != null) {
+            setDirty();
+        }
+    }
+
+    public List<TownMemberInviteRecord> getTownMemberInvitesForTown(String townId) {
+        String normalized = normalizeId(townId);
+        List<TownMemberInviteRecord> result = new ArrayList<>();
+        for (TownMemberInviteRecord invite : townMemberInvites.values()) {
+            if (normalized.equals(invite.townId())) {
+                result.add(invite);
+            }
+        }
+        return result;
+    }
+
+    public boolean isTownMembersMigrated() {
+        return townMembersMigrated;
+    }
+
+    public void setTownMembersMigrated(boolean value) {
+        if (townMembersMigrated != value) {
+            townMembersMigrated = value;
+            setDirty();
+        }
+    }
+
+    // 测试钩子
+    public void markTownMembersMigratedForTest() {
+        this.townMembersMigrated = true;
+    }
+
+    public boolean isTownMembersMigratedForTest() {
+        return townMembersMigrated;
+    }
+
+    public List<NationMemberRecord> getAllMembers() {
+        return new ArrayList<>(members.values());
+    }
+
+    public List<TownRecord> getAllTowns() {
+        return new ArrayList<>(towns.values());
     }
 
     public NationOfficeRecord getOffice(String nationId, String officeId) {
