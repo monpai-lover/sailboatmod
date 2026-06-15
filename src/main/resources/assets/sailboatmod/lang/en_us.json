@@ -221,6 +221,21 @@
     "screen.sailboatmod.market.order.cancel.failed_missing": "Order not found or already handled.",
     "screen.sailboatmod.market.order.cancel.failed_not_owner": "You can only cancel your own order.",
     "screen.sailboatmod.market.order.cancel.failed_in_transit": "Cargo is already in transit and cannot be cancelled.",
+    "screen.sailboatmod.market.my_orders": "My Orders",
+    "screen.sailboatmod.market.my_orders.subtitle": "Track your purchases, ETA, and queue position.",
+    "screen.sailboatmod.market.my_orders.hint": "%s purchase order(s).",
+    "screen.sailboatmod.market.my_orders.empty": "You have no purchase orders yet.",
+    "screen.sailboatmod.market.my_orders.total": "Total: %s",
+    "screen.sailboatmod.market.my_orders.status": "Status: %s",
+    "screen.sailboatmod.market.my_orders.eta": "Queue #%1$s · ETA %2$s",
+    "screen.sailboatmod.market.my_orders.shipping": "Shipping: %s",
+    "screen.sailboatmod.market.my_orders.cancel": "Cancel Order",
+    "screen.sailboatmod.market.order_status.paid": "Paid",
+    "screen.sailboatmod.market.order_status.waiting_shipment": "Awaiting shipment",
+    "screen.sailboatmod.market.order_status.pickup_locked": "Pickup locked",
+    "screen.sailboatmod.market.order_status.in_transit": "In transit",
+    "screen.sailboatmod.market.order_status.delivered": "Delivered",
+    "screen.sailboatmod.market.order_status.cancelled": "Cancelled",
     "screen.sailboatmod.market.cancel":  "Cancel",
     "screen.sailboatmod.market.unlist":  "Unlist",
     "screen.sailboatmod.market.unlist.success":  "Listing removed and cargo returned to the original warehouse storage.",
@@ -237,6 +252,7 @@
     "screen.sailboatmod.market.page.dispatch":  "Dispatch",
     "screen.sailboatmod.market.page.finance":  "Finance",
     "screen.sailboatmod.market.page.buy_orders":  "Buy Orders",
+    "screen.sailboatmod.market.page.my_orders":  "My Orders",
     "screen.sailboatmod.market.page.market_index":  "Market Index",
     "screen.sailboatmod.market.market_overview":  "Market Overview",
     "screen.sailboatmod.market.market_overview_hint":  "Browse the live catalog, then open Selling, Buying, or Price Chart for a selected commodity.",
@@ -524,6 +540,7 @@
     "screen.sailboatmod.market.page.kicker.dispatch": "SHIP",
     "screen.sailboatmod.market.page.kicker.finance": "FUNDS",
     "screen.sailboatmod.market.page.kicker.buy_orders": "ORDERS",
+    "screen.sailboatmod.market.page.kicker.my_orders": "PURCHASES",
     "screen.sailboatmod.market.page.kicker.market_index": "INDEX",
     "screen.sailboatmod.market.index.subtitle": "Browse the global board, category board, and macro indicators.",
     "screen.sailboatmod.market.index.latest": "Latest",
@@ -1469,6 +1486,10 @@
     ,"entity.sailboatmod.carriage.arrival.station": "Station: %s"
     ,"entity.sailboatmod.carriage.arrival.elapsed": "Elapsed: %s"
     ,"entity.sailboatmod.carriage.arrival.date": "Date: %s"
+    ,"entity.sailboatmod.sailboat.arrived": "Arrived"
+    ,"entity.sailboatmod.sailboat.arrival.station": "Dock: %s"
+    ,"entity.sailboatmod.sailboat.arrival.elapsed": "Elapsed: %s"
+    ,"entity.sailboatmod.sailboat.arrival.date": "Date: %s"
     ,"item.sailboatmod.carriage": "Carriage"
     ,"item.sailboatmod.carriage.wood": "Wood: %s"
     ,"item.sailboatmod.carriage.tip.cycle": "Sneak + right-click: cycle wood type"

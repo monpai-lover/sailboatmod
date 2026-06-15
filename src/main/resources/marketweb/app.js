@@ -81,7 +81,7 @@ const commodityIconBatchRequests = new Map();
 const COMMODITY_ICON_BATCH_SIZE = 24;
 let buyOrderResolveTimer = 0;
 let buyOrderResolveSequence = 0;
-const PAGE_ROUTES = new Set(["browse", "inventory", "sell", "buy", "demand", "chart", "index", "map"]);
+const PAGE_ROUTES = new Set(["browse", "inventory", "sell", "buy", "demand", "chart", "index", "map", "my_orders"]);
 const BROWSE_ORDER_VIEWS = new Set(["purchase", "demand"]);
 const CATALOG_SORT_MODES = new Set(["name", "price", "time", "quantity"]);
 const CATALOG_CATEGORY_ORDER = ["wood", "luxury", "food", "fishery", "livestock", "ore", "gems", "metal", "tools", "spices", "plant", "crop", "textile", "material", "construction", "building", "decoration", "furniture", "lighting", "flooring", "landscaping", "machinery", "mob_drop", "alchemy", "magic", "nether", "end", "treasure", "redstone", "utility", "weapon", "armor", "other"];
@@ -1066,6 +1066,36 @@ Object.assign(I18N["en-US"], {
   category_magic: "Magic"
 });
 
+Object.assign(I18N["en-US"], {
+  my_orders_tab: "My Orders",
+  my_orders_hint: "Track your purchases, ETA, and queue position.",
+  my_orders_empty: "You have no orders yet.",
+  listing_word: "Listing",
+  total_price_word: "Total",
+  shipping_word: "Shipping",
+  order_status_paid: "Paid",
+  order_status_waiting_shipment: "Awaiting shipment",
+  order_status_pickup_locked: "Pickup locked",
+  order_status_in_transit: "In transit",
+  order_status_delivered: "Delivered",
+  order_status_cancelled: "Cancelled"
+});
+
+Object.assign(I18N["zh-CN"], {
+  my_orders_tab: "我的订单",
+  my_orders_hint: "查看你的采购订单、ETA 与排队情况。",
+  my_orders_empty: "你还没有订单。",
+  listing_word: "挂单",
+  total_price_word: "总价",
+  shipping_word: "运输",
+  order_status_paid: "已付款",
+  order_status_waiting_shipment: "等待发货",
+  order_status_pickup_locked: "已锁定自提",
+  order_status_in_transit: "运输中",
+  order_status_delivered: "已送达",
+  order_status_cancelled: "已取消"
+});
+
 function t(key, vars = {}) {
   const locale = I18N[state.locale] || I18N["en-US"];
   let text = locale[key] || I18N["en-US"][key] || key;
@@ -1803,6 +1833,15 @@ function bindDetailActions() {
 
   document.querySelectorAll("[data-cancel-buy-order]").forEach((node) => {
     node.addEventListener("click", () => postMarketAction(`/buy-orders/${node.getAttribute("data-cancel-buy-order")}/cancel`));
+  });
+
+  document.querySelectorAll("[data-cancel-purchase-order]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const orderId = node.getAttribute("data-cancel-purchase-order");
+      if (orderId) {
+        postMarketAction(`/purchase-orders/${orderId}/cancel`);
+      }
+    });
   });
 }
 
@@ -4757,6 +4796,9 @@ function activeWorkspaceSection(route = state.activeProductTab) {
   if (normalized === "demand") {
     return "demand";
   }
+  if (normalized === "my_orders") {
+    return "orders";
+  }
   if (normalized === "inventory") {
     return "inventory";
   }
@@ -4776,6 +4818,9 @@ function workspaceTargetRoute(section) {
   if (section === "demand") {
     return "demand";
   }
+  if (section === "orders") {
+    return "my_orders";
+  }
   if (section === "trade") {
     return state.activeProductTab === "buy" ? "buy" : "sell";
   }
@@ -4794,6 +4839,9 @@ function workspaceHint(section) {
   }
   if (section === "demand") {
     return t("demand_hint");
+  }
+  if (section === "orders") {
+    return t("my_orders_hint");
   }
   if (section === "trade") {
     return t("trade_hint");
@@ -5029,6 +5077,7 @@ function renderDetail() {
       <div class="workspace-switch">
         ${workspaceButton("explore", t("explore_tab"))}
         ${workspaceButton("trade", t("trade_tab"))}
+        ${workspaceButton("orders", t("my_orders_tab"))}
         ${workspaceButton("demand", t("buy_order_tab"))}
         ${state.detail?.canManage ? workspaceButton("inventory", t("inventory_tab")) : ""}
         ${workspaceButton("analytics", t("analytics_tab"))}
@@ -5125,7 +5174,9 @@ function renderDetail() {
       </section>
 
       <section class="goods-market">
-        ${state.activeProductTab === "map"
+        ${activeWorkspaceSection() === "orders"
+          ? renderMyOrdersPage(detail)
+          : (state.activeProductTab === "map"
           ? renderMarketMapPlaceholder(detail, canAct, canManage)
           : (state.activeProductTab === "browse"
           ? browseSection
@@ -5135,7 +5186,7 @@ function renderDetail() {
               : inventorySection)
             : (selectedCommodity
               ? renderCommodityDetailPage(selectedCommodity, detail, canManage, canAct)
-              : browseSection)))}
+              : browseSection))))}
       </section>
     </div>
   `;
@@ -5144,6 +5195,97 @@ function renderDetail() {
   hydrateCommodityIcons();
   hydrateLightweightChart();
   mountMarketMapIfNeeded();
+}
+
+const CANCELLABLE_ORDER_STATUSES = new Set(["PAID", "WAITING_SHIPMENT", "PICKUP_LOCKED"]);
+
+function localizeOrderStatus(status) {
+  const raw = String(status || "").trim();
+  if (!raw) {
+    return "-";
+  }
+  const key = "order_status_" + raw.toLowerCase();
+  const localized = t(key);
+  return localized === key ? raw : localized;
+}
+
+function orderQueueText(order) {
+  const position = Number(order.queuePosition || 0);
+  if (position <= 0) {
+    return "";
+  }
+  const minutes = Math.max(1, Math.floor((Number(order.queueEtaSeconds || 0)) / 60));
+  return t("queue_position").replace("%1", position).replace("%2", minutes);
+}
+
+function renderMyOrdersPage(detail) {
+  const orders = Array.isArray(detail?.myOrders) ? detail.myOrders : [];
+  const canAct = !!state.session;
+  const head = `
+    <div class="panel-head">
+      <div>
+        <p class="section-kicker">${escapeHtml(t("my_orders_tab"))}</p>
+        <h3>${escapeHtml(t("my_orders_tab"))}</h3>
+      </div>
+      <span class="pill">${number(orders.length)}</span>
+    </div>
+    <p class="muted">${escapeHtml(t("my_orders_hint"))}</p>
+  `;
+  if (!orders.length) {
+    return `
+      <div class="goods-detail">
+        <div class="table-card">
+          ${head}
+          <div class="empty-state">${escapeHtml(t("my_orders_empty"))}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  const cards = orders.map((order) => {
+    const orderId = String(order.orderId || "");
+    const queueText = orderQueueText(order);
+    const cancellable = CANCELLABLE_ORDER_STATUSES.has(String(order.status || "").toUpperCase());
+    const shipping = order.shipping;
+    return `
+      <div class="surface-card my-order-card">
+        <div class="panel-head">
+          <div>
+            <p class="section-kicker">${escapeHtml(t("listing_word"))}</p>
+            <h3>${escapeHtml(order.listingId || orderId || "-")}</h3>
+          </div>
+          <span class="pill">${escapeHtml(localizeOrderStatus(order.status))}</span>
+        </div>
+        <div class="metric-strip">
+          ${metricBox(t("quantity"), number(order.quantity))}
+          ${metricBox(t("total_price_word"), number(order.totalPrice))}
+        </div>
+        <div class="muted-inline"><strong>${escapeHtml(order.sourceDockName || "-")}</strong> -> <strong>${escapeHtml(order.targetDockName || "-")}</strong></div>
+        ${queueText ? `<div class="muted-inline order-queue">${escapeHtml(queueText)}</div>` : ""}
+        ${shipping ? `
+          <div class="muted-inline">
+            ${escapeHtml(t("shipping_word"))}: ${escapeHtml(shipping.boatName || "-")} · ${escapeHtml(shipping.routeName || "-")} · ${escapeHtml(localizeOrderStatus(shipping.status))}
+          </div>
+        ` : ""}
+        ${cancellable ? `
+          <div class="actions">
+            <button type="button" class="danger" data-cancel-purchase-order="${escapeHtml(orderId)}" ${canAct ? "" : "disabled"}>${escapeHtml(t("order_cancel"))}</button>
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="goods-detail">
+      <div class="table-card">
+        ${head}
+      </div>
+      <div class="stack">
+        ${cards}
+      </div>
+    </div>
+  `;
 }
 
 function renderCommodityDetailPage(commodity, detail, canManage, canAct) {

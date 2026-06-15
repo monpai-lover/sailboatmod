@@ -56,7 +56,8 @@ public record MarketOverviewData(
         List<CommodityImpactSnapshot> commodityImpactSnapshots,
         List<MarketAnalyticsSeries> analyticsSeries,
         List<WarehouseOption> receivingWarehouseOptions,
-        boolean canChooseReceiving
+        boolean canChooseReceiving,
+        List<MyOrderEntry> myOrders
 ) {
     public MarketOverviewData {
         dockStorageLines = dockStorageLines == null ? List.of() : List.copyOf(dockStorageLines);
@@ -81,6 +82,7 @@ public record MarketOverviewData(
         analyticsSeries = analyticsSeries == null ? List.of() : List.copyOf(analyticsSeries);
         receivingWarehouseOptions = receivingWarehouseOptions == null ? List.of() : List.copyOf(receivingWarehouseOptions);
         canChooseReceiving = receivingWarehouseOptions != null && !receivingWarehouseOptions.isEmpty();
+        myOrders = myOrders == null ? List.of() : List.copyOf(myOrders);
     }
 
     public boolean hasTownEconomy() {
@@ -167,6 +169,37 @@ public record MarketOverviewData(
         /** 该订单是否仍可被买家取消（未发货态）。 */
         public boolean cancellable() {
             return "PAID".equals(status) || "WAITING_SHIPMENT".equals(status) || "PICKUP_LOCKED".equals(status);
+        }
+    }
+
+    /**
+     * 买家自己的采购订单（「我的订单」分页用）。与 Web 端 MarketWebService.myOrders 同源：
+     * 数量/总价、源→目的码头、状态、卖家发货排队位次/ETA，以及已生成时的运输摘要。
+     */
+    public record MyOrderEntry(String orderId, String listingId, String itemName, int quantity, int totalPrice,
+                               String sourceDockName, String targetDockName, String status,
+                               int queuePosition, int queueEtaSeconds,
+                               String shippingBoatName, String shippingRouteName, String shippingStatus) {
+        public MyOrderEntry {
+            orderId = orderId == null ? "" : orderId;
+            listingId = listingId == null ? "" : listingId;
+            itemName = itemName == null ? "" : itemName;
+            sourceDockName = sourceDockName == null ? "" : sourceDockName;
+            targetDockName = targetDockName == null ? "" : targetDockName;
+            status = status == null || status.isBlank() ? "PAID" : status;
+            shippingBoatName = shippingBoatName == null ? "" : shippingBoatName;
+            shippingRouteName = shippingRouteName == null ? "" : shippingRouteName;
+            shippingStatus = shippingStatus == null ? "" : shippingStatus;
+        }
+
+        /** 该订单是否仍可被买家取消（未发货态）。 */
+        public boolean cancellable() {
+            return "PAID".equals(status) || "WAITING_SHIPMENT".equals(status) || "PICKUP_LOCKED".equals(status);
+        }
+
+        /** 是否已生成运输单（船/路线已分配）。 */
+        public boolean hasShipping() {
+            return shippingBoatName != null && !shippingBoatName.isBlank();
         }
     }
 

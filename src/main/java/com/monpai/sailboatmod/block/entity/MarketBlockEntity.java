@@ -428,6 +428,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
         java.util.List<MarketOverviewData.WarehouseOption> receivingOptions = receivingWarehouseOptionsForViewer(safePlayerUuid);
 
+        List<MarketOverviewData.MyOrderEntry> myOrders = buildMyOrders(safePlayerUuid);
+
         return new MarketOverviewData(
                 worldPosition,
                 getMarketName(),
@@ -477,8 +479,71 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 impactSnapshots,
                 analyticsSeries,
                 receivingOptions,
-                !receivingOptions.isEmpty()
+                !receivingOptions.isEmpty(),
+                myOrders
         );
+    }
+
+    /**
+     * 构建买家「我的订单」列表（客户端 GUI 用），与 Web 端 MarketWebService.myOrders 同源：
+     * 按 orderId 稳定排序、卖家发货态算排队位次/ETA、附运输摘要。itemName 尽力从对应挂单解析，
+     * 售罄删档则回退 listingId。
+     */
+    private List<MarketOverviewData.MyOrderEntry> buildMyOrders(String buyerUuid) {
+        if (level == null || level.isClientSide || buyerUuid == null || buyerUuid.isBlank()) {
+            return List.of();
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        List<PurchaseOrder> orders = new ArrayList<>(market.getOrdersForBuyer(buyerUuid));
+        orders.sort(java.util.Comparator.comparing(PurchaseOrder::orderId));
+        List<MarketOverviewData.MyOrderEntry> result = new ArrayList<>(orders.size());
+        for (PurchaseOrder order : orders) {
+            int queuePosition = 0;
+            int queueEtaSeconds = 0;
+            if (FulfillmentMode.fromString(order.fulfillment()) == FulfillmentMode.SELLER_SHIP
+                    && "WAITING_SHIPMENT".equals(order.status())) {
+                List<String> queueIds = new ArrayList<>();
+                for (PurchaseOrder o : market.getOpenOrdersForSourceDock(order.sourceDockPos())) {
+                    if (FulfillmentMode.fromString(o.fulfillment()) == FulfillmentMode.SELLER_SHIP
+                            && "WAITING_SHIPMENT".equals(o.status())) {
+                        queueIds.add(o.orderId());
+                    }
+                }
+                queueIds.sort(java.util.Comparator.naturalOrder());
+                queuePosition = SellerShipQueue.positionOf(queueIds, order.orderId());
+                queueEtaSeconds = SellerShipQueue.etaSeconds(queuePosition);
+            }
+            String shippingBoatName = "";
+            String shippingRouteName = "";
+            String shippingStatus = "";
+            ShippingOrder shipping = market.getShippingOrderForPurchaseOrder(order.orderId());
+            if (shipping != null) {
+                shippingBoatName = shipping.boatName();
+                shippingRouteName = shipping.routeName();
+                shippingStatus = shipping.status();
+            }
+            String itemName = order.listingId();
+            MarketListing listing = market.getListing(order.listingId());
+            if (listing != null && !listing.itemStack().isEmpty()) {
+                itemName = listing.itemStack().getHoverName().getString();
+            }
+            result.add(new MarketOverviewData.MyOrderEntry(
+                    order.orderId(),
+                    order.listingId(),
+                    itemName,
+                    order.quantity(),
+                    order.totalPrice(),
+                    order.sourceDockName().isBlank() ? order.sourceDockPos().toShortString() : order.sourceDockName(),
+                    order.targetDockName().isBlank() ? order.targetDockPos().toShortString() : order.targetDockName(),
+                    order.status(),
+                    queuePosition,
+                    queueEtaSeconds,
+                    shippingBoatName,
+                    shippingRouteName,
+                    shippingStatus
+            ));
+        }
+        return result;
     }
 
     private static List<String> collectCategories(List<MarketOverviewData.ListingEntry> listingEntries) {

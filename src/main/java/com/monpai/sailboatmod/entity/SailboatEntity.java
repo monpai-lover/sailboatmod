@@ -26,6 +26,9 @@ import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
@@ -58,10 +61,14 @@ import software.bernie.geckolib.core.animation.AnimatableManager;
 import software.bernie.geckolib.core.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -97,8 +104,19 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> DATA_RENTAL_PRICE =
             SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<Integer> DATA_ARRIVAL_NOTICE_UNTIL_TICK =
+            SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<String> DATA_ARRIVAL_NOTICE_STATION_NAME =
+            SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.STRING);
+    private static final EntityDataAccessor<Integer> DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS =
+            SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.INT);
+    private static final EntityDataAccessor<String> DATA_ARRIVAL_NOTICE_DATE_TEXT =
+            SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.STRING);
     private static final int INVENTORY_SIZE = 27;
     private static final int SEAT_COUNT = 5;
+    private static final int ARRIVAL_NOTICE_TICKS = 100;
+    private static final DateTimeFormatter ARRIVAL_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
     private static final float MAX_TURN_DEGREES_PER_TICK = 0.85F;
     private static final double STOWED_FORWARD_ACCEL = 1.006D;
     private static final double STOWED_MAX_SPEED_FACTOR = 0.42D;
@@ -296,6 +314,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         this.entityData.define(DATA_SEAT_3, -1);
         this.entityData.define(DATA_SEAT_4, -1);
         this.entityData.define(DATA_RENTAL_PRICE, DEFAULT_RENTAL_PRICE);
+        this.entityData.define(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
+        this.entityData.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
+        this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
+        this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
     }
 
     @Override
@@ -2190,6 +2212,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         boolean allowUnload = hasOrder || autopilotAllowNonOrderAutoUnload;
         boolean allowReturn = hasOrder || autopilotAllowNonOrderAutoReturn;
         if (!allowUnload && !allowReturn) {
+            beginArrivalFeedback(destinationDock);
             applyDockHoldState(destinationDock);
             stopAutopilot(false);
             return;
@@ -2227,8 +2250,79 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 && tryStartReturnTrip(destinationDock, previousSourceDockPos, returnBuyerUuid, returnBuyerName)) {
             return;
         }
+        beginArrivalFeedback(destinationDock);
         applyDockHoldState(destinationDock);
         stopAutopilot(false);
+    }
+
+    public int getArrivalNoticeTicks() {
+        return Math.max(0, entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK) - tickCount);
+    }
+
+    public String getArrivalNoticeStationName() {
+        return entityData.get(DATA_ARRIVAL_NOTICE_STATION_NAME);
+    }
+
+    public String getArrivalNoticeElapsedText() {
+        return formatArrivalElapsedSeconds(entityData.get(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS));
+    }
+
+    public String getArrivalNoticeDateText() {
+        return entityData.get(DATA_ARRIVAL_NOTICE_DATE_TEXT);
+    }
+
+    private void beginArrivalFeedback(@Nullable DockBlockEntity destination) {
+        if (level().isClientSide) {
+            return;
+        }
+        entityData.set(DATA_ARRIVAL_NOTICE_STATION_NAME, arrivalStationName(destination));
+        entityData.set(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, arrivalElapsedSecondsFromDeparture());
+        entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT,
+                formatArrivalDate(System.currentTimeMillis(), ZoneId.systemDefault()));
+        setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
+        level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+    }
+
+    private void setArrivalNoticeTicks(int ticks) {
+        int clamped = Mth.clamp(ticks, 0, ARRIVAL_NOTICE_TICKS);
+        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped <= 0 ? 0 : tickCount + clamped);
+    }
+
+    private int arrivalElapsedSecondsFromDeparture() {
+        if (autopilotShipmentDepartureEpochMillis <= 0L) {
+            return 0;
+        }
+        long elapsedMillis = Math.max(0L, System.currentTimeMillis() - autopilotShipmentDepartureEpochMillis);
+        long seconds = elapsedMillis / 1000L;
+        return seconds > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) seconds;
+    }
+
+    private static String formatArrivalElapsedSeconds(int seconds) {
+        int safeSeconds = Math.max(0, seconds);
+        int hours = safeSeconds / 3600;
+        int minutes = (safeSeconds % 3600) / 60;
+        int remainingSeconds = safeSeconds % 60;
+        if (hours > 0) {
+            return String.format(Locale.ROOT, "%02d:%02d:%02d", hours, minutes, remainingSeconds);
+        }
+        return String.format(Locale.ROOT, "%02d:%02d", minutes, remainingSeconds);
+    }
+
+    private static String formatArrivalDate(long epochMillis, @Nullable ZoneId zoneId) {
+        ZoneId safeZone = zoneId == null ? ZoneId.systemDefault() : zoneId;
+        return ARRIVAL_DATE_FORMATTER.format(Instant.ofEpochMilli(epochMillis).atZone(safeZone));
+    }
+
+    private static String arrivalStationName(@Nullable DockBlockEntity destination) {
+        if (destination == null) {
+            return "Dock";
+        }
+        String name = destination.getDockName();
+        return name == null || name.isBlank() ? "Dock" : name.trim();
+    }
+
+    private static SoundEvent arrivalSoundEvent() {
+        return SoundEvents.PLAYER_LEVELUP;
     }
 
     private void applyDockHoldState(DockBlockEntity dock) {

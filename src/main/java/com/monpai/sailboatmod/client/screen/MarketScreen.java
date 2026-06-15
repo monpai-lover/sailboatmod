@@ -440,6 +440,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             case DISPATCH -> buildDispatchPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
             case FINANCE -> buildFinancePage(mainPanel, contentX, contentY, contentWidth, contentHeight);
             case BUY_ORDERS -> buildBuyOrdersPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
+            case MY_ORDERS -> buildMyOrdersPage(mainPanel, contentX, contentY, contentWidth, contentHeight);
         }
         buildNotice(mainPanel, panelWidth);
         if (showBuyModal) {
@@ -822,6 +823,96 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 selectedBuyOrder() == null ? Component.translatable("screen.sailboatmod.market.page.buy_orders").getString() : displayCommodityName(selectedBuyOrder().commodityKey()),
                 buildBuyOrdersSubtitle());
         buildBuyOrderActionPanel(actionPanel, width);
+    }
+
+    // === 「我的订单」分页：买家自己的采购订单详情 / ETA / 排队 / 取消 ===
+    private void buildMyOrdersPage(UIComponent parent, int x, int y, int width, int height) {
+        UIRoundedRectangle section = createSection(parent, x, y, width, height,
+                Component.translatable("screen.sailboatmod.market.my_orders").getString(),
+                Component.translatable("screen.sailboatmod.market.my_orders.subtitle").getString());
+        int innerWidth = Math.max(120, width - 28);
+        ScrollComponent scroll = createPanelBodyScroll(section, 44, 6);
+        List<MarketOverviewData.MyOrderEntry> orders = data.myOrders();
+        if (orders.isEmpty()) {
+            createText(scroll, 4, 8,
+                    Component.translatable("screen.sailboatmod.market.my_orders.empty").getString(), 0.84f, TEXT_MUTED);
+            return;
+        }
+        int cardWidth = innerWidth - 8;
+        int yCursor = 0;
+        for (MarketOverviewData.MyOrderEntry order : orders) {
+            yCursor += buildMyOrderCard(scroll, 0, yCursor, cardWidth, order) + 10;
+        }
+    }
+
+    /** 渲染单张「我的订单」卡片，返回其高度（像素）。 */
+    private int buildMyOrderCard(UIComponent parent, int x, int y, int width, MarketOverviewData.MyOrderEntry order) {
+        boolean cancellable = order.cancellable();
+        boolean hasShipping = order.hasShipping();
+        int lineCount = 4 + (hasShipping ? 1 : 0);
+        int cardHeight = 18 + lineCount * 14 + (cancellable ? 34 : 8);
+
+        UIRoundedRectangle card = createPanel(parent, x, y, width, cardHeight, 12f, CARD_BG_SOFT);
+        card.enableEffect(new OutlineEffect(BORDER, 1f));
+        createAccentBar(card, 0, 0, 4, cardHeight, cancellable ? ACCENT : ACCENT_DIM);
+
+        int innerWidth = Math.max(60, width - 28);
+        int textY = 10;
+        createText(card, 14, textY, shortenToWidth(
+                order.itemName() + "  x" + order.quantity(), innerWidth, 0.9f), 0.9f, TEXT_PRIMARY);
+        textY += 16;
+        createText(card, 14, textY, shortenToWidth(
+                Component.translatable("screen.sailboatmod.market.my_orders.total",
+                        formatCompactLong(order.totalPrice())).getString(), innerWidth, 0.78f), 0.78f, TEXT_SOFT);
+        textY += 14;
+        createText(card, 14, textY, shortenToWidth(
+                order.sourceDockName() + " -> " + order.targetDockName(), innerWidth, 0.78f), 0.78f, TEXT_MUTED);
+        textY += 14;
+        createText(card, 14, textY, shortenToWidth(
+                Component.translatable("screen.sailboatmod.market.my_orders.status",
+                        localizeOrderStatus(order.status())).getString()
+                        + queueEtaSuffix(order), innerWidth, 0.78f), 0.78f, TEXT_MUTED);
+        textY += 14;
+        if (hasShipping) {
+            String routePart = order.shippingRouteName().isBlank() ? "" : " | " + order.shippingRouteName();
+            createText(card, 14, textY, shortenToWidth(
+                    Component.translatable("screen.sailboatmod.market.my_orders.shipping",
+                            order.shippingBoatName()).getString() + routePart, innerWidth, 0.74f), 0.74f, ACCENT_DIM);
+            textY += 14;
+        }
+        if (cancellable) {
+            createButton(card, 14, cardHeight - 32, Math.min(160, innerWidth), 26,
+                    Component.translatable("screen.sailboatmod.market.my_orders.cancel").getString(),
+                    true, true, () -> cancelMyOrder(order));
+        }
+        return cardHeight;
+    }
+
+    private String queueEtaSuffix(MarketOverviewData.MyOrderEntry order) {
+        if (order.queuePosition() <= 0) {
+            return "";
+        }
+        return "  " + Component.translatable("screen.sailboatmod.market.my_orders.eta",
+                order.queuePosition(), formatEta(order.queueEtaSeconds())).getString();
+    }
+
+    /** 订单状态本地化：screen.sailboatmod.market.order_status.&lt;lower&gt;，缺失则回退原文。 */
+    private String localizeOrderStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return "-";
+        }
+        String key = "screen.sailboatmod.market.order_status." + status.toLowerCase(Locale.ROOT);
+        String localized = Component.translatable(key).getString();
+        return localized.equals(key) ? status : localized;
+    }
+
+    private void cancelMyOrder(MarketOverviewData.MyOrderEntry order) {
+        if (order == null || order.orderId() == null || order.orderId().isBlank()) {
+            return;
+        }
+        rememberScrollState();
+        ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPurchaseOrderPacket(
+                data.marketPos(), order.orderId()));
     }
 
     private void buildGoodsActionPanel(UIComponent panel, int width) {
@@ -2827,6 +2918,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     selectedOrder() == null ? "-" : selectedOrder().status()).getString();
             case FINANCE -> Component.translatable("screen.sailboatmod.econbar.net", formatSignedLong(data.netBalance())).getString();
             case BUY_ORDERS -> Component.translatable("screen.sailboatmod.market.buy_order.price_range_hint").getString();
+            case MY_ORDERS -> Component.translatable("screen.sailboatmod.market.my_orders.hint",
+                    data.myOrders().size()).getString();
         };
     }
 
@@ -5283,7 +5376,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), false);
+                List.of(), false, List.of());
     }
 
     private enum MarketPage {
@@ -5292,7 +5385,8 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         SELL("screen.sailboatmod.market.page.sell", "screen.sailboatmod.market.page.kicker.sell"),
         DISPATCH("screen.sailboatmod.market.page.dispatch", "screen.sailboatmod.market.page.kicker.dispatch"),
         FINANCE("screen.sailboatmod.market.page.finance", "screen.sailboatmod.market.page.kicker.finance"),
-        BUY_ORDERS("screen.sailboatmod.market.page.buy_orders", "screen.sailboatmod.market.page.kicker.buy_orders");
+        BUY_ORDERS("screen.sailboatmod.market.page.buy_orders", "screen.sailboatmod.market.page.kicker.buy_orders"),
+        MY_ORDERS("screen.sailboatmod.market.page.my_orders", "screen.sailboatmod.market.page.kicker.my_orders");
 
         private final String key;
         private final String kickerKey;

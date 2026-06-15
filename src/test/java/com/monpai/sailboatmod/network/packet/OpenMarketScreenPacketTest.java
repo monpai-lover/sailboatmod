@@ -33,6 +33,7 @@ class OpenMarketScreenPacketTest {
         OpenMarketScreenPacket decoded = OpenMarketScreenPacket.decode(new FriendlyByteBuf(buffer.copy()));
 
         assertEquals(List.of(carrier), decoded.dataForTest().availableDispatchOptions());
+        assertEquals(List.of(myOrder()), decoded.dataForTest().myOrders());
     }
 
     private static MarketOverviewData emptyOverview(List<MarketOverviewData.DispatchOption> availableDispatchOptions) {
@@ -85,7 +86,15 @@ class OpenMarketScreenPacketTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                false
+                false,
+                List.of(myOrder())
         );
+    }
+
+    private static MarketOverviewData.MyOrderEntry myOrder() {
+        return new MarketOverviewData.MyOrderEntry(
+                "order-1", "listing-1", "Wheat", 12, 240,
+                "Crimea Port", "Riverside Dock", "WAITING_SHIPMENT",
+                2, 120, "Sailboat A", "Trade Route", "PENDING");
     }
 }
