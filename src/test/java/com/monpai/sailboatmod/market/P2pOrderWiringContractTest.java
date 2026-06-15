@@ -20,8 +20,8 @@ class P2pOrderWiringContractTest {
                 "should resolve a buyer's available receiving warehouses");
         assertTrue(src.contains("defaultReceivingWarehouseFor("),
                 "should resolve a buyer's default receiving warehouse for fallback");
-        assertTrue(src.contains("getTownsForNation(") || src.contains("getMember("),
-                "candidate resolution should go through the buyer's nation/town");
+        assertTrue(src.contains("getTownsForPlayer("),
+                "candidate resolution should go through the buyer's own town (member-town binding)");
     }
 
     @Test
