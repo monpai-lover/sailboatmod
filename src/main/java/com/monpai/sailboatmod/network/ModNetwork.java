@@ -38,6 +38,8 @@ import com.monpai.sailboatmod.network.packet.OpenTownMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenTownScreenPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
 import com.monpai.sailboatmod.network.packet.PostStationGuiActionPacket;
+import com.monpai.sailboatmod.network.packet.ProbeFulfillmentModesPacket;
+import com.monpai.sailboatmod.network.packet.ProbeFulfillmentModesResultPacket;
 import com.monpai.sailboatmod.network.packet.RefreshClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.RenameDockPacket;
@@ -851,6 +853,22 @@ public final class ModNetwork {
                 SetUnloadOnArrivalPacket::encode,
                 SetUnloadOnArrivalPacket::decode,
                 SetUnloadOnArrivalPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                ProbeFulfillmentModesPacket.class,
+                ProbeFulfillmentModesPacket::encode,
+                ProbeFulfillmentModesPacket::decode,
+                ProbeFulfillmentModesPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                ProbeFulfillmentModesResultPacket.class,
+                ProbeFulfillmentModesResultPacket::encode,
+                ProbeFulfillmentModesResultPacket::decode,
+                ProbeFulfillmentModesResultPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
     }
 

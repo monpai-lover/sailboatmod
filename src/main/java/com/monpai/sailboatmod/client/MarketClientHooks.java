@@ -59,6 +59,13 @@ public final class MarketClientHooks {
         return null;
     }
 
+    public static void applyProbeResult(String listingId, boolean sellerShip, boolean autoPickup, boolean realPickup) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof MarketScreen marketScreen) {
+            marketScreen.onProbeResult(listingId, sellerShip, autoPickup, realPickup);
+        }
+    }
+
     public record MarketNotice(BlockPos marketPos, String message, boolean positive) {
     }
 

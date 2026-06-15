@@ -197,6 +197,10 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return data.marketPos().equals(pos);
     }
 
+    /** 接收模式可达性探测回包（E3 填实现）。 */
+    public void onProbeResult(String listingId, boolean sellerShip, boolean autoPickup, boolean realPickup) {
+    }
+
     @Override
     public void updateData(MarketOverviewData updated) {
         this.data = updated;
