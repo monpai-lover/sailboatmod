@@ -69,6 +69,7 @@ import org.slf4j.Logger;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -1053,6 +1054,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return;
         }
         MarketSavedData market = MarketSavedData.get(level);
+        // 自动自提（AUTO_PICKUP，PICKUP_LOCKED）：把买家空车空驶到产地（不在产地时），到产地后 Task4 装货、Task5 续发。
+        // 独立于下方 SELLER_SHIP 链路——自提单非 WAITING_SHIPMENT，isBackgroundDispatchable 不认它。
+        dispatchAutoPickup(market);
         boolean hasDispatchable = false;
         for (PurchaseOrder order : market.getOpenOrdersForSourceDock(linkedDockPos)) {
             if (com.monpai.sailboatmod.market.logistics.TransportDispatchService
@@ -2052,6 +2056,151 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 null);
     }
 
+    /**
+     * 自动自提空驶调度（后台 tick 入口）：扫描本产地（linkedDockPos）所有 AUTO_PICKUP + PICKUP_LOCKED 订单，
+     * 对每个买家——若其空闲车已在产地终端 zone，则交给 Task4 的进-zone 触发装货，不重复发车；
+     * 否则把买家在其他终端的空闲空车空驶到产地终端（到产地后由 Task4 装货、Task5 续发）。无可调度车则留队列。
+     * 自提单非 WAITING_SHIPMENT，不会被 SELLER_SHIP 链路（tryDispatchWaitingOrders）认领，故此处独立处理。
+     */
+    private void dispatchAutoPickup(MarketSavedData market) {
+        if (level == null || level.isClientSide || linkedDockPos == null || market == null) {
+            return;
+        }
+        TownWarehouseBlockEntity sourceWarehouse = getLinkedWarehouse();
+        if (sourceWarehouse == null) {
+            return;
+        }
+        Set<String> buyers = new LinkedHashSet<>();
+        for (PurchaseOrder order : market.getPickupOrdersForSourceDock(linkedDockPos)) {
+            if (FulfillmentMode.fromString(order.fulfillment()) != FulfillmentMode.AUTO_PICKUP) {
+                continue;
+            }
+            String buyerUuid = order.buyerUuid();
+            if (buyerUuid != null && !buyerUuid.isBlank()) {
+                buyers.add(buyerUuid);
+            }
+        }
+        for (String buyerUuid : buyers) {
+            deadheadBuyerVehicleToSource(sourceWarehouse, buyerUuid);
+        }
+    }
+
+    /**
+     * 把指定买家的一辆空闲空车空驶到本产地终端。港口、驿站两类终端各试一遍：
+     * 若该买家车已停在任一产地终端 zone（availableBuyerVehiclesForPickup 非空），说明 Task4 会就地装货，直接返回不发车；
+     * 否则枚举其他终端上属于该买家的空闲空车，规划「他处终端 → 产地终端」的有向路线并空驶过去。
+     */
+    private void deadheadBuyerVehicleToSource(TownWarehouseBlockEntity sourceWarehouse, String buyerUuid) {
+        if (level == null || sourceWarehouse == null || buyerUuid == null || buyerUuid.isBlank()) {
+            return;
+        }
+        for (TransportTerminalKind kind : List.of(TransportTerminalKind.PORT, TransportTerminalKind.POST_STATION)) {
+            List<DockBlockEntity> sourceTerminals = terminalsForTown(sourceWarehouse.getTownId(), kind);
+            if (sourceTerminals.isEmpty()) {
+                continue;
+            }
+            boolean alreadyAtSource = false;
+            for (DockBlockEntity sourceTerminal : sourceTerminals) {
+                if (!sourceTerminal.availableBuyerVehiclesForPickup(buyerUuid).isEmpty()) {
+                    alreadyAtSource = true;
+                    break;
+                }
+            }
+            if (alreadyAtSource) {
+                continue; // 车已在产地终端，Task4 进-zone 装货接手，不空驶
+            }
+            deadheadFromRemoteTerminals(sourceTerminals, buyerUuid, kind);
+        }
+    }
+
+    /**
+     * 枚举该 kind 下所有终端，找属于买家的空闲空车，规划「该终端 → 某个产地终端」的有向路线并空驶一辆。
+     * 跳过类型不符的终端、跳过产地终端本身。一次只成功空驶一辆（return），其余下个后台 tick 再处理。
+     */
+    private void deadheadFromRemoteTerminals(List<DockBlockEntity> sourceTerminals, String buyerUuid, TransportTerminalKind kind) {
+        if (level == null || sourceTerminals == null || sourceTerminals.isEmpty() || buyerUuid == null || buyerUuid.isBlank()) {
+            return;
+        }
+        Set<BlockPos> candidates = kind == TransportTerminalKind.POST_STATION ? PostStationRegistry.get(level) : DockRegistry.get(level);
+        for (BlockPos pos : candidates) {
+            if (!(level.getBlockEntity(pos) instanceof DockBlockEntity remote)) {
+                continue;
+            }
+            if (kind == TransportTerminalKind.PORT && remote instanceof PostStationBlockEntity) {
+                continue;
+            }
+            if (kind == TransportTerminalKind.POST_STATION && !(remote instanceof PostStationBlockEntity)) {
+                continue;
+            }
+            BlockPos remotePos = remote.getBlockPos();
+            boolean isSourceTerminal = false;
+            for (DockBlockEntity sourceTerminal : sourceTerminals) {
+                if (sourceTerminal.getBlockPos().equals(remotePos)) {
+                    isSourceTerminal = true;
+                    break;
+                }
+            }
+            if (isSourceTerminal) {
+                continue; // 产地终端本身，车若在此由 Task4 就地装货，不算空驶来源
+            }
+            List<TransportEntity> vehicles = remote.availableBuyerVehiclesForPickup(buyerUuid);
+            if (vehicles.isEmpty()) {
+                continue;
+            }
+            for (DockBlockEntity sourceTerminal : sourceTerminals) {
+                DeadheadRoute route = planDeadheadRoute(remote, sourceTerminal, kind);
+                if (route == null) {
+                    continue;
+                }
+                if (routeLoadedVehicleToTarget(vehicles.get(0), remote, route.generatedRoute(), route.landPlan(), route.routeIndex(), null)) {
+                    return; // 一次只空驶一辆，其余下个 tick 再处理
+                }
+            }
+        }
+    }
+
+    /**
+     * 规划「fromTerminal → toTerminal（=产地终端）」的有向空驶路线。返回 null 表示该对不可达。
+     * 不复用 resolveDispatchTerminalPlan（它要求源终端有空闲船且自挑终端，这里源终端固定、目标固定）。
+     */
+    @Nullable
+    private DeadheadRoute planDeadheadRoute(DockBlockEntity fromTerminal, DockBlockEntity toTerminal, TransportTerminalKind kind) {
+        if (level == null || fromTerminal == null || toTerminal == null || kind == null) {
+            return null;
+        }
+        if (kind == TransportTerminalKind.POST_STATION) {
+            if (!(fromTerminal instanceof PostStationBlockEntity)
+                    || !(toTerminal instanceof PostStationBlockEntity toStation)
+                    || !(level instanceof ServerLevel serverLevel)) {
+                return null;
+            }
+            String targetTownId = DockTownResolver.resolveTownForArrival(level, toStation.getBlockPos(), toStation.getTownId());
+            if (targetTownId == null || targetTownId.isBlank()) {
+                return null;
+            }
+            LandTransportNetworkService service = new LandTransportNetworkService();
+            LandTransportNetworkService.RouteAvailability availability = service.planRouteToTown(
+                    serverLevel,
+                    service.stationRef(level, (PostStationBlockEntity) fromTerminal),
+                    targetTownId,
+                    ALLOW_TERRAIN_FALLBACK_FOR_POST_STATION_DISPATCH
+            );
+            if (!availability.reachable() || availability.plan() == null) {
+                return null;
+            }
+            LandTransportNetworkService.LandRoutePlan landPlan = availability.plan();
+            if (!landPlan.targetStationPos().equals(toStation.getBlockPos())) {
+                return null;
+            }
+            return new DeadheadRoute(-1, landPlan.route(), landPlan);
+        }
+        int routeIndex = fromTerminal.findRouteIndexByDestinationDock(toTerminal.getBlockPos(), toTerminal.getDockName());
+        if (routeIndex < 0) {
+            return null;
+        }
+        return new DeadheadRoute(routeIndex, null, null);
+    }
+
     /** 本市场产地（linkedDockPos）的该买家 PICKUP_LOCKED 自提订单。 */
     private List<PurchaseOrder> pickupOrdersForBuyerAtThisSource(MarketSavedData market, String buyerUuid) {
         List<PurchaseOrder> out = new ArrayList<>();
@@ -2238,6 +2387,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         boolean usesGeneratedRoute() {
             return generatedRoute != null;
         }
+    }
+
+    /** 空驶有向路线：从他处终端导航到产地终端。PORT 用 routeIndex；POST_STATION 用 generatedRoute + landPlan。 */
+    private record DeadheadRoute(int routeIndex,
+                                @Nullable RouteDefinition generatedRoute,
+                                @Nullable LandTransportNetworkService.LandRoutePlan landPlan) {
     }
 
     private record DispatchCandidate(MarketDispatchPlanner.DispatchChoice choice,

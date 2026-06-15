@@ -63,6 +63,17 @@ class PickupWiringContractTest {
     }
 
     @Test
+    void autoPickupDeadheadsBuyerVehicleToSource() throws Exception {
+        String src = marketBlockEntity();
+        assertTrue(src.contains("dispatchAutoPickup("),
+                "background dispatch should route the buyer's empty vehicle to the source terminal");
+        assertTrue(src.contains("runBackgroundAutoDispatch") && src.contains("dispatchAutoPickup("),
+                "dispatchAutoPickup should be wired into the background auto-dispatch entry");
+        assertTrue(src.contains("PickupLock.isPickupOrder(") && src.contains("FulfillmentMode.AUTO_PICKUP"),
+                "deadhead should scan AUTO_PICKUP locked orders for the source market");
+    }
+
+    @Test
     void vehiclesTriggerPickupLoadInZone() throws Exception {
         String sb = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/SailboatEntity.java"));
         String cr = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/CarriageEntity.java"));

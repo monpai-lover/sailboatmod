@@ -139,6 +139,21 @@ public class MarketSavedData extends SavedData {
         return out;
     }
 
+    /** 指定产地（sourceDockPos）所有 PICKUP_LOCKED 自提订单（真人/自动），供自提装货与空驶调度扫描。 */
+    public List<PurchaseOrder> getPickupOrdersForSourceDock(net.minecraft.core.BlockPos sourceDockPos) {
+        List<PurchaseOrder> out = new ArrayList<>();
+        if (sourceDockPos == null) {
+            return out;
+        }
+        for (PurchaseOrder order : purchaseOrders.values()) {
+            if (sourceDockPos.equals(order.sourceDockPos())
+                    && PickupLock.isPickupOrder(order.status(), order.fulfillment())) {
+                out.add(order);
+            }
+        }
+        return out;
+    }
+
     public List<PurchaseOrder> getOpenOrdersForSourceDock(net.minecraft.core.BlockPos sourceDockPos) {
         List<PurchaseOrder> out = new ArrayList<>();
         if (sourceDockPos == null) {
