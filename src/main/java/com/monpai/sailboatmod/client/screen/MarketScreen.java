@@ -2510,9 +2510,15 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         for (int i = 0; i < data.orderEntries().size(); i++) {
             MarketOverviewData.OrderEntry entry = data.orderEntries().get(i);
             int index = i;
+            String subtitle = Component.translatable("screen.sailboatmod.market.dispatch.route", entry.sourceDockName()).getString();
+            if (entry.queuePosition() > 0) {
+                int mins = Math.max(1, entry.queueEtaSeconds() / 60);
+                subtitle = subtitle + "  ·  " + Component.translatable(
+                        "screen.sailboatmod.market.buy.modal.queue.position", entry.queuePosition(), mins).getString();
+            }
             rows.add(rowSpec(
                     entry.targetDockName().isBlank() ? entry.sourceDockName() : entry.targetDockName(),
-                    Component.translatable("screen.sailboatmod.market.dispatch.route", entry.sourceDockName()).getString(),
+                    subtitle,
                     "x" + entry.quantity(),
                     index == selectedOrderIndex,
                     () -> {
