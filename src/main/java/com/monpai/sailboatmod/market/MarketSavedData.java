@@ -225,6 +225,34 @@ public class MarketSavedData extends SavedData {
         setDirty();
     }
 
+    public void removePurchaseOrder(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            return;
+        }
+        if (purchaseOrders.remove(orderId) != null) {
+            setDirty();
+        }
+    }
+
+    /** 指定挂单下、仍未发货（可取消/可退款）的订单：PAID / WAITING_SHIPMENT / PICKUP_LOCKED。 */
+    public List<PurchaseOrder> getActiveOrdersForListing(String listingId) {
+        List<PurchaseOrder> out = new ArrayList<>();
+        if (listingId == null || listingId.isBlank()) {
+            return out;
+        }
+        for (PurchaseOrder order : purchaseOrders.values()) {
+            if (!listingId.equals(order.listingId())) {
+                continue;
+            }
+            String status = order.status();
+            if ("PAID".equals(status) || "WAITING_SHIPMENT".equals(status)
+                    || PickupLock.STATUS_LOCKED.equals(status)) {
+                out.add(order);
+            }
+        }
+        return out;
+    }
+
     public void putShippingOrder(ShippingOrder order) {
         shippingOrders.put(order.shippingOrderId(), order);
         setDirty();

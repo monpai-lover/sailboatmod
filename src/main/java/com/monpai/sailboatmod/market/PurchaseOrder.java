@@ -20,6 +20,9 @@ public record PurchaseOrder(
         String fulfillment,
         BlockPos targetWarehousePos
 ) {
+    /** 订单被取消并已全额退款的终态。保留单据用于审计，不从存档删除。 */
+    public static final String STATUS_CANCELLED = "CANCELLED";
+
     public PurchaseOrder {
         orderId = sanitize(orderId);
         listingId = sanitize(listingId);
