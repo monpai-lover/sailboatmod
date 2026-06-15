@@ -7,6 +7,8 @@ import com.monpai.sailboatmod.menu.PostStationMenu;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.PostStationGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.RenamePostStationPacket;
+import com.monpai.sailboatmod.network.packet.SetDockZonePacket;
+import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -15,6 +17,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.material.MapColor;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
@@ -24,10 +28,16 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     private static final int TAB_VEHICLES = 1;
     private static final int TAB_DISPATCH = 2;
     private static final int TAB_ADVANCED = 3;
+    private static final int TAB_RENAME_ZONE = 4;
     private static final int MAIN_PANEL_W = 194;
     private static final int RIGHT_PANEL_W = 194;
     private static final int RIGHT_PANEL_GAP = 6;
     private static final int ROW_H = 16;
+    // 改名与范围分页的 zone 编辑小地图（相对右面板）
+    private static final int MINIMAP_X = 8;
+    private static final int MINIMAP_Y = 56;
+    private static final int MINIMAP_W = 150;
+    private static final int MINIMAP_H = 110;
 
     private PostStationScreenData data;
     private int activeTab = TAB_DESTINATIONS;
@@ -44,6 +54,13 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     private Button takeWaybillButton;
     private EditBox nameInput;
     private Button renameButton;
+    // zone 拖拽编辑状态（移植自 DockScreen）
+    private boolean selectingZone = false;
+    private int selectStartPx;
+    private int selectStartPz;
+    private int selectNowPx;
+    private int selectNowPz;
+    private String hoveredMinimapBoatName;
 
     public PostStationScreen(PostStationMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -73,13 +90,15 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
         int x = rightPanelX;
         int y = rightPanelY;
         addRenderableWidget(Button.builder(text("tab.destinations"), button -> activeTab = TAB_DESTINATIONS)
-                .bounds(x + 6, y + 4, 44, 16).build());
+                .bounds(x + 6, y + 4, 34, 16).build());
         addRenderableWidget(Button.builder(text("tab.vehicles"), button -> activeTab = TAB_VEHICLES)
-                .bounds(x + 52, y + 4, 40, 16).build());
+                .bounds(x + 42, y + 4, 32, 16).build());
         addRenderableWidget(Button.builder(text("tab.dispatch"), button -> activeTab = TAB_DISPATCH)
-                .bounds(x + 94, y + 4, 42, 16).build());
+                .bounds(x + 76, y + 4, 32, 16).build());
         addRenderableWidget(Button.builder(text("tab.advanced"), button -> activeTab = TAB_ADVANCED)
-                .bounds(x + 138, y + 4, 50, 16).build());
+                .bounds(x + 110, y + 4, 34, 16).build());
+        addRenderableWidget(Button.builder(text("tab.rename_zone"), button -> activeTab = TAB_RENAME_ZONE)
+                .bounds(x + 146, y + 4, 42, 16).build());
         addRenderableWidget(Button.builder(text("refresh"), button -> send(PostStationGuiActionPacket.Action.REFRESH))
                 .bounds(x + 146, y + 160, 40, 16).build());
         dispatchButton = addRenderableWidget(Button.builder(text("dispatch"), button -> sendDispatchSelected())
@@ -100,13 +119,14 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
                 .bounds(x + 146, y + 92, 40, 16).build());
         takeWaybillButton = addRenderableWidget(Button.builder(text("take"), button -> send(PostStationGuiActionPacket.Action.ADV_TAKE_SELECTED_WAYBILL))
                 .bounds(x + 146, y + 116, 40, 16).build());
-        nameInput = new EditBox(this.font, x + 8, y + 102, 100, 16, text("rename.hint"));
+        // 改名控件移到「改名与范围」分页：小地图上方
+        nameInput = new EditBox(this.font, x + 8, y + 30, 130, 16, text("rename.hint"));
         nameInput.setMaxLength(64);
         nameInput.setValue(data.stationName());
         addRenderableWidget(nameInput);
         renameButton = addRenderableWidget(Button.builder(text("rename.save"), button ->
                         ModNetwork.CHANNEL.sendToServer(new RenamePostStationPacket(data.stationPos(), nameInput.getValue())))
-                .bounds(x + 110, y + 102, 30, 16).build());
+                .bounds(x + 142, y + 30, 44, 16).build());
         send(PostStationGuiActionPacket.Action.REFRESH);
     }
 
@@ -129,6 +149,8 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
             drawVehicleList(guiGraphics, rightPanelX + 8, rightPanelY + 26, 178);
         } else if (activeTab == TAB_DISPATCH) {
             drawDispatchTab(guiGraphics, rightPanelX + 8, rightPanelY + 26, 178);
+        } else if (activeTab == TAB_RENAME_ZONE) {
+            drawRenameZoneTab(guiGraphics, mouseX, mouseY);
         } else {
             drawAdvancedTab(guiGraphics, rightPanelX + 8, rightPanelY + 26, 178);
         }
@@ -138,11 +160,17 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
+        if (activeTab == TAB_RENAME_ZONE && hoveredMinimapBoatName != null && !hoveredMinimapBoatName.isBlank()) {
+            guiGraphics.renderTooltip(this.font, Component.literal(hoveredMinimapBoatName), mouseX, mouseY);
+        }
         renderTooltip(guiGraphics, mouseX, mouseY);
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (activeTab == TAB_RENAME_ZONE && data.canManage() && button == 0 && tryStartZoneSelect(mouseX, mouseY)) {
+            return true;
+        }
         if (button == 0 && activeTab == TAB_DESTINATIONS && tryClickDestination(mouseX, mouseY)) {
             return true;
         }
@@ -153,6 +181,37 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
             return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (selectingZone && button == 0) {
+            int[] mini = minimapBounds();
+            selectNowPx = MthClamp((int) mouseX - mini[0], 0, mini[2] - 1);
+            selectNowPz = MthClamp((int) mouseY - mini[1], 0, mini[3] - 1);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (selectingZone && button == 0) {
+            selectingZone = false;
+            int[] mini = minimapBounds();
+            int minPx = Math.min(selectStartPx, selectNowPx);
+            int maxPx = Math.max(selectStartPx, selectNowPx);
+            int minPz = Math.min(selectStartPz, selectNowPz);
+            int maxPz = Math.max(selectStartPz, selectNowPz);
+            int r = DockBlockEntity.MINIMAP_RADIUS;
+            int minX = fromMiniToOffsetX(minPx, mini[2], r);
+            int maxX = fromMiniToOffsetX(maxPx, mini[2], r);
+            int minZ = fromMiniToOffsetZ(minPz, mini[3], r);
+            int maxZ = fromMiniToOffsetZ(maxPz, mini[3], r);
+            ModNetwork.CHANNEL.sendToServer(new SetDockZonePacket(data.stationPos(), minX, maxX, minZ, maxZ));
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     private void drawDestinationList(GuiGraphics g, int x, int y, int w) {
@@ -236,6 +295,187 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
         drawLineList(g, advanced.storageLines(), advanced.selectedStorageIndex(), x, y + 88, 132, 2, text("storage_empty"));
         drawSectionTitle(g, text("advanced.waybill"), x, y + 122);
         drawLineList(g, advanced.waybillNames(), advanced.selectedWaybillIndex(), x, y + 134, 132, 1, text("no_waybill"));
+    }
+
+    // ===== 改名与范围分页：zone 编辑可视化小地图（移植自 DockScreen，数据源 advancedData，恒用陆地调色板） =====
+
+    private void drawRenameZoneTab(GuiGraphics g, int mouseX, int mouseY) {
+        hoveredMinimapBoatName = null;
+        int x = rightPanelX + 8;
+        int y = rightPanelY + 26;
+        drawSectionTitle(g, text("rename_zone.title"), x, y);
+        if (data.canManage()) {
+            g.drawString(font, text("zone_hint"), x, rightPanelY + MINIMAP_Y - 12, 0xFFAEDAD1);
+        }
+        drawMiniMap(g, rightPanelX + MINIMAP_X, rightPanelY + MINIMAP_Y, MINIMAP_W, MINIMAP_H, mouseX, mouseY);
+    }
+
+    private void drawMiniMap(GuiGraphics g, int x, int y, int w, int h, int mouseX, int mouseY) {
+        DockScreenData adv = data.advancedData();
+        BlockPos center = adv.dockPos();
+        g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF8EAF9E);
+        g.fill(x, y, x + w, y + h, 0xAA0B110F);
+        if (minecraft == null || minecraft.level == null) {
+            return;
+        }
+        int radius = DockBlockEntity.MINIMAP_RADIUS;
+        for (int py = 0; py < h; py++) {
+            for (int px = 0; px < w; px++) {
+                int ox = (int) Math.round((px / (double) (w - 1) * 2.0D - 1.0D) * radius);
+                int oz = (int) Math.round((py / (double) (h - 1) * 2.0D - 1.0D) * radius);
+                int wx = center.getX() + ox;
+                int wz = center.getZ() + oz;
+                int wy = minecraft.level.getHeight(Heightmap.Types.WORLD_SURFACE, wx, wz) - 1;
+                BlockPos pos = new BlockPos(wx, wy, wz);
+                int color;
+                if (wy >= minecraft.level.getMinBuildHeight() && minecraft.level.getFluidState(pos).is(net.minecraft.tags.FluidTags.WATER)) {
+                    color = 0xFF27415A; // 驿站陆地调色板：水偏暗
+                } else {
+                    MapColor mc = minecraft.level.getBlockState(pos).getMapColor(minecraft.level, pos);
+                    int base = mc == null ? 0x55606A : mc.col;
+                    int r = (((base >> 16) & 0xFF) + 0x76) / 2;
+                    int gCol = (((base >> 8) & 0xFF) + 0x95) / 2;
+                    int b = ((base & 0xFF) + 0x62) / 2;
+                    base = (r << 16) | (gCol << 8) | b;
+                    color = 0xFF000000 | (base & 0xFFFFFF);
+                }
+                g.fill(x + px, y + py, x + px + 1, y + py + 1, color);
+            }
+        }
+
+        int rx1 = x + toMiniX(adv.zoneMinX(), w, radius);
+        int rx2 = x + toMiniX(adv.zoneMaxX(), w, radius);
+        int rz1 = y + toMiniZ(adv.zoneMinZ(), h, radius);
+        int rz2 = y + toMiniZ(adv.zoneMaxZ(), h, radius);
+        g.fill(Math.min(rx1, rx2), Math.min(rz1, rz2), Math.max(rx1, rx2) + 1, Math.max(rz1, rz2) + 1, 0x3345D7A8);
+        drawRect(g, rx1, rz1, rx2, rz2, 0xFF56DDB4);
+        drawRoutePreview(g, x, y, w, h, radius);
+        drawNearbyBoatsOnMiniMap(g, x, y, w, h, radius, mouseX, mouseY);
+
+        if (selectingZone) {
+            drawRect(g, x + selectStartPx, y + selectStartPz, x + selectNowPx, y + selectNowPz, 0xFFFFE28A);
+        }
+    }
+
+    private void drawRect(GuiGraphics g, int x1, int y1, int x2, int y2, int color) {
+        int minX = Math.min(x1, x2);
+        int maxX = Math.max(x1, x2);
+        int minY = Math.min(y1, y2);
+        int maxY = Math.max(y1, y2);
+        g.fill(minX, minY, maxX + 1, minY + 1, color);
+        g.fill(minX, maxY, maxX + 1, maxY + 1, color);
+        g.fill(minX, minY, minX + 1, maxY + 1, color);
+        g.fill(maxX, minY, maxX + 1, maxY + 1, color);
+    }
+
+    private void drawRoutePreview(GuiGraphics g, int mapX, int mapY, int mapW, int mapH, int radius) {
+        List<Vec3> points = data.advancedData().selectedRouteWaypoints();
+        if (points == null || points.isEmpty()) {
+            return;
+        }
+        int prevX = toRouteMiniX(points.get(0), mapX, mapW, radius);
+        int prevZ = toRouteMiniZ(points.get(0), mapY, mapH, radius);
+        for (int i = 1; i < points.size(); i++) {
+            int currX = toRouteMiniX(points.get(i), mapX, mapW, radius);
+            int currZ = toRouteMiniZ(points.get(i), mapY, mapH, radius);
+            drawMiniLine(g, prevX, prevZ, currX, currZ, 0xFFEFD36A);
+            prevX = currX;
+            prevZ = currZ;
+        }
+        drawMiniDot(g, toRouteMiniX(points.get(0), mapX, mapW, radius), toRouteMiniZ(points.get(0), mapY, mapH, radius), 0xFF6BFF95);
+        drawMiniDot(g, toRouteMiniX(points.get(points.size() - 1), mapX, mapW, radius), toRouteMiniZ(points.get(points.size() - 1), mapY, mapH, radius), 0xFFFF6F6F);
+    }
+
+    private int toRouteMiniX(Vec3 waypoint, int mapX, int mapW, int radius) {
+        int offsetX = (int) Math.round(waypoint.x - data.advancedData().dockPos().getX());
+        return mapX + toMiniX(offsetX, mapW, radius);
+    }
+
+    private int toRouteMiniZ(Vec3 waypoint, int mapY, int mapH, int radius) {
+        int offsetZ = (int) Math.round(waypoint.z - data.advancedData().dockPos().getZ());
+        return mapY + toMiniZ(offsetZ, mapH, radius);
+    }
+
+    private void drawMiniLine(GuiGraphics g, int x1, int y1, int x2, int y2, int color) {
+        int steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+        if (steps <= 0) {
+            g.fill(x1, y1, x1 + 1, y1 + 1, color);
+            return;
+        }
+        for (int i = 0; i <= steps; i++) {
+            int px = x1 + (x2 - x1) * i / steps;
+            int py = y1 + (y2 - y1) * i / steps;
+            g.fill(px, py, px + 1, py + 1, color);
+        }
+    }
+
+    private void drawMiniDot(GuiGraphics g, int x, int y, int color) {
+        g.fill(x - 1, y - 1, x + 2, y + 2, color);
+    }
+
+    private void drawNearbyBoatsOnMiniMap(GuiGraphics g, int mapX, int mapY, int mapW, int mapH, int radius, int mouseX, int mouseY) {
+        DockScreenData adv = data.advancedData();
+        if (adv.nearbyBoatPositions().isEmpty()) {
+            return;
+        }
+        BlockPos center = adv.dockPos();
+        String hoveredName = null;
+        int hoveredDistSq = Integer.MAX_VALUE;
+        int count = Math.min(adv.nearbyBoatNames().size(), adv.nearbyBoatPositions().size());
+        for (int i = 0; i < count; i++) {
+            Vec3 boat = adv.nearbyBoatPositions().get(i);
+            int bx = mapX + toMiniX((int) Math.round(boat.x - center.getX()), mapW, radius);
+            int bz = mapY + toMiniZ((int) Math.round(boat.z - center.getZ()), mapH, radius);
+            int dx = mouseX - bx;
+            int dz = mouseY - bz;
+            int distSq = dx * dx + dz * dz;
+            boolean hovered = distSq <= 9;
+            drawMiniDot(g, bx, bz, hovered ? 0xFFFFD166 : 0xFFFFFFFF);
+            if (hovered && distSq < hoveredDistSq) {
+                hoveredDistSq = distSq;
+                hoveredName = adv.nearbyBoatNames().get(i);
+            }
+        }
+        hoveredMinimapBoatName = hoveredName;
+    }
+
+    private int toMiniX(int ox, int w, int radius) {
+        return MthClamp((int) Math.round((ox + radius) / (double) (radius * 2) * (w - 1)), 0, w - 1);
+    }
+
+    private int toMiniZ(int oz, int h, int radius) {
+        return MthClamp((int) Math.round((oz + radius) / (double) (radius * 2) * (h - 1)), 0, h - 1);
+    }
+
+    private int fromMiniToOffsetX(int px, int w, int radius) {
+        double t = px / (double) (w - 1);
+        return (int) Math.round(t * radius * 2 - radius);
+    }
+
+    private int fromMiniToOffsetZ(int pz, int h, int radius) {
+        double t = pz / (double) (h - 1);
+        return (int) Math.round(t * radius * 2 - radius);
+    }
+
+    private int MthClamp(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    private boolean tryStartZoneSelect(double mouseX, double mouseY) {
+        int[] mini = minimapBounds();
+        if (mouseX < mini[0] || mouseX >= mini[0] + mini[2] || mouseY < mini[1] || mouseY >= mini[1] + mini[3]) {
+            return false;
+        }
+        selectingZone = true;
+        selectStartPx = MthClamp((int) mouseX - mini[0], 0, mini[2] - 1);
+        selectStartPz = MthClamp((int) mouseY - mini[1], 0, mini[3] - 1);
+        selectNowPx = selectStartPx;
+        selectNowPz = selectStartPz;
+        return true;
+    }
+
+    private int[] minimapBounds() {
+        return new int[] { rightPanelX + MINIMAP_X, rightPanelY + MINIMAP_Y, MINIMAP_W, MINIMAP_H };
     }
 
     private void drawLineList(GuiGraphics g, List<String> lines, int selected, int x, int y, int w, int visible, Component emptyText) {
@@ -332,11 +572,11 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
             takeWaybillButton.visible = advanced;
         }
         if (nameInput != null) {
-            nameInput.visible = advanced && data.canManage();
+            nameInput.visible = activeTab == TAB_RENAME_ZONE && data.canManage();
         }
         if (renameButton != null) {
-            renameButton.visible = advanced && data.canManage();
-            renameButton.active = advanced && data.canManage();
+            renameButton.visible = activeTab == TAB_RENAME_ZONE && data.canManage();
+            renameButton.active = activeTab == TAB_RENAME_ZONE && data.canManage();
         }
     }
 

@@ -143,20 +143,25 @@ public final class ShippingTraceService {
      * 为手动发车的载具建/更新一条 manual Trace（无市场订单）。
      * @param waypoints 载具 autopilotRoute 路点；少于 2 点不建
      * @param transportMode "PORT"(水) / "LAND"(陆)；status 可见状态 "SAILING"/"IN_TRANSIT"
+     * @param sourceName 出发地名（空则回退"手动"）
+     * @param targetName 目的地名（空则回退"手动"）
      */
     public static void createOrUpdateManualTrace(Level level, java.util.UUID vehicleUuid,
                                                  List<Vec3> waypoints, String shipperUuid, String nationId,
                                                  String transportMode, String status,
+                                                 String sourceName, String targetName,
                                                  double currentX, double currentZ) {
         if (level == null || level.isClientSide() || vehicleUuid == null
                 || waypoints == null || waypoints.size() < 2) {
             return;
         }
         long gameTime = level.getGameTime();
+        String src = sourceName == null || sourceName.isBlank() ? "手动" : sourceName.trim();
+        String dst = targetName == null || targetName.isBlank() ? "手动" : targetName.trim();
         ShippingTraceRecord rec = new ShippingTraceRecord(
                 manualTraceId(vehicleUuid), shipperUuid == null ? "" : shipperUuid,
                 MarketWebMapConstants.OVERWORLD, transportMode, status,
-                nationId == null ? "" : nationId, "", "手动", "手动",
+                nationId == null ? "" : nationId, "", src, dst,
                 waypoints, 0, 0.0D, gameTime, gameTime, currentX, currentZ, true);
         ShippingTraceSavedData.get(level).putTrace(rec);
     }
@@ -170,6 +175,23 @@ public final class ShippingTraceService {
         ShippingTraceRecord trace = data.getTrace(traceId);
         if (trace != null) {
             data.putTrace(trace.withLivePosition(x, z, level.getGameTime()));
+        }
+    }
+
+    /** 写入载具实时坐标 + 进度（已通过路点数 / 进度比），使网页地图已走段渲染实线。 */
+    public static void updateLivePositionAndProgress(Level level, String traceId,
+                                                     double x, double z,
+                                                     int completedPointCount, double progressRatio) {
+        if (level == null || level.isClientSide() || traceId == null || traceId.isBlank()) {
+            return;
+        }
+        ShippingTraceSavedData data = ShippingTraceSavedData.get(level);
+        ShippingTraceRecord trace = data.getTrace(traceId);
+        if (trace != null) {
+            long gameTime = level.getGameTime();
+            // withProgress 保留 currentX/Z，故先 withLivePosition 再 withProgress。
+            data.putTrace(trace.withLivePosition(x, z, gameTime)
+                    .withProgress(completedPointCount, progressRatio, gameTime));
         }
     }
 

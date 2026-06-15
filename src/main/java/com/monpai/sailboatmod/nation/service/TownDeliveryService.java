@@ -21,12 +21,22 @@ public final class TownDeliveryService {
             return "";
         }
         String townId = DockTownResolver.resolveTownForArrival(level, dockPos, declaredTownId);
-        if (!townId.isBlank()) {
-            TownStockpileService.addCargo(level, townId, cargo);
-        } else if (level.getBlockEntity(dockPos)
+        boolean ledgerRecorded = false;
+        if (level.getBlockEntity(dockPos)
                 instanceof com.monpai.sailboatmod.block.entity.DockBlockEntity dock) {
-            // 目的地不属任何 town（没检查到 town 仓库）：卸到到达码头/驿站方块自身的库存，避免货物丢失。
-            dock.insertCargo(cargo);
+            // 优先把货落到方块自身 storage，让玩家在驿站/港口界面直接看到。
+            if (dock.insertCargo(cargo)) {
+                // insertCargo 内部已对 resolvedTownId() 记 town 账本，不要重复 addCargo。
+                ledgerRecorded = true;
+            } else if (!townId.isBlank()) {
+                // storage 满：兜底仅记 town 账本，避免货物丢失（经济统计仍正确）。
+                TownStockpileService.addCargo(level, townId, cargo);
+                ledgerRecorded = true;
+            }
+        }
+        if (!ledgerRecorded && !townId.isBlank()) {
+            // 目的地无 DockBlockEntity（异常路径）：仅记账本。
+            TownStockpileService.addCargo(level, townId, cargo);
         }
         if (manifest != null) {
             for (ShipmentManifestEntry entry : manifest) {

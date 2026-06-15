@@ -255,6 +255,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private int autopilotTargetIndex = 0;
     private String autopilotRouteName = "";
     private BlockPos routeDockPos = null;
+    // 自动驾驶强制加载区块：用 ENTITY_TICKING 票据保证玩家走远后马车仍持续 tick（修离玩家远卡住）。
+    private static final int AUTOPILOT_CHUNK_RADIUS = 2;
+    private static final int AUTOPILOT_TARGET_CHUNK_RADIUS = 1;
+    private final Set<Long> forcedAutopilotChunks = new HashSet<>();
     private String pendingShipperName = "";
     private String ownerName = "";
     private String ownerUuid = "";
@@ -478,6 +482,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
 
         tickLandDrive();
+        updateAutopilotChunkLoading();
         if (!level().isClientSide && tickCount % PICKUP_LOAD_SCAN_INTERVAL_TICKS == 0) {
             tickPickupLoadDetection();
         }
@@ -567,13 +572,16 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         Vec3 correctedPosition = railAutopilotSurfacePosition(step.position());
         applyRailAutopilotPose(correctedPosition, step.yaw(), correctedPosition.subtract(position()));
         checkInsideBlocks();
-        // webmap: 航行中每 2 秒把实时坐标推给轨迹
+        // webmap: 航行中每 2 秒把实时坐标 + 进度推给轨迹
         if (++traceLiveSyncTicks >= TRACE_LIVE_SYNC_INTERVAL_TICKS) {
             traceLiveSyncTicks = 0;
             String traceId = traceIdForLiveSync();
             if (traceId != null && !traceId.isBlank()) {
-                com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePosition(
-                        level(), traceId, getX(), getZ());
+                int routeSize = autopilotRoute.size();
+                int completed = routeSize <= 0 ? 0 : Mth.clamp(autopilotTargetIndex, 0, routeSize - 1);
+                double progress = routeSize <= 0 ? 0.0D : (double) completed / routeSize;
+                com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionAndProgress(
+                        level(), traceId, getX(), getZ(), completed, progress);
             }
         }
         tickPassengerSoundCue();
@@ -1260,6 +1268,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             Containers.dropContents(level(), blockPosition(), container);
             container.clearContent();
         }
+        if (level() instanceof ServerLevel serverLevel) {
+            clearAutopilotForcedChunks(serverLevel);
+        }
         super.remove(reason);
     }
 
@@ -1518,6 +1529,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (level().isClientSide || routeCatalog.isEmpty()) {
             return false;
         }
+        resetArrivalNotice(); // 新发车/续运/返航开始：清掉上一程到站通知，避免幽灵残留
         selectedRouteIndex = Mth.clamp(selectedRouteIndex, 0, routeCatalog.size() - 1);
         RouteDefinition route = routeCatalog.get(selectedRouteIndex);
         if (!isInsideRouteStartWaitingZone(route)) {
@@ -1562,7 +1574,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             com.monpai.sailboatmod.market.logistics.ShippingTraceService.createOrUpdateManualTrace(
                     level(), getUUID(), new java.util.ArrayList<>(autopilotRoute),
                     traceShipperUuid(), traceShipperNationId(),
-                    "LAND", "IN_TRANSIT", getX(), getZ());
+                    "LAND", "IN_TRANSIT",
+                    route.startDockName(), route.endDockName(),
+                    getX(), getZ());
         }
         return true;
     }
@@ -1606,6 +1620,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (level().isClientSide) {
             return;
         }
+        if (level() instanceof ServerLevel serverLevel) {
+            clearAutopilotForcedChunks(serverLevel);
+        }
         // webmap: 清理本载具的手动轨迹（订单轨迹由订单生命周期管理）
         com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
                 level(), com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID()));
@@ -1616,6 +1633,79 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         autopilotTargetIndex = 0;
         autopilotRouteName = getSelectedRouteName();
         activeTripStartGameTime = -1L;
+    }
+
+    /**
+     * 自动驾驶强制加载马车周围 + 当前/下一/终点 waypoint 所在区块，
+     * 用 ENTITY_TICKING 票据保证玩家走远后马车仍持续 tick（修离玩家远卡住）。
+     */
+    private void updateAutopilotChunkLoading() {
+        if (!(level() instanceof ServerLevel serverLevel)) {
+            return;
+        }
+        if (!isAutopilotActive()) {
+            clearAutopilotForcedChunks(serverLevel);
+            return;
+        }
+        Set<Long> requiredChunks = new HashSet<>();
+        int carriageChunkX = Mth.floor(getX()) >> 4;
+        int carriageChunkZ = Mth.floor(getZ()) >> 4;
+        addForcedChunkArea(requiredChunks, carriageChunkX, carriageChunkZ, AUTOPILOT_CHUNK_RADIUS);
+
+        if (!autopilotRoute.isEmpty()) {
+            int targetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
+            Vec3 target = autopilotRoute.get(targetIndex);
+            addForcedChunkArea(requiredChunks, Mth.floor(target.x) >> 4, Mth.floor(target.z) >> 4,
+                    AUTOPILOT_TARGET_CHUNK_RADIUS);
+            if (targetIndex + 1 < autopilotRoute.size()) {
+                Vec3 next = autopilotRoute.get(targetIndex + 1);
+                addForcedChunkArea(requiredChunks, Mth.floor(next.x) >> 4, Mth.floor(next.z) >> 4,
+                        AUTOPILOT_TARGET_CHUNK_RADIUS);
+            }
+            // 终点（目的驿站）所在区块
+            Vec3 end = autopilotRoute.get(autopilotRoute.size() - 1);
+            addForcedChunkArea(requiredChunks, Mth.floor(end.x) >> 4, Mth.floor(end.z) >> 4,
+                    AUTOPILOT_TARGET_CHUNK_RADIUS);
+        }
+
+        for (long chunkKey : requiredChunks) {
+            if (!forcedAutopilotChunks.contains(chunkKey)) {
+                setAutopilotChunkForced(serverLevel, chunkKey, true);
+            }
+        }
+        if (!forcedAutopilotChunks.isEmpty()) {
+            Set<Long> stale = new HashSet<>(forcedAutopilotChunks);
+            stale.removeAll(requiredChunks);
+            for (long chunkKey : stale) {
+                setAutopilotChunkForced(serverLevel, chunkKey, false);
+            }
+        }
+        forcedAutopilotChunks.clear();
+        forcedAutopilotChunks.addAll(requiredChunks);
+    }
+
+    private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
+        int chunkX = net.minecraft.world.level.ChunkPos.getX(chunkKey);
+        int chunkZ = net.minecraft.world.level.ChunkPos.getZ(chunkKey);
+        BlockPos owner = new BlockPos(chunkX << 4, 0, chunkZ << 4);
+        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+                serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
+                owner, chunkX, chunkZ, add, true);
+    }
+
+    private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                out.add(net.minecraft.world.level.ChunkPos.asLong(centerX + dx, centerZ + dz));
+            }
+        }
+    }
+
+    private void clearAutopilotForcedChunks(ServerLevel serverLevel) {
+        for (long chunkKey : forcedAutopilotChunks) {
+            setAutopilotChunkForced(serverLevel, chunkKey, false);
+        }
+        forcedAutopilotChunks.clear();
     }
 
     public void pauseAutopilot() {
@@ -2324,6 +2414,17 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private void setArrivalNoticeTicks(int ticks) {
         int clamped = Mth.clamp(ticks, 0, ARRIVAL_NOTICE_TICKS);
         entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped <= 0 ? 0 : tickCount + clamped);
+    }
+
+    /** 清空到站通知 4 字段。仅在发车入口调用，避免抹掉到站路径刚显示的通知。 */
+    private void resetArrivalNotice() {
+        if (level().isClientSide) {
+            return;
+        }
+        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
+        entityData.set(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
+        entityData.set(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
+        entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
     }
 
     private static boolean arrivalNoticeVisible(int remainingTicks) {

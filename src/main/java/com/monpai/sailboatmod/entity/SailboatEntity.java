@@ -423,14 +423,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             resumeAutopilot();
             autopilotControl = !isAutopilotPaused() && hasAutopilotRoute();
         }
-        // webmap: 航行中每 2 秒把实时坐标推给轨迹（订单车用订单 id，手动车用 manual id）
+        // webmap: 航行中每 2 秒把实时坐标 + 进度推给轨迹（订单车用订单 id，手动车用 manual id）
         if (autopilotControl && ++traceLiveSyncTicks >= TRACE_LIVE_SYNC_INTERVAL_TICKS) {
             traceLiveSyncTicks = 0;
             String traceId = (autopilotShipmentShippingOrderId == null || autopilotShipmentShippingOrderId.isBlank())
                     ? com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID())
                     : autopilotShipmentShippingOrderId;
-            com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePosition(
-                    level(), traceId, getX(), getZ());
+            int routeSize = autopilotRoute.size();
+            int completed = routeSize <= 0 ? 0 : Mth.clamp(autopilotTargetIndex, 0, routeSize - 1);
+            double progress = routeSize <= 0 ? 0.0D : (double) completed / routeSize;
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionAndProgress(
+                    level(), traceId, getX(), getZ(), completed, progress);
         }
         if (!level().isClientSide && !isAutopilotActive() && awaitingNextLegPort != null) {
             tryResumeAwaitedWaterLeg();
@@ -1366,6 +1369,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (level().isClientSide) {
             return false;
         }
+        resetArrivalNotice(); // 新发车/续运/返航开始：清掉上一程到站通知，避免幽灵残留
         dockHoldTicks = 0;
         dockHoldPos = null;
         dockHoldYaw = Float.NaN;
@@ -1408,7 +1412,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             com.monpai.sailboatmod.market.logistics.ShippingTraceService.createOrUpdateManualTrace(
                     level(), getUUID(), new java.util.ArrayList<>(autopilotRoute),
                     traceShipperUuid(), traceShipperNationId(),
-                    "PORT", "SAILING", getX(), getZ());
+                    "PORT", "SAILING",
+                    autopilotShipmentStartDockName, autopilotShipmentEndDockName,
+                    getX(), getZ());
         }
         return true;
     }
@@ -1741,6 +1747,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             autopilotLastTargetDistance = dist;
         }
 
+        // 终点停滞兜底：已在终点航段、长时间无进展且已进入/贴近目的 zone → 视为到站，触发卸货+停止+标记完成。
+        // 修复返航到出发港时停在 3.2~4.5 死区（始终 >AUTOPILOT_ARRIVAL_RADIUS）导致自动驾驶永远「运行中」。
+        if (finalTarget
+                && autopilotNoProgressTicks >= AUTOPILOT_NO_PROGRESS_TICKS_LIMIT
+                && (isInsideAutopilotDestinationDockZone() || dist <= AUTOPILOT_FINAL_STOP_RADIUS + 1.0D)) {
+            finishAutopilotAndUnloadAtDestination();
+            return AutopilotCommand.inactive();
+        }
+
         double slowdownRadius = computeAutopilotSlowdownRadius(finalTarget);
         double stopRadius = finalTarget ? AUTOPILOT_FINAL_STOP_RADIUS : AUTOPILOT_ARRIVAL_RADIUS * 1.2D;
         EngineGear desiredGear = selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
@@ -1918,7 +1933,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (Double.isNaN(distance)) {
             return false;
         }
-        return distance <= AUTOPILOT_ARRIVAL_RADIUS;
+        // 已贴近 approach point；或已进入目的 zone 且在最终停泊半径内（避开 3.2~4.5 死区，返航更稳）。
+        return distance <= AUTOPILOT_ARRIVAL_RADIUS
+                || (isInsideAutopilotDestinationDockZone() && distance <= AUTOPILOT_FINAL_STOP_RADIUS);
     }
 
     @Nullable
@@ -2286,6 +2303,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private void setArrivalNoticeTicks(int ticks) {
         int clamped = Mth.clamp(ticks, 0, ARRIVAL_NOTICE_TICKS);
         entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped <= 0 ? 0 : tickCount + clamped);
+    }
+
+    /** 清空到站通知 4 字段。仅在发车入口调用，避免抹掉到站路径刚显示的通知。 */
+    private void resetArrivalNotice() {
+        if (level().isClientSide) {
+            return;
+        }
+        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
+        entityData.set(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
+        entityData.set(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
+        entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
     }
 
     private int arrivalElapsedSecondsFromDeparture() {
@@ -2722,7 +2750,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
         for (long chunkKey : requiredChunks) {
             if (!forcedAutopilotChunks.contains(chunkKey)) {
-                serverLevel.setChunkForced(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey), true);
+                setAutopilotChunkForced(serverLevel, chunkKey, true);
             }
         }
 
@@ -2730,12 +2758,28 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             Set<Long> stale = new HashSet<>(forcedAutopilotChunks);
             stale.removeAll(requiredChunks);
             for (long chunkKey : stale) {
-                serverLevel.setChunkForced(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey), false);
+                setAutopilotChunkForced(serverLevel, chunkKey, false);
             }
         }
 
         forcedAutopilotChunks.clear();
         forcedAutopilotChunks.addAll(requiredChunks);
+    }
+
+    /**
+     * 用 ENTITY_TICKING 级别强制/取消加载区块。
+     * 关键：原 setChunkForced 是 FORCED 票据只保证 loaded 不保证 entity-ticking，
+     * 实体随后停 tick → 无法刷新 force → 区块卸载（玩家走远载具停住）。
+     * ForgeChunkManager.forceChunk 末参 ticking=true 才是 ENTITY_TICKING，使载具持续运行。
+     * owner 用每 chunk 的稳定 BlockPos，保证「加」「取消」用同一 owner。
+     */
+    private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
+        int chunkX = ChunkPos.getX(chunkKey);
+        int chunkZ = ChunkPos.getZ(chunkKey);
+        net.minecraft.core.BlockPos owner = new net.minecraft.core.BlockPos(chunkX << 4, 0, chunkZ << 4);
+        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+                serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
+                owner, chunkX, chunkZ, add, true);
     }
 
     private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {
@@ -2748,7 +2792,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
     private void clearAutopilotForcedChunks(ServerLevel serverLevel) {
         for (long chunkKey : forcedAutopilotChunks) {
-            serverLevel.setChunkForced(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey), false);
+            setAutopilotChunkForced(serverLevel, chunkKey, false);
         }
         forcedAutopilotChunks.clear();
     }

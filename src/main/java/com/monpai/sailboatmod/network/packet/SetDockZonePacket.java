@@ -56,7 +56,14 @@ public class SetDockZonePacket {
             if (dock.canManageDock(player)) {
                 dock.setDockZone(packet.minX, packet.maxX, packet.minZ, packet.maxZ);
             }
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenDockScreenPacket(dock.buildScreenData(player)));
+            // 驿站打开的是 PostStationScreen，必须回 OpenPostStationScreenPacket 才能就地刷新；港口回 OpenDockScreenPacket。
+            if (dock instanceof com.monpai.sailboatmod.block.entity.PostStationBlockEntity station) {
+                ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+                        new OpenPostStationScreenPacket(station.buildPostStationScreenData(player)));
+            } else {
+                ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+                        new OpenDockScreenPacket(dock.buildScreenData(player)));
+            }
         });
         context.setPacketHandled(true);
     }
