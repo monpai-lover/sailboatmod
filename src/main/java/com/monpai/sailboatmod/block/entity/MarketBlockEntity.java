@@ -535,14 +535,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_price_invalid");
         }
         ListingPriceWindow priceWindow = listingPriceWindow(listed, amount, requestedUnitPrice);
-        if (!priceWindow.valid()) {
-            return CreateListingResult.failure(
-                    "screen.sailboatmod.market.error.listing_price_out_of_range",
-                    priceWindow.minAllowedUnitPrice(),
-                    priceWindow.maxAllowedUnitPrice(),
-                    priceWindow.referenceUnitPrice()
-            );
-        }
+        // 指导价只做参考，不再按区间拒单——任何 >0 价格均可上架（上方已拦截 ≤0）。
         if (!warehouse.extractVisibleStorage(sellerId, visibleStorageIndex, amount)) {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
