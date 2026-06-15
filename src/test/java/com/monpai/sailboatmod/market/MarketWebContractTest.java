@@ -30,4 +30,14 @@ class MarketWebContractTest {
         assertTrue(src.contains("parseWarehousePos("),
                 "/purchase should parse targetWarehouse into BlockPos");
     }
+
+    @Test
+    void probeModesRouteExists() throws Exception {
+        String server = webServer();
+        assertTrue(server.contains("\"probe-modes\""),
+                "web server should route /probe-modes");
+        String service = webService();
+        assertTrue(service.contains("probeFulfillmentModes("),
+                "web service should expose probeFulfillmentModes");
+    }
 }

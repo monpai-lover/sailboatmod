@@ -302,6 +302,17 @@ public final class MarketWebServer {
                 return;
             }
             JsonObject body = readBody(exchange);
+            if (path.size() == 4 && "probe-modes".equals(path.get(3))) {
+                JsonObject probe = callOnServerThread(() -> service.probeFulfillmentModes(
+                        minecraftServer,
+                        identity,
+                        marketId,
+                        intValue(body, "listingIndex", -1),
+                        parseWarehousePos(stringValue(body, "targetWarehouse", ""))
+                ));
+                writeJson(exchange, 200, probe == null ? error("probe_failed", "Probe failed") : probe);
+                return;
+            }
             boolean ok;
             MarketWebService.ActionResult actionResult = null;
             if (path.size() == 4 && "purchase".equals(path.get(3))) {

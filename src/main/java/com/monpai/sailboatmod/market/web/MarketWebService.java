@@ -302,6 +302,26 @@ public final class MarketWebService {
         );
     }
 
+    public JsonObject probeFulfillmentModes(MinecraftServer server, MarketPlayerIdentity identity, String marketId,
+                                            int listingIndex, net.minecraft.core.BlockPos targetWarehousePos) {
+        JsonObject json = new JsonObject();
+        ResolvedMarket resolved = resolveMarket(server, marketId);
+        boolean sellerShip = false;
+        boolean autoPickup = false;
+        boolean realPickup = true;
+        if (resolved != null && identity != null) {
+            MarketBlockEntity.ModeReachability r = resolved.market().probeFulfillmentModes(
+                    identity.playerUuidString(), targetWarehousePos, identity.onlinePlayer());
+            sellerShip = r.sellerShip();
+            autoPickup = r.autoPickup();
+            realPickup = r.realPickup();
+        }
+        json.addProperty("sellerShip", sellerShip);
+        json.addProperty("autoPickup", autoPickup);
+        json.addProperty("realPickup", realPickup);
+        return json;
+    }
+
     public boolean cancelListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, String listingId) {
         ResolvedMarket resolved = resolveMarket(server, marketId);
         return resolved != null && identity != null
