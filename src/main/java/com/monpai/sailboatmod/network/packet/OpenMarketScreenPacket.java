@@ -73,6 +73,13 @@ public class OpenMarketScreenPacket {
         writeCandleSeries(buffer, data.candleSeries());
         writeImpactSnapshots(buffer, data.commodityImpactSnapshots());
         writeAnalyticsSeries(buffer, data.analyticsSeries());
+        buffer.writeVarInt(data.receivingWarehouseOptions().size());
+        for (MarketOverviewData.WarehouseOption opt : data.receivingWarehouseOptions()) {
+            buffer.writeBlockPos(opt.pos());
+            PacketStringCodec.writeUtfSafe(buffer, opt.displayName(), 128);
+            PacketStringCodec.writeUtfSafe(buffer, opt.townName(), 128);
+        }
+        buffer.writeBoolean(data.canChooseReceiving());
     }
 
     public static OpenMarketScreenPacket decode(FriendlyByteBuf buffer) {
@@ -123,6 +130,15 @@ public class OpenMarketScreenPacket {
         List<CommodityCandleSeries> candleSeries = readCandleSeries(buffer);
         List<CommodityImpactSnapshot> impactSnapshots = readImpactSnapshots(buffer);
         List<MarketAnalyticsSeries> analyticsSeries = readAnalyticsSeries(buffer);
+        int receivingCount = buffer.readVarInt();
+        List<MarketOverviewData.WarehouseOption> receivingWarehouseOptions = new java.util.ArrayList<>(receivingCount);
+        for (int i = 0; i < receivingCount; i++) {
+            BlockPos optPos = buffer.readBlockPos();
+            String optName = buffer.readUtf(128);
+            String optTown = buffer.readUtf(128);
+            receivingWarehouseOptions.add(new MarketOverviewData.WarehouseOption(optPos, optName, optTown));
+        }
+        boolean canChooseReceiving = buffer.readBoolean();
         return new OpenMarketScreenPacket(new MarketOverviewData(
                 marketPos,
                 marketName,
@@ -171,8 +187,8 @@ public class OpenMarketScreenPacket {
                 candleSeries,
                 impactSnapshots,
                 analyticsSeries,
-                java.util.List.of(),
-                false
+                receivingWarehouseOptions,
+                canChooseReceiving
         ));
     }
 
