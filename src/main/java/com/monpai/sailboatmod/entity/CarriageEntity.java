@@ -200,6 +200,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private static final double GRAVITY = -0.08D;
     private static final float MOVEMENT_SOUND_MIN_SPEED = 0.25F;
     private static final int MOVEMENT_SOUND_SLOW_INTERVAL_TICKS = 16;
+    private static final int PICKUP_LOAD_SCAN_INTERVAL_TICKS = 20;
     private static final int MOVEMENT_SOUND_FAST_INTERVAL_TICKS = 7;
     private static final float MOVEMENT_SOUND_MIN_VOLUME = 0.22F;
     private static final float MOVEMENT_SOUND_MAX_VOLUME = 0.58F;
@@ -477,6 +478,27 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
 
         tickLandDrive();
+        if (!level().isClientSide && tickCount % PICKUP_LOAD_SCAN_INTERVAL_TICKS == 0) {
+            tickPickupLoadDetection();
+        }
+    }
+
+    /**
+     * 进-zone 自提装货检测（真人自提=玩家把空马车开进驿站 zone；自动自提=系统空车驶入 zone）。
+     * 仅空车触发（hasCargo()=false），避免载货途经其它 zone 被误装；幂等（装过的锁定单已转 IN_TRANSIT，重扫空转）。
+     */
+    private void tickPickupLoadDetection() {
+        if (level().isClientSide || hasCargo()) {
+            return;
+        }
+        BlockPos hubPos = findTransportHubZoneContains(position());
+        if (hubPos == null) {
+            return;
+        }
+        DockBlockEntity hub = getTransportHub(hubPos);
+        if (hub != null) {
+            hub.tryLoadPickupCargo(this);
+        }
     }
 
     private void tickLandDrive() {

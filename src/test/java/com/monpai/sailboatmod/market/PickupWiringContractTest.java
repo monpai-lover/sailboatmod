@@ -40,4 +40,12 @@ class PickupWiringContractTest {
         assertTrue(src.contains("tryLoadPickupCargo("),
                 "dock should expose an in-zone pickup trigger that delegates to the market core");
     }
+
+    @Test
+    void vehiclesTriggerPickupLoadInZone() throws Exception {
+        String sb = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/SailboatEntity.java"));
+        String cr = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/CarriageEntity.java"));
+        assertTrue(sb.contains("tryLoadPickupCargo("), "sailboat tick should trigger in-zone pickup loading (port)");
+        assertTrue(cr.contains("tryLoadPickupCargo("), "carriage tick should trigger in-zone pickup loading (post station)");
+    }
 }

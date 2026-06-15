@@ -120,6 +120,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final double MAX_REVERSE_BLOCKS_PER_TICK = MAX_REVERSE_KNOTS * KNOTS_TO_BLOCKS_PER_TICK;
     private static final int LEGACY_LIGHT_CLEAN_RADIUS = 3;
     private static final int BLUEMAP_BOAT_SYNC_INTERVAL_TICKS = 10;
+    private static final int PICKUP_LOAD_SCAN_INTERVAL_TICKS = 20;
     private static final double AUTOPILOT_ARRIVAL_RADIUS = 3.2D;
     private static final double AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS = 7.5D;
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
@@ -651,6 +652,27 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         if (!level().isClientSide && (tickCount <= 1 || tickCount % BLUEMAP_BOAT_SYNC_INTERVAL_TICKS == 0)) {
             BlueMapIntegration.syncBoat(this);
+        }
+        if (!level().isClientSide && tickCount % PICKUP_LOAD_SCAN_INTERVAL_TICKS == 0) {
+            tickPickupLoadDetection();
+        }
+    }
+
+    /**
+     * 进-zone 自提装货检测（真人自提=玩家把空车开进港口 zone；自动自提=系统空车驶入 zone）。
+     * 仅空车触发（hasCargo()=false），避免载货途经其它 zone 被误装；幂等（装过的锁定单已转 IN_TRANSIT，重扫空转）。
+     */
+    private void tickPickupLoadDetection() {
+        if (level().isClientSide || hasCargo()) {
+            return;
+        }
+        BlockPos hubPos = findTransportHubZoneContains(position());
+        if (hubPos == null) {
+            return;
+        }
+        DockBlockEntity hub = getTransportHub(hubPos);
+        if (hub != null) {
+            hub.tryLoadPickupCargo(this);
         }
     }
 
