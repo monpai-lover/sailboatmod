@@ -160,6 +160,9 @@ public record MarketOverviewData(
         }
     }
 
+    public record WarehouseOption(BlockPos pos, String displayName, String townName) {
+    }
+
     public record ShippingEntry(String label, String boatName, String routeName, String mode) {
     }
 
