@@ -21,4 +21,13 @@ class MarketWebContractTest {
         assertTrue(src.contains("\"receivingWarehouseOptions\""),
                 "web overview JSON should include receivingWarehouseOptions array");
     }
+
+    @Test
+    void purchaseRouteReadsFulfillmentAndWarehouse() throws Exception {
+        String src = webServer();
+        assertTrue(src.contains("stringValue(body, \"fulfillment\""),
+                "/purchase should read fulfillment from body");
+        assertTrue(src.contains("parseWarehousePos("),
+                "/purchase should parse targetWarehouse into BlockPos");
+    }
 }

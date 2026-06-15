@@ -310,7 +310,9 @@ public final class MarketWebServer {
                         identity,
                         marketId,
                         intValue(body, "listingIndex", -1),
-                        intValue(body, "quantity", 1)
+                        intValue(body, "quantity", 1),
+                        stringValue(body, "fulfillment", "SELLER_SHIP"),
+                        parseWarehousePos(stringValue(body, "targetWarehouse", ""))
                 ));
             } else if (path.size() == 4 && "listings".equals(path.get(3))) {
                 actionResult = callOnServerThread(() -> service.createListing(
@@ -1033,6 +1035,29 @@ public final class MarketWebServer {
             return body.get(key).getAsString();
         } catch (Exception ignored) {
             return "";
+        }
+    }
+
+    private static String stringValue(JsonObject body, String key, String fallback) {
+        String v = stringValue(body, key);
+        return v == null || v.isBlank() ? fallback : v;
+    }
+
+    private static net.minecraft.core.BlockPos parseWarehousePos(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String[] parts = raw.split(",");
+        if (parts.length != 3) {
+            return null;
+        }
+        try {
+            return new net.minecraft.core.BlockPos(
+                    Integer.parseInt(parts[0].trim()),
+                    Integer.parseInt(parts[1].trim()),
+                    Integer.parseInt(parts[2].trim()));
+        } catch (NumberFormatException ex) {
+            return null;
         }
     }
 
