@@ -9,6 +9,8 @@ import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.PurchaseOrder;
+import com.monpai.sailboatmod.market.FulfillmentMode;
+import com.monpai.sailboatmod.market.SellerShipQueue;
 import com.monpai.sailboatmod.market.ShippingOrder;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
@@ -798,6 +800,24 @@ public final class MarketWebService {
             json.addProperty("sourceDockName", dockLabel(order.sourceDockName(), order.sourceDockPos()));
             json.addProperty("targetDockName", dockLabel(order.targetDockName(), order.targetDockPos()));
             json.addProperty("status", order.status());
+            // 卖家发货排队：按该订单源仓的 SELLER_SHIP 待发队列稳定排序求位次（与客户端 overview 同源，见 SellerShipQueue）。
+            int queuePosition = 0;
+            int queueEtaSeconds = 0;
+            if (FulfillmentMode.fromString(order.fulfillment()) == FulfillmentMode.SELLER_SHIP
+                    && "WAITING_SHIPMENT".equals(order.status())) {
+                List<String> queueIds = new java.util.ArrayList<>();
+                for (PurchaseOrder o : marketData.getOpenOrdersForSourceDock(order.sourceDockPos())) {
+                    if (FulfillmentMode.fromString(o.fulfillment()) == FulfillmentMode.SELLER_SHIP
+                            && "WAITING_SHIPMENT".equals(o.status())) {
+                        queueIds.add(o.orderId());
+                    }
+                }
+                queueIds.sort(Comparator.naturalOrder());
+                queuePosition = SellerShipQueue.positionOf(queueIds, order.orderId());
+                queueEtaSeconds = SellerShipQueue.etaSeconds(queuePosition);
+            }
+            json.addProperty("queuePosition", queuePosition);
+            json.addProperty("queueEtaSeconds", queueEtaSeconds);
             ShippingOrder shipping = marketData.getShippingOrderForPurchaseOrder(order.orderId());
             if (shipping != null) {
                 JsonObject ship = new JsonObject();

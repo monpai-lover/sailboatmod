@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.entity.TransportEntity;
 import com.monpai.sailboatmod.market.MarketDispatchPlanner;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.FulfillmentMode;
+import com.monpai.sailboatmod.market.SellerShipQueue;
 import com.monpai.sailboatmod.market.PickupLock;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.MarketPricePolicy;
@@ -318,9 +319,20 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             List<PurchaseOrder> openOrders = linkedDockPos == null ? List.<PurchaseOrder>of() : market.getOpenOrdersForSourceDock(linkedDockPos);
             TownWarehouseBlockEntity linkedWarehouse = getLinkedWarehouse();
             availableDispatchOptions.addAll(buildAvailableDispatchOptions(linkedWarehouse, onlinePlayer));
+            // 卖家发货待发单按 orderId 稳定排序求位次（与 web myOrders 同源逻辑，见 SellerShipQueue）。
+            List<String> sellerShipQueueIds = new ArrayList<>();
+            for (PurchaseOrder o : openOrders) {
+                if (FulfillmentMode.fromString(o.fulfillment()) == FulfillmentMode.SELLER_SHIP
+                        && "WAITING_SHIPMENT".equals(o.status())) {
+                    sellerShipQueueIds.add(o.orderId());
+                }
+            }
+            sellerShipQueueIds.sort(java.util.Comparator.naturalOrder());
             for (PurchaseOrder order : openOrders) {
                 String line = order.toSummaryLine();
                 orderLines.add(line);
+                int queuePos = SellerShipQueue.positionOf(sellerShipQueueIds, order.orderId());
+                int queueEta = SellerShipQueue.etaSeconds(queuePos);
                 orderEntries.add(new MarketOverviewData.OrderEntry(
                         order.orderId(),
                         line,
@@ -328,6 +340,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         order.targetDockName().isBlank() ? order.targetDockPos().toShortString() : order.targetDockName(),
                         order.quantity(),
                         order.status(),
+                        queuePos,
+                        queueEta,
                         buildDispatchOptionsForOrder(linkedWarehouse, order, onlinePlayer)
                 ));
             }

@@ -158,6 +158,7 @@ public record MarketOverviewData(
     }
 
     public record OrderEntry(String orderId, String label, String sourceDockName, String targetDockName, int quantity, String status,
+                             int queuePosition, int queueEtaSeconds,
                              List<DispatchOption> dispatchOptions) {
         public OrderEntry {
             dispatchOptions = dispatchOptions == null ? List.of() : List.copyOf(dispatchOptions);

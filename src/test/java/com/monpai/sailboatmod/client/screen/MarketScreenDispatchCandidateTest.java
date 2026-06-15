@@ -45,6 +45,8 @@ class MarketScreenDispatchCandidateTest {
                 "Kaffa",
                 4,
                 "WAITING",
+                0,
+                0,
                 List.of(orderCarrier)
         );
 

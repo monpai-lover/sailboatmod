@@ -309,6 +309,8 @@ public class OpenMarketScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, entry.targetDockName(), 64);
             buffer.writeVarInt(entry.quantity());
             PacketStringCodec.writeUtfSafe(buffer, entry.status(), 48);
+            buffer.writeVarInt(entry.queuePosition());
+            buffer.writeVarInt(entry.queueEtaSeconds());
             writeDispatchOptions(buffer, entry.dispatchOptions());
         }
     }
@@ -324,6 +326,8 @@ public class OpenMarketScreenPacket {
                     buffer.readUtf(64),
                     buffer.readVarInt(),
                     buffer.readUtf(48),
+                    buffer.readVarInt(),
+                    buffer.readVarInt(),
                     readDispatchOptions(buffer)
             ));
         }
