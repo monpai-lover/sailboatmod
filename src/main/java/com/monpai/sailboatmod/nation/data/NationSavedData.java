@@ -12,6 +12,8 @@ import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.LoanAccountRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.nation.model.TownMemberRecord;
+import com.monpai.sailboatmod.nation.model.TownMemberInviteRecord;
 import com.monpai.sailboatmod.nation.model.TownNationRequestRecord;
 import com.monpai.sailboatmod.nation.model.NationWarRecord;
 import net.minecraft.nbt.CompoundTag;
@@ -45,6 +47,9 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationDiplomacyRecord> diplomacy = new LinkedHashMap<>();
     private final Map<String, NationDiplomacyRequestRecord> diplomacyRequests = new LinkedHashMap<>();
     private final Map<String, TownNationRequestRecord> townNationRequests = new LinkedHashMap<>();
+    private final Map<String, TownMemberRecord> townMembers = new LinkedHashMap<>();
+    private final Map<String, TownMemberInviteRecord> townMemberInvites = new LinkedHashMap<>();
+    private boolean townMembersMigrated = false;
     private final Map<String, NationTreasuryRecord> treasuries = new LinkedHashMap<>();
     private final Map<String, LoanAccountRecord> nationLoans = new LinkedHashMap<>();
     private final Map<UUID, LoanAccountRecord> personalLoans = new LinkedHashMap<>();
@@ -661,6 +666,75 @@ public class NationSavedData extends SavedData {
         List<NationMemberRecord> result = new ArrayList<>();
         for (NationMemberRecord member : members.values()) {
             if (normalized.equals(member.nationId())) {
+                result.add(member);
+            }
+        }
+        return result;
+    }
+
+    private static String townMemberKey(String townId, UUID playerUuid) {
+        if (townId == null || playerUuid == null) {
+            return "";
+        }
+        String normalized = townId.trim().toLowerCase(Locale.ROOT);
+        return normalized.isBlank() ? "" : normalized + "|" + playerUuid;
+    }
+
+    public TownMemberRecord getTownMember(String townId, UUID playerUuid) {
+        String key = townMemberKey(townId, playerUuid);
+        return key.isBlank() ? null : townMembers.get(key);
+    }
+
+    public void putTownMember(TownMemberRecord member) {
+        if (member == null) {
+            return;
+        }
+        String key = townMemberKey(member.townId(), member.playerUuid());
+        if (key.isBlank()) {
+            return;
+        }
+        townMembers.put(key, member);
+        setDirty();
+    }
+
+    public void removeTownMember(String townId, UUID playerUuid) {
+        String key = townMemberKey(townId, playerUuid);
+        if (!key.isBlank() && townMembers.remove(key) != null) {
+            setDirty();
+        }
+    }
+
+    public List<TownMemberRecord> getTownMembersForTown(String townId) {
+        String normalized = normalizeId(townId);
+        List<TownMemberRecord> result = new ArrayList<>();
+        for (TownMemberRecord member : townMembers.values()) {
+            if (normalized.equals(member.townId())) {
+                result.add(member);
+            }
+        }
+        return result;
+    }
+
+    public List<String> getTownsForPlayer(UUID playerUuid) {
+        List<String> result = new ArrayList<>();
+        if (playerUuid == null) {
+            return result;
+        }
+        for (TownMemberRecord member : townMembers.values()) {
+            if (playerUuid.equals(member.playerUuid()) && !result.contains(member.townId())) {
+                result.add(member.townId());
+            }
+        }
+        return result;
+    }
+
+    public List<TownMemberRecord> getTownMembersForPlayer(UUID playerUuid) {
+        List<TownMemberRecord> result = new ArrayList<>();
+        if (playerUuid == null) {
+            return result;
+        }
+        for (TownMemberRecord member : townMembers.values()) {
+            if (playerUuid.equals(member.playerUuid())) {
                 result.add(member);
             }
         }
