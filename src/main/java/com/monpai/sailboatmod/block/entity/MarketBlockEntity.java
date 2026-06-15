@@ -661,13 +661,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return candidates.isEmpty() ? null : candidates.get(0);
     }
 
-    /** 下单目的地解析：买家选的收货仓 → 买家默认收货仓 → 现状 linkedDockPos（最终回退）。 */
+    /** 下单目的地解析：买家选的收货仓 → 买家默认收货仓 → null（不再回退卖家源仓）。 */
     private BlockPos resolveBuyerTargetWarehouse(String buyerUuid, @Nullable BlockPos chosen) {
         if (chosen != null && !chosen.equals(BlockPos.ZERO)) {
             return chosen;
         }
-        BlockPos preferred = defaultReceivingWarehouseFor(buyerUuid);
-        return preferred != null ? preferred : linkedDockPos;
+        return defaultReceivingWarehouseFor(buyerUuid);
     }
 
     /** 取某仓库坐标的显示名：是 town 仓则用其名，否则回退 linked 仓名。 */
@@ -695,6 +694,16 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
         int amount = Math.max(1, Math.min(quantity, listing.availableCount()));
         int total = currentListingTotalPrice(listing, amount);
+        // 先解析收货仓与模式：②③（非真人自提）无可用收货仓时，必须在扣款前拒单，避免钱货已动才发现 null。
+        FulfillmentMode resolvedMode = FulfillmentMode.fromString(fulfillment);
+        BlockPos receivingWarehouse = resolveBuyerTargetWarehouse(safePlayerUuid, targetWarehousePos);
+        if (resolvedMode != FulfillmentMode.REAL_PICKUP && receivingWarehouse == null) {
+            return false;
+        }
+        // 真人自提无收货仓时，货物原地等买家自取：收货仓回退为源仓，避免下游显示名查询 NPE。
+        if (receivingWarehouse == null) {
+            receivingWarehouse = listing.sourceDockPos();
+        }
         if (!chargePlayer(safePlayerUuid, safePlayerName, onlinePlayer, total)) {
             return false;
         }
@@ -725,8 +734,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.priceAdjustmentBp(),
                 listing.sellerNote()
         ));
-        BlockPos receivingWarehouse = resolveBuyerTargetWarehouse(safePlayerUuid, targetWarehousePos);
-        FulfillmentMode resolvedMode = FulfillmentMode.fromString(fulfillment);
         String fulfillmentMode = resolvedMode.name();
         // 自提（真人/自动）下单即把货为买家锁定（PICKUP_LOCKED，不被后台发货）；卖家发货走待发。
         String orderStatus = (resolvedMode == FulfillmentMode.REAL_PICKUP || resolvedMode == FulfillmentMode.AUTO_PICKUP)

@@ -34,4 +34,37 @@ class ReceivingWarehouseContractTest {
         assertTrue(!src.contains("getTownsForNation(member.nationId())"),
                 "candidates must no longer iterate all nation towns");
     }
+
+    @Test
+    void targetResolveNoLongerFallsBackToLinkedDock() throws Exception {
+        String src = marketBlockEntity();
+        int idx = src.indexOf("private BlockPos resolveBuyerTargetWarehouse(");
+        assertTrue(idx >= 0, "resolveBuyerTargetWarehouse should exist");
+        int end = src.indexOf("\n    private ", idx + 1);
+        if (end < 0) {
+            end = src.length();
+        }
+        String body = src.substring(idx, end);
+        assertTrue(!body.contains("linkedDockPos"),
+                "resolveBuyerTargetWarehouse must not fall back to linkedDockPos");
+        assertTrue(body.contains("defaultReceivingWarehouseFor"),
+                "no-warehouse case should resolve via defaultReceivingWarehouseFor (null when none), not the seller dock");
+    }
+
+    @Test
+    void shippedModesRejectWhenNoReceivingWarehouse() throws Exception {
+        String src = marketBlockEntity();
+        int idx = src.indexOf("private boolean purchaseListingResolved(");
+        assertTrue(idx >= 0, "purchaseListingResolved should exist");
+        int end = src.indexOf("\n    private ", idx + 1);
+        if (end < 0) {
+            end = src.length();
+        }
+        String body = src.substring(idx, end);
+        // ②③ 模式无收货仓时，必须在扣款前拒单（兜底），不能让钱货已动后才发现 null
+        assertTrue(body.contains("receivingWarehouse == null"),
+                "purchaseListingResolved should reject shipped modes when receiving warehouse is null");
+        assertTrue(body.indexOf("receivingWarehouse == null") < body.indexOf("chargePlayer("),
+                "the null receiving-warehouse rejection must happen before chargePlayer");
+    }
 }
