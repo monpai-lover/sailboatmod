@@ -95,4 +95,41 @@ class TownMemberServiceTest {
         assertNotNull(data.getTownMember("crimea", player));
         assertNull(data.getMember(player));  // 独立 town 无 nation 籍
     }
+
+    @Test
+    void leaveTownRemovesMemberAndNationMembership() {
+        NationSavedData data = new NationSavedData();
+        UUID mayor = UUID.randomUUID();
+        UUID player = UUID.randomUUID();
+        data.putNation(new NationRecord(
+                "alpha", "Alpha", "ALP", 0x111111, 0x222222, mayor, 1L, "", "", NationRecord.noCorePos(), ""));
+        TownRecord town = new TownRecord("crimea", "alpha", "Crimea", mayor, 1L, "", TownRecord.noCorePos(), "", "european");
+        data.putTown(town);
+        data.putTownMember(new TownMemberRecord(player, "crimea", TownMemberRecord.OFFICE_MEMBER, 1L));
+        data.putMember(new NationMemberRecord(player, "P", "alpha", "member", 1L));
+
+        TownMemberService.leaveTownForTest(data, player, "crimea");
+
+        assertNull(data.getTownMember("crimea", player));
+        assertNull(data.getMember(player));  // 不再属任何此 nation 的 town → 退籍
+    }
+
+    @Test
+    void leaveTownKeepsNationIfStillInAnotherTown() {
+        NationSavedData data = new NationSavedData();
+        UUID mayor = UUID.randomUUID();
+        UUID player = UUID.randomUUID();
+        data.putNation(new NationRecord(
+                "alpha", "Alpha", "ALP", 0x111111, 0x222222, mayor, 1L, "", "", NationRecord.noCorePos(), ""));
+        data.putTown(new TownRecord("crimea", "alpha", "Crimea", mayor, 1L, "", TownRecord.noCorePos(), "", "european"));
+        data.putTown(new TownRecord("kerch", "alpha", "Kerch", mayor, 1L, "", TownRecord.noCorePos(), "", "european"));
+        data.putTownMember(new TownMemberRecord(player, "crimea", TownMemberRecord.OFFICE_MEMBER, 1L));
+        data.putTownMember(new TownMemberRecord(player, "kerch", TownMemberRecord.OFFICE_MEMBER, 2L));
+        data.putMember(new NationMemberRecord(player, "P", "alpha", "member", 1L));
+
+        TownMemberService.leaveTownForTest(data, player, "crimea");
+
+        assertNull(data.getTownMember("crimea", player));
+        assertNotNull(data.getMember(player));  // 仍在 kerch（同 nation）→ 保留
+    }
 }

@@ -95,6 +95,53 @@ public final class TownMemberService {
         return NationResult.success(Component.translatable("command.sailboatmod.town.join.success", town.name()));
     }
 
+    // ---- 退出 town ----
+    public static NationResult leaveTown(ServerPlayer actor, String rawTownName) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        NationService.updateKnownPlayer(actor);
+        TownRecord town = data.findTownByName(rawTownName);
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.town.not_found", rawTownName));
+        }
+        return leaveTownInternal(data, actor.getUUID(), town);
+    }
+
+    static NationResult leaveTownForTest(NationSavedData data, UUID playerUuid, String townId) {
+        TownRecord town = data.getTown(townId);
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.town.not_found", townId));
+        }
+        return leaveTownInternal(data, playerUuid, town);
+    }
+
+    private static NationResult leaveTownInternal(NationSavedData data, UUID playerUuid, TownRecord town) {
+        if (data.getTownMember(town.townId(), playerUuid) == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.town.leave.not_member", town.name()));
+        }
+        data.removeTownMember(town.townId(), playerUuid);
+        TownService.demotePlayerNationIfOrphaned(data, playerUuid, town);
+        return NationResult.success(Component.translatable("command.sailboatmod.town.leave.success", town.name()));
+    }
+
+    // ---- 镇长踢出镇民 ----
+    public static NationResult kickMember(ServerPlayer actor, ServerPlayer target) {
+        NationSavedData data = NationSavedData.get(actor.level());
+        NationService.updateKnownPlayer(actor);
+        TownRecord town = firstTownForMayor(data, actor.getUUID());
+        if (town == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.town.invite.not_mayor"));
+        }
+        if (data.getTownMember(town.townId(), target.getUUID()) == null) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.town.kick.not_member", town.name()));
+        }
+        if (target.getUUID().equals(town.mayorUuid())) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.town.kick.is_mayor"));
+        }
+        data.removeTownMember(town.townId(), target.getUUID());
+        TownService.demotePlayerNationIfOrphaned(data, target.getUUID(), town);
+        return NationResult.success(Component.translatable("command.sailboatmod.town.kick.success", town.name()));
+    }
+
     private static TownRecord firstTownForMayor(NationSavedData data, UUID mayorUuid) {
         for (TownRecord town : data.getTownsForMayor(mayorUuid)) {
             return town;
