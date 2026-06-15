@@ -361,6 +361,8 @@ public final class MarketWebServer {
                 ));
             } else if (path.size() == 6 && "buy-orders".equals(path.get(3)) && "cancel".equals(path.get(5))) {
                 ok = callOnServerThread(() -> service.cancelBuyOrder(minecraftServer, identity, marketId, path.get(4)));
+            } else if (path.size() == 6 && "purchase-orders".equals(path.get(3)) && "cancel".equals(path.get(5))) {
+                ok = callOnServerThread(() -> service.cancelPurchaseOrder(minecraftServer, identity, marketId, path.get(4)));
             } else if (path.size() == 5 && "dispatch".equals(path.get(3)) && "retry".equals(path.get(4))) {
                 ok = callOnServerThread(() -> service.retryDispatch(
                         minecraftServer,

@@ -330,6 +330,12 @@ public final class MarketWebService {
                 && resolved.market().cancelListingById(identity.playerUuidString(), listingId);
     }
 
+    public boolean cancelPurchaseOrder(MinecraftServer server, MarketPlayerIdentity identity, String marketId, String orderId) {
+        ResolvedMarket resolved = resolveMarket(server, marketId);
+        return resolved != null && identity != null
+                && resolved.market().cancelPurchaseOrderById(identity.playerUuidString(), orderId).success();
+    }
+
     public boolean claimCredits(MinecraftServer server, MarketPlayerIdentity identity, String marketId) {
         ResolvedMarket resolved = resolveMarket(server, marketId);
         return resolved != null && identity != null
