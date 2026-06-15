@@ -4,9 +4,11 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimAccessLevel;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
+import com.monpai.sailboatmod.nation.model.NationOfficeIds;
 import com.monpai.sailboatmod.nation.model.NationPermission;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.nation.model.TownMemberRecord;
 import com.monpai.sailboatmod.nation.model.TownNationRequestRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
@@ -1202,9 +1204,34 @@ public final class TownService {
         }
 
         data.clearTownNationRequestsForTown(town.townId());
+
+        for (TownMemberRecord townMember : data.getTownMembersForTown(updated.townId())) {
+            NationMemberRecord existing = data.getMember(townMember.playerUuid());
+            if (existing == null || !nationId.equals(existing.nationId())) {
+                data.putMember(new NationMemberRecord(
+                        townMember.playerUuid(),
+                        nameForTownMember(data, townMember.playerUuid(), existing),
+                        nationId,
+                        NationOfficeIds.MEMBER,
+                        System.currentTimeMillis()));
+            }
+        }
+    }
+
+    private static String nameForTownMember(NationSavedData data, UUID playerUuid, NationMemberRecord existing) {
+        if (existing != null && !existing.lastKnownName().isBlank()) {
+            return existing.lastKnownName();
+        }
+        NationMemberRecord member = data.getMember(playerUuid);
+        return member == null ? "" : member.lastKnownName();
+    }
+
+    static void bindTownToNationForTest(NationSavedData data, TownRecord town, String nationId) {
+        bindTownToNation(data, town, nationId);
     }
 
     private static void unbindTownFromNation(NationSavedData data, TownRecord town) {
+        String leavingNationId = town.nationId();  // 重写前先取
         List<NationClaimRecord> claims = managedClaimsForNationRewrite(data, town, town);
         TownRecord updated = new TownRecord(
                 town.townId(), "", town.name(), town.mayorUuid(), town.createdAt(),
@@ -1215,6 +1242,35 @@ public final class TownService {
         for (NationClaimRecord claim : claims) {
             data.putClaim(rewriteTownClaim(claim, "", town.townId()));
         }
+
+        if (!leavingNationId.isBlank()) {
+            for (TownMemberRecord townMember : data.getTownMembersForTown(town.townId())) {
+                if (stillInNationViaOtherTown(data, townMember.playerUuid(), leavingNationId, town.townId())) {
+                    continue;
+                }
+                NationMemberRecord existing = data.getMember(townMember.playerUuid());
+                if (existing != null && leavingNationId.equals(existing.nationId())) {
+                    data.removeMember(townMember.playerUuid());
+                }
+            }
+        }
+    }
+
+    private static boolean stillInNationViaOtherTown(NationSavedData data, UUID playerUuid, String nationId, String excludingTownId) {
+        for (String townId : data.getTownsForPlayer(playerUuid)) {
+            if (townId.equals(excludingTownId)) {
+                continue;
+            }
+            TownRecord other = data.getTown(townId);
+            if (other != null && nationId.equals(other.nationId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void unbindTownFromNationForTest(NationSavedData data, TownRecord town) {
+        unbindTownFromNation(data, town);
     }
 
     private static List<NationClaimRecord> managedClaimsForNationRewrite(NationSavedData data, TownRecord before, TownRecord after) {
