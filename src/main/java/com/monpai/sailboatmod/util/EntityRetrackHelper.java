@@ -39,13 +39,25 @@ public final class EntityRetrackHelper {
     }
 
     /**
-     * 对视野范围内玩家维持可见：新玩家补发完整 spawn 包族；所有范围内玩家补发绝对位置(teleport)+motion，
-     * 替代失效的 EntityTracker 移动同步，使移动中的实体跟着动、不僵住、不消失。
+     * 对视野范围内玩家维持可见。多 mod 坏掉的 EntityTracker 环境下，「发一次 spawn 即标记完成、之后只发
+     * teleport」的旧模型会失败：那一次 spawn 被客户端丢弃后，teleport 对客户端不存在的实体无效 → 返航全程
+     * 看不见、只到站才出现（实测 2026-06 确认）。
      *
-     * @param alreadySpawned 由调用实体持有的可变集合，记录已补发过 spawn 的玩家 UUID（本方法就地增删）。
-     * @return 本次新补发 spawn 的玩家数（不含仅做位置同步的）。
+     * <p>新模型分两路：
+     * <ul>
+     *   <li><b>每帧</b>对范围内所有玩家发 teleport+motion —— 平滑移动，替代失效的 EntityTracker 移动同步。</li>
+     *   <li><b>spawn 包族</b>（add+data+passengers）在两种情况下重发：玩家刚进入范围（立即），或本次为
+     *       <i>心跳帧</i>（{@code spawnHeartbeat=true}，调用方约每秒置一次）。心跳持续「修复」被客户端丢弃的
+     *       实体，又不至于每帧重建 spawn 导致客户端插值重置、渲染抽搐。</li>
+     * </ul>
+     * 原版 {@code ClientboundAddEntityPacket} 按 entity-id 幂等覆盖，重发安全。
+     *
+     * @param alreadySpawned 由调用实体持有的可变集合，记录当前仍在范围内的玩家 UUID（本方法就地增删）。
+     * @param spawnHeartbeat true 时对范围内所有玩家重发 spawn 包族（心跳兜底）；false 时只对刚进范围的新玩家发。
+     * @return 本次补发 spawn 包族的玩家数（新玩家 + 心跳帧的全部范围内玩家）。
      */
-    public static int resendSpawnToNewTrackers(ServerLevel level, Entity entity, Set<UUID> alreadySpawned) {
+    public static int resendSpawnToNewTrackers(ServerLevel level, Entity entity, Set<UUID> alreadySpawned,
+                                               boolean spawnHeartbeat) {
         if (level == null || entity == null || alreadySpawned == null || !entity.isAddedToWorld()) {
             return 0;
         }
@@ -58,7 +70,7 @@ public final class EntityRetrackHelper {
         ClientboundSetEntityMotionPacket motion = new ClientboundSetEntityMotionPacket(entity);
 
         java.util.HashSet<UUID> inRangeNow = new java.util.HashSet<>();
-        int newSpawn = 0;
+        int spawned = 0;
         for (ServerPlayer player : level.players()) {
             if (player == null || player.connection == null) {
                 continue;
@@ -68,8 +80,9 @@ public final class EntityRetrackHelper {
             }
             UUID id = player.getUUID();
             inRangeNow.add(id);
-            if (!alreadySpawned.contains(id)) {
-                // 新进入范围的玩家：补发完整 spawn 包族。
+            boolean isNew = !alreadySpawned.contains(id);
+            // 新进范围立即 spawn；心跳帧对所有范围内玩家重发 spawn 修复被丢弃的实体。
+            if (isNew || spawnHeartbeat) {
                 player.connection.send(entity.getAddEntityPacket());
                 if (nonDefault != null && !nonDefault.isEmpty()) {
                     player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
@@ -78,16 +91,15 @@ public final class EntityRetrackHelper {
                     player.connection.send(new ClientboundSetPassengersPacket(entity));
                 }
                 alreadySpawned.add(id);
-                newSpawn++;
+                spawned++;
             }
-            // 所有范围内玩家：每次补发绝对位置 + 速度，替代失效的 EntityTracker 移动同步
-            // （否则 spawn 出来的实体收不到移动包会僵在原地/被丢弃）。
+            // 所有范围内玩家：每帧补发绝对位置 + 速度，替代失效的 EntityTracker 移动同步（平滑移动）。
             player.connection.send(teleport);
             player.connection.send(motion);
         }
-        // 离开范围的玩家移除，下次再进入会重新补发 spawn（覆盖「走开又回来」）。
+        // 离开范围的玩家移除，下次再进入会作为「新玩家」立即重发 spawn（覆盖「走开又回来」）。
         alreadySpawned.retainAll(inRangeNow);
-        return newSpawn;
+        return spawned;
     }
 
     /**
