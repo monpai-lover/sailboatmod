@@ -869,6 +869,29 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     @Override
+    public boolean isControlledByLocalInstance() {
+        // 服务端永远权威（服务端 true → vanilla Boat.tick 走 if 分支跑 floatBoat()+move()；客户端 false →
+        // setDeltaMovement(ZERO)+tickLerp 插值跟随）。等价于 smallships 的 AbstractWaterVehicle extends Entity
+        // 不覆此方法时 isEffectiveAi()=!isClientSide 的效果（无人/有人都服务端权威）。
+        //
+        // 沉船根因（已查实 vanilla Boat.tick + Entity.tick 源码三方互证）：vanilla Boat 没有任何重力/浮力自动
+        // 施加，浮力 floatBoat()+move() 全写在 `if(isControlledByLocalInstance())` 分支里；服务端对该方法返回
+        // false 的船走 else 分支只 setDeltaMovement(ZERO)，既不施加浮力也不 move，位置只能靠客户端上报。
+        // Boat 默认实现有玩家驾驶时返回 player.isLocalPlayer()→驾驶者客户端=true、服务端=false=客户端权威；
+        // 而本类整套自定义移动+applyFallbackBuoyancy 浮力都写在服务端分支（if(!isClientSide)），客户端那侧
+        // 只剩 vanilla floatBoat——水面判定一旦失败（判成 IN_AIR）就只剩 -0.04 重力下沉；高延迟下客户端 tick
+        // 卡顿、连续帧无浮力，沉得更明显。
+        //
+        // 修法：恒返回 !isClientSide → 服务端永远是权威方，vanilla Boat.tick 在服务端走 if 分支 floatBoat()+
+        // move()，本类服务端移动逻辑设 deltaMovement、applyFallbackBuoyancy 覆盖 Y，由 move() 执行落实；客户端
+        // 返回 false → setDeltaMovement(ZERO)+tickLerp 接收服务端位置插值跟随。这正是 autopilot 返航/空船一直
+        // 在用且工作正常的服务端权威路径——手动驾驶现在与之共用，玩家延迟再高都不会沉。手动输入走自定义
+        // SailboatControlInputPacket→服务端 manualInputState，独立于 vanilla MoveVehicle，不受影响。
+        // 代价：操控从「客户端即时」变「服务端权威+插值」，转向/加速有轻微延迟感（与马车一致，用户已认可）。
+        return !level().isClientSide;
+    }
+
+    @Override
     public void positionRider(Entity passenger, MoveFunction moveFunction) {
         if (!hasPassenger(passenger)) {
             return;
