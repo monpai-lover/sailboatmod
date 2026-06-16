@@ -1466,6 +1466,7 @@
     "block.sailboatmod.post_station.no_target": "本驿站内没有可用的马车。",
     "block.sailboatmod.post_station.no_route": "本驿站没有可用路线。",
     "command.sailboatmod.nation.core.moved": "%s 的国家核心已移动，旧核心方块现在可以安全拆除。",
+    "command.sailboatmod.trace.cleanup.done": "已清理 %s 条无效物流轨迹。",
     "command.sailboatmod.nation.town.core.moved": "%s 的城镇核心已移动，旧核心方块现在可以安全拆除。",
     "screen.sailboatmod.town.action.remove_core": "拆除核心",
     "screen.sailboatmod.town.core.removing": "正在拆除城镇核心...",

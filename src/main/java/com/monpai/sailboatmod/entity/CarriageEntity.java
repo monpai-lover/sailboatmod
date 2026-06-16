@@ -2525,6 +2525,15 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                         && tryStartLandLegToNextStation(here, split.keepOnboard())) {
                     return;
                 }
+                // 订单全部送达、不再续程：删订单轨迹（实时清理，避免送达后 webmap 残留）。
+                if (split.keepOnboard().isEmpty()) {
+                    for (ShipmentManifestEntry entry : split.deliverHere()) {
+                        if (entry != null && entry.shippingOrderId() != null && !entry.shippingOrderId().isBlank()) {
+                            com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
+                                    level(), entry.shippingOrderId());
+                        }
+                    }
+                }
             }
             // unload==false：手动发车 + 开关关 → 不卸货，货留车，玩家自理。
         }

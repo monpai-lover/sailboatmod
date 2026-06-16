@@ -1469,6 +1469,7 @@
     "block.sailboatmod.post_station.no_target":  "No available carriage was found inside this station.",
     "block.sailboatmod.post_station.no_route":  "This station has no usable route.",
     "command.sailboatmod.nation.core.moved":  "%s core moved. The previous core block can now be removed safely.",
+    "command.sailboatmod.trace.cleanup.done":  "Cleaned up %s stale shipment trace(s).",
     "command.sailboatmod.nation.town.core.moved":  "Moved the town core for %s. The previous core block can now be removed safely.",
     "screen.sailboatmod.town.action.remove_core":  "Remove Core",
     "screen.sailboatmod.town.core.removing":  "Removing town core...",

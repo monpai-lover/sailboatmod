@@ -202,6 +202,61 @@ public final class ShippingTraceService {
         return "manual-" + (vehicleUuid == null ? "unknown" : vehicleUuid.toString());
     }
 
+    // 定期兜底清理阈值（gametick）。订单轨迹终态/查不到后过 STALE_ORDER 删；
+    // 手动轨迹无订单可查，仅靠长时间不更新（载具丢失/崩溃/强杀残留）判定，阈值更长。
+    private static final long STALE_ORDER_TRACE_TICKS = 6000L;    // 5 分钟
+    private static final long STALE_MANUAL_TRACE_TICKS = 72000L;  // 1 小时
+
+    /**
+     * 定期扫描清理无效/孤儿轨迹（崩溃/强杀/订单完成等未走正常删除路径残留的）。
+     * 由 ServerEvents 周期调用。只删确定无效的：
+     *  - 订单轨迹：订单查不到 或 状态非可见终态（DELIVERED/FAILED/CANCELLED 等），且距上次更新超阈值。
+     *  - 手动轨迹：距上次更新超过更长阈值（载具早该 live-update 位置，长期不动即视为已失效）。
+     */
+    public static void cleanupOrphanTraces(net.minecraft.server.MinecraftServer server) {
+        cleanupOrphanTraces(server, false);
+    }
+
+    /**
+     * 清理无效/孤儿轨迹。
+     * @param force true=手动指令立即清理（忽略时间阈值，只看订单终态/手动 id），false=定期兜底（带时间阈值）。
+     * @return 删除的轨迹条数。
+     */
+    public static int cleanupOrphanTraces(net.minecraft.server.MinecraftServer server, boolean force) {
+        if (server == null) {
+            return 0;
+        }
+        ServerLevel overworld = server.overworld();
+        ShippingTraceSavedData traceData = ShippingTraceSavedData.get(overworld);
+        MarketSavedData marketData = MarketSavedData.get(overworld);
+        long now = overworld.getGameTime();
+        List<String> toRemove = new ArrayList<>();
+        for (ShippingTraceRecord trace : traceData.getTraces()) {
+            String id = trace.shippingOrderId();
+            if (id.isBlank()) {
+                continue;
+            }
+            long idleTicks = Math.max(0L, now - trace.updatedGameTime());
+            boolean manual = trace.manual() || id.startsWith("manual-");
+            if (manual) {
+                // 手动轨迹无订单可查：定期模式靠长闲置判定；force 模式不动手动轨迹（无法确认载具是否还在跑）。
+                if (!force && idleTicks > STALE_MANUAL_TRACE_TICKS) {
+                    toRemove.add(id);
+                }
+                continue;
+            }
+            ShippingOrder order = marketData.getShippingOrder(id);
+            boolean terminal = order == null || !isMapVisibleStatus(order.status());
+            if (terminal && (force || idleTicks > STALE_ORDER_TRACE_TICKS)) {
+                toRemove.add(id);
+            }
+        }
+        for (String id : toRemove) {
+            traceData.removeTrace(id);
+        }
+        return toRemove.size();
+    }
+
     /**
      * 为手动发车的载具建/更新一条 manual Trace（无市场订单）。
      * @param waypoints 载具 autopilotRoute 路点；少于 2 点不建

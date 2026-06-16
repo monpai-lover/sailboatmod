@@ -2435,6 +2435,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         beginArrivalFeedback(destinationDock);
         applyDockHoldState(destinationDock);
+        // 订单全部送达、航程结束：删掉订单轨迹（实时清理，避免送达后 webmap 残留）。
+        // 仅在真正结束（无续程/返航）时删；中途续程已在上面 return，不会走到这里。
+        if (!autopilotShipmentShippingOrderId.isBlank()) {
+            ShippingTraceService.removeTrace(level(), autopilotShipmentShippingOrderId);
+        }
         stopAutopilot(false);
     }
 

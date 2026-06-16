@@ -63,6 +63,27 @@ public final class NationEvents {
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         NationCommands.register(event.getDispatcher());
+        registerShippingTraceCommands(event.getDispatcher());
+    }
+
+    /** /sailboatmod trace cleanup —— OP 手动清理无效/孤儿物流轨迹。 */
+    private static void registerShippingTraceCommands(
+            com.mojang.brigadier.CommandDispatcher<net.minecraft.commands.CommandSourceStack> dispatcher) {
+        dispatcher.register(net.minecraft.commands.Commands.literal("sailboatmod")
+                .then(net.minecraft.commands.Commands.literal("trace")
+                        .then(net.minecraft.commands.Commands.literal("cleanup")
+                                .requires(source -> source.hasPermission(2))
+                                .executes(context -> {
+                                    net.minecraft.server.MinecraftServer server = context.getSource().getServer();
+                                    int removed = com.monpai.sailboatmod.market.logistics.ShippingTraceService
+                                            .cleanupOrphanTraces(server, true);
+                                    final int count = removed;
+                                    context.getSource().sendSuccess(
+                                            () -> net.minecraft.network.chat.Component.translatable(
+                                                    "command.sailboatmod.trace.cleanup.done", count),
+                                            true);
+                                    return count;
+                                }))));
     }
 
     @SubscribeEvent

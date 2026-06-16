@@ -94,6 +94,7 @@ public final class ServerEvents {
             if (++cleanupTickCounter >= 6000) {
                 cleanupTickCounter = 0;
                 cleanupOrphanClaims(server);
+                com.monpai.sailboatmod.market.logistics.ShippingTraceService.cleanupOrphanTraces(server);
             }
             if (++dispatchTickCounter >= 300) { // 15s @20tps：后台运输调度
                 dispatchTickCounter = 0;
