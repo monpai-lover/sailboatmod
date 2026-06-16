@@ -1285,6 +1285,10 @@ public final class ManualRoadPlannerService {
         if (sourceTown == null || targetTown == null) {
             return false;
         }
+        // 同一玩家(mayor)拥有的两个 town 直接放行，不要求同 nation 或外交关系。
+        if (sourceTown.mayorUuid() != null && sourceTown.mayorUuid().equals(targetTown.mayorUuid())) {
+            return true;
+        }
         if (!sourceTown.nationId().isBlank() && sourceTown.nationId().equalsIgnoreCase(targetTown.nationId())) {
             return true;
         }

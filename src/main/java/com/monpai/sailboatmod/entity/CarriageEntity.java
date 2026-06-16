@@ -258,6 +258,11 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 自动驾驶强制加载区块：用 ENTITY_TICKING 票据保证玩家走远后马车仍持续 tick（修离玩家远卡住）。
     private static final int AUTOPILOT_CHUNK_RADIUS = 2;
     private static final int AUTOPILOT_TARGET_CHUNK_RADIUS = 1;
+    // 到达/停驶后，强制加载票据再宽限保留若干 tick：多模组环境下实体在票据加载(无玩家)的区块里，
+    // 玩家靠近时某些区块/优化 mod 不重建 EntityTracker → 「看不见但有音效，重进区块才可见」。宽限期给 ChunkMap
+    // 常规追踪机制补发 spawn 的窗口。实体移除时票据自动释放，多持几秒无害。
+    private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
+    private int postArrivalForcedHoldTicks = 0;
     private final Set<Long> forcedAutopilotChunks = new HashSet<>();
     private String pendingShipperName = "";
     private String ownerName = "";
@@ -1632,7 +1637,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return;
         }
         if (level() instanceof ServerLevel serverLevel) {
-            clearAutopilotForcedChunks(serverLevel);
+            // 不立即清票：进入宽限期保留 ENTITY_TICKING 票据，让 ChunkMap 有机会在玩家靠近时重建追踪。
+            postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
+            forceRetrackForNearbyPlayers(serverLevel);
         }
         // webmap: 清理本载具的手动轨迹（订单轨迹由订单生命周期管理）
         com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
@@ -1647,6 +1654,23 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     /**
+     * 到达后强制让附近玩家重新追踪本实体。多模组环境下票据加载的实体可能未被 EntityTracker 追踪
+     * （单 mod 无此问题），表现为「看不见但有音效」。这里用公开手段触发一次位置/状态同步：标记 hasImpulse
+     * 并微扰 deltaMovement，促使 ServerEntity 下一 tick 发送移动/追踪包。诊断日志记录现场以便实测核对。
+     */
+    private void forceRetrackForNearbyPlayers(ServerLevel serverLevel) {
+        long chunkKey = net.minecraft.world.level.ChunkPos.asLong(blockPosition());
+        int nearby = serverLevel.getEntitiesOfClass(net.minecraft.world.entity.player.Player.class,
+                getBoundingBox().inflate(64.0D)).size();
+        boolean forced = forcedAutopilotChunks.contains(chunkKey);
+        LOGGER.info("[CarriageEntity] arrival retrack uuid={} pos={} chunkForced(ENTITY_TICKING)={} nearbyPlayers={} added={}",
+                getUUID(), blockPosition(), forced, nearby, isAddedToWorld());
+        // 公开字段触发同步：标记需要发送，并对自身位置做零位移 setPos 以刷新 ServerEntity 追踪。
+        this.hasImpulse = true;
+        setPos(getX(), getY(), getZ());
+    }
+
+    /**
      * 自动驾驶强制加载马车周围 + 当前/下一/终点 waypoint 所在区块，
      * 用 ENTITY_TICKING 票据保证玩家走远后马车仍持续 tick（修离玩家远卡住）。
      */
@@ -1655,7 +1679,12 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return;
         }
         if (!isAutopilotActive()) {
-            clearAutopilotForcedChunks(serverLevel);
+            // 宽限期内保留票据（让 ChunkMap 有机会在玩家靠近时重建实体追踪），期满才释放。
+            if (postArrivalForcedHoldTicks > 0) {
+                postArrivalForcedHoldTicks--;
+            } else {
+                clearAutopilotForcedChunks(serverLevel);
+            }
             return;
         }
         Set<Long> requiredChunks = new HashSet<>();

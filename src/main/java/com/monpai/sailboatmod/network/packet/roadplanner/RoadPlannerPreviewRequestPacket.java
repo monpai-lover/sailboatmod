@@ -288,7 +288,61 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
     }
 
     private SyncRoadPlannerPreviewPacket toSafePreview(ServerLevel level) {
+        // 预览前确保沿途区块已加载：未加载区块的 heightmap 返回世界底部，会让整段路面采样到地底「钻地」。
+        forceLoadPathChunks(level);
         return toSafePreview(RoadTerrainSampler.fromLevel(level));
+    }
+
+    /** 沿相邻 node 连线按区块步进同步加载，保证地形采样读到真实高度。主线程调用。 */
+    private void forceLoadPathChunks(ServerLevel level) {
+        if (level == null || nodes == null || nodes.size() < 1) {
+            return;
+        }
+        java.util.Set<Long> chunks = new java.util.HashSet<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            BlockPos a = nodes.get(i);
+            collectChunkAround(chunks, a.getX() >> 4, a.getZ() >> 4);
+            if (i + 1 < nodes.size()) {
+                collectLineChunks(chunks, a, nodes.get(i + 1));
+            }
+        }
+        // 上限保护：极长路径不一次性加载海量区块拖垮服务器。
+        int limit = 6000;
+        int loaded = 0;
+        for (long key : chunks) {
+            if (loaded++ >= limit) {
+                break;
+            }
+            level.getChunk(net.minecraft.world.level.ChunkPos.getX(key), net.minecraft.world.level.ChunkPos.getZ(key));
+        }
+    }
+
+    private static void collectChunkAround(java.util.Set<Long> out, int chunkX, int chunkZ) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                out.add(net.minecraft.world.level.ChunkPos.asLong(chunkX + dx, chunkZ + dz));
+            }
+        }
+    }
+
+    private static void collectLineChunks(java.util.Set<Long> out, BlockPos a, BlockPos b) {
+        int x0 = a.getX();
+        int z0 = a.getZ();
+        int x1 = b.getX();
+        int z1 = b.getZ();
+        int steps = Math.max(Math.abs(x1 - x0), Math.abs(z1 - z0));
+        if (steps <= 0) {
+            collectChunkAround(out, x0 >> 4, z0 >> 4);
+            return;
+        }
+        // 每 8 格采一点（< 16 即可覆盖每个区块），按区块去重。
+        for (int s = 0; s <= steps; s += 8) {
+            double t = (double) s / steps;
+            int x = (int) Math.round(x0 + (x1 - x0) * t);
+            int z = (int) Math.round(z0 + (z1 - z0) * t);
+            collectChunkAround(out, x >> 4, z >> 4);
+        }
+        collectChunkAround(out, x1 >> 4, z1 >> 4);
     }
 
     private SyncRoadPlannerPreviewPacket toSafePreview(RoadTerrainSampler terrainSampler) {

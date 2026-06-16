@@ -307,8 +307,48 @@ public class RoadPlannerBuildControlService {
         if (snapshot == null) {
             return List.of();
         }
+        // 编译前确保沿途区块已加载：未加载区块地形采样到世界底部会导致整段路面「钻地」。主线程同步加载。
+        forceLoadNodeChunks(level, snapshot.nodes());
         List<BuildStep> compiled = RoadPlannerBuildStepCompiler.compile(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), level);
         return filterOwnedBuildSteps(compiled, snapshot.reusePlan());
+    }
+
+    /** 沿相邻 node 连线按区块步进同步加载，保证采样读到真实地形高度。 */
+    private static void forceLoadNodeChunks(ServerLevel level, List<BlockPos> nodes) {
+        if (level == null || nodes == null || nodes.isEmpty()) {
+            return;
+        }
+        java.util.Set<Long> chunks = new java.util.HashSet<>();
+        for (int i = 0; i < nodes.size(); i++) {
+            BlockPos a = nodes.get(i);
+            addChunkArea(chunks, a.getX() >> 4, a.getZ() >> 4);
+            if (i + 1 < nodes.size()) {
+                BlockPos b = nodes.get(i + 1);
+                int steps = Math.max(Math.abs(b.getX() - a.getX()), Math.abs(b.getZ() - a.getZ()));
+                for (int s = 0; s <= steps; s += 8) {
+                    double t = steps == 0 ? 0.0 : (double) s / steps;
+                    int x = (int) Math.round(a.getX() + (b.getX() - a.getX()) * t);
+                    int z = (int) Math.round(a.getZ() + (b.getZ() - a.getZ()) * t);
+                    addChunkArea(chunks, x >> 4, z >> 4);
+                }
+            }
+        }
+        int limit = 6000;
+        int loaded = 0;
+        for (long key : chunks) {
+            if (loaded++ >= limit) {
+                break;
+            }
+            level.getChunk(net.minecraft.world.level.ChunkPos.getX(key), net.minecraft.world.level.ChunkPos.getZ(key));
+        }
+    }
+
+    private static void addChunkArea(java.util.Set<Long> out, int chunkX, int chunkZ) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                out.add(net.minecraft.world.level.ChunkPos.asLong(chunkX + dx, chunkZ + dz));
+            }
+        }
     }
 
     static List<BuildStep> filterOwnedBuildStepsForTest(List<BuildStep> buildSteps, RoadReusePlan reusePlan) {

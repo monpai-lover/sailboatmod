@@ -182,12 +182,42 @@ public final class RoadSurfaceStepEmitter {
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadCenterlinePoint> centerline, int index) {
+        // 沿整段 ramp run 判定升降方向，再按段内序号奇偶交替 top/bottom，使台阶半砖朝向与坡向一致。
+        // （此逻辑曾在 e83d4cd 修好、被 65209ef 回退导致台阶 top 复发，此处恢复。）
+        int start = index;
+        while (start > 0 && isRampAt(centerline, start - 1)) {
+            start--;
+        }
+        int end = index;
+        while (end + 1 < centerline.size() && isRampAt(centerline, end + 1)) {
+            end++;
+        }
+        boolean ascending = rampRunAscending(centerline, start, end);
+        int localIndex = index - start;
+        if (ascending) {
+            return (localIndex & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
+        }
+        return (localIndex & 1) == 0 ? settings.slabTopState() : settings.slabBottomState();
+    }
+
+    private static boolean isRampAt(List<RoadCenterlinePoint> centerline, int index) {
+        if (index < 0 || index >= centerline.size()) {
+            return false;
+        }
         int y = centerline.get(index).targetY();
         int prevY = index > 0 ? centerline.get(index - 1).targetY() : y;
         int nextY = index + 1 < centerline.size() ? centerline.get(index + 1).targetY() : y;
-        if (y > prevY || nextY < y) {
-            return settings.slabBottomState();
+        return y != prevY || y != nextY;
+    }
+
+    private static boolean rampRunAscending(List<RoadCenterlinePoint> centerline, int start, int end) {
+        int startY = centerline.get(start).targetY();
+        int endY = centerline.get(end).targetY();
+        if (startY != endY) {
+            return endY > startY;
         }
-        return settings.slabTopState();
+        int beforeY = start > 0 ? centerline.get(start - 1).targetY() : startY;
+        int afterY = end + 1 < centerline.size() ? centerline.get(end + 1).targetY() : endY;
+        return afterY >= beforeY;
     }
 }

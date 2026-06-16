@@ -44,6 +44,9 @@ public class ConstructionQueue {
     }
 
     public void executeStep(BuildStep step, ServerLevel level) {
+        // 确保目标区块已加载，否则 getBlockState 读到 AIR、setBlock 静默失败 —— 远端道路只走进度不放方块。
+        // 主线程同步加载；已加载时是廉价查表。
+        ensureChunkLoaded(level, step.pos());
         BlockState prev = level.getBlockState(step.pos());
         if (ConstructionStateMatchers.isProtectedCoreBlock(prev)) {
             return;
@@ -51,6 +54,13 @@ public class ConstructionQueue {
         rollbackEntries.add(new RollbackEntry(step.pos(), prev));
         level.setBlock(step.pos(), step.state(), blockUpdateFlags(step.state()));
         ConstructionStepEffects.playPlacementEffect(level, step);
+    }
+
+    private static void ensureChunkLoaded(ServerLevel level, BlockPos pos) {
+        if (level == null || pos == null) {
+            return;
+        }
+        level.getChunk(pos.getX() >> 4, pos.getZ() >> 4);
     }
 
     private static int blockUpdateFlags(BlockState state) {
@@ -73,6 +83,7 @@ public class ConstructionQueue {
     public void rollback(ServerLevel level) {
         for (int i = rollbackEntries.size() - 1; i >= 0; i--) {
             RollbackEntry entry = rollbackEntries.get(i);
+            ensureChunkLoaded(level, entry.pos());
             level.setBlock(entry.pos(), entry.previousState(), 3);
         }
     }
@@ -89,6 +100,7 @@ public class ConstructionQueue {
         int count = 0;
         while (rollbackIndex >= 0 && count < batchSize) {
             RollbackEntry entry = rollbackEntries.get(rollbackIndex);
+            ensureChunkLoaded(level, entry.pos());
             level.setBlock(entry.pos(), entry.previousState(), 3);
             rollbackIndex--;
             count++;

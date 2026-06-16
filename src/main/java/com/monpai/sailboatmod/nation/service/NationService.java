@@ -108,6 +108,9 @@ public final class NationService {
                 NationOfficeIds.LEADER,
                 now
         ));
+        // 建国者名下其余独立 town 也并入新 nation（首都已由上方绑定）。在 leader putMember 之后调用：
+        // bindTownToNation 对已是本 nation 成员的镇民不重设，故不会把 leader 从 LEADER 降级为 MEMBER。
+        TownService.absorbStandaloneTownsForMayor(data, player.getUUID(), nationId, capitalTown.townId());
         data.clearInvitesForPlayer(player.getUUID());
         data.clearJoinRequestsForPlayer(player.getUUID());
         refreshPlayerNames(player);

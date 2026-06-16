@@ -63,6 +63,28 @@ public final class RoadSurfaceHeuristics {
                 || state.is(BlockTags.REPLACEABLE);
     }
 
+    /**
+     * 应「就地被路面替换」的贴地覆盖物（雪层/草本/苔藓地毯等）。
+     * 与 {@link #isIgnoredSurfaceNoise} 的区别：这些覆盖物本身贴在真实地面上，路面应铺在它们的位置
+     * （替换它们），而不是下探到它们之下 —— 否则路面会陷进地里。
+     * <b>不含</b>树叶/原木/树苗/竹/甘蔗/仙人掌/水生植物（那些下面才是地面，或根本不该在路面上）。
+     */
+    public static boolean isReplaceableGroundCover(BlockState state) {
+        if (state == null || state.isAir()) {
+            return false;
+        }
+        return state.is(Blocks.SNOW)
+                || state.is(Blocks.SNOW_BLOCK)
+                || state.is(Blocks.GRASS)
+                || state.is(Blocks.FERN)
+                || state.is(Blocks.TALL_GRASS)
+                || state.is(Blocks.LARGE_FERN)
+                || state.is(Blocks.DEAD_BUSH)
+                || state.is(Blocks.MOSS_CARPET)
+                || state.is(BlockTags.FLOWERS)
+                || state.is(BlockTags.TALL_FLOWERS);
+    }
+
     private static boolean hasNaturalNoiseName(BlockState state) {
         if (state == null || state.getBlock() == null) {
             return false;

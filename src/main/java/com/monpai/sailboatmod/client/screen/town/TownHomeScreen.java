@@ -545,7 +545,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         int y = overlay[1];
         int w = overlay[2];
         int h = overlay[3];
-        g.fill(left() + BODY_X, top() + BODY_Y + 24, left() + BODY_X + BODY_W, top() + BODY_Y + BODY_H - 1, 0x88000000);
+        g.fill(left() + BODY_X, top() + BODY_Y, left() + BODY_X + BODY_W, top() + BODY_Y + BODY_H - 1, 0xC8101418);
         drawPanelFrame(g, x, y, w, h);
         g.drawString(this.font, Component.translatable("screen.sailboatmod.town.join_nation.title"), x + 10, y + 10, 0xFFE7C977);
         int[] list = joinNationListBounds(left(), top());
@@ -835,11 +835,13 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
         boolean hasTown = this.data.hasTown();
         boolean canManageTown = hasTown && this.data.canManageTown();
         boolean showJoinNationButton = shouldShowJoinNationButton();
-        if (this.townNameInput != null) { this.townNameInput.visible = overviewPage; this.townNameInput.setEditable(overviewPage && canManageTown); }
-        if (this.saveTownNameButton != null) { this.saveTownNameButton.visible = overviewPage; this.saveTownNameButton.active = overviewPage && canManageTown && townNameChanged(); }
-        if (this.abandonTownButton != null) { this.abandonTownButton.visible = overviewPage && hasTown; this.abandonTownButton.active = overviewPage && hasTown && this.data.isMayor(); }
-        if (this.joinNationButton != null) { this.joinNationButton.visible = overviewPage && showJoinNationButton; this.joinNationButton.active = overviewPage && showJoinNationButton; }
-        if (this.removeCoreButton != null) { this.removeCoreButton.visible = overviewPage && hasTown; this.removeCoreButton.active = overviewPage && hasTown && this.data.isMayor() && this.data.hasCore(); }
+        // join nation 弹窗打开时，隐藏其覆盖区域内的 overview 控件，否则它们被 super.render 画在弹窗之上、文字按钮重叠。
+        boolean overviewWidgetsVisible = overviewPage && !this.joinNationOverlayOpen;
+        if (this.townNameInput != null) { this.townNameInput.visible = overviewWidgetsVisible; this.townNameInput.setEditable(overviewWidgetsVisible && canManageTown); }
+        if (this.saveTownNameButton != null) { this.saveTownNameButton.visible = overviewWidgetsVisible; this.saveTownNameButton.active = overviewWidgetsVisible && canManageTown && townNameChanged(); }
+        if (this.abandonTownButton != null) { this.abandonTownButton.visible = overviewWidgetsVisible && hasTown; this.abandonTownButton.active = overviewWidgetsVisible && hasTown && this.data.isMayor(); }
+        if (this.joinNationButton != null) { this.joinNationButton.visible = overviewWidgetsVisible && showJoinNationButton; this.joinNationButton.active = overviewWidgetsVisible && showJoinNationButton; }
+        if (this.removeCoreButton != null) { this.removeCoreButton.visible = overviewWidgetsVisible && hasTown; this.removeCoreButton.active = overviewWidgetsVisible && hasTown && this.data.isMayor() && this.data.hasCore(); }
         if (this.joinNationConfirmButton != null) { this.joinNationConfirmButton.visible = this.joinNationOverlayOpen; this.joinNationConfirmButton.active = this.joinNationOverlayOpen && selectedJoinNationTarget() != null; }
         if (this.joinNationCancelButton != null) { this.joinNationCancelButton.visible = this.joinNationOverlayOpen; this.joinNationCancelButton.active = this.joinNationOverlayOpen; }
         if (this.appointMayorButton != null) { this.appointMayorButton.visible = membersPage; this.appointMayorButton.active = membersPage && hasTown && canAssignSelectedMemberAsMayor(); }

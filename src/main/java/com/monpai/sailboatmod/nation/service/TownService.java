@@ -1233,6 +1233,27 @@ public final class TownService {
         bindTownToNation(data, town, nationId);
     }
 
+    /**
+     * 把某玩家(mayor)名下所有「无 nation 的独立 town」并入指定 nation。
+     * 建国时调用：建国者名下原有的独立 town 都应自动加入新 nation（除已作为首都绑定的那个）。
+     * 已属于其他 nation 的 town 不动。复用 {@link #bindTownToNation} 的全套副作用(claim 重写 + 镇民转 nation 成员)。
+     * @param exceptTownId 跳过的 town（通常是已绑定为首都的那个），可为 null。
+     */
+    public static void absorbStandaloneTownsForMayor(NationSavedData data, UUID mayorUuid, String nationId, String exceptTownId) {
+        if (data == null || mayorUuid == null || nationId == null || nationId.isBlank()) {
+            return;
+        }
+        for (TownRecord town : new ArrayList<>(data.getTownsForMayor(mayorUuid))) {
+            if (town == null || !town.nationId().isBlank()) {
+                continue; // 已属某 nation（含刚绑定的首都）则跳过
+            }
+            if (exceptTownId != null && exceptTownId.equals(town.townId())) {
+                continue;
+            }
+            bindTownToNation(data, town, nationId);
+        }
+    }
+
     public static void syncPlayerNationWithTown(NationSavedData data, UUID playerUuid, TownRecord town) {
         if (data == null || playerUuid == null || town == null || !town.hasNation()) {
             return;  // 独立 town：只写镇民，不挂 nation
