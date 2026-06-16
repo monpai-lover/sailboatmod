@@ -156,6 +156,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final int WATER_LEG_GENERATION_TIMEOUT_TICKS = 600;
     private static final double AUTOPILOT_PROGRESS_EPSILON = 0.08D;
     private static final double AUTOPILOT_STALL_SKIP_RADIUS = 48.0D;
+    // 窄河道物理卡死自救：撞墙且几乎不动累计达 DETECT_TICKS → 进入脱困；每轮温和倒车摆舵 REVERSE_TICKS；
+    // 连续 MAX_ATTEMPTS 轮仍没挪动 → 暂停求助。MOVE_EPSILON 为单 tick 平面位移阈值，YAW_STEP 为脱困摆舵每 tick 角度。
+    private static final int AUTOPILOT_STUCK_DETECT_TICKS = 50;
+    private static final double AUTOPILOT_STUCK_MOVE_EPSILON = 0.02D;
+    private static final int AUTOPILOT_UNSTICK_REVERSE_TICKS = 24;
+    private static final int AUTOPILOT_UNSTICK_MAX_ATTEMPTS = 5;
+    private static final float AUTOPILOT_UNSTICK_YAW_STEP = 4.0F;
     private static final double DOCK_PARKING_EDGE_PADDING = 1.5D;
     private static final double DOCK_APPROACH_CLEAR_RADIUS = 3.8D;
     private static final double DOCK_PARKING_GRID_STEP = 2.75D;
@@ -204,6 +211,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private int selectedRouteIndex = 0;
     private int autopilotNoProgressTicks = 0;
     private double autopilotLastTargetDistance = Double.NaN;
+    // 窄河道脱困运行时状态
+    private int autopilotStuckTicks = 0;          // 撞墙且几乎不动的累计 tick
+    private int autopilotUnstickTicks = 0;        // 当前脱困剩余 tick（>0=正在脱困）
+    private int autopilotUnstickAttempts = 0;     // 已连续脱困轮数
+    private int autopilotUnstickYawDir = 1;       // 脱困摆舵方向，每轮交替 ±1
+    private Vec3 autopilotUnstickStartPos = null; // 本轮脱困起点，判断是否见效
+    private boolean autopilotTraceStuck = false;  // 已把 webmap 轨迹标记为 STUCK（避免重复写/无谓恢复）
     private String pendingShipperName = "";
     private String autopilotShipmentShipperName = "";
     private String autopilotShipmentStartDockName = "";
@@ -1046,6 +1060,22 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!level().isClientSide && level() instanceof ServerLevel serverLevel) {
             clearAutopilotForcedChunks(serverLevel);
         }
+        if (!level().isClientSide
+                && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED
+                    || reason == RemovalReason.CHANGED_DIMENSION)) {
+            // 载具被破坏/移除：直接刷新掉它的手动物流轨迹，避免网页地图残留
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
+                    level(), com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID()));
+        }
+        if (!level().isClientSide
+                && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED)) {
+            // 载具在途被破坏/卸载兜底：回滚/退款订单货 + 把订单轨迹标 FAILED（webmap 不再可见）。
+            // rollbackMarketShipment 内部：空 manifest 早退；可回滚则把货退回市场（船容器随之清空），
+            // 不可回滚则把货 loadCargo 留在船上——之后 KILLED 的 dropContents 才掉落，避免货物双重处理/凭空消失。
+            // CHANGED_DIMENSION 不回滚（船随维度迁移，运输继续）。
+            rollbackMarketShipment();
+            clearAutopilotShipmentContext(); // 清 manifest/订单字段，保证回滚幂等（防任何路径重复退款）
+        }
         if (!level().isClientSide) {
             if (pendingBlueMapRemoval || reason == RemovalReason.KILLED) {
                 if (!pendingBlueMapRemoval) {
@@ -1370,6 +1400,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return false;
         }
         resetArrivalNotice(); // 新发车/续运/返航开始：清掉上一程到站通知，避免幽灵残留
+        resetUnstickState();  // 新发车：清掉上一程脱困状态，避免误判/残留 STUCK
         dockHoldTicks = 0;
         dockHoldPos = null;
         dockHoldYaw = Float.NaN;
@@ -1484,6 +1515,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotRouteName = getSelectedRouteName();
         autopilotNoProgressTicks = 0;
         autopilotLastTargetDistance = Double.NaN;
+        resetUnstickState();
         autopilotDockingSpot = null;
         autopilotDepartureOrigin = null;
         if (level() instanceof ServerLevel serverLevel) {
@@ -1512,6 +1544,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return;
         }
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
+        clearStuckTraceStatus(); // 玩家手动恢复被卡死暂停的船：webmap 状态从 STUCK 恢复 SAILING
     }
 
     public void selectNextRoute() {
@@ -1655,6 +1688,21 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             finishAutopilotAndUnloadAtDestination();
             return AutopilotCommand.inactive();
         }
+        // 窄河道脱困：正在脱困期间，优先执行温和后退 + 小幅交替摆舵，不走正常寻路。
+        if (autopilotUnstickTicks > 0) {
+            autopilotUnstickTicks--;
+            if (autopilotUnstickTicks == 0) {
+                endUnstickAttempt();
+                // 脱困轮结束后本 tick 不再寻路，下一 tick 重新评估（已脱困则正常前进，仍卡则再触发）。
+                return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
+            }
+            float unstickYaw = AUTOPILOT_UNSTICK_YAW_STEP * autopilotUnstickYawDir;
+            float nextYaw = getYRot() + unstickYaw;
+            setYRot(nextYaw);
+            setYHeadRot(nextYaw);
+            setYBodyRot(nextYaw);
+            return new AutopilotCommand(true, true, autopilotUnstickYawDir, unstickYaw, EngineGear.HALF_ASTERN);
+        }
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
         Vec3 target = autopilotRoute.get(autopilotTargetIndex);
         boolean finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
@@ -1726,6 +1774,22 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         autopilotLastTargetDistance = dist;
 
+        // 窄河道物理卡死检测：撞墙（horizontalCollision）且上一 tick 几乎没动且想前进（gear!=STOP），
+        // 区别于主动慢速/大角度 pivot 转向。累计达阈值 → 进入脱困（后退+摆舵）。
+        boolean physicallyStuck = horizontalCollision
+                && getDeltaMovement().horizontalDistanceSqr() < AUTOPILOT_STUCK_MOVE_EPSILON * AUTOPILOT_STUCK_MOVE_EPSILON
+                && getEngineGear() != EngineGear.STOP
+                && absYawError <= AUTOPILOT_TURN_IN_PLACE_DEGREES;
+        if (physicallyStuck) {
+            autopilotStuckTicks++;
+        } else {
+            autopilotStuckTicks = 0;
+        }
+        if (autopilotStuckTicks >= AUTOPILOT_STUCK_DETECT_TICKS) {
+            beginUnstickAttempt();
+            return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
+        }
+
         if (autopilotNoProgressTicks >= AUTOPILOT_NO_PROGRESS_TICKS_LIMIT
                 && dist <= AUTOPILOT_STALL_SKIP_RADIUS
                 && autopilotTargetIndex < autopilotRoute.size() - 1) {
@@ -1760,6 +1824,103 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         double stopRadius = finalTarget ? AUTOPILOT_FINAL_STOP_RADIUS : AUTOPILOT_ARRIVAL_RADIUS * 1.2D;
         EngineGear desiredGear = selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
+    }
+
+    /** 进入一轮窄河道脱困：记起点、累加轮数、交替摆舵方向。 */
+    private void beginUnstickAttempt() {
+        autopilotUnstickTicks = AUTOPILOT_UNSTICK_REVERSE_TICKS;
+        autopilotUnstickStartPos = position();
+        autopilotUnstickAttempts++;
+        autopilotUnstickYawDir = -autopilotUnstickYawDir;
+        autopilotStuckTicks = 0;
+    }
+
+    /** 一轮脱困结束：挪动够远→成功复位；连续多轮无效→暂停求助并在 webmap 标 STUCK。 */
+    private void endUnstickAttempt() {
+        boolean moved = autopilotUnstickStartPos != null
+                && position().distanceToSqr(autopilotUnstickStartPos) > 1.0D;
+        autopilotStuckTicks = 0;
+        autopilotUnstickStartPos = null;
+        if (moved) {
+            autopilotUnstickAttempts = 0;
+            autopilotNoProgressTicks = 0;
+            autopilotLastTargetDistance = Double.NaN;
+            clearStuckTraceStatus();
+        } else if (autopilotUnstickAttempts >= AUTOPILOT_UNSTICK_MAX_ATTEMPTS) {
+            beginStuckHelpNotice();
+            markStuckTraceStatus();
+            pauseAutopilot();
+            autopilotUnstickAttempts = 0;
+        }
+        // 否则下次检测到仍卡死会再次 beginUnstickAttempt（attempts 继续累加直至上限）。
+    }
+
+    /** 重置全部脱困运行时状态（发车/到站/停止时调用，避免跨程残留）。 */
+    private void resetUnstickState() {
+        autopilotStuckTicks = 0;
+        autopilotUnstickTicks = 0;
+        autopilotUnstickAttempts = 0;
+        autopilotUnstickStartPos = null;
+        autopilotTraceStuck = false;
+    }
+
+    /** 卡住头顶提示（复用到站通知通道）+ 给船主/驾驶员发聊天提示。 */
+    private void beginStuckHelpNotice() {
+        if (level().isClientSide) {
+            return;
+        }
+        entityData.set(DATA_ARRIVAL_NOTICE_STATION_NAME,
+                Component.translatable("entity.sailboatmod.autopilot.stuck").getString());
+        entityData.set(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
+        entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
+        setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
+        notifyStuckToOwner();
+    }
+
+    /** 给船主/驾驶员（若在线）发送卡住聊天提示。 */
+    private void notifyStuckToOwner() {
+        if (!(level() instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
+            return;
+        }
+        String uuid = traceShipperUuid();
+        if (uuid == null || uuid.isBlank()) {
+            return;
+        }
+        java.util.UUID playerId;
+        try {
+            playerId = java.util.UUID.fromString(uuid);
+        } catch (IllegalArgumentException ignored) {
+            return;
+        }
+        net.minecraft.server.level.ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(playerId);
+        if (player != null) {
+            player.sendSystemMessage(Component.translatable("message.sailboatmod.autopilot.stuck"));
+        }
+    }
+
+    /** 当前激活轨迹 id：手动车用 manualTraceId，订单车用 shippingOrderId。 */
+    private String activeTraceId() {
+        return (autopilotShipmentShippingOrderId == null || autopilotShipmentShippingOrderId.isBlank())
+                ? ShippingTraceService.manualTraceId(getUUID())
+                : autopilotShipmentShippingOrderId;
+    }
+
+    /** 把当前轨迹状态标为 STUCK，webmap 据此红色告警「阻塞·需救援」。 */
+    private void markStuckTraceStatus() {
+        if (level().isClientSide) {
+            return;
+        }
+        ShippingTraceService.updateStatus(level(), activeTraceId(), "STUCK");
+        autopilotTraceStuck = true;
+    }
+
+    /** 脱困成功/玩家恢复后把轨迹状态从 STUCK 恢复 SAILING（仅在之前标过 STUCK 时）。 */
+    private void clearStuckTraceStatus() {
+        if (level().isClientSide || !autopilotTraceStuck) {
+            return;
+        }
+        ShippingTraceService.updateStatus(level(), activeTraceId(), "SAILING");
+        autopilotTraceStuck = false;
     }
 
     protected EngineGear selectAutopilotGear(boolean finalTarget,
@@ -2216,6 +2377,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     private void finishAutopilotAndUnloadAtDestination() {
+        resetUnstickState(); // 到站：清脱困状态，后续轨迹状态由到站/续运流程接管
         BlockPos endDockPos = findAutopilotDestinationDockPos();
         if (endDockPos == null || !(level().getBlockEntity(endDockPos) instanceof DockBlockEntity destinationDock)) {
             stopAutopilot();
@@ -2767,19 +2929,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     /**
-     * 用 ENTITY_TICKING 级别强制/取消加载区块。
-     * 关键：原 setChunkForced 是 FORCED 票据只保证 loaded 不保证 entity-ticking，
-     * 实体随后停 tick → 无法刷新 force → 区块卸载（玩家走远载具停住）。
-     * ForgeChunkManager.forceChunk 末参 ticking=true 才是 ENTITY_TICKING，使载具持续运行。
-     * owner 用每 chunk 的稳定 BlockPos，保证「加」「取消」用同一 owner。
+     * 强制/取消加载区块。用 vanilla setChunkForced（ticket level 31，与玩家同级，
+     * 区块处理游戏所有方面含实体 tick）。不用 ForgeChunkManager 的 ticking 票据——后者在
+     * 移动实体每 tick 改 force 集合时会触发区块加载/卸载抖动(thrash)甚至卡死（见 MinecraftForge #5406）。
      */
     private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
-        int chunkX = ChunkPos.getX(chunkKey);
-        int chunkZ = ChunkPos.getZ(chunkKey);
-        net.minecraft.core.BlockPos owner = new net.minecraft.core.BlockPos(chunkX << 4, 0, chunkZ << 4);
-        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
-                serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
-                owner, chunkX, chunkZ, add, true);
+        serverLevel.setChunkForced(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey), add);
     }
 
     private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {

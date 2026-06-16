@@ -1268,6 +1268,13 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             Containers.dropContents(level(), blockPosition(), container);
             container.clearContent();
         }
+        if (!level().isClientSide
+                && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED
+                    || reason == RemovalReason.CHANGED_DIMENSION)) {
+            // 载具被破坏/移除：直接刷新掉它的手动物流轨迹，避免网页地图残留
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
+                    level(), com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID()));
+        }
         if (level() instanceof ServerLevel serverLevel) {
             clearAutopilotForcedChunks(serverLevel);
         }
@@ -1684,13 +1691,15 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         forcedAutopilotChunks.addAll(requiredChunks);
     }
 
+    /**
+     * 强制/取消加载区块。用 vanilla setChunkForced（ticket level 31，与玩家同级，含实体 tick）。
+     * 不用 ForgeChunkManager 的 ticking 票据——移动实体每 tick 改 force 集合会触发区块抖动甚至卡死（MinecraftForge #5406）。
+     */
     private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
-        int chunkX = net.minecraft.world.level.ChunkPos.getX(chunkKey);
-        int chunkZ = net.minecraft.world.level.ChunkPos.getZ(chunkKey);
-        BlockPos owner = new BlockPos(chunkX << 4, 0, chunkZ << 4);
-        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
-                serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
-                owner, chunkX, chunkZ, add, true);
+        serverLevel.setChunkForced(
+                net.minecraft.world.level.ChunkPos.getX(chunkKey),
+                net.minecraft.world.level.ChunkPos.getZ(chunkKey),
+                add);
     }
 
     private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {

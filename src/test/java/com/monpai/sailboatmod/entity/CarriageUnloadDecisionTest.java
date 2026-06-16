@@ -96,4 +96,17 @@ class CarriageUnloadDecisionTest {
         assertFalse(deliver.isEmpty(), "no-spec entry at final stop should fall back to delivering the whole pool");
         assertTrue(pool.isEmpty(), "fallback delivery drains the pool at the final stop");
     }
+
+    @Test
+    void manualTripWithoutManifestDrainsPoolWhenNoOnwardCargo() {
+        java.util.List<com.monpai.sailboatmod.market.ShipmentManifestEntry> deliverHere = java.util.List.of();
+        java.util.List<net.minecraft.world.item.ItemStack> pool = new java.util.ArrayList<>(java.util.List.of(
+                new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.OAK_LOG, 64)));
+
+        java.util.List<net.minecraft.world.item.ItemStack> deliver =
+                com.monpai.sailboatmod.block.entity.DockBlockEntity.resolveDeliverCargo(pool, deliverHere, false);
+
+        assertFalse(deliver.isEmpty(), "manual cargo with no manifest should deliver the whole pool at the final stop");
+        assertTrue(pool.isEmpty(), "manual no-manifest delivery should drain the pool");
+    }
 }

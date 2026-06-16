@@ -1228,7 +1228,15 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
      */
     public static List<ItemStack> resolveDeliverCargo(List<ItemStack> pool, List<ShipmentManifestEntry> deliverHere,
                                                       boolean hasKeepOnboard) {
-        if (pool == null || pool.isEmpty() || deliverHere == null || deliverHere.isEmpty()) {
+        if (pool == null || pool.isEmpty()) {
+            return new ArrayList<>();
+        }
+        if (deliverHere == null || deliverHere.isEmpty()) {
+            if (!hasKeepOnboard) {
+                List<ItemStack> all = new ArrayList<>(pool);
+                pool.clear();
+                return all;
+            }
             return new ArrayList<>();
         }
         boolean hasUnspecifiedEntry = false;

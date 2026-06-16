@@ -1458,6 +1458,8 @@
     "message.sailboatmod.auto_route.water.failed.timeout": "水上航线计算超时。",
     "message.sailboatmod.auto_route.water.failed.already_pending": "这两个码头之间已有水上航线正在计算。",
     "message.sailboatmod.auto_route.water.failed.generic": "水上航线创建失败。",
+    "entity.sailboatmod.autopilot.stuck": "卡住，请协助",
+    "message.sailboatmod.autopilot.stuck": "你的帆船在窄河道卡住了，已暂停自动航行，请前往救援。",
     "block.sailboatmod.post_station.no_target": "本驿站内没有可用的马车。",
     "block.sailboatmod.post_station.no_route": "本驿站没有可用路线。",
     "command.sailboatmod.nation.core.moved": "%s 的国家核心已移动，旧核心方块现在可以安全拆除。",

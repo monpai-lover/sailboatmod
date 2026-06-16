@@ -40,6 +40,7 @@
       activeShipments: "Active logistics",
       route: "Route",
       status: "Status",
+      statusStuck: "Stuck · needs rescue",
       mode: "Mode",
       emptySelection: "Hover or click a market, territory, or shipment.",
       flag: "Flag"
@@ -65,6 +66,7 @@
       activeShipments: "进行中物流",
       route: "线路",
       status: "状态",
+      statusStuck: "阻塞 · 需救援",
       mode: "方式",
       emptySelection: "悬停或点击市场、领地、物流线路。",
       flag: "国旗"
@@ -647,12 +649,15 @@
     }
     state.shipmentList.innerHTML = `
       <div class="map-list-heading">${escapeHtml(label("activeShipments"))}</div>
-      ${shipments.map((shipment) => `
-        <button type="button" class="map-shipment-row" data-shipment-id="${escapeHtml(shipment.shippingOrderId || "")}">
+      ${shipments.map((shipment) => {
+        const stuck = String(shipment.status || "").toUpperCase() === "STUCK";
+        return `
+        <button type="button" class="map-shipment-row" data-shipment-id="${escapeHtml(shipment.shippingOrderId || "")}"${stuck ? ' style="color:#dc2626;font-weight:600;"' : ""}>
           <span>${escapeHtml(shipment.label || `${shipment.sourceName || "-"} -> ${shipment.targetName || "-"}`)}</span>
-          <small>${escapeHtml(shipment.transportMode || "-")} · ${Math.round((Number(shipment.progressRatio) || 0) * 100)}%</small>
+          <small>${escapeHtml(shipment.transportMode || "-")} · ${Math.round((Number(shipment.progressRatio) || 0) * 100)}%${stuck ? ` · ${escapeHtml(label("statusStuck"))}` : ""}</small>
         </button>
-      `).join("")}
+      `;
+      }).join("")}
     `;
     state.shipmentList.querySelectorAll("[data-shipment-id]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -718,13 +723,15 @@
       return;
     }
     const shipment = item.data;
+    const shipmentStuck = String(shipment.status || "").toUpperCase() === "STUCK";
+    const statusText = shipmentStuck ? label("statusStuck") : (shipment.status || "-");
     state.detailPanel.innerHTML = `
       <div class="map-detail-card">
         <p class="section-kicker">${escapeHtml(label("route"))}</p>
         <h3>${escapeHtml(shipment.label || `${shipment.sourceName || "-"} -> ${shipment.targetName || "-"}`)}</h3>
         <dl>
           <dt>${escapeHtml(label("mode"))}</dt><dd>${escapeHtml(shipment.transportMode || "-")}</dd>
-          <dt>${escapeHtml(label("status"))}</dt><dd>${escapeHtml(shipment.status || "-")}</dd>
+          <dt>${escapeHtml(label("status"))}</dt><dd${shipmentStuck ? ' style="color:#dc2626;font-weight:600;"' : ""}>${escapeHtml(statusText)}</dd>
           <dt>${escapeHtml(label("route"))}</dt><dd>${escapeHtml(shipment.sourceName || "-")} -> ${escapeHtml(shipment.targetName || "-")}</dd>
         </dl>
       </div>
@@ -954,11 +961,12 @@
       }
       const completed = clamp(Number(shipment.completedPointCount) || 0, 0, points.length - 1);
       const isManual = !!shipment.manual;
+      const isStuck = String(shipment.status || "").toUpperCase() === "STUCK";
       const doneColor = isManual ? "#f59e0b" : "#0ea5e9";
-      const pendColor = isManual ? "#b45309" : "#2563eb";
+      const pendColor = isStuck ? "#dc2626" : (isManual ? "#b45309" : "#2563eb");
       drawRoute(ctx, points.slice(0, completed + 1), false, doneColor, 4);
-      drawRoute(ctx, points.slice(completed), true, pendColor, 3);
-      drawShipmentVehicleIcon(ctx, shipment, points, completed);
+      drawRoute(ctx, points.slice(completed), true, pendColor, isStuck ? 5 : 3);
+      drawShipmentVehicleIcon(ctx, shipment, points, completed, isStuck);
     }
   }
 
@@ -978,7 +986,7 @@
     return { point: current, angle };
   }
 
-  function drawShipmentVehicleIcon(ctx, shipment, points, completedPointCount) {
+  function drawShipmentVehicleIcon(ctx, shipment, points, completedPointCount, isStuck) {
     const fallbackPose = shipmentIconPose(points, completedPointCount);
     // 优先用实时插值坐标跟走；无实时数据时回退到路点定位。
     const live = shipmentLivePoint(shipment);
@@ -1000,12 +1008,13 @@
     }
     const size = clamp(18 + state.zoom * 2, 18, 28);
     const mode = String(shipment.transportMode || "").toUpperCase();
-    // 脉动光晕：随时间正弦呼吸，手动车暖色、调度车冷色。
+    // 脉动光晕：随时间正弦呼吸，卡死告警用红色、手动车暖色、调度车冷色。
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350);
+    const haloColor = isStuck ? "#dc2626" : (shipment.manual ? "#f59e0b" : "#0ea5e9");
     ctx.save();
     ctx.translate(screen.x, screen.y);
-    ctx.globalAlpha = 0.18 + 0.16 * pulse;
-    ctx.fillStyle = shipment.manual ? "#f59e0b" : "#0ea5e9";
+    ctx.globalAlpha = isStuck ? (0.30 + 0.30 * pulse) : (0.18 + 0.16 * pulse);
+    ctx.fillStyle = haloColor;
     ctx.beginPath();
     ctx.arc(0, 0, size * (0.7 + 0.25 * pulse), 0, Math.PI * 2);
     ctx.fill();
@@ -1017,6 +1026,26 @@
       drawCarriageIcon(ctx, size);
     }
     ctx.restore();
+    // 卡死告警角标：图标右上角红圈白感叹号（不随船头旋转）。
+    if (isStuck) {
+      const badge = size * 0.42;
+      const bx = screen.x + size * 0.55;
+      const by = screen.y - size * 0.55;
+      ctx.save();
+      ctx.fillStyle = "#dc2626";
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(bx, by, badge, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `bold ${Math.round(badge * 1.4)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("!", bx, by + badge * 0.05);
+      ctx.restore();
+    }
   }
 
   function drawSailboatIcon(ctx, size) {
@@ -1338,10 +1367,12 @@
       `;
     } else {
       const shipment = item.data;
+      const tipStuck = String(shipment.status || "").toUpperCase() === "STUCK";
       html = `
         <strong>${escapeHtml(shipment.label || `${shipment.sourceName || "-"} -> ${shipment.targetName || "-"}`)}</strong>
         <span>${escapeHtml(label("mode"))}: ${escapeHtml(shipment.transportMode || "-")}</span>
         <span>${Math.round((Number(shipment.progressRatio) || 0) * 100)}%</span>
+        ${tipStuck ? `<span style="color:#dc2626;font-weight:600;">${escapeHtml(label("statusStuck"))}</span>` : ""}
       `;
     }
     state.tooltip.innerHTML = html;

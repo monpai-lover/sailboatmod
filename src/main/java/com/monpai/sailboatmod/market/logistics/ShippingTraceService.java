@@ -43,6 +43,7 @@ public final class ShippingTraceService {
                 gameTime,
                 0.0D,
                 0.0D,
+                0.0D,
                 false
         ));
     }
@@ -131,7 +132,8 @@ public final class ShippingTraceService {
 
     public static boolean isMapVisibleStatus(String status) {
         String normalized = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
-        return "SAILING".equals(normalized) || "IN_TRANSIT".equals(normalized) || "ARRIVED".equals(normalized);
+        return "SAILING".equals(normalized) || "IN_TRANSIT".equals(normalized)
+                || "ARRIVED".equals(normalized) || "STUCK".equals(normalized);
     }
 
     /** 手动发车的稳定 trace id，与订单 id 不冲突。 */
@@ -162,7 +164,7 @@ public final class ShippingTraceService {
                 manualTraceId(vehicleUuid), shipperUuid == null ? "" : shipperUuid,
                 MarketWebMapConstants.OVERWORLD, transportMode, status,
                 nationId == null ? "" : nationId, "", src, dst,
-                waypoints, 0, 0.0D, gameTime, gameTime, currentX, currentZ, true);
+                waypoints, 0, 0.0D, gameTime, gameTime, currentX, currentZ, 0.0D, true);
         ShippingTraceSavedData.get(level).putTrace(rec);
     }
 
