@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.market.logistics;
 
+import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.PurchaseOrder;
@@ -11,6 +12,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.nation.service.DockTownResolver;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -24,6 +26,9 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class ShippingTraceService {
+    /** 手动轨迹尾坐标查不到 town 时，向附近这么多格内找最近驿站方块反查其绑定 town。 */
+    private static final int STATION_SEARCH_RADIUS = 48;
+
     public static void createOrUpdateTrace(Level level, ShippingOrder order, RouteDefinition route) {
         if (!(level instanceof ServerLevel serverLevel) || order == null || route == null || route.waypoints().size() < 2) {
             return;
@@ -110,14 +115,15 @@ public final class ShippingTraceService {
         NationSavedData nationData = overworld == null ? null : NationSavedData.get(overworld);
         MarketSavedData marketData = overworld == null ? null : MarketSavedData.get(overworld);
         for (ShippingTraceRecord trace : traces == null ? List.<ShippingTraceRecord>of() : traces) {
-            out.add(toDto(trace, nationData, marketData));
+            out.add(toDto(trace, nationData, marketData, overworld));
         }
         return out;
     }
 
     public static MarketWebMapDtos.ShipmentTrace toDto(ShippingTraceRecord trace,
                                                        NationSavedData nationData,
-                                                       MarketSavedData marketData) {
+                                                       MarketSavedData marketData,
+                                                       net.minecraft.world.level.Level level) {
         List<MarketWebMapDtos.Point> points = new ArrayList<>();
         for (Vec3 waypoint : trace.waypoints()) {
             points.add(new MarketWebMapDtos.Point(waypoint.x, waypoint.z));
@@ -132,16 +138,16 @@ public final class ShippingTraceService {
         int etaSeconds = 0;
         List<MarketWebMapDtos.CargoItem> cargo = List.of();
         if (order != null) {
-            sourceTown = resolveTownName(nationData, order.sourceDockPos());
-            targetTown = resolveTownName(nationData, order.targetDockPos());
+            sourceTown = resolveTownNameForPos(nationData, level, order.sourceDockPos());
+            targetTown = resolveTownNameForPos(nationData, level, order.targetDockPos());
             etaSeconds = order.etaSeconds();
             cargo = resolveCargo(marketData, order);
         } else if (trace.manual() && trace.waypoints().size() >= 2) {
             // 手动轨迹无订单：用 waypoints 首尾坐标反查 town→town 命名；ETA 用当前速度 + 剩余路程现算。
             // 货物由 manual 轨迹自带的快照提供（手动发车时从载具容器抓取）。
             List<Vec3> waypoints = trace.waypoints();
-            sourceTown = resolveTownNameFromXZ(nationData, waypoints.get(0).x, waypoints.get(0).z);
-            targetTown = resolveTownNameFromXZ(nationData,
+            sourceTown = resolveTownNameNearXZ(nationData, level, waypoints.get(0).x, waypoints.get(0).z);
+            targetTown = resolveTownNameNearXZ(nationData, level,
                     waypoints.get(waypoints.size() - 1).x, waypoints.get(waypoints.size() - 1).z);
             etaSeconds = estimateManualEtaSeconds(trace);
             cargo = trace.cargo();
@@ -172,32 +178,95 @@ public final class ShippingTraceService {
         );
     }
 
-    /** dock 坐标 → 所在 claim 的 town 名；无主地/无 town 返回空串。 */
-    private static String resolveTownName(NationSavedData nationData, net.minecraft.core.BlockPos dockPos) {
-        if (nationData == null || dockPos == null) {
+    /**
+     * 由 townId 取 town 名；空/查无返回空串。
+     */
+    private static String townNameById(NationSavedData nationData, String townId) {
+        if (nationData == null || townId == null || townId.isBlank()) {
             return "";
         }
-        NationClaimRecord claim = nationData.getClaim(MarketWebMapConstants.OVERWORLD, dockPos.getX() >> 4, dockPos.getZ() >> 4);
-        if (claim == null || claim.townId() == null || claim.townId().isBlank()) {
-            return "";
-        }
-        TownRecord town = nationData.getTown(claim.townId());
+        TownRecord town = nationData.getTown(townId);
         return town == null || town.name() == null ? "" : town.name();
     }
 
-    /** 世界 X/Z 坐标 → 所在 claim 的 town 名（手动轨迹用 waypoints 首尾反查），无主地返回空串。 */
-    private static String resolveTownNameFromXZ(NationSavedData nationData, double worldX, double worldZ) {
+    /**
+     * dock/驿站坐标 → 所属 town 名（robust）。优先用 {@link DockTownResolver} 读驿站方块实体上绑定的
+     * townId（即使驿站坐落在无主地也存着），再退回按 claim 查；都查不到才返回空串（前端 fallback 驿站名）。
+     * 这修复了「目的地驿站在无主地 / claim 查不到 → 显示驿站名而非 town 名」的回退显示。
+     */
+    private static String resolveTownNameForPos(NationSavedData nationData,
+                                                net.minecraft.world.level.Level level,
+                                                net.minecraft.core.BlockPos dockPos) {
+        if (nationData == null || dockPos == null) {
+            return "";
+        }
+        // 1) 驿站方块实体绑定的 townId（权威，无主地也有）。
+        if (level != null) {
+            String boundTownId = DockTownResolver.resolveTownForArrival(level, dockPos);
+            String name = townNameById(nationData, boundTownId);
+            if (!name.isBlank()) {
+                return name;
+            }
+        }
+        // 2) 退回按所在 chunk 的 claim 查。
+        NationClaimRecord claim = nationData.getClaim(MarketWebMapConstants.OVERWORLD,
+                dockPos.getX() >> 4, dockPos.getZ() >> 4);
+        if (claim != null && claim.townId() != null && !claim.townId().isBlank()) {
+            return townNameById(nationData, claim.townId());
+        }
+        return "";
+    }
+
+    /**
+     * 世界 X/Z → 所属 town 名（手动轨迹用 waypoints 首尾反查，robust）。先按 XZ 直接查 claim；查不到再到
+     * {@link PostStationRegistry} 里找该坐标附近（{@value #STATION_SEARCH_RADIUS} 格内）最近的驿站方块，
+     * 用驿站坐标走 {@link #resolveTownNameForPos} 解析其绑定 town —— 修「尾坐标落在 town 边界外几格 /
+     * 驿站在无主地 → 显示驿站名」。
+     */
+    private static String resolveTownNameNearXZ(NationSavedData nationData,
+                                                net.minecraft.world.level.Level level,
+                                                double worldX, double worldZ) {
         if (nationData == null) {
             return "";
         }
         int chunkX = net.minecraft.util.Mth.floor(worldX) >> 4;
         int chunkZ = net.minecraft.util.Mth.floor(worldZ) >> 4;
+        // 1) 快路径：直接按 claim 查。
         NationClaimRecord claim = nationData.getClaim(MarketWebMapConstants.OVERWORLD, chunkX, chunkZ);
-        if (claim == null || claim.townId() == null || claim.townId().isBlank()) {
-            return "";
+        if (claim != null && claim.townId() != null && !claim.townId().isBlank()) {
+            String name = townNameById(nationData, claim.townId());
+            if (!name.isBlank()) {
+                return name;
+            }
         }
-        TownRecord town = nationData.getTown(claim.townId());
-        return town == null || town.name() == null ? "" : town.name();
+        // 2) 找附近最近的驿站方块，用其绑定 town 名（覆盖尾坐标偏离 / 无主地驿站）。
+        if (level != null) {
+            net.minecraft.core.BlockPos nearest = nearestPostStation(level, worldX, worldZ);
+            if (nearest != null) {
+                String name = resolveTownNameForPos(nationData, level, nearest);
+                if (!name.isBlank()) {
+                    return name;
+                }
+            }
+        }
+        return "";
+    }
+
+    /** 半径内（格）找最近驿站方块；超出范围或无驿站返回 null。 */
+    private static net.minecraft.core.BlockPos nearestPostStation(net.minecraft.world.level.Level level,
+                                                                  double worldX, double worldZ) {
+        net.minecraft.core.BlockPos best = null;
+        double bestSqr = (double) STATION_SEARCH_RADIUS * STATION_SEARCH_RADIUS;
+        for (net.minecraft.core.BlockPos station : PostStationRegistry.get(level)) {
+            double dx = station.getX() + 0.5D - worldX;
+            double dz = station.getZ() + 0.5D - worldZ;
+            double sqr = dx * dx + dz * dz;
+            if (sqr <= bestSqr) {
+                bestSqr = sqr;
+                best = station;
+            }
+        }
+        return best;
     }
 
     /**
