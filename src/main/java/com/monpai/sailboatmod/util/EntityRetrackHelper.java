@@ -13,7 +13,6 @@ import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -100,61 +99,6 @@ public final class EntityRetrackHelper {
         }
         // 离开范围的玩家移除，下次再进入会作为「新玩家」重新补发 spawn（覆盖「走开又回来」）。
         alreadySpawned.retainAll(inRangeNow);
-        return spawned;
-    }
-
-    /**
-     * 调试变体：每个玩家进入视野范围后，最多补发 {@code maxSpawnsPerPlayer} 次 spawn 包族就停，
-     * 之后只发 teleport+motion 维持移动。用于验证「持续每秒重发 spawn 反而干扰客户端建实体」的假设：
-     * 若改成「进范围后发固定几次就停」能稳定可见，说明问题出在重发频率而非发送本身。
-     *
-     * @param spawnCounts 由调用实体持有的可变 map：玩家 UUID → 已补发 spawn 次数（本方法就地增改）。
-     * @param maxSpawnsPerPlayer 每个玩家进范围后最多发几次 spawn（如 5）。达到后不再发 spawn，只发位置同步。
-     * @return 本次实际补发 spawn 包族的玩家数。
-     */
-    public static int resendSpawnCapped(ServerLevel level, Entity entity, Map<UUID, Integer> spawnCounts,
-                                        int maxSpawnsPerPlayer) {
-        if (level == null || entity == null || spawnCounts == null || !entity.isAddedToWorld()) {
-            return 0;
-        }
-        double ex = entity.getX();
-        double ey = entity.getY();
-        double ez = entity.getZ();
-        var nonDefault = entity.getEntityData().getNonDefaultValues();
-        boolean hasPassengers = !entity.getPassengers().isEmpty();
-        ClientboundTeleportEntityPacket teleport = new ClientboundTeleportEntityPacket(entity);
-        ClientboundSetEntityMotionPacket motion = new ClientboundSetEntityMotionPacket(entity);
-
-        java.util.HashSet<UUID> inRangeNow = new java.util.HashSet<>();
-        int spawned = 0;
-        for (ServerPlayer player : level.players()) {
-            if (player == null || player.connection == null) {
-                continue;
-            }
-            if (player.distanceToSqr(ex, ey, ez) > RETRACK_RANGE_SQR) {
-                continue;
-            }
-            UUID id = player.getUUID();
-            inRangeNow.add(id);
-            int sentSoFar = spawnCounts.getOrDefault(id, 0);
-            // 进范围后前 maxSpawnsPerPlayer 帧（每次调用算一帧）补发 spawn，之后停。
-            if (sentSoFar < maxSpawnsPerPlayer) {
-                player.connection.send(entity.getAddEntityPacket());
-                if (nonDefault != null && !nonDefault.isEmpty()) {
-                    player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
-                }
-                if (hasPassengers) {
-                    player.connection.send(new ClientboundSetPassengersPacket(entity));
-                }
-                spawnCounts.put(id, sentSoFar + 1);
-                spawned++;
-            }
-            // 所有范围内玩家：每帧补发绝对位置 + 速度，维持移动同步。
-            player.connection.send(teleport);
-            player.connection.send(motion);
-        }
-        // 离开范围的玩家移除其计数，下次再进入从 0 开始重新发满 maxSpawnsPerPlayer 次。
-        spawnCounts.keySet().retainAll(inRangeNow);
         return spawned;
     }
 

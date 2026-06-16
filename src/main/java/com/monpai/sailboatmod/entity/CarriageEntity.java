@@ -263,12 +263,11 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 常规追踪机制补发 spawn 的窗口。实体移除时票据自动释放，多持几秒无害。
     private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
     private int postArrivalForcedHoldTicks = 0;
-    // enroute 调试：每个玩家进视野范围后最多补发几次 spawn 就停（验证「持续重发干扰建实体」假设）。
-    private static final int ENROUTE_SPAWN_CAP = 5;
+    // enroute spawn 心跳周期(tick)：每隔这么久对范围内所有玩家重发一次完整 spawn 包族，兜底被丢弃的实体。
+    // 60=3s：实测唯一成功的持续重发模型，频率从每秒降到每 3 秒省开销（包量极小、对服务器无感）。
+    private static final int ENROUTE_SPAWN_HEARTBEAT_TICKS = 60;
     // 已对其补发过 spawn 的附近玩家（修「幽灵车」：玩家一进入视野即补 spawn，离开则移除，再进入重补）。
     private final Set<java.util.UUID> spawnedToPlayers = new HashSet<>();
-    // enroute 调试：玩家进范围后已补发 spawn 的次数（每玩家发满 ENROUTE_SPAWN_CAP 次就停，验证频率假设）。
-    private final java.util.Map<java.util.UUID, Integer> enrouteSpawnCounts = new java.util.HashMap<>();
     private final Set<Long> forcedAutopilotChunks = new HashSet<>();
     private String pendingShipperName = "";
     private String ownerName = "";
@@ -1663,21 +1662,23 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return;
         }
         // 幽灵车修复：autopilot 全程 + 到站宽限期内，对范围内玩家维持可见。
-        // 调试方案（用户提议）：每个玩家进入视野后只补发固定 ENROUTE_SPAWN_CAP(=5) 次 spawn 就停，
-        // 之后只发 teleport+motion 维持移动 —— 验证「持续每帧/每秒重发 spawn 反而干扰客户端建实体」的假设。
-        // 若发满 5 次就停能稳定可见，说明问题在重发频率；若仍幽灵车，再回到周期性 spawn 心跳。
+        // 实测定论（2026-06，三次验证）：「发几次就停」必回归幽灵车——多 mod 坏掉 EntityTracker 时
+        // 客户端区块追踪窗口何时建立不可预测，停发后被丢弃的 spawn 再也补不回。唯一成功的版本是
+        // **从进视野到贴脸全程持续重发 spawn**。故回到持续 spawn 心跳，仅把频率从每秒 1 次降到每 3 秒
+        // 1 次省开销：每 2 tick 发 teleport+motion 维持平滑移动；每 ENROUTE_SPAWN_HEARTBEAT_TICKS(60=3s)
+        // 对范围内所有玩家重发一次完整 spawn 包族兜底被丢弃的实体（不每帧重发，否则客户端插值重置→渲染抽搐）。
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
             if (tickCount % 2 == 0) {
-                int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnCapped(
-                        serverLevel, this, enrouteSpawnCounts, ENROUTE_SPAWN_CAP);
+                boolean spawnHeartbeat = (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0);
+                int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
+                        serverLevel, this, spawnedToPlayers, spawnHeartbeat);
                 if (sent > 0) {
-                    LOGGER.info("[CarriageEntity] enroute spawn-capped sent={} counts={} pos=({},{},{})",
-                            sent, enrouteSpawnCounts, (int) getX(), (int) getY(), (int) getZ());
+                    LOGGER.info("[CarriageEntity] enroute spawn heartbeat sent={} tracked={} pos=({},{},{})",
+                            sent, spawnedToPlayers.size(), (int) getX(), (int) getY(), (int) getZ());
                 }
             }
         } else {
             spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置，下次发车重新跟踪
-            enrouteSpawnCounts.clear();
         }
         if (!isAutopilotActive()) {
             // 宽限期递减；期满才释放票据。
