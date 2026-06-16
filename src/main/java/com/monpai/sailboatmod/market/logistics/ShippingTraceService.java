@@ -218,8 +218,11 @@ public final class ShippingTraceService {
     }
 
     /**
-     * 清理无效/孤儿轨迹。
-     * @param force true=手动指令立即清理（忽略时间阈值，只看订单终态/手动 id），false=定期兜底（带时间阈值）。
+     * 清理无效/孤儿轨迹。核心判据：轨迹对应的载具实体是否仍存活（跨所有维度查）。
+     * 载具不存在 = 船/车已被打掉/卸载/崩溃丢失 → 轨迹必然是僵尸，删之。这比看订单状态可靠
+     * （船被打掉时订单状态常仍停在 SAILING，旧的"看状态"判据会漏掉这种残留轨迹）。
+     * @param force true=手动指令立即清理（实体不存在即删，无时间宽限）；
+     *              false=定期兜底（实体不存在 + 距上次更新超阈值才删，给未加载实体留缓冲）。
      * @return 删除的轨迹条数。
      */
     public static int cleanupOrphanTraces(net.minecraft.server.MinecraftServer server, boolean force) {
@@ -236,18 +239,17 @@ public final class ShippingTraceService {
             if (id.isBlank()) {
                 continue;
             }
-            long idleTicks = Math.max(0L, now - trace.updatedGameTime());
-            boolean manual = trace.manual() || id.startsWith("manual-");
-            if (manual) {
-                // 手动轨迹无订单可查：定期模式靠长闲置判定；force 模式不动手动轨迹（无法确认载具是否还在跑）。
-                if (!force && idleTicks > STALE_MANUAL_TRACE_TICKS) {
-                    toRemove.add(id);
-                }
-                continue;
+            // 解析轨迹对应的载具 uuid：订单轨迹用订单的 boatUuid；手动轨迹 id 形如 "manual-<uuid>"。
+            java.util.UUID vehicleUuid = resolveTraceVehicleUuid(marketData, trace, id);
+            boolean vehicleAlive = vehicleUuid != null && isEntityAliveAnywhere(server, vehicleUuid);
+            if (vehicleAlive) {
+                continue; // 载具还在跑，保留轨迹
             }
-            ShippingOrder order = marketData.getShippingOrder(id);
-            boolean terminal = order == null || !isMapVisibleStatus(order.status());
-            if (terminal && (force || idleTicks > STALE_ORDER_TRACE_TICKS)) {
+            // 载具不存在 = 僵尸轨迹。force 立即删；定期兜底要求距上次更新已超阈值（避免误删刚卸载/未加载的实体）。
+            long idleTicks = Math.max(0L, now - trace.updatedGameTime());
+            long staleThreshold = (trace.manual() || id.startsWith("manual-"))
+                    ? STALE_MANUAL_TRACE_TICKS : STALE_ORDER_TRACE_TICKS;
+            if (force || idleTicks > staleThreshold) {
                 toRemove.add(id);
             }
         }
@@ -255,6 +257,42 @@ public final class ShippingTraceService {
             traceData.removeTrace(id);
         }
         return toRemove.size();
+    }
+
+    /** 解析轨迹对应的载具 uuid（订单 boatUuid / 手动 id 后缀），无法解析返回 null。 */
+    private static java.util.UUID resolveTraceVehicleUuid(MarketSavedData marketData, ShippingTraceRecord trace, String id) {
+        if (id.startsWith("manual-")) {
+            return parseUuid(id.substring("manual-".length()));
+        }
+        if (marketData != null) {
+            ShippingOrder order = marketData.getShippingOrder(id);
+            if (order != null && !order.boatUuid().isBlank()) {
+                return parseUuid(order.boatUuid());
+            }
+        }
+        // 回退：用 shipperUuid 无意义（那是玩家），无 boat uuid 时返回 null → 走时间阈值兜底。
+        return null;
+    }
+
+    private static java.util.UUID parseUuid(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return java.util.UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    /** 跨所有维度查实体是否存活。 */
+    private static boolean isEntityAliveAnywhere(net.minecraft.server.MinecraftServer server, java.util.UUID uuid) {
+        for (ServerLevel level : server.getAllLevels()) {
+            if (level.getEntity(uuid) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
