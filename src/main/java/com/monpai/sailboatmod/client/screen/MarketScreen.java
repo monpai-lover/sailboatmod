@@ -204,6 +204,21 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         return menu;
     }
 
+    /**
+     * 把字符输入转发给当前聚焦的 Elementa 组件。Elementa 的 WindowScreen 没有覆写原版
+     * {@code charTyped}，导致输入法（IME）合成的字符（如中文）走原版 charTyped 回调进来后无人转发，
+     * 聚焦的 UITextInput 收不到 → 改名等输入框打不出中文。这里手动把字符送给聚焦组件的 keyType。
+     */
+    @Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        UIComponent focused = getWindow().getFocusedComponent();
+        if (focused != null) {
+            focused.keyType(codePoint, modifiers);
+            return true;
+        }
+        return super.charTyped(codePoint, modifiers);
+    }
+
     @Override
     public boolean isForMarket(BlockPos pos) {
         return data.marketPos().equals(pos);

@@ -563,8 +563,6 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         CarriageRailPathFollower.StepResult step = railAutopilotStep(autopilotRoute, position(), autopilotTargetIndex);
         autopilotTargetIndex = step.targetIndex();
         if (step.finished()) {
-            LOGGER.info("[CarriageAutopilot] finished entity={} uuid={} pos={} stepPos={} targetIndex={} routeSize={} task={} cargo={}",
-                    getId(), getUUID(), position(), step.position(), autopilotTargetIndex, autopilotRoute.size(), transportTaskKind, hasCargo());
             Vec3 correctedPosition = railAutopilotSurfacePosition(step.position());
             applyRailAutopilotPose(correctedPosition, step.yaw(), correctedPosition.subtract(position()));
             finishAutopilot();
@@ -1265,13 +1263,11 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     public void remove(RemovalReason reason) {
-        if (!level().isClientSide) {
-            String message = "[CarriageEntity] remove entity={} uuid={} reason={} pos={} autopilot={} paused={} routeSize={} targetIndex={} task={} cargo={}";
-            if (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED || reason == RemovalReason.CHANGED_DIMENSION) {
-                LOGGER.warn(message, getId(), getUUID(), reason, position(), isAutopilotActive(), isAutopilotPaused(), autopilotRoute.size(), autopilotTargetIndex, transportTaskKind, hasCargo());
-            } else {
-                LOGGER.info(message, getId(), getUUID(), reason, position(), isAutopilotActive(), isAutopilotPaused(), autopilotRoute.size(), autopilotTargetIndex, transportTaskKind, hasCargo());
-            }
+        if (!level().isClientSide
+                && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED
+                        || reason == RemovalReason.CHANGED_DIMENSION)) {
+            LOGGER.warn("[CarriageEntity] remove entity={} uuid={} reason={} pos={} autopilot={} paused={} routeSize={} targetIndex={} task={} cargo={}",
+                    getId(), getUUID(), reason, position(), isAutopilotActive(), isAutopilotPaused(), autopilotRoute.size(), autopilotTargetIndex, transportTaskKind, hasCargo());
         }
         if (!level().isClientSide && reason == RemovalReason.KILLED) {
             Containers.dropContents(level(), blockPosition(), container);
@@ -1565,25 +1561,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return false;
         }
         Vec3 snappedStart = railAutopilotStartPosition(autopilotRoute, position(), routeDockPos);
-        Vec3 beforeStart = position();
-        LOGGER.info("[CarriageAutopilot] start entity={} uuid={} pos={} routeName={} routeDockPos={} routeSize={} first={} second={} last={} snappedStart={} task={} cargo={}",
-                getId(),
-                getUUID(),
-                beforeStart,
-                route.name(),
-                routeDockPos,
-                autopilotRoute.size(),
-                autopilotRoute.isEmpty() ? null : autopilotRoute.get(0),
-                autopilotRoute.size() > 1 ? autopilotRoute.get(1) : null,
-                autopilotRoute.isEmpty() ? null : autopilotRoute.get(autopilotRoute.size() - 1),
-                snappedStart,
-                transportTaskKind,
-                hasCargo());
         if (snappedStart != null && horizontalDistance(position(), snappedStart) > 1.0E-6D) {
             setPos(snappedStart.x, snappedStart.y, snappedStart.z);
             setDeltaMovement(Vec3.ZERO);
-            LOGGER.info("[CarriageAutopilot] snapped start entity={} uuid={} from={} to={}",
-                    getId(), getUUID(), beforeStart, snappedStart);
         }
         autopilotTargetIndex = 1;
         autopilotRouteName = route.name() == null || route.name().isBlank() ? "Route-" + (selectedRouteIndex + 1) : route.name();
@@ -1666,12 +1646,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
      * 在宽限期内持续重发，覆盖客户端建立追踪的窗口（修「幽灵车」）。
      */
     private void forceRetrackForNearbyPlayers(ServerLevel serverLevel) {
-        long chunkKey = net.minecraft.world.level.ChunkPos.asLong(blockPosition());
-        boolean forced = forcedAutopilotChunks.contains(chunkKey);
         spawnedToPlayers.clear();
-        int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers, true);
-        LOGGER.info("[CarriageEntity] arrival respawn(stop) uuid={} pos={} chunkForced={} sentToPlayers={} added={}",
-                getUUID(), blockPosition(), forced, sent, isAddedToWorld());
+        com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers, true);
     }
 
     /**
@@ -1682,27 +1658,15 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
-        // 幽灵车持续修复：autopilot 全程 + 到站宽限期内，每 tick 对「新进入视野范围、客户端尚未收到 spawn」
-        // 的玩家补发 spawn 包族 —— 实现「车辆一进入玩家视野就恢复可视」。只对新玩家发、离开即移除，
-        // 不重复轰炸已可见玩家（spawnedToPlayers 由本实体持有）。
+        // 幽灵车修复：autopilot 全程 + 到站宽限期内，对「新进入视野范围、客户端尚未收到 spawn」的玩家
+        // 补发一次 spawn 包族 —— 实现「车辆一进入玩家视野就恢复可视」。只对新玩家发一次、离开即移除，
+        // 之后靠 teleport+motion 维持移动，不每秒重发 spawn（spawnedToPlayers 由本实体持有）。
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
             // 每 2 tick 同步一次：对范围内玩家发位置(teleport)+motion 维持平滑移动；
-            // 每 20 tick(约 1 秒)置 spawnHeartbeat 重发 spawn 包族，修复被坏掉的 EntityTracker 丢弃的实体。
+            // 新玩家进范围那次顺带补发 spawn（forceRespawn=false，只发新玩家，不轰炸已可见玩家）。
             if (tickCount % 2 == 0) {
-                boolean spawnHeartbeat = tickCount % 20 == 0;
-                int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
-                        serverLevel, this, spawnedToPlayers, spawnHeartbeat);
-                if (tickCount % 40 == 0) {
-                    double nearestSqr = Double.MAX_VALUE;
-                    for (net.minecraft.server.level.ServerPlayer p : serverLevel.players()) {
-                        double d = p.distanceToSqr(getX(), getY(), getZ());
-                        if (d < nearestSqr) nearestSqr = d;
-                    }
-                    int nearestDist = nearestSqr == Double.MAX_VALUE ? -1 : (int) Math.sqrt(nearestSqr);
-                    LOGGER.info("[CarriageEntity] enroute sync uuid={} pos={} autopilot={} hold={} nearestPlayer={}blk newSpawn={} tracked={}",
-                            getUUID(), blockPosition(), isAutopilotActive(), postArrivalForcedHoldTicks,
-                            nearestDist, sent, spawnedToPlayers.size());
-                }
+                com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
+                        serverLevel, this, spawnedToPlayers, false);
             }
         } else {
             spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置，下次发车重新跟踪
@@ -2429,11 +2393,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (level() instanceof ServerLevel serverLevel) {
             postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
             spawnedToPlayers.clear();
-            int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers, true);
-            LOGGER.info("[CarriageEntity] arrival respawn uuid={} pos={} chunkForced={} sentToPlayers={} added={}",
-                    getUUID(), blockPosition(),
-                    forcedAutopilotChunks.contains(net.minecraft.world.level.ChunkPos.asLong(blockPosition())),
-                    sent, isAddedToWorld());
+            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers, true);
         }
     }
 

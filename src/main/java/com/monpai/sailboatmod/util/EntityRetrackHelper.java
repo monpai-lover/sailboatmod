@@ -39,25 +39,24 @@ public final class EntityRetrackHelper {
     }
 
     /**
-     * 对视野范围内玩家维持可见。多 mod 坏掉的 EntityTracker 环境下，「发一次 spawn 即标记完成、之后只发
-     * teleport」的旧模型会失败：那一次 spawn 被客户端丢弃后，teleport 对客户端不存在的实体无效 → 返航全程
-     * 看不见、只到站才出现（实测 2026-06 确认）。
+     * 对视野范围内玩家维持可见。多 mod 坏掉的 EntityTracker 环境下，spawn 包被客户端丢弃后 teleport 对
+     * 客户端不存在的实体无效 → 返航全程看不见、只到站才出现（实测 2026-06 确认）。
      *
-     * <p>新模型分两路：
+     * <p>模型分两路：
      * <ul>
      *   <li><b>每帧</b>对范围内所有玩家发 teleport+motion —— 平滑移动，替代失效的 EntityTracker 移动同步。</li>
-     *   <li><b>spawn 包族</b>（add+data+passengers）在两种情况下重发：玩家刚进入范围（立即），或本次为
-     *       <i>心跳帧</i>（{@code spawnHeartbeat=true}，调用方约每秒置一次）。心跳持续「修复」被客户端丢弃的
-     *       实体，又不至于每帧重建 spawn 导致客户端插值重置、渲染抽搐。</li>
+     *   <li><b>spawn 包族</b>（add+data+passengers）只在玩家<i>刚进入范围</i>时发一次（让马车出现）；玩家走出
+     *       范围再进入会重新算作「新玩家」补发。实测证明进视野第一次 spawn 即成功，无需每秒重发心跳，故去掉
+     *       周期性重发以省开销。{@code forceRespawn=true} 时（如到站收尾）对范围内所有玩家强制重发一次。</li>
      * </ul>
      * 原版 {@code ClientboundAddEntityPacket} 按 entity-id 幂等覆盖，重发安全。
      *
      * @param alreadySpawned 由调用实体持有的可变集合，记录当前仍在范围内的玩家 UUID（本方法就地增删）。
-     * @param spawnHeartbeat true 时对范围内所有玩家重发 spawn 包族（心跳兜底）；false 时只对刚进范围的新玩家发。
-     * @return 本次补发 spawn 包族的玩家数（新玩家 + 心跳帧的全部范围内玩家）。
+     * @param forceRespawn true 时对范围内所有玩家强制重发一次 spawn 包族（到站收尾用）；false 时只对刚进范围的新玩家发。
+     * @return 本次补发 spawn 包族的玩家数。
      */
     public static int resendSpawnToNewTrackers(ServerLevel level, Entity entity, Set<UUID> alreadySpawned,
-                                               boolean spawnHeartbeat) {
+                                               boolean forceRespawn) {
         if (level == null || entity == null || alreadySpawned == null || !entity.isAddedToWorld()) {
             return 0;
         }
@@ -81,8 +80,8 @@ public final class EntityRetrackHelper {
             UUID id = player.getUUID();
             inRangeNow.add(id);
             boolean isNew = !alreadySpawned.contains(id);
-            // 新进范围立即 spawn；心跳帧对所有范围内玩家重发 spawn 修复被丢弃的实体。
-            if (isNew || spawnHeartbeat) {
+            // 新进范围发一次 spawn 让马车出现；forceRespawn（到站收尾）对所有范围内玩家强制重发一次。
+            if (isNew || forceRespawn) {
                 player.connection.send(entity.getAddEntityPacket());
                 if (nonDefault != null && !nonDefault.isEmpty()) {
                     player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
@@ -97,7 +96,7 @@ public final class EntityRetrackHelper {
             player.connection.send(teleport);
             player.connection.send(motion);
         }
-        // 离开范围的玩家移除，下次再进入会作为「新玩家」立即重发 spawn（覆盖「走开又回来」）。
+        // 离开范围的玩家移除，下次再进入会作为「新玩家」重新补发 spawn（覆盖「走开又回来」）。
         alreadySpawned.retainAll(inRangeNow);
         return spawned;
     }

@@ -458,12 +458,9 @@ public final class NationEvents {
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onServerChat(ServerChatEvent event) {
         ServerPlayer player = event.getPlayer();
+        // 名字前缀由 onNameFormat 加在玩家显示名上（聊天显示为 <[国][职]名> 内容）。
+        // 此处只同步 Bukkit 显示名；不再往消息正文拼前缀，否则会重复显示成 <[国][职]名> [国][职]内容。
         syncBukkitDisplayName(player);
-        Component prefix = NationService.buildNamePrefix(player.level(), player.getUUID());
-        if (prefix.getString().isBlank()) {
-            return;
-        }
-        event.setMessage(Component.empty().append(prefix).append(event.getMessage()));
     }
 
     private static void syncBukkitDisplayName(ServerPlayer player) {
