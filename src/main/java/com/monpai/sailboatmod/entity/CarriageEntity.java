@@ -263,6 +263,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 常规追踪机制补发 spawn 的窗口。实体移除时票据自动释放，多持几秒无害。
     private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
     private int postArrivalForcedHoldTicks = 0;
+    // 已对其补发过 spawn 的附近玩家（修「幽灵车」：玩家一进入视野即补 spawn，离开则移除，再进入重补）。
+    private final Set<java.util.UUID> spawnedToPlayers = new HashSet<>();
     private final Set<Long> forcedAutopilotChunks = new HashSet<>();
     private String pendingShipperName = "";
     private String ownerName = "";
@@ -1666,7 +1668,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private void forceRetrackForNearbyPlayers(ServerLevel serverLevel) {
         long chunkKey = net.minecraft.world.level.ChunkPos.asLong(blockPosition());
         boolean forced = forcedAutopilotChunks.contains(chunkKey);
-        int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNearby(serverLevel, this);
+        spawnedToPlayers.clear();
+        int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers);
         LOGGER.info("[CarriageEntity] arrival respawn(stop) uuid={} pos={} chunkForced={} sentToPlayers={} added={}",
                 getUUID(), blockPosition(), forced, sent, isAddedToWorld());
     }
@@ -1679,10 +1682,13 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
-        // 到站宽限期：无论 autopilot 是否仍 active（延迟返航/连运中转期间可能仍 active），只要在宽限期内
-        // 就每 tick 给追踪玩家补发 spawn 包族，覆盖客户端建立区块追踪的窗口（修「幽灵车·过几秒才出现」）。
-        if (postArrivalForcedHoldTicks > 0) {
-            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNearby(serverLevel, this);
+        // 幽灵车持续修复：autopilot 全程 + 到站宽限期内，每 tick 对「新进入视野范围、客户端尚未收到 spawn」
+        // 的玩家补发 spawn 包族 —— 实现「车辆一进入玩家视野就恢复可视」。只对新玩家发、离开即移除，
+        // 不重复轰炸已可见玩家（spawnedToPlayers 由本实体持有）。
+        if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
+            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers);
+        } else {
+            spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置，下次发车重新跟踪
         }
         if (!isAutopilotActive()) {
             // 宽限期递减；期满才释放票据。
@@ -2401,11 +2407,12 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT, formatArrivalDate(System.currentTimeMillis(), ZoneId.systemDefault()));
         setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
         level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
-        // 到站（含延迟返航、连运中转等所有到站路径都经过这里）：开宽限期 + 首发 spawn，
-        // 让多 mod 环境下未被 EntityTracker pair 的马车对附近玩家可见（修「幽灵车」）。
+        // 到站（含延迟返航、连运中转等所有到站路径都经过这里）：开宽限期 + 清 spawn 记录，
+        // 让下一 tick 把当前视野内所有玩家当「新玩家」重新补发 spawn，确保到站即可见（修「幽灵车」）。
         if (level() instanceof ServerLevel serverLevel) {
             postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
-            int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNearby(serverLevel, this);
+            spawnedToPlayers.clear();
+            int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers);
             LOGGER.info("[CarriageEntity] arrival respawn uuid={} pos={} chunkForced={} sentToPlayers={} added={}",
                     getUUID(), blockPosition(),
                     forcedAutopilotChunks.contains(net.minecraft.world.level.ChunkPos.asLong(blockPosition())),
