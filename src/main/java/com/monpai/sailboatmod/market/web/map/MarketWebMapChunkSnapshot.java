@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.roadplanner.map.MapBlockColors;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColorizer;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColumnSample;
@@ -12,6 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
+import org.slf4j.Logger;
 
 import java.util.Optional;
 
@@ -28,10 +30,17 @@ public record MarketWebMapChunkSnapshot(
         int chunkZ,
         RoadMapColumnSample[] samples
 ) {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final int UNKNOWN_ARGB = 0xFF2A2A2A;
 
     public static Optional<MarketWebMapChunkSnapshot> capture(ServerLevel level, int chunkX, int chunkZ) {
         if (level == null || !MarketWebMapConstants.OVERWORLD.equals(level.dimension().location().toString())) {
+            return Optional.empty();
+        }
+        // 纵深防御:getChunk 在非主线程上会 join 主线程(死锁源)。worker 线程绝不该调到这里——
+        // 真要调到了就安全降级(丢一帧,下次扫描会补),绝不阻塞 join。
+        if (!level.getServer().isSameThread()) {
+            LOGGER.warn("MarketWebMapChunkSnapshot.capture called off the server thread for chunk {},{} — skipping to avoid blocking getChunk", chunkX, chunkZ);
             return Optional.empty();
         }
         ChunkAccess chunk = level.getChunkSource().getChunk(chunkX, chunkZ, false);
@@ -50,6 +59,11 @@ public record MarketWebMapChunkSnapshot(
      */
     public static Optional<MarketWebMapChunkSnapshot> captureGenerated(ServerLevel level, int chunkX, int chunkZ) {
         if (level == null || !MarketWebMapConstants.OVERWORLD.equals(level.dimension().location().toString())) {
+            return Optional.empty();
+        }
+        // 同 capture:getChunk 与 chunkMap.read().getNow 都假定在主线程;非主线程安全降级。
+        if (!level.getServer().isSameThread()) {
+            LOGGER.warn("MarketWebMapChunkSnapshot.captureGenerated called off the server thread for chunk {},{} — skipping to avoid blocking getChunk", chunkX, chunkZ);
             return Optional.empty();
         }
         ChunkAccess loaded = level.getChunkSource().getChunk(chunkX, chunkZ, false);

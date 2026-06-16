@@ -130,6 +130,12 @@ public final class MarketWebMapRenderManager {
         if (level == null || cache == null || task == null || !MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
             return;
         }
+        // 主线程旁路:已加载的 chunk 直接在主线程 capture(读 ServerLevel 在主线程是安全的),
+        // 完全绕开 SnapshotManager 与 worker 线程。只有未加载的 chunk 才进 SnapshotManager 走异步 NBT 读盘。
+        // 这样 worker 线程永不需要读 ServerLevel,从根上消除「worker join 主线程」的死锁边。
+        if (submitLoadedSnapshotOnMainThread(level, cache, task, nowMillis)) {
+            return;
+        }
         MarketWebMapSnapshotManager manager = snapshotManager(level);
         manager.snapshotDirect(task.dimensionId(), task.chunkX(), task.chunkZ() - 1, task.quality())
                 .thenAccept(optional -> optional.ifPresent(this::cacheBottomRow));
@@ -148,6 +154,25 @@ public final class MarketWebMapRenderManager {
             }
             acceptSnapshot(cache, optional.get(), task.quality(), nowMillis);
         });
+    }
+
+    /**
+     * 主线程旁路:若目标 chunk 已加载,在主线程直接 capture 并消费,返回 true。
+     * 同时趁机 capture 北邻(chunkZ-1)喂 bottomRow 缓存,与异步路径的 cacheBottomRow 语义一致。
+     * 目标 chunk 未加载时返回 false,交给异步 NBT 路径。
+     */
+    private boolean submitLoadedSnapshotOnMainThread(ServerLevel level,
+                                                     MarketWebMapTileCache cache,
+                                                     MarketWebMapRenderQueue.Task task,
+                                                     long nowMillis) {
+        Optional<MarketWebMapChunkSnapshot> target = MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ());
+        if (target.isEmpty()) {
+            return false;
+        }
+        // 北邻已加载则缓存其底行(供 height shading 接缝)。北邻未加载就跳过——异步路径后续也会补。
+        MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ() - 1).ifPresent(this::cacheBottomRow);
+        acceptSnapshot(cache, target.get(), task.quality(), nowMillis);
+        return true;
     }
 
     public synchronized boolean startFullRender(ServerLevel level) {
@@ -535,10 +560,10 @@ public final class MarketWebMapRenderManager {
         if (level == null || !MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
             return CompletableFuture.completedFuture(Optional.empty());
         }
-        Optional<MarketWebMapChunkSnapshot> loaded = MarketWebMapChunkSnapshot.capture(level, chunkX, chunkZ);
-        if (loaded.isPresent()) {
-            return CompletableFuture.completedFuture(loaded);
-        }
+        // 注意:这里绝不调 MarketWebMapChunkSnapshot.capture / getChunk —— 该 provider 会在 worker 线程
+        // (renderExecutor)执行,而 getChunk 在非主线程上会 join 主线程,与 SnapshotManager 锁构成死锁。
+        // 已加载的 chunk 由 submitSnapshot 在主线程旁路 capture,根本不会走到这里。
+        // 未加载的 chunk 只走纯异步 NBT 读盘(chunkMap.read 返回 future 不 join 主线程)。
         if (quality != MarketWebMapTileQuality.SERVER_REGION_SCAN) {
             return CompletableFuture.completedFuture(Optional.empty());
         }
