@@ -1063,7 +1063,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!level().isClientSide
                 && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED
                     || reason == RemovalReason.CHANGED_DIMENSION)) {
-            // 载具被破坏/移除：直接刷新掉它的手动物流轨迹，避免网页地图残留
+            // 载具被破坏/移除：刷新掉它的物流轨迹，避免网页地图残留。
+            // activeTraceId() 解析真实轨迹 id：订单船=shippingOrderId、手动船=manual-uuid。
+            // 旧实现写死 manualTraceId，导致跑订单的船被破坏后 shippingOrderId 轨迹永久残留在 webmap。
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(level(), activeTraceId());
+            // 兼容兜底：若船既跑过订单又留过 manual 轨迹，连 manual id 一并清掉。
             com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
                     level(), com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID()));
         }
@@ -2929,12 +2933,19 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     /**
-     * 强制/取消加载区块。用 vanilla setChunkForced（ticket level 31，与玩家同级，
-     * 区块处理游戏所有方面含实体 tick）。不用 ForgeChunkManager 的 ticking 票据——后者在
-     * 移动实体每 tick 改 force 集合时会触发区块加载/卸载抖动(thrash)甚至卡死（见 MinecraftForge #5406）。
+     * 强制/取消加载区块。用 ForgeChunkManager.forceChunk(ticking=true) 申请 ENTITY_TICKING 票据。
+     * 必须用 ticking 票据：vanilla setChunkForced 只给 FORCED 票据(level 31)，玩家不在附近时
+     * ChunkMap 不为区块内实体建 EntityTrackerEntry —— 实体在服务端 tick 却从不向客户端发 spawn 包，
+     * 导致载具远行返回后「看不见但有音效」。ENTITY_TICKING 保证实体被客户端追踪可见，
+     * 且实体移除即释放(不像 vanilla 会持久化到 level.dat)。
      */
     private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
-        serverLevel.setChunkForced(ChunkPos.getX(chunkKey), ChunkPos.getZ(chunkKey), add);
+        int chunkX = ChunkPos.getX(chunkKey);
+        int chunkZ = ChunkPos.getZ(chunkKey);
+        BlockPos owner = new BlockPos(chunkX << 4, 0, chunkZ << 4);
+        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+                serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
+                owner, chunkX, chunkZ, add, true);
     }
 
     private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {

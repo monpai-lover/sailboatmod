@@ -90,6 +90,19 @@ public final class MarketWebMapJson {
         json.addProperty("status", shipment.status());
         json.addProperty("sourceName", shipment.sourceName());
         json.addProperty("targetName", shipment.targetName());
+        json.addProperty("sourceTownName", shipment.sourceTownName());
+        json.addProperty("targetTownName", shipment.targetTownName());
+        json.addProperty("etaSeconds", shipment.etaSeconds());
+        json.addProperty("currentSpeed", shipment.currentSpeed());
+        JsonArray cargo = new JsonArray();
+        for (MarketWebMapDtos.CargoItem item : shipment.cargo()) {
+            JsonObject c = new JsonObject();
+            c.addProperty("name", item.name());
+            c.addProperty("quantity", item.quantity());
+            c.addProperty("recipient", item.recipient());
+            cargo.add(c);
+        }
+        json.add("cargo", cargo);
         json.add("points", points(shipment.points()));
         json.addProperty("completedPointCount", shipment.completedPointCount());
         json.addProperty("progressRatio", shipment.progressRatio());

@@ -1271,7 +1271,11 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!level().isClientSide
                 && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED
                     || reason == RemovalReason.CHANGED_DIMENSION)) {
-            // 载具被破坏/移除：直接刷新掉它的手动物流轨迹，避免网页地图残留
+            // 载具被破坏/移除：刷新掉它的物流轨迹，避免网页地图残留。
+            // 用 traceIdForLiveSync() 解析真实轨迹 id：订单车=shippingOrderId、手动车=manual-uuid。
+            // 旧实现写死 manualTraceId，导致跑订单的车被破坏后 shippingOrderId 轨迹永久残留在 webmap。
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(level(), traceIdForLiveSync());
+            // 兼容兜底：若车既跑过订单又留过 manual 轨迹，连 manual id 一并清掉。
             com.monpai.sailboatmod.market.logistics.ShippingTraceService.removeTrace(
                     level(), com.monpai.sailboatmod.market.logistics.ShippingTraceService.manualTraceId(getUUID()));
         }
@@ -1692,14 +1696,19 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     /**
-     * 强制/取消加载区块。用 vanilla setChunkForced（ticket level 31，与玩家同级，含实体 tick）。
-     * 不用 ForgeChunkManager 的 ticking 票据——移动实体每 tick 改 force 集合会触发区块抖动甚至卡死（MinecraftForge #5406）。
+     * 强制/取消加载区块。用 ForgeChunkManager.forceChunk(ticking=true) 申请 ENTITY_TICKING 票据。
+     * 必须用 ticking 票据：vanilla setChunkForced 只给 FORCED 票据(level 31)，玩家不在附近时
+     * ChunkMap 不为区块内实体建 EntityTrackerEntry —— 实体在服务端 tick(有音效、可被扫描)却
+     * 从不向客户端发 spawn 包，导致载具远行返回后「看不见但有音效」(实测回归)。
+     * ENTITY_TICKING 票据保证实体被客户端追踪可见，且实体移除即释放(不像 vanilla 会持久化到 level.dat)。
      */
     private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
-        serverLevel.setChunkForced(
-                net.minecraft.world.level.ChunkPos.getX(chunkKey),
-                net.minecraft.world.level.ChunkPos.getZ(chunkKey),
-                add);
+        int chunkX = net.minecraft.world.level.ChunkPos.getX(chunkKey);
+        int chunkZ = net.minecraft.world.level.ChunkPos.getZ(chunkKey);
+        BlockPos owner = new BlockPos(chunkX << 4, 0, chunkZ << 4);
+        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+                serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
+                owner, chunkX, chunkZ, add, true);
     }
 
     private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {

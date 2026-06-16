@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.market.logistics;
 
 import com.monpai.sailboatmod.market.MarketSavedData;
+import com.monpai.sailboatmod.market.MarketListing;
+import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShippingOrder;
 import com.monpai.sailboatmod.market.web.MarketPlayerIdentity;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
@@ -8,6 +10,7 @@ import com.monpai.sailboatmod.market.web.map.MarketWebMapDtos;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
+import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -99,22 +102,45 @@ public final class ShippingTraceService {
         return out;
     }
 
-    public static List<MarketWebMapDtos.ShipmentTrace> toDtos(List<ShippingTraceRecord> traces) {
+    public static List<MarketWebMapDtos.ShipmentTrace> toDtos(MinecraftServer server, List<ShippingTraceRecord> traces) {
         List<MarketWebMapDtos.ShipmentTrace> out = new ArrayList<>();
+        ServerLevel overworld = server == null ? null : server.overworld();
+        NationSavedData nationData = overworld == null ? null : NationSavedData.get(overworld);
+        MarketSavedData marketData = overworld == null ? null : MarketSavedData.get(overworld);
         for (ShippingTraceRecord trace : traces == null ? List.<ShippingTraceRecord>of() : traces) {
-            out.add(toDto(trace));
+            out.add(toDto(trace, nationData, marketData));
         }
         return out;
     }
 
-    public static MarketWebMapDtos.ShipmentTrace toDto(ShippingTraceRecord trace) {
+    public static MarketWebMapDtos.ShipmentTrace toDto(ShippingTraceRecord trace,
+                                                       NationSavedData nationData,
+                                                       MarketSavedData marketData) {
         List<MarketWebMapDtos.Point> points = new ArrayList<>();
         for (Vec3 waypoint : trace.waypoints()) {
             points.add(new MarketWebMapDtos.Point(waypoint.x, waypoint.z));
         }
-        String label = (trace.sourceName().isBlank() ? "Source" : trace.sourceName())
-                + " -> "
-                + (trace.targetName().isBlank() ? "Target" : trace.targetName());
+
+        // 订单轨迹可解析出真实的 town→town 命名、ETA、货物清单；手动轨迹无订单时全部回退。
+        ShippingOrder order = (marketData == null || trace.shippingOrderId().isBlank())
+                ? null : marketData.getShippingOrder(trace.shippingOrderId());
+
+        String sourceTown = "";
+        String targetTown = "";
+        int etaSeconds = 0;
+        List<MarketWebMapDtos.CargoItem> cargo = List.of();
+        if (order != null) {
+            sourceTown = resolveTownName(nationData, order.sourceDockPos());
+            targetTown = resolveTownName(nationData, order.targetDockPos());
+            etaSeconds = order.etaSeconds();
+            cargo = resolveCargo(marketData, order);
+        }
+
+        // town→town 主命名；某端不在城镇内则回退该端的驿站名。
+        String sourceLabel = sourceTown.isBlank() ? (trace.sourceName().isBlank() ? "?" : trace.sourceName()) : sourceTown;
+        String targetLabel = targetTown.isBlank() ? (trace.targetName().isBlank() ? "?" : trace.targetName()) : targetTown;
+        String label = sourceLabel + " -> " + targetLabel;
+
         return new MarketWebMapDtos.ShipmentTrace(
                 trace.shippingOrderId(),
                 label,
@@ -122,12 +148,47 @@ public final class ShippingTraceService {
                 trace.status(),
                 trace.sourceName(),
                 trace.targetName(),
+                sourceTown,
+                targetTown,
+                etaSeconds,
+                trace.currentSpeed(),
+                cargo,
                 points,
                 trace.completedPointCount(),
                 trace.progressRatio(),
                 new MarketWebMapDtos.Point(trace.currentX(), trace.currentZ()),
                 trace.manual()
         );
+    }
+
+    /** dock 坐标 → 所在 claim 的 town 名；无主地/无 town 返回空串。 */
+    private static String resolveTownName(NationSavedData nationData, net.minecraft.core.BlockPos dockPos) {
+        if (nationData == null || dockPos == null) {
+            return "";
+        }
+        NationClaimRecord claim = nationData.getClaim(MarketWebMapConstants.OVERWORLD, dockPos.getX() >> 4, dockPos.getZ() >> 4);
+        if (claim == null || claim.townId() == null || claim.townId().isBlank()) {
+            return "";
+        }
+        TownRecord town = nationData.getTown(claim.townId());
+        return town == null || town.name() == null ? "" : town.name();
+    }
+
+    /** 订单货物摘要：purchaseOrder 数量 + listing 物品名 + 收货人。 */
+    private static List<MarketWebMapDtos.CargoItem> resolveCargo(MarketSavedData marketData, ShippingOrder order) {
+        if (marketData == null || order.purchaseOrderId().isBlank()) {
+            return List.of();
+        }
+        PurchaseOrder purchase = marketData.getPurchaseOrder(order.purchaseOrderId());
+        if (purchase == null || purchase.quantity() <= 0) {
+            return List.of();
+        }
+        String itemName = "?";
+        MarketListing listing = marketData.getListing(purchase.listingId());
+        if (listing != null && !listing.itemStack().isEmpty()) {
+            itemName = listing.itemStack().getHoverName().getString();
+        }
+        return List.of(new MarketWebMapDtos.CargoItem(itemName, purchase.quantity(), purchase.buyerName()));
     }
 
     public static boolean isMapVisibleStatus(String status) {

@@ -42,6 +42,9 @@
       status: "Status",
       statusStuck: "Stuck · needs rescue",
       mode: "Mode",
+      eta: "ETA",
+      speed: "Speed",
+      cargo: "Cargo",
       emptySelection: "Hover or click a market, territory, or shipment.",
       flag: "Flag"
     },
@@ -68,6 +71,9 @@
       status: "状态",
       statusStuck: "阻塞 · 需救援",
       mode: "方式",
+      eta: "预计到达",
+      speed: "当前速度",
+      cargo: "货物",
       emptySelection: "悬停或点击市场、领地、物流线路。",
       flag: "国旗"
     }
@@ -653,7 +659,7 @@
         const stuck = String(shipment.status || "").toUpperCase() === "STUCK";
         return `
         <button type="button" class="map-shipment-row" data-shipment-id="${escapeHtml(shipment.shippingOrderId || "")}"${stuck ? ' style="color:#dc2626;font-weight:600;"' : ""}>
-          <span>${escapeHtml(shipment.label || `${shipment.sourceName || "-"} -> ${shipment.targetName || "-"}`)}</span>
+          <span>${escapeHtml(`${shipment.sourceTownName || shipment.sourceName || "-"} → ${shipment.targetTownName || shipment.targetName || "-"}`)}</span>
           <small>${escapeHtml(shipment.transportMode || "-")} · ${Math.round((Number(shipment.progressRatio) || 0) * 100)}%${stuck ? ` · ${escapeHtml(label("statusStuck"))}` : ""}</small>
         </button>
       `;
@@ -725,17 +731,41 @@
     const shipment = item.data;
     const shipmentStuck = String(shipment.status || "").toUpperCase() === "STUCK";
     const statusText = shipmentStuck ? label("statusStuck") : (shipment.status || "-");
+    const townLine = `${shipment.sourceTownName || shipment.sourceName || "-"} → ${shipment.targetTownName || shipment.targetName || "-"}`;
+    const etaSec = Number(shipment.etaSeconds) || 0;
+    const speed = Number(shipment.currentSpeed) || 0;
+    const cargo = Array.isArray(shipment.cargo) ? shipment.cargo : [];
+    const cargoHtml = cargo.length
+      ? cargo.map((c) => `${Number(c.quantity) || 0}× ${escapeHtml(c.name || "-")}${c.recipient ? ` → ${escapeHtml(c.recipient)}` : ""}`).join("<br>")
+      : "-";
     state.detailPanel.innerHTML = `
       <div class="map-detail-card">
         <p class="section-kicker">${escapeHtml(label("route"))}</p>
-        <h3>${escapeHtml(shipment.label || `${shipment.sourceName || "-"} -> ${shipment.targetName || "-"}`)}</h3>
+        <h3>${escapeHtml(townLine)}</h3>
         <dl>
           <dt>${escapeHtml(label("mode"))}</dt><dd>${escapeHtml(shipment.transportMode || "-")}</dd>
           <dt>${escapeHtml(label("status"))}</dt><dd${shipmentStuck ? ' style="color:#dc2626;font-weight:600;"' : ""}>${escapeHtml(statusText)}</dd>
-          <dt>${escapeHtml(label("route"))}</dt><dd>${escapeHtml(shipment.sourceName || "-")} -> ${escapeHtml(shipment.targetName || "-")}</dd>
+          ${etaSec > 0 ? `<dt>${escapeHtml(label("eta"))}</dt><dd>${escapeHtml(formatEta(etaSec))}</dd>` : ""}
+          ${speed > 0 ? `<dt>${escapeHtml(label("speed"))}</dt><dd>${escapeHtml(formatSpeed(speed))}</dd>` : ""}
+          <dt>${escapeHtml(label("route"))}</dt><dd>${escapeHtml(shipment.sourceName || "-")} → ${escapeHtml(shipment.targetName || "-")}</dd>
+          <dt>${escapeHtml(label("cargo"))}</dt><dd>${cargoHtml}</dd>
         </dl>
       </div>
     `;
+  }
+
+  function formatEta(seconds) {
+    const s = Math.max(0, Math.round(Number(seconds) || 0));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ${s % 60}s`;
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+  }
+
+  function formatSpeed(blocksPerTick) {
+    // 服务端 currentSpeed 单位为 方块/tick；换算成 方块/秒（×20）便于阅读。
+    return `${((Number(blocksPerTick) || 0) * 20).toFixed(1)} m/s`;
   }
 
   function setPanelMessage(message) {
@@ -1368,10 +1398,15 @@
     } else {
       const shipment = item.data;
       const tipStuck = String(shipment.status || "").toUpperCase() === "STUCK";
+      const tipTown = `${shipment.sourceTownName || shipment.sourceName || "-"} → ${shipment.targetTownName || shipment.targetName || "-"}`;
+      const tipEta = Number(shipment.etaSeconds) || 0;
+      const tipSpeed = Number(shipment.currentSpeed) || 0;
       html = `
-        <strong>${escapeHtml(shipment.label || `${shipment.sourceName || "-"} -> ${shipment.targetName || "-"}`)}</strong>
+        <strong>${escapeHtml(tipTown)}</strong>
         <span>${escapeHtml(label("mode"))}: ${escapeHtml(shipment.transportMode || "-")}</span>
         <span>${Math.round((Number(shipment.progressRatio) || 0) * 100)}%</span>
+        ${tipEta > 0 ? `<span>${escapeHtml(label("eta"))}: ${escapeHtml(formatEta(tipEta))}</span>` : ""}
+        ${tipSpeed > 0 ? `<span>${escapeHtml(label("speed"))}: ${escapeHtml(formatSpeed(tipSpeed))}</span>` : ""}
         ${tipStuck ? `<span style="color:#dc2626;font-weight:600;">${escapeHtml(label("statusStuck"))}</span>` : ""}
       `;
     }

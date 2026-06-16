@@ -71,7 +71,7 @@ public final class MarketWebMapLayerService {
     }
 
     public List<MarketWebMapDtos.ShipmentTrace> shipments(MinecraftServer server, MarketPlayerIdentity identity) {
-        return ShippingTraceService.toDtos(ShippingTraceService.visibleFor(server, identity));
+        return ShippingTraceService.toDtos(server, ShippingTraceService.visibleFor(server, identity));
     }
 
     public static MarketWebMapDtos.Territory toTerritoryForTest(NationClaimRecord claim, NationRecord nation, TownRecord town) {

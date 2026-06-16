@@ -47,6 +47,11 @@ public final class MarketWebMapDtos {
                                 String status,
                                 String sourceName,
                                 String targetName,
+                                String sourceTownName,
+                                String targetTownName,
+                                int etaSeconds,
+                                double currentSpeed,
+                                List<CargoItem> cargo,
                                 List<Point> points,
                                 int completedPointCount,
                                 double progressRatio,
@@ -54,7 +59,11 @@ public final class MarketWebMapDtos {
                                 boolean manual) {
         public ShipmentTrace {
             points = points == null ? List.of() : List.copyOf(points);
+            cargo = cargo == null ? List.of() : List.copyOf(cargo);
         }
+    }
+
+    public record CargoItem(String name, int quantity, String recipient) {
     }
 
     private MarketWebMapDtos() {

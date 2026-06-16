@@ -18,6 +18,7 @@ import com.monpai.sailboatmod.network.packet.CreateMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.DispatchMarketOrderPacket;
 import com.monpai.sailboatmod.network.packet.MarketGuiActionPacket;
 import com.monpai.sailboatmod.network.packet.MarketWalletActionPacket;
+import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 import com.monpai.sailboatmod.network.packet.ProbeFulfillmentModesPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import gg.essential.elementa.ElementaVersion;
@@ -129,9 +130,11 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String buyOrderMinPriceValue = "-1000";
     private String buyOrderMaxPriceValue = "1000";
     private String walletAmountValue = "";
+    // 市场改名输入框当前值；null 表示用户尚未编辑（显示服务端最新市场名），非 null 表示正在编辑。
+    private String marketRenameValue = null;
     private String priceFilterMinValue = "";
     private String priceFilterMaxValue = "";
-    private GoodsCatalogSort goodsCatalogSort = GoodsCatalogSort.PRICE_DESC;
+    private GoodsCatalogSort goodsCatalogSort = GoodsCatalogSort.PRICE_ASC;
     private GoodsCategoryFilter goodsCategoryFilter = GoodsCategoryFilter.ALL;
     private GoodsRarityFilter goodsRarityFilter = GoodsRarityFilter.ALL;
     private GoodsPriceBandFilter goodsPriceBandFilter = GoodsPriceBandFilter.ALL;
@@ -702,7 +705,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         int leftWidth = Math.min(300, width / 3);
         int centerWidth = Math.min(240, width / 3);
         int rightWidth = width - leftWidth - centerWidth - SECTION_GAP * 2;
-        int topHeight = 184;
+        int topHeight = 224;
         int bottomHeight = height - topHeight - SECTION_GAP;
 
         UIRoundedRectangle summary = createSection(parent, x, y, leftWidth, topHeight,
@@ -2189,19 +2192,45 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private void buildFinanceSummary(UIComponent panel, int width) {
+        int tileTop = 48;
+        if (data.canManage()) {
+            // 市场改名（仅市场主可见）：输入框 + 确认按钮，发 RenameMarketPacket。
+            int innerWidth = width - 28;
+            int btnWidth = 64;
+            int gap = 6;
+            int inputWidth = innerWidth - btnWidth - gap;
+            createText(panel, 14, 48, Component.translatable("screen.sailboatmod.market.rename.label").getString(), 0.7f, TEXT_SOFT);
+            String shownName = marketRenameValue != null ? marketRenameValue : data.marketName();
+            createInput(panel, 14, 62, inputWidth, 24,
+                    Component.translatable("screen.sailboatmod.market.rename.placeholder").getString(),
+                    shownName,
+                    value -> marketRenameValue = value);
+            createButton(panel, 14 + inputWidth + gap, 62, btnWidth, 24,
+                    Component.translatable("screen.sailboatmod.market.rename.confirm").getString(),
+                    true, false,
+                    this::sendMarketRename);
+            tileTop = 96;
+        }
         int tileWidth = (width - 42) / 2;
-        buildMetricTile(panel, 14, 48, tileWidth, 36, Component.translatable("screen.sailboatmod.market.pending").getString(),
+        buildMetricTile(panel, 14, tileTop, tileWidth, 36, Component.translatable("screen.sailboatmod.market.pending").getString(),
                 formatCompactLong(data.pendingCredits()), ACCENT);
-        buildMetricTile(panel, 14 + tileWidth + 10, 48, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.available").getString(),
+        buildMetricTile(panel, 14 + tileWidth + 10, tileTop, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.available").getString(),
                 formatCompactLong(data.walletAvailableBalance()), POSITIVE);
-        buildMetricTile(panel, 14, 90, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.reserved").getString(),
+        buildMetricTile(panel, 14, tileTop + 42, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.reserved").getString(),
                 formatCompactLong(data.walletReservedBalance()), ACCENT_DIM);
-        buildMetricTile(panel, 14 + tileWidth + 10, 90, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.treasury").getString(),
+        buildMetricTile(panel, 14 + tileWidth + 10, tileTop + 42, tileWidth, 36, Component.translatable("screen.sailboatmod.market.wallet.treasury").getString(),
                 formatCompactLong(data.treasuryBalance()), new Color(117, 170, 219));
-        buildMetricTile(panel, 14, 132, tileWidth, 36, Component.translatable("screen.sailboatmod.econbar.net").getString(),
+        buildMetricTile(panel, 14, tileTop + 84, tileWidth, 36, Component.translatable("screen.sailboatmod.econbar.net").getString(),
                 formatSignedLong(data.netBalance()), data.netBalance() >= 0 ? POSITIVE : NEGATIVE);
-        buildMetricTile(panel, 14 + tileWidth + 10, 132, tileWidth, 36, Component.translatable("screen.sailboatmod.econbar.income").getString(),
+        buildMetricTile(panel, 14 + tileWidth + 10, tileTop + 84, tileWidth, 36, Component.translatable("screen.sailboatmod.econbar.income").getString(),
                 formatCompactLong(data.totalIncome()), POSITIVE);
+    }
+
+    private void sendMarketRename() {
+        String name = marketRenameValue == null ? data.marketName() : marketRenameValue.trim();
+        ModNetwork.CHANNEL.sendToServer(new RenameMarketPacket(data.marketPos(), name));
+        // 提交后清空本地编辑态，回包 OpenMarketScreenPacket 会带回服务端最新名字。
+        marketRenameValue = null;
     }
 
     private void buildFinanceEconomy(UIComponent panel, int width) {
@@ -2869,7 +2898,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
 
     private int compareListings(MarketOverviewData.ListingEntry left, MarketOverviewData.ListingEntry right) {
         return switch (goodsCatalogSort) {
-            case PRICE_DESC -> Integer.compare(right.unitPrice(), left.unitPrice());
+            case PRICE_ASC -> Integer.compare(left.unitPrice(), right.unitPrice());
             case STOCK_DESC -> Integer.compare(right.availableCount(), left.availableCount());
             case NAME_ASC -> left.itemName().compareToIgnoreCase(right.itemName());
         };
@@ -5422,7 +5451,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     }
 
     private enum GoodsCatalogSort {
-        PRICE_DESC("screen.sailboatmod.market.catalog.sort.price"),
+        PRICE_ASC("screen.sailboatmod.market.catalog.sort.price"),
         STOCK_DESC("screen.sailboatmod.market.catalog.sort.stock"),
         NAME_ASC("screen.sailboatmod.market.catalog.sort.name");
 
