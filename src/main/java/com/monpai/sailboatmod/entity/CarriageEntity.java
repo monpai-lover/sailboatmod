@@ -1686,7 +1686,22 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         // 的玩家补发 spawn 包族 —— 实现「车辆一进入玩家视野就恢复可视」。只对新玩家发、离开即移除，
         // 不重复轰炸已可见玩家（spawnedToPlayers 由本实体持有）。
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
-            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers);
+            // 每 2 tick 同步一次：检测新玩家发 spawn + 对范围内玩家发位置(teleport)+motion，
+            // 替代多 mod 环境下失效的 EntityTracker 移动同步（10 次/秒足够流畅，包量可控）。
+            if (tickCount % 2 == 0) {
+                int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers);
+                if (tickCount % 40 == 0) {
+                    double nearestSqr = Double.MAX_VALUE;
+                    for (net.minecraft.server.level.ServerPlayer p : serverLevel.players()) {
+                        double d = p.distanceToSqr(getX(), getY(), getZ());
+                        if (d < nearestSqr) nearestSqr = d;
+                    }
+                    int nearestDist = nearestSqr == Double.MAX_VALUE ? -1 : (int) Math.sqrt(nearestSqr);
+                    LOGGER.info("[CarriageEntity] enroute sync uuid={} pos={} autopilot={} hold={} nearestPlayer={}blk newSpawn={} tracked={}",
+                            getUUID(), blockPosition(), isAutopilotActive(), postArrivalForcedHoldTicks,
+                            nearestDist, sent, spawnedToPlayers.size());
+                }
+            }
         } else {
             spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置，下次发车重新跟踪
         }
