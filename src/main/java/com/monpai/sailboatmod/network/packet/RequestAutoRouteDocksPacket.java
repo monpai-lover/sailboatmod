@@ -51,7 +51,10 @@ public class RequestAutoRouteDocksPacket {
             for (BlockPos dockPos : candidates) {
                 if (dockPos.equals(msg.sourceDockPos)) continue;
 
-                if (!shouldInspectCandidateChunk(serverLevel.hasChunkAt(dockPos))) continue;
+                // 不再用 hasChunkAt 闸门过滤未加载区块的候选驿站：那会导致玩家没走近、目标驿站
+                // 区块未加载时被直接跳过 → 派遣 UI「无可达路」，走近一段才出现（间歇性消失 bug）。
+                // 可达判定本身只查持久化路图+claim（零区块依赖），这里 getBlockEntity 主动同步加载目标
+                // 区块以读取其名字/owner/nationId（驿站数量有限、开 UI 为低频手动操作，开销可接受）。
                 if (!(serverLevel.getBlockEntity(dockPos) instanceof DockBlockEntity targetDock)) continue;
 
                 boolean canCreate = postStationMode
@@ -80,13 +83,5 @@ public class RequestAutoRouteDocksPacket {
         NationSavedData data = NationSavedData.get(level);
         var nation = data.getNation(dock.getNationId());
         return nation == null ? "-" : nation.name();
-    }
-
-    static boolean shouldInspectCandidateChunkForTest(boolean chunkLoaded) {
-        return shouldInspectCandidateChunk(chunkLoaded);
-    }
-
-    private static boolean shouldInspectCandidateChunk(boolean chunkLoaded) {
-        return chunkLoaded;
     }
 }

@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public final class ShippingTraceService {
     public static void createOrUpdateTrace(Level level, ShippingOrder order, RouteDefinition route) {
@@ -47,6 +48,7 @@ public final class ShippingTraceService {
                 0.0D,
                 0.0D,
                 0.0D,
+                java.util.List.of(),
                 false
         ));
     }
@@ -134,6 +136,15 @@ public final class ShippingTraceService {
             targetTown = resolveTownName(nationData, order.targetDockPos());
             etaSeconds = order.etaSeconds();
             cargo = resolveCargo(marketData, order);
+        } else if (trace.manual() && trace.waypoints().size() >= 2) {
+            // 手动轨迹无订单：用 waypoints 首尾坐标反查 town→town 命名；ETA 用当前速度 + 剩余路程现算。
+            // 货物由 manual 轨迹自带的快照提供（手动发车时从载具容器抓取）。
+            List<Vec3> waypoints = trace.waypoints();
+            sourceTown = resolveTownNameFromXZ(nationData, waypoints.get(0).x, waypoints.get(0).z);
+            targetTown = resolveTownNameFromXZ(nationData,
+                    waypoints.get(waypoints.size() - 1).x, waypoints.get(waypoints.size() - 1).z);
+            etaSeconds = estimateManualEtaSeconds(trace);
+            cargo = trace.cargo();
         }
 
         // town→town 主命名；某端不在城镇内则回退该端的驿站名。
@@ -174,6 +185,50 @@ public final class ShippingTraceService {
         return town == null || town.name() == null ? "" : town.name();
     }
 
+    /** 世界 X/Z 坐标 → 所在 claim 的 town 名（手动轨迹用 waypoints 首尾反查），无主地返回空串。 */
+    private static String resolveTownNameFromXZ(NationSavedData nationData, double worldX, double worldZ) {
+        if (nationData == null) {
+            return "";
+        }
+        int chunkX = net.minecraft.util.Mth.floor(worldX) >> 4;
+        int chunkZ = net.minecraft.util.Mth.floor(worldZ) >> 4;
+        NationClaimRecord claim = nationData.getClaim(MarketWebMapConstants.OVERWORLD, chunkX, chunkZ);
+        if (claim == null || claim.townId() == null || claim.townId().isBlank()) {
+            return "";
+        }
+        TownRecord town = nationData.getTown(claim.townId());
+        return town == null || town.name() == null ? "" : town.name();
+    }
+
+    /**
+     * 手动轨迹 ETA（秒）：当前速度(blocks/tick) × 20 = blocks/s，剩余路程 / 速度。
+     * 速度为 0 或无剩余路程时返回 0（前端值>0 才显示）。
+     */
+    private static int estimateManualEtaSeconds(ShippingTraceRecord trace) {
+        double speedPerTick = trace.currentSpeed();
+        if (speedPerTick <= 1.0E-4D) {
+            return 0;
+        }
+        List<Vec3> waypoints = trace.waypoints();
+        if (waypoints.size() < 2) {
+            return 0;
+        }
+        int completed = Math.max(0, Math.min(trace.completedPointCount(), waypoints.size() - 1));
+        // 从当前实时位置到下一个未完成路点，再沿剩余路点累加到终点（仅 XZ 平面）。
+        double remaining = 0.0D;
+        Vec3 cursor = new Vec3(trace.currentX(), 0.0D, trace.currentZ());
+        for (int i = completed; i < waypoints.size(); i++) {
+            Vec3 wp = new Vec3(waypoints.get(i).x, 0.0D, waypoints.get(i).z);
+            remaining += cursor.distanceTo(wp);
+            cursor = wp;
+        }
+        if (remaining <= 0.0D) {
+            return 0;
+        }
+        double speedPerSecond = speedPerTick * 20.0D;
+        return (int) Math.ceil(remaining / speedPerSecond);
+    }
+
     /** 订单货物摘要：purchaseOrder 数量 + listing 物品名 + 收货人。 */
     private static List<MarketWebMapDtos.CargoItem> resolveCargo(MarketSavedData marketData, ShippingOrder order) {
         if (marketData == null || order.purchaseOrderId().isBlank()) {
@@ -200,6 +255,32 @@ public final class ShippingTraceService {
     /** 手动发车的稳定 trace id，与订单 id 不冲突。 */
     public static String manualTraceId(java.util.UUID vehicleUuid) {
         return "manual-" + (vehicleUuid == null ? "unknown" : vehicleUuid.toString());
+    }
+
+    /**
+     * 把载具容器内的物品聚合成货物清单（同种物品累加数量），供手动轨迹携带显示。
+     * 收货人留空（手动发车无市场买家）。最多 64 项。
+     */
+    public static List<MarketWebMapDtos.CargoItem> cargoFromItems(Iterable<net.minecraft.world.item.ItemStack> items) {
+        if (items == null) {
+            return List.of();
+        }
+        java.util.LinkedHashMap<String, int[]> byName = new java.util.LinkedHashMap<>();
+        for (net.minecraft.world.item.ItemStack stack : items) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            String name = stack.getHoverName().getString();
+            byName.computeIfAbsent(name, ignored -> new int[1])[0] += stack.getCount();
+        }
+        if (byName.isEmpty()) {
+            return List.of();
+        }
+        List<MarketWebMapDtos.CargoItem> out = new ArrayList<>(byName.size());
+        for (Map.Entry<String, int[]> entry : byName.entrySet()) {
+            out.add(new MarketWebMapDtos.CargoItem(entry.getKey(), entry.getValue()[0], ""));
+        }
+        return out;
     }
 
     // 定期兜底清理阈值（gametick）。订单轨迹终态/查不到后过 STALE_ORDER 删；
@@ -306,7 +387,8 @@ public final class ShippingTraceService {
                                                  List<Vec3> waypoints, String shipperUuid, String nationId,
                                                  String transportMode, String status,
                                                  String sourceName, String targetName,
-                                                 double currentX, double currentZ) {
+                                                 double currentX, double currentZ,
+                                                 List<MarketWebMapDtos.CargoItem> cargo) {
         if (level == null || level.isClientSide() || vehicleUuid == null
                 || waypoints == null || waypoints.size() < 2) {
             return;
@@ -318,7 +400,8 @@ public final class ShippingTraceService {
                 manualTraceId(vehicleUuid), shipperUuid == null ? "" : shipperUuid,
                 MarketWebMapConstants.OVERWORLD, transportMode, status,
                 nationId == null ? "" : nationId, "", src, dst,
-                waypoints, 0, 0.0D, gameTime, gameTime, currentX, currentZ, 0.0D, true);
+                waypoints, 0, 0.0D, gameTime, gameTime, currentX, currentZ, 0.0D,
+                cargo == null ? List.of() : cargo, true);
         ShippingTraceSavedData.get(level).putTrace(rec);
     }
 
@@ -348,6 +431,25 @@ public final class ShippingTraceService {
             // withProgress 保留 currentX/Z，故先 withLivePosition 再 withProgress。
             data.putTrace(trace.withLivePosition(x, z, gameTime)
                     .withProgress(completedPointCount, progressRatio, gameTime));
+        }
+    }
+
+    /** 写入载具实时坐标 + 进度 + 速度（一次提交，speed 单位 blocks/tick）。 */
+    public static void updateLivePositionProgressAndSpeed(Level level, String traceId,
+                                                         double x, double z,
+                                                         int completedPointCount, double progressRatio,
+                                                         double speed) {
+        if (level == null || level.isClientSide() || traceId == null || traceId.isBlank()) {
+            return;
+        }
+        ShippingTraceSavedData data = ShippingTraceSavedData.get(level);
+        ShippingTraceRecord trace = data.getTrace(traceId);
+        if (trace != null) {
+            long gameTime = level.getGameTime();
+            // withProgress 保留 currentX/Z，故先 withLivePosition 再 withProgress 再 withSpeed。
+            data.putTrace(trace.withLivePosition(x, z, gameTime)
+                    .withProgress(completedPointCount, progressRatio, gameTime)
+                    .withSpeed(Math.max(0.0D, speed), gameTime));
         }
     }
 

@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.market.logistics;
 
 import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapDtos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -26,8 +27,10 @@ public record ShippingTraceRecord(String shippingOrderId,
                                   double currentX,
                                   double currentZ,
                                   double currentSpeed,
+                                  List<MarketWebMapDtos.CargoItem> cargo,
                                   boolean manual) {
     private static final int MAX_WAYPOINTS = 2048;
+    private static final int MAX_CARGO_ITEMS = 64;
 
     public ShippingTraceRecord {
         shippingOrderId = clean(shippingOrderId);
@@ -45,6 +48,7 @@ public record ShippingTraceRecord(String shippingOrderId,
         startedGameTime = Math.max(0L, startedGameTime);
         updatedGameTime = Math.max(0L, updatedGameTime);
         currentSpeed = Math.max(0.0D, currentSpeed);
+        cargo = copyCargo(cargo);
         if (currentX == 0.0D && currentZ == 0.0D && !waypoints.isEmpty()) {
             currentX = waypoints.get(0).x;
             currentZ = waypoints.get(0).z;
@@ -54,25 +58,31 @@ public record ShippingTraceRecord(String shippingOrderId,
     public ShippingTraceRecord withStatus(String nextStatus, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, nextStatus,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime, currentX, currentZ, currentSpeed, manual);
+                startedGameTime, gameTime, currentX, currentZ, currentSpeed, cargo, manual);
     }
 
     public ShippingTraceRecord withProgress(int nextCompletedPointCount, double nextProgressRatio, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, nextCompletedPointCount, nextProgressRatio,
-                startedGameTime, gameTime, currentX, currentZ, currentSpeed, manual);
+                startedGameTime, gameTime, currentX, currentZ, currentSpeed, cargo, manual);
     }
 
     public ShippingTraceRecord withLivePosition(double nextX, double nextZ, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime, nextX, nextZ, currentSpeed, manual);
+                startedGameTime, gameTime, nextX, nextZ, currentSpeed, cargo, manual);
     }
 
     public ShippingTraceRecord withSpeed(double nextSpeed, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime, currentX, currentZ, nextSpeed, manual);
+                startedGameTime, gameTime, currentX, currentZ, nextSpeed, cargo, manual);
+    }
+
+    public ShippingTraceRecord withCargo(List<MarketWebMapDtos.CargoItem> nextCargo, long gameTime) {
+        return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
+                nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
+                startedGameTime, gameTime, currentX, currentZ, currentSpeed, nextCargo, manual);
     }
 
     public CompoundTag save() {
@@ -102,6 +112,15 @@ public record ShippingTraceRecord(String shippingOrderId,
         tag.putDouble("CurrentX", currentX);
         tag.putDouble("CurrentZ", currentZ);
         tag.putDouble("CurrentSpeed", currentSpeed);
+        ListTag cargoTag = new ListTag();
+        for (MarketWebMapDtos.CargoItem item : cargo) {
+            CompoundTag itemTag = new CompoundTag();
+            itemTag.putString("Name", item.name());
+            itemTag.putInt("Quantity", item.quantity());
+            itemTag.putString("Recipient", item.recipient());
+            cargoTag.add(itemTag);
+        }
+        tag.put("Cargo", cargoTag);
         tag.putBoolean("Manual", manual);
         return tag;
     }
@@ -112,6 +131,16 @@ public record ShippingTraceRecord(String shippingOrderId,
         for (Tag raw : list) {
             if (raw instanceof CompoundTag pointTag) {
                 points.add(new Vec3(pointTag.getDouble("X"), pointTag.getDouble("Y"), pointTag.getDouble("Z")));
+            }
+        }
+        List<MarketWebMapDtos.CargoItem> cargoItems = new ArrayList<>();
+        ListTag cargoList = tag.getList("Cargo", Tag.TAG_COMPOUND);
+        for (Tag raw : cargoList) {
+            if (raw instanceof CompoundTag itemTag) {
+                cargoItems.add(new MarketWebMapDtos.CargoItem(
+                        itemTag.getString("Name"),
+                        itemTag.getInt("Quantity"),
+                        itemTag.getString("Recipient")));
             }
         }
         return new ShippingTraceRecord(
@@ -132,6 +161,7 @@ public record ShippingTraceRecord(String shippingOrderId,
                 tag.contains("CurrentX") ? tag.getDouble("CurrentX") : 0.0D,
                 tag.contains("CurrentZ") ? tag.getDouble("CurrentZ") : 0.0D,
                 tag.contains("CurrentSpeed") ? tag.getDouble("CurrentSpeed") : 0.0D,
+                cargoItems,
                 tag.contains("Manual") && tag.getBoolean("Manual")
         );
     }
@@ -146,6 +176,22 @@ public record ShippingTraceRecord(String shippingOrderId,
                 out.add(point);
             }
             if (out.size() >= MAX_WAYPOINTS) {
+                break;
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static List<MarketWebMapDtos.CargoItem> copyCargo(List<MarketWebMapDtos.CargoItem> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        List<MarketWebMapDtos.CargoItem> out = new ArrayList<>(Math.min(raw.size(), MAX_CARGO_ITEMS));
+        for (MarketWebMapDtos.CargoItem item : raw) {
+            if (item != null) {
+                out.add(item);
+            }
+            if (out.size() >= MAX_CARGO_ITEMS) {
                 break;
             }
         }

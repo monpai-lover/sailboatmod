@@ -422,6 +422,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             cleanupLegacyNightLightBlocks();
             applyTransportSupport();
             updateAutopilotChunkLoading();
+            tickArrivalNoticeCountdown();
         }
         limitTurnRate();
 
@@ -446,8 +447,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             int routeSize = autopilotRoute.size();
             int completed = routeSize <= 0 ? 0 : Mth.clamp(autopilotTargetIndex, 0, routeSize - 1);
             double progress = routeSize <= 0 ? 0.0D : (double) completed / routeSize;
-            com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionAndProgress(
-                    level(), traceId, getX(), getZ(), completed, progress);
+            double speedPerTick = getDeltaMovement().horizontalDistance();
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionProgressAndSpeed(
+                    level(), traceId, getX(), getZ(), completed, progress, speedPerTick);
         }
         if (!level().isClientSide && !isAutopilotActive() && awaitingNextLegPort != null) {
             tryResumeAwaitedWaterLeg();
@@ -1449,7 +1451,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     traceShipperUuid(), traceShipperNationId(),
                     "PORT", "SAILING",
                     autopilotShipmentStartDockName, autopilotShipmentEndDockName,
-                    getX(), getZ());
+                    getX(), getZ(),
+                    com.monpai.sailboatmod.market.logistics.ShippingTraceService.cargoFromItems(inventory));
         }
         return true;
     }
@@ -1523,6 +1526,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotDockingSpot = null;
         autopilotDepartureOrigin = null;
         if (level() instanceof ServerLevel serverLevel) {
+            // 释放票据前强制让附近客户端重新追踪本船：多 mod 环境下票据加载的实体可能未被
+            // EntityTracker pair（同马车幽灵车问题），到站「看不见但有音效」。
+            com.monpai.sailboatmod.util.EntityRetrackHelper.forceRetrack(serverLevel, this);
             clearAutopilotForcedChunks(serverLevel);
         }
         clearAutopilotShipmentContext();
@@ -2444,7 +2450,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     public int getArrivalNoticeTicks() {
-        return Math.max(0, entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK) - tickCount);
+        // 语义=剩余可见 tick（服务端权威递减并同步）。不再用 untilTick-tickCount：多 mod 环境下
+        // 客户端实体 tick 可能停滞，tickCount 不前进会导致到站提示永不消失。
+        return Math.max(0, entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK));
     }
 
     public String getArrivalNoticeStationName() {
@@ -2472,8 +2480,20 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     private void setArrivalNoticeTicks(int ticks) {
+        // 存「剩余可见 tick」（服务端权威递减），不再存绝对到期 tick。
         int clamped = Mth.clamp(ticks, 0, ARRIVAL_NOTICE_TICKS);
-        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped <= 0 ? 0 : tickCount + clamped);
+        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped);
+    }
+
+    /** 服务端每 tick 递减到站提示剩余可见时长（驱动其按时消失，不依赖客户端 tick）。 */
+    private void tickArrivalNoticeCountdown() {
+        if (level().isClientSide) {
+            return;
+        }
+        int remaining = entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK);
+        if (remaining > 0) {
+            entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, remaining - 1);
+        }
     }
 
     /** 清空到站通知 4 字段。仅在发车入口调用，避免抹掉到站路径刚显示的通知。 */

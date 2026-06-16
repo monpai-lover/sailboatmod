@@ -488,6 +488,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
         tickLandDrive();
         updateAutopilotChunkLoading();
+        tickArrivalNoticeCountdown();
         if (!level().isClientSide && tickCount % PICKUP_LOAD_SCAN_INTERVAL_TICKS == 0) {
             tickPickupLoadDetection();
         }
@@ -585,8 +586,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                 int routeSize = autopilotRoute.size();
                 int completed = routeSize <= 0 ? 0 : Mth.clamp(autopilotTargetIndex, 0, routeSize - 1);
                 double progress = routeSize <= 0 ? 0.0D : (double) completed / routeSize;
-                com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionAndProgress(
-                        level(), traceId, getX(), getZ(), completed, progress);
+                double speedPerTick = getDeltaMovement().horizontalDistance();
+                com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionProgressAndSpeed(
+                        level(), traceId, getX(), getZ(), completed, progress, speedPerTick);
             }
         }
         tickPassengerSoundCue();
@@ -1471,7 +1473,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     public int getArrivalNoticeTicks() {
-        return Math.max(0, entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK) - tickCount);
+        // 语义=剩余可见 tick（服务端权威递减并同步）。不再用 untilTick-tickCount：多 mod 环境下
+        // 客户端实体 tick 可能停滞，tickCount 不前进会导致到站提示永不消失（幽灵车同源）。
+        return Math.max(0, entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK));
     }
 
     public String getArrivalNoticeStationName() {
@@ -1592,7 +1596,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                     traceShipperUuid(), traceShipperNationId(),
                     "LAND", "IN_TRANSIT",
                     route.startDockName(), route.endDockName(),
-                    getX(), getZ());
+                    getX(), getZ(),
+                    com.monpai.sailboatmod.market.logistics.ShippingTraceService.cargoFromItems(inventory));
         }
         return true;
     }
@@ -1655,19 +1660,18 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     /**
      * 到达后强制让附近玩家重新追踪本实体。多模组环境下票据加载的实体可能未被 EntityTracker 追踪
-     * （单 mod 无此问题），表现为「看不见但有音效」。这里用公开手段触发一次位置/状态同步：标记 hasImpulse
-     * 并微扰 deltaMovement，促使 ServerEntity 下一 tick 发送移动/追踪包。诊断日志记录现场以便实测核对。
+     * （单 mod 无此问题），表现为「看不见但有音效、判定箱框不到」——客户端从未收到 spawn 包。
+     * 实测确认 chunkForced/nearbyPlayers/added 全正常但仍不可见，故走 ChunkMap untrack→retrack
+     * 强制重发完整 spawn（{@link EntityRetrackHelper}），替代旧的 setPos（只发移动包，对未 spawn 实体无效）。
      */
     private void forceRetrackForNearbyPlayers(ServerLevel serverLevel) {
         long chunkKey = net.minecraft.world.level.ChunkPos.asLong(blockPosition());
         int nearby = serverLevel.getEntitiesOfClass(net.minecraft.world.entity.player.Player.class,
                 getBoundingBox().inflate(64.0D)).size();
         boolean forced = forcedAutopilotChunks.contains(chunkKey);
-        LOGGER.info("[CarriageEntity] arrival retrack uuid={} pos={} chunkForced(ENTITY_TICKING)={} nearbyPlayers={} added={}",
-                getUUID(), blockPosition(), forced, nearby, isAddedToWorld());
-        // 公开字段触发同步：标记需要发送，并对自身位置做零位移 setPos 以刷新 ServerEntity 追踪。
-        this.hasImpulse = true;
-        setPos(getX(), getY(), getZ());
+        boolean reflective = com.monpai.sailboatmod.util.EntityRetrackHelper.forceRetrack(serverLevel, this);
+        LOGGER.info("[CarriageEntity] arrival retrack uuid={} pos={} chunkForced(ENTITY_TICKING)={} nearbyPlayers={} added={} retrackPath={}",
+                getUUID(), blockPosition(), forced, nearby, isAddedToWorld(), reflective ? "reflective" : "vanilla/none");
     }
 
     /**
@@ -2459,8 +2463,20 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     private void setArrivalNoticeTicks(int ticks) {
+        // 存「剩余可见 tick」（服务端权威递减），不再存绝对到期 tick。
         int clamped = Mth.clamp(ticks, 0, ARRIVAL_NOTICE_TICKS);
-        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped <= 0 ? 0 : tickCount + clamped);
+        entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, clamped);
+    }
+
+    /** 服务端每 tick 递减到站提示剩余可见时长（驱动其按时消失，不依赖客户端 tick）。 */
+    private void tickArrivalNoticeCountdown() {
+        if (level().isClientSide) {
+            return;
+        }
+        int remaining = entityData.get(DATA_ARRIVAL_NOTICE_UNTIL_TICK);
+        if (remaining > 0) {
+            entityData.set(DATA_ARRIVAL_NOTICE_UNTIL_TICK, remaining - 1);
+        }
     }
 
     /** 清空到站通知 4 字段。仅在发车入口调用，避免抹掉到站路径刚显示的通知。 */
