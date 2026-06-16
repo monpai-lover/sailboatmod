@@ -158,6 +158,9 @@ public final class ShippingTraceService {
         String targetLabel = targetTown.isBlank() ? (trace.targetName().isBlank() ? "?" : trace.targetName()) : targetTown;
         String label = sourceLabel + " -> " + targetLabel;
 
+        String vehicleName = resolveVehicleName(trace, order, level);
+        String ownerName = resolveOwnerName(trace, order, level);
+
         return new MarketWebMapDtos.ShipmentTrace(
                 trace.shippingOrderId(),
                 label,
@@ -167,6 +170,8 @@ public final class ShippingTraceService {
                 trace.targetName(),
                 sourceTown,
                 targetTown,
+                vehicleName,
+                ownerName,
                 etaSeconds,
                 trace.currentSpeed(),
                 cargo,
@@ -296,6 +301,59 @@ public final class ShippingTraceService {
         }
         double speedPerSecond = speedPerTick * 20.0D;
         return (int) Math.ceil(remaining / speedPerSecond);
+    }
+
+    /**
+     * 载具名：订单轨迹优先用订单存的船名 boatName；都没有则按运输方式回退「帆船」(PORT) / 「马车」(LAND)。
+     */
+    private static String resolveVehicleName(ShippingTraceRecord trace, ShippingOrder order,
+                                             net.minecraft.world.level.Level level) {
+        if (order != null && order.boatName() != null && !order.boatName().isBlank()) {
+            return order.boatName().trim();
+        }
+        String mode = trace.transportMode() == null ? "" : trace.transportMode().trim().toUpperCase(Locale.ROOT);
+        if ("LAND".equals(mode)) {
+            return "马车";
+        }
+        return "帆船";
+    }
+
+    /**
+     * 拥有者名：优先跨维度找到载具实体读其 getOwnerName()（最准、随实体存活）；实体不在则用订单存的
+     * 发货人名 shipperName 兜底；都没有返回空串（前端显示「-」）。
+     */
+    private static String resolveOwnerName(ShippingTraceRecord trace, ShippingOrder order,
+                                           net.minecraft.world.level.Level level) {
+        java.util.UUID vehicleUuid = traceVehicleUuid(trace, order);
+        if (vehicleUuid != null && level instanceof ServerLevel serverLevel && serverLevel.getServer() != null) {
+            for (ServerLevel candidate : serverLevel.getServer().getAllLevels()) {
+                if (candidate.getEntity(vehicleUuid) instanceof com.monpai.sailboatmod.entity.TransportEntity vehicle) {
+                    String name = vehicle.getOwnerName();
+                    if (name != null && !name.isBlank()) {
+                        return name.trim();
+                    }
+                }
+            }
+        }
+        if (order != null && order.shipperName() != null && !order.shipperName().isBlank()) {
+            return order.shipperName().trim();
+        }
+        return "";
+    }
+
+    /** 轨迹对应载具 uuid：订单用 order.boatUuid；手动用 manual trace id 后缀。 */
+    private static java.util.UUID traceVehicleUuid(ShippingTraceRecord trace, ShippingOrder order) {
+        if (order != null && order.boatUuid() != null && !order.boatUuid().isBlank()) {
+            java.util.UUID uuid = parseUuid(order.boatUuid());
+            if (uuid != null) {
+                return uuid;
+            }
+        }
+        String id = trace.shippingOrderId();
+        if (id != null && id.startsWith("manual-")) {
+            return parseUuid(id.substring("manual-".length()));
+        }
+        return null;
     }
 
     /** 订单货物摘要：purchaseOrder 数量 + listing 物品名 + 收货人。 */
@@ -435,10 +493,14 @@ public final class ShippingTraceService {
         }
     }
 
-    /** 跨所有维度查实体是否存活。 */
+    /** 跨所有维度查实体是否存活。先查主世界（绝大多数载具在此）快路径，再查其余维度。 */
     private static boolean isEntityAliveAnywhere(net.minecraft.server.MinecraftServer server, java.util.UUID uuid) {
+        ServerLevel overworld = server.overworld();
+        if (overworld != null && overworld.getEntity(uuid) != null) {
+            return true;
+        }
         for (ServerLevel level : server.getAllLevels()) {
-            if (level.getEntity(uuid) != null) {
+            if (level != overworld && level.getEntity(uuid) != null) {
                 return true;
             }
         }

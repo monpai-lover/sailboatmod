@@ -49,6 +49,8 @@ public final class MarketWebMapDtos {
                                 String targetName,
                                 String sourceTownName,
                                 String targetTownName,
+                                String vehicleName,
+                                String ownerName,
                                 int etaSeconds,
                                 double currentSpeed,
                                 List<CargoItem> cargo,

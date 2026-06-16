@@ -92,6 +92,8 @@ public final class MarketWebMapJson {
         json.addProperty("targetName", shipment.targetName());
         json.addProperty("sourceTownName", shipment.sourceTownName());
         json.addProperty("targetTownName", shipment.targetTownName());
+        json.addProperty("vehicleName", shipment.vehicleName());
+        json.addProperty("ownerName", shipment.ownerName());
         json.addProperty("etaSeconds", shipment.etaSeconds());
         json.addProperty("currentSpeed", shipment.currentSpeed());
         JsonArray cargo = new JsonArray();

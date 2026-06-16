@@ -203,6 +203,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private final List<Vec3> autopilotRoute = new ArrayList<>();
     private final List<RouteDefinition> routeCatalog = new ArrayList<>();
     private final Set<Long> forcedAutopilotChunks = new HashSet<>();
+    // 幽灵船修复（同马车）：已对其补发过 spawn 的附近玩家；autopilot 全程 + 到港宽限期每帧维持可见。
+    private final Set<UUID> spawnedToPlayers = new HashSet<>();
+    // 到港宽限期：到港后仍强加载区块并持续 spawn 心跳这么多 tick，给 ChunkMap 重建追踪窗口。
+    private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
+    private int postArrivalForcedHoldTicks = 0;
+    // enroute spawn 心跳周期(tick)：每隔这么久对范围内所有玩家重发整套 spawn 兜底被丢弃的实体。
+    private static final int ENROUTE_SPAWN_HEARTBEAT_TICKS = 60;
     private int autopilotTargetIndex = 0;
     private String autopilotRouteName = "";
     private BlockPos routeDockPos = null;
@@ -2390,6 +2397,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         resetUnstickState(); // 到站：清脱困状态，后续轨迹状态由到站/续运流程接管
         BlockPos endDockPos = findAutopilotDestinationDockPos();
         if (endDockPos == null || !(level().getBlockEntity(endDockPos) instanceof DockBlockEntity destinationDock)) {
+            // 目的地 dock 方块实体读不到（区块未加载/已拆）：仍播到达反馈 + 音效（destination=null 取航线名），
+            // 不再静默 stop —— 否则到港玩家既听不到音效也看不到到达提示（实测帆船到港缺音效根因之一）。
+            beginArrivalFeedback(null);
             stopAutopilot();
             return;
         }
@@ -2477,6 +2487,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 formatArrivalDate(System.currentTimeMillis(), ZoneId.systemDefault()));
         setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
         level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+        // 到港收尾：开宽限期 + 强制对范围内所有玩家重发一次 spawn，让到港时仍是幽灵的船立即现身（同马车）。
+        if (level() instanceof ServerLevel serverLevel) {
+            postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
+            spawnedToPlayers.clear();
+            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
+                    serverLevel, this, spawnedToPlayers, true);
+        }
     }
 
     private void setArrivalNoticeTicks(int ticks) {
@@ -2906,8 +2923,25 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
+        // 幽灵船修复（同马车）：autopilot 全程 + 到港宽限期内对范围内玩家维持可见。
+        // 多 mod 坏掉 EntityTracker 时只发一次/不发 spawn 会导致远行返回看不见（幽灵船）。
+        // 每 2tick 发 teleport+motion 维持移动；每 ENROUTE_SPAWN_HEARTBEAT_TICKS(60=3s) 重发整套 spawn 兜底。
+        if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
+            if (tickCount % 2 == 0) {
+                boolean spawnHeartbeat = (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0);
+                com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
+                        serverLevel, this, spawnedToPlayers, spawnHeartbeat);
+            }
+        } else {
+            spawnedToPlayers.clear();
+        }
         if (!isAutopilotActive()) {
-            clearAutopilotForcedChunks(serverLevel);
+            // 宽限期递减；期满才释放票据，给 ChunkMap 几秒重建客户端追踪（同马车）。
+            if (postArrivalForcedHoldTicks > 0) {
+                postArrivalForcedHoldTicks--;
+            } else {
+                clearAutopilotForcedChunks(serverLevel);
+            }
             return;
         }
         Set<Long> requiredChunks = new HashSet<>();

@@ -255,6 +255,13 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private int autopilotTargetIndex = 0;
     private String autopilotRouteName = "";
     private BlockPos routeDockPos = null;
+    // autopilot 卡住检测：连续这么多 tick 位置几乎没动（且未到站）就放弃，避免永久卡在到不了的 waypoint
+    // 上无限刷包/扫地形拖慢服务器。600tick=30s。STUCK_MOVE_EPSILON_SQR=移动量平方阈值（0.04=0.2格）。
+    private static final int AUTOPILOT_STUCK_TIMEOUT_TICKS = 600;
+    private static final double AUTOPILOT_STUCK_MOVE_EPSILON_SQR = 0.04D;
+    private double autopilotLastProgressX = Double.NaN;
+    private double autopilotLastProgressZ = Double.NaN;
+    private int autopilotStuckTicks = 0;
     // 自动驾驶强制加载区块：用 ENTITY_TICKING 票据保证玩家走远后马车仍持续 tick（修离玩家远卡住）。
     private static final int AUTOPILOT_CHUNK_RADIUS = 2;
     private static final int AUTOPILOT_TARGET_CHUNK_RADIUS = 1;
@@ -595,9 +602,46 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             }
         }
         tickPassengerSoundCue();
+        tickAutopilotStuckGuard();
     }
 
-    /** 当前航行对应的 trace id：订单车用 manifest 的 shippingOrderId，手动车用 manual id。 */
+    /**
+     * autopilot 卡住兜底：连续 AUTOPILOT_STUCK_TIMEOUT_TICKS(30s) 位置几乎没动（到不了的 waypoint，
+     * targetIndex 推不动、永不 finish）就主动放弃，避免马车永久卡住、无限刷 spawn 心跳 + 每 tick 扫地形
+     * 拖慢服务器。放弃 = stopAutopilot（进到站宽限期收尾，票据正常释放）。
+     */
+    private void tickAutopilotStuckGuard() {
+        double x = getX();
+        double z = getZ();
+        if (Double.isNaN(autopilotLastProgressX)) {
+            autopilotLastProgressX = x;
+            autopilotLastProgressZ = z;
+            autopilotStuckTicks = 0;
+            return;
+        }
+        double dx = x - autopilotLastProgressX;
+        double dz = z - autopilotLastProgressZ;
+        if (dx * dx + dz * dz >= AUTOPILOT_STUCK_MOVE_EPSILON_SQR) {
+            // 有明显推进：重置卡住计时与基准位置。
+            autopilotLastProgressX = x;
+            autopilotLastProgressZ = z;
+            autopilotStuckTicks = 0;
+            return;
+        }
+        if (++autopilotStuckTicks >= AUTOPILOT_STUCK_TIMEOUT_TICKS) {
+            LOGGER.warn("[CarriageAutopilot] stuck timeout -> abort entity={} uuid={} pos={} targetIndex={} routeSize={} task={}",
+                    getId(), getUUID(), position(), autopilotTargetIndex, autopilotRoute.size(), transportTaskKind);
+            resetAutopilotStuckGuard();
+            stopAutopilot();
+        }
+    }
+
+    /** 发车/到站时重置卡住检测状态，避免跨行程误判。 */
+    private void resetAutopilotStuckGuard() {
+        autopilotLastProgressX = Double.NaN;
+        autopilotLastProgressZ = Double.NaN;
+        autopilotStuckTicks = 0;
+    }
     private String traceIdForLiveSync() {
         List<ShipmentManifestEntry> manifest = getPendingShipmentManifest();
         if (hasTransportOrder(manifest)) {
@@ -1641,6 +1685,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         autopilotTargetIndex = 0;
         autopilotRouteName = getSelectedRouteName();
         activeTripStartGameTime = -1L;
+        resetAutopilotStuckGuard();
     }
 
     /**

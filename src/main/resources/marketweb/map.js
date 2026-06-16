@@ -45,6 +45,8 @@
       eta: "ETA",
       speed: "Speed",
       cargo: "Cargo",
+      vehicle: "Vehicle",
+      owner: "Owner",
       emptySelection: "Hover or click a market, territory, or shipment.",
       flag: "Flag"
     },
@@ -74,6 +76,8 @@
       eta: "预计到达",
       speed: "当前速度",
       cargo: "货物",
+      vehicle: "载具",
+      owner: "拥有者",
       emptySelection: "悬停或点击市场、领地、物流线路。",
       flag: "国旗"
     }
@@ -743,6 +747,8 @@
         <p class="section-kicker">${escapeHtml(label("route"))}</p>
         <h3>${escapeHtml(townLine)}</h3>
         <dl>
+          ${shipment.vehicleName ? `<dt>${escapeHtml(label("vehicle"))}</dt><dd>${escapeHtml(shipment.vehicleName)}</dd>` : ""}
+          ${shipment.ownerName ? `<dt>${escapeHtml(label("owner"))}</dt><dd>${escapeHtml(shipment.ownerName)}</dd>` : ""}
           <dt>${escapeHtml(label("mode"))}</dt><dd>${escapeHtml(shipment.transportMode || "-")}</dd>
           <dt>${escapeHtml(label("status"))}</dt><dd${shipmentStuck ? ' style="color:#dc2626;font-weight:600;"' : ""}>${escapeHtml(statusText)}</dd>
           ${etaSec > 0 ? `<dt>${escapeHtml(label("eta"))}</dt><dd>${escapeHtml(formatEta(etaSec))}</dd>` : ""}
@@ -1403,6 +1409,7 @@
       const tipSpeed = Number(shipment.currentSpeed) || 0;
       html = `
         <strong>${escapeHtml(tipTown)}</strong>
+        ${shipment.vehicleName ? `<span>${escapeHtml(label("vehicle"))}: ${escapeHtml(shipment.vehicleName)}${shipment.ownerName ? `（${escapeHtml(shipment.ownerName)}）` : ""}</span>` : ""}
         <span>${escapeHtml(label("mode"))}: ${escapeHtml(shipment.transportMode || "-")}</span>
         <span>${Math.round((Number(shipment.progressRatio) || 0) * 100)}%</span>
         ${tipEta > 0 ? `<span>${escapeHtml(label("eta"))}: ${escapeHtml(formatEta(tipEta))}</span>` : ""}
