@@ -263,8 +263,12 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 常规追踪机制补发 spawn 的窗口。实体移除时票据自动释放，多持几秒无害。
     private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
     private int postArrivalForcedHoldTicks = 0;
+    // enroute 调试：每个玩家进视野范围后最多补发几次 spawn 就停（验证「持续重发干扰建实体」假设）。
+    private static final int ENROUTE_SPAWN_CAP = 5;
     // 已对其补发过 spawn 的附近玩家（修「幽灵车」：玩家一进入视野即补 spawn，离开则移除，再进入重补）。
     private final Set<java.util.UUID> spawnedToPlayers = new HashSet<>();
+    // enroute 调试：玩家进范围后已补发 spawn 的次数（每玩家发满 ENROUTE_SPAWN_CAP 次就停，验证频率假设）。
+    private final java.util.Map<java.util.UUID, Integer> enrouteSpawnCounts = new java.util.HashMap<>();
     private final Set<Long> forcedAutopilotChunks = new HashSet<>();
     private String pendingShipperName = "";
     private String ownerName = "";
@@ -1658,18 +1662,22 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
-        // 幽灵车修复：autopilot 全程 + 到站宽限期内，对「新进入视野范围、客户端尚未收到 spawn」的玩家
-        // 补发一次 spawn 包族 —— 实现「车辆一进入玩家视野就恢复可视」。只对新玩家发一次、离开即移除，
-        // 之后靠 teleport+motion 维持移动，不每秒重发 spawn（spawnedToPlayers 由本实体持有）。
+        // 幽灵车修复：autopilot 全程 + 到站宽限期内，对范围内玩家维持可见。
+        // 调试方案（用户提议）：每个玩家进入视野后只补发固定 ENROUTE_SPAWN_CAP(=5) 次 spawn 就停，
+        // 之后只发 teleport+motion 维持移动 —— 验证「持续每帧/每秒重发 spawn 反而干扰客户端建实体」的假设。
+        // 若发满 5 次就停能稳定可见，说明问题在重发频率；若仍幽灵车，再回到周期性 spawn 心跳。
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
-            // 每 2 tick 同步一次：对范围内玩家发位置(teleport)+motion 维持平滑移动；
-            // 新玩家进范围那次顺带补发 spawn（forceRespawn=false，只发新玩家，不轰炸已可见玩家）。
             if (tickCount % 2 == 0) {
-                com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
-                        serverLevel, this, spawnedToPlayers, false);
+                int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnCapped(
+                        serverLevel, this, enrouteSpawnCounts, ENROUTE_SPAWN_CAP);
+                if (sent > 0) {
+                    LOGGER.info("[CarriageEntity] enroute spawn-capped sent={} counts={} pos=({},{},{})",
+                            sent, enrouteSpawnCounts, (int) getX(), (int) getY(), (int) getZ());
+                }
             }
         } else {
             spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置，下次发车重新跟踪
+            enrouteSpawnCounts.clear();
         }
         if (!isAutopilotActive()) {
             // 宽限期递减；期满才释放票据。

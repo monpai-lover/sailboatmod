@@ -13,6 +13,7 @@ import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -45,18 +46,19 @@ public final class EntityRetrackHelper {
      * <p>模型分两路：
      * <ul>
      *   <li><b>每帧</b>对范围内所有玩家发 teleport+motion —— 平滑移动，替代失效的 EntityTracker 移动同步。</li>
-     *   <li><b>spawn 包族</b>（add+data+passengers）只在玩家<i>刚进入范围</i>时发一次（让马车出现）；玩家走出
-     *       范围再进入会重新算作「新玩家」补发。实测证明进视野第一次 spawn 即成功，无需每秒重发心跳，故去掉
-     *       周期性重发以省开销。{@code forceRespawn=true} 时（如到站收尾）对范围内所有玩家强制重发一次。</li>
+     *   <li><b>spawn 包族</b>（add+data+passengers）在玩家<i>刚进入范围</i>时发一次（让马车出现），
+     *       且在 {@code spawnHeartbeat=true} 的帧对范围内<i>所有</i>玩家重发一次 —— 兜底「首次 spawn 被
+     *       客户端丢弃后实体永远建不起来」的幽灵车回归（实测 2026-06：只发一次会退回幽灵车）。调用方应
+     *       周期性（约每秒一帧）置 {@code spawnHeartbeat=true}，而非每帧（每帧重发会令客户端插值重置→渲染抽搐）。</li>
      * </ul>
      * 原版 {@code ClientboundAddEntityPacket} 按 entity-id 幂等覆盖，重发安全。
      *
      * @param alreadySpawned 由调用实体持有的可变集合，记录当前仍在范围内的玩家 UUID（本方法就地增删）。
-     * @param forceRespawn true 时对范围内所有玩家强制重发一次 spawn 包族（到站收尾用）；false 时只对刚进范围的新玩家发。
+     * @param spawnHeartbeat true 时对范围内所有玩家重发一次 spawn 包族（心跳帧 / 到站收尾用）；false 时只对刚进范围的新玩家发。
      * @return 本次补发 spawn 包族的玩家数。
      */
     public static int resendSpawnToNewTrackers(ServerLevel level, Entity entity, Set<UUID> alreadySpawned,
-                                               boolean forceRespawn) {
+                                               boolean spawnHeartbeat) {
         if (level == null || entity == null || alreadySpawned == null || !entity.isAddedToWorld()) {
             return 0;
         }
@@ -80,8 +82,8 @@ public final class EntityRetrackHelper {
             UUID id = player.getUUID();
             inRangeNow.add(id);
             boolean isNew = !alreadySpawned.contains(id);
-            // 新进范围发一次 spawn 让马车出现；forceRespawn（到站收尾）对所有范围内玩家强制重发一次。
-            if (isNew || forceRespawn) {
+            // 新进范围发一次 spawn 让马车出现；心跳帧（spawnHeartbeat）对所有范围内玩家重发一次兜底被丢弃的实体。
+            if (isNew || spawnHeartbeat) {
                 player.connection.send(entity.getAddEntityPacket());
                 if (nonDefault != null && !nonDefault.isEmpty()) {
                     player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
@@ -98,6 +100,61 @@ public final class EntityRetrackHelper {
         }
         // 离开范围的玩家移除，下次再进入会作为「新玩家」重新补发 spawn（覆盖「走开又回来」）。
         alreadySpawned.retainAll(inRangeNow);
+        return spawned;
+    }
+
+    /**
+     * 调试变体：每个玩家进入视野范围后，最多补发 {@code maxSpawnsPerPlayer} 次 spawn 包族就停，
+     * 之后只发 teleport+motion 维持移动。用于验证「持续每秒重发 spawn 反而干扰客户端建实体」的假设：
+     * 若改成「进范围后发固定几次就停」能稳定可见，说明问题出在重发频率而非发送本身。
+     *
+     * @param spawnCounts 由调用实体持有的可变 map：玩家 UUID → 已补发 spawn 次数（本方法就地增改）。
+     * @param maxSpawnsPerPlayer 每个玩家进范围后最多发几次 spawn（如 5）。达到后不再发 spawn，只发位置同步。
+     * @return 本次实际补发 spawn 包族的玩家数。
+     */
+    public static int resendSpawnCapped(ServerLevel level, Entity entity, Map<UUID, Integer> spawnCounts,
+                                        int maxSpawnsPerPlayer) {
+        if (level == null || entity == null || spawnCounts == null || !entity.isAddedToWorld()) {
+            return 0;
+        }
+        double ex = entity.getX();
+        double ey = entity.getY();
+        double ez = entity.getZ();
+        var nonDefault = entity.getEntityData().getNonDefaultValues();
+        boolean hasPassengers = !entity.getPassengers().isEmpty();
+        ClientboundTeleportEntityPacket teleport = new ClientboundTeleportEntityPacket(entity);
+        ClientboundSetEntityMotionPacket motion = new ClientboundSetEntityMotionPacket(entity);
+
+        java.util.HashSet<UUID> inRangeNow = new java.util.HashSet<>();
+        int spawned = 0;
+        for (ServerPlayer player : level.players()) {
+            if (player == null || player.connection == null) {
+                continue;
+            }
+            if (player.distanceToSqr(ex, ey, ez) > RETRACK_RANGE_SQR) {
+                continue;
+            }
+            UUID id = player.getUUID();
+            inRangeNow.add(id);
+            int sentSoFar = spawnCounts.getOrDefault(id, 0);
+            // 进范围后前 maxSpawnsPerPlayer 帧（每次调用算一帧）补发 spawn，之后停。
+            if (sentSoFar < maxSpawnsPerPlayer) {
+                player.connection.send(entity.getAddEntityPacket());
+                if (nonDefault != null && !nonDefault.isEmpty()) {
+                    player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
+                }
+                if (hasPassengers) {
+                    player.connection.send(new ClientboundSetPassengersPacket(entity));
+                }
+                spawnCounts.put(id, sentSoFar + 1);
+                spawned++;
+            }
+            // 所有范围内玩家：每帧补发绝对位置 + 速度，维持移动同步。
+            player.connection.send(teleport);
+            player.connection.send(motion);
+        }
+        // 离开范围的玩家移除其计数，下次再进入从 0 开始重新发满 maxSpawnsPerPlayer 次。
+        spawnCounts.keySet().retainAll(inRangeNow);
         return spawned;
     }
 
