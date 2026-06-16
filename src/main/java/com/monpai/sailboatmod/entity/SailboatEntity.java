@@ -1526,9 +1526,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotDockingSpot = null;
         autopilotDepartureOrigin = null;
         if (level() instanceof ServerLevel serverLevel) {
-            // 释放票据前强制让附近客户端重新追踪本船：多 mod 环境下票据加载的实体可能未被
+            // 释放票据前给追踪玩家补发 spawn 包族：多 mod 环境下票据加载的实体可能未被
             // EntityTracker pair（同马车幽灵车问题），到站「看不见但有音效」。
-            com.monpai.sailboatmod.util.EntityRetrackHelper.forceRetrack(serverLevel, this);
+            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNearby(serverLevel, this);
             clearAutopilotForcedChunks(serverLevel);
         }
         clearAutopilotShipmentContext();

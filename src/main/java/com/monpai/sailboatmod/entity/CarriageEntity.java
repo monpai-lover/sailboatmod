@@ -1659,19 +1659,16 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     /**
-     * 到达后强制让附近玩家重新追踪本实体。多模组环境下票据加载的实体可能未被 EntityTracker 追踪
-     * （单 mod 无此问题），表现为「看不见但有音效、判定箱框不到」——客户端从未收到 spawn 包。
-     * 实测确认 chunkForced/nearbyPlayers/added 全正常但仍不可见，故走 ChunkMap untrack→retrack
-     * 强制重发完整 spawn（{@link EntityRetrackHelper}），替代旧的 setPos（只发移动包，对未 spawn 实体无效）。
+     * 到站收尾（stopAutopilot 路径）：开宽限期 + 首发 spawn。多 mod 环境下票据加载的实体可能未被
+     * EntityTracker pair → 「看不见但有音效、判定箱框不到」。后续每 tick 由 updateAutopilotChunkLoading
+     * 在宽限期内持续重发，覆盖客户端建立追踪的窗口（修「幽灵车」）。
      */
     private void forceRetrackForNearbyPlayers(ServerLevel serverLevel) {
         long chunkKey = net.minecraft.world.level.ChunkPos.asLong(blockPosition());
-        int nearby = serverLevel.getEntitiesOfClass(net.minecraft.world.entity.player.Player.class,
-                getBoundingBox().inflate(64.0D)).size();
         boolean forced = forcedAutopilotChunks.contains(chunkKey);
-        boolean reflective = com.monpai.sailboatmod.util.EntityRetrackHelper.forceRetrack(serverLevel, this);
-        LOGGER.info("[CarriageEntity] arrival retrack uuid={} pos={} chunkForced(ENTITY_TICKING)={} nearbyPlayers={} added={} retrackPath={}",
-                getUUID(), blockPosition(), forced, nearby, isAddedToWorld(), reflective ? "reflective" : "vanilla/none");
+        int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNearby(serverLevel, this);
+        LOGGER.info("[CarriageEntity] arrival respawn(stop) uuid={} pos={} chunkForced={} sentToPlayers={} added={}",
+                getUUID(), blockPosition(), forced, sent, isAddedToWorld());
     }
 
     /**
@@ -1682,8 +1679,13 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
+        // 到站宽限期：无论 autopilot 是否仍 active（延迟返航/连运中转期间可能仍 active），只要在宽限期内
+        // 就每 tick 给追踪玩家补发 spawn 包族，覆盖客户端建立区块追踪的窗口（修「幽灵车·过几秒才出现」）。
+        if (postArrivalForcedHoldTicks > 0) {
+            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNearby(serverLevel, this);
+        }
         if (!isAutopilotActive()) {
-            // 宽限期内保留票据（让 ChunkMap 有机会在玩家靠近时重建实体追踪），期满才释放。
+            // 宽限期递减；期满才释放票据。
             if (postArrivalForcedHoldTicks > 0) {
                 postArrivalForcedHoldTicks--;
             } else {
@@ -2399,6 +2401,16 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT, formatArrivalDate(System.currentTimeMillis(), ZoneId.systemDefault()));
         setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
         level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
+        // 到站（含延迟返航、连运中转等所有到站路径都经过这里）：开宽限期 + 首发 spawn，
+        // 让多 mod 环境下未被 EntityTracker pair 的马车对附近玩家可见（修「幽灵车」）。
+        if (level() instanceof ServerLevel serverLevel) {
+            postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
+            int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNearby(serverLevel, this);
+            LOGGER.info("[CarriageEntity] arrival respawn uuid={} pos={} chunkForced={} sentToPlayers={} added={}",
+                    getUUID(), blockPosition(),
+                    forcedAutopilotChunks.contains(net.minecraft.world.level.ChunkPos.asLong(blockPosition())),
+                    sent, isAddedToWorld());
+        }
     }
 
     private int activeTripElapsedTicks() {
