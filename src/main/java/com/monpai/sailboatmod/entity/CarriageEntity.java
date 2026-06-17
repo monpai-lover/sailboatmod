@@ -570,26 +570,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     private void tickRailAutopilotDrive() {
-        Vec3 beforeStep = position();
-        int beforeIndex = autopilotTargetIndex;
         CarriageRailPathFollower.StepResult step = railAutopilotStep(autopilotRoute, position(), autopilotTargetIndex);
         autopilotTargetIndex = step.targetIndex();
-        // 蠕动诊断：每秒打一次 step 全链路状态。cursorAdvance≈0.36 才正常；若≈0 说明 step 没推进，
-        // 看是 active 还是 index 卡住、当前段两端坐标、车与投影起点偏离。
-        if (tickCount % 20 == 0) {
-            int rs = autopilotRoute.size();
-            int idx = Mth.clamp(step.targetIndex(), 1, Math.max(1, rs - 1));
-            Vec3 segPrev = (rs >= 2 && idx - 1 >= 0 && idx - 1 < rs) ? autopilotRoute.get(idx - 1) : null;
-            Vec3 segTarget = (rs >= 2 && idx < rs) ? autopilotRoute.get(idx) : null;
-            double cursorAdvance = horizontalDistance(beforeStep, step.position());
-            double segLen = (segPrev != null && segTarget != null) ? horizontalDistance(segPrev, segTarget) : -1.0D;
-            double distToTarget = segTarget != null ? horizontalDistance(beforeStep, segTarget) : -1.0D;
-            LOGGER.info("[CarriageCrawl] active={} finished={} idx {}->{} routeSize={} pos={} cursor={} cursorAdvance={} segLen={} distToTarget={}",
-                    step.active(), step.finished(), beforeIndex, step.targetIndex(), rs,
-                    String.format("(%.2f,%.2f,%.2f)", beforeStep.x, beforeStep.y, beforeStep.z),
-                    String.format("(%.2f,%.2f,%.2f)", step.position().x, step.position().y, step.position().z),
-                    String.format("%.4f", cursorAdvance), String.format("%.3f", segLen), String.format("%.3f", distToTarget));
-        }
         if (step.finished()) {
             Vec3 correctedPosition = railAutopilotSurfacePosition(step.position());
             applyRailAutopilotPose(correctedPosition, step.yaw(), correctedPosition.subtract(position()));
@@ -605,14 +587,6 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
         Vec3 correctedPosition = railAutopilotSurfacePosition(step.position());
         applyRailAutopilotPose(correctedPosition, step.yaw(), correctedPosition.subtract(position()));
-        if (tickCount % 20 == 0) {
-            double actualMove = horizontalDistance(beforeStep, position());
-            double yCorrection = correctedPosition.y - step.position().y;
-            LOGGER.info("[CarriageCrawl] afterPose actualMove={} corrected={} yCorr={}",
-                    String.format("%.4f", actualMove),
-                    String.format("(%.2f,%.2f,%.2f)", correctedPosition.x, correctedPosition.y, correctedPosition.z),
-                    String.format("%.3f", yCorrection));
-        }
         checkInsideBlocks();
         // webmap: 航行中每 2 秒把实时坐标 + 进度推给轨迹
         if (++traceLiveSyncTicks >= TRACE_LIVE_SYNC_INTERVAL_TICKS) {

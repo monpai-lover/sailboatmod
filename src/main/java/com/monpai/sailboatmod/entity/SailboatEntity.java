@@ -567,8 +567,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     wantsReverse = playerWantsReverse;
                     wantsTurn = playerWantsTurn;
                     turnInput = controlInput.turnInput();
-                    // 换挡写 EntityData 只能服务端；客户端读同步 gear(getEngineGear)预测，~1tick 延迟可接受。
-                    if (!level().isClientSide) {
+                    // 客户端本地驾驶端(clientLocalDrive)也跑换挡：客户端 entityData.set 只改本地副本(下一 tick
+                    // 被服务端权威值同步覆盖纠正)，给本地预测提供油门源。否则客户端 gear 恒 STOP→预测无推力→
+                    // 船不动，且客户端 isControlledByLocalInstance=true 会经 ServerboundMoveVehiclePacket 把
+                    // 「不动」上报、服务端 absMoveTo 覆盖→两端冻结。服务端照旧权威切挡。
+                    if (!level().isClientSide || clientLocalDrive) {
                         if (usesHoldToDriveControls()) {
                             entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
                             forwardPressedLastTick = false;
