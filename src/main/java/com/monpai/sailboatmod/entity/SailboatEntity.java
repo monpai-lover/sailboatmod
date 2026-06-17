@@ -123,9 +123,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final DateTimeFormatter ARRIVAL_DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
     private static final float MAX_TURN_DEGREES_PER_TICK = 0.85F;
-    // 手动驾驶时船头 yaw 跟随航向(漂移转向后的速度矢量方向)的每 tick 最大角度。
-    // 比 MAX_TURN_DEGREES_PER_TICK 大，因服务端权威下这是玩家可见转向的唯一来源(经 Rot 包+tickLerp)。
+    // 手动驾驶时船头 yaw 跟随航向(漂移转向后的速度矢量方向)的每 tick 最大角度。双端预测下两端同跑此公式，
+    // 驾驶者客户端本地即时转向，不再依赖服务端 Rot 包+插值。
     private static final float MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK = 3.0F;
+    // 网络插值步数(autopilot 服务端权威时用，照抄马车)。
+    private static final int NETWORK_LERP_STEPS = 10;
     private static final double STOWED_FORWARD_ACCEL = 1.006D;
     private static final double STOWED_MAX_SPEED_FACTOR = 0.42D;
     private static final double COASTING_DRAG = 0.9994D;
@@ -206,6 +208,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private boolean forwardPressedLastTick = false;
     private boolean reversePressedLastTick = false;
     private final SailboatManualInputState manualInputState = new SailboatManualInputState();
+    // 自管网络插值(覆写 vanilla Boat 的 private lerp)：手动 local-control 端清 0 步=本地预测不被服务端拖；
+    // autopilot 服务端权威时用 1/NETWORK_LERP_STEPS 步插值跟随。照抄 CarriageEntity 的 tickNetworkLerp/lerpTo。
+    private int sailboatLerpSteps;
+    private double sailboatLerpX;
+    private double sailboatLerpY;
+    private double sailboatLerpZ;
+    private double sailboatLerpYaw;
+    private double sailboatLerpPitch;
     private float previousSailDeployProgress = 1.0F;
     private float sailDeployProgress = 1.0F;
     private final List<Vec3> autopilotRoute = new ArrayList<>();
@@ -419,12 +429,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
     @Override
     public void tick() {
-        boolean skipVanillaBoatMovementTick = skipsVanillaBoatMovementTick() && !level().isClientSide;
+        boolean skipVanillaBoatMovementTick = skipsVanillaBoatMovementTick();
         if (skipVanillaBoatMovementTick) {
             tickBaseEntityWithoutBoatMovement();
         } else {
             super.tick();
         }
+        tickNetworkLerp();
         cleanupSeatAssignments();
         previousSailDeployProgress = sailDeployProgress;
         float sailTarget = isSailDeployed() ? 1.0F : 0.0F;
@@ -441,7 +452,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             tickArrivalNoticeCountdown();
         }
         limitTurnRate();
-
         LivingEntity captain = getControllingPassenger();
         if (!level().isClientSide && !(captain instanceof Player)) {
             manualInputState.clear();
@@ -454,6 +464,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             resumeAutopilot();
             autopilotControl = !isAutopilotPaused() && hasAutopilotRoute();
         }
+        // 双端预测：客户端驾驶者也跑移动物理(本地预测=零延迟跟手)，但仅手动(非 autopilot)、有玩家驾驶时。
+        // autopilot 时 isControlledByLocalInstance()=false→客户端不本地控制，靠 tickNetworkLerp 插值服务端权威位置。
+        boolean clientLocalDrive = level().isClientSide
+                && isControlledByLocalInstance()
+                && (captain instanceof Player)
+                && isPrimaryTravelMedium();
         // webmap: 航行中每 2 秒把实时坐标 + 进度推给轨迹（订单车用订单 id，手动车用 manual id）
         if (autopilotControl && ++traceLiveSyncTicks >= TRACE_LIVE_SYNC_INTERVAL_TICKS) {
             traceLiveSyncTicks = 0;
@@ -493,8 +509,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             }
             setDeltaMovement(adjusted);
         }
-        if (!level().isClientSide && isPrimaryTravelMedium() && (isVehicle() || autopilotControl)) {
+        if ((!level().isClientSide || clientLocalDrive) && isPrimaryTravelMedium() && (isVehicle() || autopilotControl)) {
             nonWaterTicks = 0;
+            // 客户端本地预测也要跑浮力(否则预测 Y 沉)；服务端浮力已在上面副作用块跑过。
+            // 浮力设 deltaMovement.y，须在下面物理积分(读 current.y 保留)之前。
+            if (clientLocalDrive) {
+                applyTransportSupport();
+            }
             Vec3 current = getDeltaMovement();
             HandlingPreset preset = getHandlingPreset();
             boolean sailDeployed = isSailDeployed();
@@ -543,12 +564,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     wantsReverse = playerWantsReverse;
                     wantsTurn = playerWantsTurn;
                     turnInput = controlInput.turnInput();
-                    if (usesHoldToDriveControls()) {
-                        entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
-                        forwardPressedLastTick = false;
-                        reversePressedLastTick = false;
-                    } else {
-                        updateGearFromInput(wantsForward, wantsReverse);
+                    // 换挡写 EntityData 只能服务端；客户端读同步 gear(getEngineGear)预测，~1tick 延迟可接受。
+                    if (!level().isClientSide) {
+                        if (usesHoldToDriveControls()) {
+                            entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
+                            forwardPressedLastTick = false;
+                            reversePressedLastTick = false;
+                        } else {
+                            updateGearFromInput(wantsForward, wantsReverse);
+                        }
                     }
                 }
             } else if (autopilotControl) {
@@ -693,22 +717,19 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
                 inertialPlanarVelocity = new Vec3(nextX, 0.0D, nextZ);
                 setDeltaMovement(nextX, current.y, nextZ);
-                // 让船头 yaw 跟随最终速度矢量方向（漂移转向后的航向），使转向被客户端看到：
-                // 帆船服务端权威，客户端 deltaMovement=ZERO 无法本地模拟转向，必须让服务端 getYRot 真的变，
-                // 经 ServerEntity Rot 包 + 客户端 tickLerp 插值才看得到船头转。limitTurnRate(本 tick 早期已跑)
-                // 不会再限制这次变化；同步更新 lastTickYaw 让它下一 tick 也不误判为突变。
-                if (!level().isClientSide) {
-                    double planarSpeedSq = nextX * nextX + nextZ * nextZ;
-                    if (planarSpeedSq > 1.0E-6D) {
-                        float headingYaw = (float) (Mth.atan2(-nextX, nextZ) * (180.0D / Math.PI));
-                        float yawDelta = Mth.wrapDegrees(headingYaw - getYRot());
-                        float step = Mth.clamp(yawDelta, -MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK, MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK);
-                        float nextYaw = getYRot() + step;
-                        setYRot(nextYaw);
-                        setYHeadRot(nextYaw);
-                        setYBodyRot(nextYaw);
-                        lastTickYaw = nextYaw;
-                    }
+                // 船头 yaw 跟随最终速度矢量航向（漂移转向后的方向）。双端预测：两端同跑此公式，驾驶者客户端
+                // 本地即时转向、零延迟跟手；服务端权威同步给旁观者。limitTurnRate(本 tick 早期已跑)不再限制
+                // 这次变化；同步更新 lastTickYaw 让它下一 tick 不误判为突变。
+                double planarSpeedSq = nextX * nextX + nextZ * nextZ;
+                if (planarSpeedSq > 1.0E-6D) {
+                    float headingYaw = (float) (Mth.atan2(-nextX, nextZ) * (180.0D / Math.PI));
+                    float yawDelta = Mth.wrapDegrees(headingYaw - getYRot());
+                    float step = Mth.clamp(yawDelta, -MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK, MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK);
+                    float nextYaw = getYRot() + step;
+                    setYRot(nextYaw);
+                    setYHeadRot(nextYaw);
+                    setYBodyRot(nextYaw);
+                    lastTickYaw = nextYaw;
                 }
             }
         } else if (!level().isClientSide) {
@@ -723,7 +744,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 nonWaterTicks = 0;
             }
         }
-        if (!level().isClientSide && skipVanillaBoatMovementTick) {
+        if ((!level().isClientSide || clientLocalDrive) && skipVanillaBoatMovementTick) {
             move(MoverType.SELF, getDeltaMovement());
         }
         if (!level().isClientSide) {
@@ -762,7 +783,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     protected boolean skipsVanillaBoatMovementTick() {
-        return false;
+        // 恒 true：帆船完全接管移动(floatBoat 浮力→applyTransportSupport、controlBoat 操控→自定义物理、
+        // move 自己调)，绕开 vanilla Boat 在 isControlledByLocalInstance() 分支里的那套，消除双重浮力/双重
+        // 转向/划桨动画。两端都绕开(手动 local-control 端跑本地预测物理、autopilot 服务端权威)。
+        return true;
     }
 
     protected void tickBaseEntityWithoutBoatMovement() {
@@ -905,25 +929,62 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
     @Override
     public boolean isControlledByLocalInstance() {
-        // 服务端永远权威（服务端 true → vanilla Boat.tick 走 if 分支跑 floatBoat()+move()；客户端 false →
-        // setDeltaMovement(ZERO)+tickLerp 插值跟随）。等价于 smallships 的 AbstractWaterVehicle extends Entity
-        // 不覆此方法时 isEffectiveAi()=!isClientSide 的效果（无人/有人都服务端权威）。
-        //
-        // 沉船根因（已查实 vanilla Boat.tick + Entity.tick 源码三方互证）：vanilla Boat 没有任何重力/浮力自动
-        // 施加，浮力 floatBoat()+move() 全写在 `if(isControlledByLocalInstance())` 分支里；服务端对该方法返回
-        // false 的船走 else 分支只 setDeltaMovement(ZERO)，既不施加浮力也不 move，位置只能靠客户端上报。
-        // Boat 默认实现有玩家驾驶时返回 player.isLocalPlayer()→驾驶者客户端=true、服务端=false=客户端权威；
-        // 而本类整套自定义移动+applyFallbackBuoyancy 浮力都写在服务端分支（if(!isClientSide)），客户端那侧
-        // 只剩 vanilla floatBoat——水面判定一旦失败（判成 IN_AIR）就只剩 -0.04 重力下沉；高延迟下客户端 tick
-        // 卡顿、连续帧无浮力，沉得更明显。
-        //
-        // 修法：恒返回 !isClientSide → 服务端永远是权威方，vanilla Boat.tick 在服务端走 if 分支 floatBoat()+
-        // move()，本类服务端移动逻辑设 deltaMovement、applyFallbackBuoyancy 覆盖 Y，由 move() 执行落实；客户端
-        // 返回 false → setDeltaMovement(ZERO)+tickLerp 接收服务端位置插值跟随。这正是 autopilot 返航/空船一直
-        // 在用且工作正常的服务端权威路径——手动驾驶现在与之共用，玩家延迟再高都不会沉。手动输入走自定义
-        // SailboatControlInputPacket→服务端 manualInputState，独立于 vanilla MoveVehicle，不受影响。
-        // 代价：操控从「客户端即时」变「服务端权威+插值」，转向/加速有轻微延迟感（与马车一致，用户已认可）。
-        return !level().isClientSide;
+        // 手动驾驶=客户端本地控制(super=vanilla Boat：驾驶者客户端 true、服务端 false、旁观/无人 false)，
+        // 让驾驶者客户端跑本地物理预测=零延迟跟手(双端跑同一份确定性物理，见 tickSailDrive)。
+        // autopilot=服务端权威(返 false)：vanilla else 分支服务端 setDeltaMovement+move 权威驱动、客户端
+        // tickNetworkLerp 插值跟随，保 rail 返航+防沉。照抄马车 isLocalInstanceControlAuthoritative。
+        return isLocalInstanceControlAuthoritative(super.isControlledByLocalInstance(), isAutopilotActive());
+    }
+
+    /**
+     * autopilot 时交还服务端权威(返 false)，手动时保留 vanilla 本地控制维持客户端预测手感。
+     * 照抄 CarriageEntity.isLocalInstanceControlAuthoritative。
+     */
+    private static boolean isLocalInstanceControlAuthoritative(boolean vanillaLocalControl, boolean autopilotActive) {
+        return !autopilotActive && vanillaLocalControl;
+    }
+
+    // ===== 自管网络插值（覆写 vanilla Boat 的 tickLerp/lerpTo，照抄 CarriageEntity 1087-1123）=====
+    // vanilla Boat.tickLerp 在 local-control 端仍会 setDeltaMovement 干扰本地预测，且其 lerp 字段 private 不可控，
+    // 故覆写：手动 local-control 端清 0 步即时预测、autopilot 服务端权威时插值跟随。
+
+    @Override
+    public void lerpTo(double x, double y, double z, float yRot, float xRot, int posRotationIncrements, boolean teleport) {
+        this.sailboatLerpX = x;
+        this.sailboatLerpY = y;
+        this.sailboatLerpZ = z;
+        this.sailboatLerpYaw = yRot;
+        this.sailboatLerpPitch = xRot;
+        this.sailboatLerpSteps = networkLerpSteps(posRotationIncrements, isAutopilotActive());
+    }
+
+    private void tickNetworkLerp() {
+        boolean autopilotNetworkAuthoritative = isAutopilotActive();
+        if (isControlledByLocalInstance()) {
+            this.sailboatLerpSteps = lerpStepsAfterLocalControl(this.sailboatLerpSteps, autopilotNetworkAuthoritative);
+            if (!autopilotNetworkAuthoritative) {
+                syncPacketPositionCodec(getX(), getY(), getZ());
+            }
+        }
+        if (this.sailboatLerpSteps > 0) {
+            double nextX = getX() + (this.sailboatLerpX - getX()) / (double) this.sailboatLerpSteps;
+            double nextY = getY() + (this.sailboatLerpY - getY()) / (double) this.sailboatLerpSteps;
+            double nextZ = getZ() + (this.sailboatLerpZ - getZ()) / (double) this.sailboatLerpSteps;
+            double nextYawDelta = Mth.wrapDegrees(this.sailboatLerpYaw - (double) getYRot());
+            setYRot((float) ((double) getYRot() + nextYawDelta / (double) this.sailboatLerpSteps));
+            setXRot((float) ((double) getXRot() + (this.sailboatLerpPitch - (double) getXRot()) / (double) this.sailboatLerpSteps));
+            --this.sailboatLerpSteps;
+            setPos(nextX, nextY, nextZ);
+            setRot(getYRot(), getXRot());
+        }
+    }
+
+    private static int networkLerpSteps(int posRotationIncrements, boolean autopilotActive) {
+        return autopilotActive ? 1 : NETWORK_LERP_STEPS;
+    }
+
+    private static int lerpStepsAfterLocalControl(int currentLerpSteps, boolean autopilotActive) {
+        return autopilotActive ? currentLerpSteps : 0;
     }
 
     /**
@@ -1676,6 +1737,20 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return;
         }
         manualInputState.update(player.getUUID(), input, tickCount);
+    }
+
+    /**
+     * 客户端把本地驾驶玩家输入喂进 manualInputState，供客户端本地预测(tick 里的物理)读取——
+     * 这是「两端跑同一份物理」的输入来源(服务端靠 SailboatControlInputPacket→applyManualControlInput)。
+     * 照抄 CarriageEntity.applyClientControlInput。
+     */
+    public void applyClientControlInput(SailboatControlInput input) {
+        if (!level().isClientSide) {
+            return;
+        }
+        if (getControllingPassenger() instanceof Player driver) {
+            manualInputState.update(driver.getUUID(), input == null ? SailboatControlInput.IDLE : input, tickCount);
+        }
     }
 
     public float getSailDeployProgress(float partialTick) {

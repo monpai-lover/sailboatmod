@@ -150,7 +150,7 @@ public final class ClientInputHandler {
     }
 
     private static void syncSailboatControls(Minecraft minecraft, LocalPlayer player) {
-        if (!(player.getVehicle() instanceof SailboatEntity)) {
+        if (!(player.getVehicle() instanceof SailboatEntity sailboat)) {
             return;
         }
         boolean controlsEnabled = minecraft.screen == null;
@@ -161,6 +161,8 @@ public final class ClientInputHandler {
                 minecraft.options.keyLeft.isDown(),
                 minecraft.options.keyRight.isDown()
         );
+        // 客户端本地应用：喂进 manualInputState 供本地预测物理读取（两端跑同一份）。照抄 carriage 143。
+        sailboat.applyClientControlInput(input);
         ModNetwork.CHANNEL.sendToServer(new SailboatControlInputPacket(input));
     }
 
