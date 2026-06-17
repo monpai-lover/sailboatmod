@@ -28,12 +28,11 @@ final class CarriageRailPathFollower {
             return StepResult.inactive(currentPosition, index);
         }
 
-        // 净沿轨位移 = frontGap + remaining。cursor 初值是投影点(可能因 t-clamp 落后于车的真实
-        // 沿轨位置 → frontGap 为负),补回这部分回退量使每 tick 净推进恒 = maxStepDistance，消除起步/
-        // 到站蠕动。上限钳 2 个步长，避免发车头一两 tick 因补偿一次性窜出去肉眼可见；下限保证极端
-        // 贴段端时仍微推、防 0 步长卡住。
-        double frontGap = frontGap(currentPosition, cursor, previous, target);
-        double remaining = Mth.clamp(maxStepDistance - frontGap, EPSILON * 2.0D, maxStepDistance * 2.0D);
+        // 推进**只算水平(XZ)距离**：rail 跟随是贴地面沿路线走，Y 由 cursor 沿段线性插值(projectOntoSegmentXZ
+        // 已给) + 后续 railAutopilotSurfacePosition 地形修正负责，**不能让 waypoint 的 Y 参与推进归一化**。
+        // 否则当某个 waypoint 的 Y 指向地下很深时(实测 route Y 异常)，3D normalize 会把 0.36 步长几乎全分给
+        // Y 方向，XZ 只推进 0.0046 格 → 蠕动近乎卡死(实测返航 12s 仅移 1 格)。
+        double remaining = maxStepDistance;
         while (remaining > EPSILON && index < route.size()) {
             previous = route.get(index - 1);
             target = route.get(index);
@@ -41,7 +40,7 @@ final class CarriageRailPathFollower {
                 return StepResult.inactive(cursor, index);
             }
             float segmentYaw = yawFromSegment(previous, target);
-            double distanceToTarget = cursor.distanceTo(target);
+            double distanceToTarget = horizontalDistance(cursor, target);
             if (distanceToTarget <= EPSILON) {
                 if (index >= route.size() - 1) {
                     return StepResult.finished(cursor, segmentYaw, index);
@@ -50,7 +49,12 @@ final class CarriageRailPathFollower {
                 continue;
             }
             if (remaining < distanceToTarget) {
-                cursor = cursor.add(target.subtract(cursor).normalize().scale(remaining));
+                // 只沿 XZ 方向按 remaining 推进；Y 用沿段比例插值(t = 已推进/段总长)，与水平进度一致。
+                double t = remaining / distanceToTarget;
+                double nextX = cursor.x + (target.x - cursor.x) * t;
+                double nextZ = cursor.z + (target.z - cursor.z) * t;
+                double nextY = cursor.y + (target.y - cursor.y) * t;
+                cursor = new Vec3(nextX, nextY, nextZ);
                 return StepResult.active(cursor, segmentYaw, index, cursor.subtract(currentPosition));
             }
             cursor = target;
@@ -83,19 +87,6 @@ final class CarriageRailPathFollower {
         double dx = right.x - left.x;
         double dz = right.z - left.z;
         return Math.sqrt(dx * dx + dz * dz);
-    }
-
-    // cursor 相对 current 在 (from→to) 行进方向上的领先距离;cursor0 因 t-clamp 落后于车时为负。
-    private static double frontGap(Vec3 current, Vec3 cursor, Vec3 from, Vec3 to) {
-        double dx = to.x - from.x;
-        double dz = to.z - from.z;
-        double len = Math.sqrt(dx * dx + dz * dz);
-        if (len <= EPSILON) {
-            return 0.0D;
-        }
-        double ux = dx / len;
-        double uz = dz / len;
-        return (cursor.x - current.x) * ux + (cursor.z - current.z) * uz;
     }
 
     private static float yawFromDelta(Vec3 from, Vec3 to) {
