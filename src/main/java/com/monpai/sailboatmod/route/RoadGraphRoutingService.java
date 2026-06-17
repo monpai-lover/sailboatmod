@@ -41,6 +41,12 @@ public final class RoadGraphRoutingService {
         return repository != null && repository.spatialIndex().isRoadCorridor(dimensionId, pos, radiusBlocks);
     }
 
+    /** 该维度是否存在任何已建成(BUILT)道路。用于决定是否启用「正式道路才加速」判定,空则回退材质白名单。 */
+    public boolean hasBuiltRoad(String dimensionId) {
+        return repository != null
+                && repository.edgesForDimension(dimensionId).stream().anyMatch(RoadGraphEdgeRecord::built);
+    }
+
     private Graph buildGraph(String dimensionId) {
         Map<UUID, RoadGraphNodeRecord> nodes = new HashMap<>();
         for (RoadGraphNodeRecord node : repository.nodes()) {

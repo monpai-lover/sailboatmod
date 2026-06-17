@@ -142,6 +142,7 @@ public final class ServerEvents {
         RoadPlannerMapPreloadService.onServerStopped();
         RoadEditTaskService.global().clear();
         WaterRouteTaskService.global().clear();
+        com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository.clearCache();
         com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration.onServerStopped();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();

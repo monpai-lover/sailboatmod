@@ -112,26 +112,27 @@ public class NationFlagBlockEntityRenderer implements BlockEntityRenderer<Nation
     private void renderWallFlag(NationFlagBlockEntity blockEntity, float partialTick, PoseStack poseStack,
                                  MultiBufferSource bufferSource, int light, int packedOverlay,
                                  FlagGeometry geometry, Direction facing, ResourceLocation texture) {
-        poseStack.translate(0.5F, 0.5F, 0.5F);
+        // 参照 vanilla BannerRenderer 的墙挂分支:先在世界尺度把整体下移并朝墙面(-Z)推,
+        // 再 scale 进模型局部坐标。FACING = 远离墙的方向,mulPose(-yRot) 后本地 -Z 正好指向墙。
+        poseStack.translate(0.5F, -0.16666667F, 0.5F);
         poseStack.mulPose(Axis.YP.rotationDegrees(-facing.toYRot()));
+        poseStack.translate(0.0F, -0.3125F, -0.4375F);
 
         poseStack.pushPose();
         poseStack.scale(0.6666667F, -0.6666667F, -0.6666667F);
 
-        // Render horizontal bar only (no pole for wall-mounted flags)
+        // 墙挂无旗杆,只渲染横杆
         VertexConsumer baseConsumer = bufferSource.getBuffer(RenderType.entitySolid(BANNER_BASE_TEXTURE));
         this.pole.visible = false;
 
         poseStack.pushPose();
-        // Move bar to wall attachment point
-        poseStack.translate(0.0F, -6.0F / 16.0F, -8.0F / 16.0F);
         poseStack.scale(geometry.barScaleX(), 1.0F, 1.0F);
         this.bar.render(poseStack, baseConsumer, light, packedOverlay);
         poseStack.popPose();
 
-        // Cloth hangs from the bar near the wall
+        // 旗布从横杆下垂(与站立旗共用 FLAG_Y_OFFSET 下垂量)
         poseStack.pushPose();
-        poseStack.translate(0.0F, FLAG_Y_OFFSET + 6.0F / 16.0F, -8.0F / 16.0F);
+        poseStack.translate(0.0F, FLAG_Y_OFFSET, 0.0F);
 
         VertexConsumer clothConsumer = bufferSource.getBuffer(RenderType.entityCutoutNoCull(texture));
         drawWavingFlagSurface(poseStack, clothConsumer, light, packedOverlay, geometry, blockEntity, partialTick);

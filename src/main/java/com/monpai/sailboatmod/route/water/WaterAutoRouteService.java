@@ -80,6 +80,16 @@ public final class WaterAutoRouteService {
         if (!targetBerth.successful()) {
             return WaterRouteResult.failure(targetBerth.reason());
         }
+        // 连通性溯源:泊位必须通向开阔水域(非封闭小水坑)。只在候选列表这关跑(低频手动)。
+        // berthWorld 实际实例是 ServerWaterRouteWorld(同时实现 WaterRouteWorld),转型后用其 sample 做 flood-fill。
+        if (berthWorld instanceof WaterRouteWorld routeWorld) {
+            if (!WaterConnectivityProbe.reachesOpenWater(routeWorld, blockPos(sourceBerth.value().pos()), policy)) {
+                return WaterRouteResult.failure(WaterRouteFailureReason.SOURCE_NOT_OPEN_WATER);
+            }
+            if (!WaterConnectivityProbe.reachesOpenWater(routeWorld, blockPos(targetBerth.value().pos()), policy)) {
+                return WaterRouteResult.failure(WaterRouteFailureReason.TARGET_NOT_OPEN_WATER);
+            }
+        }
         return WaterRouteResult.success(new BerthPair(sourceBerth.value(), targetBerth.value()));
     }
 
@@ -248,6 +258,8 @@ public final class WaterAutoRouteService {
             case TIMEOUT -> "message.sailboatmod.auto_route.water.failed.timeout";
             case ALREADY_PENDING -> "message.sailboatmod.auto_route.water.failed.already_pending";
             case NO_WATER_PATH -> "message.sailboatmod.auto_route.water.failed.no_water_path";
+            case SOURCE_NOT_OPEN_WATER -> "message.sailboatmod.auto_route.water.failed.source_not_open_water";
+            case TARGET_NOT_OPEN_WATER -> "message.sailboatmod.auto_route.water.failed.target_not_open_water";
             default -> "message.sailboatmod.auto_route.water.failed.generic";
         };
     }

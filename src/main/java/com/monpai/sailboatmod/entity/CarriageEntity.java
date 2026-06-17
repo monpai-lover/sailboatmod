@@ -13,6 +13,8 @@ import com.monpai.sailboatmod.route.CarriageRoutePlanner;
 import com.monpai.sailboatmod.route.LandTransportNetworkService;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
+import com.monpai.sailboatmod.route.RoadGraphRoutingService;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -176,6 +178,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<String> DATA_ARRIVAL_NOTICE_DATE_TEXT =
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.STRING);
+    // 服务端权威判定「车轮是否在正式建成道路上」,同步给客户端读,避免客户端自查路网(SavedData 仅服务端有)。
+    private static final EntityDataAccessor<Boolean> DATA_ON_ROAD =
+            SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.BOOLEAN);
 
     private static final RawAnimation CARRIAGE_DRIVE_ANIMATION = RawAnimation.begin().thenLoop("animation.carriage.drive");
     private static final int INVENTORY_SIZE = 27;
@@ -389,6 +394,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         this.entityData.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
         this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
         this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
+        this.entityData.define(DATA_ON_ROAD, false);
     }
 
     @Override
@@ -533,6 +539,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             tickRailAutopilotDrive();
             tickMovementSoundCue();
             return;
+        }
+        if (!level().isClientSide) {
+            recomputeOnRoadAuthoritative();
         }
         CarriageDriveInput input = createDriveInputForTick();
         driveState = CarriageLandDriveModel.step(
@@ -3165,14 +3174,54 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         return !shape.isEmpty() && shape.max(Direction.Axis.Y) >= MIN_DRIVEABLE_GROUND_HEIGHT;
     }
 
+    private static final int ON_ROAD_RECHECK_TICKS = 10;       // 同格内最多复用旧判定的 tick 数(0.5s),应对原地建/拆路
+    private static final int ON_ROAD_CORRIDOR_RADIUS = 2;       // isRoadCorridor 容差半径,给车轮压路缘/台阶错位余量
+
+    private boolean cachedOnRoad = false;
+    private int cachedOnRoadCellX = Integer.MIN_VALUE;
+    private int cachedOnRoadCellZ = Integer.MIN_VALUE;
+    private int lastOnRoadCheckTick = Integer.MIN_VALUE;
+
+    /** 读服务端权威同步过来的 onRoad 值(两端通用,客户端读上次同步结果)。 */
     private boolean isOnFinishedRoadSurface() {
-        if (level() == null) {
-            return false;
+        return entityData.get(DATA_ON_ROAD);
+    }
+
+    /**
+     * 服务端权威判定车轮是否在「正式建成道路」上,结果写入 DATA_ON_ROAD 同步给客户端。
+     * 性能:跨格门控——车轮所在 8×8 grid cell 未变且距上次判定 < 10 tick 时直接复用,
+     * 仅跨格或超时才真正查空间索引(且索引经 forLevelCached 复用,绝大多数 tick 不重建)。
+     * 兜底:该维度无任何建成道路时回退到旧的材质白名单,避免老存档/纯手搓路存档突然全不加速。
+     */
+    private void recomputeOnRoadAuthoritative() {
+        if (!(level() instanceof ServerLevel serverLevel)) {
+            return;
         }
-        BlockPos below = onGround()
+        BlockPos wheel = onGround()
                 ? blockPosition().below()
                 : BlockPos.containing(getX(), getBoundingBox().minY - 0.15D, getZ());
-        return isRoadSurfaceState(level().getBlockState(below));
+        int cellX = wheel.getX() >> 3;
+        int cellZ = wheel.getZ() >> 3;
+        boolean sameCell = cellX == cachedOnRoadCellX && cellZ == cachedOnRoadCellZ;
+        boolean fresh = lastOnRoadCheckTick != Integer.MIN_VALUE
+                && (tickCount - lastOnRoadCheckTick) < ON_ROAD_RECHECK_TICKS;
+        if (sameCell && fresh) {
+            entityData.set(DATA_ON_ROAD, cachedOnRoad);
+            return;
+        }
+        String dimensionId = serverLevel.dimension().location().toString();
+        RoadGraphRoutingService routing = new RoadGraphRoutingService(RoadGraphRepository.forLevelCached(serverLevel));
+        boolean onRoad;
+        if (routing.hasBuiltRoad(dimensionId)) {
+            onRoad = routing.isRoadCorridor(dimensionId, wheel, ON_ROAD_CORRIDOR_RADIUS);
+        } else {
+            onRoad = isRoadSurfaceState(level().getBlockState(wheel));
+        }
+        cachedOnRoad = onRoad;
+        cachedOnRoadCellX = cellX;
+        cachedOnRoadCellZ = cellZ;
+        lastOnRoadCheckTick = tickCount;
+        entityData.set(DATA_ON_ROAD, onRoad);
     }
 
     private static boolean isRoadSurfaceState(BlockState state) {

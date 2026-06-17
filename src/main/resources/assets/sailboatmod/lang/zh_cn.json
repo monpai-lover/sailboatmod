@@ -1462,6 +1462,8 @@
     "message.sailboatmod.auto_route.water.failed.no_source_berth": "起点码头停泊区没有可用水面泊位。",
     "message.sailboatmod.auto_route.water.failed.no_target_berth": "目标码头停泊区没有可用水面泊位。",
     "message.sailboatmod.auto_route.water.failed.no_water_path": "没有找到连续可通航水路。",
+    "message.sailboatmod.auto_route.water.failed.source_not_open_water": "起点码头的水域未连通到开阔水域(像是封闭水池)。",
+    "message.sailboatmod.auto_route.water.failed.target_not_open_water": "目标码头的水域未连通到开阔水域(像是封闭水池)。",
     "message.sailboatmod.auto_route.water.failed.range_exceeded": "两个码头超出自动水路寻路范围。",
     "message.sailboatmod.auto_route.water.failed.chunk_budget_exceeded": "水上航线计算达到区块加载预算后停止。",
     "message.sailboatmod.auto_route.water.failed.node_budget_exceeded": "水上航线计算达到搜索预算后停止。",

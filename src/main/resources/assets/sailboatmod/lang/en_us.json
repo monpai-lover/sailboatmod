@@ -1465,6 +1465,8 @@
     "message.sailboatmod.auto_route.water.failed.no_source_berth": "The source dock zone has no usable water berth.",
     "message.sailboatmod.auto_route.water.failed.no_target_berth": "The target dock zone has no usable water berth.",
     "message.sailboatmod.auto_route.water.failed.no_water_path": "No continuous navigable water route was found.",
+    "message.sailboatmod.auto_route.water.failed.source_not_open_water": "The source dock's water is not connected to open water (looks like an enclosed pool).",
+    "message.sailboatmod.auto_route.water.failed.target_not_open_water": "The target dock's water is not connected to open water (looks like an enclosed pool).",
     "message.sailboatmod.auto_route.water.failed.range_exceeded": "The docks are outside the automatic water route range.",
     "message.sailboatmod.auto_route.water.failed.chunk_budget_exceeded": "Water route calculation stopped after reaching the chunk loading budget.",
     "message.sailboatmod.auto_route.water.failed.node_budget_exceeded": "Water route calculation stopped after reaching the search budget.",

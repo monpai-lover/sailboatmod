@@ -10,17 +10,22 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.route.RoadAutoRouteService;
 import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
+import com.monpai.sailboatmod.route.water.WaterRouteResult;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.PacketDistributor;
+import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
 public class RequestAutoRouteDocksPacket {
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     private final BlockPos sourceDockPos;
 
     public RequestAutoRouteDocksPacket(BlockPos sourceDockPos) {
@@ -57,9 +62,19 @@ public class RequestAutoRouteDocksPacket {
                 // 区块以读取其名字/owner/nationId（驿站数量有限、开 UI 为低频手动操作，开销可接受）。
                 if (!(serverLevel.getBlockEntity(dockPos) instanceof DockBlockEntity targetDock)) continue;
 
-                boolean canCreate = postStationMode
-                        ? RoadAutoRouteService.canResolveAutoRoute(serverLevel, sourceDock, targetDock)
-                        : WaterAutoRouteService.canListCandidate(serverLevel, sourceDock, targetDock).successful();
+                boolean canCreate;
+                if (postStationMode) {
+                    canCreate = RoadAutoRouteService.canResolveAutoRoute(serverLevel, sourceDock, targetDock);
+                    if (!canCreate) {
+                        LOGGER.debug("[AutoRoute] 驿站候选被刷掉 {} @{}: 路网不可达", targetDock.getDockName(), dockPos);
+                    }
+                } else {
+                    WaterRouteResult<?> result = WaterAutoRouteService.canListCandidate(serverLevel, sourceDock, targetDock);
+                    canCreate = result.successful();
+                    if (!canCreate) {
+                        LOGGER.debug("[AutoRoute] 码头候选被刷掉 {} @{}: {}", targetDock.getDockName(), dockPos, result.reason());
+                    }
+                }
                 if (!canCreate) continue;
 
                 int distance = (int) Math.sqrt(msg.sourceDockPos.distSqr(dockPos));
