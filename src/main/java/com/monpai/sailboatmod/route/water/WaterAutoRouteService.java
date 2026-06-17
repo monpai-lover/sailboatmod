@@ -54,9 +54,9 @@ public final class WaterAutoRouteService {
         if (target == null) {
             return WaterRouteResult.failure(WaterRouteFailureReason.MISSING_TARGET_DOCK);
         }
-        if (isOutOfRange(source.pos(), target.pos(), policy)) {
-            return WaterRouteResult.failure(WaterRouteFailureReason.RANGE_EXCEEDED);
-        }
+        // 候选列表不再按直线距离硬性过滤：远距离码头也应可见、可选。寻路本身靠
+        // maxExpandedNodes / maxChunkLoads / timeoutTicks 算力预算 + maxSearchRadius 外层护栏兜底，
+        // 而非用距离把目标提前淘汰（先进寻路应能处理远航线，真无水路时由算力预算判失败）。
         WaterRouteResult<Void> permission = WaterRoutePermissionService.evaluate(
                 source.access(),
                 target.access(),
@@ -223,17 +223,6 @@ public final class WaterAutoRouteService {
 
     private static boolean isGeneratedWaterRoute(RouteDefinition route) {
         return route != null && route.name() != null && route.name().startsWith("Water Auto: ");
-    }
-
-    private static boolean isOutOfRange(BlockPos source, BlockPos target, WaterRoutePolicy policy) {
-        if (source == null || target == null) {
-            return false;
-        }
-        WaterRoutePolicy effective = policy == null ? WaterRoutePolicy.defaults() : policy;
-        long dx = source.getX() - target.getX();
-        long dz = source.getZ() - target.getZ();
-        long radius = Math.max(1, effective.maxSearchRadius());
-        return dx * dx + dz * dz > radius * radius;
     }
 
     private static boolean safeEquals(String left, String right) {

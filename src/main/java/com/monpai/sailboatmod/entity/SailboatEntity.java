@@ -155,7 +155,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final float ROT_ACCELERATION = 0.06F;       // 转向角加速度,小=启动慢(惯性强)
     private static final float MAX_ROT_SPEED = 1.4F;           // 最大转向角速度°/tick,小=转弯慢(重船感)
     private static final float ROT_RESISTANCE = 0.04F;         // 松舵衰减步长,小=停止拖
-    private static final double TURN_SPEED_LOSS_MAX = 0.93D;   // 满舵每tick掉7%速,小=掉速猛
+    private static final double TURN_SPEED_LOSS_MAX = 0.975D;  // 满舵每tick掉2.5%速,小=掉速猛
     private static final double HEADING_CATCHUP = 0.35D;      // 航向追船头低通系数,小=滑后明显(重船感),只影响方向不吃速度
     private static final double COASTING_DECEL = 0.0015D;       // STOP档线性兜底,保证乘性衰减最终归零(必停)
     private static final double SPEED_WATER_DAMP = 1.0D;       // 标量水阻,先1.0(顶速靠gearCap),要更粘降到0.995
