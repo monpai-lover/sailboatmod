@@ -486,7 +486,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!level().isClientSide && !isAutopilotActive() && awaitingNextLegPort != null) {
             tryResumeAwaitedWaterLeg();
         }
-        if (!level().isClientSide && !isAutopilotActive() && dockHoldTicks > 0) {
+        if (!level().isClientSide && !isAutopilotActive() && dockHoldTicks > 0
+                && !(getControllingPassenger() instanceof Player)) {
+            // 有玩家驾驶时不做到站 dock-hold 阻尼：否则服务端把船拉回 dock，与客户端本地预测(玩家想开走)
+            // 打架成橡皮筋。无人时(autopilot 到站后空置)才阻尼保持停泊位。
             dockHoldTicks--;
             entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
             Vec3 vel = getDeltaMovement();
