@@ -28,7 +28,12 @@ final class CarriageRailPathFollower {
             return StepResult.inactive(currentPosition, index);
         }
 
-        double remaining = maxStepDistance;
+        // 净沿轨位移 = frontGap + remaining。cursor 初值是投影点(可能因 t-clamp 落后于车的真实
+        // 沿轨位置 → frontGap 为负),补回这部分回退量使每 tick 净推进恒 = maxStepDistance，消除起步/
+        // 到站蠕动。上限钳 2 个步长，避免发车头一两 tick 因补偿一次性窜出去肉眼可见；下限保证极端
+        // 贴段端时仍微推、防 0 步长卡住。
+        double frontGap = frontGap(currentPosition, cursor, previous, target);
+        double remaining = Mth.clamp(maxStepDistance - frontGap, EPSILON * 2.0D, maxStepDistance * 2.0D);
         while (remaining > EPSILON && index < route.size()) {
             previous = route.get(index - 1);
             target = route.get(index);
@@ -78,6 +83,19 @@ final class CarriageRailPathFollower {
         double dx = right.x - left.x;
         double dz = right.z - left.z;
         return Math.sqrt(dx * dx + dz * dz);
+    }
+
+    // cursor 相对 current 在 (from→to) 行进方向上的领先距离;cursor0 因 t-clamp 落后于车时为负。
+    private static double frontGap(Vec3 current, Vec3 cursor, Vec3 from, Vec3 to) {
+        double dx = to.x - from.x;
+        double dz = to.z - from.z;
+        double len = Math.sqrt(dx * dx + dz * dz);
+        if (len <= EPSILON) {
+            return 0.0D;
+        }
+        double ux = dx / len;
+        double uz = dz / len;
+        return (cursor.x - current.x) * ux + (cursor.z - current.z) * uz;
     }
 
     private static float yawFromDelta(Vec3 from, Vec3 to) {
