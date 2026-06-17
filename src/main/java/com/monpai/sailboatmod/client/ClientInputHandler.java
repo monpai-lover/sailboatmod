@@ -163,7 +163,7 @@ public final class ClientInputHandler {
         );
         // 客户端本地应用：喂进 manualInputState 供本地预测物理读取（两端跑同一份）。照抄 carriage 143。
         sailboat.applyClientControlInput(input);
-        ModNetwork.CHANNEL.sendToServer(new SailboatControlInputPacket(input));
+        ModNetwork.CHANNEL.sendToServer(new SailboatControlInputPacket(input, sailboat.getEngineGear().id));
     }
 
     private static CarriageDriveInput createCarriageControlInput(boolean controlsEnabled,

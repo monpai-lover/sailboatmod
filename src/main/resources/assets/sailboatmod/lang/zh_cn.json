@@ -1,4 +1,11 @@
 {
+    "hud.sailboatmod.gear": "挡位：%s",
+    "gear.sailboatmod.full_astern": "全速后退",
+    "gear.sailboatmod.half_astern": "半速后退",
+    "gear.sailboatmod.stop": "停车",
+    "gear.sailboatmod.one_third_ahead": "三分之一前进",
+    "gear.sailboatmod.two_thirds_ahead": "三分之二前进",
+    "gear.sailboatmod.full_ahead": "全速前进",
     "item.sailboatmod.sailboat": "帆船",
     "itemGroup.sailboatmod.sailboat_tab": "帆船模组",
     "entity.sailboatmod.sailboat": "帆船",

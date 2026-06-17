@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.entity;
 
+import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.market.MarketListing;
@@ -15,6 +17,7 @@ import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
 import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
@@ -74,6 +77,7 @@ import java.util.Set;
 import java.util.UUID;
 
 public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, TransportEntity {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final RawAnimation SAIL_DOWN_ANIMATION = RawAnimation.begin().thenPlayAndHold("sail down");
     private static final RawAnimation SAIL_UP_ANIMATION = RawAnimation.begin().thenPlayAndHold("sail up");
     private static final EntityDataAccessor<Boolean> DATA_SAIL_DEPLOYED =
@@ -130,8 +134,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final int NETWORK_LERP_STEPS = 10;
     private static final double STOWED_FORWARD_ACCEL = 1.006D;
     private static final double STOWED_MAX_SPEED_FACTOR = 0.42D;
-    private static final double COASTING_DRAG = 0.9994D;
-    private static final double GEAR_COASTING_DRAG = 0.9988D;
+    private static final double COASTING_DRAG = 0.992D;       // STOP档松手乘性阻力,每tick掉0.8%约4秒长缓滑(大货轮惯性)
     private static final double GEAR_DRIVE_DRAG = 0.9968D;
     private static final double GEAR_ACCEL_RAMP_UP = 0.0007D;
     private static final double GEAR_ACCEL_RAMP_DOWN = 0.0009D;
@@ -147,8 +150,26 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final double STOWED_MAX_FORWARD_BLOCKS_PER_TICK = STOWED_MAX_FORWARD_KNOTS * KNOTS_TO_BLOCKS_PER_TICK;
     private static final double MAX_REVERSE_BLOCKS_PER_TICK = MAX_REVERSE_KNOTS * KNOTS_TO_BLOCKS_PER_TICK;
     private static final int LEGACY_LIGHT_CLEAN_RADIUS = 3;
+    // 船头主导转向模型（仿 smallships rotationSpeed 累积）+ 重船感惯性 + 转弯掉速。"惯性强/大货轮"档。
+    // turnInput 累积 rotationSpeed 驱动 yaw，速度永远沿船头方向；急转掉速；航向低通滑后于船头。
+    private static final float ROT_ACCELERATION = 0.06F;       // 转向角加速度,小=启动慢(惯性强)
+    private static final float MAX_ROT_SPEED = 1.4F;           // 最大转向角速度°/tick,小=转弯慢(重船感)
+    private static final float ROT_RESISTANCE = 0.04F;         // 松舵衰减步长,小=停止拖
+    private static final double TURN_SPEED_LOSS_MAX = 0.93D;   // 满舵每tick掉7%速,小=掉速猛
+    private static final double HEADING_CATCHUP = 0.35D;      // 航向追船头低通系数,小=滑后明显(重船感),只影响方向不吃速度
+    private static final double COASTING_DECEL = 0.0015D;       // STOP档线性兜底,保证乘性衰减最终归零(必停)
+    private static final double SPEED_WATER_DAMP = 1.0D;       // 标量水阻,先1.0(顶速靠gearCap),要更粘降到0.995
     private static final int BLUEMAP_BOAT_SYNC_INTERVAL_TICKS = 10;
     private static final int PICKUP_LOAD_SCAN_INTERVAL_TICKS = 20;
+    // 航行水花/划水音特效（仿 smallships）：前向速度(格/tick)超过阈值且在水里才触发；音效每 N tick 一次循环。
+    private static final float WAKE_EFFECT_SPEED_THRESHOLD = 0.04F;
+    private static final int WAKE_SOUND_INTERVAL_TICKS = 8;
+    // checkInWater 判定容差：自定义浮力 applyFallbackBuoyancy 把 getY() 顶到 ≈水面高度，而 vanilla Boat
+    // box.minY==getY()，故船底精确贴在水面（实测 boxMinY==surfaceY==62.889）。原版 smallships 的船吃水深
+    // (box.minY 明显低于水面)所以严格小于成立；我们的船浮在水面上沿，严格小于恒 false。给一格向下容差：
+    // 船底在水面上方 1 格内（且扫到了水方块）即算在水里，消除「边界相等→不进物理→船完全不动」。岸上扫不到
+    // 水方块不受影响。
+    private static final double WATER_DETECT_TOLERANCE = 1.0D;
     private static final double AUTOPILOT_ARRIVAL_RADIUS = 3.2D;
     private static final double AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS = 7.5D;
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
@@ -204,6 +225,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private float lastTickYaw;
     private Vec3 inertialPlanarVelocity = Vec3.ZERO;
     private double commandedForwardAccel = 0.0D;
+    // 转向角速度(度/tick)。本地字段非同步：两端各自从 turnInput 累积，manualInputState +
+    // applyClientControlInput 保证两端输入一致，rotationSpeed 是输入纯函数→结果一致(同 commandedForwardAccel)。
+    // 同步反而引入服务端→客户端覆盖延迟、破坏本地预测零延迟。不持久化 NBT(瞬时量)。
+    private float rotationSpeed = 0.0F;
     private int nonWaterTicks = 0;
     private boolean forwardPressedLastTick = false;
     private boolean reversePressedLastTick = false;
@@ -576,7 +601,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                             entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
                             forwardPressedLastTick = false;
                             reversePressedLastTick = false;
-                        } else {
+                        } else if (clientLocalDrive) {
+                            // 六段挡边沿检测只在客户端本地驾驶端跑：客户端用本地实时按键算目标挡位(可靠)，
+                            // 设本地 DATA_ENGINE_GEAR 供预测+随包发服务端。服务端不再重放边沿(网络包丢/合批
+                            // 会漏沿致两端永久错位、一卡一卡)，改由 applyManualControlInput 收 packet gear 幂等设挡。
                             updateGearFromInput(wantsForward, wantsReverse);
                         }
                     }
@@ -615,107 +643,104 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 applyCustomGroundDriveModel(new GroundDriveContext(autopilotControl, hasManualInput, wantsForward, wantsReverse, wantsTurn, turnInput, gear));
             } else {
                 boolean gearDriving = gear != EngineGear.STOP;
-                double drag = gearDriving ? GEAR_DRIVE_DRAG : GEAR_COASTING_DRAG;
-                double baseX = current.x;
-                double baseZ = current.z;
-                double currentPlanarSq = current.x * current.x + current.z * current.z;
-                double inertialPlanarSq = inertialPlanarVelocity.x * inertialPlanarVelocity.x + inertialPlanarVelocity.z * inertialPlanarVelocity.z;
-                if (!gearDriving) {
-                    // STOP gear should coast from inertial velocity instead of being snapped by transient current speed.
-                    if (inertialPlanarSq > 0.0D) {
-                        baseX = inertialPlanarVelocity.x;
-                        baseZ = inertialPlanarVelocity.z;
-                    }
-                } else if (inertialPlanarSq > currentPlanarSq) {
-                    // Preserve momentum when vanilla boat update momentarily drops current speed.
-                    baseX = inertialPlanarVelocity.x;
-                    baseZ = inertialPlanarVelocity.z;
-                }
-                double nextX = baseX * drag;
-                double nextZ = baseZ * drag;
+                boolean manualSteering = !autopilotControl && (captain instanceof Player);
 
+                // ---------- (A) 转向：船头主导。仅手动累积 rotationSpeed 驱动 yaw（重船感惯性）----------
+                if (manualSteering) {
+                    if (wantsTurn) {
+                        // turnInput: left(+1)/right(-1)。steerSign=-turnInput → A 让 yaw 减(左转)、D 让 yaw 增(右转)。
+                        // 按住时纯累积到 ±MAX_ROT_SPEED(启动渐快=惯性)。不在此处乘水阻——否则累积与衰减每 tick
+                        // 打架，稳态被钳在 ROT_ACCELERATION*damp/(1-damp) 远低于 MAX_ROT_SPEED，转向极慢。
+                        float steerSign = -turnInput;
+                        rotationSpeed += steerSign * ROT_ACCELERATION;
+                        rotationSpeed = Mth.clamp(rotationSpeed, -MAX_ROT_SPEED, MAX_ROT_SPEED);
+                    } else {
+                        rotationSpeed = subtractToZero(rotationSpeed, ROT_RESISTANCE); // 松舵渐归零=停止拖
+                    }
+                    float newYaw = getYRot() + rotationSpeed;
+                    setYRot(newYaw);
+                    setYHeadRot(newYaw);
+                    setYBodyRot(newYaw);
+                    // 绕过 limitTurnRate(本 tick 早期已跑)：同步 lastTickYaw 让下一 tick 读到 delta≈0 不被 0.85°夹死。
+                    lastTickYaw = newYaw;
+                    yawRad = getYRot() * (Math.PI / 180.0D);
+                    dirX = -Math.sin(yawRad);
+                    dirZ = Math.cos(yawRad);
+                } else {
+                    // autopilot：yaw 由 computeAutopilotCommand 自管(上方已 setYRot+重算 dirX/dirZ)，清零转向惯性防残留。
+                    rotationSpeed = 0.0F;
+                }
+
+                // ---------- (B) 标量速度积分：速度永远沿船头方向。复用 commandedForwardAccel/gear ----------
                 double maxForward = maxSpeed;
                 double maxReverse = Math.min(maxForward * 0.55D, MAX_REVERSE_BLOCKS_PER_TICK);
-                double lateralX = -dirZ;
-                double lateralZ = dirX;
-                double currentForwardSpeed = nextX * dirX + nextZ * dirZ;
-                double lateralSpeed = nextX * lateralX + nextZ * lateralZ;
+                // 上一 tick 速度的带符号模长(前进+/倒车-)：保留动能。不用 current·newDir 投影——急转时船头已转、
+                // 投影丢 cos(θ) 会让速度凭空蒸发(叠加转弯掉速→90°转向瞬间掉光)。方向由下方 dir*speed 重新给定。
+                double prevSpeedMag = current.horizontalDistance();
+                double currentForwardSpeed = (current.x * dirX + current.z * dirZ) < 0.0D ? -prevSpeedMag : prevSpeedMag;
                 double targetAccel = gear.accelTarget(sailDeployed);
                 double accelDelta = targetAccel - commandedForwardAccel;
                 double accelResponse = accelDelta >= 0.0D ? GEAR_ACCEL_RAMP_UP : GEAR_ACCEL_RAMP_DOWN;
                 commandedForwardAccel += Mth.clamp(accelDelta, -accelResponse, accelResponse);
+                double speed = currentForwardSpeed + commandedForwardAccel;
 
-                double adjustedForwardSpeed = currentForwardSpeed + commandedForwardAccel;
                 double targetForwardSpeed = gear.targetSpeed(maxForward, maxReverse, sailDeployed);
                 double gearForwardCap = gear.maxAllowedSpeed(maxForward, maxReverse, sailDeployed);
-                double cappedForwardSpeed = adjustedForwardSpeed;
-                if (gear != EngineGear.STOP && gearForwardCap > 0.0D) {
-                    // Keep acceleration-driven feel: block further acceleration above this gear cap,
-                    // but do not instantly snap down when downshifting from overspeed.
-                    if (targetForwardSpeed > 0.0D) {
-                        if (currentForwardSpeed >= gearForwardCap && cappedForwardSpeed > currentForwardSpeed) {
-                            cappedForwardSpeed = currentForwardSpeed;
-                        } else if (currentForwardSpeed < gearForwardCap && cappedForwardSpeed > gearForwardCap) {
-                            cappedForwardSpeed = gearForwardCap;
-                        }
-                    } else if (targetForwardSpeed < 0.0D) {
-                        double reverseCap = -gearForwardCap;
-                        if (currentForwardSpeed <= reverseCap && cappedForwardSpeed < currentForwardSpeed) {
-                            cappedForwardSpeed = currentForwardSpeed;
-                        } else if (currentForwardSpeed > reverseCap && cappedForwardSpeed < reverseCap) {
-                            cappedForwardSpeed = reverseCap;
-                        }
-                    }
-                }
-                nextX = dirX * cappedForwardSpeed + lateralX * lateralSpeed;
-                nextZ = dirZ * cappedForwardSpeed + lateralZ * lateralSpeed;
+                speed = applyGearCap(speed, currentForwardSpeed, targetForwardSpeed, gearForwardCap, gear);
 
-                if (wantsTurn) {
-                    double speedBeforeTurn = Math.sqrt(nextX * nextX + nextZ * nextZ);
-                    if (speedBeforeTurn > 0.0001D) {
-                        // Rotate velocity direction instead of injecting lateral boost (prevents drift spikes).
-                        double speedRatio = Mth.clamp(speedBeforeTurn / maxSpeed, 0.0D, 1.0D);
-                        double rotateRad = TURN_VELOCITY_ROTATE_RAD * Mth.lerp(speedRatio, 0.25D, 1.0D) * turnInput;
-                        double cos = Math.cos(rotateRad);
-                        double sin = Math.sin(rotateRad);
-                        double rotatedX = nextX * cos - nextZ * sin;
-                        double rotatedZ = nextX * sin + nextZ * cos;
-                        nextX = rotatedX;
-                        nextZ = rotatedZ;
-                    }
-                    if (gearDriving) {
-                        double speedRatio = Mth.clamp(Math.sqrt(nextX * nextX + nextZ * nextZ) / maxSpeed, 0.0D, 1.0D);
-                        double turnDrag = Mth.lerp(speedRatio, 0.998D, preset.turningDrag);
-                        nextX *= turnDrag;
-                        nextZ *= turnDrag;
-                    }
+                if (!gearDriving) {
+                    // STOP 档：乘性阻力(滑停手感,开始快接近停慢) + 线性兜底(乘性永远到不了 0，必停)。
+                    speed *= COASTING_DRAG;
+                    speed = subtractToZero(speed, COASTING_DECEL);
+                } else {
+                    speed *= GEAR_DRIVE_DRAG;
+                }
+                speed *= SPEED_WATER_DAMP;
+
+                // ---------- (C) 转弯掉速（重船感：转得越急掉得越多。投影已不掉速，这里是唯一掉速源）----------
+                if (manualSteering && wantsTurn) {
+                    double rotMag = Math.abs(rotationSpeed) / MAX_ROT_SPEED;
+                    speed *= Mth.lerp(Mth.clamp(rotMag, 0.0D, 1.0D), 1.0D, TURN_SPEED_LOSS_MAX);
                 }
 
-                double forwardComp = nextX * dirX + nextZ * dirZ;
-                double lateralComp = nextX * (-dirZ) + nextZ * dirX;
-                double lateralRetention = gearDriving ? 0.94D : 0.97D;
-                if (wantsTurn) {
-                    double turnStrength = Mth.clamp(Math.abs(turnInput), 0.0D, 1.0D);
-                    double turnRetention = gearDriving ? THROTTLE_LATERAL_DAMP : GLIDE_LATERAL_DAMP;
-                    double minRetention = gearDriving ? 0.10D : 0.14D;
-                    lateralRetention = Mth.lerp(turnStrength, turnRetention, minRetention);
-                }
-                lateralComp *= lateralRetention;
-                nextX = dirX * forwardComp + (-dirZ) * lateralComp;
-                nextZ = dirZ * forwardComp + dirX * lateralComp;
-                if (wantsTurn && gearDriving) {
-                    nextX *= TURN_SPEED_LOSS;
-                    nextZ *= TURN_SPEED_LOSS;
+                // ---------- (D) 航向滑后于船头（重船感：方向带惯性追船头。autopilot 直通）----------
+                // 速度大小=speed(已含动能保留+掉速)，方向用低通从上一 tick 速度方向滑向船头方向。
+                double desiredX = dirX * speed;
+                double desiredZ = dirZ * speed;
+                double nextX;
+                double nextZ;
+                if (manualSteering && (inertialPlanarVelocity.x != 0.0D || inertialPlanarVelocity.z != 0.0D)) {
+                    // 对「方向」做低通(归一化后插值)，再乘回 speed 模长——这样滑后只影响航向、不吃掉速度大小(修起步肉)。
+                    double prevLen = inertialPlanarVelocity.horizontalDistance();
+                    double prevDirX = prevLen > 1.0E-6D ? inertialPlanarVelocity.x / prevLen : dirX;
+                    double prevDirZ = prevLen > 1.0E-6D ? inertialPlanarVelocity.z / prevLen : dirZ;
+                    double targetDirX = Math.signum(speed == 0.0D ? 1.0D : speed) * dirX;
+                    double targetDirZ = Math.signum(speed == 0.0D ? 1.0D : speed) * dirZ;
+                    double blendX = Mth.lerp(HEADING_CATCHUP, prevDirX, targetDirX);
+                    double blendZ = Mth.lerp(HEADING_CATCHUP, prevDirZ, targetDirZ);
+                    double blendLen = Math.sqrt(blendX * blendX + blendZ * blendZ);
+                    if (blendLen > 1.0E-6D) {
+                        double mag = Math.abs(speed);
+                        nextX = blendX / blendLen * mag;
+                        nextZ = blendZ / blendLen * mag;
+                    } else {
+                        nextX = desiredX;
+                        nextZ = desiredZ;
+                    }
+                } else {
+                    nextX = desiredX;
+                    nextZ = desiredZ;
                 }
 
+                // ---------- (E) 进港限速（autopilot dock 接近，原样保留）+ 写回 ----------
                 double finalDockDistance = getFinalDockApproachDistance();
                 if (!Double.isNaN(finalDockDistance)) {
                     double maxApproachSpeed = finalDockDistance <= AUTOPILOT_FINAL_STOP_RADIUS
                             ? AUTOPILOT_FINAL_STOP_MAX_SPEED
                             : AUTOPILOT_FINAL_APPROACH_MAX_SPEED;
-                    double speed = Math.sqrt(nextX * nextX + nextZ * nextZ);
-                    if (speed > maxApproachSpeed && speed > 1.0E-4D) {
-                        double scale = maxApproachSpeed / speed;
+                    double approachSpeed = Math.sqrt(nextX * nextX + nextZ * nextZ);
+                    if (approachSpeed > maxApproachSpeed && approachSpeed > 1.0E-4D) {
+                        double scale = maxApproachSpeed / approachSpeed;
                         nextX *= scale;
                         nextZ *= scale;
                     }
@@ -723,20 +748,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
                 inertialPlanarVelocity = new Vec3(nextX, 0.0D, nextZ);
                 setDeltaMovement(nextX, current.y, nextZ);
-                // 船头 yaw 跟随最终速度矢量航向（漂移转向后的方向）。双端预测：两端同跑此公式，驾驶者客户端
-                // 本地即时转向、零延迟跟手；服务端权威同步给旁观者。limitTurnRate(本 tick 早期已跑)不再限制
-                // 这次变化；同步更新 lastTickYaw 让它下一 tick 不误判为突变。
-                double planarSpeedSq = nextX * nextX + nextZ * nextZ;
-                if (planarSpeedSq > 1.0E-6D) {
-                    float headingYaw = (float) (Mth.atan2(-nextX, nextZ) * (180.0D / Math.PI));
-                    float yawDelta = Mth.wrapDegrees(headingYaw - getYRot());
-                    float step = Mth.clamp(yawDelta, -MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK, MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK);
-                    float nextYaw = getYRot() + step;
-                    setYRot(nextYaw);
-                    setYHeadRot(nextYaw);
-                    setYBodyRot(nextYaw);
-                    lastTickYaw = nextYaw;
-                }
             }
         } else if (!level().isClientSide) {
             if (isOutsidePrimaryTravelMedium()) {
@@ -767,6 +778,50 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         if (!level().isClientSide && tickCount % PICKUP_LOAD_SCAN_INTERVAL_TICKS == 0) {
             tickPickupLoadDetection();
+        }
+        tickWakeEffects();
+    }
+
+    /**
+     * 航行视听特效（移植自 smallships AbstractSailShip.tick 的 WaterSplash + GENERIC_SWIM）：
+     * 船以一定速度在水面航行时，船尾两侧生成水花/气泡粒子并循环播放划水音。
+     * 速度判定用同步的 getCurrentSpeedForHud()（格/tick 前向，两端都有值）——不能用 deltaMovement，
+     * 因为客户端 deltaMovement 恒=ZERO（服务端权威移动）。粒子只在客户端生成（本地表现，无需联网），
+     * 音效只在服务端 playSound(null,...) 触发由 vanilla 广播给附近客户端。
+     */
+    private void tickWakeEffects() {
+        float speed = Math.abs(getCurrentSpeedForHud());
+        if (speed < WAKE_EFFECT_SPEED_THRESHOLD || !isPrimaryTravelMedium()) {
+            return;
+        }
+
+        double yawRad = getYRot() * (Math.PI / 180.0D);
+        double dirX = -Math.sin(yawRad);
+        double dirZ = Math.cos(yawRad);
+        // 船尾方向（与前进相反）+ 两侧偏移
+        double sternX = -dirX;
+        double sternZ = -dirZ;
+        double sideX = -dirZ;
+        double sideZ = dirX;
+        double waterY = getY() + 0.1D;
+
+        if (level().isClientSide) {
+            for (int i = 0; i < 2; i++) {
+                double back = 1.4D + random.nextDouble() * 0.9D;
+                double side = (random.nextDouble() - 0.5D) * 1.6D;
+                double px = getX() + sternX * back + sideX * side;
+                double pz = getZ() + sternZ * back + sideZ * side;
+                level().addParticle(ParticleTypes.SPLASH, px, waterY + 0.2D, pz, 0.0D, 0.0D, 0.0D);
+                level().addParticle(ParticleTypes.BUBBLE, px, waterY, pz,
+                        sternX * 0.04D, 0.0D, sternZ * 0.04D);
+            }
+            // 船头破浪小水花
+            double bowX = getX() + dirX * 1.3D;
+            double bowZ = getZ() + dirZ * 1.3D;
+            level().addParticle(ParticleTypes.SPLASH, bowX, waterY + 0.3D, bowZ, 0.0D, 0.0D, 0.0D);
+        } else if (tickCount % WAKE_SOUND_INTERVAL_TICKS == 0) {
+            level().playSound(null, getX(), getY(), getZ(), SoundEvents.GENERIC_SWIM,
+                    SoundSource.NEUTRAL, 0.06F, 0.8F + random.nextFloat() * 0.4F);
         }
     }
 
@@ -828,11 +883,98 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     protected boolean isPrimaryTravelMedium() {
-        return isInWater();
+        // 不能用 vanilla isInWater()：skipsVanillaBoatMovementTick()=true 绕开了 Boat.tick/Entity.tick，
+        // vanilla 的 updateInWaterStateAndDoFluidPushing 不再跑→wasTouchingWater 恒 false→isInWater() 恒 false。
+        // 改自给自足扫流体判定（照抄 smallships AbstractWaterVehicle.checkInWater）：船体包围盒底层一格
+        // 内只要有水方块、且船体 minY 低于该水面高度即「在水里」。
+        return checkInWater();
     }
 
     protected boolean isOutsidePrimaryTravelMedium() {
-        return !isInWater() && !isUnderWater();
+        return !checkInWater();
+    }
+
+    /**
+     * 自给自足的「在水里」判定，不依赖 vanilla 水状态字段(被 skipsVanillaBoatMovementTick 绕开)。
+     * 参照 smallships AbstractWaterVehicle.checkInWater：扫包围盒底层一格的水方块。
+     * 关键差异（实测坐实，2026-06-17）：判定从 smallships 的 `box.minY < surfaceY` 改为
+     * `box.minY < surfaceY + WATER_DETECT_TOLERANCE`。原因：本帆船自定义浮力把 getY()(==box.minY) 顶到
+     * 精确等于水面高度(实测三者都=62.889)，严格小于恒 false → 两端都不进物理 → 船完全不动。smallships 船吃水
+     * 深所以严格小于成立，我们的船浮在水面上沿，必须给向下容差。岸上无水方块，sawWater=false 不受影响。
+     */
+    private boolean checkInWater() {
+        AABB box = getBoundingBox();
+        int minX = Mth.floor(box.minX);
+        int maxX = Mth.ceil(box.maxX);
+        int minY = Mth.floor(box.minY) - 1;
+        int maxYExclusive = Mth.ceil(box.minY + 0.001D);
+        int minZ = Mth.floor(box.minZ);
+        int maxZ = Mth.ceil(box.maxZ);
+
+        boolean inWater = false;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int x = minX; x < maxX; x++) {
+            for (int y = minY; y < maxYExclusive; y++) {
+                for (int z = minZ; z < maxZ; z++) {
+                    cursor.set(x, y, z);
+                    var fluid = level().getFluidState(cursor);
+                    if (fluid.is(FluidTags.WATER)) {
+                        double surfaceY = y + fluid.getHeight(level(), cursor);
+                        inWater |= box.minY < surfaceY + WATER_DETECT_TOLERANCE;
+                    }
+                }
+            }
+        }
+        return inWater;
+    }
+
+    /** 把 value 朝 0 衰减固定步长 step（不越过 0）。照抄 smallships Utils.subtractToZero。 */
+    private static float subtractToZero(float value, float step) {
+        if (value > 0.0F) {
+            return Math.max(value - step, 0.0F);
+        }
+        if (value < 0.0F) {
+            return Math.min(value + step, 0.0F);
+        }
+        return 0.0F;
+    }
+
+    private static double subtractToZero(double value, double step) {
+        if (value > 0.0D) {
+            return Math.max(value - step, 0.0D);
+        }
+        if (value < 0.0D) {
+            return Math.min(value + step, 0.0D);
+        }
+        return 0.0D;
+    }
+
+    /**
+     * 挡位速度上限钳制（标量版，从旧矢量物理 676-694 行原样搬来，语义不变）：
+     * 保持加速手感——不瞬间砸到 gear cap，但阻止超过 cap 继续加速；降挡过顶时不瞬停、靠阻力自然回落。
+     */
+    private static double applyGearCap(double speed, double currentForwardSpeed,
+                                       double targetForwardSpeed, double gearForwardCap, EngineGear gear) {
+        if (gear == EngineGear.STOP || gearForwardCap <= 0.0D) {
+            return speed;
+        }
+        if (targetForwardSpeed > 0.0D) {
+            if (currentForwardSpeed >= gearForwardCap && speed > currentForwardSpeed) {
+                return currentForwardSpeed;
+            }
+            if (currentForwardSpeed < gearForwardCap && speed > gearForwardCap) {
+                return gearForwardCap;
+            }
+        } else if (targetForwardSpeed < 0.0D) {
+            double reverseCap = -gearForwardCap;
+            if (currentForwardSpeed <= reverseCap && speed < currentForwardSpeed) {
+                return currentForwardSpeed;
+            }
+            if (currentForwardSpeed > reverseCap && speed < reverseCap) {
+                return reverseCap;
+            }
+        }
+        return speed;
     }
 
     protected void applyFallbackBuoyancy() {
@@ -1738,11 +1880,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
     }
 
-    public void applyManualControlInput(Player player, SailboatControlInput input) {
+    public void applyManualControlInput(Player player, SailboatControlInput input, int gear) {
         if (player == null || level().isClientSide || player.getVehicle() != this || !hasPassenger(player) || !isCaptain(player)) {
             return;
         }
         manualInputState.update(player.getUUID(), input, tickCount);
+        // 挡位是离散状态：客户端用本地实时按键做边沿检测算出目标挡位 id，随包传来，服务端在此幂等设挡。
+        // 不在服务端重放边沿（网络包丢/合批会漏沿致两端永久错位、一卡一卡）。手动六段挡才采用，autopilot
+        // 与 hold-to-drive 各自管挡，不被覆盖。EngineGear.byId 越界回退 STOP，脏包安全。
+        if (!isAutopilotActive() && !usesHoldToDriveControls()) {
+            entityData.set(DATA_ENGINE_GEAR, EngineGear.byId(gear).id);
+        }
     }
 
     /**
@@ -3280,23 +3428,25 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     public enum EngineGear {
-        FULL_ASTERN(-2, "FULL ASTERN", -1.00D, -0.55D, 0.0060D, 0.0035D),
-        HALF_ASTERN(-1, "HALF ASTERN", -0.55D, -0.30D, 0.0045D, 0.0028D),
-        STOP(0, "STOP", 0.0D, 0.0D, 0.0D, 0.0D),
-        ONE_THIRD_AHEAD(1, "1/3 AHEAD", 0.40D, 0.30D, 0.0100D, 0.0060D),
-        TWO_THIRDS_AHEAD(2, "2/3 AHEAD", 0.70D, 0.62D, 0.0070D, 0.0042D),
-        FULL_AHEAD(3, "FULL AHEAD", 1.00D, 0.50D, 0.0048D, 0.0030D);
+        FULL_ASTERN(-2, "FULL ASTERN", "gear.sailboatmod.full_astern", -1.00D, -0.55D, 0.0060D, 0.0035D),
+        HALF_ASTERN(-1, "HALF ASTERN", "gear.sailboatmod.half_astern", -0.55D, -0.30D, 0.0045D, 0.0028D),
+        STOP(0, "STOP", "gear.sailboatmod.stop", 0.0D, 0.0D, 0.0D, 0.0D),
+        ONE_THIRD_AHEAD(1, "1/3 AHEAD", "gear.sailboatmod.one_third_ahead", 0.40D, 0.30D, 0.0100D, 0.0060D),
+        TWO_THIRDS_AHEAD(2, "2/3 AHEAD", "gear.sailboatmod.two_thirds_ahead", 0.70D, 0.62D, 0.0070D, 0.0042D),
+        FULL_AHEAD(3, "FULL AHEAD", "gear.sailboatmod.full_ahead", 1.00D, 0.50D, 0.0048D, 0.0030D);
 
         public final int id;
         public final String displayName;
+        public final String translationKey;
         private final double deployedScale;
         private final double stowedScale;
         private final double deployedAccel;
         private final double stowedAccel;
 
-        EngineGear(int id, String displayName, double deployedScale, double stowedScale, double deployedAccel, double stowedAccel) {
+        EngineGear(int id, String displayName, String translationKey, double deployedScale, double stowedScale, double deployedAccel, double stowedAccel) {
             this.id = id;
             this.displayName = displayName;
+            this.translationKey = translationKey;
             this.deployedScale = deployedScale;
             this.stowedScale = stowedScale;
             this.deployedAccel = deployedAccel;

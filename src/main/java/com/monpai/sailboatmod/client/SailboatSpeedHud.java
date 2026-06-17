@@ -77,7 +77,8 @@ public final class SailboatSpeedHud {
         Component gearText = transport instanceof CarriageEntity carriage
                 ? Component.literal("Drive: " + carriageDriveLabel(player, carriage))
                 : transport instanceof SailboatEntity sailboat
-                ? Component.literal("Gear: " + sailboat.getEngineGear().displayName)
+                ? Component.translatable("hud.sailboatmod.gear",
+                        Component.translatable(sailboat.getEngineGear().translationKey))
                 : Component.empty();
 
         int x = 10;

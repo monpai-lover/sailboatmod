@@ -8,7 +8,7 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
-public record SailboatControlInputPacket(SailboatControlInput input) {
+public record SailboatControlInputPacket(SailboatControlInput input, int gear) {
     public SailboatControlInputPacket {
         input = input == null ? SailboatControlInput.IDLE : input;
     }
@@ -19,15 +19,17 @@ public record SailboatControlInputPacket(SailboatControlInput input) {
         buffer.writeBoolean(input.back());
         buffer.writeBoolean(input.left());
         buffer.writeBoolean(input.right());
+        buffer.writeVarInt(packet.gear);
     }
 
     public static SailboatControlInputPacket decode(FriendlyByteBuf buffer) {
-        return new SailboatControlInputPacket(new SailboatControlInput(
+        SailboatControlInput input = new SailboatControlInput(
                 buffer.readBoolean(),
                 buffer.readBoolean(),
                 buffer.readBoolean(),
                 buffer.readBoolean()
-        ));
+        );
+        return new SailboatControlInputPacket(input, buffer.readVarInt());
     }
 
     public static void handle(SailboatControlInputPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -35,7 +37,7 @@ public record SailboatControlInputPacket(SailboatControlInput input) {
         context.enqueueWork(() -> {
             ServerPlayer sender = context.getSender();
             if (sender != null && sender.getVehicle() instanceof SailboatEntity sailboat) {
-                sailboat.applyManualControlInput(sender, packet.input);
+                sailboat.applyManualControlInput(sender, packet.input, packet.gear);
             }
         });
         context.setPacketHandled(true);

@@ -1,4 +1,11 @@
 ﻿{
+    "hud.sailboatmod.gear":  "Gear: %s",
+    "gear.sailboatmod.full_astern":  "FULL ASTERN",
+    "gear.sailboatmod.half_astern":  "HALF ASTERN",
+    "gear.sailboatmod.stop":  "STOP",
+    "gear.sailboatmod.one_third_ahead":  "1/3 AHEAD",
+    "gear.sailboatmod.two_thirds_ahead":  "2/3 AHEAD",
+    "gear.sailboatmod.full_ahead":  "FULL AHEAD",
     "item.sailboatmod.sailboat":  "Sailboat",
     "itemGroup.sailboatmod.sailboat_tab":  "Sailboat Mod",
     "entity.sailboatmod.sailboat":  "Sailboat",
