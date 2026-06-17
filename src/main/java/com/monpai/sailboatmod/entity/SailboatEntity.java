@@ -112,12 +112,20 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<String> DATA_ARRIVAL_NOTICE_DATE_TEXT =
             SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.STRING);
+    // 服务端权威移动后，把当前前向速度(格/tick)同步给客户端，供 HUD 显示。
+    // 帆船是服务端权威(isControlledByLocalInstance=!isClientSide)，客户端 deltaMovement 恒=ZERO，
+    // 不能像以前那样用客户端本地 deltaMovement 算速度——必须靠这个同步字段(仿马车 DATA_CURRENT_SPEED)。
+    private static final EntityDataAccessor<Float> DATA_CURRENT_SPEED =
+            SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.FLOAT);
     private static final int INVENTORY_SIZE = 27;
     private static final int SEAT_COUNT = 5;
     private static final int ARRIVAL_NOTICE_TICKS = 100;
     private static final DateTimeFormatter ARRIVAL_DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT);
     private static final float MAX_TURN_DEGREES_PER_TICK = 0.85F;
+    // 手动驾驶时船头 yaw 跟随航向(漂移转向后的速度矢量方向)的每 tick 最大角度。
+    // 比 MAX_TURN_DEGREES_PER_TICK 大，因服务端权威下这是玩家可见转向的唯一来源(经 Rot 包+tickLerp)。
+    private static final float MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK = 3.0F;
     private static final double STOWED_FORWARD_ACCEL = 1.006D;
     private static final double STOWED_MAX_SPEED_FACTOR = 0.42D;
     private static final double COASTING_DRAG = 0.9994D;
@@ -339,6 +347,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         this.entityData.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
         this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
         this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
+        this.entityData.define(DATA_CURRENT_SPEED, 0.0F);
     }
 
     @Override
@@ -684,6 +693,23 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
                 inertialPlanarVelocity = new Vec3(nextX, 0.0D, nextZ);
                 setDeltaMovement(nextX, current.y, nextZ);
+                // 让船头 yaw 跟随最终速度矢量方向（漂移转向后的航向），使转向被客户端看到：
+                // 帆船服务端权威，客户端 deltaMovement=ZERO 无法本地模拟转向，必须让服务端 getYRot 真的变，
+                // 经 ServerEntity Rot 包 + 客户端 tickLerp 插值才看得到船头转。limitTurnRate(本 tick 早期已跑)
+                // 不会再限制这次变化；同步更新 lastTickYaw 让它下一 tick 也不误判为突变。
+                if (!level().isClientSide) {
+                    double planarSpeedSq = nextX * nextX + nextZ * nextZ;
+                    if (planarSpeedSq > 1.0E-6D) {
+                        float headingYaw = (float) (Mth.atan2(-nextX, nextZ) * (180.0D / Math.PI));
+                        float yawDelta = Mth.wrapDegrees(headingYaw - getYRot());
+                        float step = Mth.clamp(yawDelta, -MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK, MANUAL_HEADING_FOLLOW_DEGREES_PER_TICK);
+                        float nextYaw = getYRot() + step;
+                        setYRot(nextYaw);
+                        setYHeadRot(nextYaw);
+                        setYBodyRot(nextYaw);
+                        lastTickYaw = nextYaw;
+                    }
+                }
             }
         } else if (!level().isClientSide) {
             if (isOutsidePrimaryTravelMedium()) {
@@ -699,6 +725,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         if (!level().isClientSide && skipVanillaBoatMovementTick) {
             move(MoverType.SELF, getDeltaMovement());
+        }
+        if (!level().isClientSide) {
+            // 服务端权威移动后，把水平前向速度(格/tick)同步给客户端供 HUD 显示。
+            // 覆盖所有出口(手动 692 / 自定义地面模型 / autopilot)——它们都已把本 tick 位移写进 deltaMovement。
+            // 客户端 deltaMovement 恒=ZERO，只能靠这个同步值(与马车 DATA_CURRENT_SPEED 口径一致)。
+            Vec3 vel = getDeltaMovement();
+            double yawRad = getYRot() * (Math.PI / 180.0D);
+            double signedForward = vel.x * -Math.sin(yawRad) + vel.z * Math.cos(yawRad);
+            entityData.set(DATA_CURRENT_SPEED, (float) signedForward);
         }
         if (!level().isClientSide && (tickCount <= 1 || tickCount % BLUEMAP_BOAT_SYNC_INTERVAL_TICKS == 0)) {
             BlueMapIntegration.syncBoat(this);
@@ -889,6 +924,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         // SailboatControlInputPacket→服务端 manualInputState，独立于 vanilla MoveVehicle，不受影响。
         // 代价：操控从「客户端即时」变「服务端权威+插值」，转向/加速有轻微延迟感（与马车一致，用户已认可）。
         return !level().isClientSide;
+    }
+
+    /**
+     * HUD 用的当前前向速度(格/tick)。帆船服务端权威、客户端 deltaMovement 恒=ZERO，
+     * 故读服务端同步的 DATA_CURRENT_SPEED 而非客户端本地 deltaMovement(仿马车 getCurrentSpeedForHud)。
+     */
+    public float getCurrentSpeedForHud() {
+        return entityData.get(DATA_CURRENT_SPEED);
     }
 
     @Override

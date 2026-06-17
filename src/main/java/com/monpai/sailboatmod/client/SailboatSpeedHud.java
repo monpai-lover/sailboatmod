@@ -42,6 +42,10 @@ public final class SailboatSpeedHud {
         double rawKnots;
         if (transport instanceof CarriageEntity carriage) {
             rawKnots = carriage.getCurrentSpeedForHud() * METERS_PER_SECOND_TO_KNOTS;
+        } else if (transport instanceof SailboatEntity sailboat) {
+            // 帆船服务端权威，客户端 deltaMovement 恒=ZERO，必须读服务端同步的前向速度(格/tick)，
+            // 否则 HUD 恒显示 0.0 kn。
+            rawKnots = sailboat.getCurrentSpeedForHud() * BLOCKS_PER_TICK_TO_KNOTS;
         } else {
             Entity vehicle = transport.asEntity();
             Vec3 velocity = vehicle.getDeltaMovement();
