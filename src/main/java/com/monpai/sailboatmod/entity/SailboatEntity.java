@@ -23,6 +23,7 @@ import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
 import com.monpai.sailboatmod.route.water.WaterRoutePathfinder;
 import com.monpai.sailboatmod.route.water.WaterRoutePolicy;
 import com.monpai.sailboatmod.route.water.WaterRouteResult;
+import com.monpai.sailboatmod.route.water.WaterRouteTaskExecutor;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.BlockPos;
@@ -280,6 +281,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private int autopilotUnstickYawDir = 1;       // 脱困摆舵方向，每轮交替 ±1
     private Vec3 autopilotUnstickStartPos = null; // 本轮脱困起点，判断是否见效
     private boolean autopilotTraceStuck = false;  // 已把 webmap 轨迹标记为 STUCK（避免重复写/无谓恢复）
+    private volatile boolean asyncRerouteInFlight = false; // 自救寻路在后台跑中，防重入(主线程读写)
     private String pendingShipperName = "";
     private String autopilotShipmentShipperName = "";
     private String autopilotShipmentStartDockName = "";
@@ -2233,71 +2235,95 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             // 第一轮后退摆舵没挪动 → 立即自救(用户要求:卡住后马上重寻路,不再反复脱困5次)。
             autopilotUnstickAttempts = 0;
             // 在当前坐标重新寻路到目标港,绕开原航线的卡点(通常是穿陆误判)。
-            if (tryRerouteAndResume()) {
-                return; // 成功:新路线接管,不喊救援、不暂停。
-            }
-            // 自救失败(寻不到路/解析不到港)→ 退回原行为:头顶提示+聊天求救+webmap STUCK+暂停。
-            beginStuckHelpNotice();
-            markStuckTraceStatus();
-            pauseAutopilot();
+            // 异步:寻路搬到后台线程(getBaseHeight 采样昂贵,同步主线程会崩服);失败降级在回调里做。
+            tryRerouteAndResumeAsync();
         }
         // 否则下次检测到仍卡死会再次 beginUnstickAttempt（attempts 继续累加直至上限）。
     }
 
     /**
-     * 船卡住自救:不按原航线走,直接以「当前坐标最近可航格」为起点、目标港泊位为终点重新寻路(同步,主线程),
-     * 平滑+真实校验后替换 autopilotRoute 并恢复航行。任一步失败返回 false(由调用方降级求救)。
+     * 船卡住自救:不按原航线走,直接以「当前坐标最近可航格」为起点、目标港泊位为终点重新寻路,平滑+真实校验后
+     * 替换 autopilotRoute 并恢复航行。<b>2026-06 异步化(修崩服):</b>寻路采样改用 getBaseHeight(每列 new
+     * NoiseChunk,rescue policy 上限 20000 节点 ≈ 36 万次烘焙)同步主线程必崩,故搬到后台线程,主线程只取快照
+     * 和落地。失败降级(头顶提示+聊天求救+webmap STUCK+暂停)放在回调里。
      *
-     * <p>同步跑 {@link WaterRoutePathfinder}:噪声采样零区块加载、纯 CPU,用 {@link WaterRoutePolicy#rescue()}
-     * 收紧半径/预算,单 tick 内跑完。低频(5 轮脱困失败才触发),不卡服。
+     * <p>线程切分:主线程取快照(destZone 值对象、船当前 BlockPos、海平面)→ 后台跑 DockBerthResolver.resolve
+     * + findNearestNavigableCell + WaterRoutePathfinder(全只读 world.sample,纯 getBaseHeight 采样,线程安全)
+     * → server.execute 回主线程做 PathSmoother + RealWaterVerifier(碰真实区块,必须主线程)+ applyRescueRoute。
      */
-    private boolean tryRerouteAndResume() {
+    private void tryRerouteAndResumeAsync() {
         if (!(level() instanceof ServerLevel server)) {
-            return false;
+            return;
         }
+        if (asyncRerouteInFlight) {
+            return; // 后台已有一次自救在跑,别重复提交
+        }
+        // ---- 主线程取快照(后台不碰实体/BlockEntity 可变状态)----
         BlockPos destDockPos = findAutopilotDestinationDockPos();
         DockBlockEntity destDock = destDockPos == null ? null : getTransportHub(destDockPos);
         if (destDock == null) {
-            return false;
+            rerouteFailedFallback();
+            return;
         }
-        ServerWaterRouteWorld world = new ServerWaterRouteWorld(server);
-        WaterRoutePolicy policy = WaterRoutePolicy.rescue();
-
-        // 终点:目标港泊位(同创建航线那套泊位解析)。
-        DockBerthResolver.DockZone destZone = new DockBerthResolver.DockZone(
+        final DockBerthResolver.DockZone destZone = new DockBerthResolver.DockZone(
                 destDock.getBlockPos(),
                 destDock.getZoneMinX(), destDock.getZoneMaxX(),
                 destDock.getZoneMinZ(), destDock.getZoneMaxZ());
-        WaterRouteResult<DockBerthResolver.DockBerth> berth =
-                DockBerthResolver.resolve(world, destZone, policy);
-        if (!berth.successful()) {
-            return false;
-        }
-        Vec3 berthPos = berth.value().pos();
-        BlockPos goal = new BlockPos(Mth.floor(berthPos.x), Mth.floor(berthPos.y), Mth.floor(berthPos.z));
+        final BlockPos boatPos = blockPosition();
+        final int seaY = server.getSeaLevel();
+        final WaterRoutePolicy policy = WaterRoutePolicy.rescue();
+        asyncRerouteInFlight = true;
 
-        // 起点:船当前位置最近可航格(船卡在窄道,当前格可能不可航)。
-        BlockPos start = findNearestNavigableCell(world, blockPosition(), policy, 16);
-        if (start == null) {
-            return false;
-        }
+        // ---- 后台线程:纯只读采样寻路,返回原始航点(失败返回 null)----
+        WaterRouteTaskExecutor.submit(() -> {
+            try {
+                ServerWaterRouteWorld world = new ServerWaterRouteWorld(server);
+                WaterRouteResult<DockBerthResolver.DockBerth> berth =
+                        DockBerthResolver.resolve(world, destZone, policy);
+                if (!berth.successful()) {
+                    return null;
+                }
+                Vec3 berthPos = berth.value().pos();
+                BlockPos goal = new BlockPos(Mth.floor(berthPos.x), Mth.floor(berthPos.y), Mth.floor(berthPos.z));
+                BlockPos start = findNearestNavigableCell(world, boatPos, policy, 16);
+                if (start == null) {
+                    return null;
+                }
+                WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(world, start, goal, policy);
+                WaterRoutePathfinder.Status status;
+                do {
+                    status = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
+                } while (status == WaterRoutePathfinder.Status.RUNNING);
+                return status == WaterRoutePathfinder.Status.SUCCESS ? pathfinder.path() : null;
+            } catch (Throwable t) {
+                LOGGER.error("[SailboatEntity] 自救后台寻路异常", t);
+                return null;
+            }
+        }).whenComplete((rawPath, ex) -> server.getServer().execute(() -> {
+            // ---- 主线程回调:平滑 + 真实校验 + 落地,或失败降级 ----
+            asyncRerouteInFlight = false;
+            if (isRemoved() || !isAutopilotActive()) {
+                return; // 异步期间船已卸载/到站/停自动驾驶 → 丢弃结果
+            }
+            if (ex != null || rawPath == null || rawPath.size() < 2) {
+                rerouteFailedFallback();
+                return;
+            }
+            List<BlockPos> smoothed = PathSmoother.smooth2D(rawPath, seaY, 2.0D);
+            List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(server, smoothed);
+            if (verified.size() < 2) {
+                rerouteFailedFallback();
+                return;
+            }
+            applyRescueRoute(verified);
+        }));
+    }
 
-        WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(world, start, goal, policy);
-        WaterRoutePathfinder.Status status;
-        do {
-            status = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
-        } while (status == WaterRoutePathfinder.Status.RUNNING);
-        if (status != WaterRoutePathfinder.Status.SUCCESS) {
-            return false;
-        }
-
-        List<BlockPos> smoothed = PathSmoother.smooth2D(pathfinder.path(), server.getSeaLevel(), 2.0D);
-        List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(server, smoothed);
-        if (verified.size() < 2) {
-            return false;
-        }
-        applyRescueRoute(verified);
-        return true;
+    /** 自救失败(寻不到路/解析不到港)→ 退回原行为:头顶提示+聊天求救+webmap STUCK+暂停。 */
+    private void rerouteFailedFallback() {
+        beginStuckHelpNotice();
+        markStuckTraceStatus();
+        pauseAutopilot();
     }
 
     /** 用自救航点列表替换当前 autopilotRoute,重置索引/卡住状态并恢复航行。 */

@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.route.water;
 
 import net.minecraft.core.BlockPos;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
@@ -10,9 +12,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WaterRouteTaskServiceTest {
+    // 异步化后寻路在 WaterRouteTaskExecutor 后台跑。测试注入同步执行器(Runnable::run)保持确定性:
+    // 首次 advance 提交→同步跑完→asyncResult 立即 set,下一 tick 的 advance poll 到结果 complete。
+    @BeforeEach
+    void useSyncExecutor() {
+        WaterRouteTaskExecutor.setExecutorForTesting(Runnable::run);
+    }
+
+    @AfterEach
+    void restoreExecutor() {
+        WaterRouteTaskExecutor.setExecutorForTesting(null);
+    }
     @Test
     void duplicateSourceTargetTaskIsRejected() {
         WaterRouteTaskService service = new WaterRouteTaskService();
@@ -48,31 +62,34 @@ class WaterRouteTaskServiceTest {
     }
 
     @Test
-    void timeoutCompletesWithFailure() {
+    void unreachableTargetCompletesWithFailure() {
+        // 异步化后超时改 wall-clock,在同步测试执行器下不可靠;改测「目标不可达 → 失败完成」(语义等价:
+        // 寻路跑不通也必须 complete 并从 pending 移除,不会永久挂起)。目标 (200,*) 在水域 0..128 外。
         WaterRouteTaskService service = new WaterRouteTaskService();
         AtomicReference<WaterRouteResult<List<BlockPos>>> completion = new AtomicReference<>();
-        WaterRoutePolicy policy = new WaterRoutePolicy(8, 2, 1, 2, 256, 5000, 512, 1, 64, 1);
+        WaterRoutePolicy policy = new WaterRoutePolicy(8, 2, 1, 2, 256, 5000, 512, 64, 64, 200);
         WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(
                 new TestWaterWorld().waterRect(0, -16, 128, 16),
                 new BlockPos(0, 64, 0),
-                new BlockPos(128, 64, 0),
+                new BlockPos(200, 64, 0),
                 policy);
         WaterRouteTask task = new WaterRouteTask(
                 "minecraft:overworld",
                 new BlockPos(0, 64, 0),
-                new BlockPos(128, 64, 0),
+                new BlockPos(200, 64, 0),
                 new BlockPos(0, 64, 0),
-                new BlockPos(128, 64, 0),
+                new BlockPos(200, 64, 0),
                 "Tester",
                 policy,
                 pathfinder,
                 completion::set);
 
         service.submit(task);
-        service.tick();
-        service.tick();
+        for (int i = 0; i < 10 && service.pendingCount() > 0; i++) {
+            service.tick();
+        }
 
-        assertEquals(WaterRouteFailureReason.TIMEOUT, completion.get().reason());
+        assertFalse(completion.get().successful());
         assertEquals(0, service.pendingCount());
     }
 

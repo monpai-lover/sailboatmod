@@ -1,11 +1,14 @@
 package com.monpai.sailboatmod.route.water;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
+import org.slf4j.Logger;
 
 import java.util.List;
 import java.util.Objects;
 
 public final class WaterRouteTask {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private final String dimensionId;
     private final BlockPos sourceDockPos;
     private final BlockPos targetDockPos;
@@ -16,8 +19,11 @@ public final class WaterRouteTask {
     private final WaterRoutePathfinder pathfinder;
     private final CompletionHandler completionHandler;
     private final String key;
-    private int elapsedTicks;
     private boolean completed;
+    // 异步状态机(修崩服):寻路在后台线程跑,主线程 tick 只 poll。
+    // asyncStarted:后台搜索已提交;asyncResult:后台跑完写入(volatile,主线程读)——必为非 null 才算完成。
+    private volatile boolean asyncStarted;
+    private volatile WaterRouteResult<List<BlockPos>> asyncResult;
 
     public WaterRouteTask(String dimensionId,
                           BlockPos sourceDockPos,
@@ -40,22 +46,61 @@ public final class WaterRouteTask {
         this.key = key(this.dimensionId, sourceDockPos, targetDockPos);
     }
 
+    /**
+     * 主线程每 tick 调用。<b>2026-06 异步化(修崩服):</b>不再在主线程 step(每次 step 上千次 getBaseHeight →
+     * new NoiseChunk → 单 tick 数秒崩服)。首次 advance 把整条寻路提交后台线程跑完,之后每 tick 只 poll
+     * {@code asyncResult}(volatile,后台写完为非 null)。完成时在<b>主线程</b>调 completionHandler →
+     * applyCompletedRoute 里的 RealWaterVerifier/setRoutes 天然在主线程,无需手动切线程。
+     *
+     * @return true 表示本 task 已完成(可从 pending 移除)。
+     */
     boolean advance() {
         if (completed) {
             return true;
         }
-        elapsedTicks++;
-        if (elapsedTicks > policy.timeoutTicks()) {
-            complete(WaterRouteResult.failure(WaterRouteFailureReason.TIMEOUT));
-            return true;
+        if (!asyncStarted) {
+            asyncStarted = true;
+            startBackgroundSearch();
+            return false; // 后台刚启动,这一 tick 还没结果
         }
-        WaterRoutePathfinder.Status status = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
-        if (status == WaterRoutePathfinder.Status.SUCCESS) {
-            complete(WaterRouteResult.success(pathfinder.path()));
-        } else if (status == WaterRoutePathfinder.Status.FAILED) {
-            complete(WaterRouteResult.failure(pathfinder.failureReason()));
+        WaterRouteResult<List<BlockPos>> result = asyncResult; // 单次 volatile 读
+        if (result == null) {
+            return false; // 后台仍在跑(不占主线程 CPU)
         }
-        return completed;
+        complete(result); // 主线程调 completionHandler
+        return true;
+    }
+
+    /**
+     * 把寻路提交后台线程,跑到 SUCCESS/FAILED 或 wall-clock 超时。<b>双保险必写非 null asyncResult</b>
+     * (try/catch Throwable + whenComplete ex 分支),否则后台异常会让 task 永久 pending。
+     * 超时用 wall-clock(timeoutTicks×50ms,复用 policy 字段);maxExpandedNodes 节点上限在 step 内部硬兜底。
+     */
+    private void startBackgroundSearch() {
+        final long deadlineNanos = System.nanoTime() + (long) policy.timeoutTicks() * 50_000_000L;
+        WaterRouteTaskExecutor.submit(() -> {
+            try {
+                WaterRoutePathfinder.Status status;
+                do {
+                    status = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
+                } while (status == WaterRoutePathfinder.Status.RUNNING
+                        && System.nanoTime() < deadlineNanos);
+                if (status == WaterRoutePathfinder.Status.SUCCESS) {
+                    return WaterRouteResult.success(pathfinder.path());
+                }
+                if (status == WaterRoutePathfinder.Status.FAILED) {
+                    return WaterRouteResult.<List<BlockPos>>failure(pathfinder.failureReason());
+                }
+                return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.TIMEOUT);
+            } catch (Throwable t) {
+                LOGGER.error("[WaterPath] 后台寻路异常 key={}", key, t);
+                return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
+            }
+        }).whenComplete((res, ex) ->
+                // 必写非 null,否则 task 永久 pending。try/catch 已兜住绝大多数异常,ex 是最后保险。
+                asyncResult = (ex != null || res == null)
+                        ? WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH)
+                        : res);
     }
 
     private void complete(WaterRouteResult<List<BlockPos>> result) {

@@ -79,6 +79,26 @@ public final class EntityRetrackHelper {
             }
         }
 
+        // 诊断(2026-06):用公开 API chunkMap.getPlayers(chunkPos,false) 取「vanilla EntityTracker 正在向其
+        // 追踪本实体所在区块」的玩家集,与我的 alreadySpawned 对比,实测确认 vanilla 到底有没有在同步本实体。
+        // 只在心跳帧打(每3秒一次,不刷屏)。据此判断:vanilla 在追踪 → 兜底应让位(不抽搐);没追踪 → 兜底才有意义。
+        java.util.Set<UUID> vanillaTrackers = new java.util.HashSet<>();
+        if (spawnHeartbeat) {
+            try {
+                var chunkMap = level.getChunkSource().chunkMap;
+                var trackers = chunkMap.getPlayers(new ChunkPos(entity.blockPosition()), false);
+                if (trackers != null) {
+                    for (ServerPlayer p : trackers) {
+                        if (p != null) {
+                            vanillaTrackers.add(p.getUUID());
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 诊断失败不影响主逻辑
+            }
+        }
+
         java.util.HashSet<UUID> inRangeNow = new java.util.HashSet<>();
         int spawned = 0;
         for (ServerPlayer player : level.players()) {
@@ -116,6 +136,16 @@ public final class EntityRetrackHelper {
                 }
                 alreadySpawned.add(id);
                 spawned++;
+            }
+            // 诊断(心跳帧):对比 vanilla 追踪集 vs 我的 spawn 集,看 vanilla 到底有没有在同步本实体。
+            // vanillaTracks=true 表示 vanilla EntityTracker 正常工作(我的兜底重发是多余且有害的,会抽搐);
+            // vanillaTracks=false 但实体可见 说明确实靠我兜底。实测据此定最终修法。
+            if (spawnHeartbeat) {
+                boolean vanillaTracks = vanillaTrackers.contains(id);
+                LOGGER.info("[Retrack] entity={} player={} vanillaTracks={} mySpawned={} dist={} pos=({},{},{})",
+                        entity.getId(), player.getGameProfile().getName(), vanillaTracks,
+                        !isNew, (int) Math.sqrt(player.distanceToSqr(ex, ey, ez)),
+                        (int) ex, (int) ey, (int) ez);
             }
             // 非乘客玩家：每帧补发绝对位置 + 速度，替代失效的 EntityTracker 移动同步（平滑移动）。
             player.connection.send(teleport);
