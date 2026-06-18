@@ -5,7 +5,7 @@ import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 
 import java.util.List;
-import java.util.Objects;
+import java.util.function.Supplier;
 
 public final class WaterRouteTask {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -16,7 +16,8 @@ public final class WaterRouteTask {
     private final BlockPos targetBerthPos;
     private final String requesterName;
     private final WaterRoutePolicy policy;
-    private final WaterRoutePathfinder pathfinder;
+    private final WaterRoutePathfinder pathfinder;             // 单段寻路(可 null,用 customSearch 时)
+    private final Supplier<WaterRouteResult<List<BlockPos>>> customSearch; // 三段编排整体跑(可 null)
     private final CompletionHandler completionHandler;
     private final String key;
     private boolean completed;
@@ -34,6 +35,40 @@ public final class WaterRouteTask {
                           WaterRoutePolicy policy,
                           WaterRoutePathfinder pathfinder,
                           CompletionHandler completionHandler) {
+        this(dimensionId, sourceDockPos, targetDockPos, sourceBerthPos, targetBerthPos,
+                requesterName, policy, pathfinder, null, completionHandler);
+        if (pathfinder == null) {
+            throw new NullPointerException("pathfinder");
+        }
+    }
+
+    /** 三段编排重载:customSearch 在后台线程整体跑三段并返回拼接结果(pathfinder=null)。 */
+    public WaterRouteTask(String dimensionId,
+                          BlockPos sourceDockPos,
+                          BlockPos targetDockPos,
+                          BlockPos sourceBerthPos,
+                          BlockPos targetBerthPos,
+                          String requesterName,
+                          WaterRoutePolicy policy,
+                          Supplier<WaterRouteResult<List<BlockPos>>> customSearch,
+                          CompletionHandler completionHandler) {
+        this(dimensionId, sourceDockPos, targetDockPos, sourceBerthPos, targetBerthPos,
+                requesterName, policy, null, customSearch, completionHandler);
+        if (customSearch == null) {
+            throw new NullPointerException("customSearch");
+        }
+    }
+
+    private WaterRouteTask(String dimensionId,
+                           BlockPos sourceDockPos,
+                           BlockPos targetDockPos,
+                           BlockPos sourceBerthPos,
+                           BlockPos targetBerthPos,
+                           String requesterName,
+                           WaterRoutePolicy policy,
+                           WaterRoutePathfinder pathfinder,
+                           Supplier<WaterRouteResult<List<BlockPos>>> customSearch,
+                           CompletionHandler completionHandler) {
         this.dimensionId = dimensionId == null ? "" : dimensionId;
         this.sourceDockPos = sourceDockPos;
         this.targetDockPos = targetDockPos;
@@ -41,7 +76,8 @@ public final class WaterRouteTask {
         this.targetBerthPos = targetBerthPos;
         this.requesterName = requesterName == null ? "" : requesterName;
         this.policy = policy == null ? WaterRoutePolicy.defaults() : policy;
-        this.pathfinder = Objects.requireNonNull(pathfinder, "pathfinder");
+        this.pathfinder = pathfinder;
+        this.customSearch = customSearch;
         this.completionHandler = completionHandler;
         this.key = key(this.dimensionId, sourceDockPos, targetDockPos);
     }
@@ -77,6 +113,28 @@ public final class WaterRouteTask {
      * 超时用 wall-clock(timeoutTicks×50ms,复用 policy 字段);maxExpandedNodes 节点上限在 step 内部硬兜底。
      */
     private void startBackgroundSearch() {
+        // 三段编排:customSearch 在后台整体跑三段串行并返回拼接结果。
+        if (customSearch != null) {
+            final long t0 = System.nanoTime();
+            LOGGER.info("[WaterPath] 三段编排后台提交 key={}", key);
+            WaterRouteTaskExecutor.submit(() -> {
+                try {
+                    WaterRouteResult<List<BlockPos>> r = customSearch.get();
+                    long ms = (System.nanoTime() - t0) / 1_000_000L;
+                    LOGGER.info("[WaterPath] 三段编排完成 key={} 耗时={}ms success={} 航点={}",
+                            key, ms, r != null && r.successful(),
+                            r != null && r.value() != null ? r.value().size() : 0);
+                    return r != null ? r : WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
+                } catch (Throwable t) {
+                    LOGGER.error("[WaterPath] 三段编排异常 key={}", key, t);
+                    return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
+                }
+            }).whenComplete((res, ex) ->
+                    asyncResult = (ex != null || res == null)
+                            ? WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH)
+                            : res);
+            return;
+        }
         final long startNanos = System.nanoTime();
         final long timeoutMs = (long) policy.timeoutTicks() * 50L;
         final long deadlineNanos = startNanos + timeoutMs * 1_000_000L;

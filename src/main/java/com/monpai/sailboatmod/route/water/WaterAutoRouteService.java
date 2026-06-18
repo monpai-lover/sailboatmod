@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.route.PathSmoother;
 import com.monpai.sailboatmod.route.RouteDefinition;
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -19,6 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class WaterAutoRouteService {
+    private static final org.slf4j.Logger LOGGER = LogUtils.getLogger();
+
     private WaterAutoRouteService() {
     }
 
@@ -123,19 +126,34 @@ public final class WaterAutoRouteService {
         // 命名用城镇名(Auto-源城镇-目标城镇)。townId 解析不到则回退 dock 名。
         String sourceTownName = resolveTownName(level, sourceSnapshot);
         String targetTownName = resolveTownName(level, targetSnapshot);
-        ServerWaterRouteWorld routeWorld = new ServerWaterRouteWorld(level);
-        WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(routeWorld, sourceBerth, targetBerth, policy);
-        WaterRouteTask task = new WaterRouteTask(
-                level.dimension().location().toString(),
-                source.getBlockPos(),
-                target.getBlockPos(),
-                sourceBerth,
-                targetBerth,
-                playerName(player),
-                policy,
-                pathfinder,
-                result -> applyCompletedRoute(level, source, target, sourceSnapshot, targetSnapshot,
-                        sourceTownName, targetTownName, result, player));
+        WaterRouteTask.CompletionHandler onComplete = result -> applyCompletedRoute(
+                level, source, target, sourceSnapshot, targetSnapshot, sourceTownName, targetTownName, result, player);
+
+        // ---- 三段式贴岸:主线程预读两端港口真实区块快照,后台串行跑三段(起始贴岸→中段长距离→尾段贴岸)。----
+        // 真实区块加载只在此主线程小范围临时(port 附近 ~7x7 区块,读完即释放);后台三段全用快照/噪声(线程安全)。
+        WaterRouteTask task;
+        try {
+            int radius = RealChunkRouteWorld.DEFAULT_RADIUS;
+            int threshold = RealChunkRouteWorld.OFFSHORE_THRESHOLD;
+            RealChunkRouteWorld startWorld = RealChunkRouteWorld.load(level, sourceBerth, radius);
+            RealChunkRouteWorld endWorld = RealChunkRouteWorld.load(level, targetBerth, radius);
+            ServerWaterRouteWorld midWorld = new ServerWaterRouteWorld(level);
+            java.util.function.Supplier<WaterRouteResult<java.util.List<BlockPos>>> threeSeg =
+                    () -> ThreeSegmentPlanner.runSerial(startWorld, endWorld, midWorld, sourceBerth, targetBerth, radius, threshold);
+            task = new WaterRouteTask(
+                    level.dimension().location().toString(),
+                    source.getBlockPos(), target.getBlockPos(), sourceBerth, targetBerth,
+                    playerName(player), policy, threeSeg, onComplete);
+        } catch (Throwable t) {
+            // 真实区块快照加载失败 → 回退现有单段噪声寻路(berth→berth)。
+            LOGGER.warn("[WaterPath] 真实区块快照加载失败,回退单段寻路", t);
+            ServerWaterRouteWorld routeWorld = new ServerWaterRouteWorld(level);
+            WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(routeWorld, sourceBerth, targetBerth, policy);
+            task = new WaterRouteTask(
+                    level.dimension().location().toString(),
+                    source.getBlockPos(), target.getBlockPos(), sourceBerth, targetBerth,
+                    playerName(player), policy, pathfinder, onComplete);
+        }
         return WaterRouteTaskService.global().submit(task).successful()
                 ? WaterRouteResult.success(null)
                 : WaterRouteResult.failure(WaterRouteFailureReason.ALREADY_PENDING);
