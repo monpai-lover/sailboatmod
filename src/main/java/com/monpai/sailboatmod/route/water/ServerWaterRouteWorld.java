@@ -2,42 +2,66 @@ package com.monpai.sailboatmod.route.water;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.tags.FluidTags;
-import net.minecraft.world.level.chunk.ChunkAccess;
-import net.minecraft.world.level.chunk.ChunkStatus;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
 
+/**
+ * 水路寻路的世界采样:改用 {@link NoiseWaterSampler} 噪声海底高度判定「可航水面」,寻路阶段<b>零区块加载</b>,
+ * 配合 (x,z) 列级缓存消除重复采样。这是修复 CHUNK_BUDGET_EXCEEDED 的核心——旧实现对每个新格强加载真实区块。
+ *
+ * <p>水面 y 统一取海平面(可航水域水面即海平面)。足迹/净空判定基于噪声可航性,不再逐层扫真实方块。
+ * 玩家改动(人工运河/填海)由寻路出最终路径后的真实区块校验兜底,不在此采样阶段处理。
+ */
 public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthResolver.BerthWorld {
     private final ServerLevel level;
-    private final Set<Long> loadedChunks = new HashSet<>();
-    private int consumedChunkLoads;
+    private final NoiseWaterSampler noise;
+    private final Map<Long, WaterColumn> columnCache = new HashMap<>();
 
     public ServerWaterRouteWorld(ServerLevel level) {
         this.level = level;
+        this.noise = level == null ? null : NoiseWaterSampler.create(level);
     }
 
     @Override
     public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
-        if (level == null || !ensureChunk(x, z)) {
+        if (level == null || noise == null) {
             return WaterColumn.blocked();
         }
-        int y = findWaterSurfaceY(x, z, policy);
-        if (y == Integer.MIN_VALUE) {
-            return WaterColumn.blocked();
+        long key = packXZ(x, z);
+        WaterColumn cached = columnCache.get(key);
+        if (cached != null) {
+            return cached;
         }
-        return WaterColumn.passable(new BlockPos(x, y, z), 0.0D);
+        WaterColumn result = computeColumn(x, z, policy);
+        columnCache.put(key, result);
+        return result;
+    }
+
+    private WaterColumn computeColumn(int x, int z, WaterRoutePolicy policy) {
+        WaterRoutePolicy effective = policy == null ? WaterRoutePolicy.defaults() : policy;
+        int halfWidth = Math.max(0, effective.boatHalfWidth());
+        int minDepth = Math.max(1, effective.clearanceHeight());
+        // 船足迹内每一列都要是可航水面(噪声海底低于海平面足够深)
+        for (int dx = -halfWidth; dx <= halfWidth; dx++) {
+            for (int dz = -halfWidth; dz <= halfWidth; dz++) {
+                if (!noise.isNavigableWater(x + dx, z + dz, minDepth)) {
+                    return WaterColumn.blocked();
+                }
+            }
+        }
+        return WaterColumn.passable(new BlockPos(x, noise.seaLevel(), z), 0.0D);
     }
 
     @Override
     public boolean canLoadMoreChunks(int requested) {
-        return requested > 0;
+        // 噪声采样不加载区块,不再受区块预算约束。
+        return true;
     }
 
     @Override
     public int consumedChunkLoads() {
-        return consumedChunkLoads;
+        return 0;
     }
 
     @Override
@@ -47,67 +71,10 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
 
     @Override
     public int waterSurfaceY(int x, int z) {
-        int y = findWaterSurfaceY(x, z, WaterRoutePolicy.defaults());
-        return y == Integer.MIN_VALUE ? level.getSeaLevel() : y;
+        return noise == null ? (level == null ? 63 : level.getSeaLevel()) : noise.seaLevel();
     }
 
-    private boolean ensureChunk(int x, int z) {
-        long key = chunkKey(x >> 4, z >> 4);
-        if (loadedChunks.contains(key)) {
-            return true;
-        }
-        ChunkAccess chunk = level.getChunkSource().getChunk(x >> 4, z >> 4, ChunkStatus.FULL, true);
-        if (chunk == null) {
-            return false;
-        }
-        loadedChunks.add(key);
-        consumedChunkLoads++;
-        return true;
-    }
-
-    private int findWaterSurfaceY(int x, int z, WaterRoutePolicy policy) {
-        WaterRoutePolicy effective = policy == null ? WaterRoutePolicy.defaults() : policy;
-        int minY = level.getMinBuildHeight();
-        int maxY = level.getMaxBuildHeight() - 1;
-        int top = Math.min(maxY, level.getSeaLevel() + 24);
-        int bottom = Math.max(minY, level.getSeaLevel() - 32);
-        for (int y = top; y >= bottom; y--) {
-            if (isWaterFootprint(x, y, z, effective) && hasClearance(x, y, z, effective)) {
-                return y;
-            }
-        }
-        return Integer.MIN_VALUE;
-    }
-
-    private boolean isWaterFootprint(int x, int y, int z, WaterRoutePolicy policy) {
-        int halfWidth = Math.max(0, policy.boatHalfWidth());
-        for (int dx = -halfWidth; dx <= halfWidth; dx++) {
-            for (int dz = -halfWidth; dz <= halfWidth; dz++) {
-                if (!level.getFluidState(new BlockPos(x + dx, y, z + dz)).is(FluidTags.WATER)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    private boolean hasClearance(int x, int y, int z, WaterRoutePolicy policy) {
-        int halfWidth = Math.max(0, policy.boatHalfWidth());
-        int clearance = Math.max(1, policy.clearanceHeight());
-        for (int dy = 1; dy <= clearance; dy++) {
-            for (int dx = -halfWidth; dx <= halfWidth; dx++) {
-                for (int dz = -halfWidth; dz <= halfWidth; dz++) {
-                    BlockPos pos = new BlockPos(x + dx, y + dy, z + dz);
-                    if (!level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()) {
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
-    private static long chunkKey(int chunkX, int chunkZ) {
-        return (((long) chunkX) << 32) ^ (chunkZ & 0xffffffffL);
+    private static long packXZ(int x, int z) {
+        return (((long) x) << 32) | (z & 0xFFFFFFFFL);
     }
 }
