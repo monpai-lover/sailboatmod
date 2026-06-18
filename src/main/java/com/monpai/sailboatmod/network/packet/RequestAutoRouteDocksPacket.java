@@ -49,6 +49,7 @@ public class RequestAutoRouteDocksPacket {
             if (!(serverLevel.getBlockEntity(msg.sourceDockPos) instanceof DockBlockEntity sourceDock)) return;
 
             List<AvailableDockEntry> available = new ArrayList<>();
+            int scanned = 0;
             boolean postStationMode = sourceDock instanceof PostStationBlockEntity;
             TransportTerminalKind terminalKind = postStationMode ? TransportTerminalKind.POST_STATION : TransportTerminalKind.PORT;
             Iterable<BlockPos> candidates = postStationMode ? PostStationRegistry.get(serverLevel) : DockRegistry.get(serverLevel);
@@ -62,17 +63,18 @@ public class RequestAutoRouteDocksPacket {
                 // 区块以读取其名字/owner/nationId（驿站数量有限、开 UI 为低频手动操作，开销可接受）。
                 if (!(serverLevel.getBlockEntity(dockPos) instanceof DockBlockEntity targetDock)) continue;
 
+                scanned++;
                 boolean canCreate;
                 if (postStationMode) {
                     canCreate = RoadAutoRouteService.canResolveAutoRoute(serverLevel, sourceDock, targetDock);
                     if (!canCreate) {
-                        LOGGER.debug("[AutoRoute] 驿站候选被刷掉 {} @{}: 路网不可达", targetDock.getDockName(), dockPos);
+                        LOGGER.info("[AutoRoute] 驿站候选被刷掉 {} @{}: 路网不可达", targetDock.getDockName(), dockPos);
                     }
                 } else {
                     WaterRouteResult<?> result = WaterAutoRouteService.canListCandidate(serverLevel, sourceDock, targetDock);
                     canCreate = result.successful();
                     if (!canCreate) {
-                        LOGGER.debug("[AutoRoute] 码头候选被刷掉 {} @{}: {}", targetDock.getDockName(), dockPos, result.reason());
+                        LOGGER.info("[AutoRoute] 码头候选被刷掉 {} @{}: {}", targetDock.getDockName(), dockPos, result.reason());
                     }
                 }
                 if (!canCreate) continue;
@@ -86,6 +88,9 @@ public class RequestAutoRouteDocksPacket {
                     distance
                 ));
             }
+
+            LOGGER.info("[AutoRoute] 源 @{} 模式={} 共扫描 {} 个其它码头,列出 {} 个可用",
+                    msg.sourceDockPos, postStationMode ? "驿站" : "码头", scanned, available.size());
 
             ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
                 new SyncAutoRouteDocksPacket(msg.sourceDockPos, terminalKind, available));

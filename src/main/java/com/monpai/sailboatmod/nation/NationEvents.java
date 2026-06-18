@@ -21,6 +21,8 @@ import com.monpai.sailboatmod.nation.service.NationWarService;
 import com.monpai.sailboatmod.nation.service.TerrainCacheInvalidator;
 import com.monpai.sailboatmod.nation.service.TownFlagBlockTracker;
 import com.monpai.sailboatmod.nation.service.TownService;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
+import com.monpai.sailboatmod.route.RoadGraphRoutingService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
@@ -59,6 +61,9 @@ public final class NationEvents {
     private static final Map<UUID, TerritoryPresence> LAST_TERRITORY = new HashMap<>();
     private static final Map<UUID, String> LAST_TAB_LIST_KEYS = new HashMap<>();
     private static final Map<UUID, ContainerAccessAttempt> PENDING_CONTAINER_ACCESS = new HashMap<>();
+    // 玩家走路加速判定的跨格门控缓存:同 8×8 grid cell 且 <10tick 内复用上次结果,避免每 tick 查路网。
+    private static final int ROAD_SPEED_RECHECK_TICKS = 10;
+    private static final Map<UUID, RoadTravelCache> ROAD_TRAVEL_CACHE = new HashMap<>();
 
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
@@ -94,6 +99,7 @@ public final class NationEvents {
             LAST_TERRITORY.remove(player.getUUID());
             LAST_TAB_LIST_KEYS.remove(player.getUUID());
             PENDING_CONTAINER_ACCESS.remove(player.getUUID());
+            ROAD_TRAVEL_CACHE.remove(player.getUUID());
             syncPlayerNames(player, true);
             ClaimHighlightSyncService.syncTo(player);
         }
@@ -338,6 +344,7 @@ public final class NationEvents {
         LAST_TERRITORY.remove(event.getEntity().getUUID());
         LAST_TAB_LIST_KEYS.remove(event.getEntity().getUUID());
         PENDING_CONTAINER_ACCESS.remove(event.getEntity().getUUID());
+        ROAD_TRAVEL_CACHE.remove(event.getEntity().getUUID());
     }
 
     @SubscribeEvent
@@ -366,10 +373,7 @@ public final class NationEvents {
             return;
         }
         BlockPos supportPos = BlockPos.containing(player.getX(), player.getBoundingBox().minY - 0.1D, player.getZ());
-        if (!RoadTravelHelper.shouldGrantRoadSpeed(
-                player.serverLevel().getBlockState(supportPos),
-                player.serverLevel().getBlockState(supportPos.below())
-        )) {
+        if (!isOnGrantingRoadSurface(player, supportPos)) {
             return;
         }
         MobEffectInstance existing = player.getEffect(MobEffects.MOVEMENT_SPEED);
@@ -389,6 +393,37 @@ public final class NationEvents {
                 false,
                 false
         ));
+    }
+
+    /**
+     * 判定玩家脚下是否「正式建成道路」→ 给走路加速。改自旧的纯材质白名单:
+     * 该维度有建成道路时查路网空间索引(只认 BUILT 边),否则回退材质白名单(老存档兼容)。
+     * 跨格门控:同 8×8 grid cell 且 <10tick 内复用上次结果,避免每 tick 查路网。
+     */
+    private static boolean isOnGrantingRoadSurface(ServerPlayer player, BlockPos supportPos) {
+        int cellX = supportPos.getX() >> 3;
+        int cellZ = supportPos.getZ() >> 3;
+        RoadTravelCache cached = ROAD_TRAVEL_CACHE.get(player.getUUID());
+        if (cached != null
+                && cached.cellX == cellX && cached.cellZ == cellZ
+                && (player.tickCount - cached.tick) < ROAD_SPEED_RECHECK_TICKS) {
+            return cached.onRoad;
+        }
+        String dimensionId = player.serverLevel().dimension().location().toString();
+        RoadGraphRoutingService routing = new RoadGraphRoutingService(RoadGraphRepository.forLevelCached(player.serverLevel()));
+        boolean onRoad;
+        if (routing.hasBuiltRoad(dimensionId)) {
+            onRoad = routing.isRoadCorridor(dimensionId, supportPos, 1);
+        } else {
+            onRoad = RoadTravelHelper.shouldGrantRoadSpeed(
+                    player.serverLevel().getBlockState(supportPos),
+                    player.serverLevel().getBlockState(supportPos.below()));
+        }
+        ROAD_TRAVEL_CACHE.put(player.getUUID(), new RoadTravelCache(cellX, cellZ, player.tickCount, onRoad));
+        return onRoad;
+    }
+
+    private record RoadTravelCache(int cellX, int cellZ, int tick, boolean onRoad) {
     }
 
     private static TerritoryPresence territoryPresence(ServerPlayer player) {
