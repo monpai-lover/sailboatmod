@@ -3,7 +3,6 @@ package com.monpai.sailboatmod.network.packet;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.dock.AvailableDockEntry;
-import com.monpai.sailboatmod.dock.DockRegistry;
 import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
@@ -52,7 +51,11 @@ public class RequestAutoRouteDocksPacket {
             int scanned = 0;
             boolean postStationMode = sourceDock instanceof PostStationBlockEntity;
             TransportTerminalKind terminalKind = postStationMode ? TransportTerminalKind.POST_STATION : TransportTerminalKind.PORT;
-            Iterable<BlockPos> candidates = postStationMode ? PostStationRegistry.get(serverLevel) : DockRegistry.get(serverLevel);
+            // 码头(water)候选来自持久坐标清单(不依赖区块加载,远处码头也能列出);驿站仍用内存注册表。
+            Iterable<BlockPos> candidates = postStationMode
+                    ? PostStationRegistry.get(serverLevel)
+                    : com.monpai.sailboatmod.dock.DockLocationSavedData.get(serverLevel)
+                            .positionsIn(serverLevel.dimension().location().toString());
 
             for (BlockPos dockPos : candidates) {
                 if (dockPos.equals(msg.sourceDockPos)) continue;

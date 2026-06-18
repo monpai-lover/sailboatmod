@@ -100,6 +100,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (level != null && !level.isClientSide) {
             DockTownResolver.resolve(level, worldPosition);
             registerFacility(level, worldPosition);
+            // 港口码头坐标进持久清单(惰性覆盖老存档),供创建自动航线时枚举远处候选;驿站不入此清单。
+            if (!(this instanceof PostStationBlockEntity)) {
+                com.monpai.sailboatmod.dock.DockLocationSavedData.get(level)
+                        .register(level.dimension().location().toString(), worldPosition.asLong());
+            }
             syncFacilityMarkers();
         }
     }

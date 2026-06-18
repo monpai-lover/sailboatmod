@@ -77,6 +77,9 @@ public class DockBlock extends BaseEntityBlock {
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock()) && !level.isClientSide) {
             BlueMapIntegration.removeDock(level, pos);
+            // 真正破坏时(区块卸载不触发 onRemove)从持久清单移除该码头坐标。
+            com.monpai.sailboatmod.dock.DockLocationSavedData.get(level)
+                    .unregister(level.dimension().location().toString(), pos.asLong());
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
     }
