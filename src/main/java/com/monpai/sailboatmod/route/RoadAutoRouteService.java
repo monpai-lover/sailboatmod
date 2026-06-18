@@ -108,7 +108,11 @@ public final class RoadAutoRouteService {
         if (!resolution.found()) {
             return false;
         }
-        List<BlockPos> path = resolution.path();
+        // 马车 rail = 这条 waypoints。同样消 zigzag:样条平滑(与 routeDefinitionFromPath 一致)。
+        List<BlockPos> path = PathSmoother.smooth2DInterpolatedY(resolution.path(), 1.0D);
+        if (path.size() < 2) {
+            path = resolution.path();
+        }
         List<Vec3> waypoints = new ArrayList<>(path.size());
         for (BlockPos pos : path) {
             waypoints.add(new Vec3(pos.getX() + 0.5D, pos.getY() + 1.05D, pos.getZ() + 0.5D));
@@ -292,10 +296,13 @@ public final class RoadAutoRouteService {
     private static RouteDefinition routeDefinitionFromPath(PostStationBlockEntity startDock,
                                                            PostStationBlockEntity endDock,
                                                            List<BlockPos> path) {
-        List<Vec3> waypoints = new ArrayList<>(path.size());
+        // 陆路同样消锯齿:Catmull-Rom 样条+1格弧长重采样,Y 沿原折线插值(地形跟随)。
+        // 水路用 smooth2D(海平面),陆路用 smooth2DInterpolatedY(逐点插值 Y)。
+        List<BlockPos> smoothed = PathSmoother.smooth2DInterpolatedY(path, 1.0D);
+        List<Vec3> waypoints = new ArrayList<>(smoothed.size());
         double routeLength = 0.0D;
         Vec3 previous = null;
-        for (BlockPos pos : path) {
+        for (BlockPos pos : smoothed) {
             Vec3 waypoint = new Vec3(pos.getX() + 0.5D, pos.getY() + 1.05D, pos.getZ() + 0.5D);
             if (previous != null) {
                 routeLength += previous.distanceTo(waypoint);

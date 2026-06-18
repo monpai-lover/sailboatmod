@@ -42,7 +42,7 @@ public class RoadPlannerActionMenuScreen extends Screen {
         if (mode == RoadPlannerActionMenuMode.BUILDING) {
             addButton(left, top, "\u67e5\u770b\u65bd\u5de5\u8fdb\u5ea6", button -> closeOnly());
             addButton(left, top + row, "\u53d6\u6d88\u5efa\u9020\u5e76\u56de\u6eda", button -> cancelBuildAndRollback());
-            addButton(left, top + row * 2, "\u6682\u505c/\u7ee7\u7eed\u65bd\u5de5", button -> closeOnly());
+            addButton(left, top + row * 2, "\u6682\u505c/\u7ee7\u7eed\u65bd\u5de5", button -> togglePauseBuild());
             addButton(left, top + row * 3, "\u5173\u95ed", button -> onClose());
             return;
         }
@@ -97,6 +97,12 @@ public class RoadPlannerActionMenuScreen extends Screen {
 
     private void cancelBuildAndRollback() {
         ModNetwork.CHANNEL.sendToServer(new RoadPlannerCancelJobPacket(sessionId));
+        onClose();
+    }
+
+    private void togglePauseBuild() {
+        ModNetwork.CHANNEL.sendToServer(
+                new com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket(sessionId));
         onClose();
     }
 

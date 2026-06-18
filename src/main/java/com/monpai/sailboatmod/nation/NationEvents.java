@@ -3,6 +3,8 @@ package com.monpai.sailboatmod.nation;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.NationCoreBlock;
 import com.monpai.sailboatmod.block.TownCoreBlock;
+import com.monpai.sailboatmod.entity.CarriageEntity;
+import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.nation.command.NationCommands;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
@@ -187,6 +189,10 @@ public final class NationEvents {
         if (!(event.getPlayer() instanceof ServerPlayer player)) {
             return;
         }
+        if (bypassesProtection(player)) {
+            TerrainCacheInvalidator.onBlockBreak(event);
+            return;
+        }
         boolean allowed;
         if (event.getState().getBlock() instanceof TownCoreBlock) {
             allowed = false;
@@ -211,7 +217,8 @@ public final class NationEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
-        if (!NationClaimService.canPlace(player.level(), player.getUUID(), event.getPos())) {
+        if (!bypassesProtection(player)
+                && !NationClaimService.canPlace(player.level(), player.getUUID(), event.getPos())) {
             player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.protect.place_denied"));
             event.setCanceled(true);
         }
@@ -258,6 +265,10 @@ public final class NationEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
+        if (bypassesProtection(player)) {
+            rememberContainerAccess(player, event.getPos());
+            return;
+        }
         if (!NationClaimService.canUseBlock(player.level(), player.getUUID(), event.getPos())) {
             player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.protect.use_denied"));
             event.setCanceled(true);
@@ -269,6 +280,10 @@ public final class NationEvents {
     @SubscribeEvent
     public static void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        // OP 或「自己的载具」(上船/驾驶是个人财产操作)不受领地阻挡。
+        if (bypassesProtection(player) || isOwnVehicle(player, event.getTarget())) {
             return;
         }
         if (!NationClaimService.canUseBlock(player.level(), player.getUUID(), event.getTarget().blockPosition())) {
@@ -284,6 +299,9 @@ public final class NationEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
+        if (bypassesProtection(player) || isOwnVehicle(player, event.getTarget())) {
+            return;
+        }
         if (!NationClaimService.canUseBlock(player.level(), player.getUUID(), event.getTarget().blockPosition())) {
             player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.protect.use_denied"));
             event.setCanceled(true);
@@ -295,6 +313,10 @@ public final class NationEvents {
     @SubscribeEvent
     public static void onContainerOpen(PlayerContainerEvent.Open event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (bypassesProtection(player)) {
+            PENDING_CONTAINER_ACCESS.remove(player.getUUID());
             return;
         }
         ContainerAccessAttempt attempt = PENDING_CONTAINER_ACCESS.remove(player.getUUID());
@@ -366,6 +388,26 @@ public final class NationEvents {
             return;
         }
         PENDING_CONTAINER_ACCESS.put(player.getUUID(), new ContainerAccessAttempt(pos.immutable(), player.tickCount));
+    }
+
+    /** OP(权限等级≥2)绕过所有领地权限检查,与命令权限 hasPermission(2) 同口径。 */
+    private static boolean bypassesProtection(ServerPlayer player) {
+        return player != null && player.hasPermissions(2);
+    }
+
+    /** 目标实体是本 mod 载具且属于该玩家本人 → 上船/驾驶不受领地阻挡(载具是个人财产)。 */
+    private static boolean isOwnVehicle(ServerPlayer player, net.minecraft.world.entity.Entity target) {
+        if (player == null) {
+            return false;
+        }
+        String self = player.getUUID().toString();
+        if (target instanceof SailboatEntity boat) {
+            return !boat.getOwnerUuid().isBlank() && boat.getOwnerUuid().equals(self);
+        }
+        if (target instanceof CarriageEntity carriage) {
+            return !carriage.getOwnerUuid().isBlank() && carriage.getOwnerUuid().equals(self);
+        }
+        return false;
     }
 
     private static void refreshRoadTravelEffects(ServerPlayer player) {

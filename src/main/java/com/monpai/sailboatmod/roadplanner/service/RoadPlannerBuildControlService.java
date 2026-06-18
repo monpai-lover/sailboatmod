@@ -211,6 +211,24 @@ public class RoadPlannerBuildControlService {
         return cancelBuild(playerId, requestedId, null);
     }
 
+    /** 切换施工暂停/继续。返回切换后是否为「已暂停」。 */
+    public boolean togglePauseBuild(UUID playerId, UUID requestedId) {
+        UUID jobId = activeBuilds.get(playerId);
+        if (jobId == null || !matches(requestedId, jobId)) {
+            return false;
+        }
+        ConstructionQueue queue = buildQueues.get(jobId);
+        if (queue == null) {
+            return false;
+        }
+        if (queue.getState() == ConstructionQueue.State.PAUSED) {
+            queue.resume();
+            return false; // 现在是运行中
+        }
+        queue.pause();
+        return true; // 现在是暂停
+    }
+
     public void tick(ServerLevel level) {
         ResourceKey<Level> currentDim = level != null ? level.dimension() : null;
         List<UUID> completedJobs = new java.util.ArrayList<>();

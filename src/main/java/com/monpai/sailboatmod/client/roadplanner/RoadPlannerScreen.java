@@ -1166,6 +1166,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         clearStartReuseSpan();
         manualTerrainSamples = RoadPlannerTerrainSampleIndex.from(terrainSamples);
         RoadPlannerRouteExpander.Result expanded = expandRoute(nodes, segmentTypes, manualTerrainSamples);
+        org.slf4j.LoggerFactory.getLogger("RoadPlannerAuto").info(
+                "[RoadPlan] applyResult: 收到节点={} expandRoute后={} (预览显示的是 expandRoute 后的)",
+                nodes == null ? 0 : nodes.size(), expanded.nodes() == null ? 0 : expanded.nodes().size());
         linePlan.replaceWith(expanded.nodes(), expanded.segmentTypes());
         saveDraft();
         if (expanded.nodes().size() >= 2) {

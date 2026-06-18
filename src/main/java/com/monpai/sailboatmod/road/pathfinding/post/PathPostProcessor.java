@@ -36,11 +36,13 @@ public class PathPostProcessor {
         List<BlockPos> heightAdjusted = applyHeights(relaxed, smoothedHeights);
 
         List<BlockPos> splined = autoSpline(heightAdjusted, SPLINE_SEGMENTS_PER_SPAN);
-        List<BlockPos> rasterized = rasterize(splined);
-        List<BridgeSpan> finalBridges = detectBridges(rasterized, cache, bridgeMinWaterDepth);
-        List<RoadSegmentPlacement> placements = rasterizeSegments(rasterized, halfWidth, finalBridges);
+        // 不再 Bresenham rasterize:Bresenham 把平滑样条曲线又打回逐格台阶,路面/预览都跟着锯齿(zigzag)。
+        // 直接用平滑的 splined 点:rasterizeSegments 是「沿段宽度带投影」铺设(填满段间空隙),稀疏样条点也能
+        // 铺出连续平滑路面;返回的 path 与桥检测也用 splined,预览与实际道路走向一致、无锯齿。
+        List<BridgeSpan> finalBridges = detectBridges(splined, cache, bridgeMinWaterDepth);
+        List<RoadSegmentPlacement> placements = rasterizeSegments(splined, halfWidth, finalBridges);
         anchorEndpoints(placements, cache);
-        return new ProcessedPath(rasterized, finalBridges, placements);
+        return new ProcessedPath(splined, finalBridges, placements);
     }
 
     public ProcessedPath process(List<BlockPos> rawPath, TerrainSamplingCache cache, int bridgeMinWaterDepth) {

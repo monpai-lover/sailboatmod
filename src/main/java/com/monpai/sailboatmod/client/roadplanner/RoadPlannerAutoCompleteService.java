@@ -51,9 +51,24 @@ public class RoadPlannerAutoCompleteService {
                 : start;
         int spacing = Math.max(4, spacingBlocks);
         List<BlockPos> suffixNodes = runPathfinder(from, destination);
+        boolean usedFallback = false;
         if (suffixNodes.isEmpty()) {
             suffixNodes = interpolateRoadWeaverStyle(from, destination, spacing);
+            usedFallback = true;
         }
+        if (suffixNodes.size() < 2) {
+            return RoadPlannerAutoCompleteResult.failure("自动寻路失败");
+        }
+        int rawCount = suffixNodes.size();
+        // 关键修复:A* 是 8 邻网格寻路,接近水平/对角方向时在「对角格+正交格」间交替 → 规则 W 锯齿。
+        // 这些节点就是预览青色节点 + 实际建路中心线的源头。必须在「分段(classifySegments)之前」对 A* 节点
+        // 做样条平滑——分段在平滑后重新分类,segmentType 不会错乱;预览与建路都用同一条平滑节点序列。
+        suffixNodes = com.monpai.sailboatmod.route.PathSmoother.smooth2DInterpolatedY(suffixNodes, spacing);
+        org.slf4j.LoggerFactory.getLogger("RoadPlannerAuto").info(
+                "[RoadPlan] complete: runner={} 兜底={} 原始节点={} 平滑后={} spacing={} 首点={} 尾点={}",
+                pathfinderRunner == null ? "null" : "有", usedFallback, rawCount, suffixNodes.size(), spacing,
+                suffixNodes.isEmpty() ? "-" : suffixNodes.get(0),
+                suffixNodes.isEmpty() ? "-" : suffixNodes.get(suffixNodes.size() - 1));
         if (suffixNodes.size() < 2) {
             return RoadPlannerAutoCompleteResult.failure("自动寻路失败");
         }

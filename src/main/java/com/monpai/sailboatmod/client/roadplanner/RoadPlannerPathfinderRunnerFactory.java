@@ -25,7 +25,10 @@ public final class RoadPlannerPathfinderRunnerFactory {
             return null;
         }
         PathfindingConfig config = new PathfindingConfig();
-        config.setAlgorithm(PathfindingConfig.Algorithm.BIDIRECTIONAL_ASTAR);
+        // 用全局默认算法(POTENTIAL_FIELD,势场+等高线代价,沿地形等高线走更自然)。
+        // 之前这里硬编码 BIDIRECTIONAL_ASTAR 覆盖了默认 → 自动补全实际跑的是双向A*,非本意的 potential field。
+        // 注意:potential field 同为 8 邻网格,仍会有离散锯齿,锯齿由下游 PathSmoother 样条平滑抹掉。
+        config.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
         Pathfinder pathfinder = PathfinderFactory.create(config);
         TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getSamplingPrecision());
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {

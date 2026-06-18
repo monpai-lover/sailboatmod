@@ -64,13 +64,18 @@ public final class WaterRoutePathfinder {
             fail(WaterRouteFailureReason.NO_WATER_PATH);
             return;
         }
-        WaterColumn startColumn = world.sample(start.getX(), start.getZ(), policy);
-        WaterColumn goalColumn = world.sample(goal.getX(), goal.getZ(), policy);
+        // 关键:前向/后向必须落在同一套全局 step 网格上,否则两边格点错位(start/goal 在 step 上不整除时)
+        // 永远命中不到同一格 → 双向 A* 永不相遇(实测前后向各扩展上千节点、前沿在目标附近横跳却碰不上)。
+        // snap 把任意坐标对齐到 step 的整数倍,从 start 还是 goal 出发,落点都在同一网格,必能相遇。
+        BlockPos snappedStart = snapToGrid(start);
+        BlockPos snappedGoal = snapToGrid(goal);
+        WaterColumn startColumn = world.sample(snappedStart.getX(), snappedStart.getZ(), policy);
+        WaterColumn goalColumn = world.sample(snappedGoal.getX(), snappedGoal.getZ(), policy);
         boolean startOk = startColumn != null && startColumn.passable();
         boolean goalOk = goalColumn != null && goalColumn.passable();
         long straight = Math.round(Math.sqrt(start.distSqr(goal)));
-        LOGGER.info("[WaterPath] 开始 start={} goal={} 直线={}格 起点可航={} 终点可航={}",
-                start, goal, straight, startOk, goalOk);
+        LOGGER.info("[WaterPath] 开始 start={} goal={} (网格对齐 s={} g={}) 直线={}格 起点可航={} 终点可航={}",
+                start, goal, snappedStart, snappedGoal, straight, startOk, goalOk);
         if (!startOk || !goalOk) {
             fail(WaterRouteFailureReason.NO_WATER_PATH);
             return;
@@ -83,6 +88,13 @@ public final class WaterRoutePathfinder {
         forward.best.put(key(s), startNode);
         backward.open.add(goalNode);
         backward.best.put(key(g), goalNode);
+    }
+
+    /** 把坐标 snap 到 step 网格(向下取整到 step 倍数),保证前后向格点同网格、可相遇。 */
+    private BlockPos snapToGrid(BlockPos pos) {
+        int sx = Math.floorDiv(pos.getX(), step) * step;
+        int sz = Math.floorDiv(pos.getZ(), step) * step;
+        return new BlockPos(sx, pos.getY(), sz);
     }
 
     /** chunkBudget 参数保留以兼容调用方,但噪声采样零区块加载,已忽略。 */
@@ -136,9 +148,12 @@ public final class WaterRoutePathfinder {
         }
         expandedNodes++;
 
-        // 相遇检测:当前节点已被对侧确定(closed)→ 拼接
-        if (other.best.containsKey(curKey) && other.closed.contains(curKey)) {
-            meet(isForward, current, other.best.get(curKey));
+        // 相遇检测:对侧已生成过该格(在 best 里,无论 open/closed)→ 拼接。
+        // 不再要求对侧 closed:若某侧因 f 较大长期不被扩展(其前沿节点一直留在 open),
+        // 要求 closed 会导致已网格对齐、明明能碰上的两条链永远拼不起来 → 又超时。
+        Node otherNode = other.best.get(curKey);
+        if (otherNode != null) {
+            meet(isForward, current, otherNode);
             return true;
         }
 
@@ -196,11 +211,16 @@ public final class WaterRoutePathfinder {
             path.add(n.pos);
         }
 
-        if (!path.isEmpty() && !path.get(path.size() - 1).equals(goal)) {
-            WaterColumn goalColumn = world.sample(goal.getX(), goal.getZ(), policy);
-            if (goalColumn != null && goalColumn.passable() && goalColumn.surfacePos() != null) {
-                path.add(goalColumn.surfacePos());
-            }
+        // 首尾补回真实泊位坐标(搜索走 snap 网格,首尾可能偏真实泊位几格;补上让船精确停靠)。
+        // Y 沿用路径首/尾航点(海平面),start/goal 的 Y 即泊位 Y,二者一致。
+        int surfaceY = path.isEmpty() ? start.getY() : path.get(0).getY();
+        BlockPos realStart = new BlockPos(start.getX(), surfaceY, start.getZ());
+        BlockPos realGoal = new BlockPos(goal.getX(), surfaceY, goal.getZ());
+        if (!path.isEmpty() && !path.get(0).equals(realStart)) {
+            path.add(0, realStart);
+        }
+        if (!path.isEmpty() && !path.get(path.size() - 1).equals(realGoal)) {
+            path.add(realGoal);
         }
         List<BlockPos> simplified = simplify(path);
         path.clear();

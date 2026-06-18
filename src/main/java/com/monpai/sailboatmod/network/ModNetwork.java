@@ -886,6 +886,13 @@ public final class ModNetwork {
                 RenamePostStationPacket::decode,
                 RenamePostStationPacket::handle
         );
+        CHANNEL.registerMessage(
+                packetId++,
+                com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket.class,
+                com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::encode,
+                com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::decode,
+                com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::handle
+        );
     }
 
     private ModNetwork() {

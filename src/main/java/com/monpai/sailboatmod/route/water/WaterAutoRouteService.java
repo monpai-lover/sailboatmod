@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
+import com.monpai.sailboatmod.route.PathSmoother;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -124,6 +125,9 @@ public final class WaterAutoRouteService {
         }
         BlockPos sourceBerth = blockPos(candidate.value().source().pos());
         BlockPos targetBerth = blockPos(candidate.value().target().pos());
+        // 命名用城镇名(Auto-源城镇-目标城镇)。townId 解析不到则回退 dock 名。
+        String sourceTownName = resolveTownName(level, sourceSnapshot);
+        String targetTownName = resolveTownName(level, targetSnapshot);
         ServerWaterRouteWorld routeWorld = new ServerWaterRouteWorld(level);
         WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(routeWorld, sourceBerth, targetBerth, policy);
         WaterRouteTask task = new WaterRouteTask(
@@ -135,16 +139,20 @@ public final class WaterAutoRouteService {
                 playerName(player),
                 policy,
                 pathfinder,
-                result -> applyCompletedRoute(source, target, sourceSnapshot, targetSnapshot, result, player));
+                result -> applyCompletedRoute(level, source, target, sourceSnapshot, targetSnapshot,
+                        sourceTownName, targetTownName, result, player));
         return WaterRouteTaskService.global().submit(task).successful()
                 ? WaterRouteResult.success(null)
                 : WaterRouteResult.failure(WaterRouteFailureReason.ALREADY_PENDING);
     }
 
-    private static void applyCompletedRoute(DockBlockEntity source,
+    private static void applyCompletedRoute(ServerLevel level,
+                                            DockBlockEntity source,
                                             DockBlockEntity target,
                                             DockSnapshot sourceSnapshot,
                                             DockSnapshot targetSnapshot,
+                                            String sourceTownName,
+                                            String targetTownName,
                                             WaterRouteResult<List<BlockPos>> result,
                                             @Nullable ServerPlayer player) {
         if (!result.successful()) {
@@ -153,10 +161,25 @@ public final class WaterAutoRouteService {
             }
             return;
         }
+        // 先平滑(Catmull-Rom 样条+弧长重采样,消锯齿/直线/稀疏),后真实区块校验(堵穿陆漏洞)。
+        // 顺序不可反:样条会把航点推离折线可能推上陆地,校验必须是最后一道闸门。两步都在主线程(回调里),
+        // 真实校验只对这一条最终航线跑一次 + hasChunkAt 预检,不卡服。
+        int seaY = level.getSeaLevel();
+        List<BlockPos> smoothed = PathSmoother.smooth2D(result.value(), seaY, 2.0D);
+        List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(level, smoothed);
+        if (verified.size() < 2) {
+            // 穿陆且绕不开 → 不落地无效航线(船会卡死),报无水路。
+            if (player != null) {
+                player.sendSystemMessage(messageFor(WaterRouteFailureReason.NO_WATER_PATH));
+            }
+            return;
+        }
         RouteDefinition route = routeDefinitionFromPath(
                 sourceSnapshot,
                 targetSnapshot,
-                result.value(),
+                sourceTownName,
+                targetTownName,
+                verified,
                 playerName(player),
                 player == null ? "" : player.getUUID().toString(),
                 System.currentTimeMillis());
@@ -173,15 +196,19 @@ public final class WaterAutoRouteService {
 
     static RouteDefinition routeDefinitionFromPath(DockSnapshot source,
                                                    DockSnapshot target,
+                                                   String sourceTownName,
+                                                   String targetTownName,
                                                    List<BlockPos> path,
                                                    String authorName,
                                                    String authorUuid,
                                                    long createdAtEpochMillis) {
-        List<BlockPos> simplified = simplify(path);
-        List<Vec3> waypoints = new ArrayList<>(simplified.size());
+        // 不再 simplify:传入的 path 已由 PathSmoother 平滑+弧长重采样成等距密集航点,
+        // 再 simplify 会把加密点抽回拐点、平滑白做。直接逐点构造 waypoints。
+        List<BlockPos> waypointsSource = path == null ? List.of() : path;
+        List<Vec3> waypoints = new ArrayList<>(waypointsSource.size());
         double routeLength = 0.0D;
         Vec3 previous = null;
-        for (BlockPos pos : simplified) {
+        for (BlockPos pos : waypointsSource) {
             Vec3 waypoint = new Vec3(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D);
             if (previous != null) {
                 routeLength += previous.distanceTo(waypoint);
@@ -190,8 +217,11 @@ public final class WaterAutoRouteService {
             previous = waypoint;
         }
         String targetName = target == null ? "Dock" : target.name();
+        String srcTown = sourceTownName == null || sourceTownName.isBlank()
+                ? (source == null ? "Dock" : source.name()) : sourceTownName;
+        String dstTown = targetTownName == null || targetTownName.isBlank() ? targetName : targetTownName;
         return new RouteDefinition(
-                "Water Auto: " + targetName,
+                "Auto-" + srcTown + "-" + dstTown,
                 waypoints,
                 authorName,
                 authorUuid,
@@ -232,7 +262,18 @@ public final class WaterAutoRouteService {
     }
 
     private static boolean isGeneratedWaterRoute(RouteDefinition route) {
-        return route != null && route.name() != null && route.name().startsWith("Water Auto: ");
+        // 兼容旧前缀("Water Auto: ")与新前缀("Auto-"),保证去重对历史航线仍生效。
+        return route != null && route.name() != null
+                && (route.name().startsWith("Auto-") || route.name().startsWith("Water Auto: "));
+    }
+
+    /** townId → 城镇名;解析不到返回空串(由调用方回退 dock 名)。 */
+    private static String resolveTownName(ServerLevel level, DockSnapshot snapshot) {
+        if (level == null || snapshot == null || snapshot.townId() == null || snapshot.townId().isBlank()) {
+            return "";
+        }
+        var town = NationSavedData.get(level).getTown(snapshot.townId());
+        return town == null || town.name() == null ? "" : town.name();
     }
 
     private static boolean safeEquals(String left, String right) {

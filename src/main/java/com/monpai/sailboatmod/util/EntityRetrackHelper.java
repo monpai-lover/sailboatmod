@@ -69,6 +69,16 @@ public final class EntityRetrackHelper {
         ClientboundTeleportEntityPacket teleport = new ClientboundTeleportEntityPacket(entity);
         ClientboundSetEntityMotionPacket motion = new ClientboundSetEntityMotionPacket(entity);
 
+        // 本实体的乘客集合(UUID)：乘客客户端必然已正确追踪本实体(否则上不去/坐不住),对其重发 spawn
+        // 只会砸掉正常工作的客户端实体——GeckoLib 动画从头重播(每3秒抽搐)、打开的容器菜单被关闭。
+        // 故心跳重发跳过乘客,乘客只靠下面的 teleport+motion 维持移动同步。
+        java.util.HashSet<UUID> passengerIds = new java.util.HashSet<>();
+        for (Entity passenger : entity.getPassengers()) {
+            if (passenger != null) {
+                passengerIds.add(passenger.getUUID());
+            }
+        }
+
         java.util.HashSet<UUID> inRangeNow = new java.util.HashSet<>();
         int spawned = 0;
         for (ServerPlayer player : level.players()) {
@@ -81,8 +91,10 @@ public final class EntityRetrackHelper {
             UUID id = player.getUUID();
             inRangeNow.add(id);
             boolean isNew = !alreadySpawned.contains(id);
-            // 新进范围发一次 spawn 让马车出现；心跳帧（spawnHeartbeat）对所有范围内玩家重发一次兜底被丢弃的实体。
-            if (isNew || spawnHeartbeat) {
+            boolean isPassenger = passengerIds.contains(id);
+            // 新进范围发一次 spawn 让船/车出现；心跳帧对范围内玩家重发兜底被丢弃的实体——但乘客除外
+            // (乘客已正确追踪,重发会砸动画/关菜单)。乘客即使首次也不在此发 spawn(上船时已正常 spawn)。
+            if ((isNew || spawnHeartbeat) && !isPassenger) {
                 player.connection.send(entity.getAddEntityPacket());
                 if (nonDefault != null && !nonDefault.isEmpty()) {
                     player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));

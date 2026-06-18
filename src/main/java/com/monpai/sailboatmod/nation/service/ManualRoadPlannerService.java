@@ -513,6 +513,8 @@ public final class ManualRoadPlannerService {
             PathPostProcessor postProcessor = new PathPostProcessor();
             PathPostProcessor.ProcessedPath processed = postProcessor.process(
                     result.path(), cache, config.getBridge().getBridgeMinWaterDepth(), 3 / 2);
+            // PathPostProcessor 已改为输出平滑样条路径(去掉末尾 Bresenham 栅格化),path 与 placements 都基于
+            // 同一条平滑曲线 → 预览中心线 = 实际道路走向,建路与预览都无 zigzag。这里直接用,无需再平滑。
             finalPath = processed.path();
             if (!allowsPierlessDetourCrossing(maxWaterSpanLength(processed.bridgeSpans()))) {
                 return null;

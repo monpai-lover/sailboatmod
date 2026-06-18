@@ -5,8 +5,6 @@ import com.monpai.sailboatmod.block.WallNationFlagBlock;
 import com.monpai.sailboatmod.block.entity.NationFlagBlockEntity;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.mojang.blaze3d.vertex.PoseStack;
-import net.minecraft.client.model.geom.ModelLayers;
-import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
@@ -16,13 +14,10 @@ import net.minecraft.resources.ResourceLocation;
 
 /** 国旗渲染:薄壳,几何/动画全部委托 FlagRenderHelper(与城镇旗共用同一套,只是贴图来源不同)。 */
 public class NationFlagBlockEntityRenderer implements BlockEntityRenderer<NationFlagBlockEntity> {
-    private final ModelPart pole;
-    private final ModelPart bar;
-
     public NationFlagBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
-        ModelPart root = context.bakeLayer(ModelLayers.BANNER);
-        this.pole = root.getChild("pole");
-        this.bar = root.getChild("bar");
+        // 不再 bakeLayer(ModelLayers.BANNER):FlagRenderHelper 已全自画顶点,不用 vanilla banner ModelPart。
+        // 真因修复:此前构造里 bakeLayer 一旦在客户端抛异常,整个 BER 实例化失败 → 旗帜方块完全不渲染
+        // (只剩选择框 outline,无模型无贴图),而城镇核心等不依赖 bakeLayer 的 BER 正常。
     }
 
     @Override
@@ -46,7 +41,7 @@ public class NationFlagBlockEntityRenderer implements BlockEntityRenderer<Nation
         ResourceLocation texture = NationFlagTextureCache.resolve(blockEntity.getFlagId(), blockEntity.getPrimaryColor(), blockEntity.getSecondaryColor(), blockEntity.isFlagMirrored());
         long gameTime = blockEntity.getLevel() == null ? 0L : blockEntity.getLevel().getGameTime();
 
-        FlagRenderHelper.render(poseStack, bufferSource, pole, bar, light, packedOverlay, isWall, facing,
+        FlagRenderHelper.render(poseStack, bufferSource, light, packedOverlay, isWall, facing,
                 blockEntity.getFlagWidth(), blockEntity.getFlagHeight(), texture,
                 blockEntity.getBlockPos(), gameTime, partialTick);
     }

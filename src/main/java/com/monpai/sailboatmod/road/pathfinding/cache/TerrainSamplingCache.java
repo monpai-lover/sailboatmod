@@ -16,9 +16,8 @@ public class TerrainSamplingCache {
     private final ServerLevel level;
     private final FastHeightSampler fastSampler;
     private final AccurateHeightSampler accurateSampler;
-    private final BiomeSource biomeSource;      // 噪声生物群系来源(不依赖区块)
+    private final BiomeSource biomeSource;
     private final Climate.Sampler climateSampler;
-    private final int seaLevel;
     private final PathfindingConfig.SamplingPrecision precision;
     private final Set<Long> blockedColumns;
     private final Set<Long> allowedColumns;
@@ -47,7 +46,6 @@ public class TerrainSamplingCache {
         var chunkSource = level.getChunkSource();
         this.biomeSource = chunkSource.getGenerator().getBiomeSource();
         this.climateSampler = chunkSource.getGeneratorState().randomState().sampler();
-        this.seaLevel = level.getSeaLevel();
         this.precision = precision;
         this.blockedColumns = blockedColumns == null || blockedColumns.isEmpty()
                 ? Set.of()
@@ -72,18 +70,24 @@ public class TerrainSamplingCache {
 
     public boolean isWater(int x, int z) {
         return waterCache.computeIfAbsent(key(x, z), k -> {
-            // 噪声判定:海底低于海平面足够多 → 水柱;或水生物群系 + 海底在海平面下。零区块加载。
+            // 基于世界生成高度(getBaseHeight,不依赖区块加载,远端准):海底(OCEAN_FLOOR_WG)低于海平面
+            // 足够多 → 水柱。WORLD_SURFACE_WG 与 OCEAN_FLOOR_WG 之差就是水深(WG 阶段水也算 surface 不算 floor)。
             int floor = getOceanFloor(x, z);
-            return floor < seaLevel - 1 || (isWaterBiome(x, z) && floor < seaLevel);
+            int surface = getHeight(x, z);
+            int sea = level.getSeaLevel();
+            // 海底在海平面下,且地表(含水面)到海底有水柱 → 是水。
+            return floor < sea - 1 && surface >= sea - 1;
         });
     }
 
     public int getWaterSurfaceY(int x, int z) {
         return waterSurfaceCache.computeIfAbsent(key(x, z), k -> {
-            // 噪声下:是水则水面=海平面,否则=地表/海底。
+            // WG 下:是水则水面=海平面,否则=海底(无区块依赖)。
             int floor = getOceanFloor(x, z);
-            boolean water = floor < seaLevel - 1 || (isWaterBiome(x, z) && floor < seaLevel);
-            return water ? seaLevel : floor;
+            int surface = getHeight(x, z);
+            int sea = level.getSeaLevel();
+            boolean water = floor < sea - 1 && surface >= sea - 1;
+            return water ? sea : floor;
         });
     }
 
@@ -92,7 +96,7 @@ public class TerrainSamplingCache {
     }
 
     public Holder<Biome> getBiome(int x, int z) {
-        // 噪声生物群系:直接问 biomeSource(不加载区块)。biome 用 4 格 cell 坐标(>>2)。
+        // 噪声生物群系:问 biomeSource(不加载区块)。biome 坐标用 4 格 cell(>>2)。
         return biomeCache.computeIfAbsent(key(x, z), k ->
             biomeSource.getNoiseBiome(x >> 2, getHeight(x, z) >> 2, z >> 2, climateSampler)
         );

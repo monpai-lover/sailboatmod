@@ -67,12 +67,14 @@ class WaterAutoRouteServiceTest {
         RouteDefinition route = WaterAutoRouteService.routeDefinitionFromPath(
                 dock("Source Dock", new BlockPos(0, 64, 0), "town-a", "nation-a"),
                 dock("Target Dock", new BlockPos(32, 64, 0), "town-b", "nation-a"),
+                "TownA",
+                "TownB",
                 List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0), new BlockPos(32, 64, 0)),
                 "Tester",
                 "uuid",
                 1234L);
 
-        assertEquals("Water Auto: Target Dock", route.name());
+        assertEquals("Auto-TownA-TownB", route.name());
         assertEquals("Source Dock", route.startDockName());
         assertEquals("Target Dock", route.endDockName());
         assertEquals("Tester", route.authorName());

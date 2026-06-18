@@ -182,8 +182,10 @@ public final class RoadSurfaceStepEmitter {
     }
 
     private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadCenterlinePoint> centerline, int index) {
-        // 沿整段 ramp run 判定升降方向，再按段内序号奇偶交替 top/bottom，使台阶半砖朝向与坡向一致。
-        // （此逻辑曾在 e83d4cd 修好、被 65209ef 回退导致台阶 top 复发，此处恢复。）
+        // 坡道用半砖(slab),恢复 v1.3.7(e83d4cd6)「先定坡向再选 slab」的正确做法。
+        // 旧的「全局 ramp 数奇偶交替」忽略坡向,导致下坡段 bottom/top 反向(用户实测 top 处变 bottom)。
+        // 正确:先把当前点所在的连续 ramp 段(run)圈出来,判断该段是上坡还是下坡,
+        // 再按段内局部 index 选 slab —— 上坡 bottom 起步,下坡 top 起步,每两个半砖升/降一整格。
         int start = index;
         while (start > 0 && isRampAt(centerline, start - 1)) {
             start--;
@@ -200,6 +202,7 @@ public final class RoadSurfaceStepEmitter {
         return (localIndex & 1) == 0 ? settings.slabTopState() : settings.slabBottomState();
     }
 
+    /** 判断给定 index 是否为坡道点(targetY 与前或后不同)。 */
     private static boolean isRampAt(List<RoadCenterlinePoint> centerline, int index) {
         if (index < 0 || index >= centerline.size()) {
             return false;
@@ -210,6 +213,7 @@ public final class RoadSurfaceStepEmitter {
         return y != prevY || y != nextY;
     }
 
+    /** 判断 [start,end] 这段连续坡道是上坡还是下坡(首尾 Y 不同看首尾,相同看段前后)。 */
     private static boolean rampRunAscending(List<RoadCenterlinePoint> centerline, int start, int end) {
         int startY = centerline.get(start).targetY();
         int endY = centerline.get(end).targetY();
