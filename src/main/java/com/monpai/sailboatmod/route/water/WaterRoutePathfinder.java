@@ -230,13 +230,28 @@ public final class WaterRoutePathfinder {
     }
 
     /**
-     * 2026-06 降采样(修长航线寻路超时):砂掉每边的中间点插值采样。原实现对每条 step=8 的边再插值 ~4 个
-     * 中间点、每点 world.sample(getBaseHeight 极慢),把每节点采样数从 ~16 放大到 ~1000 → 1869 格航线 90 秒
-     * 跑不完。现在信任 step=8 网格内噪声地形连续(端点两格都可航则中间大概率也可航),中间窄陆(<8格)的漏检
-     * 由寻路出路后的 RealWaterVerifier(真实区块逐段校验+局部绕开)兜底。端点可航性已在 expandStep 里查过。
+     * 检测 from→to 这条 step 边中间是否全程可航(纯密度采样便宜,逐段插值堵 step=8 跳步漏检窄陆)。
+     * 2026-06 回退:曾因 getBaseHeight 昂贵把这里砍成空(直线穿陆),现采样退回纯密度(便宜),恢复完整插值。
      */
     private boolean segmentPassable(BlockPos from, BlockPos to) {
-        return from != null && to != null;
+        if (from == null || to == null) {
+            return false;
+        }
+        int dx = to.getX() - from.getX();
+        int dz = to.getZ() - from.getZ();
+        double distance = Math.sqrt((double) dx * dx + (double) dz * dz);
+        int spacing = Math.max(1, Math.min(2, step));
+        int samples = Math.max(1, (int) Math.ceil(distance / spacing));
+        for (int s = 1; s < samples; s++) {
+            double t = s / (double) samples;
+            int x = (int) Math.round(from.getX() + dx * t);
+            int z = (int) Math.round(from.getZ() + dz * t);
+            WaterColumn column = world.sample(x, z, policy);
+            if (column == null || !column.passable()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean diagonalCorridorPassable(BlockPos current, int nx, int nz) {

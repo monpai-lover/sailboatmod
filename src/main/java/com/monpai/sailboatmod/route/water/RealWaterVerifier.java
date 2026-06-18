@@ -1,10 +1,9 @@
 package com.monpai.sailboatmod.route.water;
 
+import com.monpai.sailboatmod.road.pathfinding.cache.NoiseChunkHeightSampler;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.tags.FluidTags;
-import net.minecraft.world.level.material.FluidState;
 import org.slf4j.Logger;
 
 import java.util.ArrayDeque;
@@ -18,24 +17,25 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 最终航线的<b>真实区块</b>校验+局部重寻——堵住"噪声把陆地误判成可航水 → 航线穿陆 → 船卡死"的漏洞。
+ * 最终航线的<b>精确判障</b>校验+局部重寻——堵住"寻路(纯密度,判障粗)把陆地误判成可航水 → 航线穿陆 → 船卡死"。
  *
- * <p>噪声采样(寻路阶段)零区块加载、远端不卡,但在海岸/河口过渡带会把陆地误判成水;step=8 跳步+4格对齐
- * 还会跳过窄陆颈。寻路链路全程不碰真实方块,所以穿陆永远发现不了。本类是<b>最后一道闸门</b>:对一条最终航线
- * (平滑+重采样后几十~一两百航点)用真实 {@code getFluidState} 逐段校验是否全程在水,穿陆段用小预算真实 BFS
- * 局部绕开。
+ * <p><b>2026-06 改用 NoiseChunk 精确采样</b>:寻路阶段用纯密度(便宜、跑通超远、不卡),但纯密度在海岸/河口
+ * 判障粗;旧版本类用真实 {@code getFluidState} 校验,但<b>对未加载区块直接信任噪声</b>(超远航线大部分区块未
+ * 加载)→ 校验形同虚设、穿陆漏过。现改用 {@link NoiseChunkHeightSampler}(自己 new NoiseChunk 整块烘焙世界
+ * 生成真方块插值,<b>精确到方块、零区块加载、任意远都准</b>)逐段精确校验全程在水,穿陆段小预算 BFS 局部绕开。
+ * 去掉了旧的「首尾信任区」——任何位置(含泊位附近)都精确判,不放过陆地。
  *
- * <p><b>防卡服铁律</b>:只在主线程、只在"创建航线/船自救"这类低频操作各跑一次;{@code hasChunkAt} 预检,
- * 未加载区块跳过复检(信任噪声采样,绝不强加载);BFS 硬上限 {@link #LOCAL_BFS_MAX_CELLS} + 绕行盒剪枝。
+ * <p>采样的是世界生成原始地形(不含玩家挖的运河/填海;那部分是另一层问题,本类只保证原始陆地不穿)。
+ *
+ * <p><b>性能</b>:只在主线程、只在"创建航线/船自救"低频各跑一次;NoiseChunk 整块缓存(沿航线~百区块各烘焙
+ * 一次,256 列共享),比寻路主循环上万节点轻;BFS 硬上限 {@link #LOCAL_BFS_MAX_CELLS} + 绕行盒剪枝。
  */
 public final class RealWaterVerifier {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     private static final int SAMPLE_SPACING = 2;        // 逐段校验采样间隔(格)
-    private static final int WATER_PROBE_RANGE = 2;     // 海平面上下各探几格找水(容忍浅滩/起伏)
     private static final int LOCAL_BFS_MAX_CELLS = 4000; // 局部绕行 BFS 探格上限
     private static final int LOCAL_REROUTE_MARGIN = 24;  // 绕行盒相对 a-b 包围盒的外扩格数
-    private static final int ENDPOINT_TRUST_DIST = 24;   // 航线首尾此半径内不做真实校验(信任泊位解析)
 
     private RealWaterVerifier() {
     }
@@ -48,9 +48,13 @@ public final class RealWaterVerifier {
         if (level == null || waypoints == null || waypoints.size() < 2) {
             return waypoints == null ? List.of() : List.copyOf(waypoints);
         }
+        NoiseChunkHeightSampler sampler = NoiseChunkHeightSampler.createOrNull(level);
+        if (sampler == null) {
+            // 非噪声生成器(超平坦/自定义)无法 NoiseChunk 采样 → 不校验,原样返回(信任寻路)。
+            return List.copyOf(waypoints);
+        }
         int seaLevel = level.getSeaLevel();
         BlockPos startPt = waypoints.get(0);
-        BlockPos endPt = waypoints.get(waypoints.size() - 1);
         List<BlockPos> result = new ArrayList<>();
         result.add(startPt);
         int repaired = 0;
@@ -58,21 +62,15 @@ public final class RealWaterVerifier {
         for (int i = 0; i < waypoints.size() - 1; i++) {
             BlockPos a = waypoints.get(i);
             BlockPos b = waypoints.get(i + 1);
-            // 首尾信任区:泊位本就紧贴码头/浅滩,真实判定不可靠(码头木板下是水、楼梯等),
-            // 这一段交给 DockBerthResolver 的泊位解析,不做真实校验,避免误判把整条航线毙掉。
-            if (nearEndpoint(a, startPt, endPt) || nearEndpoint(b, startPt, endPt)) {
+            // 去掉「首尾信任区」:NoiseChunk 精确到方块,任何位置(含泊位附近)都精确判,不放过陆地。
+            if (segmentAllWater(sampler, a, b, seaLevel)) {
                 result.add(b);
                 continue;
             }
-            if (segmentAllWater(level, a, b, seaLevel)) {
-                result.add(b);
-                continue;
-            }
-            // 穿陆段:局部真实 BFS 找绕行路。
-            List<BlockPos> detour = localReroute(level, a, b, seaLevel);
+            // 穿陆段:局部精确 BFS 找绕行路。
+            List<BlockPos> detour = localReroute(sampler, a, b, seaLevel);
             if (detour.isEmpty()) {
-                // 绕不开:不再整条作废(真实校验不比噪声更权威——噪声已判此路可航,校验只是优化)。
-                // 退回保留原直连段,信任噪声结果,仅记录。避免一段误判毁掉整条远洋航线。
+                // 绕不开:保留原直连段仅记录(避免一段毁掉整条远洋航线;NoiseChunk 已比纯密度精确)。
                 result.add(b);
                 skipped++;
                 continue;
@@ -84,23 +82,14 @@ public final class RealWaterVerifier {
             repaired++;
         }
         if (repaired > 0 || skipped > 0) {
-            LOGGER.info("[WaterPath] 真实校验:绕开 {} 处穿陆段,保留 {} 处(绕不开,信任噪声),航点 {}→{}",
+            LOGGER.info("[WaterPath] NoiseChunk 精确校验:绕开 {} 处穿陆段,保留 {} 处(绕不开),航点 {}→{}",
                     repaired, skipped, waypoints.size(), result.size());
         }
         return result;
     }
 
-    /** 点是否在航线首/尾端点的信任半径内(切比雪夫距离)。 */
-    private static boolean nearEndpoint(BlockPos p, BlockPos start, BlockPos end) {
-        return chebyshev(p, start) <= ENDPOINT_TRUST_DIST || chebyshev(p, end) <= ENDPOINT_TRUST_DIST;
-    }
-
-    private static int chebyshev(BlockPos a, BlockPos b) {
-        return Math.max(Math.abs(a.getX() - b.getX()), Math.abs(a.getZ() - b.getZ()));
-    }
-
-    /** 沿 a→b 按 SAMPLE_SPACING 采样,每点真实可航才算全程在水。 */
-    private static boolean segmentAllWater(ServerLevel level, BlockPos a, BlockPos b, int seaLevel) {
+    /** 沿 a→b 按 SAMPLE_SPACING 采样,每点精确可航才算全程在水。 */
+    private static boolean segmentAllWater(NoiseChunkHeightSampler sampler, BlockPos a, BlockPos b, int seaLevel) {
         int dx = b.getX() - a.getX();
         int dz = b.getZ() - a.getZ();
         double distance = Math.sqrt((double) dx * dx + (double) dz * dz);
@@ -109,7 +98,7 @@ public final class RealWaterVerifier {
             double t = s / (double) samples;
             int x = (int) Math.round(a.getX() + dx * t);
             int z = (int) Math.round(a.getZ() + dz * t);
-            if (!isRealNavigable(level, x, z, seaLevel)) {
+            if (!isNavigable(sampler, x, z, seaLevel)) {
                 return false;
             }
         }
@@ -117,29 +106,21 @@ public final class RealWaterVerifier {
     }
 
     /**
-     * (x,z) 该列在海平面附近是否真实可航(有水且不被实心方块堵)。
-     * 未加载区块 → 返回 true(信任噪声采样,防强加载卡服)。
+     * (x,z) 该列是否可航水——用 NoiseChunk 世界生成真方块高度判:海床(OCEAN_FLOOR_WG)低于海平面足够深,
+     * 且地表/水面(WORLD_SURFACE_WG)不高出海平面(高出=陆地)。精确到方块、零区块加载、任意远都准。
      */
-    private static boolean isRealNavigable(ServerLevel level, int x, int z, int seaLevel) {
-        BlockPos probe = new BlockPos(x, seaLevel, z);
-        if (!level.hasChunkAt(probe)) {
-            return true; // 未加载:不复检,信任噪声(铁律:绝不强加载)
-        }
-        // 海平面上下几格内有水即算可航(容忍浅滩/水面起伏 1~2 格)。
-        for (int dy = -WATER_PROBE_RANGE; dy <= WATER_PROBE_RANGE; dy++) {
-            FluidState fluid = level.getFluidState(new BlockPos(x, seaLevel + dy, z));
-            if (!fluid.isEmpty() && fluid.is(FluidTags.WATER)) {
-                return true;
-            }
-        }
-        return false;
+    private static boolean isNavigable(NoiseChunkHeightSampler sampler, int x, int z, int seaLevel) {
+        int floor = sampler.oceanFloorWg(x, z) - 1;     // OCEAN_FLOOR_WG 返回首个空气格+1,-1 为实心海床顶
+        int surface = sampler.worldSurfaceWg(x, z) - 1; // WORLD_SURFACE_WG 同理(含水面)
+        // 海床在海平面下足够深(有水柱)且地表不冒出海平面(否则是陆地)→ 可航。
+        return floor < seaLevel - 1 && surface <= seaLevel;
     }
 
     /**
      * 在 a-b 局部包围盒(外扩 LOCAL_REROUTE_MARGIN)内,沿真实可航格 1 格步长 4 邻 BFS 从 a 找到 b。
      * @return a..b 的绕行航点(含首尾);找不到/超预算返回空。
      */
-    private static List<BlockPos> localReroute(ServerLevel level, BlockPos a, BlockPos b, int seaLevel) {
+    private static List<BlockPos> localReroute(NoiseChunkHeightSampler sampler, BlockPos a, BlockPos b, int seaLevel) {
         int minX = Math.min(a.getX(), b.getX()) - LOCAL_REROUTE_MARGIN;
         int maxX = Math.max(a.getX(), b.getX()) + LOCAL_REROUTE_MARGIN;
         int minZ = Math.min(a.getZ(), b.getZ()) - LOCAL_REROUTE_MARGIN;
@@ -172,7 +153,7 @@ public final class RealWaterVerifier {
                 if (visited.contains(nkey)) {
                     continue;
                 }
-                if (!isRealNavigable(level, nx, nz, seaLevel)) {
+                if (!isNavigable(sampler, nx, nz, seaLevel)) {
                     continue;
                 }
                 visited.add(nkey);
