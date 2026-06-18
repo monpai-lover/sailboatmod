@@ -34,8 +34,8 @@ public final class RealWaterVerifier {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     private static final int SAMPLE_SPACING = 2;        // 逐段校验采样间隔(格)
-    private static final int LOCAL_BFS_MAX_CELLS = 4000; // 局部绕行 BFS 探格上限
-    private static final int LOCAL_REROUTE_MARGIN = 24;  // 绕行盒相对 a-b 包围盒的外扩格数
+    private static final int LOCAL_BFS_MAX_CELLS = 8000; // 局部绕行 BFS 探格上限(放大救中等陆颈)
+    private static final int LOCAL_REROUTE_MARGIN = 48;  // 绕行盒外扩(放大;大陆靠寻路 biome 门槛绕,非这里)
 
     private RealWaterVerifier() {
     }

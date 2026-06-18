@@ -2,7 +2,12 @@ package com.monpai.sailboatmod.route.water;
 
 import com.monpai.sailboatmod.road.pathfinding.cache.NoiseChunkHeightSampler;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeSource;
+import net.minecraft.world.level.biome.Climate;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -32,13 +37,24 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
     private final NoiseWaterSampler noise;             // 粗:纯密度,开阔海
     private final NoiseChunkHeightSampler precise;     // 精:整块烘焙,岸边(null=非噪声生成器)
     private final int seaLevel;
+    private final BiomeSource biomeSource;             // biome 门槛:判海洋/河流 biome(零加载、稳定)
+    private final Climate.Sampler climateSampler;
     private final Map<Long, WaterColumn> columnCache = new HashMap<>();
+    private final Map<Long, Boolean> waterBiomeCache = new HashMap<>();
 
     public ServerWaterRouteWorld(ServerLevel level) {
         this.level = level;
         this.noise = level == null ? null : NoiseWaterSampler.create(level);
         this.precise = level == null ? null : NoiseChunkHeightSampler.createOrNull(level);
         this.seaLevel = level == null ? 63 : level.getSeaLevel();
+        if (level != null) {
+            var chunkSource = level.getChunkSource();
+            this.biomeSource = chunkSource.getGenerator().getBiomeSource();
+            this.climateSampler = chunkSource.getGeneratorState().randomState().sampler();
+        } else {
+            this.biomeSource = null;
+            this.climateSampler = null;
+        }
     }
 
     @Override
@@ -61,8 +77,18 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
         int halfWidth = Math.max(0, effective.boatHalfWidth());
         int minDepth = Math.max(1, effective.clearanceHeight());
 
-        // ---- 粗细结合:先看中心点纯密度,判明确深水还是疑似岸边 ----
-        // seaFloorHeight 是纯密度首个固体 y(开阔海=海底,陆地=地表);深度 = 海平面 - 它。
+        // ---- biome 门槛(核心):biome 不依赖密度高度、稳定可靠,作首道升级判据 ----
+        // 陆地 biome → 绝不信纯密度(纯密度 8 格步长会把陆地误判成深水跳过精判→直线穿陆),
+        //   强制 NoiseChunk 精判:确实是陆则 blocked 绕开,是深入陆地的河道/海湾则精判仍放行。
+        if (!isWaterBiome(x, z)) {
+            if (!preciseFootprintAllWater(x, z, halfWidth, minDepth)) {
+                return WaterColumn.blocked();
+            }
+            return WaterColumn.passable(new BlockPos(x, seaLevel, z), 0.0D); // 陆地 biome 里的水道不另加深度代价
+        }
+
+        // ---- 水 biome(海洋/河流):走粗细结合 ----
+        // seaFloorHeight 是纯密度首个固体 y;深度 = 海平面 - 它。
         int centerFloor = noise.seaFloorHeight(x, z);
         int centerDepth = seaLevel - centerFloor;
         boolean centerClearlyDeep = centerDepth >= DEEP_MARGIN;
@@ -90,6 +116,28 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
             }
         }
         return WaterColumn.passable(new BlockPos(x, seaLevel, z), extraCost);
+    }
+
+    /**
+     * 该格是否水 biome(海洋/河流/深海)。biome 由噪声 biomeSource 直接查(零区块加载),不依赖密度高度,
+     * 比纯密度判障稳定可靠——纯密度 8 格步长会把陆地误判成深水,biome 不会把陆地标成水 biome。
+     * 4 格对齐 + 缓存(biome 本就 4×4 cell 精度)。非噪声生成器回退 true(不靠 biome 门槛,走后续粗细判)。
+     */
+    private boolean isWaterBiome(int x, int z) {
+        if (biomeSource == null || climateSampler == null) {
+            return true; // 无 biome 源:不启用 biome 门槛,交给后续粗细结合
+        }
+        int ax = (x >> 2) << 2;
+        int az = (z >> 2) << 2;
+        long key = packXZ(ax, az);
+        Boolean cached = waterBiomeCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        Holder<Biome> biome = biomeSource.getNoiseBiome(x >> 2, seaLevel >> 2, z >> 2, climateSampler);
+        boolean water = biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_RIVER) || biome.is(BiomeTags.IS_DEEP_OCEAN);
+        waterBiomeCache.put(key, water);
+        return water;
     }
 
     /** footprint 内每格纯密度都判可航水(粗,便宜)。 */
