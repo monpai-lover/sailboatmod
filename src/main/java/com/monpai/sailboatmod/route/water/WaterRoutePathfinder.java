@@ -334,6 +334,35 @@ public final class WaterRoutePathfinder {
         return expandedNodes;
     }
 
+    /**
+     * 接力绕行用:寻路未接回 goal(预算耗光)时,从前向已生成节点(best 集,均真实可航且从 start 可达)里取
+     * <b>离 goal 最近</b>者作为「接力落点」,返回 start→该落点的回溯路径(含首尾)。无前向节点或落点即 start
+     * (没推进)返回空。落点格保证可航(是 A* 扩展出来的合法节点),可当新好节点继续接力绕。
+     */
+    public List<BlockPos> forwardRelayLanding() {
+        Node best = null;
+        double bestH = Double.MAX_VALUE;
+        for (Node n : forward.best.values()) {
+            double h = n.pos.distSqr(goal);
+            if (h < bestH) {
+                bestH = h;
+                best = n;
+            }
+        }
+        if (best == null) {
+            return List.of();
+        }
+        List<BlockPos> chain = new ArrayList<>();
+        for (Node n = best; n != null; n = n.parent) {
+            chain.add(n.pos);
+        }
+        Collections.reverse(chain); // start → landing
+        if (chain.size() < 2) {
+            return List.of(); // 落点即 start,没推进
+        }
+        return chain;
+    }
+
     private static long key(BlockPos pos) {
         return (((long) pos.getX()) << 32) ^ (pos.getZ() & 0xffffffffL);
     }

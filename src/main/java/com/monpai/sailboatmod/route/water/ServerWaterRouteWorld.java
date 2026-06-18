@@ -208,6 +208,11 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
         return seaLevel; // 可航水域水面即海平面
     }
 
+    /** 持有的 ServerLevel(供 MidSegmentVerifier 拿 server 做主线程乒乓加载真实区块)。 */
+    public ServerLevel level() {
+        return level;
+    }
+
     private static long packXZ(int x, int z) {
         return (((long) x) << 32) | (z & 0xFFFFFFFFL);
     }

@@ -101,7 +101,10 @@ public final class ThreeSegmentPlanner {
         }
     }
 
-    /** 中段两阶段:粗大step粗寻 → 沿粗路走廊小step精寻。精寻失败则退回粗路。 */
+    /**
+     * 中段两阶段:粗大step粗寻 → 沿粗路走廊小step精寻 → <b>真实区块验证纠错层</b>(分批加载真实区块验证在水/陆,
+     * 穿陆处接力绕行,玩家运河算数、不穿陆)。精寻失败退回粗路;真实验证降级(超预算/绕不过)退回噪声路。
+     */
     private static List<BlockPos> runMidTwoPhase(ServerWaterRouteWorld midWorld, BlockPos a, BlockPos b) {
         List<BlockPos> coarse = runPathfinder(midWorld, a, b, WaterRoutePolicy.longDistance());
         if (coarse == null || coarse.size() < 2) {
@@ -109,7 +112,10 @@ public final class ThreeSegmentPlanner {
         }
         CorridorWaterRouteWorld corridor = new CorridorWaterRouteWorld(midWorld, coarse, CORRIDOR_RADIUS);
         List<BlockPos> refined = runPathfinder(corridor, a, b, WaterRoutePolicy.longDistanceRefine());
-        return (refined != null && refined.size() >= 2) ? refined : coarse;
+        List<BlockPos> base = (refined != null && refined.size() >= 2) ? refined : coarse;
+        // 真实区块验证纠错(后台乒乓加载真实区块):穿陆处接力绕行。降级返 null → 退回噪声 base。
+        List<BlockPos> verified = MidSegmentVerifier.verifyAndRelay(midWorld.level(), midWorld, base);
+        return verified != null ? verified : base;
     }
 
     /** 复用 WaterRoutePathfinder 跑一段(后台同步 do/while step 到完成或 wall-clock 超时)。 */

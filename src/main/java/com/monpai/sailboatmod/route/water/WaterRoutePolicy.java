@@ -50,4 +50,12 @@ public record WaterRoutePolicy(int stepSize,
     public static WaterRoutePolicy longDistanceRefine() {
         return new WaterRoutePolicy(8, 2, 1, 3, 8192, 120000, 0, 128, 0, 20 * 60);
     }
+
+    /**
+     * 中段真实区块「接力绕行」段:穿陆处从好节点用真实快照高精度绕到下一个好节点。step=4 精细绕,
+     * maxSearchRadius=256(覆盖单跳局部快照),maxExpandedNodes=8000(单跳预算,耗光则落水点接力),timeout=30s。
+     */
+    public static WaterRoutePolicy detourSegment() {
+        return new WaterRoutePolicy(4, 2, 1, 3, 256, 8000, 0, 512, 0, 20 * 30);
+    }
 }
