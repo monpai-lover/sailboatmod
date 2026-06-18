@@ -92,9 +92,12 @@ public final class MarketWebCommands {
                                 .executes(context -> showMapRenderStatus(context.getSource()))))
                 .then(Commands.literal("debugroute")
                         .requires(source -> source.hasPermission(2))
-                        .executes(context -> debugRoute(context.getSource()))
+                        .executes(context -> debugRoute(context.getSource(), null))
                         .then(Commands.literal("clear")
-                                .executes(context -> debugRouteClear(context.getSource())))));
+                                .executes(context -> debugRouteClear(context.getSource())))
+                        .then(Commands.argument("name", com.mojang.brigadier.arguments.StringArgumentType.greedyString())
+                                .executes(context -> debugRoute(context.getSource(),
+                                        com.mojang.brigadier.arguments.StringArgumentType.getString(context, "name"))))));
     }
 
     private static int issueToken(CommandSourceStack source) {
@@ -293,10 +296,13 @@ public final class MarketWebCommands {
     private static final String DEBUG_TRACE_PREFIX = "debugroute_";
 
     /**
-     * 调试:把玩家附近最近码头的所有航线投成 webmap 轨迹(manual=true 金色折线),用于实测看清航线走向/穿陆。
-     * 每条航线一条 trace,起点=waypoints[0],终点=waypoints[last]。webmap 2 秒后自动刷新显示。
+     * 调试:把玩家附近最近码头的航线投成 webmap 轨迹,用于实测看清航线走向/穿陆。webmap 2 秒后自动刷新显示。
+     * @param nameFilter null=画该码头所有航线;非 null=只画名字含此串的航线(单独看一条)。
+     *
+     * <p>关键:status 必须用 {@code SAILING}(webmap 的 isMapVisibleStatus 只放行 SAILING/IN_TRANSIT/ARRIVED/
+     * STUCK;之前误用 ACTIVE 被过滤掉 → webmap 看不到);shipperUuid=玩家 → visibleFor 的 ownShipment 放行。
      */
-    private static int debugRoute(CommandSourceStack source) {
+    private static int debugRoute(CommandSourceStack source, String nameFilter) {
         if (!(source.getEntity() instanceof ServerPlayer player)) {
             source.sendFailure(Component.literal("需在游戏中以玩家身份执行。"));
             return 0;
@@ -312,11 +318,17 @@ public final class MarketWebCommands {
             source.sendFailure(Component.literal("该码头没有航线。先创建自动航线。"));
             return 0;
         }
+        String filter = nameFilter == null ? null : nameFilter.trim().toLowerCase(java.util.Locale.ROOT);
         ShippingTraceSavedData data = ShippingTraceSavedData.get(level);
         long gameTime = level.getGameTime();
         int painted = 0;
+        int matched = 0;
         for (int i = 0; i < routes.size(); i++) {
             RouteDefinition route = routes.get(i);
+            if (filter != null && (route.name() == null || !route.name().toLowerCase(java.util.Locale.ROOT).contains(filter))) {
+                continue;
+            }
+            matched++;
             if (route.waypoints() == null || route.waypoints().size() < 2) {
                 continue;
             }
@@ -326,7 +338,7 @@ public final class MarketWebCommands {
                     player.getUUID().toString(),
                     MarketWebMapConstants.OVERWORLD,
                     "PORT",
-                    "ACTIVE",
+                    "SAILING",          // 必须是 isMapVisibleStatus 放行的状态,否则 webmap 不显示
                     "", "",
                     route.startDockName(),
                     route.endDockName(),
@@ -339,10 +351,15 @@ public final class MarketWebCommands {
                     true));            // manual=true → webmap 画成金色调试折线
             painted++;
         }
+        if (filter != null && matched == 0) {
+            source.sendFailure(Component.literal("该码头没有名字含「" + nameFilter + "」的航线。"));
+            return 0;
+        }
         final int paintedFinal = painted;
+        final int total = routes.size();
         source.sendSuccess(() -> Component.literal("已在 webmap 投放 " + paintedFinal + " 条调试航线("
-                + dock.getDockName() + ",含 " + routes.size() + " 条航线)。webmap 刷新后查看。"
-                + " 清除:/marketweb debugroute clear"), false);
+                + dock.getDockName() + (filter == null ? ",共 " + total + " 条" : ",筛选「" + nameFilter + "」")
+                + ")。webmap 刷新后查看金色折线。清除:/marketweb debugroute clear"), false);
         return painted;
     }
 
