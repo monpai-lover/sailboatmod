@@ -45,8 +45,10 @@ public final class FlagRenderHelper {
     private static final float BASE_FLAG_WIDTH = 20.0F * PX;
     private static final float BASE_FLAG_HEIGHT = 40.0F * PX;
     private static final float FLAG_AREA = BASE_FLAG_WIDTH * BASE_FLAG_HEIGHT;
+    // 比例夹取范围照搬「老旗帜」(NationFlagBlockEntityRenderer 改造前):MAX_WIDTH=44。
+    // 之前误把 MAX_WIDTH 收窄到 24,导致竖图/横图触发宽度上限误夹 → h=AREA/w 反算扭曲比例。
     private static final float MIN_FLAG_WIDTH = 14.0F * PX;
-    private static final float MAX_FLAG_WIDTH = 24.0F * PX;   // 比老的 44 收窄:不超横杆太多,避免显得过宽
+    private static final float MAX_FLAG_WIDTH = 44.0F * PX;
     private static final float MIN_FLAG_HEIGHT = 14.0F * PX;
     private static final float MAX_FLAG_HEIGHT = 40.0F * PX;
     private static final float FLAG_TOP = 0.0F;
@@ -54,7 +56,7 @@ public final class FlagRenderHelper {
     private static final float FLAG_FRONT_Z = -1.5F * PX;
     private static final float FLAG_BACK_Z = -2.5F * PX;      // 错开正面 → 有厚度消闪烁;都在旗杆前不穿杆
     private static final float FLAG_OFFSET_Y = -32.0F * PX;   // 挂到横杆下(model 空间)
-    private static final int WAVE_SEGMENTS = 6;
+    private static final int WAVE_SEGMENTS = 5;
     // 小振幅前后飘动(老旗帜的感觉):0.025+0.012 model 空间 ≈ 0.6px,左右/前后轻晃,绝不穿旗杆。
     private static final float PRIMARY_WAVE_SPEED = 0.05F;
     private static final float SECONDARY_WAVE_SPEED = 0.13F;
@@ -126,32 +128,32 @@ public final class FlagRenderHelper {
         }
         poseStack.scale(0.6666667F, -0.6666667F, -0.6666667F);
 
+        // 先按贴图比例算出旗面宽高(面积守恒,照搬老旗帜),横杆随旗面宽度缩放(老旗帜的 barScaleX)。
+        float[] wh = computeFlagSize(flagWidth, flagHeight);
+        float w = wh[0];
+        float h = wh[1];
+        float barScaleX = w / BASE_FLAG_WIDTH;
+
         VertexConsumer poleBuf = bufferSource.getBuffer(RenderType.entitySolid(POLE_TEXTURE));
-        POLE.render(poseStack, poleBuf, light, packedOverlay);
+        if (POLE.visible) {
+            POLE.render(poseStack, poleBuf, light, packedOverlay);
+        }
+        poseStack.pushPose();
+        poseStack.scale(barScaleX, 1.0F, 1.0F);
         BAR.render(poseStack, poleBuf, light, packedOverlay);
+        poseStack.popPose();
 
         // 旗面:自画铺满 UV 的飘动面(用自定义贴图),挂在横杆下。
         poseStack.pushPose();
         poseStack.translate(0.0F, FLAG_OFFSET_Y, 0.0F);
-        drawWavingFlag(poseStack, bufferSource, light, packedOverlay, texture, blockPos, gameTime, partialTick,
-                flagWidth, flagHeight);
+        drawWavingFlag(poseStack, bufferSource, light, packedOverlay, texture, blockPos, gameTime, partialTick, w, h);
         poseStack.popPose();
 
         poseStack.popPose();
     }
 
-    /**
-     * 自画旗面:UV 铺满 [0,1](自定义贴图完整显示),宽高<b>面积守恒</b>按贴图比例自适应(照搬老旗帜,不拉伸成细线),
-     * 正背面错开 z(有厚度消闪烁、都在旗杆前不穿杆),小振幅前后飘动(老旗帜的感觉)。
-     */
-    private static void drawWavingFlag(PoseStack poseStack, MultiBufferSource bufferSource, int light, int packedOverlay,
-                                       ResourceLocation texture, BlockPos blockPos, long gameTime, float partialTick,
-                                       int imgW, int imgH) {
-        VertexConsumer c = bufferSource.getBuffer(RenderType.entityCutoutNoCull(texture));
-        float time = gameTime + partialTick;
-        float seedPhase = ((blockPos.getX() * 7 + blockPos.getY() * 9 + blockPos.getZ() * 13) % 360) * Mth.DEG_TO_RAD;
-
-        // 面积守恒:width=sqrt(AREA*aspect)、height=AREA/width,再各自夹 MIN/MAX。宽高都不会极端(老旗帜算法)。
+    /** 面积守恒比例(照搬老旗帜 FlagGeometry.fromImageSize):width=sqrt(AREA*aspect)、height=AREA/width,各自夹 MIN/MAX。 */
+    private static float[] computeFlagSize(int imgW, int imgH) {
         float safeW = Math.max(1.0F, imgW);
         float safeH = Math.max(1.0F, imgH);
         float aspect = safeW / safeH;
@@ -161,6 +163,20 @@ public final class FlagRenderHelper {
         else if (w > MAX_FLAG_WIDTH) { w = MAX_FLAG_WIDTH; h = FLAG_AREA / w; }
         if (h < MIN_FLAG_HEIGHT) { h = MIN_FLAG_HEIGHT; w = FLAG_AREA / h; }
         else if (h > MAX_FLAG_HEIGHT) { h = MAX_FLAG_HEIGHT; w = FLAG_AREA / h; }
+        return new float[]{w, h};
+    }
+
+    /**
+     * 自画旗面:UV 铺满 [0,1](自定义贴图完整显示),宽高<b>面积守恒</b>按贴图比例自适应(照搬老旗帜,不拉伸成细线),
+     * 正背面错开 z(有厚度消闪烁、都在旗杆前不穿杆),小振幅前后飘动(老旗帜的感觉)。
+     */
+    private static void drawWavingFlag(PoseStack poseStack, MultiBufferSource bufferSource, int light, int packedOverlay,
+                                       ResourceLocation texture, BlockPos blockPos, long gameTime, float partialTick,
+                                       float w, float h) {
+        VertexConsumer c = bufferSource.getBuffer(RenderType.entityCutoutNoCull(texture));
+        float time = gameTime + partialTick;
+        float seedPhase = ((blockPos.getX() * 7 + blockPos.getY() * 9 + blockPos.getZ() * 13) % 360) * Mth.DEG_TO_RAD;
+
         float left = -w * 0.5F;
         float right = w * 0.5F;
         float segH = (h - FLAG_TOP) / WAVE_SEGMENTS;

@@ -92,9 +92,17 @@ public final class EntityRetrackHelper {
             inRangeNow.add(id);
             boolean isNew = !alreadySpawned.contains(id);
             boolean isPassenger = passengerIds.contains(id);
-            // 新进范围发一次 spawn 让船/车出现；心跳帧对范围内玩家重发兜底被丢弃的实体——但乘客除外
-            // (乘客已正确追踪,重发会砸动画/关菜单)。乘客即使首次也不在此发 spawn(上船时已正常 spawn)。
-            if ((isNew || spawnHeartbeat) && !isPassenger) {
+            // 乘客(尤其驾驶者)一律跳过所有补发:
+            //   - AddEntity 重发会砸 GeckoLib 动画(每3秒重播)+ 关掉打开的乘客菜单;
+            //   - teleport/motion 重发会把「乘客正在本地权威驾驶 / 靠 lerp 跟随」的船硬拽回服务端旧位置,
+            //     表现为船被「重置」/抽搐/拉回(用户实测自动驾驶切挡/暂停瞬间最明显)。
+            // 坐在船上本身就证明该玩家客户端已正确追踪本实体,无需任何幽灵船兜底。
+            if (isPassenger) {
+                alreadySpawned.add(id);   // 记为已 spawn,避免下船后被当「新玩家」误判
+                continue;
+            }
+            // 新进范围发一次 spawn 让船/车出现；心跳帧对范围内玩家重发兜底被丢弃的实体。
+            if (isNew || spawnHeartbeat) {
                 player.connection.send(entity.getAddEntityPacket());
                 if (nonDefault != null && !nonDefault.isEmpty()) {
                     player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
@@ -105,7 +113,7 @@ public final class EntityRetrackHelper {
                 alreadySpawned.add(id);
                 spawned++;
             }
-            // 所有范围内玩家：每帧补发绝对位置 + 速度，替代失效的 EntityTracker 移动同步（平滑移动）。
+            // 非乘客玩家：每帧补发绝对位置 + 速度，替代失效的 EntityTracker 移动同步（平滑移动）。
             player.connection.send(teleport);
             player.connection.send(motion);
         }
