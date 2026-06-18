@@ -28,11 +28,12 @@ public record WaterRoutePolicy(int stepSize,
     }
 
     /**
-     * 三段式起始/尾段「贴岸高精度」:step=2 精细贴岸,maxSearchRadius=160(略大于真实快照半径 96,够绕海湾),
-     * maxExpandedNodes=20000(贴岸距离短),timeout=30s。配合 RealChunkRouteWorld 的贴岸代价沿海岸驶出/进港。
+     * 两段式起始/尾段「真实区块段」:step=4(快照范围只 96 格,step=4 够精细绕码头/运河、节点适中跑得快),
+     * maxSearchRadius=256(覆盖快照半径 96 + 余量,goal 外推到快照边缘),maxExpandedNodes=20000,timeout=30s。
+     * 配合 RealChunkRouteWorld 的近海偏好代价 + 泊位信任,从泊位驶出到快照边缘大洋衔接点(不再贴岸高精度)。
      */
-    public static WaterRoutePolicy coastalHighPrecision() {
-        return new WaterRoutePolicy(2, 2, 1, 3, 160, 20000, 0, 512, 0, 20 * 30);
+    public static WaterRoutePolicy realChunkSegment() {
+        return new WaterRoutePolicy(4, 2, 1, 3, 256, 20000, 0, 512, 0, 20 * 30);
     }
 
     /**

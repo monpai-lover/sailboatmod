@@ -9,15 +9,20 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 三段式贴岸航行编排(在后台线程串行跑):
+ * 两段式航行编排(在后台线程串行跑;类名沿用 ThreeSegmentPlanner 保持接线不变,实为「真实起终 + 噪声中段」两段):
  * <ol>
- *   <li>起始段:港口沿岸贴岸驶出(RealChunkRouteWorld 真实区块 + 贴岸代价)→ 大洋出口节点 A,pathA 截到 A。</li>
- *   <li>尾段:目标港口沿岸贴岸驶出 → 入口节点 B,pathB 截到 B(最终 reverse 即进港方向)。</li>
- *   <li>中段:A→B 两阶段长距离(粗大step粗寻 + 沿粗路走廊精寻,ServerWaterRouteWorld 噪声)。</li>
+ *   <li>起始段:从港口泊位用真实区块(RealChunkRouteWorld + 近海偏好 + 泊位信任)驶到快照边缘大洋方向衔接点 A,
+ *       pathA 末点 = nodeA。</li>
+ *   <li>尾段:目标港口泊位同理驶到衔接点 B,pathB 末点 = nodeB(最终 reverse 即进港方向)。</li>
+ *   <li>中段:nodeA→nodeB 两阶段长距离(粗大step粗寻 + 沿粗路走廊精寻,ServerWaterRouteWorld 噪声)。</li>
  * </ol>
  * 拼接 pathA + pathMid + reverse(pathB),去重接头。执行顺序「先两端求 A/B 再中段连接」。
  *
- * <p>降级:贴岸段失败 → 退泊位直连中段(锦上添花);中段失败 → 硬 NO_WATER_PATH。
+ * <p><b>取消贴岸高精度段</b>:旧版单独跑 coastalHighPrecision A* 求出口节点,但 berth 由噪声世界解析、贴岸段用
+ * 真实区块判定,两套采样器对同一泊位打架 → 起点判不可航必降级 → 中段从 near-岸点直线穿陆。现起终段直接用真实
+ * 区块 + 泊位信任(泊位无条件可航)+ 近海偏好驶到大洋衔接点,不再有「贴岸段失败→降级」退化路径。
+ *
+ * <p>降级:起终段失败(罕见,泊位已信任) → 退泊位直连中段;中段失败 → 硬 NO_WATER_PATH。
  */
 public final class ThreeSegmentPlanner {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -36,32 +41,35 @@ public final class ThreeSegmentPlanner {
             int radius,
             int threshold) {
         try {
-            WaterRoutePolicy coastal = WaterRoutePolicy.coastalHighPrecision();
+            WaterRoutePolicy segPolicy = WaterRoutePolicy.realChunkSegment();
+            // 泊位信任:起终段对各自泊位邻域无条件可航(消除真实区块 vs 噪声泊位解析器判定打架 → 不再降级)。
+            startWorld.setTrustedBerth(srcBerth);
+            endWorld.setTrustedBerth(tgtBerth);
 
-            // ---- 段1:起始贴岸 → 出口 A ----
+            // ---- 段1:起点真实区块驶向快照边缘大洋衔接点 A;nodeA = pathA 真实末点 ----
             BlockPos startGoal = CoastalExitResolver.oceanGoal(startWorld, srcBerth, radius);
-            List<BlockPos> pathA = runPathfinder(startWorld, srcBerth, startGoal, coastal);
+            List<BlockPos> pathA = runPathfinder(startWorld, srcBerth, startGoal, segPolicy);
             BlockPos nodeA;
             if (pathA == null || pathA.size() < 2) {
-                LOGGER.warn("[WaterPath] 三段:起始贴岸段失败,降级泊位直连中段");
+                LOGGER.warn("[WaterPath] 两段:起点真实区块段失败,降级泊位直连中段 berth={}", srcBerth);
                 pathA = new ArrayList<>(List.of(new BlockPos(srcBerth.getX(), midWorld.waterSurfaceY(srcBerth.getX(), srcBerth.getZ()), srcBerth.getZ())));
                 nodeA = pathA.get(0);
             } else {
-                nodeA = CoastalExitResolver.extractExitNode(startWorld, pathA, threshold);
-                pathA = new ArrayList<>(CoastalExitResolver.truncateTo(pathA, nodeA));
+                pathA = new ArrayList<>(pathA);
+                nodeA = pathA.get(pathA.size() - 1);
             }
 
-            // ---- 段3:尾段贴岸 → 入口 B ----
+            // ---- 段3:终点真实区块驶向衔接点 B;nodeB = pathB 真实末点 ----
             BlockPos endGoal = CoastalExitResolver.oceanGoal(endWorld, tgtBerth, radius);
-            List<BlockPos> pathB = runPathfinder(endWorld, tgtBerth, endGoal, coastal);
+            List<BlockPos> pathB = runPathfinder(endWorld, tgtBerth, endGoal, segPolicy);
             BlockPos nodeB;
             if (pathB == null || pathB.size() < 2) {
-                LOGGER.warn("[WaterPath] 三段:尾段贴岸段失败,降级泊位直连中段");
+                LOGGER.warn("[WaterPath] 两段:终点真实区块段失败,降级泊位直连中段 berth={}", tgtBerth);
                 pathB = new ArrayList<>(List.of(new BlockPos(tgtBerth.getX(), midWorld.waterSurfaceY(tgtBerth.getX(), tgtBerth.getZ()), tgtBerth.getZ())));
                 nodeB = pathB.get(0);
             } else {
-                nodeB = CoastalExitResolver.extractExitNode(endWorld, pathB, threshold);
-                pathB = new ArrayList<>(CoastalExitResolver.truncateTo(pathB, nodeB));
+                pathB = new ArrayList<>(pathB);
+                nodeB = pathB.get(pathB.size() - 1);
             }
 
             // ---- 段2:中段 A→B 两阶段长距离 ----
@@ -78,7 +86,7 @@ public final class ThreeSegmentPlanner {
             Collections.reverse(revB);
             appendDedup(full, revB);
 
-            LOGGER.info("[WaterPath] 三段拼接:起始{}+中段{}+尾段{} → {} 航点 (A={} B={})",
+            LOGGER.info("[WaterPath] 两段拼接:起始{}+中段{}+尾段{} → {} 航点 (A={} B={})",
                     pathA.size(), pathMid.size(), pathB.size(), full.size(), nodeA, nodeB);
             return full.size() < 2
                     ? WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH)

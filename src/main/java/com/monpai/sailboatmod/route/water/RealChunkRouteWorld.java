@@ -27,15 +27,20 @@ import java.util.List;
  * {@code getFluidState}/{@code getBlockState} 成 {@code isWater[][]}+{@code offshoreDist[][]} 数组快照 →
  * <b>立即释放</b>强制加载票据。{@link #sample} 在<b>后台线程</b>纯查 final 数组(线程安全、飞快)。
  *
- * <p><b>贴岸代价</b>:离岸不足阈值的近岸区便宜、≥阈值归零 → A* 在近岸便宜带贴岸走,配合「大洋方向 goal」牵引,
- * 自然贴岸驶出后转直线进大洋(不会贴岸蹭圈不肯出海)。与开阔海「深度软代价」分属不同 world 实例,零冲突。
+ * <p><b>近海偏好(轻)</b>:离岸越远略贵、≥阈值归零,权重小(只轻微倾向近海,不贴死岸、不为近海绕进浅水/河口)。
+ * 配合「大洋方向 goal」牵引,航线走「偏近海的自然曲线」驶出/进港。与开阔海「深度软代价」分属不同 world 实例,零冲突。
+ *
+ * <p><b>泊位信任</b>:泊位点(srcBerth/tgtBerth 所在格,及其 {@link #BERTH_TRUST_RADIUS} 邻域)由泊位解析器
+ * (噪声世界)选出、已确认可航。本类真实区块判定不再对它复判(否则噪声判水≠真实方块判水、或泊位上方有码头方块
+ * 遮挡 → 同一泊位两套采样器打架,起点判不可航直接降级)。命中泊位邻域无条件 passable。
  */
 public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthResolver.BerthWorld {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     public static final int DEFAULT_RADIUS = 96;        // 港口附近快照半径(格)
-    public static final int OFFSHORE_THRESHOLD = 48;    // 离岸 ≥ 此格 = 进入大洋(贴岸代价归零)
-    private static final double COASTAL_WEIGHT = 0.30;   // 贴岸代价斜率
+    public static final int OFFSHORE_THRESHOLD = 48;    // 离岸 ≥ 此格 = 进入大洋(近海偏好归零)
+    private static final double COASTAL_WEIGHT = 0.08;   // 近海偏好斜率(轻:只轻微倾向近海,不贴死岸)
+    private static final int BERTH_TRUST_RADIUS = 3;     // 泊位信任邻域半径(格):此范围内无条件可航
 
     private final int originX;
     private final int originZ;
@@ -46,6 +51,7 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
     private final int[][] offshoreDist;       // [dx][dz] 到最近陆地格的距离
     private final boolean hasAnyOpenOcean;    // 快照内有没有任何开阔水域 biome(决定出口判定是否用它)
     private final NoiseChunkHeightSampler fallback; // 快照外回退(可 null)
+    private BlockPos trustedBerth;            // 信任泊位(此格及邻域无条件可航);可 null
 
     private RealChunkRouteWorld(int originX, int originZ, int size, int seaLevel,
                                boolean[][] isWater, boolean[][] isOpenOcean, int[][] offshoreDist,
@@ -59,6 +65,20 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
         this.offshoreDist = offshoreDist;
         this.hasAnyOpenOcean = hasAnyOpenOcean;
         this.fallback = fallback;
+    }
+
+    /** 设信任泊位:此格及 {@link #BERTH_TRUST_RADIUS} 邻域 sample 无条件可航(消除两套采样器对泊位判定打架)。 */
+    public void setTrustedBerth(BlockPos berth) {
+        this.trustedBerth = berth;
+    }
+
+    /** (x,z) 是否在信任泊位邻域内。 */
+    private boolean isTrustedBerth(int x, int z) {
+        if (trustedBerth == null) {
+            return false;
+        }
+        return Math.abs(x - trustedBerth.getX()) <= BERTH_TRUST_RADIUS
+                && Math.abs(z - trustedBerth.getZ()) <= BERTH_TRUST_RADIUS;
     }
 
     /**
@@ -172,9 +192,13 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
 
     @Override
     public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
+        // 泊位信任:泊位邻域无条件可航(不复判真实方块,消除与噪声泊位解析器的判定打架 → 不再降级)。
+        if (isTrustedBerth(x, z)) {
+            return WaterColumn.passable(new BlockPos(x, seaLevel, z), 0.0D);
+        }
         int dx = x - originX, dz = z - originZ;
         if (dx < 0 || dz < 0 || dx >= size || dz >= size) {
-            // 快照外:回退 NoiseChunk(贴岸段范围一般够,极少触发)。
+            // 快照外:回退 NoiseChunk(起终段范围一般够,极少触发)。
             if (fallback == null) {
                 return WaterColumn.blocked();
             }
@@ -186,7 +210,7 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
         if (!isWater[dx][dz]) {
             return WaterColumn.blocked();
         }
-        // 贴岸代价:离岸不足阈值的近岸便宜、≥阈值归零(大洋自由)。
+        // 近海偏好(轻):离岸越远略贵、≥阈值归零。权重小,只轻微倾向近海,不贴死岸、不为近海绕进浅水/河口。
         double extra = Math.max(0.0D, OFFSHORE_THRESHOLD - offshoreDist[dx][dz]) * COASTAL_WEIGHT;
         return WaterColumn.passable(new BlockPos(x, seaLevel, z), extra);
     }
