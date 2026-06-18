@@ -86,8 +86,12 @@ public final class ThreeSegmentPlanner {
             Collections.reverse(revB);
             appendDedup(full, revB);
 
-            LOGGER.info("[WaterPath] 两段拼接:起始{}+中段{}+尾段{} → {} 航点 (A={} B={})",
-                    pathA.size(), pathMid.size(), pathB.size(), full.size(), nodeA, nodeB);
+            // 去回头折点:三段拼接接头处(起终段 step=4 末点 vs 中段 snap 到 step=12 网格首点错位)易形成
+            // 「往回折」的 zigzag,样条平滑也只能把它磨成圆滑的 zigzag。拼接后整条扫一遍,删回折/微绕中间点。
+            int before = full.size();
+            full = dropBackfolds(full);
+            LOGGER.info("[WaterPath] 两段拼接:起始{}+中段{}+尾段{} → 去折{}→{} 航点 (A={} B={})",
+                    pathA.size(), pathMid.size(), pathB.size(), before, full.size(), nodeA, nodeB);
             return full.size() < 2
                     ? WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH)
                     : WaterRouteResult.success(full);
@@ -117,6 +121,54 @@ public final class ThreeSegmentPlanner {
             st = pf.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
         } while (st == WaterRoutePathfinder.Status.RUNNING && System.nanoTime() < deadline);
         return st == WaterRoutePathfinder.Status.SUCCESS ? pf.path() : null;
+    }
+
+    private static final double BACKFOLD_PERP_DIST = 6.0D; // 去折:中间点到 a→c 直线垂距 < 此值视作微绕/回折,删
+
+    /**
+     * 去回头折点:连续三点 a-b-c,若 b 到直线 a→c 的垂距很小(b 几乎在 a-c 连线上 = 微绕或回折赘点),删 b。
+     * 接头 zigzag 的中间折点正是这种「跨出去又拐回来」的赘点,删掉即拉直。迭代到稳定(一遍删完可能露出新赘点)。
+     */
+    private static List<BlockPos> dropBackfolds(List<BlockPos> path) {
+        if (path == null || path.size() <= 2) {
+            return path;
+        }
+        List<BlockPos> cur = new ArrayList<>(path);
+        boolean changed = true;
+        while (changed && cur.size() > 2) {
+            changed = false;
+            List<BlockPos> out = new ArrayList<>();
+            out.add(cur.get(0));
+            int i = 1;
+            while (i < cur.size() - 1) {
+                BlockPos a = out.get(out.size() - 1);
+                BlockPos b = cur.get(i);
+                BlockPos c = cur.get(i + 1);
+                if (perpDistToLine(b, a, c) < BACKFOLD_PERP_DIST) {
+                    // b 是赘点(微绕/回折),跳过它(不加入 out),直接看 a→c。
+                    changed = true;
+                    i++;
+                } else {
+                    out.add(b);
+                    i++;
+                }
+            }
+            out.add(cur.get(cur.size() - 1)); // 末点必留
+            cur = out;
+        }
+        return cur;
+    }
+
+    /** 点 p 到直线 a→c 的垂距(2D,XZ)。a==c 时退化为 p 到 a 的距离。 */
+    private static double perpDistToLine(BlockPos p, BlockPos a, BlockPos c) {
+        double acx = c.getX() - a.getX(), acz = c.getZ() - a.getZ();
+        double lenSq = acx * acx + acz * acz;
+        if (lenSq < 1.0E-9D) {
+            double dx = p.getX() - a.getX(), dz = p.getZ() - a.getZ();
+            return Math.sqrt(dx * dx + dz * dz);
+        }
+        double cross = Math.abs((p.getX() - a.getX()) * acz - (p.getZ() - a.getZ()) * acx);
+        return cross / Math.sqrt(lenSq);
     }
 
     /** 把 src 接到 dst 尾部:若 src 首点与 dst 末点很近(<DEDUP_DIST)则跳过首点,避免接头重复/折角。 */

@@ -42,11 +42,12 @@ public record WaterRoutePolicy(int stepSize,
      * maxSearchRadius=8192,maxExpandedNodes=160000(群岛绕行节点多),timeout=90s。精阶段沿粗路走廊 step=8 精寻。
      */
     public static WaterRoutePolicy longDistance() {
-        return new WaterRoutePolicy(12, 2, 1, 3, 8192, 160000, 0, 128, 0, 20 * 90);
+        // timeout 90→60s:绕陆修好后正常航线远不到上限,给「绕不出」退化情况更快失败(后台跑,不卡主线程)。
+        return new WaterRoutePolicy(12, 2, 1, 3, 8192, 160000, 0, 128, 0, 20 * 60);
     }
 
     /** 中段精阶段(走廊内):step=8,沿粗路 ±走廊精寻,半径同长距离。 */
     public static WaterRoutePolicy longDistanceRefine() {
-        return new WaterRoutePolicy(8, 2, 1, 3, 8192, 120000, 0, 128, 0, 20 * 90);
+        return new WaterRoutePolicy(8, 2, 1, 3, 8192, 120000, 0, 128, 0, 20 * 60);
     }
 }

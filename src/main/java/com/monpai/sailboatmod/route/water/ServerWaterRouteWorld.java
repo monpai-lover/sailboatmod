@@ -28,6 +28,9 @@ import java.util.Map;
 public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthResolver.BerthWorld {
     /** 海底深度 ≥ 此值(格)且邻格皆水视为「明确深水/开阔海」,信纯密度;否则疑似岸边升级 NoiseChunk。 */
     private static final int DEEP_MARGIN = 6;
+    /** 陆地 biome(含去 IS_RIVER 后的 river)分支的「明确深水」短路门槛:比海洋严(river 误深风险更高),取 8。
+     *  宽河口/深内海(深 ≥ 8 格)信纯密度不烘焙 NoiseChunk;否则升级精判,防大片 river 全精判爆慢。 */
+    private static final int LAND_BIOME_DEEP_MARGIN = 8;
     /** 开阔海深度软代价权重:浅水每浅 1 格加这么多代价,让 A* 偏向深水走折线。小,只够软偏好不绕远。 */
     private static final double DEPTH_COST_WEIGHT = 0.15D;
     /** 浅水软代价封顶,避免接近岸边的浅水代价过大反而绕远(绕陆由精判保证,不靠这个)。 */
@@ -78,13 +81,19 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
         int minDepth = Math.max(1, effective.clearanceHeight());
 
         // ---- biome 门槛(核心):biome 不依赖密度高度、稳定可靠,作首道升级判据 ----
-        // 陆地 biome → 绝不信纯密度(纯密度 8 格步长会把陆地误判成深水跳过精判→直线穿陆),
-        //   强制 NoiseChunk 精判:确实是陆则 blocked 绕开,是深入陆地的河道/海湾则精判仍放行。
+        // 陆地 biome(含去 IS_RIVER 后的 river)→ 绝不直信纯密度(纯密度 8 格步长会把窄陆误判成深水跳过精判
+        //   →直线穿陆),但也不无脑全精判(大片 river 全烘焙 NoiseChunk 会爆慢):先纯密度探深度,中心明确深水
+        //   (≥LAND_BIOME_DEEP_MARGIN)且 footprint 粗判全可航 → 信纯密度(宽河口/深内海,不烘焙);否则升级精判。
         if (!isWaterBiome(x, z)) {
-            if (!preciseFootprintAllWater(x, z, halfWidth, minDepth)) {
-                return WaterColumn.blocked();
+            int landFloor = noise.seaFloorHeight(x, z);
+            boolean landClearlyDeep = (seaLevel - landFloor) >= LAND_BIOME_DEEP_MARGIN;
+            if (landClearlyDeep && coarseFootprintAllWater(x, z, halfWidth, minDepth)) {
+                return WaterColumn.passable(new BlockPos(x, seaLevel, z), 0.0D); // 宽河口/深内海:纯密度足够,不烘焙
             }
-            return WaterColumn.passable(new BlockPos(x, seaLevel, z), 0.0D); // 陆地 biome 里的水道不另加深度代价
+            if (!preciseFootprintAllWater(x, z, halfWidth, minDepth)) {
+                return WaterColumn.blocked(); // 确实是陆/窄陆 → 绕开
+            }
+            return WaterColumn.passable(new BlockPos(x, seaLevel, z), 0.0D); // 深入陆地的真河道/海湾:精判放行
         }
 
         // ---- 水 biome(海洋/河流):走粗细结合 ----
@@ -135,7 +144,9 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
             return cached;
         }
         Holder<Biome> biome = biomeSource.getNoiseBiome(x >> 2, seaLevel >> 2, z >> 2, climateSampler);
-        boolean water = biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_RIVER) || biome.is(BiomeTags.IS_DEEP_OCEAN);
+        // 2026-06 去 IS_RIVER:河流/河口/沿海低地被纯密度误判可航直插穿陆(实测中段斜切群岛/大陆)。
+        // 只信海洋/深海走纯密度;river 走陆地 biome 分支强制精判(真河道仍放行,夹缝窄陆 blocked 绕开)。
+        boolean water = biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_DEEP_OCEAN);
         waterBiomeCache.put(key, water);
         return water;
     }

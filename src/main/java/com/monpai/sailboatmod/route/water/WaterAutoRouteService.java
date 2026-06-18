@@ -138,21 +138,58 @@ public final class WaterAutoRouteService {
             RealChunkRouteWorld startWorld = RealChunkRouteWorld.load(level, sourceBerth, radius);
             RealChunkRouteWorld endWorld = RealChunkRouteWorld.load(level, targetBerth, radius);
             ServerWaterRouteWorld midWorld = new ServerWaterRouteWorld(level);
+            // 三段编排 + smooth + verify 全在后台线程跑(消除主线程卡服):smooth 纯数学、verify 走 NoiseChunk
+            // 只读世界生成 + BFS 纯数组,均线程安全。回到主线程的 applyCompletedRoute 只剩 setRoutes(轻)。
+            int seaY = level.getSeaLevel();
             java.util.function.Supplier<WaterRouteResult<java.util.List<BlockPos>>> threeSeg =
-                    () -> ThreeSegmentPlanner.runSerial(startWorld, endWorld, midWorld, sourceBerth, targetBerth, radius, threshold);
+                    () -> {
+                        WaterRouteResult<java.util.List<BlockPos>> raw =
+                                ThreeSegmentPlanner.runSerial(startWorld, endWorld, midWorld, sourceBerth, targetBerth, radius, threshold);
+                        if (!raw.successful()) {
+                            return raw;
+                        }
+                        // 先平滑(消锯齿/接头折角),后真实区块校验(堵穿陆漏洞)。顺序不可反:样条会把航点推离折线
+                        // 可能推上陆地,校验必须最后一道闸门。两步在后台线程,主线程不再背这个重活。
+                        java.util.List<BlockPos> smoothed = PathSmoother.smooth2D(raw.value(), seaY, 2.0D);
+                        java.util.List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(level, smoothed);
+                        if (verified == null || verified.size() < 2) {
+                            return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
+                        }
+                        return WaterRouteResult.success(verified);
+                    };
             task = new WaterRouteTask(
                     level.dimension().location().toString(),
                     source.getBlockPos(), target.getBlockPos(), sourceBerth, targetBerth,
                     playerName(player), policy, threeSeg, onComplete);
         } catch (Throwable t) {
-            // 真实区块快照加载失败 → 回退现有单段噪声寻路(berth→berth)。
+            // 真实区块快照加载失败 → 回退现有单段噪声寻路(berth→berth)。也走 Supplier 形式,
+            // 统一在后台 smooth+verify(主线程不背重活)。
             LOGGER.warn("[WaterPath] 真实区块快照加载失败,回退单段寻路", t);
-            ServerWaterRouteWorld routeWorld = new ServerWaterRouteWorld(level);
-            WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(routeWorld, sourceBerth, targetBerth, policy);
+            int seaY = level.getSeaLevel();
+            java.util.function.Supplier<WaterRouteResult<java.util.List<BlockPos>>> singleSeg =
+                    () -> {
+                        ServerWaterRouteWorld routeWorld = new ServerWaterRouteWorld(level);
+                        WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(routeWorld, sourceBerth, targetBerth, policy);
+                        long deadline = System.nanoTime() + (long) policy.timeoutTicks() * 50L * 1_000_000L;
+                        WaterRoutePathfinder.Status st;
+                        do {
+                            st = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
+                        } while (st == WaterRoutePathfinder.Status.RUNNING && System.nanoTime() < deadline);
+                        if (st != WaterRoutePathfinder.Status.SUCCESS) {
+                            return WaterRouteResult.failure(
+                                    st == WaterRoutePathfinder.Status.FAILED ? pathfinder.failureReason() : WaterRouteFailureReason.TIMEOUT);
+                        }
+                        java.util.List<BlockPos> smoothed = PathSmoother.smooth2D(pathfinder.path(), seaY, 2.0D);
+                        java.util.List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(level, smoothed);
+                        if (verified == null || verified.size() < 2) {
+                            return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
+                        }
+                        return WaterRouteResult.success(verified);
+                    };
             task = new WaterRouteTask(
                     level.dimension().location().toString(),
                     source.getBlockPos(), target.getBlockPos(), sourceBerth, targetBerth,
-                    playerName(player), policy, pathfinder, onComplete);
+                    playerName(player), policy, singleSeg, onComplete);
         }
         return WaterRouteTaskService.global().submit(task).successful()
                 ? WaterRouteResult.success(null)
@@ -174,13 +211,10 @@ public final class WaterAutoRouteService {
             }
             return;
         }
-        // 先平滑(Catmull-Rom 样条+弧长重采样,消锯齿/直线/稀疏),后真实区块校验(堵穿陆漏洞)。
-        // 顺序不可反:样条会把航点推离折线可能推上陆地,校验必须是最后一道闸门。两步都在主线程(回调里),
-        // 真实校验只对这一条最终航线跑一次 + hasChunkAt 预检,不卡服。
-        int seaY = level.getSeaLevel();
-        List<BlockPos> smoothed = PathSmoother.smooth2D(result.value(), seaY, 2.0D);
-        List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(level, smoothed);
-        if (verified.size() < 2) {
+        // 2026-06:smooth+verify 已移到后台 Supplier(消除主线程卡服),result.value() 即最终航点。
+        // 这里只剩 setRoutes + 发消息(轻,主线程安全)。
+        List<BlockPos> verified = result.value();
+        if (verified == null || verified.size() < 2) {
             // 穿陆且绕不开 → 不落地无效航线(船会卡死),报无水路。
             if (player != null) {
                 player.sendSystemMessage(messageFor(WaterRouteFailureReason.NO_WATER_PATH));
