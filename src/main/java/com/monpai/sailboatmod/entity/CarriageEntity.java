@@ -1724,11 +1724,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         // 频率必须低;乘客由 retrackViaVanilla 内部跳过(乘客必然已正确 pair)。
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
             if (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0) {
-                boolean ok = com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
-                if (ok) {
-                    LOGGER.info("[CarriageEntity] vanilla retrack pos=({},{},{})",
-                            (int) getX(), (int) getY(), (int) getZ());
-                }
+                com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
             }
         } else {
             spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置（保留字段兼容，retrack 不再用它）

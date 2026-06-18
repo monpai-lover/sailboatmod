@@ -4,7 +4,6 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
-import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -13,147 +12,22 @@ import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
 
 import java.util.List;
-import java.util.Set;
-import java.util.UUID;
 
 /**
  * 强制让附近客户端重新接收并持续追踪某实体。
  *
  * <p>多模组环境下，用区块强加载票据加载进来的移动实体（自动驾驶的马车/帆船）可能从未被
  * {@link ChunkMap} 的 EntityTracker 向附近玩家 pair —— 服务端实体存活、有音效、可被扫描，但客户端
- * 从未收到 {@code ClientboundAddEntityPacket}，表现为「看不见但有声音、判定箱也框不到」。单 mod 无此问题。
+ * 从未收到 {@code ClientboundAddEntityPacket}，表现为「看不见但有声音、判定箱也框不到」（幽灵车/船）。
  *
- * <p>仅补发一次 spawn 不够：EntityTracker 坏掉后客户端收不到后续移动包，spawn 出来的实体会僵在原地
- * 甚至被丢弃。故对视野范围内玩家：新玩家补发完整 spawn 包族，且对所有范围内玩家**每次都补发绝对位置
- * (teleport)+motion**，自行替代 EntityTracker 的移动同步，使返航途中实体跟着动、稳定可见。
- * 纯原版 API、零反射（早期反射 ChunkMap.TrackedEntity 的 SRG 名在生产 reobf jar 下不稳，已弃用）。
+ * <p>根治 = {@link #retrackViaVanilla}：用 vanilla {@code ServerChunkCache.removeEntity+addEntity} 让 vanilla
+ * 自己重建 TrackedEntity 并对全体玩家重新评估 pairing（发 spawn）。之后位置同步全交给 vanilla，平滑不抽搐。
+ * 不再自己周期重发 spawn/teleport（那会砸客户端实体导致动画重播/抽搐，已删）。
  */
 public final class EntityRetrackHelper {
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    /** 视野/追踪范围（格）。略大于原版实体常规 tracking range，保证玩家一进视野即覆盖。 */
-    private static final double RETRACK_RANGE = 96.0D;
-    private static final double RETRACK_RANGE_SQR = RETRACK_RANGE * RETRACK_RANGE;
-
     private EntityRetrackHelper() {
-    }
-
-    /**
-     * 对视野范围内玩家维持可见。多 mod 坏掉的 EntityTracker 环境下，spawn 包被客户端丢弃后 teleport 对
-     * 客户端不存在的实体无效 → 返航全程看不见、只到站才出现（实测 2026-06 确认）。
-     *
-     * <p>模型分两路：
-     * <ul>
-     *   <li><b>每帧</b>对范围内所有玩家发 teleport+motion —— 平滑移动，替代失效的 EntityTracker 移动同步。</li>
-     *   <li><b>spawn 包族</b>（add+data+passengers）在玩家<i>刚进入范围</i>时发一次（让马车出现），
-     *       且在 {@code spawnHeartbeat=true} 的帧对范围内<i>所有</i>玩家重发一次 —— 兜底「首次 spawn 被
-     *       客户端丢弃后实体永远建不起来」的幽灵车回归（实测 2026-06：只发一次会退回幽灵车）。调用方应
-     *       周期性（约每秒一帧）置 {@code spawnHeartbeat=true}，而非每帧（每帧重发会令客户端插值重置→渲染抽搐）。</li>
-     * </ul>
-     * 原版 {@code ClientboundAddEntityPacket} 按 entity-id 幂等覆盖，重发安全。
-     *
-     * @param alreadySpawned 由调用实体持有的可变集合，记录当前仍在范围内的玩家 UUID（本方法就地增删）。
-     * @param spawnHeartbeat true 时对范围内所有玩家重发一次 spawn 包族（心跳帧 / 到站收尾用）；false 时只对刚进范围的新玩家发。
-     * @return 本次补发 spawn 包族的玩家数。
-     */
-    public static int resendSpawnToNewTrackers(ServerLevel level, Entity entity, Set<UUID> alreadySpawned,
-                                               boolean spawnHeartbeat) {
-        if (level == null || entity == null || alreadySpawned == null || !entity.isAddedToWorld()) {
-            return 0;
-        }
-        double ex = entity.getX();
-        double ey = entity.getY();
-        double ez = entity.getZ();
-        var nonDefault = entity.getEntityData().getNonDefaultValues();
-        boolean hasPassengers = !entity.getPassengers().isEmpty();
-        ClientboundTeleportEntityPacket teleport = new ClientboundTeleportEntityPacket(entity);
-        ClientboundSetEntityMotionPacket motion = new ClientboundSetEntityMotionPacket(entity);
-
-        // 本实体的乘客集合(UUID)：乘客客户端必然已正确追踪本实体(否则上不去/坐不住),对其重发 spawn
-        // 只会砸掉正常工作的客户端实体——GeckoLib 动画从头重播(每3秒抽搐)、打开的容器菜单被关闭。
-        // 故心跳重发跳过乘客,乘客只靠下面的 teleport+motion 维持移动同步。
-        java.util.HashSet<UUID> passengerIds = new java.util.HashSet<>();
-        for (Entity passenger : entity.getPassengers()) {
-            if (passenger != null) {
-                passengerIds.add(passenger.getUUID());
-            }
-        }
-
-        // 诊断(2026-06):用公开 API chunkMap.getPlayers(chunkPos,false) 取「vanilla EntityTracker 正在向其
-        // 追踪本实体所在区块」的玩家集,与我的 alreadySpawned 对比,实测确认 vanilla 到底有没有在同步本实体。
-        // 只在心跳帧打(每3秒一次,不刷屏)。据此判断:vanilla 在追踪 → 兜底应让位(不抽搐);没追踪 → 兜底才有意义。
-        java.util.Set<UUID> vanillaTrackers = new java.util.HashSet<>();
-        if (spawnHeartbeat) {
-            try {
-                var chunkMap = level.getChunkSource().chunkMap;
-                var trackers = chunkMap.getPlayers(new ChunkPos(entity.blockPosition()), false);
-                if (trackers != null) {
-                    for (ServerPlayer p : trackers) {
-                        if (p != null) {
-                            vanillaTrackers.add(p.getUUID());
-                        }
-                    }
-                }
-            } catch (Throwable ignored) {
-                // 诊断失败不影响主逻辑
-            }
-        }
-
-        java.util.HashSet<UUID> inRangeNow = new java.util.HashSet<>();
-        int spawned = 0;
-        for (ServerPlayer player : level.players()) {
-            if (player == null || player.connection == null) {
-                continue;
-            }
-            if (player.distanceToSqr(ex, ey, ez) > RETRACK_RANGE_SQR) {
-                continue;
-            }
-            UUID id = player.getUUID();
-            inRangeNow.add(id);
-            boolean isNew = !alreadySpawned.contains(id);
-            boolean isPassenger = passengerIds.contains(id);
-            // 乘客(尤其驾驶者)一律跳过所有补发:
-            //   - AddEntity 重发会砸 GeckoLib 动画(每3秒重播)+ 关掉打开的乘客菜单;
-            //   - teleport/motion 重发会把「乘客正在本地权威驾驶 / 靠 lerp 跟随」的船硬拽回服务端旧位置,
-            //     表现为船被「重置」/抽搐/拉回(用户实测自动驾驶切挡/暂停瞬间最明显)。
-            // 坐在船上本身就证明该玩家客户端已正确追踪本实体,无需任何幽灵船兜底。
-            if (isPassenger) {
-                alreadySpawned.add(id);   // 记为已 spawn,避免下船后被当「新玩家」误判
-                continue;
-            }
-            // 只对「刚进入范围、确实没 spawn 过」的玩家发一次 spawn 让船/车出现。
-            // 关键修复:之前心跳帧(spawnHeartbeat)对已 spawn 的玩家也无差别重发 AddEntity,
-            // 导致船已正常显示在玩家屏幕里却每 3 秒被重建一次——GeckoLib 动画从头重播(抽搐)。
-            // 这对所有非乘客玩家都犯,不只乘客。teleport+motion 已足够维持移动,AddEntity 绝不重发。
-            // (到港 beginArrivalFeedback 靠 spawnedToPlayers.clear() 让全员变 isNew 重新现身,不依赖心跳重发。)
-            if (isNew) {
-                player.connection.send(entity.getAddEntityPacket());
-                if (nonDefault != null && !nonDefault.isEmpty()) {
-                    player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
-                }
-                if (hasPassengers) {
-                    player.connection.send(new ClientboundSetPassengersPacket(entity));
-                }
-                alreadySpawned.add(id);
-                spawned++;
-            }
-            // 诊断(心跳帧):对比 vanilla 追踪集 vs 我的 spawn 集,看 vanilla 到底有没有在同步本实体。
-            // vanillaTracks=true 表示 vanilla EntityTracker 正常工作(我的兜底重发是多余且有害的,会抽搐);
-            // vanillaTracks=false 但实体可见 说明确实靠我兜底。实测据此定最终修法。
-            if (spawnHeartbeat) {
-                boolean vanillaTracks = vanillaTrackers.contains(id);
-                LOGGER.info("[Retrack] entity={} player={} vanillaTracks={} mySpawned={} dist={} pos=({},{},{})",
-                        entity.getId(), player.getGameProfile().getName(), vanillaTracks,
-                        !isNew, (int) Math.sqrt(player.distanceToSqr(ex, ey, ez)),
-                        (int) ex, (int) ey, (int) ez);
-            }
-            // 非乘客玩家：每帧补发绝对位置 + 速度，替代失效的 EntityTracker 移动同步（平滑移动）。
-            player.connection.send(teleport);
-            player.connection.send(motion);
-        }
-        // 离开范围的玩家移除，下次再进入会作为「新玩家」重新补发 spawn（覆盖「走开又回来」）。
-        alreadySpawned.retainAll(inRangeNow);
-        return spawned;
     }
 
     /**
@@ -220,41 +94,12 @@ public final class EntityRetrackHelper {
         // 有乘客时跳过:移除+重加会把乘客客户端正常工作的实体砸掉(动画重播、菜单关闭)。
         // 乘客坐得上车本就证明其客户端已正确 pair,无需 retrack。
         if (!entity.getPassengers().isEmpty()) {
-            LOGGER.info("[Retrack] 跳过(有乘客) entity={} type={} pos=({},{},{})",
-                    entity.getId(), entity.getType().getDescriptionId(),
-                    (int) entity.getX(), (int) entity.getY(), (int) entity.getZ());
             return false;
         }
         try {
-            // 诊断:retrack 前统计 vanilla 追踪集 + 范围内玩家(看 removeEntity+addEntity 前后 pairing 变化)。
-            ChunkMap chunkMap = level.getChunkSource().chunkMap;
-            ChunkPos chunkPos = new ChunkPos(entity.blockPosition());
-            List<ServerPlayer> trackChunkBefore = chunkMap.getPlayers(chunkPos, false);
-            int trackBefore = trackChunkBefore == null ? 0 : trackChunkBefore.size();
-            int nearbyPlayers = 0;
-            ServerPlayer nearest = null;
-            double nearestSq = Double.MAX_VALUE;
-            for (ServerPlayer p : level.players()) {
-                if (p == null) continue;
-                double dSq = p.distanceToSqr(entity.getX(), entity.getY(), entity.getZ());
-                if (dSq <= RETRACK_RANGE_SQR) {
-                    nearbyPlayers++;
-                    if (dSq < nearestSq) { nearestSq = dSq; nearest = p; }
-                }
-            }
-
             var chunkSource = level.getChunkSource();
             chunkSource.removeEntity(entity); // 清旧 TrackedEntity + 对已 pair 客户端 broadcastRemoved
             chunkSource.addEntity(entity);    // 重建 TrackedEntity + updatePlayers 全员重新评估 pairing(发 spawn)
-
-            List<ServerPlayer> trackChunkAfter = chunkMap.getPlayers(chunkPos, false);
-            int trackAfter = trackChunkAfter == null ? 0 : trackChunkAfter.size();
-            LOGGER.info("[Retrack] vanilla retrack entity={} type={} pos=({},{},{}) 范围内玩家={} 最近={}格 区块追踪玩家 {}→{}",
-                    entity.getId(), entity.getType().getDescriptionId(),
-                    (int) entity.getX(), (int) entity.getY(), (int) entity.getZ(),
-                    nearbyPlayers,
-                    nearest == null ? -1 : (int) Math.sqrt(nearestSq),
-                    trackBefore, trackAfter);
             return true;
         } catch (Throwable t) {
             LOGGER.warn("[Retrack] vanilla retrack 失败 entity={}", entity.getId(), t);
