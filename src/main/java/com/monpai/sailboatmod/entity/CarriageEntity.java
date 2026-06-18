@@ -1704,7 +1704,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
      */
     private void forceRetrackForNearbyPlayers(ServerLevel serverLevel) {
         spawnedToPlayers.clear();
-        com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers, true);
+        com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
     }
 
     /**
@@ -1715,24 +1715,23 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
-        // 幽灵车修复：autopilot 全程 + 到站宽限期内，对范围内玩家维持可见。
-        // 实测定论（2026-06，三次验证）：「发几次就停」必回归幽灵车——多 mod 坏掉 EntityTracker 时
-        // 客户端区块追踪窗口何时建立不可预测，停发后被丢弃的 spawn 再也补不回。唯一成功的版本是
-        // **从进视野到贴脸全程持续重发 spawn**。故回到持续 spawn 心跳，仅把频率从每秒 1 次降到每 3 秒
-        // 1 次省开销：每 2 tick 发 teleport+motion 维持平滑移动；每 ENROUTE_SPAWN_HEARTBEAT_TICKS(60=3s)
-        // 对范围内所有玩家重发一次完整 spawn 包族兜底被丢弃的实体（不每帧重发，否则客户端插值重置→渲染抽搐）。
+        // 幽灵车彻底修复(2026-06):autopilot 全程 + 到站宽限期内,周期性让 vanilla 重建本实体的 EntityTracker
+        // 并对全体玩家重新评估 pairing。真因(反编译 ChunkMap 确认):载具靠 ENTITY_TICKING 票据自己 tick,但
+        // ChunkMap.tick() 只在实体跨 section 移动那帧才 updatePlayers 重新 pair,时序错过 → vanilla 不发 spawn
+        // → 幽灵车。retrackViaVanilla 用 ServerChunkCache.removeEntity+addEntity 让 vanilla 走完整 pairing 流程,
+        // 之后位置同步全交给 vanilla ServerEntity(平滑不抽搐),不再自己发 teleport/motion 硬拽。
+        // 低频(每 ENROUTE_SPAWN_HEARTBEAT_TICKS=60=3s 一次):removeEntity+addEntity 对已显示客户端会重播一次动画,
+        // 频率必须低;乘客由 retrackViaVanilla 内部跳过(乘客必然已正确 pair)。
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
-            if (tickCount % 2 == 0) {
-                boolean spawnHeartbeat = (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0);
-                int sent = com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
-                        serverLevel, this, spawnedToPlayers, spawnHeartbeat);
-                if (sent > 0) {
-                    LOGGER.info("[CarriageEntity] enroute spawn heartbeat sent={} tracked={} pos=({},{},{})",
-                            sent, spawnedToPlayers.size(), (int) getX(), (int) getY(), (int) getZ());
+            if (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0) {
+                boolean ok = com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
+                if (ok) {
+                    LOGGER.info("[CarriageEntity] vanilla retrack pos=({},{},{})",
+                            (int) getX(), (int) getY(), (int) getZ());
                 }
             }
         } else {
-            spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置，下次发车重新跟踪
+            spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置（保留字段兼容，retrack 不再用它）
         }
         if (!isAutopilotActive()) {
             // 宽限期递减；期满才释放票据。
@@ -2451,12 +2450,12 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         entityData.set(DATA_ARRIVAL_NOTICE_DATE_TEXT, formatArrivalDate(System.currentTimeMillis(), ZoneId.systemDefault()));
         setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
         level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
-        // 到站（含延迟返航、连运中转等所有到站路径都经过这里）：开宽限期 + 清 spawn 记录，
-        // 让下一 tick 把当前视野内所有玩家当「新玩家」重新补发 spawn，确保到站即可见（修「幽灵车」）。
+        // 到站（含延迟返航、连运中转等所有到站路径都经过这里）：开宽限期 + 让 vanilla 重建追踪重新 pair，
+        // 确保到站即可见（修「幽灵车」）。
         if (level() instanceof ServerLevel serverLevel) {
             postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
             spawnedToPlayers.clear();
-            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(serverLevel, this, spawnedToPlayers, true);
+            com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
         }
     }
 

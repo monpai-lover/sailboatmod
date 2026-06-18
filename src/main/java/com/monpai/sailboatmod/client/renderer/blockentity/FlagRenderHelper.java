@@ -72,8 +72,6 @@ public final class FlagRenderHelper {
     private FlagRenderHelper() {
     }
 
-    private static boolean loggedOnce = false;
-
     private static void ensureModel() {
         if (POLE != null) {
             return;
@@ -82,8 +80,6 @@ public final class FlagRenderHelper {
             ModelPart root = buildMesh().bakeRoot();
             POLE = root.getChild("pole");
             BAR = root.getChild("bar");
-            org.slf4j.LoggerFactory.getLogger("FlagRender").info(
-                    "[Flag] ensureModel 成功 bake: pole={} bar={}", POLE != null, BAR != null);
         } catch (Exception e) {
             org.slf4j.LoggerFactory.getLogger("FlagRender").error("[Flag] ensureModel bake 失败!", e);
         }
@@ -108,12 +104,6 @@ public final class FlagRenderHelper {
                               int flagWidth, int flagHeight, ResourceLocation texture,
                               BlockPos blockPos, long gameTime, float partialTick) {
         ensureModel();
-        if (!loggedOnce) {
-            loggedOnce = true;
-            org.slf4j.LoggerFactory.getLogger("FlagRender").info(
-                    "[Flag] render 执行 isWall={} facing={} texture={} pos={} (此日志只打一次,证明 FlagRenderHelper 在渲染链上)",
-                    isWall, facing, texture, blockPos);
-        }
         poseStack.pushPose();
         if (isWall) {
             // vanilla wall banner:translate(0.5,-0.16667,0.5) → 绕Y旋到 facing → translate(0,-0.3125,-0.4375)。

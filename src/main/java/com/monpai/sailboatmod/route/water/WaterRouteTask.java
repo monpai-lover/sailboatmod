@@ -77,7 +77,11 @@ public final class WaterRouteTask {
      * 超时用 wall-clock(timeoutTicks×50ms,复用 policy 字段);maxExpandedNodes 节点上限在 step 内部硬兜底。
      */
     private void startBackgroundSearch() {
-        final long deadlineNanos = System.nanoTime() + (long) policy.timeoutTicks() * 50_000_000L;
+        final long startNanos = System.nanoTime();
+        final long timeoutMs = (long) policy.timeoutTicks() * 50L;
+        final long deadlineNanos = startNanos + timeoutMs * 1_000_000L;
+        LOGGER.info("[WaterPath] 后台寻路提交 key={} 超时={}s nodesPerTick={} maxNodes={}",
+                key, timeoutMs / 1000.0, policy.nodesPerTick(), policy.maxExpandedNodes());
         WaterRouteTaskExecutor.submit(() -> {
             try {
                 WaterRoutePathfinder.Status status;
@@ -85,12 +89,21 @@ public final class WaterRouteTask {
                     status = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
                 } while (status == WaterRoutePathfinder.Status.RUNNING
                         && System.nanoTime() < deadlineNanos);
+                long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
                 if (status == WaterRoutePathfinder.Status.SUCCESS) {
-                    return WaterRouteResult.success(pathfinder.path());
+                    List<BlockPos> p = pathfinder.path();
+                    LOGGER.info("[WaterPath] 后台寻路成功 key={} 耗时={}ms 节点={} 航点={}",
+                            key, elapsedMs, pathfinder.expandedNodes(), p == null ? 0 : p.size());
+                    return WaterRouteResult.success(p);
                 }
                 if (status == WaterRoutePathfinder.Status.FAILED) {
+                    LOGGER.warn("[WaterPath] 后台寻路失败 key={} 耗时={}ms 节点={} 原因={}",
+                            key, elapsedMs, pathfinder.expandedNodes(), pathfinder.failureReason());
                     return WaterRouteResult.<List<BlockPos>>failure(pathfinder.failureReason());
                 }
+                // RUNNING 但跳出循环 = wall-clock 超时(节点没耗尽,纯是太慢跑不完)。
+                LOGGER.warn("[WaterPath] 后台寻路超时 key={} 耗时={}ms 节点={}/{} (仍 RUNNING,航线太长/采样太慢)",
+                        key, elapsedMs, pathfinder.expandedNodes(), policy.maxExpandedNodes());
                 return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.TIMEOUT);
             } catch (Throwable t) {
                 LOGGER.error("[WaterPath] 后台寻路异常 key={}", key, t);

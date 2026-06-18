@@ -189,4 +189,76 @@ public final class EntityRetrackHelper {
         }
         return sent;
     }
+
+    /**
+     * <b>2026-06 幽灵车彻底修复</b>:让 <b>vanilla</b> 完整重建本实体的 EntityTracker 并对所有玩家重新评估 pairing,
+     * 而非自己硬塞 spawn/teleport 包。
+     *
+     * <p><b>真因</b>(实测+反编译 ChunkMap 确认):载具靠 ForgeChunkManager ENTITY_TICKING 票据强加载自己周围、
+     * 远航途中自行 tick,但玩家不在附近时载具所在区块不在玩家的 entity-ticking 范围;vanilla {@code ChunkMap.tick()}
+     * 只在实体「跨 section 移动」那一帧才 {@code updatePlayers} 重新评估 pairing,时序一旦错过(玩家进范围时载具
+     * 恰未跨 section / 距离判定边界),{@code TrackedEntity.updatePlayer} 不被调 → {@code seenBy} 不加该玩家 →
+     * {@code serverEntity.addPairing} 不发 spawn → 客户端永远没这个实体(幽灵车)。注释 chunkMap.getPlayers
+     * 返回「区块在视野」≠「实体已 pair」,所以诊断里 vanillaTracks=true 仍幽灵。
+     *
+     * <p><b>修法</b>:{@code ServerChunkCache.removeEntity} + {@code addEntity}(都是 public vanilla API)。
+     * removeEntity 清掉旧 TrackedEntity 并对已 pair 客户端 broadcastRemoved;addEntity 重建 TrackedEntity 并
+     * {@code updatePlayers(level.players())} 对<b>全体玩家</b>重新评估距离+broadcastToPlayer → 范围内的客户端
+     * 由 vanilla 自己 addPairing 发完整 spawn。之后位置同步全交给 vanilla 的 {@code serverEntity.sendChanges()}
+     * (平滑、不抽搐),<b>无需再自己发 teleport/motion</b>。
+     *
+     * <p>代价:对已正常显示的客户端是一次「移除+重加」,会让 GeckoLib 动画重播一次。故<b>低频</b>调用(每 1~2 秒,
+     * 而非每帧),且只在 autopilot 远航期间。比旧的「每帧 teleport 硬拽 + 每 3 秒重发 AddEntity」抽搐轻得多,且是
+     * 纯 vanilla 流程。乘客一律跳过(乘客客户端必然已正确 pair,移除+重加会砸乘客菜单/动画)。
+     *
+     * @return true 表示执行了一次 vanilla retrack。
+     */
+    public static boolean retrackViaVanilla(ServerLevel level, Entity entity) {
+        if (level == null || entity == null || !entity.isAddedToWorld() || entity.isRemoved()) {
+            return false;
+        }
+        // 有乘客时跳过:移除+重加会把乘客客户端正常工作的实体砸掉(动画重播、菜单关闭)。
+        // 乘客坐得上车本就证明其客户端已正确 pair,无需 retrack。
+        if (!entity.getPassengers().isEmpty()) {
+            LOGGER.info("[Retrack] 跳过(有乘客) entity={} type={} pos=({},{},{})",
+                    entity.getId(), entity.getType().getDescriptionId(),
+                    (int) entity.getX(), (int) entity.getY(), (int) entity.getZ());
+            return false;
+        }
+        try {
+            // 诊断:retrack 前统计 vanilla 追踪集 + 范围内玩家(看 removeEntity+addEntity 前后 pairing 变化)。
+            ChunkMap chunkMap = level.getChunkSource().chunkMap;
+            ChunkPos chunkPos = new ChunkPos(entity.blockPosition());
+            List<ServerPlayer> trackChunkBefore = chunkMap.getPlayers(chunkPos, false);
+            int trackBefore = trackChunkBefore == null ? 0 : trackChunkBefore.size();
+            int nearbyPlayers = 0;
+            ServerPlayer nearest = null;
+            double nearestSq = Double.MAX_VALUE;
+            for (ServerPlayer p : level.players()) {
+                if (p == null) continue;
+                double dSq = p.distanceToSqr(entity.getX(), entity.getY(), entity.getZ());
+                if (dSq <= RETRACK_RANGE_SQR) {
+                    nearbyPlayers++;
+                    if (dSq < nearestSq) { nearestSq = dSq; nearest = p; }
+                }
+            }
+
+            var chunkSource = level.getChunkSource();
+            chunkSource.removeEntity(entity); // 清旧 TrackedEntity + 对已 pair 客户端 broadcastRemoved
+            chunkSource.addEntity(entity);    // 重建 TrackedEntity + updatePlayers 全员重新评估 pairing(发 spawn)
+
+            List<ServerPlayer> trackChunkAfter = chunkMap.getPlayers(chunkPos, false);
+            int trackAfter = trackChunkAfter == null ? 0 : trackChunkAfter.size();
+            LOGGER.info("[Retrack] vanilla retrack entity={} type={} pos=({},{},{}) 范围内玩家={} 最近={}格 区块追踪玩家 {}→{}",
+                    entity.getId(), entity.getType().getDescriptionId(),
+                    (int) entity.getX(), (int) entity.getY(), (int) entity.getZ(),
+                    nearbyPlayers,
+                    nearest == null ? -1 : (int) Math.sqrt(nearestSq),
+                    trackBefore, trackAfter);
+            return true;
+        } catch (Throwable t) {
+            LOGGER.warn("[Retrack] vanilla retrack 失败 entity={}", entity.getId(), t);
+            return false;
+        }
+    }
 }

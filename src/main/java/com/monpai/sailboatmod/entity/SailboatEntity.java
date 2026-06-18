@@ -32,6 +32,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
@@ -373,6 +375,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     public SailboatEntity(EntityType<? extends Boat> entityType, Level level) {
         super(entityType, level);
         this.lastTickYaw = getYRot();
+    }
+
+    /**
+     * 用 Forge 的 spawn 包(NetworkHooks)替代原版 Boat 的 ClientboundAddEntityPacket。
+     * 帆船是 GeckoLib GeoEntity 且有十几个自定义 EntityDataAccessor(帆/挡位/自动驾驶/航线...);
+     * 原版包不带这些自定义数据,客户端建出的实体字段全是默认值、且 GeckoLib 实体首帧初始化更易出问题
+     * → 旁观玩家看不到(幽灵船)。CarriageEntity 早已这么做,帆船此前遗漏,本次补齐(止血心跳之外的彻底修复一环)。
+     */
+    @Override
+    public Packet<ClientGamePacketListener> getAddEntityPacket() {
+        return NetworkHooks.getEntitySpawningPacket(this);
     }
 
     @Override
@@ -2273,20 +2286,26 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         final int seaY = server.getSeaLevel();
         final WaterRoutePolicy policy = WaterRoutePolicy.rescue();
         asyncRerouteInFlight = true;
+        LOGGER.info("[Rescue] 卡死自救:后台寻路提交 boatPos=({},{},{}) destDock={}",
+                boatPos.getX(), boatPos.getY(), boatPos.getZ(), destDockPos);
 
         // ---- 后台线程:纯只读采样寻路,返回原始航点(失败返回 null)----
         WaterRouteTaskExecutor.submit(() -> {
             try {
+                long t0 = System.nanoTime();
                 ServerWaterRouteWorld world = new ServerWaterRouteWorld(server);
                 WaterRouteResult<DockBerthResolver.DockBerth> berth =
                         DockBerthResolver.resolve(world, destZone, policy);
                 if (!berth.successful()) {
+                    LOGGER.warn("[Rescue] 自救失败:目标港泊位解析不到 ({})", berth.reason());
                     return null;
                 }
                 Vec3 berthPos = berth.value().pos();
                 BlockPos goal = new BlockPos(Mth.floor(berthPos.x), Mth.floor(berthPos.y), Mth.floor(berthPos.z));
                 BlockPos start = findNearestNavigableCell(world, boatPos, policy, 16);
                 if (start == null) {
+                    LOGGER.warn("[Rescue] 自救失败:当前位置 16 格内找不到可航格 boatPos=({},{},{})",
+                            boatPos.getX(), boatPos.getY(), boatPos.getZ());
                     return null;
                 }
                 WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(world, start, goal, policy);
@@ -2294,27 +2313,39 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 do {
                     status = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
                 } while (status == WaterRoutePathfinder.Status.RUNNING);
-                return status == WaterRoutePathfinder.Status.SUCCESS ? pathfinder.path() : null;
+                long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
+                if (status == WaterRoutePathfinder.Status.SUCCESS) {
+                    LOGGER.info("[Rescue] 自救后台寻路成功 耗时={}ms 节点={} 航点={}",
+                            elapsedMs, pathfinder.expandedNodes(), pathfinder.path().size());
+                    return pathfinder.path();
+                }
+                LOGGER.warn("[Rescue] 自救后台寻路失败 耗时={}ms 节点={} status={} ({})",
+                        elapsedMs, pathfinder.expandedNodes(), status, pathfinder.failureReason());
+                return null;
             } catch (Throwable t) {
-                LOGGER.error("[SailboatEntity] 自救后台寻路异常", t);
+                LOGGER.error("[Rescue] 自救后台寻路异常", t);
                 return null;
             }
         }).whenComplete((rawPath, ex) -> server.getServer().execute(() -> {
             // ---- 主线程回调:平滑 + 真实校验 + 落地,或失败降级 ----
             asyncRerouteInFlight = false;
             if (isRemoved() || !isAutopilotActive()) {
+                LOGGER.info("[Rescue] 自救结果丢弃:船已卸载/到站/停自动驾驶");
                 return; // 异步期间船已卸载/到站/停自动驾驶 → 丢弃结果
             }
             if (ex != null || rawPath == null || rawPath.size() < 2) {
+                LOGGER.warn("[Rescue] 自救失败 → 降级求救(头顶提示+聊天+webmap STUCK+暂停)");
                 rerouteFailedFallback();
                 return;
             }
             List<BlockPos> smoothed = PathSmoother.smooth2D(rawPath, seaY, 2.0D);
             List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(server, smoothed);
             if (verified.size() < 2) {
+                LOGGER.warn("[Rescue] 自救航线真实校验后 <2 航点 → 降级求救");
                 rerouteFailedFallback();
                 return;
             }
+            LOGGER.info("[Rescue] 自救成功:新航线接管 航点={} 恢复航行", verified.size());
             applyRescueRoute(verified);
         }));
     }
@@ -2979,12 +3010,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 formatArrivalDate(System.currentTimeMillis(), ZoneId.systemDefault()));
         setArrivalNoticeTicks(ARRIVAL_NOTICE_TICKS);
         level().playSound(null, blockPosition(), arrivalSoundEvent(), SoundSource.NEUTRAL, 0.85F, 1.0F);
-        // 到港收尾：开宽限期 + 强制对范围内所有玩家重发一次 spawn，让到港时仍是幽灵的船立即现身（同马车）。
+        // 到港收尾：开宽限期 + 让 vanilla 重建追踪并重新 pair，让到港时仍是幽灵的船立即现身（同马车）。
         if (level() instanceof ServerLevel serverLevel) {
             postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
             spawnedToPlayers.clear();
-            com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
-                    serverLevel, this, spawnedToPlayers, true);
+            com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
         }
     }
 
@@ -3415,14 +3445,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
-        // 幽灵船修复（同马车）：autopilot 全程 + 到港宽限期内对范围内玩家维持可见。
-        // 多 mod 坏掉 EntityTracker 时只发一次/不发 spawn 会导致远行返回看不见（幽灵船）。
-        // 每 2tick 发 teleport+motion 维持移动；每 ENROUTE_SPAWN_HEARTBEAT_TICKS(60=3s) 重发整套 spawn 兜底。
+        // 幽灵船彻底修复(2026-06,同马车):autopilot 全程 + 到港宽限期内周期性让 vanilla 重建 EntityTracker
+        // 并对全体玩家重新评估 pairing(ServerChunkCache.removeEntity+addEntity)。真因=载具靠 ENTITY_TICKING
+        // 票据自己 tick,但 ChunkMap.tick() 只在跨 section 移动那帧才重新 pair,时序错过 → vanilla 不发 spawn。
+        // 之后位置同步交给 vanilla ServerEntity(平滑不抽搐),不再自己发 teleport/motion。低频(每 3s)防动画重播。
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
-            if (tickCount % 2 == 0) {
-                boolean spawnHeartbeat = (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0);
-                com.monpai.sailboatmod.util.EntityRetrackHelper.resendSpawnToNewTrackers(
-                        serverLevel, this, spawnedToPlayers, spawnHeartbeat);
+            if (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0) {
+                com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
             }
         } else {
             spawnedToPlayers.clear();

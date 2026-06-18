@@ -51,15 +51,13 @@ public final class ServerWaterRouteWorld implements WaterRouteWorld, DockBerthRe
 
     private WaterColumn computeColumn(int x, int z, WaterRoutePolicy policy) {
         WaterRoutePolicy effective = policy == null ? WaterRoutePolicy.defaults() : policy;
-        int halfWidth = Math.max(0, effective.boatHalfWidth());
         int minDepth = Math.max(1, effective.clearanceHeight());
-        // 船足迹内每一列都要是可航水面:基于世界生成高度判水(海床低于海平面足够深),零区块加载。
-        for (int dx = -halfWidth; dx <= halfWidth; dx++) {
-            for (int dz = -halfWidth; dz <= halfWidth; dz++) {
-                if (!isNavigableWater(x + dx, z + dz, minDepth)) {
-                    return WaterColumn.blocked();
-                }
-            }
+        // 2026-06 降采样(修长航线寻路超时):只查中心点一列,不再扫 footprint 3×3(省 9× getBaseHeight)。
+        // getBaseHeight 每列烘焙 NoiseChunk 极慢,3×3 让每节点采样数爆炸,1869 格航线 90 秒跑不完。
+        // 开阔水域中心点可航即整船可航;窄水道边界 1~2 格的误差由寻路出路后的 RealWaterVerifier(真实区块
+        // 校验+局部绕开)兜底。boatHalfWidth 参数保留但不再在采样阶段逐格展开。
+        if (!isNavigableWater(x, z, minDepth)) {
+            return WaterColumn.blocked();
         }
         return WaterColumn.passable(new BlockPos(x, waterSurfaceY(x, z), z), 0.0D);
     }
