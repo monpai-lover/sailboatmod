@@ -35,13 +35,18 @@ public final class RoadSurfaceStepEmitter {
                 continue;
             }
             boolean ramp = isRamp(centerline, spans, index);
-            BlockState surfaceState = ramp ? rampState(safeSettings, centerline, index) : safeSettings.surfaceState();
+            // 单半砖过渡:相邻 targetY 差 1 格(一阶=高点+低点两个 ramp 点)。
+            // 高点铺全方块(顶面=自己targetY);只有「低点」在它自己 targetY 这一层(而非targetY-1)
+            // 铺一个 bottom 半砖(顶面=targetY+0.5,正好落在高低两平面正中),把 1 格落差劈成两个半格。
+            boolean transitionSlab = ramp && isTransitionLowPoint(centerline, spans, index);
+            BlockState surfaceState = transitionSlab ? safeSettings.slabBottomState() : safeSettings.surfaceState();
             BuildPhase surfacePhase = ramp ? BuildPhase.RAMP : BuildPhase.SURFACE;
             List<BlockPos> footprint = index < footprints.size()
                     ? footprints.get(index)
                     : RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width());
             for (BlockPos surfacePos : footprint) {
-                BlockPos placementPos = roadSurfacePlacementPos(surfacePos, ramp);
+                // 过渡半砖抬高 1 格放在 surfacePos(targetY 层);其余路面照旧 surfacePos.below()。
+                BlockPos placementPos = transitionSlab ? surfacePos : roadSurfacePlacementPos(surfacePos, ramp);
                 for (int dy = 1; dy <= CLEARANCE_HEIGHT; dy++) {
                     steps.add(new BuildStep(order++, placementPos.above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
                 }
@@ -181,47 +186,23 @@ public final class RoadSurfaceStepEmitter {
         return y != prevY || y != nextY;
     }
 
-    private static BlockState rampState(RoadPlannerBuildSettings settings, List<RoadCenterlinePoint> centerline, int index) {
-        // 坡道用半砖(slab),恢复 v1.3.7(e83d4cd6)「先定坡向再选 slab」的正确做法。
-        // 旧的「全局 ramp 数奇偶交替」忽略坡向,导致下坡段 bottom/top 反向(用户实测 top 处变 bottom)。
-        // 正确:先把当前点所在的连续 ramp 段(run)圈出来,判断该段是上坡还是下坡,
-        // 再按段内局部 index 选 slab —— 上坡 bottom 起步,下坡 top 起步,每两个半砖升/降一整格。
-        int start = index;
-        while (start > 0 && isRampAt(centerline, start - 1)) {
-            start--;
-        }
-        int end = index;
-        while (end + 1 < centerline.size() && isRampAt(centerline, end + 1)) {
-            end++;
-        }
-        boolean ascending = rampRunAscending(centerline, start, end);
-        int localIndex = index - start;
-        if (ascending) {
-            return (localIndex & 1) == 0 ? settings.slabBottomState() : settings.slabTopState();
-        }
-        return (localIndex & 1) == 0 ? settings.slabTopState() : settings.slabBottomState();
-    }
-
-    /** 判断给定 index 是否为坡道点(targetY 与前或后不同)。 */
-    private static boolean isRampAt(List<RoadCenterlinePoint> centerline, int index) {
-        if (index < 0 || index >= centerline.size()) {
+    /**
+     * 单半砖过渡的判定:这个 ramp 点是否为「一格落差的低侧点」——它的 targetY 比相邻的更高邻居恰好低 1。
+     * 实测序列形如 ...-59 -59 [-59R -60R] -60...,一阶=高点(-59R)+低点(-60R);只有低点(-60R)
+     * 放过渡半砖(抬到自己 targetY 层、bottom 半砖,顶面=targetY+0.5),正好卡在高(-59 平面)
+     * 与低(-60 平面)正中,形成 平→半砖→平 的半格阶梯。高点本身铺全方块(顶面=自己 targetY)。
+     *
+     * 取相邻两侧更高的一侧作为参照:若存在某个邻居 targetY = 自己+1,则自己是该阶的低点 → true。
+     * 这样上坡下坡都对称成立(不依赖坡向推导,纯看相邻实际高度差),不会再反。
+     */
+    private static boolean isTransitionLowPoint(List<RoadCenterlinePoint> centerline, List<RoadSpan> spans, int index) {
+        if (!isRoadIndex(spans, index)) {
             return false;
         }
         int y = centerline.get(index).targetY();
         int prevY = index > 0 ? centerline.get(index - 1).targetY() : y;
         int nextY = index + 1 < centerline.size() ? centerline.get(index + 1).targetY() : y;
-        return y != prevY || y != nextY;
-    }
-
-    /** 判断 [start,end] 这段连续坡道是上坡还是下坡(首尾 Y 不同看首尾,相同看段前后)。 */
-    private static boolean rampRunAscending(List<RoadCenterlinePoint> centerline, int start, int end) {
-        int startY = centerline.get(start).targetY();
-        int endY = centerline.get(end).targetY();
-        if (startY != endY) {
-            return endY > startY;
-        }
-        int beforeY = start > 0 ? centerline.get(start - 1).targetY() : startY;
-        int afterY = end + 1 < centerline.size() ? centerline.get(end + 1).targetY() : endY;
-        return afterY >= beforeY;
+        // 任一相邻点恰好高自己 1 格 → 自己是这一阶的低侧过渡点。
+        return prevY == y + 1 || nextY == y + 1;
     }
 }
