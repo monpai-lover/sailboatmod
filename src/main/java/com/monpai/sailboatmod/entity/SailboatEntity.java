@@ -164,6 +164,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     // 航行水花/划水音特效（仿 smallships）：前向速度(格/tick)超过阈值且在水里才触发；音效每 N tick 一次循环。
     private static final float WAKE_EFFECT_SPEED_THRESHOLD = 0.04F;
     private static final int WAKE_SOUND_INTERVAL_TICKS = 8;
+    private static final float RAM_SPEED_THRESHOLD = 0.12F;     // 撞击伤害的最低巡航速度(格/tick)
+    private static final float RAM_DAMAGE_PER_SPEED = 8.0F;     // 撞击伤害系数(伤害=速度×此值,借鉴 smallships 7.5)
     // checkInWater 判定容差：自定义浮力 applyFallbackBuoyancy 把 getY() 顶到 ≈水面高度，而 vanilla Boat
     // box.minY==getY()，故船底精确贴在水面（实测 boxMinY==surfaceY==62.889）。原版 smallships 的船吃水深
     // (box.minY 明显低于水面)所以严格小于成立；我们的船浮在水面上沿，严格小于恒 false。给一格向下容差：
@@ -232,6 +234,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private int nonWaterTicks = 0;
     private boolean forwardPressedLastTick = false;
     private boolean reversePressedLastTick = false;
+    private int lastGearIdForSound = Integer.MIN_VALUE; // 服务端挡位变化音效的上次挡位 id(MIN=未初始化)
     private final SailboatManualInputState manualInputState = new SailboatManualInputState();
     // 自管网络插值(覆写 vanilla Boat 的 private lerp)：手动 local-control 端清 0 步=本地预测不被服务端拖；
     // autopilot 服务端权威时用 1/NETWORK_LERP_STEPS 步插值跟随。照抄 CarriageEntity 的 tickNetworkLerp/lerpTo。
@@ -780,6 +783,55 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             tickPickupLoadDetection();
         }
         tickWakeEffects();
+        if (!level().isClientSide) {
+            tickGearShiftSound();
+            tickRamDamage();
+        }
+    }
+
+    /**
+     * 撞击伤害(借鉴 smallships):巡航时撞到非乘客生物 → 按船速造成伤害 + 顺船头方向击退,给撞角重量感。
+     * 仅服务端;靠 vanilla 伤害无敌帧天然节流,不额外加冷却。
+     */
+    private void tickRamDamage() {
+        float speed = Math.abs(getCurrentSpeedForHud());
+        if (speed < RAM_SPEED_THRESHOLD || !isPrimaryTravelMedium()) {
+            return;
+        }
+        java.util.List<LivingEntity> victims = level().getEntitiesOfClass(LivingEntity.class,
+                getBoundingBox().inflate(0.3D, 0.0D, 0.3D),
+                e -> e.isAlive() && !e.isPassengerOfSameVehicle(this) && !hasPassenger(e));
+        if (victims.isEmpty()) {
+            return;
+        }
+        double yawRad = getYRot() * (Math.PI / 180.0D);
+        double dirX = -Math.sin(yawRad);
+        double dirZ = Math.cos(yawRad);
+        float damage = speed * RAM_DAMAGE_PER_SPEED;
+        double knockback = 0.5D + speed * 1.1D;
+        for (LivingEntity victim : victims) {
+            victim.hurt(damageSources().generic(), damage);
+            victim.push(dirX * knockback, 0.15D, dirZ * knockback);
+        }
+    }
+
+    /**
+     * 服务端检测挡位变化并播切挡音效(权威挡位 DATA_ENGINE_GEAR 由 vanilla 广播给附近客户端)。
+     * pitch 随挡位升高而升高(借鉴 smallships:大挡音调高,给操作清晰反馈)。覆盖手动/autopilot/hold-to-drive 所有改挡来源。
+     */
+    private void tickGearShiftSound() {
+        int gearId = getEngineGear().id;
+        if (lastGearIdForSound == Integer.MIN_VALUE) {
+            lastGearIdForSound = gearId; // 首次只记录,不播(避免出生/加载即响)
+            return;
+        }
+        if (gearId != lastGearIdForSound) {
+            lastGearIdForSound = gearId;
+            // 挡位 id 范围约 [reverse..forwardMax],映射 pitch 0.7~1.5:挡越高音越高。
+            float pitch = Mth.clamp(0.9F + gearId * 0.12F, 0.6F, 1.6F);
+            level().playSound(null, getX(), getY(), getZ(), SoundEvents.LEVER_CLICK,
+                    SoundSource.NEUTRAL, 0.5F, pitch);
+        }
     }
 
     /**

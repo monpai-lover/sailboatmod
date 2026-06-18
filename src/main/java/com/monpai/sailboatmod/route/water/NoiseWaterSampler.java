@@ -2,40 +2,67 @@ package com.monpai.sailboatmod.route.water;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.ChunkGenerator;
-import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.DensityFunction;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
+import net.minecraft.world.level.levelgen.NoiseRouter;
+import net.minecraft.world.level.levelgen.NoiseSettings;
 import net.minecraft.world.level.levelgen.RandomState;
 
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 噪声海底采样器——用世界生成器的 OCEAN_FLOOR_WG 高度图直接算海底高度,寻路时<b>零区块加载</b>。
- * 借鉴 RoadWeaver 的 FastHeightSampler/AccurateHeightSampler:寻路高效的根本是不碰真实区块,
- * 而是查生成器噪声。判定「可航水面」= 海底高度低于海平面足够多(够船浮)。
+ * 噪声海底采样器——直接查世界生成器的密度函数算地表/海底高度,寻路时<b>零区块加载、零 NoiseChunk 分配</b>。
  *
- * <p>局限:拿的是「地形生成时」的样子,玩家挖的人工运河/填的水道不反映。这由寻路出最终路径后的
- * 真实区块二次校验兜底(见 WaterRoutePathfinder 终段校验);纯人工运河航线粗搜阶段可能探索不到。
+ * <p><b>关键</b>:必须用 {@link NoiseRouter#initialDensityWithoutJaggedness()} 的 {@code compute(SinglePointContext)}
+ * 单点查询(照搬 RoadWeaver FastHeightSampler)。<b>绝不能用 {@code ChunkGenerator.getBaseHeight}</b>——后者每次调用
+ * 都 {@code new NoiseChunk(...)}(初始化整个噪声采样器),寻路 sample 上万格会瞬间卡死主线程 → Server Watchdog 崩服。
+ *
+ * <p>局限:拿的是「地形生成时」的样子,玩家挖的人工运河/填海不反映;由最终路径真实区块校验兜底。
  */
 public final class NoiseWaterSampler {
-    private final ChunkGenerator generator;
-    private final ServerLevel level;
-    private final RandomState randomState;
+    private static final double DENSITY_THRESHOLD = 0.390625D; // 密度 > 此值视为固体(地表/海底),同 vanilla/RoadWeaver
+
+    private final DensityFunction initialDensity;
+    private final int minY;
+    private final int maxY;
+    private final int cellHeight;
     private final int seaLevel;
+    private final boolean usable;
     private final ConcurrentHashMap<Long, Integer> floorCache = new ConcurrentHashMap<>();
 
-    private NoiseWaterSampler(ServerLevel level, ChunkGenerator generator, RandomState randomState) {
-        this.level = level;
-        this.generator = generator;
-        this.randomState = randomState;
-        this.seaLevel = level.getSeaLevel();
+    private NoiseWaterSampler(DensityFunction initialDensity, NoiseSettings settings, int seaLevel, boolean usable) {
+        this.initialDensity = initialDensity;
+        this.minY = settings.minY();
+        this.maxY = minY + settings.height();
+        this.cellHeight = Math.max(1, settings.getCellHeight());
+        this.seaLevel = seaLevel;
+        this.usable = usable;
     }
 
     public static NoiseWaterSampler create(ServerLevel level) {
+        int seaLevel = level.getSeaLevel();
         var chunkSource = level.getChunkSource();
-        return new NoiseWaterSampler(level, chunkSource.getGenerator(), chunkSource.getGeneratorState().randomState());
+        ChunkGenerator generator = chunkSource.getGenerator();
+        if (generator instanceof NoiseBasedChunkGenerator noiseGen) {
+            RandomState randomState = chunkSource.getGeneratorState().randomState();
+            NoiseRouter router = randomState.router();
+            NoiseSettings settings = noiseGen.generatorSettings().value().noiseSettings();
+            return new NoiseWaterSampler(router.initialDensityWithoutJaggedness(), settings, seaLevel, true);
+        }
+        // 非噪声生成器(自定义维度等):标记不可用,寻路侧据此回退或判不可航。
+        return new NoiseWaterSampler(null, NoiseSettings.create(-64, 384, 1, 2), seaLevel, false);
     }
 
-    /** 噪声海底高度(OCEAN_FLOOR_WG),零区块加载。4 格对齐 + 缓存(噪声本就 4×4 cell 精度)。 */
+    /** 是否可用(噪声生成器)。不可用时 isNavigableWater 恒 false。 */
+    public boolean isUsable() {
+        return usable;
+    }
+
+    /** 噪声地表/海底高度(首个密度 > 阈值的 y),零区块加载。4 格对齐 + 缓存(噪声本就 4×4 cell 精度)。 */
     public int seaFloorHeight(int x, int z) {
+        if (!usable) {
+            return minY;
+        }
         int alignedX = (x >> 2) << 2;
         int alignedZ = (z >> 2) << 2;
         long key = (((long) alignedX) << 32) | (alignedZ & 0xFFFFFFFFL);
@@ -43,14 +70,24 @@ public final class NoiseWaterSampler {
         if (cached != null) {
             return cached;
         }
-        int floor = generator.getBaseHeight(alignedX, alignedZ, Heightmap.Types.OCEAN_FLOOR_WG, level, randomState);
+        int floor = computeFloor(alignedX, alignedZ);
         floorCache.put(key, floor);
         return floor;
     }
 
+    private int computeFloor(int x, int z) {
+        for (int y = maxY; y >= minY; y -= cellHeight) {
+            double density = initialDensity.compute(new DensityFunction.SinglePointContext(x, y, z));
+            if (density > DENSITY_THRESHOLD) {
+                return y;
+            }
+        }
+        return minY;
+    }
+
     /** 该列是否可航水面:海底低于海平面 minDepth 格以上(保证够船浮)。 */
     public boolean isNavigableWater(int x, int z, int minDepth) {
-        return seaFloorHeight(x, z) <= seaLevel - Math.max(1, minDepth);
+        return usable && seaFloorHeight(x, z) <= seaLevel - Math.max(1, minDepth);
     }
 
     public int seaLevel() {
