@@ -44,6 +44,9 @@ public class DockBlock extends BaseEntityBlock {
             return;
         }
         if (TownService.getManagedTownAt(player, pos) != null) {
+            // 放置成功(在管辖城镇内):立即登记进持久码头清单,新建码头无需有人专程加载一次即可见。
+            com.monpai.sailboatmod.dock.DockLocationSavedData.get(level)
+                    .register(level.dimension().location().toString(), pos.asLong());
             return;
         }
         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.town.facility.place_denied"));
