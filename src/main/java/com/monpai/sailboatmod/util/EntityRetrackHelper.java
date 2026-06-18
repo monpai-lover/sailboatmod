@@ -101,8 +101,12 @@ public final class EntityRetrackHelper {
                 alreadySpawned.add(id);   // 记为已 spawn,避免下船后被当「新玩家」误判
                 continue;
             }
-            // 新进范围发一次 spawn 让船/车出现；心跳帧对范围内玩家重发兜底被丢弃的实体。
-            if (isNew || spawnHeartbeat) {
+            // 只对「刚进入范围、确实没 spawn 过」的玩家发一次 spawn 让船/车出现。
+            // 关键修复:之前心跳帧(spawnHeartbeat)对已 spawn 的玩家也无差别重发 AddEntity,
+            // 导致船已正常显示在玩家屏幕里却每 3 秒被重建一次——GeckoLib 动画从头重播(抽搐)。
+            // 这对所有非乘客玩家都犯,不只乘客。teleport+motion 已足够维持移动,AddEntity 绝不重发。
+            // (到港 beginArrivalFeedback 靠 spawnedToPlayers.clear() 让全员变 isNew 重新现身,不依赖心跳重发。)
+            if (isNew) {
                 player.connection.send(entity.getAddEntityPacket());
                 if (nonDefault != null && !nonDefault.isEmpty()) {
                     player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
