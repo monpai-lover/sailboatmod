@@ -3209,14 +3209,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             entityData.set(DATA_ON_ROAD, cachedOnRoad);
             return;
         }
+        // 只认规划器建成的正式道路才给加速:随手摆的路面材质方块不再触发(去掉材质白名单回退)。
         String dimensionId = serverLevel.dimension().location().toString();
         RoadGraphRoutingService routing = new RoadGraphRoutingService(RoadGraphRepository.forLevelCached(serverLevel));
-        boolean onRoad;
-        if (routing.hasBuiltRoad(dimensionId)) {
-            onRoad = routing.isRoadCorridor(dimensionId, wheel, ON_ROAD_CORRIDOR_RADIUS);
-        } else {
-            onRoad = isRoadSurfaceState(level().getBlockState(wheel));
-        }
+        boolean onRoad = routing.isRoadCorridor(dimensionId, wheel, ON_ROAD_CORRIDOR_RADIUS);
         cachedOnRoad = onRoad;
         cachedOnRoadCellX = cellX;
         cachedOnRoadCellZ = cellZ;

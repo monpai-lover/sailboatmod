@@ -409,16 +409,10 @@ public final class NationEvents {
                 && (player.tickCount - cached.tick) < ROAD_SPEED_RECHECK_TICKS) {
             return cached.onRoad;
         }
+        // 只认规划器建成的正式道路才给加速:随手摆的路面材质方块不再触发(去掉材质白名单回退)。
         String dimensionId = player.serverLevel().dimension().location().toString();
         RoadGraphRoutingService routing = new RoadGraphRoutingService(RoadGraphRepository.forLevelCached(player.serverLevel()));
-        boolean onRoad;
-        if (routing.hasBuiltRoad(dimensionId)) {
-            onRoad = routing.isRoadCorridor(dimensionId, supportPos, 1);
-        } else {
-            onRoad = RoadTravelHelper.shouldGrantRoadSpeed(
-                    player.serverLevel().getBlockState(supportPos),
-                    player.serverLevel().getBlockState(supportPos.below()));
-        }
+        boolean onRoad = routing.isRoadCorridor(dimensionId, supportPos, 1);
         ROAD_TRAVEL_CACHE.put(player.getUUID(), new RoadTravelCache(cellX, cellZ, player.tickCount, onRoad));
         return onRoad;
     }
