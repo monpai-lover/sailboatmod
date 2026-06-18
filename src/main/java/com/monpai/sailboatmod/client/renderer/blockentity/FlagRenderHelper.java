@@ -52,11 +52,12 @@ public final class FlagRenderHelper {
     private static final float MIN_FLAG_HEIGHT = 14.0F * PX;
     private static final float MAX_FLAG_HEIGHT = 40.0F * PX;
     private static final float FLAG_TOP = 0.0F;
-    // 旗面在旗杆「前侧」(z 负向),旗杆在 z∈[-1px,1px];旗面前/背面都在 z<-1px,小幅飘动不会穿到旗杆。
+    // 旗面在旗杆「前侧」(z 负向),旗杆在 z∈[-1px,1px];旗面在 z<-1px,小幅飘动不会穿到旗杆。单层(NoCull 正反可见)。
     private static final float FLAG_FRONT_Z = -1.5F * PX;
-    private static final float FLAG_BACK_Z = -2.5F * PX;      // 错开正面 → 有厚度消闪烁;都在旗杆前不穿杆
     private static final float FLAG_OFFSET_Y = -32.0F * PX;   // 挂到横杆下(model 空间)
     private static final int WAVE_SEGMENTS = 5;
+    // 飘动时间取模周期:把 long gameTime 压回 float 精度安全区间(< 2^24),防老存档大 gameTime 精度丢失致动画冻结。
+    private static final long WAVE_TIME_MODULO = 1_000_000L;
     // 小振幅前后飘动(老旗帜的感觉):0.025+0.012 model 空间 ≈ 0.6px,左右/前后轻晃,绝不穿旗杆。
     private static final float PRIMARY_WAVE_SPEED = 0.05F;
     private static final float SECONDARY_WAVE_SPEED = 0.13F;
@@ -168,13 +169,24 @@ public final class FlagRenderHelper {
 
     /**
      * 自画旗面:UV 铺满 [0,1](自定义贴图完整显示),宽高<b>面积守恒</b>按贴图比例自适应(照搬老旗帜,不拉伸成细线),
-     * 正背面错开 z(有厚度消闪烁、都在旗杆前不穿杆),小振幅前后飘动(老旗帜的感觉)。
+     * 小振幅前后飘动(老旗帜的感觉)。
+     *
+     * <p><b>2026-06 单层:</b>只画一个 quad。{@link RenderType#entityCutoutNoCull} 不剔除背面,单面正反都可见
+     * (背面看到的是镜像 UV,旗子背面本就是正面的镜像,符合直觉),无需再画第二个背面 quad。之前画正/背两层
+     * 是为「有厚度消闪烁」,但单层 NoCull 无 z-fighting,两层纯属多余。
+     *
+     * <p><b>多人动画修复:</b>{@code gameTime} 是 long,老存档(运行很久)可达数千万 tick;{@code long→float}
+     * 在超过 ~16,777,216(float 24 位尾数上限,约 9.7 天游戏时间)后无法表示相邻整数,相邻 tick 的 gameTime
+     * 映射到同一 float、{@code +partialTick} 也被舍掉 → {@code sin} 输入冻结 → 旗帜不飘(单机新存档 gameTime
+     * 小看不出,多人/老存档才暴露)。修复:先 {@code gameTime % WAVE_TIME_MODULO} 把数值压回 float 精度区间,
+     * 再 {@code +partialTick} 转 float,飘动连续(模数周期边界每 ~13.9 小时一次、幅度极小肉眼不可见)。
      */
     private static void drawWavingFlag(PoseStack poseStack, MultiBufferSource bufferSource, int light, int packedOverlay,
                                        ResourceLocation texture, BlockPos blockPos, long gameTime, float partialTick,
                                        float w, float h) {
         VertexConsumer c = bufferSource.getBuffer(RenderType.entityCutoutNoCull(texture));
-        float time = gameTime + partialTick;
+        // 压回 float 精度安全区间再转 float,否则老存档大 gameTime 精度丢失 → 动画冻结(多人失效根因)。
+        float time = (gameTime % WAVE_TIME_MODULO) + partialTick;
         float seedPhase = ((blockPos.getX() * 7 + blockPos.getY() * 9 + blockPos.getZ() * 13) % 360) * Mth.DEG_TO_RAD;
 
         float left = -w * 0.5F;
@@ -189,20 +201,13 @@ public final class FlagRenderHelper {
             float topWave = waveZ(time, seedPhase, (float) i / WAVE_SEGMENTS, i);
             float botWave = waveZ(time, seedPhase, (float) (i + 1) / WAVE_SEGMENTS, i + 1);
 
-            // 正面
+            // 单层旗面(NoCull → 正反都可见)
             quad(poseStack, c, light, packedOverlay,
                     left,  topY, FLAG_FRONT_Z + topWave, 0.0F, vTop,
                     right, topY, FLAG_FRONT_Z + topWave, 1.0F, vTop,
                     right, botY, FLAG_FRONT_Z + botWave, 1.0F, vBot,
                     left,  botY, FLAG_FRONT_Z + botWave, 0.0F, vBot,
                     0.0F, 0.0F, 1.0F);
-            // 背面(错开 z,反向缠绕)
-            quad(poseStack, c, light, packedOverlay,
-                    right, topY, FLAG_BACK_Z + topWave, 0.0F, vTop,
-                    left,  topY, FLAG_BACK_Z + topWave, 1.0F, vTop,
-                    left,  botY, FLAG_BACK_Z + botWave, 1.0F, vBot,
-                    right, botY, FLAG_BACK_Z + botWave, 0.0F, vBot,
-                    0.0F, 0.0F, -1.0F);
         }
     }
 
