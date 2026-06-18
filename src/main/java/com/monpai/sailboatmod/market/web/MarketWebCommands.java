@@ -1,9 +1,14 @@
 package com.monpai.sailboatmod.market.web;
 
+import com.monpai.sailboatmod.block.entity.DockBlockEntity;
+import com.monpai.sailboatmod.market.logistics.ShippingTraceRecord;
+import com.monpai.sailboatmod.market.logistics.ShippingTraceSavedData;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapRenderService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
+import com.monpai.sailboatmod.route.RouteDefinition;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.CommandDispatcher;
 import net.minecraft.core.BlockPos;
@@ -12,8 +17,11 @@ import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.PacketDistributor;
+
+import java.util.List;
 
 public final class MarketWebCommands {
     private MarketWebCommands() {
@@ -81,7 +89,12 @@ public final class MarketWebCommands {
                         .then(Commands.literal("scan")
                                 .executes(context -> enqueueMapRegionScan(context.getSource())))
                         .then(Commands.literal("status")
-                                .executes(context -> showMapRenderStatus(context.getSource())))));
+                                .executes(context -> showMapRenderStatus(context.getSource()))))
+                .then(Commands.literal("debugroute")
+                        .requires(source -> source.hasPermission(2))
+                        .executes(context -> debugRoute(context.getSource()))
+                        .then(Commands.literal("clear")
+                                .executes(context -> debugRouteClear(context.getSource())))));
     }
 
     private static int issueToken(CommandSourceStack source) {
@@ -274,6 +287,76 @@ public final class MarketWebCommands {
                 + " localChunk=" + status.currentLocalChunk()), false);
         source.sendSuccess(() -> Component.literal("Renderer version: " + MarketWebMapTileCache.RENDER_VERSION), false);
         return queueSize;
+    }
+
+    /** 调试用 /marketweb debugroute 前缀,投到 webmap 的 trace id 都以此开头,便于 clear 时识别。 */
+    private static final String DEBUG_TRACE_PREFIX = "debugroute_";
+
+    /**
+     * 调试:把玩家附近最近码头的所有航线投成 webmap 轨迹(manual=true 金色折线),用于实测看清航线走向/穿陆。
+     * 每条航线一条 trace,起点=waypoints[0],终点=waypoints[last]。webmap 2 秒后自动刷新显示。
+     */
+    private static int debugRoute(CommandSourceStack source) {
+        if (!(source.getEntity() instanceof ServerPlayer player)) {
+            source.sendFailure(Component.literal("需在游戏中以玩家身份执行。"));
+            return 0;
+        }
+        ServerLevel level = source.getLevel();
+        BlockPos dockPos = DockBlockEntity.findNearestRegisteredDock(level, player.position(), 64.0D);
+        if (dockPos == null || !(level.getBlockEntity(dockPos) instanceof DockBlockEntity dock)) {
+            source.sendFailure(Component.literal("附近 64 格内未找到码头。请站在码头旁执行。"));
+            return 0;
+        }
+        List<RouteDefinition> routes = dock.getRoutesForMap();
+        if (routes.isEmpty()) {
+            source.sendFailure(Component.literal("该码头没有航线。先创建自动航线。"));
+            return 0;
+        }
+        ShippingTraceSavedData data = ShippingTraceSavedData.get(level);
+        long gameTime = level.getGameTime();
+        int painted = 0;
+        for (int i = 0; i < routes.size(); i++) {
+            RouteDefinition route = routes.get(i);
+            if (route.waypoints() == null || route.waypoints().size() < 2) {
+                continue;
+            }
+            String traceId = DEBUG_TRACE_PREFIX + dockPos.asLong() + "_" + i;
+            data.putTrace(new ShippingTraceRecord(
+                    traceId,
+                    player.getUUID().toString(),
+                    MarketWebMapConstants.OVERWORLD,
+                    "PORT",
+                    "ACTIVE",
+                    "", "",
+                    route.startDockName(),
+                    route.endDockName(),
+                    route.waypoints(),
+                    0,                 // completedPointCount=0 → 全程未完成,整条都画出来
+                    0.0D,
+                    gameTime, gameTime,
+                    0.0D, 0.0D, 0.0D,
+                    List.of(),
+                    true));            // manual=true → webmap 画成金色调试折线
+            painted++;
+        }
+        final int paintedFinal = painted;
+        source.sendSuccess(() -> Component.literal("已在 webmap 投放 " + paintedFinal + " 条调试航线("
+                + dock.getDockName() + ",含 " + routes.size() + " 条航线)。webmap 刷新后查看。"
+                + " 清除:/marketweb debugroute clear"), false);
+        return painted;
+    }
+
+    /** 清除所有 debugroute 投放的调试轨迹。 */
+    private static int debugRouteClear(CommandSourceStack source) {
+        ServerLevel level = source.getLevel();
+        ShippingTraceSavedData data = ShippingTraceSavedData.get(level);
+        List<String> ids = data.getTraces().stream()
+                .map(ShippingTraceRecord::shippingOrderId)
+                .filter(id -> id != null && id.startsWith(DEBUG_TRACE_PREFIX))
+                .toList();
+        ids.forEach(data::removeTrace);
+        source.sendSuccess(() -> Component.literal("已清除 " + ids.size() + " 条调试航线。"), false);
+        return ids.size();
     }
 
     private static int showVersion(CommandSourceStack source) {
