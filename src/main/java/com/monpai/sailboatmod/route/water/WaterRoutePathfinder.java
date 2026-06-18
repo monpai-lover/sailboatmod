@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.route.water;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
+import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,8 +26,13 @@ import java.util.Set;
  * </ul>
  */
 public final class WaterRoutePathfinder {
+    private static final Logger LOGGER = LogUtils.getLogger();
+    private static final int LOG_EVERY_NODES = 2000; // 每扩展这么多节点打一次进度
+
     private static final double HEURISTIC_EPSILON = 0.2D;
     private static final double DEVIATION_WEIGHT = 0.001D;
+
+    private int lastLoggedAt = 0; // 上次打进度时的 expandedNodes
 
     private final WaterRouteWorld world;
     private final BlockPos start;
@@ -59,7 +66,12 @@ public final class WaterRoutePathfinder {
         }
         WaterColumn startColumn = world.sample(start.getX(), start.getZ(), policy);
         WaterColumn goalColumn = world.sample(goal.getX(), goal.getZ(), policy);
-        if (startColumn == null || !startColumn.passable() || goalColumn == null || !goalColumn.passable()) {
+        boolean startOk = startColumn != null && startColumn.passable();
+        boolean goalOk = goalColumn != null && goalColumn.passable();
+        long straight = Math.round(Math.sqrt(start.distSqr(goal)));
+        LOGGER.info("[WaterPath] 开始 start={} goal={} 直线={}格 起点可航={} 终点可航={}",
+                start, goal, straight, startOk, goalOk);
+        if (!startOk || !goalOk) {
             fail(WaterRouteFailureReason.NO_WATER_PATH);
             return;
         }
@@ -94,6 +106,15 @@ public final class WaterRoutePathfinder {
             boolean expandForward = fF <= fB;
             if (expandStep(expandForward)) {
                 return status; // 相遇 → complete 已设状态
+            }
+            if (expandedNodes - lastLoggedAt >= LOG_EVERY_NODES) {
+                lastLoggedAt = expandedNodes;
+                BlockPos fFront = forward.open.isEmpty() ? null : forward.open.peek().pos;
+                BlockPos bFront = backward.open.isEmpty() ? null : backward.open.peek().pos;
+                long fToGoal = fFront == null ? -1 : Math.round(Math.sqrt(fFront.distSqr(goal)));
+                long bToStart = bFront == null ? -1 : Math.round(Math.sqrt(bFront.distSqr(start)));
+                LOGGER.info("[WaterPath] 扩展{} 前向开集={} 后向开集={} 前向前沿离目标={}格 后向前沿离起点={}格",
+                        expandedNodes, forward.open.size(), backward.open.size(), fToGoal, bToStart);
             }
         }
         return status;
@@ -185,6 +206,7 @@ public final class WaterRoutePathfinder {
         path.clear();
         path.addAll(simplified);
         status = Status.SUCCESS;
+        LOGGER.info("[WaterPath] 成功 扩展{}节点 航点{}个", expandedNodes, path.size());
     }
 
     private boolean segmentPassable(BlockPos from, BlockPos to) {
@@ -270,6 +292,10 @@ public final class WaterRoutePathfinder {
     private void fail(WaterRouteFailureReason reason) {
         status = Status.FAILED;
         failureReason = reason == null ? WaterRouteFailureReason.NO_WATER_PATH : reason;
+        LOGGER.info("[WaterPath] 失败 原因={} 扩展{}节点 前向开集={} 后向开集={}",
+                failureReason, expandedNodes,
+                forward == null ? 0 : forward.open.size(),
+                backward == null ? 0 : backward.open.size());
     }
 
     public List<BlockPos> path() {

@@ -1,13 +1,12 @@
 package com.monpai.sailboatmod.road.pathfinding.cache;
 
 import com.monpai.sailboatmod.construction.RoadCoreExclusion;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.biome.BiomeSource;
+import net.minecraft.world.level.biome.Climate;
 import com.monpai.sailboatmod.road.config.PathfindingConfig;
 
 import java.util.Set;
@@ -17,6 +16,9 @@ public class TerrainSamplingCache {
     private final ServerLevel level;
     private final FastHeightSampler fastSampler;
     private final AccurateHeightSampler accurateSampler;
+    private final BiomeSource biomeSource;      // 噪声生物群系来源(不依赖区块)
+    private final Climate.Sampler climateSampler;
+    private final int seaLevel;
     private final PathfindingConfig.SamplingPrecision precision;
     private final Set<Long> blockedColumns;
     private final Set<Long> allowedColumns;
@@ -42,6 +44,10 @@ public class TerrainSamplingCache {
         this.level = level;
         this.fastSampler = new FastHeightSampler(level);
         this.accurateSampler = new AccurateHeightSampler(level);
+        var chunkSource = level.getChunkSource();
+        this.biomeSource = chunkSource.getGenerator().getBiomeSource();
+        this.climateSampler = chunkSource.getGeneratorState().randomState().sampler();
+        this.seaLevel = level.getSeaLevel();
         this.precision = precision;
         this.blockedColumns = blockedColumns == null || blockedColumns.isEmpty()
                 ? Set.of()
@@ -66,23 +72,18 @@ public class TerrainSamplingCache {
 
     public boolean isWater(int x, int z) {
         return waterCache.computeIfAbsent(key(x, z), k -> {
-            int waterSurfaceY = getWaterSurfaceY(x, z);
-            return waterSurfaceY > getOceanFloor(x, z)
-                    || (isWaterBiome(x, z) && level.getBlockState(new BlockPos(x, level.getSeaLevel(), z)).is(Blocks.WATER));
+            // 噪声判定:海底低于海平面足够多 → 水柱;或水生物群系 + 海底在海平面下。零区块加载。
+            int floor = getOceanFloor(x, z);
+            return floor < seaLevel - 1 || (isWaterBiome(x, z) && floor < seaLevel);
         });
     }
 
     public int getWaterSurfaceY(int x, int z) {
         return waterSurfaceCache.computeIfAbsent(key(x, z), k -> {
-            int top = fastSampler.motionBlockingHeight(x, z) - 1;
+            // 噪声下:是水则水面=海平面,否则=地表/海底。
             int floor = getOceanFloor(x, z);
-            for (int y = Math.max(top, floor); y >= floor; y--) {
-                BlockState state = level.getBlockState(new BlockPos(x, y, z));
-                if (state.is(Blocks.WATER)) {
-                    return y;
-                }
-            }
-            return floor;
+            boolean water = floor < seaLevel - 1 || (isWaterBiome(x, z) && floor < seaLevel);
+            return water ? seaLevel : floor;
         });
     }
 
@@ -91,8 +92,9 @@ public class TerrainSamplingCache {
     }
 
     public Holder<Biome> getBiome(int x, int z) {
+        // 噪声生物群系:直接问 biomeSource(不加载区块)。biome 用 4 格 cell 坐标(>>2)。
         return biomeCache.computeIfAbsent(key(x, z), k ->
-            level.getBiome(new BlockPos(x, getHeight(x, z), z))
+            biomeSource.getNoiseBiome(x >> 2, getHeight(x, z) >> 2, z >> 2, climateSampler)
         );
     }
 
