@@ -81,16 +81,11 @@ public final class WaterAutoRouteService {
         if (!targetBerth.successful()) {
             return WaterRouteResult.failure(targetBerth.reason());
         }
-        // 连通性溯源:泊位必须通向开阔水域(非封闭小水坑)。只在候选列表这关跑(低频手动)。
-        // berthWorld 实际实例是 ServerWaterRouteWorld(同时实现 WaterRouteWorld),转型后用其 sample 做 flood-fill。
-        if (berthWorld instanceof WaterRouteWorld routeWorld) {
-            if (!WaterConnectivityProbe.reachesOpenWater(routeWorld, blockPos(sourceBerth.value().pos()), policy)) {
-                return WaterRouteResult.failure(WaterRouteFailureReason.SOURCE_NOT_OPEN_WATER);
-            }
-            if (!WaterConnectivityProbe.reachesOpenWater(routeWorld, blockPos(targetBerth.value().pos()), policy)) {
-                return WaterRouteResult.failure(WaterRouteFailureReason.TARGET_NOT_OPEN_WATER);
-            }
-        }
+        // 连通性溯源(WaterConnectivityProbe.reachesOpenWater)已移除:采样从纯密度换成 getBaseHeight 后,
+        // 它逐格 flood-fill 最多 4000 格 × footprint 9 列 × 2 次 getBaseHeight ≈ 7.2 万次 new NoiseChunk,
+        // 对每个候选码头各跑两次 → 点「自动」列目的地直接卡服 25 秒。价值低(本意:过滤封闭水域/护城河里的
+        // 码头),而真正建航线时 WaterRoutePathfinder 寻不通会以 NO_WATER_PATH 失败兜底,封闭水域码头不会
+        // 误建出无效航线。故砍掉这个昂贵预探测,封闭水域码头允许进候选列表,由建航线寻路把关。
         return WaterRouteResult.success(new BerthPair(sourceBerth.value(), targetBerth.value()));
     }
 
