@@ -1,17 +1,10 @@
 package com.monpai.sailboatmod.util;
 
 import com.mojang.logging.LogUtils;
-import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
-import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
-import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
-
-import java.util.List;
 
 /**
  * 强制让附近客户端重新接收并持续追踪某实体。
@@ -28,40 +21,6 @@ public final class EntityRetrackHelper {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     private EntityRetrackHelper() {
-    }
-
-    /**
-     * 给附近玩家补发本实体的完整 spawn 包族（无状态版，帆船 stopAutopilot 一次性用）。
-     *
-     * @return 实际发包的玩家数（0 表示当前无追踪玩家）。
-     */
-    public static int resendSpawnToNearby(ServerLevel level, Entity entity) {
-        if (level == null || entity == null || !entity.isAddedToWorld()) {
-            return 0;
-        }
-        ChunkMap chunkMap = level.getChunkSource().chunkMap;
-        ChunkPos chunkPos = new ChunkPos(entity.blockPosition());
-        List<ServerPlayer> trackers = chunkMap.getPlayers(chunkPos, false);
-        if (trackers == null || trackers.isEmpty()) {
-            return 0;
-        }
-        var nonDefault = entity.getEntityData().getNonDefaultValues();
-        int sent = 0;
-        for (ServerPlayer player : trackers) {
-            if (player == null || player.connection == null) {
-                continue;
-            }
-            player.connection.send(entity.getAddEntityPacket());
-            if (nonDefault != null && !nonDefault.isEmpty()) {
-                player.connection.send(new ClientboundSetEntityDataPacket(entity.getId(), nonDefault));
-            }
-            player.connection.send(new ClientboundSetEntityMotionPacket(entity));
-            if (!entity.getPassengers().isEmpty()) {
-                player.connection.send(new ClientboundSetPassengersPacket(entity));
-            }
-            sent++;
-        }
-        return sent;
     }
 
     /**

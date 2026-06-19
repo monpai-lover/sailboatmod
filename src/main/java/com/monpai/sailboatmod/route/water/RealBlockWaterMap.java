@@ -1,8 +1,6 @@
 package com.monpai.sailboatmod.route.water;
 
 import com.monpai.sailboatmod.SailboatMod;
-import com.monpai.sailboatmod.market.web.map.MarketWebMapChunkSnapshot;
-import com.monpai.sailboatmod.roadplanner.map.RoadMapColumnSample;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -460,7 +458,7 @@ public final class RealBlockWaterMap {
         if (cache.containsKey(k)) {
             return true;
         }
-        Optional<MarketWebMapChunkSnapshot> snap = MarketWebMapChunkSnapshot.readGeneratedOffThread(level, cx, cz, NBT_READ_TIMEOUT_MS);
+        Optional<NbtChunkWaterReader.ChunkColumns> snap = NbtChunkWaterReader.readOffThread(level, cx, cz, NBT_READ_TIMEOUT_MS);
         if (snap.isPresent()) {
             cache.put(k, toChunkWater(snap.get()));
             hitNbt.incrementAndGet();
@@ -478,7 +476,7 @@ public final class RealBlockWaterMap {
         if (cache.containsKey(k)) {
             return;
         }
-        Optional<MarketWebMapChunkSnapshot> snap = forceAndCapture(cx, cz);
+        Optional<NbtChunkWaterReader.ChunkColumns> snap = NbtChunkWaterReader.readForcedOnMainThread(level, cx, cz);
         if (snap.isPresent()) {
             cache.put(k, toChunkWater(snap.get()));
             hitForced.incrementAndGet();
@@ -488,34 +486,14 @@ public final class RealBlockWaterMap {
         }
     }
 
-    private Optional<MarketWebMapChunkSnapshot> forceAndCapture(int cx, int cz) {
-        BlockPos owner = new BlockPos(cx << 4, seaLevel, cz << 4);
-        try {
-            ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
-            level.getChunk(cx, cz, ChunkStatus.FULL, true);
-            return MarketWebMapChunkSnapshot.captureGenerated(level, cx, cz); // 已加载分支
-        } catch (Throwable t) {
-            return Optional.empty();
-        } finally {
-            try {
-                ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, false, false);
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
     private final AtomicInteger totalWaterCells = new AtomicInteger();
     private final AtomicInteger totalCells = new AtomicInteger();
 
-    private ChunkWater toChunkWater(MarketWebMapChunkSnapshot snap) {
-        boolean[] water = new boolean[CHUNK * CHUNK];
-        int[] surfY = new int[CHUNK * CHUNK];
-        RoadMapColumnSample[] samples = snap.samples();
+    private ChunkWater toChunkWater(NbtChunkWaterReader.ChunkColumns snap) {
+        boolean[] water = snap.water();
+        int[] surfY = snap.surfaceY();
         int w = 0;
         for (int i = 0; i < CHUNK * CHUNK; i++) {
-            RoadMapColumnSample s = samples == null || i >= samples.length ? null : samples[i];
-            water[i] = s != null && s.water();
-            surfY[i] = s == null ? -999 : s.surfaceY();
             if (water[i]) {
                 w++;
             }
