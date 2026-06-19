@@ -34,3 +34,11 @@ forge*changelog.txt
 
 # 测试产物（roadplanner 草稿）
 roadplanner_drafts_test/
+
+# route water debug tool - local only, never pushed (user request)
+src/main/java/com/monpai/sailboatmod/route/water/debug/
+CMSG.txt
+COMMIT_MSG_TMP.txt
+HANDOFF_*.md
+build_compile.log
+build_jar.log
