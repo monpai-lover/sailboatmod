@@ -15,6 +15,7 @@ import com.monpai.sailboatmod.roadplanner.service.RoadPlannerMapPreloadService;
 import com.monpai.sailboatmod.route.water.WaterRouteTaskService;
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.MinecraftServer;
+import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.server.ServerStartedEvent;
@@ -33,6 +34,11 @@ public final class ServerEvents {
     @FunctionalInterface
     interface StartupTask {
         void run() throws Exception;
+    }
+
+    @SubscribeEvent
+    public static void onRegisterCommands(RegisterCommandsEvent event) {
+        com.monpai.sailboatmod.route.water.SailboatRouteCommands.register(event.getDispatcher());
     }
 
     @SubscribeEvent

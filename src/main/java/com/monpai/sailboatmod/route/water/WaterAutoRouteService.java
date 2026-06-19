@@ -126,8 +126,21 @@ public final class WaterAutoRouteService {
         // 命名用城镇名(Auto-源城镇-目标城镇)。townId 解析不到则回退 dock 名。
         String sourceTownName = resolveTownName(level, sourceSnapshot);
         String targetTownName = resolveTownName(level, targetSnapshot);
-        WaterRouteTask.CompletionHandler onComplete = result -> applyCompletedRoute(
-                level, source, target, sourceSnapshot, targetSnapshot, sourceTownName, targetTownName, result, player);
+
+        // 进度条(原版 BossBar,顶部血条):航线计算可能跑几十秒~几分钟(REALCHUNK 模式),让玩家实时看到进度。
+        String srcLabel = sourceTownName.isBlank() ? source.getDockName() : sourceTownName;
+        String dstLabel = targetTownName.isBlank() ? target.getDockName() : targetTownName;
+        WaterRouteProgressBar bar = new WaterRouteProgressBar(level.getServer(), player, srcLabel, dstLabel);
+        bar.show();
+
+        WaterRouteTask.CompletionHandler onComplete = result -> {
+            if (result != null && result.successful()) {
+                bar.done();
+            } else {
+                bar.fail("无水路");
+            }
+            applyCompletedRoute(level, source, target, sourceSnapshot, targetSnapshot, sourceTownName, targetTownName, result, player);
+        };
 
         // ---- 三段式贴岸:主线程预读两端港口真实区块快照,后台串行跑三段(起始贴岸→中段长距离→尾段贴岸)。----
         // 真实区块加载只在此主线程小范围临时(port 附近 ~7x7 区块,读完即释放);后台三段全用快照/噪声(线程安全)。
@@ -138,24 +151,24 @@ public final class WaterAutoRouteService {
             RealChunkRouteWorld startWorld = RealChunkRouteWorld.load(level, sourceBerth, radius);
             RealChunkRouteWorld endWorld = RealChunkRouteWorld.load(level, targetBerth, radius);
             ServerWaterRouteWorld midWorld = new ServerWaterRouteWorld(level);
-            // 三段编排 + smooth + verify 全在后台线程跑(消除主线程卡服):smooth 纯数学、verify 走 NoiseChunk
-            // 只读世界生成 + BFS 纯数组,均线程安全。回到主线程的 applyCompletedRoute 只剩 setRoutes(轻)。
+            // 三段编排 + smooth 全在后台线程跑(消除主线程卡服):smooth 纯数学,线程安全。
+            // 2026-06:中段已改「真实地形走廊精寻」(NoiseChunk 精判 / 真实区块分批加载),三段全程真实地形判定、
+            // 不再穿陆 → 去掉末端 RealWaterVerifier(它原是噪声中段的兜底,现中段不穿陆,末端再绕反而可能把好航点
+            // 推偏)。只保留 size<2 的空路拒绝。船自救仍用 RealWaterVerifier(它走噪声 rescue,需要兜底)。
             int seaY = level.getSeaLevel();
             java.util.function.Supplier<WaterRouteResult<java.util.List<BlockPos>>> threeSeg =
                     () -> {
                         WaterRouteResult<java.util.List<BlockPos>> raw =
-                                ThreeSegmentPlanner.runSerial(startWorld, endWorld, midWorld, sourceBerth, targetBerth, radius, threshold);
+                                ThreeSegmentPlanner.runSerial(startWorld, endWorld, midWorld, sourceBerth, targetBerth, radius, threshold,
+                                        (percent, stage) -> bar.update(percent, stage));
                         if (!raw.successful()) {
                             return raw;
                         }
-                        // 先平滑(消锯齿/接头折角),后真实区块校验(堵穿陆漏洞)。顺序不可反:样条会把航点推离折线
-                        // 可能推上陆地,校验必须最后一道闸门。两步在后台线程,主线程不再背这个重活。
                         java.util.List<BlockPos> smoothed = PathSmoother.smooth2D(raw.value(), seaY, 2.0D);
-                        java.util.List<BlockPos> verified = RealWaterVerifier.verifyAndRepair(level, smoothed);
-                        if (verified == null || verified.size() < 2) {
+                        if (smoothed == null || smoothed.size() < 2) {
                             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
                         }
-                        return WaterRouteResult.success(verified);
+                        return WaterRouteResult.success(smoothed);
                     };
             task = new WaterRouteTask(
                     level.dimension().location().toString(),

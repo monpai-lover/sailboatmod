@@ -261,4 +261,20 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
     public int seaLevel() {
         return seaLevel;
     }
+
+    /** 该快照方形范围是否覆盖 (x,z)(供 CorridorRealChunkWorld 多快照聚合时定位)。 */
+    public boolean covers(int x, int z) {
+        int dx = x - originX, dz = z - originZ;
+        return dx >= 0 && dz >= 0 && dx < size && dz < size;
+    }
+
+    /** 快照中心 X(供聚合器按粗路锚点去重/定位)。 */
+    public int centerX() {
+        return originX + size / 2;
+    }
+
+    /** 快照中心 Z。 */
+    public int centerZ() {
+        return originZ + size / 2;
+    }
 }
