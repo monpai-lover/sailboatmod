@@ -131,6 +131,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     // 不能像以前那样用客户端本地 deltaMovement 算速度——必须靠这个同步字段(仿马车 DATA_CURRENT_SPEED)。
     private static final EntityDataAccessor<Float> DATA_CURRENT_SPEED =
             SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.FLOAT);
+    // 船主名同步给客户端:SailboatInfoScreen 直接读客户端 entity 的 getOwnerName()。owner 旧版只存本地字段+NBT,
+    // spawn 包不带 NBT → 客户端 ownerName 恒="" → UI 显示「船主:-」(新放的船)。必须 EntityData 同步(仿租金)。
+    private static final EntityDataAccessor<String> DATA_OWNER_NAME =
+            SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.STRING);
     private static final int INVENTORY_SIZE = 27;
     private static final int SEAT_COUNT = 5;
     private static final int ARRIVAL_NOTICE_TICKS = 100;
@@ -410,6 +414,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
         this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
         this.entityData.define(DATA_CURRENT_SPEED, 0.0F);
+        this.entityData.define(DATA_OWNER_NAME, "");
     }
 
     @Override
@@ -1399,6 +1404,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");
+        entityData.set(DATA_OWNER_NAME, ownerName == null ? "" : ownerName); // 重载存档后同步给客户端
         int loadedRentalPrice = tag.contains("RentalPrice", Tag.TAG_INT) ? tag.getInt("RentalPrice") : DEFAULT_RENTAL_PRICE;
         rentalPrice = clampRentalPrice(loadedRentalPrice);
         entityData.set(DATA_RENTAL_PRICE, rentalPrice);
@@ -1581,7 +1587,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     public String getOwnerName() {
-        return ownerName == null || ownerName.isBlank() ? "-" : ownerName;
+        // 客户端读同步字段(spawn 包不带 NBT,本地 ownerName 恒空);服务端读本地权威字段。
+        String name = level().isClientSide ? entityData.get(DATA_OWNER_NAME) : ownerName;
+        return name == null || name.isBlank() ? "-" : name;
     }
 
     public String getOwnerUuid() {
@@ -1622,6 +1630,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         ownerUuid = player.getUUID().toString();
         ownerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+        entityData.set(DATA_OWNER_NAME, ownerName); // 同步给客户端(否则新放的船 UI 显示「船主:-」)
     }
 
     private static int clampRentalPrice(int value) {

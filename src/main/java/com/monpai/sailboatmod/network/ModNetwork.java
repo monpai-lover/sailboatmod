@@ -113,7 +113,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "8";
+    private static final String PROTOCOL_VERSION = "10"; // 9→10:RoadPlannerAutoCompleteRequestPacket 加 useRealChunk 寻路精度字节;版本不匹配握手即拒(防新旧 jar 混用运行时崩)
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(SailboatMod.MODID, "main"),
             () -> PROTOCOL_VERSION,

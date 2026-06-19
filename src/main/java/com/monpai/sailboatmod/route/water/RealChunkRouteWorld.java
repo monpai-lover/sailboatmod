@@ -38,8 +38,9 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
     private static final Logger LOGGER = LogUtils.getLogger();
 
     public static final int DEFAULT_RADIUS = 96;        // 港口附近快照半径(格)
-    public static final int OFFSHORE_THRESHOLD = 48;    // 离岸 ≥ 此格 = 进入大洋(近海偏好归零)
-    private static final double COASTAL_WEIGHT = 0.08;   // 近海偏好斜率(轻:只轻微倾向近海,不贴死岸)
+    public static final int OFFSHORE_THRESHOLD = 48;    // 离岸 ≥ 此格 = 进入大洋(出口判定用)
+    private static final int COAST_MIN = 3;             // 期望离岸格数:< 此值算贴岸,加代价逼船离岸走
+    private static final double COAST_HUG_WEIGHT = 12.0D; // 贴岸惩罚斜率(每贴近 1 格加这么多代价,逼离岸不切岛角)
     private static final int BERTH_TRUST_RADIUS = 3;     // 泊位信任邻域半径(格):此范围内无条件可航
 
     private final int originX;
@@ -210,8 +211,10 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
         if (!isWater[dx][dz]) {
             return WaterColumn.blocked();
         }
-        // 近海偏好(轻):离岸越远略贵、≥阈值归零。权重小,只轻微倾向近海,不贴死岸、不为近海绕进浅水/河口。
-        double extra = Math.max(0.0D, OFFSHORE_THRESHOLD - offshoreDist[dx][dz]) * COASTAL_WEIGHT;
+        // 离岸偏好(反转旧「近海偏好」):贴岸高代价、离岸便宜,逼船离岸 ≥1 格走,不贴岸切岛角。
+        // offshoreDist 离岸格数:<COAST_MIN(贴岸) → 高代价(越贴越贵);≥COAST_MIN → 零代价(开阔水)。
+        int off = offshoreDist[dx][dz];
+        double extra = off >= COAST_MIN ? 0.0D : (COAST_MIN - off) * COAST_HUG_WEIGHT;
         return WaterColumn.passable(new BlockPos(x, seaLevel, z), extra);
     }
 

@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.dock.AvailableDockEntry;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
+import com.monpai.sailboatmod.route.water.WaterMidMode;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -26,6 +27,9 @@ public class AutoRouteDockSelectionScreen extends Screen {
     private int scroll = 0;
     private int selectedIndex = -1;
     private Component statusLine = Component.empty();
+    // 中段寻路模式(仅水路 PORT 显示三选项卡;驿站陆路不需要)。默认 HYBRID。
+    private WaterMidMode selectedMode = WaterMidMode.HYBRID;
+    private final java.util.List<Button> modeButtons = new java.util.ArrayList<>();
 
     public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
         super(Component.translatable(baseKey(terminalKind) + ".title"));
@@ -39,12 +43,47 @@ public class AutoRouteDockSelectionScreen extends Screen {
         int left = (this.width - SCREEN_W) / 2;
         int top = (this.height - SCREEN_H) / 2;
 
+        // 中段寻路模式三选项卡(仅水路 PORT 显示)。放列表下方、创建按钮上方。
+        modeButtons.clear();
+        if (terminalKind == TransportTerminalKind.PORT) {
+            WaterMidMode[] modes = {WaterMidMode.NOISE, WaterMidMode.NBT, WaterMidMode.HYBRID};
+            int btnW = 92, gap = 4, modeY = top + SCREEN_H - 52;
+            for (int i = 0; i < modes.length; i++) {
+                WaterMidMode mode = modes[i];
+                Button mb = this.addRenderableWidget(Button.builder(modeLabel(mode), b -> {
+                    selectedMode = mode;
+                    refreshModeButtons();
+                }).bounds(left + 12 + i * (btnW + gap), modeY, btnW, 16).build());
+                modeButtons.add(mb);
+            }
+            refreshModeButtons();
+        }
+
         this.createButton = this.addRenderableWidget(Button.builder(autoRouteText("create"), b -> createRoute())
             .bounds(left + 12, top + SCREEN_H - 30, 120, 18).build());
         this.createButton.active = !this.docks.isEmpty();
 
         this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.route_name.cancel"), b -> onClose())
             .bounds(left + SCREEN_W - 72, top + SCREEN_H - 30, 60, 18).build());
+    }
+
+    /** 选中的模式按钮高亮(置灰=当前选中,不可点)。 */
+    private void refreshModeButtons() {
+        WaterMidMode[] modes = {WaterMidMode.NOISE, WaterMidMode.NBT, WaterMidMode.HYBRID};
+        for (int i = 0; i < modeButtons.size() && i < modes.length; i++) {
+            modeButtons.get(i).active = (modes[i] != selectedMode);
+        }
+    }
+
+    private Component modeLabel(WaterMidMode mode) {
+        switch (mode) {
+            case NOISE:
+                return Component.literal("噪声·快");
+            case NBT:
+                return Component.literal("真实·准");
+            default:
+                return Component.literal("混合·荐");
+        }
     }
 
     @Override
@@ -80,10 +119,15 @@ public class AutoRouteDockSelectionScreen extends Screen {
             }
         }
         if (!this.statusLine.getString().isBlank()) {
-            g.drawString(this.font, this.statusLine, left + 12, top + SCREEN_H - 54, 0xFFF1D98A);
+            g.drawString(this.font, this.statusLine, left + 12, top + SCREEN_H - 66, 0xFFF1D98A);
         } else {
             g.drawString(this.font, autoRouteText("hint"),
-                    left + 12, top + SCREEN_H - 54, 0xFF8D98A3);
+                    left + 12, top + SCREEN_H - 66, 0xFF8D98A3);
+        }
+        // 水路:显示当前选中模式的说明。
+        if (terminalKind == TransportTerminalKind.PORT) {
+            g.drawString(this.font, Component.literal("中段模式:" + selectedMode.label()),
+                    left + 12, top + SCREEN_H - 78, 0xFF6FB7E0);
         }
 
         super.render(g, mouseX, mouseY, partialTick);
@@ -114,7 +158,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
 
     private void createRoute() {
         if (selectedIndex >= 0 && selectedIndex < docks.size()) {
-            ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos, docks.get(selectedIndex).pos()));
+            ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos, docks.get(selectedIndex).pos(), selectedMode));
             onClose();
             return;
         }

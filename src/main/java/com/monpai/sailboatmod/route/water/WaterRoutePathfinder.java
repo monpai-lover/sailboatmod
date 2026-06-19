@@ -34,11 +34,15 @@ public final class WaterRoutePathfinder {
 
     private int lastLoggedAt = 0; // 上次打进度时的 expandedNodes
 
+    /** 合法 step 边最长是对角 step·√2;×1.2 余量容首尾 snap 微偏。超此即拼接出现空隙=假相遇。 */
+    private static final double LEGAL_HOP_FACTOR = 1.4142135623730951D * 1.2D;
+
     private final WaterRouteWorld world;
     private final BlockPos start;
     private final BlockPos goal;
     private final WaterRoutePolicy policy;
     private final int step;
+    private final double MAX_LEGAL_HOP;
 
     private final Search forward;
     private final Search backward;
@@ -54,6 +58,7 @@ public final class WaterRoutePathfinder {
         this.goal = goal;
         this.policy = policy == null ? WaterRoutePolicy.defaults() : policy;
         this.step = Math.max(1, this.policy.stepSize());
+        this.MAX_LEGAL_HOP = this.step * LEGAL_HOP_FACTOR;
         this.forward = new Search();
         this.backward = new Search();
         seed();
@@ -148,13 +153,20 @@ public final class WaterRoutePathfinder {
         }
         expandedNodes++;
 
-        // 相遇检测:对侧已生成过该格(在 best 里,无论 open/closed)→ 拼接。
-        // 不再要求对侧 closed:若某侧因 f 较大长期不被扩展(其前沿节点一直留在 open),
-        // 要求 closed 会导致已网格对齐、明明能碰上的两条链永远拼不起来 → 又超时。
-        Node otherNode = other.best.get(curKey);
-        if (otherNode != null) {
-            meet(isForward, current, otherNode);
-            return true;
+        // 相遇检测:<b>必须对侧已 closed(确定最优到达)该格</b>才拼接,不能只看 best 里生成过。
+        // 根因([[water_route_real_root_autopilot]] 的真正下游 bug):best 里有「仅 open 待扩展」的陈旧节点,
+        // 其 parent 是 PriorityQueue 懒删除/覆盖遗留的 stale 链——后向早期把远处格临时挂在「goal 一跳可达」的
+        // 松估算子树上(parent 指 goal 邻域)。前向撞上这种节点误判相遇,meet 回溯一跳从相遇点跳回 goal 邻域
+        // (实测 1664 格),拼出带空隙的假成功路径 → 空隙经 PathSmoother 加密成直线穿陆。
+        // closed 节点在扩展那刻 parent 已定型、链合法连续到源点 → 只认 closed 从根上消除 stale 跳格。
+        // 网格已 snap 对齐(seed),双向必能在同一水格 closed-closed 真实碰头;凑不齐则正常失败交上层放宽走廊。
+        if (other.closed.contains(curKey)) {
+            Node otherNode = other.best.get(curKey);
+            if (otherNode != null && meet(isForward, current, otherNode)) {
+                return true; // 合法相遇(拼接后连续性校验通过)
+            }
+            // 假相遇被拒(拼接出现异常大跳)→ 不 return,把 current 当普通节点继续扩展邻居,让 A* 继续搜索。
+            // current 已 closed(确实处理过),邻居照常入 open,直到出现真正逐格连续的合法相遇才收敛。
         }
 
         int[] dx = {0, step, 0, -step, step, step, -step, -step};
@@ -193,24 +205,47 @@ public final class WaterRoutePathfinder {
         return false;
     }
 
-    /** 前向链(start→meet) + 后向链(meet→goal)拼接成完整路径。 */
-    private void meet(boolean currentIsForward, Node currentSide, Node otherSide) {
+    /**
+     * 前向链(start→meet) + 后向链(meet→goal)拼接成完整路径。
+     * <b>拼接前做逐格连续性校验</b>:纯网格链(补首尾泊位前)任一相邻航点间距 &gt; {@link #MAX_LEGAL_HOP} 即
+     * 判<b>假相遇</b>(两条链没真正在同一水格逐格接上,中间是 stale parent 跳格留的空隙)→ 不拼、返回 false,
+     * 由 {@link #expandStep} 继续搜索。校验通过才落 SUCCESS。
+     * @return true=合法相遇已拼接;false=假相遇被拒(继续搜索)。
+     */
+    private boolean meet(boolean currentIsForward, Node currentSide, Node otherSide) {
         Node fwdMeet = currentIsForward ? currentSide : otherSide;
         Node bwdMeet = currentIsForward ? otherSide : currentSide;
 
-        List<BlockPos> forwardChain = new ArrayList<>();
+        // 纯网格链(不含首尾泊位回贴):前向 start→meet + 后向 meet.parent→goal。
+        List<BlockPos> gridChain = new ArrayList<>();
         for (Node n = fwdMeet; n != null; n = n.parent) {
-            forwardChain.add(n.pos);
+            gridChain.add(n.pos);
         }
-        Collections.reverse(forwardChain); // start → meet
+        Collections.reverse(gridChain); // start → meet
+        for (Node n = bwdMeet.parent; n != null; n = n.parent) {
+            gridChain.add(n.pos); // meet → goal
+        }
+
+        // 逐格连续性校验:相邻航点最大间距。合法 step 边最长是对角 step·√2;给 1.2 余量容首尾 snap 微偏。
+        double maxHop = 0.0D;
+        BlockPos worstA = null, worstB = null;
+        for (int i = 1; i < gridChain.size(); i++) {
+            double hop = Math.sqrt(gridChain.get(i - 1).distSqr(gridChain.get(i)));
+            if (hop > maxHop) {
+                maxHop = hop;
+                worstA = gridChain.get(i - 1);
+                worstB = gridChain.get(i);
+            }
+        }
+        if (maxHop > MAX_LEGAL_HOP) {
+            // 假相遇:相遇点两侧链没真正逐格接上(stale parent 跳格)。拒绝拼接,继续搜索。
+            LOGGER.warn("[WaterPath] 假相遇已拒绝 meet={} 最大跳={}格({}→{}) 对侧closed=true 继续搜索",
+                    currentSide.pos, (int) maxHop, worstA, worstB);
+            return false;
+        }
 
         path.clear();
-        path.addAll(forwardChain);
-        // 后向链:从相遇点的 parent 开始(避免重复相遇点),meet → goal
-        for (Node n = bwdMeet.parent; n != null; n = n.parent) {
-            path.add(n.pos);
-        }
-
+        path.addAll(gridChain);
         // 首尾补回真实泊位坐标(搜索走 snap 网格,首尾可能偏真实泊位几格;补上让船精确停靠)。
         // Y 沿用路径首/尾航点(海平面),start/goal 的 Y 即泊位 Y,二者一致。
         int surfaceY = path.isEmpty() ? start.getY() : path.get(0).getY();
@@ -226,7 +261,8 @@ public final class WaterRoutePathfinder {
         path.clear();
         path.addAll(simplified);
         status = Status.SUCCESS;
-        LOGGER.info("[WaterPath] 成功 扩展{}节点 航点{}个", expandedNodes, path.size());
+        LOGGER.info("[WaterPath] 成功 扩展{}节点 航点{}个 相遇点={} 最大跳={}格", expandedNodes, path.size(), currentSide.pos, (int) maxHop);
+        return true;
     }
 
     /**

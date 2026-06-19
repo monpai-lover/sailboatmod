@@ -3,7 +3,20 @@ package com.monpai.sailboatmod.market.web.map;
 import java.util.List;
 
 public final class MarketWebMapDtos {
-    public record Point(double x, double z) {
+    /**
+     * 地图坐标点。debug 字段(block/water/origin/segment)仅 /marketweb debugroute 投放的调试航点携带,
+     * 普通航点用 2 参构造器,debug 字段保持「无数据」哨兵(origin=segment=-1、block=null、water=null),
+     * 序列化时不输出。这样所有现存 new Point(x, z) 调用点零改动。
+     */
+    public record Point(double x, double z, String block, Boolean water, byte origin, byte segment) {
+        public Point(double x, double z) {
+            this(x, z, null, null, (byte) -1, (byte) -1);
+        }
+
+        /** 是否携带 debug 节点信息(origin/segment 有效)。 */
+        public boolean hasDebug() {
+            return origin >= 0;
+        }
     }
 
     public record Snapshot(String dimensionId,

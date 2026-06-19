@@ -413,10 +413,19 @@
   }
 
   function normalizePoint(point) {
-    return {
+    const out = {
       x: Number(point?.x) || 0,
       z: Number(point?.z) || 0
     };
+    // debugroute 调试航点携带的真实方块快照 + 出身标记(origin/segment >=0 才有效),透传供节点层渲染 + tooltip。
+    if (point && typeof point.origin === "number" && point.origin >= 0) {
+      out.origin = point.origin;     // 0=寻路原始节点 1=样条插值点
+      out.segment = typeof point.segment === "number" ? point.segment : -1; // 0=起始 1=中段 2=尾段
+      out.block = typeof point.block === "string" ? point.block : "";
+      out.water = point.water === true;
+      out.hasWater = typeof point.water === "boolean";
+    }
+    return out;
   }
 
   function worldToScreen(point) {
@@ -1002,7 +1011,39 @@
       const pendColor = isStuck ? "#dc2626" : (isManual ? "#b45309" : "#2563eb");
       drawRoute(ctx, points.slice(0, completed + 1), false, doneColor, 4);
       drawRoute(ctx, points.slice(completed), true, pendColor, isStuck ? 5 : 3);
+      // debugroute 调试航线:在金线上叠加航点节点层(原始=大圆/插值=小圆,水=蓝描边/陆=红描边)。
+      drawRouteNodes(ctx, points);
       drawShipmentVehicleIcon(ctx, shipment, points, completed, isStuck);
+    }
+  }
+
+  // 调试航点节点层:仅 debugroute 投放、Point 带 origin 标记的航点才画圆点。
+  // 大圆(r6)=寻路原始节点,小圆(r3)=样条插值点;蓝描边=海平面是水,红描边=陆(穿陆嫌疑)。
+  function drawRouteNodes(ctx, points) {
+    if (!points || !points.length) {
+      return;
+    }
+    for (const point of points) {
+      if (typeof point.origin !== "number" || point.origin < 0) {
+        continue; // 普通航点无 debug 数据,不画节点
+      }
+      const screen = worldToScreen(point);
+      if (screen.x < -16 || screen.y < -16 || screen.x > state.canvas.width + 16 || screen.y > state.canvas.height + 16) {
+        continue;
+      }
+      const raw = point.origin === 0;
+      const radius = raw ? 6 : 3;
+      const onLand = point.hasWater && !point.water;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = raw ? "rgba(250, 204, 21, 0.95)" : "rgba(125, 211, 252, 0.95)";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      // 陆地点红描边醒目(穿陆嫌疑),水格蓝描边。
+      ctx.strokeStyle = onLand ? "#dc2626" : "#1d4ed8";
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -1303,6 +1344,28 @@
     return best;
   }
 
+  // 命中最近的调试航点节点(屏幕坐标系内,像素距离)。返回富化后的节点对象(含 block/water/origin/segment),
+  // 供 tooltip 显示;无 debug 节点的航线返回 null。
+  function nearestRouteNode(screenX, screenY, maxScreenDistance) {
+    let best = null;
+    let bestDistance = maxScreenDistance;
+    for (const shipment of state.shipments || []) {
+      for (const raw of shipment.points || []) {
+        if (!raw || typeof raw.origin !== "number" || raw.origin < 0) {
+          continue;
+        }
+        const node = normalizePoint(raw);
+        const screen = worldToScreen(node);
+        const distance = Math.hypot(screen.x - screenX, screen.y - screenY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = node;
+        }
+      }
+    }
+    return best;
+  }
+
   function distanceToSegment(point, a, b) {
     const dx = b.x - a.x;
     const dz = b.z - a.z;
@@ -1330,6 +1393,11 @@
       }
     }
     if (state.layers.shipments) {
+      // 优先命中调试航点节点(圆点),tooltip 显示该点真实方块/水陆/段/来源;命中半径取节点大圆 + 余量。
+      const node = nearestRouteNode(x, y, 8);
+      if (node) {
+        return { type: "routeNode", data: node, screen: { x, y } };
+      }
       const shipment = nearestShipment(world, 9);
       if (shipment) {
         return { type: "shipment", data: shipment, screen: { x, y } };
@@ -1400,6 +1468,20 @@
         </div>
         <strong>${escapeHtml(territory.nationName || "-")}</strong>
         <span>${escapeHtml(label("town"))}: ${escapeHtml(territory.townName || "-")}</span>
+      `;
+    } else if (item.type === "routeNode") {
+      // 调试航点 tooltip:坐标 / 真实方块 / 水陆 / 段 / 来源,用于分清陆地上的点是寻路寻到陆还是样条过冲。
+      const node = item.data;
+      const segName = node.segment === 0 ? "起始段" : node.segment === 1 ? "中段" : node.segment === 2 ? "尾段" : "-";
+      const originName = node.origin === 0 ? "原始节点(寻路)" : node.origin === 1 ? "插值点(样条)" : "-";
+      const waterName = node.hasWater ? (node.water ? "水" : "陆") : "-";
+      html = `
+        <strong>调试航点</strong>
+        <span>X/Z ${Math.round(node.x)}, ${Math.round(node.z)}</span>
+        <span>方块: ${escapeHtml(node.block || "-")}</span>
+        <span>水陆: ${escapeHtml(waterName)}</span>
+        <span>段: ${escapeHtml(segName)}</span>
+        <span>来源: ${escapeHtml(originName)}</span>
       `;
     } else {
       const shipment = item.data;

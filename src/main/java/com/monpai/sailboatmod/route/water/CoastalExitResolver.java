@@ -43,7 +43,12 @@ public final class CoastalExitResolver {
         int[] dir = openWaterDirection(world, berth, 16);
         int gx = berth.getX() + dir[0] * (radius - 8);
         int gz = berth.getZ() + dir[1] * (radius - 8);
-        return nearestNavigable(world, gx, gz, berth.getY());
+        BlockPos goal = nearestNavigable(world, gx, gz, berth.getY());
+        // 诊断:最开阔方向 + 外推目标点离岸距离(看 goal 是不是被引向贴岸/陆地方向)。
+        org.slf4j.LoggerFactory.getLogger("WaterPath").info(
+                "[WaterPath] 诊断 oceanGoal:berth={} 最开阔方向=({},{}) 外推点=({},{}) →goal={} goal离岸={}格 有开阔海biome={}",
+                berth, dir[0], dir[1], gx, gz, goal, world.offshoreDistAt(goal.getX(), goal.getZ()), world.hasOpenOcean());
+        return goal;
     }
 
     /** 从 (cx,cz) 螺旋向外找最近可航格(快照内)。 */

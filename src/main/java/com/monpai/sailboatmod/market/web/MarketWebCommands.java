@@ -349,6 +349,8 @@ public final class MarketWebCommands {
                     0.0D, 0.0D, 0.0D,
                     List.of(),
                     true));            // manual=true → webmap 画成金色调试折线
+            // 主线程逐航点采真实方块(按 chunk 去重 force 加载)+ 出身标记,写入旁路缓存供 webmap tooltip。
+            sampleAndCacheDebugNodes(level, traceId, route);
             painted++;
         }
         if (filter != null && matched == 0) {
@@ -372,8 +374,101 @@ public final class MarketWebCommands {
                 .filter(id -> id != null && id.startsWith(DEBUG_TRACE_PREFIX))
                 .toList();
         ids.forEach(data::removeTrace);
+        ids.forEach(DebugRouteNodeCache::remove);
         source.sendSuccess(() -> Component.literal("已清除 " + ids.size() + " 条调试航线。"), false);
         return ids.size();
+    }
+
+    /**
+     * 主线程逐航点采真实方块,合成调试节点写入 {@link DebugRouteNodeCache}。
+     *
+     * <p>采样口径与船的可航判定一致:海平面那格 {@code getFluidState} 是否水(抄
+     * {@link com.monpai.sailboatmod.route.water.RealBlockWaterMap#diagnosePathLandCrossings});
+     * 表面方块 id 取 MOTION_BLOCKING_NO_LEAVES 高度处的方块。出身标记取
+     * {@code route.waypointMetas()}(只水路自动航线有,缺位→默认段/原始,debug 降级)。
+     *
+     * <p>性能:按 chunk 分组,每个区块只 {@code forceChunk} 一次,读完该区块内所有落点再释放,
+     * 避免对同一区块反复 force/卸载(平滑后航点可达 ~256 个,但落点集中在沿途少数区块)。
+     */
+    private static void sampleAndCacheDebugNodes(ServerLevel level, String traceId, RouteDefinition route) {
+        List<net.minecraft.world.phys.Vec3> waypoints = route.waypoints();
+        if (waypoints == null || waypoints.isEmpty()) {
+            DebugRouteNodeCache.put(traceId, List.of());
+            return;
+        }
+        List<com.monpai.sailboatmod.route.WaypointMeta> metas = route.waypointMetas();
+        int seaLevel = level.getSeaLevel();
+        int n = waypoints.size();
+        // 预置数组,按 chunk 分组填充(保持与 waypoints 的 index 对齐)。
+        DebugRouteNodeCache.Node[] nodes = new DebugRouteNodeCache.Node[n];
+        // chunkKey -> 该 chunk 内航点的 index 列表。
+        java.util.Map<Long, java.util.List<Integer>> byChunk = new java.util.LinkedHashMap<>();
+        for (int idx = 0; idx < n; idx++) {
+            net.minecraft.world.phys.Vec3 wp = waypoints.get(idx);
+            int cx = ((int) Math.floor(wp.x)) >> 4;
+            int cz = ((int) Math.floor(wp.z)) >> 4;
+            byChunk.computeIfAbsent((((long) cx) << 32) ^ (cz & 0xffffffffL), k -> new java.util.ArrayList<>()).add(idx);
+        }
+        for (java.util.Map.Entry<Long, java.util.List<Integer>> e : byChunk.entrySet()) {
+            long ck = e.getKey();
+            int cx = (int) (ck >> 32);
+            int cz = (int) ck;
+            BlockPos owner = new BlockPos(cx << 4, seaLevel, cz << 4);
+            net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+                    level, com.monpai.sailboatmod.SailboatMod.MODID, owner, cx, cz, true, false);
+            try {
+                level.getChunk(cx, cz, net.minecraft.world.level.chunk.ChunkStatus.FULL, true);
+                for (int idx : e.getValue()) {
+                    net.minecraft.world.phys.Vec3 wp = waypoints.get(idx);
+                    int x = (int) Math.floor(wp.x);
+                    int z = (int) Math.floor(wp.z);
+                    boolean water = level.getFluidState(new BlockPos(x, seaLevel, z))
+                            .is(net.minecraft.tags.FluidTags.WATER);
+                    int surfY = level.getHeight(
+                            net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                    net.minecraft.world.level.block.state.BlockState st =
+                            level.getBlockState(new BlockPos(x, surfY, z));
+                    String blockId = net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                            .getKey(st.getBlock()).toString();
+                    byte segment = metaSegmentAt(metas, idx);
+                    byte origin = metaOriginAt(metas, idx);
+                    nodes[idx] = new DebugRouteNodeCache.Node(wp.x, wp.z, blockId, water, origin, segment);
+                }
+            } catch (Throwable t) {
+                // 单区块采样失败不影响整条:该 chunk 内的点留 null,下方补降级节点。
+            } finally {
+                net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+                        level, com.monpai.sailboatmod.SailboatMod.MODID, owner, cx, cz, false, false);
+            }
+        }
+        // 补齐采样失败的点(无方块信息,但仍带坐标+出身标记,前端按缺方块降级)。
+        java.util.List<DebugRouteNodeCache.Node> out = new java.util.ArrayList<>(n);
+        for (int idx = 0; idx < n; idx++) {
+            if (nodes[idx] != null) {
+                out.add(nodes[idx]);
+            } else {
+                net.minecraft.world.phys.Vec3 wp = waypoints.get(idx);
+                out.add(new DebugRouteNodeCache.Node(wp.x, wp.z, "",
+                        false, metaOriginAt(metas, idx), metaSegmentAt(metas, idx)));
+            }
+        }
+        DebugRouteNodeCache.put(traceId, out);
+    }
+
+    /** 容错取 metas 段标记:缺位/越界 → 默认起始段(0)。 */
+    private static byte metaSegmentAt(List<com.monpai.sailboatmod.route.WaypointMeta> metas, int idx) {
+        if (metas == null || idx < 0 || idx >= metas.size() || metas.get(idx) == null) {
+            return com.monpai.sailboatmod.route.WaypointMeta.SEGMENT_START;
+        }
+        return metas.get(idx).segment();
+    }
+
+    /** 容错取 metas 来源标记:缺位/越界 → 默认原始节点(0)。 */
+    private static byte metaOriginAt(List<com.monpai.sailboatmod.route.WaypointMeta> metas, int idx) {
+        if (metas == null || idx < 0 || idx >= metas.size() || metas.get(idx) == null) {
+            return com.monpai.sailboatmod.route.WaypointMeta.ORIGIN_RAW;
+        }
+        return metas.get(idx).origin();
     }
 
     private static int showVersion(CommandSourceStack source) {

@@ -25,6 +25,17 @@ public final class MarketWebMapJson {
         JsonObject json = new JsonObject();
         json.addProperty("x", point == null ? 0.0D : point.x());
         json.addProperty("z", point == null ? 0.0D : point.z());
+        // debugroute 调试航点附加真实方块快照 + 出身标记;普通航点无 debug 数据,不输出这些字段。
+        if (point != null && point.hasDebug()) {
+            json.addProperty("origin", point.origin());
+            json.addProperty("segment", point.segment());
+            if (point.block() != null) {
+                json.addProperty("block", point.block());
+            }
+            if (point.water() != null) {
+                json.addProperty("water", point.water());
+            }
+        }
         return json;
     }
 

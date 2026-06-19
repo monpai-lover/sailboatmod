@@ -18,7 +18,8 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
                                                    BlockPos start,
                                                    BlockPos destination,
                                                    List<BlockPos> manualNodes,
-                                                   int spacingBlocks) {
+                                                   int spacingBlocks,
+                                                   boolean useRealChunk) {
     public RoadPlannerAutoCompleteRequestPacket {
         sessionId = sessionId == null ? new UUID(0L, 0L) : sessionId;
         start = start == null ? BlockPos.ZERO : start.immutable();
@@ -33,6 +34,7 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
         buffer.writeBlockPos(packet.destination());
         RoadPlannerPacketCodec.writeBlockPosList(buffer, packet.manualNodes());
         buffer.writeVarInt(packet.spacingBlocks());
+        buffer.writeBoolean(packet.useRealChunk()); // 9→10:寻路精度(true=真实区块HIGH / false=噪声NORMAL)
     }
 
     public static RoadPlannerAutoCompleteRequestPacket decode(FriendlyByteBuf buffer) {
@@ -41,7 +43,8 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
                 buffer.readBlockPos(),
                 buffer.readBlockPos(),
                 RoadPlannerPacketCodec.readBlockPosList(buffer),
-                buffer.readVarInt()
+                buffer.readVarInt(),
+                buffer.readBoolean()
         );
     }
 
@@ -52,7 +55,7 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
             if (player == null) {
                 return;
             }
-            RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel());
+            RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel(), packet.useRealChunk());
             if (service == null) {
                 service = new RoadPlannerAutoCompleteService();
             }

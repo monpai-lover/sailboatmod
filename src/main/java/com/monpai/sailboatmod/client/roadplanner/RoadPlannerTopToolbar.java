@@ -12,6 +12,7 @@ public record RoadPlannerTopToolbar(List<Item> items, RoadPlannerMapLayout.Rect 
     public static final String ACTION_UNDO = "\u64a4\u9500";
     public static final String ACTION_CLEAR = "\u6e05\u9664";
     public static final String ACTION_AUTO_COMPLETE = "\u81ea\u52a8\u8865\u5168";
+    public static final String ACTION_PATHFIND_MODE = "\u5bfb\u8def\u7cbe\u5ea6"; // \u566a\u58f0(\u5feb)/\u771f\u5b9e\u533a\u5757(\u51c6) \u5207\u6362;label \u540e\u4f1a\u62fc\u5f53\u524d\u6a21\u5f0f
     public static final String ACTION_MERGE_SCOPE = "\u5438\u9644\u8303\u56f4";
     public static final String ACTION_CONFIRM_MERGE = "\u786e\u8ba4\u5e76\u5165";
     public static final String ACTION_NEXT_MERGE = ACTION_CONFIRM_MERGE;
@@ -55,6 +56,7 @@ public record RoadPlannerTopToolbar(List<Item> items, RoadPlannerMapLayout.Rect 
             addTool(items, "\u5e76\u5165", RoadToolType.MERGE, startX, row += 24);
         } else if (group == Group.ROUTE) {
             addAction(items, ACTION_AUTO_COMPLETE, startX, row);
+            addAction(items, ACTION_PATHFIND_MODE, startX, row += 24);
             addAction(items, ACTION_MERGE_SCOPE, startX, row += 24);
             addAction(items, ACTION_NEXT_MERGE, startX, row += 24);
             addAction(items, ACTION_CONFIRM_BUILD, startX, row += 24);
@@ -76,7 +78,7 @@ public record RoadPlannerTopToolbar(List<Item> items, RoadPlannerMapLayout.Rect 
         return switch (group) {
             case TOOLS -> 9 * 24 + 2;
             case EDIT -> 3 * 24 + 2;
-            case ROUTE -> 5 * 24 + 2;
+            case ROUTE -> 6 * 24 + 2;
             case NONE -> 0;
         };
     }

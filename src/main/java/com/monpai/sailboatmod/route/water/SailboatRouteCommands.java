@@ -32,18 +32,18 @@ public final class SailboatRouteCommands {
         WaterMidMode m = WaterMidMode.current();
         source.sendSuccess(() -> Component.literal("当前中段地形源:" + m.name().toLowerCase(java.util.Locale.ROOT)
                 + " —— " + m.label()), false);
-        source.sendSuccess(() -> Component.literal("切换:/sailboat watermid noise | realchunk"), false);
+        source.sendSuccess(() -> Component.literal("切换默认:/sailboat watermid noise | nbt | hybrid(创建航线 UI 也可单独选)"), false);
         return 1;
     }
 
     private static int setMode(CommandSourceStack source, String arg) {
         WaterMidMode mode = WaterMidMode.parse(arg);
         if (mode == null) {
-            source.sendFailure(Component.literal("无效模式「" + arg + "」。可选:noise | realchunk"));
+            source.sendFailure(Component.literal("无效模式「" + arg + "」。可选:noise | nbt | hybrid"));
             return 0;
         }
         WaterMidMode.set(mode);
-        source.sendSuccess(() -> Component.literal("中段地形源已切到:" + mode.name().toLowerCase(java.util.Locale.ROOT)
+        source.sendSuccess(() -> Component.literal("中段默认模式已切到:" + mode.name().toLowerCase(java.util.Locale.ROOT)
                 + " —— " + mode.label() + "(下次创建航线生效)"), true);
         return 1;
     }

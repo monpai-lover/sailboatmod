@@ -124,9 +124,21 @@ public final class ShippingTraceService {
                                                        NationSavedData nationData,
                                                        MarketSavedData marketData,
                                                        net.minecraft.world.level.Level level) {
+        // 调试航线(debugroute)带逐航点真实方块快照:按 trace id 取旁路缓存,index 对齐富化 Point。
+        // 非 debug trace / 老航线 → debugNodes==null → 走普通 2 参 Point,不富化。
+        List<com.monpai.sailboatmod.market.web.DebugRouteNodeCache.Node> debugNodes =
+                com.monpai.sailboatmod.market.web.DebugRouteNodeCache.get(trace.shippingOrderId());
         List<MarketWebMapDtos.Point> points = new ArrayList<>();
-        for (Vec3 waypoint : trace.waypoints()) {
-            points.add(new MarketWebMapDtos.Point(waypoint.x, waypoint.z));
+        List<Vec3> tracePoints = trace.waypoints();
+        for (int pi = 0; pi < tracePoints.size(); pi++) {
+            Vec3 waypoint = tracePoints.get(pi);
+            if (debugNodes != null && pi < debugNodes.size()) {
+                com.monpai.sailboatmod.market.web.DebugRouteNodeCache.Node node = debugNodes.get(pi);
+                points.add(new MarketWebMapDtos.Point(
+                        waypoint.x, waypoint.z, node.blockId(), node.water(), node.origin(), node.segment()));
+            } else {
+                points.add(new MarketWebMapDtos.Point(waypoint.x, waypoint.z));
+            }
         }
 
         // 订单轨迹可解析出真实的 town→town 命名、ETA、货物清单；手动轨迹无订单时全部回退。

@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.route.PathSmoother;
 import com.monpai.sailboatmod.route.RouteDefinition;
+import com.monpai.sailboatmod.route.WaypointMeta;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -96,6 +97,14 @@ public final class WaterAutoRouteService {
                                                          DockBlockEntity source,
                                                          DockBlockEntity target,
                                                          @Nullable ServerPlayer player) {
+        return submitAutoRoute(level, source, target, player, WaterMidMode.current());
+    }
+
+    public static WaterRouteResult<Void> submitAutoRoute(ServerLevel level,
+                                                         DockBlockEntity source,
+                                                         DockBlockEntity target,
+                                                         @Nullable ServerPlayer player,
+                                                         WaterMidMode midMode) {
         if (level == null) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
@@ -133,16 +142,37 @@ public final class WaterAutoRouteService {
         WaterRouteProgressBar bar = new WaterRouteProgressBar(level.getServer(), player, srcLabel, dstLabel);
         bar.show();
 
+        // metas 旁路:后台 Supplier 计算平滑点的同时算出每点 segment/origin,经此 AtomicReference 传到主线程
+        // applyCompletedRoute(同一次请求内,后台写主线程读,用 Atomic 保可见性)。最终仍塞进 RouteDefinition 持久化
+        // ——不是绕过正式结构的缓存,只是把 metas 从后台搬到主线程的通道(task 链路泛型保持 List<BlockPos> 不变)。
+        java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>> metasOut = new java.util.concurrent.atomic.AtomicReference<>(List.of());
         WaterRouteTask.CompletionHandler onComplete = result -> {
             if (result != null && result.successful()) {
                 bar.done();
             } else {
                 bar.fail("无水路");
             }
-            applyCompletedRoute(level, source, target, sourceSnapshot, targetSnapshot, sourceTownName, targetTownName, result, player);
+            applyCompletedRoute(level, source, target, sourceSnapshot, targetSnapshot, sourceTownName, targetTownName, result, metasOut.get(), player);
         };
 
-        // ---- 三段式贴岸:主线程预读两端港口真实区块快照,后台串行跑三段(起始贴岸→中段长距离→尾段贴岸)。----
+        // ---- NBT 单段双向 A*(默认,WorldPainter/已存盘地图):源泊位直接搜到目标泊位,全程真实方块判定 ----
+        // A* 节点扩展时用 3×3 船宽校验(占地内无陆才可航)→ 从源头根除搁浅;区块按需 NBT 后台读 + 滑动窗口卸载
+        // (前沿过的区块淘汰,常驻有界)。不再拆三段、不噪声粗寻、不样条过冲。NOISE/HYBRID 仍走下方三段编排(原版/生成式地图)。
+        if (midMode == WaterMidMode.NBT) {
+            int seaY = level.getSeaLevel();
+            int boatHalfWidth = Math.max(1, policy.boatHalfWidth()); // 1 = 船 3×3
+            java.util.function.Supplier<WaterRouteResult<java.util.List<BlockPos>>> singleNbt =
+                    () -> runSingleSegmentNbt(level, sourceBerth, targetBerth, seaY, boatHalfWidth, policy, metasOut, bar);
+            WaterRouteTask nbtTask = new WaterRouteTask(
+                    level.dimension().location().toString(),
+                    source.getBlockPos(), target.getBlockPos(), sourceBerth, targetBerth,
+                    playerName(player), policy, singleNbt, onComplete);
+            return WaterRouteTaskService.global().submit(nbtTask).successful()
+                    ? WaterRouteResult.success(null)
+                    : WaterRouteResult.failure(WaterRouteFailureReason.ALREADY_PENDING);
+        }
+
+        // ---- 三段式贴岸(NOISE/HYBRID,原版/生成式地图):主线程预读两端港口真实区块快照,后台串行跑三段。----
         // 真实区块加载只在此主线程小范围临时(port 附近 ~7x7 区块,读完即释放);后台三段全用快照/噪声(线程安全)。
         WaterRouteTask task;
         try {
@@ -158,16 +188,20 @@ public final class WaterAutoRouteService {
             int seaY = level.getSeaLevel();
             java.util.function.Supplier<WaterRouteResult<java.util.List<BlockPos>>> threeSeg =
                     () -> {
-                        WaterRouteResult<java.util.List<BlockPos>> raw =
-                                ThreeSegmentPlanner.runSerial(startWorld, endWorld, midWorld, sourceBerth, targetBerth, radius, threshold,
-                                        (percent, stage) -> bar.update(percent, stage));
+                        WaterRouteResult<ThreeSegmentPlanner.PlannedPath> raw =
+                                ThreeSegmentPlanner.runSerialPlanned(startWorld, endWorld, midWorld, sourceBerth, targetBerth, radius, threshold,
+                                        midMode, (percent, stage) -> bar.update(percent, stage));
                         if (!raw.successful()) {
-                            return raw;
+                            return WaterRouteResult.failure(raw.reason());
                         }
-                        java.util.List<BlockPos> smoothed = PathSmoother.smooth2D(raw.value(), seaY, 2.0D);
+                        ThreeSegmentPlanner.PlannedPath planned = raw.value();
+                        // 平滑同时拿每点 origin(原始拐点/样条插值);segment 按平滑点到原折线最近投影 index vs jointA/jointB 判定。
+                        PathSmoother.SmoothWithOrigin sm = PathSmoother.smooth2DWithOrigin(planned.path(), seaY, 2.0D);
+                        java.util.List<BlockPos> smoothed = sm.points();
                         if (smoothed == null || smoothed.size() < 2) {
                             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
                         }
+                        metasOut.set(buildMetas(smoothed, sm.origins(), planned.path(), planned.jointA(), planned.jointB()));
                         return WaterRouteResult.success(smoothed);
                     };
             task = new WaterRouteTask(
@@ -209,6 +243,132 @@ public final class WaterAutoRouteService {
                 : WaterRouteResult.failure(WaterRouteFailureReason.ALREADY_PENDING);
     }
 
+    /**
+     * <b>NBT 单段双向 A*</b>(后台线程):源泊位→目标泊位一条 A*,全程真实方块判定 + 3×3 船宽校验,区块按需 NBT
+     * 后台读 + 滑动窗口卸载。出来的折线线性重采样成等距密集航点(去样条,不过冲)。失败 → NO_WATER_PATH。
+     */
+    private static WaterRouteResult<List<BlockPos>> runSingleSegmentNbt(
+            ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth, int seaY, int boatHalfWidth,
+            WaterRoutePolicy policy,
+            java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>> metasOut,
+            WaterRouteProgressBar bar) {
+        bar.update(5, "真实方块寻路");
+        RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand();
+        RealBlockWaterWorld world = RealBlockWaterWorld.singleSegment(map, seaY, boatHalfWidth, sourceBerth, targetBerth);
+        WaterRoutePathfinder pf = new WaterRoutePathfinder(world, sourceBerth, targetBerth, policy);
+        long deadline = System.nanoTime() + (long) policy.timeoutTicks() * 50L * 1_000_000L;
+        WaterRoutePathfinder.Status st;
+        do {
+            st = pf.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
+        } while (st == WaterRoutePathfinder.Status.RUNNING && System.nanoTime() < deadline);
+        map.logLayerStats("NBT单段");
+        if (st != WaterRoutePathfinder.Status.SUCCESS) {
+            LOGGER.warn("[WaterPath] NBT 单段寻路失败 st={} 节点={} 原因={}",
+                    st, pf.expandedNodes(), pf.failureReason());
+            return WaterRouteResult.failure(
+                    st == WaterRoutePathfinder.Status.FAILED ? pf.failureReason() : WaterRouteFailureReason.TIMEOUT);
+        }
+        List<BlockPos> raw = pf.path();
+        LOGGER.info("[WaterPath] NBT 单段寻路成功 节点={} 航点={}", pf.expandedNodes(), raw == null ? 0 : raw.size());
+        bar.update(85, "拼接平滑");
+        // 贝塞尔平滑(不过冲);A* 折线本已船宽判可航。
+        PathSmoother.SmoothWithOrigin sm = PathSmoother.smooth2DWithOrigin(raw, seaY, 2.0D);
+        List<BlockPos> smoothed = sm.points();
+        if (smoothed == null || smoothed.size() < 2) {
+            return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
+        }
+        // 平滑后连线 3×3 陆地校验 + 危险段安全连线:贝塞尔残留贴岸/过冲的段会搁浅 → 拉回水里或退回原折线安全直连。
+        bar.update(90, "搁浅校验");
+        int beforeRepair = smoothed.size();
+        smoothed = repairHullCollisions(smoothed, map, boatHalfWidth);
+        if (smoothed == null || smoothed.size() < 2) {
+            return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
+        }
+        // 单段无 jointA/jointB:全程 MID 段。jointA=-1(首点后即 MID),jointB=末 index(无 END 段)。
+        // 修复改了点数时 origins 与新 smoothed 错位 → 传 null(buildMetas 全 RAW 兜底),metas 仅 debug 着色不影响航行。
+        List<Byte> originsForMeta = smoothed.size() == beforeRepair ? sm.origins() : null;
+        metasOut.set(buildMetas(smoothed, originsForMeta, raw, -1, smoothed.size()));
+        bar.update(95, "完成");
+        return WaterRouteResult.success(smoothed);
+    }
+
+    /**
+     * <b>平滑后连线 3×3 陆地校验 + 危险段安全连线</b>(后台线程):贝塞尔虽不过冲,转弯处仍可能轻微贴岸 → 逐段
+     * (相邻平滑点)做 3×3 船宽全水校验,判定为陆地的段用安全方法重连:
+     * <ol>
+     *   <li>把段端点拉回最近 3×3 全水格({@link RealBlockWaterMap#nearestHullWater});</li>
+     *   <li>拉回后该段仍穿陆 → 在两端间按 1 格步进逐点拉回水里,逐点安全连(细分安全直连)。</li>
+     * </ol>
+     * 仿 RoadWeaver「桥梁段直线化」:危险段不走曲线,改安全连法。校验/拉回全是内存数组查(命中缓存),后台安全。
+     */
+    private static List<BlockPos> repairHullCollisions(List<BlockPos> smoothed, RealBlockWaterMap map, int halfWidth) {
+        if (smoothed == null || smoothed.size() < 2) {
+            return smoothed;
+        }
+        final int PULL_RADIUS = 24; // 拉回最近水格的最大螺旋半径
+        List<BlockPos> out = new ArrayList<>(smoothed.size());
+        out.add(smoothed.get(0));
+        int repaired = 0;
+        for (int i = 1; i < smoothed.size(); i++) {
+            BlockPos prev = out.get(out.size() - 1);
+            BlockPos cur = smoothed.get(i);
+            if (map.segmentHullClear(prev, cur, halfWidth)) {
+                out.add(cur);
+                continue;
+            }
+            // 该段会搁浅:先把当前点拉回最近 3×3 全水格。
+            BlockPos safeCur = map.nearestHullWater(cur.getX(), cur.getZ(), halfWidth, PULL_RADIUS);
+            if (safeCur != null && map.segmentHullClear(prev, safeCur, halfWidth)) {
+                out.add(safeCur);
+                repaired++;
+                continue;
+            }
+            // 拉回后仍穿陆 → 在 prev→(safeCur或cur) 间逐点拉回水里安全连(细分直连)。
+            BlockPos target = safeCur != null ? safeCur : cur;
+            List<BlockPos> safeChain = safeConnect(prev, target, map, halfWidth, PULL_RADIUS);
+            if (safeChain.isEmpty()) {
+                // 实在连不安全(极少;一般是按需读不到该海域)→ 保留原点,记一笔(不毁整条航线)。
+                out.add(cur);
+            } else {
+                out.addAll(safeChain);
+                repaired++;
+            }
+        }
+        if (repaired > 0) {
+            LOGGER.info("[WaterPath] NBT 单段平滑后 3×3 搁浅校验:修复 {} 段(贝塞尔贴岸/过冲)", repaired);
+        }
+        return out;
+    }
+
+    /**
+     * 安全连接 a→b:沿直线按 1 格步进,每个采样点拉回最近 3×3 全水格,逐点接成不搁浅的折线(去重)。
+     * 任一点拉不回水里(maxR 内无 3×3 全水)→ 返回空(交调用方保留原点)。不含起点 a(调用方已在 out 里)。
+     */
+    private static List<BlockPos> safeConnect(BlockPos a, BlockPos b, RealBlockWaterMap map, int halfWidth, int maxR) {
+        int dx = b.getX() - a.getX();
+        int dz = b.getZ() - a.getZ();
+        int steps = Math.max(1, (int) Math.ceil(Math.sqrt((double) dx * dx + (double) dz * dz)));
+        List<BlockPos> chain = new ArrayList<>();
+        BlockPos last = a;
+        for (int s = 1; s <= steps; s++) {
+            double t = s / (double) steps;
+            int x = (int) Math.round(a.getX() + dx * t);
+            int z = (int) Math.round(a.getZ() + dz * t);
+            BlockPos safe = map.nearestHullWater(x, z, halfWidth, maxR);
+            if (safe == null) {
+                return List.of(); // 这一段没法安全连
+            }
+            if (!safe.equals(last) && map.segmentHullClear(last, safe, halfWidth)) {
+                chain.add(safe);
+                last = safe;
+            } else if (!safe.equals(last)) {
+                // 相邻安全点之间仍穿陆(拉回方向横跨了陆地)→ 放弃,交调用方保留原点。
+                return List.of();
+            }
+        }
+        return chain;
+    }
+
     private static void applyCompletedRoute(ServerLevel level,
                                             DockBlockEntity source,
                                             DockBlockEntity target,
@@ -217,6 +377,7 @@ public final class WaterAutoRouteService {
                                             String sourceTownName,
                                             String targetTownName,
                                             WaterRouteResult<List<BlockPos>> result,
+                                            List<WaypointMeta> waypointMetas,
                                             @Nullable ServerPlayer player) {
         if (!result.successful()) {
             if (player != null) {
@@ -240,6 +401,7 @@ public final class WaterAutoRouteService {
                 sourceTownName,
                 targetTownName,
                 verified,
+                waypointMetas,
                 playerName(player),
                 player == null ? "" : player.getUUID().toString(),
                 System.currentTimeMillis());
@@ -254,11 +416,55 @@ public final class WaterAutoRouteService {
         }
     }
 
+    /**
+     * 把平滑后的航点 + origins(每点来源) + 原折线 jointA/jointB 合成 metas:
+     * <ul>
+     *   <li>segment:平滑点投影到原折线最近 index,≤jointA→START,≤jointB→MID,否则→END;</li>
+     *   <li>origin:直接取 PathSmoother 输出的 origins[i](原始拐点 / 样条插值)。</li>
+     * </ul>
+     * 与 smoothed 等长。origins 缺位时按 RAW 兜底。
+     */
+    static List<WaypointMeta> buildMetas(List<BlockPos> smoothed, List<Byte> origins, List<BlockPos> original, int jointA, int jointB) {
+        if (smoothed == null || smoothed.isEmpty()) {
+            return List.of();
+        }
+        List<WaypointMeta> metas = new ArrayList<>(smoothed.size());
+        for (int i = 0; i < smoothed.size(); i++) {
+            int idx = nearestIndexOnPolyline(original, smoothed.get(i));
+            byte seg = idx <= jointA ? WaypointMeta.SEGMENT_START
+                    : (idx <= jointB ? WaypointMeta.SEGMENT_MID : WaypointMeta.SEGMENT_END);
+            byte origin = origins != null && i < origins.size() ? origins.get(i) : WaypointMeta.ORIGIN_RAW;
+            metas.add(new WaypointMeta(seg, origin));
+        }
+        return metas;
+    }
+
+    /** 折线上离 target 最近的点 index(欧氏 2D,XZ;给 segment 分段)。 */
+    private static int nearestIndexOnPolyline(List<BlockPos> polyline, BlockPos target) {
+        if (polyline == null || polyline.isEmpty()) {
+            return 0;
+        }
+        int best = 0;
+        double bestSq = Double.MAX_VALUE;
+        for (int i = 0; i < polyline.size(); i++) {
+            BlockPos p = polyline.get(i);
+            double dx = p.getX() - target.getX();
+            double dz = p.getZ() - target.getZ();
+            double dq = dx * dx + dz * dz;
+            if (dq < bestSq) {
+                bestSq = dq;
+                best = i;
+            }
+        }
+        return best;
+    }
+
     static RouteDefinition routeDefinitionFromPath(DockSnapshot source,
                                                    DockSnapshot target,
                                                    String sourceTownName,
                                                    String targetTownName,
                                                    List<BlockPos> path,
+                                                   List<WaypointMeta> waypointMetas,
                                                    String authorName,
                                                    String authorUuid,
                                                    long createdAtEpochMillis) {
@@ -280,6 +486,9 @@ public final class WaterAutoRouteService {
         String srcTown = sourceTownName == null || sourceTownName.isBlank()
                 ? (source == null ? "Dock" : source.name()) : sourceTownName;
         String dstTown = targetTownName == null || targetTownName.isBlank() ? targetName : targetTownName;
+        // metas 只在与 waypoints 等长时带入(三段主路径成立);单段 fallback / 长度不符 → 留空(debug 降级,不报错)。
+        List<WaypointMeta> metas = waypointMetas != null && waypointMetas.size() == waypoints.size()
+                ? waypointMetas : List.of();
         return new RouteDefinition(
                 "Auto-" + srcTown + "-" + dstTown,
                 waypoints,
@@ -288,7 +497,8 @@ public final class WaterAutoRouteService {
                 createdAtEpochMillis,
                 routeLength,
                 source == null ? "" : source.name(),
-                targetName);
+                targetName,
+                metas);
     }
 
     static List<RouteDefinition> upsertAutoRouteForTest(List<RouteDefinition> existingRoutes, RouteDefinition route) {

@@ -20,7 +20,16 @@ public final class RoadPlannerPathfinderRunnerFactory {
         return service == null ? null : service::runPathfinderOnly;
     }
 
+    /** 旧签名:默认噪声精度(NORMAL)。 */
     public static RoadPlannerAutoCompleteService serverService(ServerLevel level) {
+        return serverService(level, false);
+    }
+
+    /**
+     * @param useRealChunk true = 真实区块高度图精度(SamplingPrecision.HIGH,AccurateHeightSampler,准、慢);
+     *                     false = 噪声精度(NORMAL,FastHeightSampler,快、远处粗)。
+     */
+    public static RoadPlannerAutoCompleteService serverService(ServerLevel level, boolean useRealChunk) {
         if (level == null) {
             return null;
         }
@@ -29,6 +38,10 @@ public final class RoadPlannerPathfinderRunnerFactory {
         // 之前这里硬编码 BIDIRECTIONAL_ASTAR 覆盖了默认 → 自动补全实际跑的是双向A*,非本意的 potential field。
         // 注意:potential field 同为 8 邻网格,仍会有离散锯齿,锯齿由下游 PathSmoother 样条平滑抹掉。
         config.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
+        // 寻路精度:玩家在道路规划器工具栏切换(真实区块 HIGH / 噪声 NORMAL)。
+        config.setSamplingPrecision(useRealChunk
+                ? PathfindingConfig.SamplingPrecision.HIGH
+                : PathfindingConfig.SamplingPrecision.NORMAL);
         Pathfinder pathfinder = PathfinderFactory.create(config);
         TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getSamplingPrecision());
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {

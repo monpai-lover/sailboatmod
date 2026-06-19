@@ -118,6 +118,8 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private RoadPlannerMapPreloadProgressPacket lastMapPreloadProgress;
     private RoadPlannerMapPreloadCancelPacket lastMapPreloadCancel;
     private RoadPlannerMergeScope mergeScope = RoadPlannerMergeScope.OWN_NATION;
+    // 自动补全寻路精度:false=噪声(快,远处粗) / true=真实区块(准,慢)。工具栏「寻路精度」按钮循环切换。
+    private boolean autoCompleteUseRealChunk = false;
     private List<OpenRoadMergeCandidatesPacket.Entry> mergeCandidates = List.of();
     private int selectedMergeCandidateIndex = -1;
     private RoadPlannerMergeCandidateRequestPacket lastMergeCandidateRequest;
@@ -2335,10 +2337,15 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             }
             if (minecraft != null && minecraft.getConnection() != null) {
                 ModNetwork.CHANNEL.sendToServer(new RoadPlannerAutoCompleteRequestPacket(
-                        state.sessionId(), startTownPos, destinationTownPos, linePlan.nodes(), 24
+                        state.sessionId(), startTownPos, destinationTownPos, linePlan.nodes(), 24, autoCompleteUseRealChunk
                 ));
-                statusLine = "正在请求自动补全...";
+                statusLine = "正在请求自动补全...(" + (autoCompleteUseRealChunk ? "真实区块" : "噪声") + ")";
             }
+            return;
+        }
+        if (RoadPlannerTopToolbar.ACTION_PATHFIND_MODE.equals(label)) {
+            autoCompleteUseRealChunk = !autoCompleteUseRealChunk;
+            statusLine = "寻路精度: " + (autoCompleteUseRealChunk ? "真实区块(准·慢)" : "噪声(快·远处粗)");
             return;
         }
         if (RoadPlannerTopToolbar.ACTION_MERGE_SCOPE.equals(label)) {
