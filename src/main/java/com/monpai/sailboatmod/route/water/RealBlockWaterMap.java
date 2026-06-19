@@ -105,10 +105,14 @@ public final class RealBlockWaterMap {
         return WaterColumn.passable(new BlockPos(x, seaLevel, z), coastHugCost(x, z));
     }
 
+    private static final double HULL_LAND_COST = 12.0D; // 3×3 占地内每个陆格的额外通行代价(软引导,越贴岸越贵)
+
     /**
-     * <b>3×3 船宽校验</b>:以 (x,z) 为中心 3×3 占地(船 3×3,{@code boatHalfWidth=1})内任一格非水(陆/未知)→
-     * blocked;全水 → passable(代价含贴岸惩罚)。供单段 NBT A* 节点可航判定,从源头根除搁浅。
-     * 未命中区块在按需模式下会触发加载;读不到当陆 → 该 3×3 视作有陆 → blocked,A* 绕开。
+     * <b>3×3 船宽软校验</b>(2026-06 调整,原硬约束太严):硬约束<b>只要求中心格是水</b>(船能浮);3×3 占地里有陆
+     * 不再直接 blocked,而是<b>每个陆格加重通行代价</b>({@link #HULL_LAND_COST})。A* 优先走宽水(占地全水零附加),
+     * 窄水道/河口实在没宽水也能挤过去(占地有陆但可通行,只是贵)+ 叠加 coastHugCost 贴岸惩罚双重引导离岸。
+     * <p>Why:原 3×3 全水硬 blocked 要求航道≥5格宽,大量河口/窄道判不可航 → 双向 A* 前向闷死、寻路失败。
+     * 改软代价后既保留「优先离岸不搁浅」的引导,又不把窄道堵死。中心非水/区块读不到 → blocked(真不能浮)。
      */
     public WaterColumn sampleHull(int x, int z, int halfWidth) {
         int hw = Math.max(0, halfWidth);
@@ -117,19 +121,62 @@ public final class RealBlockWaterMap {
             return null; // 中心格区块都没有(按需也读不到)→ 交调用方当 blocked
         }
         if (!center.water[(z & 15) * CHUNK + (x & 15)]) {
-            return WaterColumn.blocked();
+            return WaterColumn.blocked(); // 中心非水 = 船浮不起来,真 blocked
         }
+        int landInHull = 0;
         for (int dx = -hw; dx <= hw; dx++) {
             for (int dz = -hw; dz <= hw; dz++) {
                 if (dx == 0 && dz == 0) {
                     continue;
                 }
                 if (!isWaterAt(x + dx, z + dz)) {
-                    return WaterColumn.blocked(); // 占地内有陆/未知 → 会搁浅,blocked
+                    landInHull++;
                 }
             }
         }
-        return WaterColumn.passable(new BlockPos(x, seaLevel, z), coastHugCost(x, z));
+        double extra = coastHugCost(x, z) + landInHull * HULL_LAND_COST;
+        return WaterColumn.passable(new BlockPos(x, seaLevel, z), extra);
+    }
+
+    /**
+     * <b>3×3 校验诊断</b>:返回 (x,z) 该格在船宽校验下不可航/可航的<b>精确原因</b>(给寻路失败定位用)。
+     * <ul>
+     *   <li>中心区块读不到(按需也读不到)→ {@code "区块(cx,cz)读不到(未存盘/超时)"}</li>
+     *   <li>中心格非水(船浮不起来,真 blocked)→ {@code "中心(x,z)非水(NBT判陆)"}</li>
+     *   <li>中心是水但占地有陆 → {@code "可航(占地N格陆:(x1,z1)...)"}(软代价,仍可航,只是贵)</li>
+     *   <li>占地全水 → {@code "可航(占地全水)"}</li>
+     * </ul>
+     */
+    public String sampleHullDiagnostic(int x, int z, int halfWidth) {
+        int hw = Math.max(0, halfWidth);
+        int cx = x >> 4, cz = z >> 4;
+        ChunkWater center = chunkAt(cx, cz);
+        if (center == null) {
+            return "区块(" + cx + "," + cz + ")读不到(未存盘/超时)";
+        }
+        if (!center.water[(z & 15) * CHUNK + (x & 15)]) {
+            int sy = center.surfaceY[(z & 15) * CHUNK + (x & 15)];
+            return "中心(" + x + "," + z + ")非水(NBT判陆,表面Y=" + sy + ")";
+        }
+        StringBuilder landCells = new StringBuilder();
+        int landInHull = 0;
+        for (int dx = -hw; dx <= hw; dx++) {
+            for (int dz = -hw; dz <= hw; dz++) {
+                if (dx == 0 && dz == 0) {
+                    continue;
+                }
+                if (!isWaterAt(x + dx, z + dz)) {
+                    landInHull++;
+                    if (landInHull <= 4) { // 最多列 4 个陆格坐标,避免日志爆
+                        landCells.append("(").append(x + dx).append(",").append(z + dz).append(")");
+                    }
+                }
+            }
+        }
+        if (landInHull == 0) {
+            return "可航(占地全水)";
+        }
+        return "可航(占地" + landInHull + "格陆:" + landCells + ",软代价不blocked)";
     }
 
     /** 紧贴岸代价:(x,z) 周围 OFFSHORE_MIN 范围内有陆格则加代价(陆越近/越多越贵)。 */
@@ -213,6 +260,83 @@ public final class RealBlockWaterMap {
             }
         }
         return null;
+    }
+
+    /**
+     * <b>NBT 局部绕行 BFS</b>(替代 RealWaterVerifier 的噪声版):在 a-b 局部包围盒(外扩 margin)内,沿
+     * <b>3×3 船宽全水格</b>1 格步长 4 邻 BFS 从 a 找到 b 的绕行水路。判水全用 NBT {@link #hullClear}(真实方块,
+     * 命中缓存的内存数组查;按需模式未命中触发后台读),<b>绝不用噪声密度</b>(WorldPainter 地图噪声≠真实方块)。
+     * @return a..b 的绕行航点(含首尾,海平面 Y);找不到/超预算返回空。
+     */
+    public java.util.List<BlockPos> localRerouteNbt(BlockPos a, BlockPos b, int halfWidth, int margin, int maxCells) {
+        int minX = Math.min(a.getX(), b.getX()) - margin;
+        int maxX = Math.max(a.getX(), b.getX()) + margin;
+        int minZ = Math.min(a.getZ(), b.getZ()) - margin;
+        int maxZ = Math.max(a.getZ(), b.getZ()) + margin;
+        java.util.Set<Long> visited = new java.util.HashSet<>();
+        java.util.Map<Long, Long> parent = new java.util.HashMap<>();
+        java.util.Deque<int[]> queue = new java.util.ArrayDeque<>();
+        long startKey = packXZ(a.getX(), a.getZ());
+        queue.add(new int[]{a.getX(), a.getZ()});
+        visited.add(startKey);
+        int[][] neighbors = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        while (!queue.isEmpty()) {
+            if (visited.size() > maxCells) {
+                return java.util.List.of(); // 超预算,绕不开
+            }
+            int[] cell = queue.poll();
+            int x = cell[0], z = cell[1];
+            if (Math.abs(x - b.getX()) <= 1 && Math.abs(z - b.getZ()) <= 1) {
+                return reconstructNbt(parent, a, x, z, b);
+            }
+            for (int[] n : neighbors) {
+                int nx = x + n[0], nz = z + n[1];
+                if (nx < minX || nx > maxX || nz < minZ || nz > maxZ) {
+                    continue;
+                }
+                long nkey = packXZ(nx, nz);
+                if (visited.contains(nkey)) {
+                    continue;
+                }
+                if (!hullClear(nx, nz, halfWidth)) {
+                    continue; // 3×3 占地有陆 → 不走
+                }
+                visited.add(nkey);
+                parent.put(nkey, packXZ(x, z));
+                queue.add(new int[]{nx, nz});
+            }
+        }
+        return java.util.List.of();
+    }
+
+    private java.util.List<BlockPos> reconstructNbt(java.util.Map<Long, Long> parent, BlockPos a,
+                                                    int endX, int endZ, BlockPos b) {
+        java.util.List<BlockPos> path = new java.util.ArrayList<>();
+        long startKey = packXZ(a.getX(), a.getZ());
+        long cur = packXZ(endX, endZ);
+        while (true) {
+            int x = (int) (cur >> 32);
+            int z = (int) (cur & 0xFFFFFFFFL);
+            path.add(new BlockPos(x, seaLevel, z));
+            if (cur == startKey) {
+                break;
+            }
+            Long prev = parent.get(cur);
+            if (prev == null) {
+                break;
+            }
+            cur = prev;
+        }
+        java.util.Collections.reverse(path); // a → end
+        BlockPos last = path.get(path.size() - 1);
+        if (last.getX() != b.getX() || last.getZ() != b.getZ()) {
+            path.add(new BlockPos(b.getX(), seaLevel, b.getZ())); // 接回真实终点
+        }
+        return path;
+    }
+
+    private static long packXZ(int x, int z) {
+        return (((long) x) << 32) | (z & 0xFFFFFFFFL);
     }
 
     /**

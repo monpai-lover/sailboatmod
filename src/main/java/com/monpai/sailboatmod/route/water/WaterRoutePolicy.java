@@ -58,4 +58,21 @@ public record WaterRoutePolicy(int stepSize,
     public static WaterRoutePolicy detourSegment() {
         return new WaterRoutePolicy(4, 2, 1, 3, 256, 8000, 0, 512, 0, 20 * 30);
     }
+
+    /**
+     * <b>NBT 两阶段·粗走廊阶段</b>:大 step 粗网格跑大致走向(确定从哪绕大陆),<b>halfWidth=0</b>(中心格判水即可,
+     * 不卡船宽,只求走向)。step=24 跨远(粗路只导向,精度交阶段二);maxSearchRadius=12288 覆盖超远航线;
+     * maxExpandedNodes=120000;nodesPerTick=256(后台跑可大点);timeout=60s。
+     */
+    public static WaterRoutePolicy nbtCoarse() {
+        return new WaterRoutePolicy(24, 2, 0, 3, 12288, 120000, 0, 256, 0, 20 * 60);
+    }
+
+    /**
+     * <b>NBT 两阶段·走廊精寻阶段</b>:step=8 + halfWidth=1(船 3×3),沿粗路 ±走廊精寻。搜索空间被走廊收死 →
+     * 双向 A* 不发散。maxSearchRadius 同粗阶段(走廊约束才是主闸门);maxExpandedNodes=160000(走廊内绕岛节点多)。
+     */
+    public static WaterRoutePolicy nbtRefine() {
+        return new WaterRoutePolicy(8, 2, 1, 3, 12288, 160000, 0, 128, 0, 20 * 90);
+    }
 }

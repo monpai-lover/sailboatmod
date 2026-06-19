@@ -82,6 +82,15 @@ public final class WaterRoutePathfinder {
         LOGGER.info("[WaterPath] 开始 start={} goal={} (网格对齐 s={} g={}) 直线={}格 起点可航={} 终点可航={}",
                 start, goal, snappedStart, snappedGoal, straight, startOk, goalOk);
         if (!startOk || !goalOk) {
+            // 精确原因:3×3 在哪格过不去(中心非水/区块读不到/占地哪格陆/约束外/泊位信任)。定位 seed 0 节点失败。
+            if (!startOk) {
+                LOGGER.warn("[WaterPath] 起点不可航 snap={} 原因={}", snappedStart,
+                        world.sampleDiagnostic(snappedStart.getX(), snappedStart.getZ(), policy));
+            }
+            if (!goalOk) {
+                LOGGER.warn("[WaterPath] 终点不可航 snap={} 原因={}", snappedGoal,
+                        world.sampleDiagnostic(snappedGoal.getX(), snappedGoal.getZ(), policy));
+            }
             fail(WaterRouteFailureReason.NO_WATER_PATH);
             return;
         }
@@ -360,6 +369,10 @@ public final class WaterRoutePathfinder {
 
     public List<BlockPos> path() {
         return List.copyOf(path);
+    }
+
+    public Status status() {
+        return status;
     }
 
     public WaterRouteFailureReason failureReason() {

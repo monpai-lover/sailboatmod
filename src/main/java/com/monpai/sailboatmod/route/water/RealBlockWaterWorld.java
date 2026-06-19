@@ -18,7 +18,9 @@ import java.util.List;
  * <p>纯读 {@link RealBlockWaterMap}(后台线程安全)。
  */
 public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthResolver.BerthWorld {
-    private static final int BERTH_TRUST_RADIUS = 4; // 泊位信任半径(此格及邻域无条件可航,消除船宽判定卡死泊位)
+    // 泊位信任半径:此格及邻域无条件可航(中心可航即可,不做 3×3)。设 10 > step(8) 的 snap 偏移上限,
+    // 保证 seed 阶段 snap 后的起/终点格(最多偏 step-1=7 格)仍落在信任区,不被近岸地形判不可航直接 0 节点失败。
+    private static final int BERTH_TRUST_RADIUS = 10;
 
     private final RealBlockWaterMap map;
     private final List<BlockPos> constraint; // 约束折线(带中心线 / 粗路走廊);单段模式为 null=全开
@@ -52,6 +54,30 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
         return w;
     }
 
+    /**
+     * <b>两阶段·走廊精寻世界</b>(阶段二):用阶段一粗寻出的导向折线 {@code coarse} 作约束走廊(中心线 ±radius
+     * 外 blocked),把精寻 A* 的搜索空间收死在粗路附近 → 双向 A* 前沿不发散(解单段无约束全开发散搜不到)。
+     * 走廊内启用 3×3 船宽校验 + 起终泊位信任。map 须已 enableOnDemand。
+     */
+    public static RealBlockWaterWorld corridor(RealBlockWaterMap map, List<BlockPos> coarse, int radius, int seaY,
+                                               int boatHalfWidth, BlockPos berthA, BlockPos berthB) {
+        RealBlockWaterWorld w = new RealBlockWaterWorld(map, coarse, radius, seaY, boatHalfWidth);
+        w.trustedBerthA = berthA;
+        w.trustedBerthB = berthB;
+        return w;
+    }
+
+    /**
+     * <b>两阶段·粗走廊世界</b>(阶段一):无约束全开,中心格判水即可航(boatHalfWidth=0,不卡船宽,只求大致走向),
+     * 大 step 粗网格省节点。起终泊位信任。map 须已 enableOnDemand。
+     */
+    public static RealBlockWaterWorld coarse(RealBlockWaterMap map, int seaY, BlockPos berthA, BlockPos berthB) {
+        RealBlockWaterWorld w = new RealBlockWaterWorld(map, null, 0, seaY, 0);
+        w.trustedBerthA = berthA;
+        w.trustedBerthB = berthB;
+        return w;
+    }
+
     @Override
     public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
         // 泊位信任:起终点邻域无条件可航(泊位可能贴岸/在窄水道,3×3 船宽会误判 blocked → 起点不可航直接失败)。
@@ -66,6 +92,31 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
             return WaterColumn.blocked(); // 未加载/读不到 → 保守 blocked,A* 绕开
         }
         return c;
+    }
+
+    @Override
+    public String sampleDiagnostic(int x, int z, WaterRoutePolicy policy) {
+        if (isTrustedBerth(x, z)) {
+            return "泊位信任区(无条件可航;距A=" + dist(x, z, trustedBerthA) + " 距B=" + dist(x, z, trustedBerthB) + ")";
+        }
+        if (!withinConstraint(x, z)) {
+            return "约束外(走廊半径外,blocked)";
+        }
+        if (boatHalfWidth > 0) {
+            return map.sampleHullDiagnostic(x, z, boatHalfWidth);
+        }
+        WaterColumn c = map.sample(x, z);
+        if (c == null) {
+            return "区块读不到(blocked)";
+        }
+        return c.passable() ? "可航(中线单格)" : "非水(中线单格,blocked)";
+    }
+
+    private static int dist(int x, int z, BlockPos berth) {
+        if (berth == null) {
+            return -1;
+        }
+        return Math.max(Math.abs(x - berth.getX()), Math.abs(z - berth.getZ()));
     }
 
     private boolean isTrustedBerth(int x, int z) {

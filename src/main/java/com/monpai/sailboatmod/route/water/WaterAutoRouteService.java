@@ -201,7 +201,20 @@ public final class WaterAutoRouteService {
                         if (smoothed == null || smoothed.size() < 2) {
                             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
                         }
-                        metasOut.set(buildMetas(smoothed, sm.origins(), planned.path(), planned.jointA(), planned.jointB()));
+                        // 统一航点 NBT 校验(所有模式通用):读每个航点底下真实方块判水,删非水点 + 局部绕行重连,迭代到全水。
+                        // NOISE/HYBRID 走噪声/NoiseChunk 判障可能漏陆 → 末端真实 NBT 兜底,保证最终全程可航水域。
+                        int verifyHalfWidth = Math.max(1, policy.boatHalfWidth());
+                        RealBlockWaterMap verifyMap = new RealBlockWaterMap(level, seaY).enableOnDemand();
+                        java.util.List<BlockPos> verified = WaterRouteNbtVerifier.verify(verifyMap, smoothed, verifyHalfWidth);
+                        verifyMap.logLayerStats("三段末端NBT校验");
+                        if (verified == null || verified.size() < 2) {
+                            return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
+                        }
+                        boolean verifyChanged = verified.size() != smoothed.size();
+                        smoothed = verified;
+                        // 改了点数时 origins 与新 smoothed 错位 → 传 null(buildMetas 全 RAW 兜底)。
+                        java.util.List<Byte> origins = verifyChanged ? null : sm.origins();
+                        metasOut.set(buildMetas(smoothed, origins, planned.path(), planned.jointA(), planned.jointB()));
                         return WaterRouteResult.success(smoothed);
                     };
             task = new WaterRouteTask(
@@ -244,129 +257,90 @@ public final class WaterAutoRouteService {
     }
 
     /**
-     * <b>NBT 单段双向 A*</b>(后台线程):源泊位→目标泊位一条 A*,全程真实方块判定 + 3×3 船宽校验,区块按需 NBT
-     * 后台读 + 滑动窗口卸载。出来的折线线性重采样成等距密集航点(去样条,不过冲)。失败 → NO_WATER_PATH。
+     * <b>NBT 两阶段双向 A*</b>(后台线程):源泊位→目标泊位,全程真实方块判定,区块按需 NBT 后台读 + 滑动窗口卸载。
+     * <ol>
+     *   <li><b>阶段一·粗走廊</b>:大 step 粗网格 + 中心格判水(halfWidth=0,不卡船宽,只求大致走向)→ 出粗导向折线。
+     *       (解单段无约束全开发散搜不到:粗阶段省节点跑出走向,把搜索收敛。)</li>
+     *   <li><b>阶段二·走廊精寻</b>:用粗路作约束走廊(±半径外 blocked)+ step=8 + 3×3 船宽校验 → 出精细航线。
+     *       搜索空间被走廊收死 → 双向 A* 前沿不发散。</li>
+     * </ol>
+     * 出来的折线贝塞尔平滑 → 平滑后 3×3 搁浅校验 → <b>统一航点 NBT 校验</b>(删非水点 + 局部绕行重连,迭代到全水)。
+     * 失败 → NO_WATER_PATH。
      */
+    private static final int NBT_CORRIDOR_RADIUS = 96; // 阶段二走廊半径(粗路中心线 ±此格内可搜)
+
     private static WaterRouteResult<List<BlockPos>> runSingleSegmentNbt(
             ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth, int seaY, int boatHalfWidth,
             WaterRoutePolicy policy,
             java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>> metasOut,
             WaterRouteProgressBar bar) {
-        bar.update(5, "真实方块寻路");
         RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand();
-        RealBlockWaterWorld world = RealBlockWaterWorld.singleSegment(map, seaY, boatHalfWidth, sourceBerth, targetBerth);
-        WaterRoutePathfinder pf = new WaterRoutePathfinder(world, sourceBerth, targetBerth, policy);
-        long deadline = System.nanoTime() + (long) policy.timeoutTicks() * 50L * 1_000_000L;
-        WaterRoutePathfinder.Status st;
-        do {
-            st = pf.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
-        } while (st == WaterRoutePathfinder.Status.RUNNING && System.nanoTime() < deadline);
-        map.logLayerStats("NBT单段");
-        if (st != WaterRoutePathfinder.Status.SUCCESS) {
-            LOGGER.warn("[WaterPath] NBT 单段寻路失败 st={} 节点={} 原因={}",
-                    st, pf.expandedNodes(), pf.failureReason());
+
+        // ---- 阶段一:粗走廊(大 step + 中心判水,跑大致走向)----
+        bar.update(5, "粗寻走向");
+        RealBlockWaterWorld coarseWorld = RealBlockWaterWorld.coarse(map, seaY, sourceBerth, targetBerth);
+        WaterRoutePolicy coarsePolicy = WaterRoutePolicy.nbtCoarse();
+        WaterRoutePathfinder coarsePf = runToCompletion(coarseWorld, sourceBerth, targetBerth, coarsePolicy);
+        if (coarsePf.status() != WaterRoutePathfinder.Status.SUCCESS) {
+            map.logLayerStats("NBT粗走廊");
+            LOGGER.warn("[WaterPath] NBT 阶段一粗走廊失败 st={} 节点={} 原因={}",
+                    coarsePf.status(), coarsePf.expandedNodes(), coarsePf.failureReason());
             return WaterRouteResult.failure(
-                    st == WaterRoutePathfinder.Status.FAILED ? pf.failureReason() : WaterRouteFailureReason.TIMEOUT);
+                    coarsePf.status() == WaterRoutePathfinder.Status.FAILED ? coarsePf.failureReason() : WaterRouteFailureReason.TIMEOUT);
         }
-        List<BlockPos> raw = pf.path();
-        LOGGER.info("[WaterPath] NBT 单段寻路成功 节点={} 航点={}", pf.expandedNodes(), raw == null ? 0 : raw.size());
-        bar.update(85, "拼接平滑");
+        List<BlockPos> coarse = coarsePf.path();
+        LOGGER.info("[WaterPath] NBT 阶段一粗走廊成功 节点={} 粗航点={}", coarsePf.expandedNodes(), coarse.size());
+
+        // ---- 阶段二:走廊精寻(粗路 ±半径约束 + step=8 + 3×3 船宽)----
+        bar.update(40, "走廊精寻");
+        RealBlockWaterWorld fineWorld = RealBlockWaterWorld.corridor(
+                map, coarse, NBT_CORRIDOR_RADIUS, seaY, boatHalfWidth, sourceBerth, targetBerth);
+        WaterRoutePolicy finePolicy = WaterRoutePolicy.nbtRefine();
+        WaterRoutePathfinder finePf = runToCompletion(fineWorld, sourceBerth, targetBerth, finePolicy);
+        map.logLayerStats("NBT走廊精寻");
+        if (finePf.status() != WaterRoutePathfinder.Status.SUCCESS) {
+            LOGGER.warn("[WaterPath] NBT 阶段二走廊精寻失败 st={} 节点={} 原因={}",
+                    finePf.status(), finePf.expandedNodes(), finePf.failureReason());
+            return WaterRouteResult.failure(
+                    finePf.status() == WaterRoutePathfinder.Status.FAILED ? finePf.failureReason() : WaterRouteFailureReason.TIMEOUT);
+        }
+        List<BlockPos> raw = finePf.path();
+        LOGGER.info("[WaterPath] NBT 阶段二走廊精寻成功 节点={} 航点={}", finePf.expandedNodes(), raw == null ? 0 : raw.size());
+
+        bar.update(80, "拼接平滑");
         // 贝塞尔平滑(不过冲);A* 折线本已船宽判可航。
         PathSmoother.SmoothWithOrigin sm = PathSmoother.smooth2DWithOrigin(raw, seaY, 2.0D);
         List<BlockPos> smoothed = sm.points();
         if (smoothed == null || smoothed.size() < 2) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
-        // 平滑后连线 3×3 陆地校验 + 危险段安全连线:贝塞尔残留贴岸/过冲的段会搁浅 → 拉回水里或退回原折线安全直连。
-        bar.update(90, "搁浅校验");
-        int beforeRepair = smoothed.size();
-        smoothed = repairHullCollisions(smoothed, map, boatHalfWidth);
-        if (smoothed == null || smoothed.size() < 2) {
+        // 统一航点 NBT 校验:读每个航点底下真实方块判水,删非水点 + 局部绕行重连,迭代到全水(所有模式通用后处理)。
+        // 它已含逐段 3×3 校验 + 局部绕行 + 迭代,覆盖并强于旧 repairHullCollisions(故单段不再单独调那个)。
+        bar.update(90, "航点NBT校验");
+        int beforeVerify = smoothed.size();
+        List<BlockPos> verified = WaterRouteNbtVerifier.verify(map, smoothed, boatHalfWidth);
+        if (verified == null || verified.size() < 2) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
-        // 单段无 jointA/jointB:全程 MID 段。jointA=-1(首点后即 MID),jointB=末 index(无 END 段)。
-        // 修复改了点数时 origins 与新 smoothed 错位 → 传 null(buildMetas 全 RAW 兜底),metas 仅 debug 着色不影响航行。
-        List<Byte> originsForMeta = smoothed.size() == beforeRepair ? sm.origins() : null;
+        boolean changed = verified.size() != beforeVerify;
+        smoothed = verified;
+        // 改了点数时 origins 与新 smoothed 错位 → 传 null(buildMetas 全 RAW 兜底),metas 仅 debug 着色不影响航行。
+        List<Byte> originsForMeta = changed ? null : sm.origins();
         metasOut.set(buildMetas(smoothed, originsForMeta, raw, -1, smoothed.size()));
         bar.update(95, "完成");
         return WaterRouteResult.success(smoothed);
     }
 
-    /**
-     * <b>平滑后连线 3×3 陆地校验 + 危险段安全连线</b>(后台线程):贝塞尔虽不过冲,转弯处仍可能轻微贴岸 → 逐段
-     * (相邻平滑点)做 3×3 船宽全水校验,判定为陆地的段用安全方法重连:
-     * <ol>
-     *   <li>把段端点拉回最近 3×3 全水格({@link RealBlockWaterMap#nearestHullWater});</li>
-     *   <li>拉回后该段仍穿陆 → 在两端间按 1 格步进逐点拉回水里,逐点安全连(细分安全直连)。</li>
-     * </ol>
-     * 仿 RoadWeaver「桥梁段直线化」:危险段不走曲线,改安全连法。校验/拉回全是内存数组查(命中缓存),后台安全。
-     */
-    private static List<BlockPos> repairHullCollisions(List<BlockPos> smoothed, RealBlockWaterMap map, int halfWidth) {
-        if (smoothed == null || smoothed.size() < 2) {
-            return smoothed;
-        }
-        final int PULL_RADIUS = 24; // 拉回最近水格的最大螺旋半径
-        List<BlockPos> out = new ArrayList<>(smoothed.size());
-        out.add(smoothed.get(0));
-        int repaired = 0;
-        for (int i = 1; i < smoothed.size(); i++) {
-            BlockPos prev = out.get(out.size() - 1);
-            BlockPos cur = smoothed.get(i);
-            if (map.segmentHullClear(prev, cur, halfWidth)) {
-                out.add(cur);
-                continue;
-            }
-            // 该段会搁浅:先把当前点拉回最近 3×3 全水格。
-            BlockPos safeCur = map.nearestHullWater(cur.getX(), cur.getZ(), halfWidth, PULL_RADIUS);
-            if (safeCur != null && map.segmentHullClear(prev, safeCur, halfWidth)) {
-                out.add(safeCur);
-                repaired++;
-                continue;
-            }
-            // 拉回后仍穿陆 → 在 prev→(safeCur或cur) 间逐点拉回水里安全连(细分直连)。
-            BlockPos target = safeCur != null ? safeCur : cur;
-            List<BlockPos> safeChain = safeConnect(prev, target, map, halfWidth, PULL_RADIUS);
-            if (safeChain.isEmpty()) {
-                // 实在连不安全(极少;一般是按需读不到该海域)→ 保留原点,记一笔(不毁整条航线)。
-                out.add(cur);
-            } else {
-                out.addAll(safeChain);
-                repaired++;
-            }
-        }
-        if (repaired > 0) {
-            LOGGER.info("[WaterPath] NBT 单段平滑后 3×3 搁浅校验:修复 {} 段(贝塞尔贴岸/过冲)", repaired);
-        }
-        return out;
-    }
-
-    /**
-     * 安全连接 a→b:沿直线按 1 格步进,每个采样点拉回最近 3×3 全水格,逐点接成不搁浅的折线(去重)。
-     * 任一点拉不回水里(maxR 内无 3×3 全水)→ 返回空(交调用方保留原点)。不含起点 a(调用方已在 out 里)。
-     */
-    private static List<BlockPos> safeConnect(BlockPos a, BlockPos b, RealBlockWaterMap map, int halfWidth, int maxR) {
-        int dx = b.getX() - a.getX();
-        int dz = b.getZ() - a.getZ();
-        int steps = Math.max(1, (int) Math.ceil(Math.sqrt((double) dx * dx + (double) dz * dz)));
-        List<BlockPos> chain = new ArrayList<>();
-        BlockPos last = a;
-        for (int s = 1; s <= steps; s++) {
-            double t = s / (double) steps;
-            int x = (int) Math.round(a.getX() + dx * t);
-            int z = (int) Math.round(a.getZ() + dz * t);
-            BlockPos safe = map.nearestHullWater(x, z, halfWidth, maxR);
-            if (safe == null) {
-                return List.of(); // 这一段没法安全连
-            }
-            if (!safe.equals(last) && map.segmentHullClear(last, safe, halfWidth)) {
-                chain.add(safe);
-                last = safe;
-            } else if (!safe.equals(last)) {
-                // 相邻安全点之间仍穿陆(拉回方向横跨了陆地)→ 放弃,交调用方保留原点。
-                return List.of();
-            }
-        }
-        return chain;
+    /** 跑一条双向 A* 到完成(SUCCESS/FAILED/超时),返回 pathfinder 供取 path/status/failureReason。 */
+    private static WaterRoutePathfinder runToCompletion(WaterRouteWorld world, BlockPos start, BlockPos goal,
+                                                        WaterRoutePolicy policy) {
+        WaterRoutePathfinder pf = new WaterRoutePathfinder(world, start, goal, policy);
+        long deadline = System.nanoTime() + (long) policy.timeoutTicks() * 50L * 1_000_000L;
+        WaterRoutePathfinder.Status st;
+        do {
+            st = pf.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
+        } while (st == WaterRoutePathfinder.Status.RUNNING && System.nanoTime() < deadline);
+        return pf;
     }
 
     private static void applyCompletedRoute(ServerLevel level,
