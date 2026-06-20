@@ -18,7 +18,8 @@ public final class ModEntities {
     public static final RegistryObject<EntityType<SailboatEntity>> SAILBOAT = ENTITY_TYPES.register(
             "sailboat",
             () -> EntityType.Builder.<SailboatEntity>of(SailboatEntity::new, MobCategory.MISC)
-                    .sized(3.0F, 1.6F)
+                    // 2026-06: 船模型窄长,占地从 3x3 缩到 2x2(vanilla 实体 hitbox 只能方形)。[[sailboat_hitbox_narrow_long]]
+                    .sized(2.0F, 1.6F)
                     .clientTrackingRange(10)
                     .updateInterval(1)
                     .build("sailboat")

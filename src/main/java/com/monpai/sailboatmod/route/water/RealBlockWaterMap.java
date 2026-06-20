@@ -113,7 +113,6 @@ public final class RealBlockWaterMap {
      * 改软代价后既保留「优先离岸不搁浅」的引导,又不把窄道堵死。中心非水/区块读不到 → blocked(真不能浮)。
      */
     public WaterColumn sampleHull(int x, int z, int halfWidth) {
-        int hw = Math.max(0, halfWidth);
         ChunkWater center = chunkAt(x >> 4, z >> 4);
         if (center == null) {
             return null; // 中心格区块都没有(按需也读不到)→ 交调用方当 blocked
@@ -121,16 +120,16 @@ public final class RealBlockWaterMap {
         if (!center.water[(z & 15) * CHUNK + (x & 15)]) {
             return WaterColumn.blocked(); // 中心非水 = 船浮不起来,真 blocked
         }
+        // 2×2 占地软校验(锚点 (x,z) 的 +X/+Z/+X+Z 三个邻格);有陆加重代价,A* 优先走宽水。
         int landInHull = 0;
-        for (int dx = -hw; dx <= hw; dx++) {
-            for (int dz = -hw; dz <= hw; dz++) {
-                if (dx == 0 && dz == 0) {
-                    continue;
-                }
-                if (!isWaterAt(x + dx, z + dz)) {
-                    landInHull++;
-                }
-            }
+        if (!isWaterAt(x + 1, z)) {
+            landInHull++;
+        }
+        if (!isWaterAt(x, z + 1)) {
+            landInHull++;
+        }
+        if (!isWaterAt(x + 1, z + 1)) {
+            landInHull++;
         }
         double extra = coastHugCost(x, z) + landInHull * HULL_LAND_COST;
         return WaterColumn.passable(new BlockPos(x, seaLevel, z), extra);
@@ -206,31 +205,61 @@ public final class RealBlockWaterMap {
         return cw != null && cw.water[(z & 15) * CHUNK + (x & 15)];
     }
 
-    /** (x,z) 为中心 (2·halfWidth+1)² 占地内是否全水(3×3 船宽校验,任一非水即 false)。 */
+    /**
+     * <b>2×2 船宽校验</b>(2026-06:船实际窄长,占地从 3×3 改 2×2):以 (x,z) 为锚点的 2×2 方块
+     * {(0,0),(+1,0),(0,+1),(+1,+1)} 任一非水即 false。{@code halfWidth} 参数保留兼容调用方,语义已统一为 2 格。
+     * ([[sailboat_hitbox_narrow_long]])
+     */
     public boolean hullClear(int x, int z, int halfWidth) {
-        int hw = Math.max(0, halfWidth);
-        for (int dx = -hw; dx <= hw; dx++) {
-            for (int dz = -hw; dz <= hw; dz++) {
-                if (!isWaterAt(x + dx, z + dz)) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        return isWaterAt(x, z)
+                && isWaterAt(x + 1, z)
+                && isWaterAt(x, z + 1)
+                && isWaterAt(x + 1, z + 1);
     }
 
     /**
-     * 连线 a→b 沿途每格(含端点)是否都满足 3×3 船宽全水。沿线按 1 格步进采样,任一采样格 3×3 有陆 → false。
+     * 连线 a→b 沿途每格(含端点)是否都满足 2×2 船宽全水。任一格 2×2 有陆 → false。
      * 供平滑后逐段校验:平滑曲线可能在转弯处轻微贴岸/过冲,这里逐段抓出会搁浅的段交安全连线修。
+     *
+     * <p><b>2026-06 改 supercover(修对角线漏陆)</b>:旧版用 {@code round(a + dx*t)} 单线采样,对角线方向四舍五入
+     * 会<b>跳过</b>线段实际穿过的格 → 凸进 1 格的陆地漏检 → segment 误判「通过」→ 不触发 localRerouteNbt 绕行 →
+     * 撞陆入航线(实测平滑绿线切岛)。改用 <b>supercover DDA</b>:枚举线段穿过的<b>每一个</b>整数格(含对角穿角时
+     * 两侧格),逐格 hullClear,任一格 2×2 有陆即 false。零漏检。
      */
     public boolean segmentHullClear(BlockPos a, BlockPos b, int halfWidth) {
-        int dx = b.getX() - a.getX();
-        int dz = b.getZ() - a.getZ();
-        int steps = Math.max(1, (int) Math.ceil(Math.sqrt((double) dx * dx + (double) dz * dz)));
-        for (int s = 0; s <= steps; s++) {
-            double t = s / (double) steps;
-            int x = (int) Math.round(a.getX() + dx * t);
-            int z = (int) Math.round(a.getZ() + dz * t);
+        int x0 = a.getX();
+        int z0 = a.getZ();
+        int x1 = b.getX();
+        int z1 = b.getZ();
+        int dx = Math.abs(x1 - x0);
+        int dz = Math.abs(z1 - z0);
+        int sx = Integer.signum(x1 - x0);
+        int sz = Integer.signum(z1 - z0);
+        int x = x0;
+        int z = z0;
+        // supercover:沿主轴步进,每步推进 x 或 z,对角穿角时把两侧相邻格也查掉(err==0 的格点),不漏任何穿过的 cell。
+        if (!hullClear(x, z, halfWidth)) {
+            return false;
+        }
+        int err = dx - dz;
+        int guard = (dx + dz) * 2 + 4; // 步数上限兜底(防极端坐标死循环)
+        while ((x != x1 || z != z1) && guard-- > 0) {
+            int e2 = err * 2;
+            if (e2 > -dz && e2 < dx) {
+                // 正好穿过格点对角:两侧相邻格都被线段触及,各查一次(supercover 关键,补 Bresenham 漏的角)。
+                if (!hullClear(x + sx, z, halfWidth) || !hullClear(x, z + sz, halfWidth)) {
+                    return false;
+                }
+                x += sx;
+                z += sz;
+                err += dx - dz;
+            } else if (e2 > -dz) {
+                err -= dz;
+                x += sx;
+            } else {
+                err += dx;
+                z += sz;
+            }
             if (!hullClear(x, z, halfWidth)) {
                 return false;
             }

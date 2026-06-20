@@ -50,17 +50,41 @@ public final class WaterRouteNbtVerifier {
             int rerouted = 0;  // 本轮局部绕行重连的段数
             int keptBad = 0;   // 本轮绕不开保留的断点数
 
-            // 1) 删非水航点:逐航点读底下真实方块,非水(3×3 占地有陆/中心非水)即删。保首尾(泊位,已信任可航)。
+            // 1) 处理非水航点:先尝试「沿航向法线侧移」找 3×3 全水替换点(保住航线意图);侧移找不到才删。
+            //    保首尾(泊位,已信任可航)。([[water_route_land_node_normal_offset]])
+            int repaired = 0;
             List<BlockPos> kept = new ArrayList<>();
             for (int i = 0; i < cur.size(); i++) {
                 BlockPos p = cur.get(i);
                 boolean endpoint = (i == 0 || i == cur.size() - 1);
-                if (endpoint || map.hullClear(p.getX(), p.getZ(), halfWidth)) {
+                boolean water = map.hullClear(p.getX(), p.getZ(), halfWidth);
+                // 2026-06 离岸余量(修贴岸蹭行):不只「非水」要修,「是水但贴岸」(离岸环数 < MIN_OFFSHORE)也修——船 narrow-long,
+                // 转弯尾部会甩向岸,平滑曲线贴着岸走实测会蹭陆。贴岸点同样走法线侧移往水心拉。([[water_route_land_node_normal_offset]])
+                boolean shoreHug = water && !endpoint && offshoreClearance(map, p.getX(), p.getZ(), halfWidth) < MIN_OFFSHORE;
+                if (endpoint || (water && !shoreHug)) {
+                    kept.add(p);
+                    continue;
+                }
+                // land node 或 贴岸点:沿 before→after 航向法线往水心侧移。
+                BlockPos before = !kept.isEmpty() ? kept.get(kept.size() - 1) : (i > 0 ? cur.get(i - 1) : p);
+                BlockPos after = i + 1 < cur.size() ? cur.get(i + 1) : p;
+                // 陆点:minOffshore=0(任何 2×2 全水即可);贴岸点:要求比原点更离岸(原离岸+1),否则会把自己当候选原地不动。
+                int minOff = shoreHug ? offshoreClearance(map, p.getX(), p.getZ(), halfWidth) + 1 : 0;
+                BlockPos fixed = normalOffsetRepair(map, p, before, after, halfWidth, minOff);
+                if (fixed != null) {
+                    kept.add(fixed);
+                    repaired++;
+                    if (repaired <= 8) {
+                        LOGGER.info("[WaterPath] 航点NBT校验:法线侧移修复 #{} {} -> {} ({})",
+                                i, p, fixed, shoreHug ? "贴岸拉离" : "陆点修复");
+                    }
+                } else if (shoreHug) {
+                    // 贴岸点侧移找不到更离岸的水 → 保留原点(它至少可航,只是贴岸),不删(删可航点太激进)。
                     kept.add(p);
                 } else {
                     dropped++;
                     if (dropped <= 8) {
-                        LOGGER.info("[WaterPath] 航点NBT校验:删非水航点 #{} {} 原因={}",
+                        LOGGER.info("[WaterPath] 航点NBT校验:侧移失败,删非水航点 #{} {} 原因={}",
                                 i, p, map.sampleHullDiagnostic(p.getX(), p.getZ(), halfWidth));
                     }
                 }
@@ -94,11 +118,11 @@ public final class WaterRouteNbtVerifier {
             }
 
             cur = rebuilt;
-            LOGGER.info("[WaterPath] 航点NBT校验 第{}轮:删非水点={} 局部绕行重连={} 绕不开保留={} 航点{}→{}",
-                    iter + 1, dropped, rerouted, keptBad, waypoints.size(), cur.size());
+            LOGGER.info("[WaterPath] 航点NBT校验 第{}轮:法线侧移修复={} 删非水点={} 局部绕行重连={} 绕不开保留={} 航点{}→{}",
+                    iter + 1, repaired, dropped, rerouted, keptBad, waypoints.size(), cur.size());
 
-            // 收敛:本轮无删除、无绕行(全程全水)→ 完成。
-            if (dropped == 0 && rerouted == 0) {
+            // 收敛:本轮无修复、无删除、无绕行(全程全水)→ 完成。
+            if (repaired == 0 && dropped == 0 && rerouted == 0) {
                 if (keptBad > 0) {
                     LOGGER.warn("[WaterPath] 航点NBT校验:仍有 {} 处绕不开(按需读不到/无水路),保留断点", keptBad);
                 }
@@ -107,5 +131,83 @@ public final class WaterRouteNbtVerifier {
         }
         LOGGER.warn("[WaterPath] 航点NBT校验:达迭代上限 {} 轮仍未完全收敛,返回当前最优", MAX_ITERATIONS);
         return cur;
+    }
+
+    /** 法线侧移最大偏移量(格):land 点最远向法线两侧找这么多格的 2×2 全水替换点。 */
+    private static final int NORMAL_OFFSET_MAX = 48;
+
+    /** 离岸余量阈值(环数):航点离岸 < 此值视作「贴岸」,即便是水也要往水心侧移拉离。1 = 8 邻里有陆就算贴岸。 */
+    private static final int MIN_OFFSHORE = 1;
+
+    /**
+     * <b>沿航向法线侧移修复 land/贴岸 点</b>([[water_route_land_node_normal_offset]]):取 before→after 航向的法线方向,
+     * 在法线两侧逐格(1..{@link #NORMAL_OFFSET_MAX})偏移找候选格,2×2 全水(hullClear)<b>且离岸≥minOffshore</b>即合格;
+     * 在合格候选里选「离原点最近、同距下离岸最远」者替换。找不到返回 null。
+     *
+     * <p>{@code minOffshore}:陆点修复传 0(任何 hullClear 都行);贴岸点修复传「原点离岸+1」(必须拉得更离岸,否则
+     * 原地打转——贴岸点本身 hullClear 会被自己当候选)。
+     *
+     * <p>Why 法线侧移而非顺航向外推/删点:穿陆/贴岸通常是路径在该处侧向偏出贴岸,沿航向法线把它横向拉回航道中心,
+     * 保持前进方向不变;顺航向推会改变航线形状,删点会丢失绕行意图。
+     */
+    private static BlockPos normalOffsetRepair(RealBlockWaterMap map, BlockPos land, BlockPos before, BlockPos after,
+                                               int halfWidth, int minOffshore) {
+        double hx = after.getX() - before.getX();
+        double hz = after.getZ() - before.getZ();
+        double len = Math.sqrt(hx * hx + hz * hz);
+        // 法线方向(单位向量):航向 (hx,hz) 的法线是 (-hz,hx)。航向退化(before==after)时用 X 轴法线兜底。
+        double nx;
+        double nz;
+        if (len < 1.0E-6D) {
+            nx = 1.0D;
+            nz = 0.0D;
+        } else {
+            nx = -hz / len;
+            nz = hx / len;
+        }
+        BlockPos best = null;
+        int bestDist = Integer.MAX_VALUE;
+        int bestOffshore = -1;
+        for (int d = 1; d <= NORMAL_OFFSET_MAX; d++) {
+            for (int sign = -1; sign <= 1; sign += 2) {
+                int cx = land.getX() + (int) Math.round(nx * d * sign);
+                int cz = land.getZ() + (int) Math.round(nz * d * sign);
+                if (!map.hullClear(cx, cz, halfWidth)) {
+                    continue;
+                }
+                int offshore = offshoreClearance(map, cx, cz, halfWidth);
+                if (offshore < minOffshore) {
+                    continue; // 不够离岸(贴岸修复时排除「同样贴岸」的候选,陆点修复 minOffshore=0 不排除)
+                }
+                // nearest first; at equal distance prefer the one farther from shore (more open water).
+                if (d < bestDist || (d == bestDist && offshore > bestOffshore)) {
+                    best = new BlockPos(cx, land.getY(), cz);
+                    bestDist = d;
+                    bestOffshore = offshore;
+                }
+            }
+            // already found a hull-clear cell at this offset on at least one side -> nearest tier resolved, stop.
+            if (best != null && bestDist == d) {
+                break;
+            }
+        }
+        return best;
+    }
+
+    /** How many rings (1..8) around (x,z) stay fully hull-clear -> a cheap "distance from shore" score. */
+    private static int offshoreClearance(RealBlockWaterMap map, int x, int z, int halfWidth) {
+        for (int r = 1; r <= 8; r++) {
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
+                        continue; // current ring only
+                    }
+                    if (!map.hullClear(x + dx, z + dz, halfWidth)) {
+                        return r - 1;
+                    }
+                }
+            }
+        }
+        return 8;
     }
 }

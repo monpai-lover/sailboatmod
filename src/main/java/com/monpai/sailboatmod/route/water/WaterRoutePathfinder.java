@@ -31,6 +31,9 @@ public final class WaterRoutePathfinder {
 
     private static final double HEURISTIC_EPSILON = 0.2D;
     private static final double DEVIATION_WEIGHT = 0.001D;
+    /** 软代价(extraCost)按步长归一化的基准步长:每步软代价 = extraCost × step / NORMALIZE_STEP,使不同 step 的
+     *  阶段(coarse step24 / refine step8)跨同样格数累积的总软代价一致,消除 refine 因密度高而虚高绕远。取 8(refine 步长)。 */
+    private static final int NORMALIZE_STEP = 8;
 
     private int lastLoggedAt = 0; // 上次打进度时的 expandedNodes
 
@@ -201,7 +204,13 @@ public final class WaterRoutePathfinder {
                 continue;
             }
             double edge = (dx[i] != 0 && dz[i] != 0) ? step * 1.4142135623730951D : step;
-            double g = current.gCost + edge + column.extraCost();
+            // 2026-06 软代价按步长归一化(修 refine 比 coarse 还差):extraCost(贴岸/占地软惩罚)原来每步加一个固定量,
+            // 不随 step 缩放 → refine(step8)在同一窄道扩展步数是 coarse(step24)的 3 倍 → 累积软代价 ~3 倍 → A* 误判
+            // 窄道「贵 3 倍」宁可绕远,结果 refine 比 coarse 更差。修法:每步软代价 = extraCost × step / NORMALIZE_STEP,
+            // 这样跨同样格数累积的总软代价与 step 无关(coarse 步少但每步重、refine 步多但每步轻,总和相等)。
+            // NORMALIZE_STEP=8(refine 步长)使 refine 权重不变、coarse 跟着加重到一致。([[water_route_real_root_autopilot]] 相关)
+            double normalizedExtra = column.extraCost() * step / (double) NORMALIZE_STEP;
+            double g = current.gCost + edge + normalizedExtra;
             long nkey = key(npos);
             Node prev = self.best.get(nkey);
             if (prev != null && prev.gCost <= g) {

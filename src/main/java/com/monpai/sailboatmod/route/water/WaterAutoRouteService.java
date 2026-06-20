@@ -307,28 +307,56 @@ public final class WaterAutoRouteService {
         List<BlockPos> raw = finePf.path();
         LOGGER.info("[WaterPath] NBT 阶段二走廊精寻成功 节点={} 航点={}", finePf.expandedNodes(), raw == null ? 0 : raw.size());
 
+        // 2026-06 择优兜底(保证 refine 永不比 coarse 差):代价归一化已治本,但仍加一道安全网——比较 refine 折线与
+        // coarse 折线的质量(撞陆段数优先,同撞陆数比总长),refine 劣于 coarse 才退回 coarse。两者都过同一 verify+平滑。
+        if (raw != null && raw.size() >= 2) {
+            long[] qFine = pathQuality(map, raw, boatHalfWidth);
+            long[] qCoarse = pathQuality(map, coarse, boatHalfWidth);
+            boolean fineWorse = qFine[0] > qCoarse[0] || (qFine[0] == qCoarse[0] && qFine[1] > qCoarse[1]);
+            if (fineWorse) {
+                LOGGER.info("[WaterPath] NBT 择优:refine(撞陆段={} 长={}) 劣于 coarse(撞陆段={} 长={}) → 退回 coarse",
+                        qFine[0], qFine[1], qCoarse[0], qCoarse[1]);
+                raw = coarse;
+            }
+        }
+
         bar.update(80, "拼接平滑");
-        // 贝塞尔平滑(不过冲);A* 折线本已船宽判可航。
-        PathSmoother.SmoothWithOrigin sm = PathSmoother.smooth2DWithOrigin(raw, seaY, 2.0D);
-        List<BlockPos> smoothed = sm.points();
+        // 2026-06 撞陆感知平滑(治本:所有撞陆都是平滑过冲造成):前-折线离岸预留、中-过冲段逐级收紧重平滑、
+        // 后-逐点抽陆回推。取代裸 PathSmoother.smooth2DWithOrigin(只纯几何,过冲甩岸靠 verify 事后绕)。
+        List<BlockPos> smoothed = WaterPathSmoother.smooth(map, raw, seaY, 2.0D, boatHalfWidth);
         if (smoothed == null || smoothed.size() < 2) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
-        // 统一航点 NBT 校验:读每个航点底下真实方块判水,删非水点 + 局部绕行重连,迭代到全水(所有模式通用后处理)。
-        // 它已含逐段 3×3 校验 + 局部绕行 + 迭代,覆盖并强于旧 repairHullCollisions(故单段不再单独调那个)。
+        // 统一航点 NBT 校验:读每个航点底下真实方块判水,删非水点 + 局部绕行重连,迭代到全水(平滑已治本,这里是最终兜底)。
         bar.update(90, "航点NBT校验");
-        int beforeVerify = smoothed.size();
         List<BlockPos> verified = WaterRouteNbtVerifier.verify(map, smoothed, boatHalfWidth);
         if (verified == null || verified.size() < 2) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
-        boolean changed = verified.size() != beforeVerify;
         smoothed = verified;
-        // 改了点数时 origins 与新 smoothed 错位 → 传 null(buildMetas 全 RAW 兜底),metas 仅 debug 着色不影响航行。
-        List<Byte> originsForMeta = changed ? null : sm.origins();
-        metasOut.set(buildMetas(smoothed, originsForMeta, raw, -1, smoothed.size()));
+        // WaterPathSmoother 已改点数(回推/重采),origins 与最终点必错位 → 传 null(buildMetas 全 RAW 兜底),metas 仅 debug 着色。
+        metasOut.set(buildMetas(smoothed, null, raw, -1, smoothed.size()));
         bar.update(95, "完成");
         return WaterRouteResult.success(smoothed);
+    }
+
+    /**
+     * 折线质量度量(给 refine/coarse 择优):{@code [撞陆段数, 总长度(格,取整)]}。撞陆段 = 该段 segmentHullClear 不过
+     * (2×2 船宽逐格 supercover 校验有陆)。比较时撞陆段数优先(越少越好),同撞陆数比总长(越短越好)。
+     */
+    // public:调试工具(RouteDebugService)复用同一质量判据,保证 debug 的 refine/coarse 择优与实际 100% 同口径。
+    public static long[] pathQuality(RealBlockWaterMap map, List<BlockPos> path, int halfWidth) {
+        long landSegs = 0;
+        long totalLen = 0;
+        for (int i = 1; i < path.size(); i++) {
+            BlockPos a = path.get(i - 1);
+            BlockPos b = path.get(i);
+            totalLen += Math.round(Math.sqrt(a.distSqr(b)));
+            if (!map.segmentHullClear(a, b, halfWidth)) {
+                landSegs++;
+            }
+        }
+        return new long[]{landSegs, totalLen};
     }
 
     /** 跑一条双向 A* 到完成(SUCCESS/FAILED/超时),返回 pathfinder 供取 path/status/failureReason。 */

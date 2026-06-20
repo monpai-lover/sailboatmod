@@ -68,11 +68,12 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
     }
 
     /**
-     * <b>两阶段·粗走廊世界</b>(阶段一):无约束全开,中心格判水即可航(boatHalfWidth=0,不卡船宽,只求大致走向),
-     * 大 step 粗网格省节点。起终泊位信任。map 须已 enableOnDemand。
+     * <b>两阶段·粗走廊世界</b>(阶段一):无约束全开,大 step 粗网格省节点,求大致走向。
+     * 2026-06:粗阶段也启用 3×3 船宽(boatHalfWidth=1)——避免粗路把船宽不够的窄水道当通路、精寻再被卡死/绕远。
+     * 起终泊位信任(泊位贴岸时 3×3 会误判,信任区放行)。map 须已 enableOnDemand。
      */
     public static RealBlockWaterWorld coarse(RealBlockWaterMap map, int seaY, BlockPos berthA, BlockPos berthB) {
-        RealBlockWaterWorld w = new RealBlockWaterWorld(map, null, 0, seaY, 0);
+        RealBlockWaterWorld w = new RealBlockWaterWorld(map, null, 0, seaY, 1);
         w.trustedBerthA = berthA;
         w.trustedBerthB = berthB;
         return w;

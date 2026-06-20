@@ -35,8 +35,7 @@ forge*changelog.txt
 # 测试产物（roadplanner 草稿）
 roadplanner_drafts_test/
 
-# route water debug tool - local only, never pushed (user request)
-src/main/java/com/monpai/sailboatmod/route/water/debug/
+# route water debug tool: 2026-06 取消隔离,与游戏内同算法(零自实现),随仓库提交
 CMSG.txt
 COMMIT_MSG_TMP.txt
 HANDOFF_*.md

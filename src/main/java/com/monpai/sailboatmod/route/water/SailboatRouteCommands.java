@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.route.water;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.monpai.sailboatmod.route.water.debug.RouteDebugServer;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
@@ -25,7 +27,44 @@ public final class SailboatRouteCommands {
                         .executes(ctx -> showMode(ctx.getSource()))
                         .then(Commands.argument("mode", StringArgumentType.word())
                                 .executes(ctx -> setMode(ctx.getSource(),
-                                        StringArgumentType.getString(ctx, "mode"))))));
+                                        StringArgumentType.getString(ctx, "mode")))))
+                .then(Commands.literal("routedebug")
+                        .then(Commands.literal("start")
+                                .executes(ctx -> startDebug(ctx.getSource(), 8899))
+                                .then(Commands.argument("port", IntegerArgumentType.integer(1024, 65535))
+                                        .executes(ctx -> startDebug(ctx.getSource(),
+                                                IntegerArgumentType.getInteger(ctx, "port")))))
+                        .then(Commands.literal("stop")
+                                .executes(ctx -> stopDebug(ctx.getSource())))
+                        .then(Commands.literal("status")
+                                .executes(ctx -> statusDebug(ctx.getSource())))));
+    }
+
+    private static int startDebug(CommandSourceStack source, int port) {
+        try {
+            RouteDebugServer.start(source.getServer(), "127.0.0.1", port);
+            source.sendSuccess(() -> Component.literal(
+                    "路由调试服务已启动：http://127.0.0.1:" + port + "/  （仅本机，调试用，记得 stop）"), true);
+            return 1;
+        } catch (Exception e) {
+            source.sendFailure(Component.literal("启动失败：" + e.getMessage()));
+            return 0;
+        }
+    }
+
+    private static int stopDebug(CommandSourceStack source) {
+        RouteDebugServer.stop();
+        source.sendSuccess(() -> Component.literal("路由调试服务已停止"), true);
+        return 1;
+    }
+
+    private static int statusDebug(CommandSourceStack source) {
+        RouteDebugServer s = RouteDebugServer.get();
+        boolean running = s != null && s.isRunning();
+        int p = s == null ? -1 : s.port();
+        source.sendSuccess(() -> Component.literal(
+                running ? "运行中：http://127.0.0.1:" + p + "/" : "未运行（/sailboat routedebug start [port]）"), false);
+        return 1;
     }
 
     private static int showMode(CommandSourceStack source) {

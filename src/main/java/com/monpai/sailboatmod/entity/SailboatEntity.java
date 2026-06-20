@@ -17,9 +17,13 @@ import com.monpai.sailboatmod.route.PathSmoother;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
 import com.monpai.sailboatmod.route.water.DockBerthResolver;
+import com.monpai.sailboatmod.route.water.RealBlockWaterMap;
 import com.monpai.sailboatmod.route.water.RealWaterVerifier;
+import com.monpai.sailboatmod.route.water.RuntimeWaterAStar;
 import com.monpai.sailboatmod.route.water.ServerWaterRouteWorld;
 import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
+import com.monpai.sailboatmod.route.water.WaterPathSmoother;
+import com.monpai.sailboatmod.route.water.WaterRouteNbtVerifier;
 import com.monpai.sailboatmod.route.water.WaterRoutePathfinder;
 import com.monpai.sailboatmod.route.water.WaterRoutePolicy;
 import com.monpai.sailboatmod.route.water.WaterRouteResult;
@@ -213,8 +217,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     // DETECT 20(原50):接近"立即"停又留 1s 限位防贴墙过弯误触发。MOVE_EPSILON 单 tick 平面位移阈值,YAW_STEP 摆舵角。
     private static final int AUTOPILOT_STUCK_DETECT_TICKS = 20;
     private static final double AUTOPILOT_STUCK_MOVE_EPSILON = 0.02D;
-    private static final int AUTOPILOT_UNSTICK_REVERSE_TICKS = 40; // ≥2s 后退(用户要求,原24≈1.2s)
+    private static final int AUTOPILOT_UNSTICK_REVERSE_TICKS = 70; // ≈3.5s 后退(2026-06 用户反馈 40≈2s 仍不够挤出卡点)
     private static final int AUTOPILOT_UNSTICK_MAX_ATTEMPTS = 5;
+    // 连续卡住升级到「运行时 A* 临时重寻」的 attempts 阈值:切下一航点重试到此次数仍卡 → 不再傻切,直接 A* 重规划。
+    private static final int AUTOPILOT_UNSTICK_ASTAR_AFTER_ATTEMPTS = 3;
+    private static final double AUTOPILOT_UNSTICK_ESCAPED_DIST = 1.5D; // 后退后移出此距离视作挤出卡点(原 1.0,放宽防误判)
     private static final float AUTOPILOT_UNSTICK_YAW_STEP = 4.0F;
     private static final double DOCK_PARKING_EDGE_PADDING = 1.5D;
     private static final double DOCK_APPROACH_CLEAR_RADIUS = 3.8D;
@@ -236,10 +243,29 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final double AUTOPILOT_LATERAL_DEADBAND = 1.5D;
     private static final double AUTOPILOT_LATERAL_GAIN = 0.8D;
     private static final float AUTOPILOT_LATERAL_MAX_DEGREES = 25.0F;
+    // 防偏离#3 前馈转向:按前方航线转角提前预转,减过弯外切(外切=贴岸撞陆典型)。GAIN 保守(0.3)防内切撞内岸,
+    // 前馈偏置封顶 MAX 度,且总 yawStep 仍走 MAX_TURN 封顶。GAIN 需实测调。
+    private static final double AUTOPILOT_FEEDFORWARD_GAIN = 0.3D;
+    private static final float AUTOPILOT_FEEDFORWARD_MAX_DEGREES = 20.0F;
     // 挡位迟滞:防 dist/yawError 在阈值附近抖动导致每帧翻档(船一顿一顿)。双阈值带半宽 + 切挡后最短保持 N tick。
     private static final int AUTOPILOT_GEAR_MIN_HOLD_TICKS = 10;
     private static final float AUTOPILOT_GEAR_YAW_HYST = 5.0F;
     private static final double AUTOPILOT_GEAR_DIST_HYST = 1.5D;
+    // 防偏离#2 贴岸降速:船当前离岸环数 < 此值 → 强制封顶慢速档(偏离∝速度,贴岸慢船纠偏快/偏离小,不甩岸)。
+    private static final int AUTOPILOT_SHORE_SLOWDOWN_RINGS = 3;   // 离岸不足 3 环算贴岸危险
+    private static final int AUTOPILOT_SHORE_SCAN_MAX_RINGS = 4;   // 环扫上限(=危险阈值+1,够判定即止)
+    private static final int AUTOPILOT_SHORE_EVAL_INTERVAL = 5;    // 每 5 tick 评估一次离岸(降频,结果缓存)
+    private int autopilotShoreClearanceCache = 8;                  // 缓存的离岸环数(8=开阔)
+    private int autopilotShoreEvalTick = 0;
+    // 防偏离#4 撞陆预测避让:外推距离 = speed×GAIN,封顶 MAX;近距 HARD 内正前方陆 → 强转离+停;远距 → 转离偏置+降速。
+    private static final double AUTOPILOT_PREDICT_SPEED_GAIN = 14.0D;   // speed(格/tick)×此 ≈ 外推格数
+    private static final double AUTOPILOT_PREDICT_MIN_BLOCKS = 3.0D;
+    private static final double AUTOPILOT_PREDICT_MAX_BLOCKS = 8.0D;
+    private static final int AUTOPILOT_PREDICT_HARD_BLOCKS = 3;        // ≤ 此距离正前方陆 = 紧急(强转+停)
+    private static final int AUTOPILOT_PREDICT_SIDE_PROBE = 6;         // 左右探空格数(选更空一侧转)
+    private static final float AUTOPILOT_PREDICT_TURN_BIAS_DEGREES = 6.0F; // 远距将撞的转离偏置/tick
+    private static final int AUTOPILOT_PREDICT_INTERVAL = 3;           // 每 3 tick 评估一次(降频)
+    private int autopilotPredictEvalTick = 0;
     private static final int AUTOPILOT_CHUNK_RADIUS = 2;
     private static final int AUTOPILOT_TARGET_CHUNK_RADIUS = 1;
     private static final int AUTOPILOT_DEST_DOCK_CHUNK_RADIUS = 2;
@@ -1172,6 +1198,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     @Nullable
     @Override
     public LivingEntity getControllingPassenger() {
+        // autopilot 时船是「无人驾驶」:驾驶位玩家降为纯乘客,不再作为 controlling passenger。这样 vanilla 一切
+        // 「驾驶者」入口(input、move vehicle、转向)及本类依赖 getControllingPassenger 的分支(limitTurnRate、
+        // dock-hold、轨迹归属)在 autopilot 期间对玩家全失效 → 玩家无法影响 autopilot 船。移动已由
+        // skipsVanillaBoatMovementTick()=true 完全接管,不依赖此返回值;isControlledByLocalInstance() autopilot 恒
+        // false 也不依赖它。([[vehicle_movement_authority_buoyancy]])
+        if (isAutopilotActive()) {
+            return null;
+        }
         for (Entity passenger : getPassengers()) {
             if (getSeatFor(passenger) == 0 && passenger instanceof LivingEntity living) {
                 return living;
@@ -2007,6 +2041,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (player == null || level().isClientSide || player.getVehicle() != this || !hasPassenger(player) || !isCaptain(player)) {
             return;
         }
+        // autopilot 双保险:彻底丢弃玩家 input packet,连 manualInputState 都不写。杜绝「input packet 在 tick 的
+        // autopilot 分支 clear() 之前到达」的时序窗口 → 玩家任何按键对 autopilot 船零影响。([[vehicle_movement_authority_buoyancy]])
+        if (isAutopilotActive()) {
+            return;
+        }
         manualInputState.update(player.getUUID(), input, tickCount);
         // 挡位是离散状态：客户端用本地实时按键做边沿检测算出目标挡位 id，随包传来，服务端在此幂等设挡。
         // 不在服务端重放边沿（网络包丢/合批会漏沿致两端永久错位、一卡一卡）。手动六段挡才采用，autopilot
@@ -2225,12 +2264,46 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         double adx = aimX - boatX;
         double adz = aimZ - boatZ;
         float desiredYaw = (float) (Mth.atan2(-adx, adz) * (180.0D / Math.PI));
+        // 防偏离#3 前馈:非终点段且前方有下一段时,把 desiredYaw 朝「下一段方向」提前偏置(按前方转角×GAIN,封顶),
+        // 船没到弯就开始转 → 过弯不外切贴岸。偏置仍并入 yawError→yawStep 的统一 MAX_TURN 封顶,不会失控。
+        if (!finalTarget) {
+            desiredYaw += feedForwardBias(target);
+        }
         float yawError = Mth.wrapDegrees(desiredYaw - getYRot());
         float yawStep = Mth.clamp(yawError, -AUTOPILOT_MAX_TURN_DEGREES_PER_TICK, AUTOPILOT_MAX_TURN_DEGREES_PER_TICK);
         float turnInput = Mth.clamp(yawError / 40.0F, -1.0F, 1.0F);
         boolean wantsTurn = Math.abs(yawError) > 1.5F;
         float absYawError = Math.abs(yawError);
         return new HeadingSolution(desiredYaw, yawError, yawStep, turnInput, absYawError, wantsTurn);
+    }
+
+    /**
+     * 防偏离#3 前馈偏置(度,带符号):当前段(prev→target)方向 与 下一段(target→next)方向 的夹角 × {@link #AUTOPILOT_FEEDFORWARD_GAIN},
+     * 封顶 {@link #AUTOPILOT_FEEDFORWARD_MAX_DEGREES}。符号 = 转弯方向(左/右),让 desiredYaw 朝下一段提前偏 → 过弯不外切。
+     * 当前段或下一段不存在(退化/终点)返回 0。
+     */
+    private float feedForwardBias(Vec3 target) {
+        int idx = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
+        if (idx + 1 >= autopilotRoute.size()) {
+            return 0.0F; // 无下一段
+        }
+        Vec3 prev = idx > 0 ? autopilotRoute.get(idx - 1) : new Vec3(getX(), getY(), getZ());
+        Vec3 next = autopilotRoute.get(idx + 1);
+        double cx = target.x - prev.x;
+        double cz = target.z - prev.z;
+        double nx = next.x - target.x;
+        double nz = next.z - target.z;
+        double cl = Math.sqrt(cx * cx + cz * cz);
+        double nl = Math.sqrt(nx * nx + nz * nz);
+        if (cl < 1.0E-6D || nl < 1.0E-6D) {
+            return 0.0F;
+        }
+        // 当前段航向角、下一段航向角(与 desiredYaw 同坐标系:atan2(-dx, dz))。
+        float curYaw = (float) (Mth.atan2(-cx, cz) * (180.0D / Math.PI));
+        float nextYaw = (float) (Mth.atan2(-nx, nz) * (180.0D / Math.PI));
+        float turn = Mth.wrapDegrees(nextYaw - curYaw); // 前方将转的角度(带符号)
+        float bias = (float) (turn * AUTOPILOT_FEEDFORWARD_GAIN);
+        return Mth.clamp(bias, -AUTOPILOT_FEEDFORWARD_MAX_DEGREES, AUTOPILOT_FEEDFORWARD_MAX_DEGREES);
     }
 
     protected AutopilotCommand computeAutopilotCommand() {
@@ -2379,7 +2452,88 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             autopilotGearHoldTicks--;
         }
         EngineGear desiredGear = selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
+        // 防偏离#4 实时撞陆预测避让(最后安全网,终点段不干预——靠泊是有意贴近):按速度+航向外推查前方撞陆,
+        // 要撞则覆盖转向/挡位转离+减速。撞之前避,比卡住自救(撞住后救)更早一层。
+        if (!finalTarget) {
+            AutopilotCommand avoid = predictAndAvoidCollision(yawStep, desiredGear);
+            if (avoid != null) {
+                return avoid;
+            }
+        }
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
+    }
+
+    /**
+     * 防偏离#4:按 船位 + 当前航向 × 预测距离(speed×K,封顶 {@link #AUTOPILOT_PREDICT_MAX_BLOCKS})外推一串点,
+     * {@link #isAutopilotWaterColumn} 查;前方将撞陆则返回避让指令(转离+减速),否则 null(不干预,用原指令)。
+     * <ul>
+     *   <li>近距(≤ {@link #AUTOPILOT_PREDICT_HARD_BLOCKS})正前方陆 → 强转离 + STOP(等同提前触发自救,但不等真撞墙)。</li>
+     *   <li>远距将撞 → 朝「左右哪侧更空」方向叠转向偏置 + 降到慢速档。</li>
+     * </ul>
+     * 降频:每 {@link #AUTOPILOT_PREDICT_INTERVAL} tick 评估(查水有开销,船强加载命中内存)。
+     */
+    private AutopilotCommand predictAndAvoidCollision(float baseYawStep, EngineGear baseGear) {
+        if (level().isClientSide) {
+            return null;
+        }
+        if (tickCount - autopilotPredictEvalTick < AUTOPILOT_PREDICT_INTERVAL) {
+            return null; // 降频:非评估帧不干预(避让是低频安全网,够用)
+        }
+        autopilotPredictEvalTick = tickCount;
+        double speed = getDeltaMovement().horizontalDistance();
+        double reach = Mth.clamp(speed * AUTOPILOT_PREDICT_SPEED_GAIN, AUTOPILOT_PREDICT_MIN_BLOCKS, AUTOPILOT_PREDICT_MAX_BLOCKS);
+        double yawRad = getYRot() * (Math.PI / 180.0D);
+        double fx = -Math.sin(yawRad);
+        double fz = Math.cos(yawRad);
+        // 沿正前方外推找第一处撞陆距离。
+        int hitDist = -1;
+        for (int d = 1; d <= (int) Math.ceil(reach); d++) {
+            int x = Mth.floor(getX() + fx * d);
+            int z = Mth.floor(getZ() + fz * d);
+            if (!isAutopilotWaterColumn(x, blockPosition().getY(), z)) {
+                hitDist = d;
+                break;
+            }
+        }
+        if (hitDist < 0) {
+            return null; // 前方畅通,不干预
+        }
+        // 选更空的一侧转离:左右各探一个法线方向,哪侧前方水更多就往哪转。
+        double leftClear = sideClearance(fx, fz, -1);
+        double rightClear = sideClearance(fx, fz, +1);
+        int turnSign = leftClear >= rightClear ? -1 : 1; // -1=左,+1=右
+        if (hitDist <= AUTOPILOT_PREDICT_HARD_BLOCKS) {
+            // 近距正前方陆:强转离 + 停(防径直撞上)。
+            float yaw = AUTOPILOT_MAX_TURN_DEGREES_PER_TICK * turnSign;
+            float nextYaw = getYRot() + yaw;
+            setYRot(nextYaw);
+            setYHeadRot(nextYaw);
+            setYBodyRot(nextYaw);
+            LOGGER.info("[Avoid] 前方 {} 格撞陆(近),强转离 {} + STOP", hitDist, turnSign < 0 ? "左" : "右");
+            return new AutopilotCommand(true, true, turnSign, yaw, EngineGear.STOP);
+        }
+        // 远距将撞:叠加转离偏置 + 降慢速,不停(温和绕)。
+        float biased = baseYawStep + AUTOPILOT_PREDICT_TURN_BIAS_DEGREES * turnSign;
+        biased = Mth.clamp(biased, -AUTOPILOT_MAX_TURN_DEGREES_PER_TICK, AUTOPILOT_MAX_TURN_DEGREES_PER_TICK);
+        EngineGear gear = baseGear.id > EngineGear.ONE_THIRD_AHEAD.id ? EngineGear.ONE_THIRD_AHEAD : baseGear;
+        return new AutopilotCommand(true, true, turnSign, biased, gear);
+    }
+
+    /** 沿航向法线侧(sign)外推 AUTOPILOT_PREDICT_SIDE_PROBE 格,统计连续水格数(越大越空)。 */
+    private double sideClearance(double fx, double fz, int sign) {
+        double nx = -fz * sign;
+        double nz = fx * sign;
+        int y = blockPosition().getY();
+        int clear = 0;
+        for (int d = 1; d <= AUTOPILOT_PREDICT_SIDE_PROBE; d++) {
+            int x = Mth.floor(getX() + nx * d);
+            int z = Mth.floor(getZ() + nz * d);
+            if (!isAutopilotWaterColumn(x, y, z)) {
+                break;
+            }
+            clear++;
+        }
+        return clear;
     }
 
     /** 进入一轮窄河道脱困：记起点、累加轮数、交替摆舵方向。 */
@@ -2392,12 +2546,18 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     /**
-     * 一轮(后退≥2s)结束。用户要求的自救状态机:后退完 → 在当前位置临时寻路到「下一个可航节点」接回原航线;
-     * 一轮=后退+重寻,连续 {@link #AUTOPILOT_UNSTICK_MAX_ATTEMPTS} 轮仍卡在原处才呼救。
+     * 一轮(后退≈3.5s)结束。<b>2026-06 分级升级自救状态机</b>(用户要求:卡→切下一点→再卡→再切→连续卡用 A* 临时重寻):
+     * <ol>
+     *   <li>后退挤出卡点(移动 > {@link #AUTOPILOT_UNSTICK_ESCAPED_DIST}) → 复位,回正常循迹。</li>
+     *   <li>没挤出 + attempts &lt; {@link #AUTOPILOT_UNSTICK_ASTAR_AFTER_ATTEMPTS} → <b>切到下一个航点</b>(轻量,跳过卡点)。</li>
+     *   <li>attempts 达 A* 阈值且 &lt; MAX → <b>运行时 A* 临时重寻</b>(船强加载区块,主线程同步 2×2 网格 A*)替换剩余航线。</li>
+     *   <li>attempts ≥ {@link #AUTOPILOT_UNSTICK_MAX_ATTEMPTS} → 呼救停船。</li>
+     * </ol>
      */
     private void endUnstickAttempt() {
         boolean moved = autopilotUnstickStartPos != null
-                && position().distanceToSqr(autopilotUnstickStartPos) > 1.0D;
+                && position().distanceToSqr(autopilotUnstickStartPos)
+                        > AUTOPILOT_UNSTICK_ESCAPED_DIST * AUTOPILOT_UNSTICK_ESCAPED_DIST;
         autopilotStuckTicks = 0;
         autopilotUnstickStartPos = null;
         if (moved) {
@@ -2408,16 +2568,102 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             clearStuckTraceStatus();
             return;
         }
-        // 后退没挪动:本轮(attempts 已在 beginUnstickAttempt 累加)做临时寻路。达上限 → 呼救;否则寻路到下一个可航节点。
+        // 后退没挪动:达上限 → 呼救。
         if (autopilotUnstickAttempts >= AUTOPILOT_UNSTICK_MAX_ATTEMPTS) {
-            LOGGER.warn("[Rescue] 连续 {} 轮(后退+重寻)仍卡原处 → 呼救", AUTOPILOT_UNSTICK_MAX_ATTEMPTS);
+            LOGGER.warn("[Rescue] 连续 {} 轮自救仍卡原处 → 呼救", AUTOPILOT_UNSTICK_MAX_ATTEMPTS);
             autopilotUnstickAttempts = 0;
             rerouteFailedFallback();
             return;
         }
-        // 在当前坐标临时寻路到「下一个可航节点」,绕开原航线卡点(通常穿陆误判),接回原航线后半段继续。
-        // 异步:getBaseHeight 采样昂贵,同步主线程会崩服;失败不降级呼救(留给下一轮),只记日志。
-        tryRerouteToNextNavigableWaypointAsync();
+        // 中段升级:连续卡到 A* 阈值 → 运行时 A* 重寻(治本绕开卡点);未到阈值 → 先轻量切下一航点试跳过卡点。
+        if (autopilotUnstickAttempts >= AUTOPILOT_UNSTICK_ASTAR_AFTER_ATTEMPTS) {
+            if (tryRuntimeAStarReroute()) {
+                LOGGER.info("[Rescue] 第 {} 轮:运行时 A* 重寻成功,替换剩余航线", autopilotUnstickAttempts);
+                autopilotNoProgressTicks = 0;
+                autopilotLastTargetDistance = Double.NaN;
+                return;
+            }
+            // A* 也失败 → 退回原异步重寻(下一轮再升级或呼救)。
+            LOGGER.info("[Rescue] 第 {} 轮:运行时 A* 重寻失败,退回异步重寻", autopilotUnstickAttempts);
+            tryRerouteToNextNavigableWaypointAsync();
+            return;
+        }
+        // 早期:轻量切到下一个航点,跳过当前卡点(通常是穿陆误判的航点),不动整条航线。
+        if (advanceAutopilotTargetOrStop()) {
+            LOGGER.info("[Rescue] 第 {} 轮:切到下一航点 #{} 跳过卡点", autopilotUnstickAttempts, autopilotTargetIndex);
+            autopilotNoProgressTicks = 0;
+            autopilotLastTargetDistance = Double.NaN;
+        }
+    }
+
+    /**
+     * <b>运行时 A* 临时重寻</b>(2026-06,连续卡住升级):船强加载周围 5×5 区块,主线程<b>同步</b>跑短程网格 A*
+     * ({@link RuntimeWaterAStar},2×2 hullClear 判通行,与生成期同口径)绕开卡点。找剩余航线第一个仍可航的远端节点
+     * 当 goal,从船当前位(校正到最近可航格)A* 到它,成功则平滑+2×2 段校验后用 {@link #applyNextWaypointReroute} 拼接。
+     *
+     * <p>与异步重寻的区别:异步用 ServerWaterRouteWorld 噪声采样(WorldPainter 地图噪声失配易误判,见
+     * [[worldpainter_noise_mismatch]]);本法用 {@link RealBlockWaterMap} 真实方块,且船强加载范围内同步读不阻塞,
+     * 故能当场治本。失败返回 false,调用方退回异步重寻。
+     *
+     * @return true 表示 A* 成功并已替换剩余航线。
+     */
+    private boolean tryRuntimeAStarReroute() {
+        if (!(level() instanceof ServerLevel server)) {
+            return false;
+        }
+        List<Vec3> remaining = new ArrayList<>();
+        for (int i = Math.max(0, autopilotTargetIndex); i < autopilotRoute.size(); i++) {
+            remaining.add(autopilotRoute.get(i));
+        }
+        if (remaining.isEmpty()) {
+            return false;
+        }
+        int seaY = server.getSeaLevel();
+        RealBlockWaterMap map = new RealBlockWaterMap(server, seaY).enableOnDemand();
+        int halfWidth = 1; // 语义已统一 2×2(见 RealBlockWaterMap.hullClear)
+        BlockPos boatPos = blockPosition();
+        // 起点校正到最近可航格(船卡窄道当前格可能 2×2 不全水)。
+        BlockPos start = map.nearestHullWater(boatPos.getX(), boatPos.getZ(), halfWidth, 16);
+        if (start == null) {
+            LOGGER.info("[Rescue] 运行时A*: 船位 16 格内无可航格,放弃");
+            return false;
+        }
+        // 找剩余航线第一个仍可航的节点当 goal(卡点节点会被跳过)。
+        int goalIdx = -1;
+        BlockPos goal = null;
+        for (int i = 0; i < remaining.size(); i++) {
+            Vec3 node = remaining.get(i);
+            int nx = Mth.floor(node.x);
+            int nz = Mth.floor(node.z);
+            if (map.hullClear(nx, nz, halfWidth)) {
+                goalIdx = i;
+                goal = new BlockPos(nx, seaY, nz);
+                break;
+            }
+        }
+        if (goal == null) {
+            LOGGER.info("[Rescue] 运行时A*: {} 个剩余航点 2×2 全不可航,放弃", remaining.size());
+            return false;
+        }
+        long t0 = System.nanoTime();
+        List<BlockPos> path = RuntimeWaterAStar.findPath(map, start, goal, halfWidth,
+                RuntimeWaterAStar.DEFAULT_MARGIN, RuntimeWaterAStar.DEFAULT_MAX_EXPANSIONS);
+        long ms = (System.nanoTime() - t0) / 1_000_000L;
+        if (path.size() < 2) {
+            LOGGER.info("[Rescue] 运行时A* 无路 耗时={}ms start={} goal={}", ms, start, goal);
+            return false;
+        }
+        // 撞陆感知平滑(治本,与生成期同)+ 2×2 段校验兜底。
+        List<BlockPos> smoothed = WaterPathSmoother.smooth(map, path, seaY, 2.0D, halfWidth);
+        List<BlockPos> verified = WaterRouteNbtVerifier.verify(map, smoothed, halfWidth);
+        if (verified == null || verified.size() < 2) {
+            LOGGER.info("[Rescue] 运行时A* 校验后<2点,放弃");
+            return false;
+        }
+        LOGGER.info("[Rescue] 运行时A* 成功 耗时={}ms A*点={} 平滑校验后={} 接回剩余[{}]",
+                ms, path.size(), verified.size(), goalIdx);
+        applyNextWaypointReroute(verified, remaining, goalIdx);
+        return true;
     }
 
     /**
@@ -2787,7 +3033,58 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         EngineGear desired = (slowByYaw || slowByDist)
                 ? EngineGear.ONE_THIRD_AHEAD
                 : (isSailDeployed() ? EngineGear.FULL_AHEAD : EngineGear.TWO_THIRDS_AHEAD);
+        // 防偏离#2:贴岸危险时封顶到慢速档(开阔段不触发)。偏离∝速度,贴岸慢船纠偏快、偏出小、不甩岸。
+        if (autopilotShoreClearance() < AUTOPILOT_SHORE_SLOWDOWN_RINGS && desired.id > EngineGear.ONE_THIRD_AHEAD.id) {
+            desired = EngineGear.ONE_THIRD_AHEAD;
+        }
         return commitAutopilotGear(desired);
+    }
+
+    /**
+     * 船当前位的离岸环数(降频缓存,每 {@link #AUTOPILOT_SHORE_SCAN_MAX_RINGS} 环扫一次,每 EVAL_INTERVAL tick 刷新)。
+     * 用 vanilla {@code level.getFluidState}(船强加载区块命中内存快),环扫 1..MAX,第一环有非水格即返回环数-1=离岸格数。
+     * 不引 RealBlockWaterMap(避免后台读盘重逻辑;这里只需当前位的廉价采样)。
+     */
+    private int autopilotShoreClearance() {
+        if (level().isClientSide) {
+            return autopilotShoreClearanceCache;
+        }
+        if (tickCount - autopilotShoreEvalTick < AUTOPILOT_SHORE_EVAL_INTERVAL) {
+            return autopilotShoreClearanceCache; // 用缓存(降频)
+        }
+        autopilotShoreEvalTick = tickCount;
+        BlockPos center = blockPosition();
+        int clearance = AUTOPILOT_SHORE_SCAN_MAX_RINGS;
+        for (int r = 1; r <= AUTOPILOT_SHORE_SCAN_MAX_RINGS; r++) {
+            boolean ringHasLand = false;
+            for (int dx = -r; dx <= r && !ringHasLand; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
+                        continue; // 仅当前环
+                    }
+                    if (!isAutopilotWaterColumn(center.getX() + dx, center.getY(), center.getZ() + dz)) {
+                        ringHasLand = true;
+                        break;
+                    }
+                }
+            }
+            if (ringHasLand) {
+                clearance = r - 1;
+                break;
+            }
+        }
+        autopilotShoreClearanceCache = clearance;
+        return clearance;
+    }
+
+    /** (x,z) 在海平面附近是否水柱(船能浮)。查当前 y 与上下各 1 格容海面波动。 */
+    private boolean isAutopilotWaterColumn(int x, int y, int z) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (level().getFluidState(new BlockPos(x, y + dy, z)).is(FluidTags.WATER)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 提交一个 autopilot 挡位:与当前挡不同则重置最短保持计时,使其在 N tick 内不再被翻档。 */
@@ -3759,13 +4056,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
-        // 幽灵船彻底修复(2026-06,同马车):autopilot 全程 + 到港宽限期内周期性让 vanilla 重建 EntityTracker
-        // 并对全体玩家重新评估 pairing(ServerChunkCache.removeEntity+addEntity)。真因=载具靠 ENTITY_TICKING
-        // 票据自己 tick,但 ChunkMap.tick() 只在跨 section 移动那帧才重新 pair,时序错过 → vanilla 不发 spawn。
-        // 之后位置同步交给 vanilla ServerEntity(平滑不抽搐),不再自己发 teleport/motion。低频(每 3s)防动画重播。
+        // 幽灵船修复(2026-06,同马车):autopilot 全程 + 到港宽限期内周期性让远端客户端能看到船。真因=载具靠
+        // ENTITY_TICKING 票据自己 tick,但 ChunkMap.tick() 只在跨 section 移动那帧才重新 pair,时序错过 → vanilla 不发 spawn。
+        // 心跳抽搐根因修复(2026-06):此处由 retrackViaVanilla(removeEntity+addEntity,无差别砸所有已显示客户端 → GeckoLib
+        // 动画每 3s 重播)改成 retrackOnDemand(反射 TrackedEntity.updatePlayer,vanilla seenBy 幂等:已 pair 玩家零打扰、
+        // 仅幽灵玩家补 spawn)。到港一次性落点仍用 retrackViaVanilla。([[spawn_heartbeat_destroys_client_entity]])
         if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
             if (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0) {
-                com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
+                com.monpai.sailboatmod.util.EntityRetrackHelper.retrackOnDemand(serverLevel, this);
             }
         } else {
             spawnedToPlayers.clear();

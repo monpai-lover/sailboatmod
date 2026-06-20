@@ -30,11 +30,19 @@ public final class PathSmoother {
     private PathSmoother() {
     }
 
-    /** 水路平滑:Y 统一取传入海平面(水面航行)。spacing 建议 2.0。 */
+    /** 水路平滑:Y 统一取传入海平面(水面航行)。spacing 建议 2.0。用默认切线张力。 */
     public static List<BlockPos> smooth2D(List<BlockPos> polyline, int fixedY, double spacing) {
+        return smooth2D(polyline, fixedY, spacing, TANGENT_TIGHTNESS);
+    }
+
+    /**
+     * 水路平滑(可调切线张力)。{@code tightness} 越大曲线越贴原折线、过冲越小(WaterPathSmoother 的「过冲段局部重收紧」
+     * 用更大 tightness 重算撞陆的路径)。其余同 {@link #smooth2D(List, int, double)}。
+     */
+    public static List<BlockPos> smooth2D(List<BlockPos> polyline, int fixedY, double spacing, double tightness) {
         // 不做 Douglas-Peucker 直线化:它会把寻路绕陆/绕岛的拐点(垂距小但贴着陆地)拉直 → 穿陆(实测回归)。
         // zigzag 锯齿交给样条平滑本身(Catmull-Rom)柔化,不靠删点拉直(删点会穿陆,得不偿失)。
-        List<Vec2d> centers = smoothCenters(polyline, spacing);
+        List<Vec2d> centers = smoothCenters(polyline, spacing, null, tightness);
         if (centers.isEmpty()) {
             return polyline == null ? List.of() : List.copyOf(polyline);
         }
@@ -93,15 +101,22 @@ public final class PathSmoother {
 
     /** 折线 → 平滑 + 弧长重采样后的 2D 中心点列表(无 Y)。航点数超上限时等距抽稀。 */
     private static List<Vec2d> smoothCenters(List<BlockPos> polyline, double spacing) {
-        return smoothCenters(polyline, spacing, null);
+        return smoothCenters(polyline, spacing, null, TANGENT_TIGHTNESS);
+    }
+
+    /** {@link #smoothCenters(List, double, List, double)} 的默认张力重载。 */
+    private static List<Vec2d> smoothCenters(List<BlockPos> polyline, double spacing, List<Byte> originsOut) {
+        return smoothCenters(polyline, spacing, originsOut, TANGENT_TIGHTNESS);
     }
 
     /**
      * 折线 → 平滑 + 弧长重采样后的 2D 中心点列表(无 Y)。航点数超上限时等距抽稀。
      *
      * @param originsOut 非 null 时,与返回列表等长并列输出每点 origin(命中 simplify 控制点取整坐标=RAW,否则 INTERP)。
+     * @param tightness  切线张力(越大越贴折线、过冲越小)。
      */
-    private static List<Vec2d> smoothCenters(List<BlockPos> polyline, double spacing, List<Byte> originsOut) {
+    private static List<Vec2d> smoothCenters(List<BlockPos> polyline, double spacing, List<Byte> originsOut,
+                                             double tightness) {
         if (originsOut != null) {
             originsOut.clear();
         }
@@ -127,7 +142,7 @@ public final class PathSmoother {
         // 贝塞尔(Catmull-Rom→Bezier+de Casteljau,移植 RoadWeaver SplineHelper):曲线<b>严格落在控制点凸包内、
         // 不过冲</b>,转弯仍圆滑。残留极少数贴岸过冲由调用方(WaterAutoRouteService)平滑后逐段 3×3 陆地校验兜底,
         // 判陆的段退回安全直连。
-        List<Vec2d> spline = generateSplinePoints(controls);
+        List<Vec2d> spline = generateSplinePoints(controls, tightness);
         List<Vec2d> centers;
         if (originsOut == null) {
             centers = extractCenters(spline, Math.max(0.5D, spacing));
@@ -237,7 +252,7 @@ public final class PathSmoother {
      * 幻影端点扩展 + 逐段<b>贝塞尔</b>采样(Catmull-Rom→Bezier de Casteljau,移植 RoadWeaver,不过冲)。
      * steps≈段长×{@link #SPLINE_SAMPLES_PER_BLOCK}。曲线落在控制点凸包内,转弯圆滑但不外扩甩岸。
      */
-    private static List<Vec2d> generateSplinePoints(List<Vec2d> controls) {
+    private static List<Vec2d> generateSplinePoints(List<Vec2d> controls, double tightness) {
         int n = controls.size();
         // 幻影端点:首尾各镜像延伸一个点,保证首尾段也有 4 个控制点。
         List<Vec2d> ext = new ArrayList<>(n + 2);
@@ -255,12 +270,39 @@ public final class PathSmoother {
             int steps = Math.max(1, (int) Math.ceil(dist * SPLINE_SAMPLES_PER_BLOCK));
             for (int s = 0; s < steps; s++) {
                 double t = s / (double) steps;
-                spline.add(WeaverSplineHelper.catmullRomBezier(
-                        p0.x(), p0.z(), p1.x(), p1.z(), p2.x(), p2.z(), p3.x(), p3.z(), t));
+                // 2026-06 收紧:用更小的切线张力(贝塞尔控制点靠 p1/p2 更近),曲线更贴原折线、转弯外凸更小,
+                // 减少甩向陆地的过冲(剩余穿陆由 WaterRouteNbtVerifier 法线侧移兜底)。
+                spline.add(tightBezier(p0, p1, p2, p3, t, tightness));
             }
         }
         spline.add(controls.get(n - 1)); // 补末端点
         return spline;
+    }
+
+    /** 切线张力分母:越大切线越短、曲线越贴控制点连线(过冲越小)。标准 Catmull-Rom 用 6.0;此处收紧到 12.0。 */
+    private static final double TANGENT_TIGHTNESS = 12.0D;
+
+    /**
+     * Catmull-Rom→三次贝塞尔 + de Casteljau,切线用 {@link #TANGENT_TIGHTNESS} 收紧(比 WeaverSplineHelper 的
+     * /6.0 更贴折线)。曲线仍落在控制点凸包内不过冲,且转弯外凸更小 → 更少甩向陆地。
+     */
+    private static Vec2d tightBezier(Vec2d p0, Vec2d p1, Vec2d p2, Vec2d p3, double t, double tightness) {
+        double ct = Math.max(0.0D, Math.min(1.0D, t));
+        double tt = tightness <= 0.0D ? TANGENT_TIGHTNESS : tightness;
+        double b1x = p1.x() + (p2.x() - p0.x()) / tt;
+        double b1z = p1.z() + (p2.z() - p0.z()) / tt;
+        double b2x = p2.x() - (p3.x() - p1.x()) / tt;
+        double b2z = p2.z() - (p3.z() - p1.z()) / tt;
+        // de Casteljau on [p1, b1, b2, p2]
+        double[] xs = {p1.x(), b1x, b2x, p2.x()};
+        double[] zs = {p1.z(), b1z, b2z, p2.z()};
+        for (int k = 3; k > 0; k--) {
+            for (int i = 0; i < k; i++) {
+                xs[i] = xs[i] + (xs[i + 1] - xs[i]) * ct;
+                zs[i] = zs[i] + (zs[i + 1] - zs[i]) * ct;
+            }
+        }
+        return new Vec2d(xs[0], zs[0]);
     }
 
     /** 沿 from→to 反方向延伸一个等长幻影端点(给首尾段补第 4 控制点)。 */
