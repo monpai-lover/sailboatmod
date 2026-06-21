@@ -60,12 +60,11 @@ public record WaterRoutePolicy(int stepSize,
     }
 
     /**
-     * <b>NBT 两阶段·粗走廊阶段</b>:大 step 粗网格跑大致走向(确定从哪绕大陆),<b>halfWidth=0</b>(中心格判水即可,
-     * 不卡船宽,只求走向)。step=24 跨远(粗路只导向,精度交阶段二);maxSearchRadius=12288 覆盖超远航线;
-     * maxExpandedNodes=120000;nodesPerTick=256(后台跑可大点);timeout=60s。
+     * <b>NBT 两阶段·粗走廊阶段</b>(step=24 档,= {@link #nbtCoarseStep(int) nbtCoarseStep(24)}):大 step 粗网格跑
+     * 大致走向,halfWidth=0 只求走向。窄海峡场景由调用方走 {@link #nbtCoarseStep} 渐进缩小 step 兜底。
      */
     public static WaterRoutePolicy nbtCoarse() {
-        return new WaterRoutePolicy(24, 2, 0, 3, 12288, 120000, 0, 256, 0, 20 * 60);
+        return nbtCoarseStep(24);
     }
 
     /**
@@ -77,18 +76,22 @@ public record WaterRoutePolicy(int stepSize,
     }
 
     /**
-     * <b>HYBRID 中段·真实 NBT 粗寻阶段</b>:取代旧 HYBRID 用噪声粗寻当走廊中心线(噪声=WorldPainter 错地形,
-     * 不知真实海峡在哪 → 走廊框死真实海峡之外 → 精寻找不到 → 失败/穿陆)。改为<b>粗寻本身就走真实 NBT 水体连通性</b>:
+     * <b>NBT 粗走廊·渐进 step 版</b>(2026-06):{@link #nbtCoarse()} 固定 step=24 会<b>跳过窄海峡</b>——海峡只有
+     * 1-8 格宽时,step=24 网格点没有任何一个落进海峡 → A* 没有「站在海峡里」的可航节点 → 起终水域在粗网格上不连通 →
+     * 前后向开集都耗尽失败。改为<b>渐进 step</b>:先大 step 快试(路宽时省节点),失败逐级缩小(24→12→8→4)直到
+     * 网格点能踩进窄海峡。本工厂按指定 step 派生 coarse policy:
      * <ul>
-     *   <li><b>step=12</b>:跨大洋够快,又不取 24/16——海峡可能比 24 窄且斜穿,大 step 网格点不落进海峡 → A* 没有
-     *       "站在海峡里"的可航节点 → 跳过海峡。12 是跳窄缝风险 vs 省节点的折中(同 {@link #longDistance()})。</li>
-     *   <li><b>boatHalfWidth=0</b>:只求水体连通走向,不卡船宽——1 格宽的窄海峡也当通路,让粗路能穿过去;船宽校验
-     *       交阶段二走廊精寻(halfWidth=1 + 软代价挤过)。</li>
+     *   <li><b>halfWidth=0</b>:只求水体连通走向,不卡船宽(1 格窄海峡也当通路),船宽交阶段二精寻。</li>
+     *   <li><b>maxExpandedNodes 随 step 缩小放大</b>:step 越小同距离节点越多((24/step)² 倍),给足预算防提前耗尽
+     *       误判不连通。step=4 时约 24²/4²×120000 ≈ 给到 600000。</li>
      * </ul>
-     * 其余比照 {@link #longDistance()}(maxSearchRadius=8192、maxExpandedNodes=160000 群岛绕行节点多、timeout=60s)。
-     * 配 {@link RealBlockWaterWorld#coarse}(无约束全开 + 泊位信任,judging 真实 NBT,onDemand 前沿后台读)。
+     * 配 {@link RealBlockWaterWorld#coarse}(无约束全开 + 泊位信任,真实 NBT 判水,onDemand 前沿后台读)。
      */
-    public static WaterRoutePolicy hybridCoarse() {
-        return new WaterRoutePolicy(12, 2, 0, 3, 8192, 160000, 0, 256, 0, 20 * 60);
+    public static WaterRoutePolicy nbtCoarseStep(int step) {
+        int s = Math.max(1, step);
+        // 节点预算随 step 缩小按面积比放大(基准 step=24 给 120000),封顶 800000 防 step 过小预算爆炸。
+        long scaled = 120000L * (24L * 24L) / ((long) s * s);
+        int maxNodes = (int) Math.min(800000L, Math.max(120000L, scaled));
+        return new WaterRoutePolicy(s, 2, 0, 3, 12288, maxNodes, 0, 256, 0, 20 * 60);
     }
 }

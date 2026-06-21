@@ -125,12 +125,20 @@ public final class RouteDebugService {
         StageResult berth = new StageResult("berth", pair(startBerth, goalBerth), "OK", 0, "");
         log.append("start=").append(startBerth).append(" goal=").append(goalBerth).append('\n');
 
-        // stage 1: coarse corridor
-        RealBlockWaterWorld coarseWorld = RealBlockWaterWorld.coarse(map, seaY, startBerth, goalBerth);
-        WaterRoutePathfinder cpf = runToCompletion(coarseWorld, startBerth, goalBerth, WaterRoutePolicy.nbtCoarse());
-        StageResult coarse = stageOf("coarse", cpf);
-        log.append("coarse ").append(coarse.status()).append(" nodes=").append(coarse.expandedNodes())
-           .append(" wp=").append(coarse.path().size()).append(" reason=").append(coarse.reason()).append('\n');
+        // stage 1: coarse corridor —— 渐进 step(24→12→8→4)与游戏 WaterAutoRouteService 同口径,踩进窄海峡。
+        WaterRoutePathfinder cpf = null;
+        StageResult coarse = null;
+        for (int step : com.monpai.sailboatmod.route.water.WaterAutoRouteService.COARSE_STEP_LADDER) {
+            RealBlockWaterWorld coarseWorld = RealBlockWaterWorld.coarse(map, seaY, startBerth, goalBerth);
+            cpf = runToCompletion(coarseWorld, startBerth, goalBerth, WaterRoutePolicy.nbtCoarseStep(step));
+            coarse = stageOf("coarse", cpf);
+            log.append("coarse(step=").append(step).append(") ").append(coarse.status())
+               .append(" nodes=").append(coarse.expandedNodes())
+               .append(" wp=").append(coarse.path().size()).append(" reason=").append(coarse.reason()).append('\n');
+            if (cpf.status() == WaterRoutePathfinder.Status.SUCCESS) {
+                break;
+            }
+        }
         if (cpf.status() != WaterRoutePathfinder.Status.SUCCESS) {
             List<NodeDiag> diags = diagnoseNodes(server, level, map, coarse.path(), seaY);
             appendNodeLog(log, diags);

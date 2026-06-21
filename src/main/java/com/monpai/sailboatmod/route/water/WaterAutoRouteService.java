@@ -268,6 +268,9 @@ public final class WaterAutoRouteService {
      * 失败 → NO_WATER_PATH。
      */
     private static final int NBT_CORRIDOR_RADIUS = 96; // 阶段二走廊半径(粗路中心线 ±此格内可搜)
+    // 阶段一粗寻渐进 step 梯度:大 step 快(路宽时几十节点出走向),失败逐级缩小直到踩进 1-8 格窄海峡。
+    // 4 是最小档(踩 4-8 格海峡);更小(1-3 格)海峡极罕见且船未必过得去,不再降以免节点爆炸。
+    public static final int[] COARSE_STEP_LADDER = {24, 12, 8, 4};
 
     private static WaterRouteResult<List<BlockPos>> runSingleSegmentNbt(
             ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth, int seaY, int boatHalfWidth,
@@ -276,20 +279,32 @@ public final class WaterAutoRouteService {
             WaterRouteProgressBar bar) {
         RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand();
 
-        // ---- 阶段一:粗走廊(大 step + 中心判水,跑大致走向)----
+        // ---- 阶段一:粗走廊(渐进 step + 中心判水,跑大致走向)----
+        // 海峡可能只有 1-8 格宽,大 step 网格点踩不进去 → 起终水域在粗网格上不连通 → 失败。先大 step 快试(路宽时省节点),
+        // 失败逐级缩小 step(24→12→8→4)直到网格点能踩进窄海峡。([[water_route_strait_progressive_step]])
         bar.update(5, "粗寻走向");
-        RealBlockWaterWorld coarseWorld = RealBlockWaterWorld.coarse(map, seaY, sourceBerth, targetBerth);
-        WaterRoutePolicy coarsePolicy = WaterRoutePolicy.nbtCoarse();
-        WaterRoutePathfinder coarsePf = runToCompletion(coarseWorld, sourceBerth, targetBerth, coarsePolicy);
-        if (coarsePf.status() != WaterRoutePathfinder.Status.SUCCESS) {
-            map.logLayerStats("NBT粗走廊");
-            LOGGER.warn("[WaterPath] NBT 阶段一粗走廊失败 st={} 节点={} 原因={}",
-                    coarsePf.status(), coarsePf.expandedNodes(), coarsePf.failureReason());
-            return WaterRouteResult.failure(
-                    coarsePf.status() == WaterRoutePathfinder.Status.FAILED ? coarsePf.failureReason() : WaterRouteFailureReason.TIMEOUT);
+        List<BlockPos> coarse = null;
+        WaterRouteFailureReason coarseFail = WaterRouteFailureReason.NO_WATER_PATH;
+        for (int step : COARSE_STEP_LADDER) {
+            RealBlockWaterWorld coarseWorld = RealBlockWaterWorld.coarse(map, seaY, sourceBerth, targetBerth);
+            WaterRoutePathfinder coarsePf = runToCompletion(coarseWorld, sourceBerth, targetBerth,
+                    WaterRoutePolicy.nbtCoarseStep(step));
+            if (coarsePf.status() == WaterRoutePathfinder.Status.SUCCESS) {
+                coarse = coarsePf.path();
+                LOGGER.info("[WaterPath] NBT 阶段一粗走廊成功(step={}) 节点={} 粗航点={}",
+                        step, coarsePf.expandedNodes(), coarse.size());
+                break;
+            }
+            coarseFail = coarsePf.status() == WaterRoutePathfinder.Status.FAILED
+                    ? coarsePf.failureReason() : WaterRouteFailureReason.TIMEOUT;
+            LOGGER.info("[WaterPath] NBT 阶段一粗走廊失败(step={}) st={} 节点={} 原因={},缩小 step 重试",
+                    step, coarsePf.status(), coarsePf.expandedNodes(), coarsePf.failureReason());
         }
-        List<BlockPos> coarse = coarsePf.path();
-        LOGGER.info("[WaterPath] NBT 阶段一粗走廊成功 节点={} 粗航点={}", coarsePf.expandedNodes(), coarse.size());
+        if (coarse == null) {
+            map.logLayerStats("NBT粗走廊");
+            LOGGER.warn("[WaterPath] NBT 阶段一粗走廊全 step 均失败,原因={}", coarseFail);
+            return WaterRouteResult.failure(coarseFail);
+        }
 
         // ---- 阶段二:走廊精寻(粗路 ±半径约束 + step=8 + 3×3 船宽)----
         bar.update(40, "走廊精寻");

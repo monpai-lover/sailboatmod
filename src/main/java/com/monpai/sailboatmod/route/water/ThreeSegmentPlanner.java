@@ -241,46 +241,35 @@ public final class ThreeSegmentPlanner {
     }
 
     /**
-     * HYBRID(2026-06 重做):<b>粗路也走真实 NBT 水体连通性</b>当走廊中心线 → 真实方块精寻细化。
-     *
-     * <p><b>为什么不再用噪声粗寻当走廊中心</b>:旧版粗路用噪声({@link WaterRoutePolicy#longDistance()},
-     * {@link ServerWaterRouteWorld} 噪声判水),但 WorldPainter「原版生成器+populate」地图噪声≠真实方块
-     * ([[worldpainter_noise_mismatch]]),噪声粗路不知真实海峡在哪 → 走廊(中心线 ±radius)把真实海峡框在外 →
-     * 真实精寻在走廊内找不到海峡 → 失败或退回穿陆噪声路。真实海峡偏离噪声走向越远越必现。
-     *
-     * <p><b>现在</b>:阶段一 {@link RealBlockWaterWorld#coarse}(无约束全开 + 泊位信任,真实 NBT 判水,onDemand
-     * 前沿后台读)+ {@link WaterRoutePolicy#hybridCoarse()}(step=12 找窄海峡、halfWidth=0 不卡船宽)跑出
-     * <b>真实</b>粗路(必经真实可航海峡;内陆湖与主航道不连通,A* 跨不过陆地,粗路天然不进湖)。阶段二
-     * {@link RealBlockWaterWorld#corridor}(粗路 ±{@link #CORRIDOR_RADIUS} 走廊 + 3×3 软校验 + 泊位信任)
-     * + {@link WaterRoutePolicy#nbtRefine()} 精寻细化。复用生产 NBT 单段同款两阶段链(见
-     * {@code WaterAutoRouteService.runSingleSegmentNbt}),不再预加载整走廊(onDemand 自动按前沿读)。
+     * HYBRID:噪声粗寻拿「绕开大陆的走向」当导向走廊中心 → 沿噪声路预加载真实区块走廊 → 真实方块精寻
+     * (真实判定在走廊内绕开噪声走向的偏差/穿陆/切岛)。兼顾走向(噪声)与细节(真实)。
      */
     private static List<BlockPos> runMidHybrid(ServerWaterRouteWorld midWorld, ServerLevel level,
                                                BlockPos a, BlockPos b, int seaY, ProgressSink prog) {
-        RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand();
-        // ---- 阶段一:真实 NBT 粗寻(无约束全开,onDemand 前沿后台读;step=12 找窄海峡,halfWidth=0 只求连通走向)----
-        prog.update(10, "真实粗寻走向");
-        List<BlockPos> guide = runPathfinder(RealBlockWaterWorld.coarse(map, seaY, a, b),
-                a, b, WaterRoutePolicy.hybridCoarse());
+        prog.update(10, "导向粗寻");
+        List<BlockPos> guide = runPathfinder(midWorld, a, b, WaterRoutePolicy.longDistance());
         if (guide == null || guide.size() < 2) {
-            return null; // 真实粗寻失败 → 上层退回 NOISE
+            return null;
         }
-        LOGGER.info("[WaterPath] 中段 HYBRID 阶段一真实粗寻:{}航点", guide.size());
-        // ---- 阶段二:沿真实粗路 ±走廊精寻细化(3×3 船宽 + 泊位信任)----
-        int radius = CORRIDOR_RADIUS; // 48:真实粗路已在主航道/海峡上,精寻只需小幅细化,48 够;失败再放宽到 96。
-        prog.update(80, "走廊精寻");
-        List<BlockPos> refined = runPathfinder(
-                RealBlockWaterWorld.corridor(map, guide, radius, seaY, 1, a, b),
-                a, b, WaterRoutePolicy.nbtRefine());
+        RealBlockWaterMap map = new RealBlockWaterMap(level, seaY);
+        RealBlockChunkLoader loader = new RealBlockChunkLoader(level, map);
+        int radius = CORRIDOR_RADIUS * 2; // 走廊放宽(噪声走向可能偏离真实水道,给真实精寻绕行空间)
+        prog.update(20, "走廊加载");
+        loader.loadAll(chunksAlongPolyline(guide, radius), (d, t) ->
+                prog.update(scale(d, t, 20, 80), "走廊加载 " + d + "/" + t), MID_DEADLINE_MS);
+        prog.update(80, "真实精寻");
+        List<BlockPos> refined = runPathfinder(new RealBlockWaterWorld(map, guide, radius, seaY),
+                a, b, WaterRoutePolicy.longDistanceRefine());
         if (refined == null || refined.size() < 2) {
-            refined = runPathfinder(
-                    RealBlockWaterWorld.corridor(map, guide, radius * 2, seaY, 1, a, b),
-                    a, b, WaterRoutePolicy.nbtRefine());
+            loader.loadAll(chunksAlongPolyline(guide, radius * 2), (d, t) ->
+                    prog.update(scale(d, t, 80, 88), "走廊加载 " + d + "/" + t), MID_DEADLINE_MS);
+            refined = runPathfinder(new RealBlockWaterWorld(map, guide, radius * 2, seaY),
+                    a, b, WaterRoutePolicy.longDistanceRefine());
         }
         map.logLayerStats("hybrid");
         prog.update(90, "中段完成");
         if (refined != null && refined.size() >= 2) {
-            LOGGER.info("[WaterPath] 中段 HYBRID 完成:真实粗导向{}→真实精路{}航点", guide.size(), refined.size());
+            LOGGER.info("[WaterPath] 中段 HYBRID 完成:噪声导向{}→真实精路{}航点", guide.size(), refined.size());
             map.diagnosePathLandCrossings(refined);
             return refined;
         }
