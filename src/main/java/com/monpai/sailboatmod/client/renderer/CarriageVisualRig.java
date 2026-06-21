@@ -5,14 +5,18 @@ import net.minecraft.world.phys.Vec3;
 public final class CarriageVisualRig {
     private static final double MODEL_UNIT = 1.0D / 16.0D;
     private static final double CARRIAGE_MODEL_Y_OFFSET = 0.0D;
-    private static final float CARRIAGE_MODEL_SCALE = 1.04F;
+    // 2026-06 车+马等比放大到正常比例(俯视图原比例偏小)。车 1.04→1.35;马 HORSE_MODEL_SCALE 同比例 1.0→1.3。
+    // 两者一起调才保持协调。游戏内觉得大/小同比改这俩。
+    private static final float CARRIAGE_MODEL_SCALE = 1.35F;
     // 2026-06 新模型车头朝向校正:先 90° 把长边(X)转到 Z,实测车头前后反了再 +180 = 270°。让车头(辕杆)与马同向。
     // 这是渲染层视觉旋转,不影响实体碰撞/移动方向。若再反改回 90,左右偏改 ±90。
     private static final float CARRIAGE_MODEL_YAW_OFFSET = 270.0F;
     private static final double SHAFT_TIP_Z_UNITS = 25.0D;
-    private static final double HORSE_FORWARD_CLEARANCE = 0.18D;
+    // 马离辕杆尖的前向间隙(格):增大=马更靠车头前方(离车远),减小=马更靠车身(往后)。2026-06 用户要马往后→减小。
+    private static final double HORSE_FORWARD_CLEARANCE = -0.30D;
     private static final double HORSE_MODEL_Y = 1.42D;
-    private static final float HORSE_MODEL_SCALE = 0.96F;
+    // 马模型缩放:1.0=vanilla 原比例。2026-06 与车等比放大到 1.3(车 1.35,一起放大到正常比例)。
+    private static final float HORSE_MODEL_SCALE = 1.3F;
 
     private CarriageVisualRig() {
     }

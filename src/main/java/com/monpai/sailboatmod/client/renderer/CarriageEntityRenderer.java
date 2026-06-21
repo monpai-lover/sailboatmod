@@ -109,6 +109,15 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         double speed = Math.abs(entity.getCurrentSpeedForHud());
         float limbSwingAmount = Mth.clamp((float) (speed * 0.15D), 0.0F, 1.15F);
         float limbSwing = animationTime * (0.8F + limbSwingAmount * 2.2F);
+        // 2026-06 诊断马腿不动:打实际 speed/limbSwingAmount(每~1.5s 一次)。确认 speed 有没有值。
+        if (entity.tickCount % 30 == 0) {
+            org.slf4j.LoggerFactory.getLogger("CarriageHorseAnim").info(
+                    "[马腿诊断] currentSpeedForHud={} deltaMove={} limbSwingAmount={} limbSwing={}",
+                    String.format(java.util.Locale.ROOT, "%.3f", entity.getCurrentSpeedForHud()),
+                    String.format(java.util.Locale.ROOT, "%.4f", entity.getDeltaMovement().horizontalDistance()),
+                    String.format(java.util.Locale.ROOT, "%.3f", limbSwingAmount),
+                    String.format(java.util.Locale.ROOT, "%.1f", limbSwing));
+        }
 
         horse.setYRot(0.0F);
         horse.setYBodyRot(0.0F);

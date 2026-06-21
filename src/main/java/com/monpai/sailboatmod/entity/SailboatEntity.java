@@ -196,6 +196,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final double WATER_DETECT_TOLERANCE = 1.0D;
     // 1.8(原3.2):纯追踪贴线后船本就紧贴节点经过,小到达半径让船更忠实逐个过点、不提前切节点抄近路。
     private static final double AUTOPILOT_ARRIVAL_RADIUS = 1.8D;
+    // 到达放松:进入倒数这么多个航点后,驶入目的地 zone 即判到达(不必跑完最后一点)。3=终点不确定段才放松。
+    private static final int ARRIVAL_ZONE_EARLY_NODES = 3;
     private static final double AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS = 7.5D;
     private static final double AUTOPILOT_SLOWDOWN_RADIUS = 14.0D;
     private static final double AUTOPILOT_FINAL_SLOWDOWN_RADIUS = 11.0D;
@@ -2329,6 +2331,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.HALF_ASTERN); // 纯直退,不转
         }
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
+        // 2026-06 到达判定放松(仅帆船,航线不确定性高):进入**倒数 3 个航点**后,只要实际驶入目的地港口 zone 就算到达,
+        // 不必跑完最后一个航点(终点可能在 zone 边缘/外推点)。前面大半程不放松,避免途经点误判。
+        if (autopilotTargetIndex >= autopilotRoute.size() - ARRIVAL_ZONE_EARLY_NODES
+                && isInsideAutopilotDestinationDockZone()) {
+            finishAutopilotAndUnloadAtDestination();
+            return AutopilotCommand.inactive();
+        }
         Vec3 target = autopilotRoute.get(autopilotTargetIndex);
         boolean finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
         if (finalTarget) {
