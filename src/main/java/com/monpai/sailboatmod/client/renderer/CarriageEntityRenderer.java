@@ -96,18 +96,21 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
         float yaw = entity.getViewYRot(partialTick);
         float animationTime = entity.tickCount + partialTick;
-        // 马腿摆幅用「服务端同步的真实行驶速度」(getCurrentSpeedForHud,= DATA_CURRENT_SPEED entityData 同步,与 HUD 同源)。
-        // 不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 步进偏小)。currentSpeed m/s(0~10.5)。
-        // ×0.08:0.15 太大→walkAnimation.position 每帧推进过快→腿摆频率过高「抽搐」。降到 0.08 让巡航腿摆自然。
+        // 马腿摆速度=walkAnimation.speed:FA 腿摆相位 var.ls≈limb_swing*0.8,limb_swing 每帧推进=walkAnimation.speed。
+        // currentSpeed m/s(0~10.5)。×0.025:让行驶时 speed 稳定落在 0.15~0.35(真马正常走/小跑区间),
+        // 原 0.08(0.1~0.8)到了 vanilla 疾驰量级→相位每帧跳太多→腿摆频率成倍偏高「太快」,且会在 FA walk/trot/run
+        // 状态间(阈值 0.4/0.8)反复横跳加剧抽搐。系数游戏内对照真马微调。
         double speed = Math.abs(entity.getCurrentSpeedForHud());
-        float limbSwingAmount = Mth.clamp((float) (speed * 0.08D), 0.0F, 1.0F);
+        float limbSwingAmount = Mth.clamp((float) (speed * 0.025D), 0.0F, 0.4F);
 
         // 2026-06 关键改造:改用 EntityRenderDispatcher.render 渲染这匹临时马,而非直接 horseModel.setupAnim。
         // 原因:Fresh Animations + EMF(entity_model_features) 通过 mixin 钩在 EntityRenderDispatcher.render HEAD 捕获
         // 当前渲染实体上下文,并从 entity.walkAnimation 读腿摆相位。手画马绕过 dispatcher → EMF 没捕获到它 → 一直播待机。
         // 走 dispatcher.render 后 EMF 才会把这匹马设为 current entity、读它的 walkAnimation,播跑动动画。
         // walkAnimation 同时驱动 vanilla HorseModel 和 FA(都读同一个),所以喂真实速度一处即可。speed≈0→归 idle。
-        horse.walkAnimation.update(limbSwingAmount, 1.0F);
+        // decay=0.4(同 vanilla 真马,非 1.0):speed 指数平滑收敛,别逐帧硬跳——车速测量逐帧抖动时 decay=1.0 会让
+        // 相位推进时快时慢「抽搐/卡顿」。每帧调一次 update 让平滑生效。
+        horse.walkAnimation.update(limbSwingAmount, 0.4F);
 
         // FA 的 idle(待机)动画(呼吸/摆尾)用 `age` 变量 = entity.tickCount 做时间轴(EMF MixinEntity.emf$age 读 f_19797_)。
         // 临时马从不 tick→tickCount 恒 0→age 卡死第 0 帧→idle 静止「不播待机」。每帧把 tickCount 同步成车的,idle 才动。
