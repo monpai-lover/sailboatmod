@@ -20,11 +20,13 @@ import java.util.Locale;
 public final class SailboatSpeedHud {
     private static final double BLOCKS_PER_TICK_TO_KNOTS = 38.87689D;
     private static final double METERS_PER_SECOND_TO_KNOTS = 1.9438445D;
+    private static final double METERS_PER_SECOND_TO_KMH = 3.6D; // 马车用陆地单位 km/h(节是航海单位,陆地载具不合理)
     private static final double SPEED_SMOOTH_ALPHA = 0.14D;
     private static final double DISPLAY_STEP_KNOTS = 0.5D;
     private static final double DISPLAY_FREEZE_DELTA = 0.24D;
-    private static double smoothedKnots = 0.0D;
-    private static double displayedKnots = 0.0D;
+    private static double smoothedKnots = 0.0D;   // 平滑后的显示值(单位随载具:帆船=kn,马车=km/h)
+    private static double displayedKnots = 0.0D;  // 量化冻结后的显示值
+    private static String speedUnit = "kn";       // 当前显示单位(帆船 kn / 马车 km/h)
 
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
@@ -41,11 +43,14 @@ public final class SailboatSpeedHud {
 
         double rawKnots;
         if (transport instanceof CarriageEntity carriage) {
-            rawKnots = carriage.getCurrentSpeedForHud() * METERS_PER_SECOND_TO_KNOTS;
+            // 马车用陆地单位 km/h(独立于帆船的 kn)。getCurrentSpeedForHud() 是 m/s,×3.6 得 km/h。
+            rawKnots = carriage.getCurrentSpeedForHud() * METERS_PER_SECOND_TO_KMH;
+            speedUnit = "km/h";
         } else if (transport instanceof SailboatEntity sailboat) {
             // 帆船服务端权威，客户端 deltaMovement 恒=ZERO，必须读服务端同步的前向速度(格/tick)，
             // 否则 HUD 恒显示 0.0 kn。
             rawKnots = sailboat.getCurrentSpeedForHud() * BLOCKS_PER_TICK_TO_KNOTS;
+            speedUnit = "kn";
         } else {
             Entity vehicle = transport.asEntity();
             Vec3 velocity = vehicle.getDeltaMovement();
@@ -54,6 +59,7 @@ public final class SailboatSpeedHud {
             double dirZ = Math.cos(yawRad);
             double signedForward = velocity.x * dirX + velocity.z * dirZ;
             rawKnots = signedForward * BLOCKS_PER_TICK_TO_KNOTS;
+            speedUnit = "kn";
         }
         smoothedKnots += (rawKnots - smoothedKnots) * SPEED_SMOOTH_ALPHA;
 
@@ -73,7 +79,7 @@ public final class SailboatSpeedHud {
         if (player == null || !(player.getVehicle() instanceof TransportEntity transport)) {
             return;
         }
-        Component speedText = Component.literal(String.format(Locale.ROOT, "Speed: %.1f kn", displayedKnots));
+        Component speedText = Component.literal(String.format(Locale.ROOT, "Speed: %.1f %s", displayedKnots, speedUnit));
         Component gearText = transport instanceof CarriageEntity carriage
                 ? Component.literal("Drive: " + carriageDriveLabel(player, carriage))
                 : transport instanceof SailboatEntity sailboat

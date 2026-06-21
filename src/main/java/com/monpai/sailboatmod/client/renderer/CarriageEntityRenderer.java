@@ -100,7 +100,12 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
         float yaw = entity.getViewYRot(partialTick);
         float animationTime = entity.tickCount + partialTick;
-        double speed = entity.getDeltaMovement().horizontalDistance();
+        // 2026-06 马腿幅度改用「客户端真实每 tick 位移」算,不用 getDeltaMovement():自动驾驶马车服务端权威 + lerp 位置同步,
+        // 客户端 deltaMovement≈0 → 旧算法马腿幅度≈0 → 马只待机不跑。xo/zo 是 vanilla 上一 tick 位置(super.tick 更新,
+        // lerp 同步的位移也算进去),差值=真实位移,准确反映行驶速度。
+        double dx = entity.getX() - entity.xo;
+        double dz = entity.getZ() - entity.zo;
+        double speed = Math.sqrt(dx * dx + dz * dz);
         float limbSwingAmount = Mth.clamp((float) (speed * 8.0D), 0.0F, 1.15F);
         float limbSwing = animationTime * (0.8F + limbSwingAmount * 2.2F);
 
