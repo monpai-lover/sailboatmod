@@ -1249,11 +1249,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         controllers.add(new AnimationController<>(this, "carriage_state", 0, state -> {
-            // 2026-06 动画速度与车速联动,**永不 PlayState.STOP**:STOP 会让 GeckoLib 从当前帧过渡回默认姿势,
-            // 那个过渡就是"停车时动画快速倒播一遍"的元凶。改为低速时 animSpeed 趋近 0,动画近乎冻结在当前帧不跳变。
+            // 2026-06 动画速度与车速联动,**永不 PlayState.STOP**(STOP 会过渡回默认姿势=停车倒播一遍)。
+            // 停车时 animSpeed=0 完全冻结当前帧(轮子不转),不是 STOP 不倒播;行驶时按车速联动。
             float speed = Math.abs(getCurrentSpeedForHud()); // m/s
-            // 停车(speed≈0)→ animSpeed≈0.02 几乎静止;巡航→正常;快→更快。下限不取 0(取0部分版本会卡帧)。
-            double animSpeed = Mth.clamp(speed / CARRIAGE_ANIM_SPEED_BASE, 0.02D, 2.5D);
+            double animSpeed = speed < 0.05F ? 0.0D : Mth.clamp(speed / CARRIAGE_ANIM_SPEED_BASE, 0.15D, 2.5D);
             state.getController().setAnimationSpeed(animSpeed);
             return state.setAndContinue(CARRIAGE_DRIVE_ANIMATION);
         }));

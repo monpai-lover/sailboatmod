@@ -4,18 +4,18 @@ import net.minecraft.world.phys.Vec3;
 
 public final class CarriageVisualRig {
     private static final double MODEL_UNIT = 1.0D / 16.0D;
-    // 车离地高度偏移:车放大到 2.2 后变高,抬高否则车轮插地。0→0.55。游戏内车悬空改小、轮埋地改大。
-    private static final double CARRIAGE_MODEL_Y_OFFSET = 0.55D;
-    // 2026-06 车放大到 2.2(与马同倍数,协调)。游戏内觉得大/小改此值,记得连同 CARRIAGE_MODEL_Y_OFFSET 调高度。
-    private static final float CARRIAGE_MODEL_SCALE = 2.2F;
+    // 车离地高度偏移:0.55 浮空太高→降到 0.12 让车轮落地。车悬空改小、轮埋地改大。
+    private static final double CARRIAGE_MODEL_Y_OFFSET = 0.12D;
+    // 2026-06 车放大:2.2 太大→1.8。游戏内觉得大/小改此值,记得连同 CARRIAGE_MODEL_Y_OFFSET 调高度。
+    private static final float CARRIAGE_MODEL_SCALE = 1.8F;
     // 2026-06 新模型车头朝向校正:先 90° 把长边(X)转到 Z,实测车头前后反了再 +180 = 270°。让车头(辕杆)与马同向。
     // 这是渲染层视觉旋转,不影响实体碰撞/移动方向。若再反改回 90,左右偏改 ±90。
     private static final float CARRIAGE_MODEL_YAW_OFFSET = 270.0F;
     private static final double SHAFT_TIP_Z_UNITS = 25.0D;
-    // 马离辕杆尖的前向间隙(格):增大=马更靠车头前方,减小=往车身后靠。2026-06 用户要往后→减小。
-    private static final double HORSE_FORWARD_CLEARANCE = 0.5D;
-    // 马离地高度:2.2倍 Y3.4 浮空了→降到 2.6 让马脚落地面。悬空改小、埋地改大。
-    private static final double HORSE_MODEL_Y = 2.6D;
+    // 马离辕杆尖的前向间隙(格):增大=马更靠车头前方,减小=往车身后靠。2026-06 用户要再往后约1格→0.5减到 -0.5。
+    private static final double HORSE_FORWARD_CLEARANCE = -0.5D;
+    // 马离地高度:2.6 又插地了→升到 3.0 让马脚落地面。悬空改小、埋地改大。
+    private static final double HORSE_MODEL_Y = 3.0D;
     // 马模型缩放:2026-06 用户要稍缩小,2.5→2.2。
     private static final float HORSE_MODEL_SCALE = 2.2F;
 
