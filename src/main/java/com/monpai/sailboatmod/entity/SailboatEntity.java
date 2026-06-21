@@ -223,6 +223,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final int AUTOPILOT_UNSTICK_ASTAR_AFTER_ATTEMPTS = 3;
     private static final double AUTOPILOT_UNSTICK_ESCAPED_DIST = 1.5D; // 后退后移出此距离视作挤出卡点(原 1.0,放宽防误判)
     private static final float AUTOPILOT_UNSTICK_YAW_STEP = 4.0F;
+    // 脱困后退最后这么多 tick 才摆舵换向;之前纯直退(不转船头),否则转头把后退方向毁了退不出卡点。
+    private static final int AUTOPILOT_UNSTICK_SWING_TICKS = 20;
     private static final double DOCK_PARKING_EDGE_PADDING = 1.5D;
     private static final double DOCK_APPROACH_CLEAR_RADIUS = 3.8D;
     private static final double DOCK_PARKING_GRID_STEP = 2.75D;
@@ -257,15 +259,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final int AUTOPILOT_SHORE_EVAL_INTERVAL = 5;    // 每 5 tick 评估一次离岸(降频,结果缓存)
     private int autopilotShoreClearanceCache = 8;                  // 缓存的离岸环数(8=开阔)
     private int autopilotShoreEvalTick = 0;
-    // 防偏离#4 撞陆预测避让:外推距离 = speed×GAIN,封顶 MAX;近距 HARD 内正前方陆 → 强转离+停;远距 → 转离偏置+降速。
-    private static final double AUTOPILOT_PREDICT_SPEED_GAIN = 14.0D;   // speed(格/tick)×此 ≈ 外推格数
-    private static final double AUTOPILOT_PREDICT_MIN_BLOCKS = 3.0D;
-    private static final double AUTOPILOT_PREDICT_MAX_BLOCKS = 8.0D;
-    private static final int AUTOPILOT_PREDICT_HARD_BLOCKS = 3;        // ≤ 此距离正前方陆 = 紧急(强转+停)
-    private static final int AUTOPILOT_PREDICT_SIDE_PROBE = 6;         // 左右探空格数(选更空一侧转)
-    private static final float AUTOPILOT_PREDICT_TURN_BIAS_DEGREES = 6.0F; // 远距将撞的转离偏置/tick
-    private static final int AUTOPILOT_PREDICT_INTERVAL = 3;           // 每 3 tick 评估一次(降频)
-    private int autopilotPredictEvalTick = 0;
     private static final int AUTOPILOT_CHUNK_RADIUS = 2;
     private static final int AUTOPILOT_TARGET_CHUNK_RADIUS = 1;
     private static final int AUTOPILOT_DEST_DOCK_CHUNK_RADIUS = 2;
@@ -313,13 +306,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private final List<Vec3> autopilotRoute = new ArrayList<>();
     private final List<RouteDefinition> routeCatalog = new ArrayList<>();
     private final Set<Long> forcedAutopilotChunks = new HashSet<>();
-    // 幽灵船修复（同马车）：已对其补发过 spawn 的附近玩家；autopilot 全程 + 到港宽限期每帧维持可见。
-    private final Set<UUID> spawnedToPlayers = new HashSet<>();
     // 到港宽限期：到港后仍强加载区块并持续 spawn 心跳这么多 tick，给 ChunkMap 重建追踪窗口。
     private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
     private int postArrivalForcedHoldTicks = 0;
-    // enroute spawn 心跳周期(tick)：每隔这么久对范围内所有玩家重发整套 spawn 兜底被丢弃的实体。
-    private static final int ENROUTE_SPAWN_HEARTBEAT_TICKS = 60;
     private int autopilotTargetIndex = 0;
     private String autopilotRouteName = "";
     private BlockPos routeDockPos = null;
@@ -429,6 +418,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     public SailboatEntity(EntityType<? extends Boat> entityType, Level level) {
         super(entityType, level);
         this.lastTickYaw = getYRot();
+        // 2026-06 EntityCulling 白名单:autopilot 载具在远处/被遮挡时会被 EntityCulling(async 射线遮挡剔除)误杀成幽灵。
+        // 反编译确认其 entityCullingIgnoresCulling()=return entity.noCulling,故设 noCulling=true 即被排除剔除。
+        // vanilla public 字段,无 EntityCulling 时仅跳过视锥剔除(对大载具本就合理),零外部依赖。[[entity_culling_ghost_noculling]]
+        this.noCulling = true;
     }
 
     /**
@@ -2315,7 +2308,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             finishAutopilotAndUnloadAtDestination();
             return AutopilotCommand.inactive();
         }
-        // 窄河道脱困：正在脱困期间，优先执行温和后退 + 小幅交替摆舵，不走正常寻路。
+        // 窄河道脱困：后退分两段——【前段纯直退不转船头】(后退方向=船头反向,转了就退不出,这是旧 bug 根因),
+        // 后段(最后 AUTOPILOT_UNSTICK_SWING_TICKS tick)才小幅摆舵换个朝向,给下一轮换方向重试。
         if (autopilotUnstickTicks > 0) {
             autopilotUnstickTicks--;
             if (autopilotUnstickTicks == 0) {
@@ -2323,12 +2317,16 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 // 脱困轮结束后本 tick 不再寻路，下一 tick 重新评估（已脱困则正常前进，仍卡则再触发）。
                 return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
             }
-            float unstickYaw = AUTOPILOT_UNSTICK_YAW_STEP * autopilotUnstickYawDir;
-            float nextYaw = getYRot() + unstickYaw;
-            setYRot(nextYaw);
-            setYHeadRot(nextYaw);
-            setYBodyRot(nextYaw);
-            return new AutopilotCommand(true, true, autopilotUnstickYawDir, unstickYaw, EngineGear.HALF_ASTERN);
+            // 仅在最后 SWING_TICKS 内才摆舵;之前纯直退(yaw 不动)保证后退方向稳定、能挤出卡点。
+            if (autopilotUnstickTicks <= AUTOPILOT_UNSTICK_SWING_TICKS) {
+                float unstickYaw = AUTOPILOT_UNSTICK_YAW_STEP * autopilotUnstickYawDir;
+                float nextYaw = getYRot() + unstickYaw;
+                setYRot(nextYaw);
+                setYHeadRot(nextYaw);
+                setYBodyRot(nextYaw);
+                return new AutopilotCommand(true, true, autopilotUnstickYawDir, unstickYaw, EngineGear.HALF_ASTERN);
+            }
+            return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.HALF_ASTERN); // 纯直退,不转
         }
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
         Vec3 target = autopilotRoute.get(autopilotTargetIndex);
@@ -2452,88 +2450,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             autopilotGearHoldTicks--;
         }
         EngineGear desiredGear = selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
-        // 防偏离#4 实时撞陆预测避让(最后安全网,终点段不干预——靠泊是有意贴近):按速度+航向外推查前方撞陆,
-        // 要撞则覆盖转向/挡位转离+减速。撞之前避,比卡住自救(撞住后救)更早一层。
-        if (!finalTarget) {
-            AutopilotCommand avoid = predictAndAvoidCollision(yawStep, desiredGear);
-            if (avoid != null) {
-                return avoid;
-            }
-        }
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
-    }
-
-    /**
-     * 防偏离#4:按 船位 + 当前航向 × 预测距离(speed×K,封顶 {@link #AUTOPILOT_PREDICT_MAX_BLOCKS})外推一串点,
-     * {@link #isAutopilotWaterColumn} 查;前方将撞陆则返回避让指令(转离+减速),否则 null(不干预,用原指令)。
-     * <ul>
-     *   <li>近距(≤ {@link #AUTOPILOT_PREDICT_HARD_BLOCKS})正前方陆 → 强转离 + STOP(等同提前触发自救,但不等真撞墙)。</li>
-     *   <li>远距将撞 → 朝「左右哪侧更空」方向叠转向偏置 + 降到慢速档。</li>
-     * </ul>
-     * 降频:每 {@link #AUTOPILOT_PREDICT_INTERVAL} tick 评估(查水有开销,船强加载命中内存)。
-     */
-    private AutopilotCommand predictAndAvoidCollision(float baseYawStep, EngineGear baseGear) {
-        if (level().isClientSide) {
-            return null;
-        }
-        if (tickCount - autopilotPredictEvalTick < AUTOPILOT_PREDICT_INTERVAL) {
-            return null; // 降频:非评估帧不干预(避让是低频安全网,够用)
-        }
-        autopilotPredictEvalTick = tickCount;
-        double speed = getDeltaMovement().horizontalDistance();
-        double reach = Mth.clamp(speed * AUTOPILOT_PREDICT_SPEED_GAIN, AUTOPILOT_PREDICT_MIN_BLOCKS, AUTOPILOT_PREDICT_MAX_BLOCKS);
-        double yawRad = getYRot() * (Math.PI / 180.0D);
-        double fx = -Math.sin(yawRad);
-        double fz = Math.cos(yawRad);
-        // 沿正前方外推找第一处撞陆距离。
-        int hitDist = -1;
-        for (int d = 1; d <= (int) Math.ceil(reach); d++) {
-            int x = Mth.floor(getX() + fx * d);
-            int z = Mth.floor(getZ() + fz * d);
-            if (!isAutopilotWaterColumn(x, blockPosition().getY(), z)) {
-                hitDist = d;
-                break;
-            }
-        }
-        if (hitDist < 0) {
-            return null; // 前方畅通,不干预
-        }
-        // 选更空的一侧转离:左右各探一个法线方向,哪侧前方水更多就往哪转。
-        double leftClear = sideClearance(fx, fz, -1);
-        double rightClear = sideClearance(fx, fz, +1);
-        int turnSign = leftClear >= rightClear ? -1 : 1; // -1=左,+1=右
-        if (hitDist <= AUTOPILOT_PREDICT_HARD_BLOCKS) {
-            // 近距正前方陆:强转离 + 停(防径直撞上)。
-            float yaw = AUTOPILOT_MAX_TURN_DEGREES_PER_TICK * turnSign;
-            float nextYaw = getYRot() + yaw;
-            setYRot(nextYaw);
-            setYHeadRot(nextYaw);
-            setYBodyRot(nextYaw);
-            LOGGER.info("[Avoid] 前方 {} 格撞陆(近),强转离 {} + STOP", hitDist, turnSign < 0 ? "左" : "右");
-            return new AutopilotCommand(true, true, turnSign, yaw, EngineGear.STOP);
-        }
-        // 远距将撞:叠加转离偏置 + 降慢速,不停(温和绕)。
-        float biased = baseYawStep + AUTOPILOT_PREDICT_TURN_BIAS_DEGREES * turnSign;
-        biased = Mth.clamp(biased, -AUTOPILOT_MAX_TURN_DEGREES_PER_TICK, AUTOPILOT_MAX_TURN_DEGREES_PER_TICK);
-        EngineGear gear = baseGear.id > EngineGear.ONE_THIRD_AHEAD.id ? EngineGear.ONE_THIRD_AHEAD : baseGear;
-        return new AutopilotCommand(true, true, turnSign, biased, gear);
-    }
-
-    /** 沿航向法线侧(sign)外推 AUTOPILOT_PREDICT_SIDE_PROBE 格,统计连续水格数(越大越空)。 */
-    private double sideClearance(double fx, double fz, int sign) {
-        double nx = -fz * sign;
-        double nz = fx * sign;
-        int y = blockPosition().getY();
-        int clear = 0;
-        for (int d = 1; d <= AUTOPILOT_PREDICT_SIDE_PROBE; d++) {
-            int x = Mth.floor(getX() + nx * d);
-            int z = Mth.floor(getZ() + nz * d);
-            if (!isAutopilotWaterColumn(x, y, z)) {
-                break;
-            }
-            clear++;
-        }
-        return clear;
     }
 
     /** 进入一轮窄河道脱困：记起点、累加轮数、交替摆舵方向。 */
@@ -3624,8 +3541,42 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         // 到港收尾：开宽限期 + 让 vanilla 重建追踪并重新 pair，让到港时仍是幽灵的船立即现身（同马车）。
         if (level() instanceof ServerLevel serverLevel) {
             postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
-            spawnedToPlayers.clear();
             com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
+            broadcastArrival(serverLevel, arrivalStationName(destination));
+        }
+    }
+
+    /**
+     * 到站除悬浮提示外,聊天框广播给相关人:船主/发货人({@link #traceShipperUuid})+ 收货人
+     * ({@link #autopilotShipmentRecipientUuid})。在线才发,去重(船主==收货人只发一次)。消息含目的港名 + 用时。
+     */
+    private void broadcastArrival(ServerLevel serverLevel, String stationName) {
+        java.util.Set<java.util.UUID> targets = new java.util.HashSet<>();
+        addUuidIfValid(targets, traceShipperUuid());
+        addUuidIfValid(targets, autopilotShipmentRecipientUuid);
+        if (targets.isEmpty()) {
+            return;
+        }
+        String elapsed = formatArrivalElapsedSeconds(arrivalElapsedSecondsFromDeparture());
+        net.minecraft.network.chat.Component msg = net.minecraft.network.chat.Component.translatable(
+                "message.sailboatmod.autopilot.arrived.broadcast", stationName, elapsed);
+        for (java.util.UUID id : targets) {
+            net.minecraft.server.level.ServerPlayer p = serverLevel.getServer().getPlayerList().getPlayer(id);
+            if (p != null) {
+                p.sendSystemMessage(msg);
+            }
+        }
+    }
+
+    /** 把合法 uuid 字符串加入集合(空/非法跳过)。 */
+    private static void addUuidIfValid(java.util.Set<java.util.UUID> out, String uuid) {
+        if (uuid == null || uuid.isBlank()) {
+            return;
+        }
+        try {
+            out.add(java.util.UUID.fromString(uuid.trim()));
+        } catch (IllegalArgumentException ignored) {
+            // 非法 uuid 跳过
         }
     }
 
@@ -4056,18 +4007,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!(level() instanceof ServerLevel serverLevel)) {
             return;
         }
-        // 幽灵船修复(2026-06,同马车):autopilot 全程 + 到港宽限期内周期性让远端客户端能看到船。真因=载具靠
-        // ENTITY_TICKING 票据自己 tick,但 ChunkMap.tick() 只在跨 section 移动那帧才重新 pair,时序错过 → vanilla 不发 spawn。
-        // 心跳抽搐根因修复(2026-06):此处由 retrackViaVanilla(removeEntity+addEntity,无差别砸所有已显示客户端 → GeckoLib
-        // 动画每 3s 重播)改成 retrackOnDemand(反射 TrackedEntity.updatePlayer,vanilla seenBy 幂等:已 pair 玩家零打扰、
-        // 仅幽灵玩家补 spawn)。到港一次性落点仍用 retrackViaVanilla。([[spawn_heartbeat_destroys_client_entity]])
-        if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
-            if (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0) {
-                com.monpai.sailboatmod.util.EntityRetrackHelper.retrackOnDemand(serverLevel, this);
-            }
-        } else {
-            spawnedToPlayers.clear();
-        }
+        // 2026-06:autopilot 远航的「远处看不见」幽灵真因是客户端 EntityCulling 剔除,已由构造里 noCulling=true 治本,
+        // 不再用 enroute 周期 retrack 心跳(那套补发包逻辑方向错了,已删)。到站一次性 retrackViaVanilla 仍保留(见到站落点)。
         if (!isAutopilotActive()) {
             // 宽限期递减；期满才释放票据，给 ChunkMap 几秒重建客户端追踪（同马车）。
             if (postArrivalForcedHoldTicks > 0) {
@@ -4134,10 +4075,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
         int chunkX = ChunkPos.getX(chunkKey);
         int chunkZ = ChunkPos.getZ(chunkKey);
-        BlockPos owner = new BlockPos(chunkX << 4, 0, chunkZ << 4);
+        // 2026-06 改 entity-owner 票据(原 BlockPos owner):entity 票据持久化且按 UUID 归类,配合 AutopilotChunkLoader
+        // 回调,退档重进时 Forge 据持久化票据重新强加载载具区块→实体回来,修「退档消失」。
         net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
                 serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
-                owner, chunkX, chunkZ, add, true);
+                this, chunkX, chunkZ, add, true);
     }
 
     private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {

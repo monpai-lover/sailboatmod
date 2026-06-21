@@ -410,6 +410,27 @@ public final class WaterAutoRouteService {
         List<RouteDefinition> routes = upsertAutoRoute(source.getRoutesForMap(), route);
         int selectedIndex = Math.max(0, routes.indexOf(route));
         source.setRoutes(routes, selectedIndex);
+
+        // 2026-06:航线也存到目的地码头,且是反向(B→A)——这样从目的地出发能直接用回程线路。
+        // 反向 = 航点倒序 + metas 倒序(与航点对齐) + 起终 dock/town 对调。
+        List<BlockPos> reversedPath = new ArrayList<>(verified);
+        java.util.Collections.reverse(reversedPath);
+        List<WaypointMeta> reversedMetas = new ArrayList<>(waypointMetas == null ? List.of() : waypointMetas);
+        java.util.Collections.reverse(reversedMetas);
+        RouteDefinition reverseRoute = routeDefinitionFromPath(
+                targetSnapshot,   // 反向起点 = 原目的地
+                sourceSnapshot,   // 反向终点 = 原出发
+                targetTownName,
+                sourceTownName,
+                reversedPath,
+                reversedMetas,
+                playerName(player),
+                player == null ? "" : player.getUUID().toString(),
+                System.currentTimeMillis());
+        List<RouteDefinition> targetRoutes = upsertAutoRoute(target.getRoutesForMap(), reverseRoute);
+        int reverseIndex = Math.max(0, targetRoutes.indexOf(reverseRoute));
+        target.setRoutes(targetRoutes, reverseIndex);
+
         if (player != null) {
             player.sendSystemMessage(Component.translatable(
                     "message.sailboatmod.auto_route.water.created",

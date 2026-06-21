@@ -275,11 +275,6 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 常规追踪机制补发 spawn 的窗口。实体移除时票据自动释放，多持几秒无害。
     private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
     private int postArrivalForcedHoldTicks = 0;
-    // enroute spawn 心跳周期(tick)：每隔这么久对范围内所有玩家重发一次完整 spawn 包族，兜底被丢弃的实体。
-    // 60=3s：实测唯一成功的持续重发模型，频率从每秒降到每 3 秒省开销（包量极小、对服务器无感）。
-    private static final int ENROUTE_SPAWN_HEARTBEAT_TICKS = 60;
-    // 已对其补发过 spawn 的附近玩家（修「幽灵车」：玩家一进入视野即补 spawn，离开则移除，再进入重补）。
-    private final Set<java.util.UUID> spawnedToPlayers = new HashSet<>();
     private final Set<Long> forcedAutopilotChunks = new HashSet<>();
     private String pendingShipperName = "";
     private String ownerName = "";
@@ -370,6 +365,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         super(entityType, level);
         setMaxUpStep(LAND_VEHICLE_STEP_HEIGHT);
         this.driveState = CarriageLandDriveModel.State.idle(getYRot());
+        // 2026-06 EntityCulling 白名单(同帆船):noCulling=true 让 EntityCulling 不剔除,治远行幽灵车。[[entity_culling_ghost_noculling]]
+        this.noCulling = true;
     }
 
     @Override
@@ -1703,7 +1700,6 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
      * 在宽限期内持续重发，覆盖客户端建立追踪的窗口（修「幽灵车」）。
      */
     private void forceRetrackForNearbyPlayers(ServerLevel serverLevel) {
-        spawnedToPlayers.clear();
         com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
     }
 
@@ -1718,17 +1714,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         // 幽灵车修复(2026-06):autopilot 全程 + 到站宽限期内,周期性让远端客户端能看到车。真因(反编译 ChunkMap 确认):
         // 载具靠 ENTITY_TICKING 票据自己 tick,但 ChunkMap.tick() 只在实体跨 section 移动那帧才 updatePlayers 重新 pair,
         // 时序错过 → vanilla 不发 spawn → 幽灵车。
-        // 心跳抽搐根因修复(2026-06,同帆船):此处由 retrackViaVanilla(removeEntity+addEntity,无差别砸所有已显示客户端 →
-        // GeckoLib 动画每 3s 重播)改成 retrackOnDemand(反射 TrackedEntity.updatePlayer,vanilla seenBy 幂等:已 pair 玩家
-        // 零打扰、仅幽灵玩家补 spawn)。到站一次性落点(forceRetrackForNearbyPlayers)仍用 retrackViaVanilla。
-        // ([[spawn_heartbeat_destroys_client_entity]])
-        if (isAutopilotActive() || postArrivalForcedHoldTicks > 0) {
-            if (tickCount % ENROUTE_SPAWN_HEARTBEAT_TICKS == 0) {
-                com.monpai.sailboatmod.util.EntityRetrackHelper.retrackOnDemand(serverLevel, this);
-            }
-        } else {
-            spawnedToPlayers.clear(); // 非 autopilot/宽限期：重置（保留字段兼容，retrack 不再用它）
-        }
+        // 2026-06:远行「远处看不见」幽灵车真因是客户端 EntityCulling 剔除,已由构造里 noCulling=true 治本,不再用
+        // enroute 周期 retrack 心跳(那套补发包逻辑方向错了,已删)。到站一次性 retrackViaVanilla 仍保留。
         if (!isAutopilotActive()) {
             // 宽限期递减；期满才释放票据。
             if (postArrivalForcedHoldTicks > 0) {
@@ -1785,10 +1772,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private void setAutopilotChunkForced(ServerLevel serverLevel, long chunkKey, boolean add) {
         int chunkX = net.minecraft.world.level.ChunkPos.getX(chunkKey);
         int chunkZ = net.minecraft.world.level.ChunkPos.getZ(chunkKey);
-        BlockPos owner = new BlockPos(chunkX << 4, 0, chunkZ << 4);
+        // 2026-06 改 entity-owner 票据(同帆船):配合 AutopilotChunkLoader 回调,退档重进 Forge 重新强加载载具区块→实体回来。
         net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
                 serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
-                owner, chunkX, chunkZ, add, true);
+                this, chunkX, chunkZ, add, true);
     }
 
     private void addForcedChunkArea(Set<Long> out, int centerX, int centerZ, int radius) {
@@ -2450,7 +2437,6 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         // 确保到站即可见（修「幽灵车」）。
         if (level() instanceof ServerLevel serverLevel) {
             postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
-            spawnedToPlayers.clear();
             com.monpai.sailboatmod.util.EntityRetrackHelper.retrackViaVanilla(serverLevel, this);
         }
     }

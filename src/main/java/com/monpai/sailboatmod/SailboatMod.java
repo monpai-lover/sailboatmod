@@ -37,6 +37,10 @@ public class SailboatMod {
         modEventBus.addListener(this::onEntityAttributeCreation);
 
         ModLoadingContext.get().registerConfig(Type.COMMON, com.monpai.sailboatmod.ModConfig.COMMON_SPEC);
+
+        // 注册 Forge 强加载票据校验回调:否则退档重进时 autopilot 载具的票据被 Forge 全丢弃→载具区块不加载→实体不 tick
+        // →永不重申票据=死锁消失。回调保留票据让 Forge 重新加载载具区块。[[autopilot_chunk_ticket_persist]]
+        com.monpai.sailboatmod.util.AutopilotChunkLoader.register();
     }
 
     private void onEntityAttributeCreation(EntityAttributeCreationEvent event) {
