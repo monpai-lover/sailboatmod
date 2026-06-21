@@ -97,16 +97,21 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         float yaw = entity.getViewYRot(partialTick);
         float animationTime = entity.tickCount + partialTick;
         // 马腿摆幅用「服务端同步的真实行驶速度」(getCurrentSpeedForHud,= DATA_CURRENT_SPEED entityData 同步,与 HUD 同源)。
-        // 不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 步进偏小)。currentSpeed m/s(0~10.5),×0.15 让巡航腿摆≈0.5~1.0。
+        // 不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 步进偏小)。currentSpeed m/s(0~10.5)。
+        // ×0.08:0.15 太大→walkAnimation.position 每帧推进过快→腿摆频率过高「抽搐」。降到 0.08 让巡航腿摆自然。
         double speed = Math.abs(entity.getCurrentSpeedForHud());
-        float limbSwingAmount = Mth.clamp((float) (speed * 0.15D), 0.0F, 1.15F);
+        float limbSwingAmount = Mth.clamp((float) (speed * 0.08D), 0.0F, 1.0F);
 
         // 2026-06 关键改造:改用 EntityRenderDispatcher.render 渲染这匹临时马,而非直接 horseModel.setupAnim。
         // 原因:Fresh Animations + EMF(entity_model_features) 通过 mixin 钩在 EntityRenderDispatcher.render HEAD 捕获
         // 当前渲染实体上下文,并从 entity.walkAnimation 读腿摆相位。手画马绕过 dispatcher → EMF 没捕获到它 → 一直播待机。
         // 走 dispatcher.render 后 EMF 才会把这匹马设为 current entity、读它的 walkAnimation,播跑动动画。
-        // walkAnimation 同时驱动 vanilla HorseModel 和 FA(都读同一个),所以喂真实速度一处即可。
+        // walkAnimation 同时驱动 vanilla HorseModel 和 FA(都读同一个),所以喂真实速度一处即可。speed≈0→归 idle。
         horse.walkAnimation.update(limbSwingAmount, 1.0F);
+
+        // FA 的 idle(待机)动画(呼吸/摆尾)用 `age` 变量 = entity.tickCount 做时间轴(EMF MixinEntity.emf$age 读 f_19797_)。
+        // 临时马从不 tick→tickCount 恒 0→age 卡死第 0 帧→idle 静止「不播待机」。每帧把 tickCount 同步成车的,idle 才动。
+        horse.tickCount = entity.tickCount;
 
         // 马朝向交给 yBodyRot(dispatcher 内部 setupRotations 做 180-yBodyRot,等价原 horseRootYawRotation)。
         // 转向偏转(smoothedHorseTurn)并入 yBodyRot:马整体跟转向方向偏(同 MrCrayfish 前轮),左/右打方向马朝对应方向转。

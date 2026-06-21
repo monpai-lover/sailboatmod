@@ -17,9 +17,9 @@ public final class CarriageVisualRig {
     // 马离地高度(相对车中心的世界 Y 偏移):2026-06 改走 dispatcher.render 后马脚=实体原点,高度语义变,
     // 原 3.0 让马飞天→降到 0.0 附近(马脚约落车底地面)。悬空改小、埋地改大,游戏内对马脚落地微调。
     private static final double HORSE_MODEL_Y = 0.0D;
-    // 马模型缩放:改走 dispatcher.render 后内部已按实体尺寸归一化(vanilla 马已是正常大小),
-    // 原 2.2 是手画路径补偿值,现在 2.2 放大过头→降到 1.3(比真马稍大配大车,不夸张)。游戏内觉得大/小改此值。
-    private static final float HORSE_MODEL_SCALE = 1.3F;
+    // 马模型缩放:改走 dispatcher.render 后内部已按实体尺寸归一化(vanilla 马已是正常大小)。
+    // 2.2(手画补偿值)→1.3→1.0(用户:还是太大,换 1 比例=真马原尺寸)。游戏内觉得大/小改此值。
+    private static final float HORSE_MODEL_SCALE = 1.0F;
 
     private CarriageVisualRig() {
     }
