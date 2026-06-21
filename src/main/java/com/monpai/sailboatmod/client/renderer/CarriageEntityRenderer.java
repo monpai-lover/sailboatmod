@@ -106,18 +106,11 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         // 2026-06 马腿幅度用「服务端同步的真实行驶速度」(getCurrentSpeedForHud,= DATA_CURRENT_SPEED entityData 同步,
         // 与 HUD 同源)。不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 插值步进位移偏小,马腿仍不动)。
         // currentSpeed 单位 m/s(0~10.5),巡航几 m/s,×0.15 让巡航时腿摆幅度≈0.5~1.0。
+        // 马腿幅度用服务端同步的真实行驶速度(currentSpeed,m/s)。诊断已确认行驶时 limbSwingAmount 正常(0.6~0.98),
+        // 腿其实在摆——之前"腿不动"真因是马 Y 太低腿埋地里(见 HORSE_MODEL_Y),非动画问题。
         double speed = Math.abs(entity.getCurrentSpeedForHud());
         float limbSwingAmount = Mth.clamp((float) (speed * 0.15D), 0.0F, 1.15F);
         float limbSwing = animationTime * (0.8F + limbSwingAmount * 2.2F);
-        // 2026-06 诊断马腿不动:打实际 speed/limbSwingAmount(每~1.5s 一次)。确认 speed 有没有值。
-        if (entity.tickCount % 30 == 0) {
-            org.slf4j.LoggerFactory.getLogger("CarriageHorseAnim").info(
-                    "[马腿诊断] currentSpeedForHud={} deltaMove={} limbSwingAmount={} limbSwing={}",
-                    String.format(java.util.Locale.ROOT, "%.3f", entity.getCurrentSpeedForHud()),
-                    String.format(java.util.Locale.ROOT, "%.4f", entity.getDeltaMovement().horizontalDistance()),
-                    String.format(java.util.Locale.ROOT, "%.3f", limbSwingAmount),
-                    String.format(java.util.Locale.ROOT, "%.1f", limbSwing));
-        }
 
         horse.setYRot(0.0F);
         horse.setYBodyRot(0.0F);

@@ -1299,7 +1299,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         double y = getY() + getPassengersRidingOffset() + seat.y + passenger.getMyRidingOffset();
         double z = getZ() + seat.x * sin + seat.z * cos;
         moveFunction.accept(passenger, x, y, z);
-        passenger.setYBodyRot(getYRot());
+        // 2026-06 驾驶员(seat0,在马背)正面永远和马头同朝向:马头随转向角偏转,驾驶员身体朝向跟着偏(只改朝向,不动位置)。
+        // 用 entityData 同步的真实转向角(getRenderTurnAngle),与马渲染转向同源。其余座位朝车头不偏。
+        float seatTurn = seatIndex == 0 ? getRenderTurnAngle() : 0.0F;
+        passenger.setYBodyRot(getYRot() - seatTurn);
     }
 
     @Override
