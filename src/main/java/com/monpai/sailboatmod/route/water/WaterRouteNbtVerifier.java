@@ -97,17 +97,20 @@ public final class WaterRouteNbtVerifier {
                 return waypoints;
             }
 
-            // 1.5) 连线穿陆扫描(2026-06):步① 只查单点是否水,漏掉「单点是水但与前后航点连线穿陆」的点——
-            //      典型是内陆湖航点(湖也是 minecraft:water,hullClear=true,但与主航道不连通,连前后点的连线必穿陆)。
-            //      逐三元组 (prev,mid,next) 用 segmentHullClear 查 mid 两条连线;穿陆则先 escapeToOpenWater 全向螺旋
-            //      外推到「到 prev、到 next 两条连线都通」的真海面格;**外推失败直接剔除**(用户要求:湖点宁可剔除/留大跳,
-            //      也绝不留在湖里——湖里点会把船导进死湖,比大跳更糟)。([[water_midseg_pierce_land_fixes]])
-            int linkRepaired = 0;  // 连线穿陆→螺旋外推到真海面
-            int linkDropped = 0;   // 连线穿陆→外推不出湖,直接剔除
+            // 1.5) 连线穿陆扫描(2026-06):步① 只查单点是否水,漏掉「单点是水但与前后航点连线穿陆」的点。
+            //      逐三元组 (prev,mid,next) 用 segmentHullClear 查 mid 两条连线穿不穿陆;穿则 escapeToOpenWater 全向螺旋
+            //      外推到「到 prev、到 next 两条连线都通」的 2×2 全水格。两类处理:
+            //      - **中段**(内陆湖点):外推失败 → 剔除(湖里点把船导进死湖,宁可大跳)。([[water_midseg_pierce_land_fixes]])
+            //      - **出站/进站段**(距首/尾端点 ≤ BERTH_SEGMENT_NODES):连线穿的是**码头建筑**,点不能删(删了航线断在
+            //        码头里)→ 外推**渐进放大半径**(96→192→320)绕开建筑;实在出不去**保留原点**(不剔除)。修船卡码头等自救。
+            int linkRepaired = 0;  // 连线穿陆→螺旋外推绕开
+            int linkDropped = 0;   // 连线穿陆→中段外推失败,剔除
+            int linkKeptBerth = 0; // 出站/进站段外推失败,保留原点(不剔除)
             List<BlockPos> linked = new ArrayList<>();
             linked.add(kept.get(0));
-            for (int i = 1; i < kept.size() - 1; i++) {
-                BlockPos prev = linked.get(linked.size() - 1); // 取已确认好点(连续湖段时不会用到也在湖里的原 kept[i-1])
+            int lastIdx = kept.size() - 1;
+            for (int i = 1; i < lastIdx; i++) {
+                BlockPos prev = linked.get(linked.size() - 1); // 取已确认好点(连续穿陆段不会用到也在陆里的原 kept[i-1])
                 BlockPos mid = kept.get(i);
                 BlockPos next = kept.get(i + 1);
                 boolean prevClear = map.segmentHullClear(prev, mid, halfWidth);
@@ -116,7 +119,30 @@ public final class WaterRouteNbtVerifier {
                     linked.add(mid); // 两条连线都通,保留
                     continue;
                 }
-                // 连线穿陆:全向螺旋外推到「到 prev、到 next 两条连线都通」的真海面格。
+                // 出站/进站段:邻近首/尾端点(泊位),穿的是码头建筑 → 渐进放大半径外推,失败保留不剔除。
+                boolean berthSeg = i <= BERTH_SEGMENT_NODES || i >= lastIdx - BERTH_SEGMENT_NODES;
+                if (berthSeg) {
+                    BlockPos fixed = null;
+                    for (int maxR : BERTH_ESCAPE_RADII) { // 96→192→320 渐进
+                        fixed = escapeToOpenWater(map, mid, prev, next, halfWidth, maxR);
+                        if (fixed != null) {
+                            break;
+                        }
+                    }
+                    if (fixed != null) {
+                        linked.add(fixed);
+                        linkRepaired++;
+                        if (linkRepaired <= 8) {
+                            LOGGER.info("[WaterPath] 航点NBT校验:出/进站连线穿建筑外推 #{} {} -> {}", i, mid, fixed);
+                        }
+                    } else {
+                        linked.add(mid); // 出站段绝不删点(删了航线断在码头),保留原点
+                        linkKeptBerth++;
+                        LOGGER.warn("[WaterPath] 航点NBT校验:出/进站连线穿建筑但外推出不去,保留原点 #{} {}", i, mid);
+                    }
+                    continue;
+                }
+                // 中段:全向螺旋外推到「两条连线都通」的真海面格。
                 BlockPos fixed = escapeToOpenWater(map, mid, prev, next, halfWidth);
                 if (fixed != null) {
                     linked.add(fixed);
@@ -126,7 +152,7 @@ public final class WaterRouteNbtVerifier {
                     }
                     continue;
                 }
-                // 外推出不了湖 → 直接剔除(不加入 linked);prev→next 交步② 用大预算重连,绕不通就大跳(用户接受)。
+                // 中段外推出不了湖 → 剔除;prev→next 交步② 用大预算重连,绕不通就大跳(用户接受)。
                 linkDropped++;
                 if (linkDropped <= 8) {
                     LOGGER.info("[WaterPath] 航点NBT校验:连线穿陆剔除(出不了湖) #{} {}", i, mid);
@@ -168,8 +194,8 @@ public final class WaterRouteNbtVerifier {
             }
 
             cur = rebuilt;
-            LOGGER.info("[WaterPath] 航点NBT校验 第{}轮:法线侧移修复={} 删非水点={} 连线外推={} 连线剔除={} 局部绕行重连={} 绕不开保留={} 航点{}→{}",
-                    iter + 1, repaired, dropped, linkRepaired, linkDropped, rerouted, keptBad, waypoints.size(), cur.size());
+            LOGGER.info("[WaterPath] 航点NBT校验 第{}轮:法线侧移修复={} 删非水点={} 连线外推={} 连线剔除={} 出站保留={} 局部绕行重连={} 绕不开保留={} 航点{}→{}",
+                    iter + 1, repaired, dropped, linkRepaired, linkDropped, linkKeptBerth, rerouted, keptBad, waypoints.size(), cur.size());
 
             // 收敛:本轮无任何修复/删除/绕行(单点 + 连线 + 段重连全静默 = 全程全水且连线全通)→ 完成。
             if (repaired == 0 && dropped == 0 && linkRepaired == 0 && linkDropped == 0 && rerouted == 0) {
@@ -249,6 +275,12 @@ public final class WaterRouteNbtVerifier {
     /** 连线穿陆点全向螺旋外推最大半径(格):内陆湖点出湖到主航道,湖点到主航道实测几十格,给 96 覆盖。 */
     private static final int ESCAPE_MAX_R = 96;
 
+    /** 出站/进站段判别:距首/尾端点(泊位)这么多个航点内,视作出/进站段——穿的是码头建筑,外推不删。 */
+    private static final int BERTH_SEGMENT_NODES = 4;
+
+    /** 出/进站段穿码头建筑时,外推螺旋半径渐进放大序列(绕开大型码头建筑)。 */
+    private static final int[] BERTH_ESCAPE_RADII = {96, 192, 320};
+
     /** 离岸余量阈值(环数):航点离岸 < 此值视作「贴岸」,即便是水也要往水心侧移拉离。1 = 8 邻里有陆就算贴岸。 */
     private static final int MIN_OFFSHORE = 1;
 
@@ -316,7 +348,13 @@ public final class WaterRouteNbtVerifier {
      */
     private static BlockPos escapeToOpenWater(RealBlockWaterMap map, BlockPos mid, BlockPos prev, BlockPos next,
                                               int halfWidth) {
-        for (int r = 1; r <= ESCAPE_MAX_R; r++) {
+        return escapeToOpenWater(map, mid, prev, next, halfWidth, ESCAPE_MAX_R);
+    }
+
+    /** 同上,可指定螺旋最大半径(出站/进站段穿码头建筑时渐进放大半径用)。 */
+    private static BlockPos escapeToOpenWater(RealBlockWaterMap map, BlockPos mid, BlockPos prev, BlockPos next,
+                                              int halfWidth, int maxR) {
+        for (int r = 1; r <= maxR; r++) {
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {

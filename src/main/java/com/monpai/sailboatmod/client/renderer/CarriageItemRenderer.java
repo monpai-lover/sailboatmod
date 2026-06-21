@@ -53,7 +53,8 @@ public class CarriageItemRenderer extends GeoItemRenderer<CarriageItem> {
 
         @Override
         public ResourceLocation getTextureResource(CarriageItem animatable) {
-            return CarriageItem.getWoodType(CarriageItemRenderer.currentItemStack()).textureLocation();
+            // 2026-06 新模型用单贴图,不再按木材分三色。
+            return new ResourceLocation(SailboatMod.MODID, "textures/entity/carriage.png");
         }
 
         @Override

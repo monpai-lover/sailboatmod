@@ -13,7 +13,8 @@ public class CarriageEntityModel extends GeoModel<CarriageEntity> {
 
     @Override
     public ResourceLocation getTextureResource(CarriageEntity animatable) {
-        return animatable.getWoodType().textureLocation();
+        // 2026-06 新模型用单贴图(512x512),不再按木材分三色。
+        return new ResourceLocation(SailboatMod.MODID, "textures/entity/carriage.png");
     }
 
     @Override

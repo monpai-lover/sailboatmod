@@ -28,7 +28,9 @@ public final class ModEntities {
     public static final RegistryObject<EntityType<CarriageEntity>> CARRIAGE = ENTITY_TYPES.register(
             "carriage",
             () -> EntityType.Builder.<CarriageEntity>of(CarriageEntity::new, MobCategory.MISC)
-                    .sized(3.0F, 1.6F)
+                    // 2026-06 新模型:碰撞箱是正方底面(width×width),取罩住车身主体的值(轮子/辕杆超出部分不计碰撞,正常)。
+                    // 原 3.0 太大(截图白框超模型一圈)。1.8 罩主体;游戏内觉得大/小再调此值与高度 1.6。
+                    .sized(1.8F, 1.6F)
                     .clientTrackingRange(10)
                     .updateInterval(1)
                     .build("carriage")
