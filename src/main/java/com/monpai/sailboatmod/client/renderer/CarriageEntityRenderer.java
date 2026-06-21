@@ -7,11 +7,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.model.HorseModel;
-import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -22,14 +18,12 @@ import org.jetbrains.annotations.Nullable;
 import software.bernie.geckolib.renderer.GeoEntityRenderer;
 
 public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
-    private static final ResourceLocation HORSE_TEXTURE = new ResourceLocation("textures/entity/horse/horse_brown.png");
     private static final int ARRIVAL_HOLOGRAM_COLOR = 0xF8E7A0;
     private static final int ARRIVAL_HOLOGRAM_BACKGROUND = 0x66000000;
     private static final float ARRIVAL_HOLOGRAM_SCALE = 0.025F;
     private static final float HORSE_TURN_SMOOTH_ALPHA = 0.18F; // 马转向角每帧逼近目标的比例(越大越跟手,越小越平滑)
     private static final float HORSE_TURN_GAIN = 1.0F;          // 马转向幅度增益(1=直接用马车转向角;游戏内觉得转太多/少改此值)
 
-    private final HorseModel<Horse> horseModel;
     @Nullable
     private Horse renderHorse;
     private float smoothedHorseTurn = 0.0F; // 马转向角平滑值(度),逼近 entity.getRenderTurnAngle() 防突变抖动
@@ -37,7 +31,6 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     public CarriageEntityRenderer(EntityRendererProvider.Context renderManager) {
         super(renderManager, new CarriageEntityModel());
         this.shadowRadius = 0.9F;
-        this.horseModel = new HorseModel<>(renderManager.bakeLayer(ModelLayers.HORSE));
     }
 
     @Override
@@ -103,45 +96,56 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
         float yaw = entity.getViewYRot(partialTick);
         float animationTime = entity.tickCount + partialTick;
-        // 2026-06 马腿幅度用「服务端同步的真实行驶速度」(getCurrentSpeedForHud,= DATA_CURRENT_SPEED entityData 同步,
-        // 与 HUD 同源)。不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 插值步进位移偏小,马腿仍不动)。
-        // currentSpeed 单位 m/s(0~10.5),巡航几 m/s,×0.15 让巡航时腿摆幅度≈0.5~1.0。
-        // 马腿幅度用服务端同步的真实行驶速度(currentSpeed,m/s)。诊断已确认行驶时 limbSwingAmount 正常(0.6~0.98),
-        // 腿其实在摆——之前"腿不动"真因是马 Y 太低腿埋地里(见 HORSE_MODEL_Y),非动画问题。
+        // 马腿摆幅用「服务端同步的真实行驶速度」(getCurrentSpeedForHud,= DATA_CURRENT_SPEED entityData 同步,与 HUD 同源)。
+        // 不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 步进偏小)。currentSpeed m/s(0~10.5),×0.15 让巡航腿摆≈0.5~1.0。
         double speed = Math.abs(entity.getCurrentSpeedForHud());
         float limbSwingAmount = Mth.clamp((float) (speed * 0.15D), 0.0F, 1.15F);
-        float limbSwing = animationTime * (0.8F + limbSwingAmount * 2.2F);
 
-        horse.setYRot(0.0F);
-        horse.setYBodyRot(0.0F);
-        horse.yBodyRotO = 0.0F;
-        horse.yHeadRot = 0.0F;
-        horse.yHeadRotO = 0.0F;
-        horse.setXRot(0.0F);
-        horse.xRotO = 0.0F;
-        // 2026-06 关键:Fresh Animations(及 vanilla 1.20+)从 entity.walkAnimation.speed()/position() 读腿摆,
-        // 不读 setupAnim 的 limbSwing 参数!临时马 renderHorse 从不移动→walkAnimation.speed()=0→FA 一直播待机。
-        // 这里把真实行驶速度喂进 walkAnimation,FA 才会播 move(跑动)动画。update(speed,decay) 内部推进相位+速度。
+        // 2026-06 关键改造:改用 EntityRenderDispatcher.render 渲染这匹临时马,而非直接 horseModel.setupAnim。
+        // 原因:Fresh Animations + EMF(entity_model_features) 通过 mixin 钩在 EntityRenderDispatcher.render HEAD 捕获
+        // 当前渲染实体上下文,并从 entity.walkAnimation 读腿摆相位。手画马绕过 dispatcher → EMF 没捕获到它 → 一直播待机。
+        // 走 dispatcher.render 后 EMF 才会把这匹马设为 current entity、读它的 walkAnimation,播跑动动画。
+        // walkAnimation 同时驱动 vanilla HorseModel 和 FA(都读同一个),所以喂真实速度一处即可。
         horse.walkAnimation.update(limbSwingAmount, 1.0F);
 
-        double bob = Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount;
-        CarriageVisualRig.HorseAttachmentPose attachment = CarriageVisualRig.horseAttachmentPose(yaw, bob);
-
-        // 马整体跟转向方向偏转(同 MrCrayfish 前轮转向):平滑逼近马车转向角,左/右打方向马朝对应方向转。
+        // 马朝向交给 yBodyRot(dispatcher 内部 setupRotations 做 180-yBodyRot,等价原 horseRootYawRotation)。
+        // 转向偏转(smoothedHorseTurn)并入 yBodyRot:马整体跟转向方向偏(同 MrCrayfish 前轮),左/右打方向马朝对应方向转。
         float targetTurn = entity.getRenderTurnAngle();
         smoothedHorseTurn += (targetTurn - smoothedHorseTurn) * HORSE_TURN_SMOOTH_ALPHA;
+        float bodyYaw = yaw - smoothedHorseTurn * HORSE_TURN_GAIN;
+        horse.setYRot(bodyYaw);
+        horse.yRotO = bodyYaw;
+        horse.setYBodyRot(bodyYaw);
+        horse.yBodyRotO = bodyYaw;
+        horse.yHeadRot = bodyYaw;
+        horse.yHeadRotO = bodyYaw;
+        horse.setXRot(0.0F);
+        horse.xRotO = 0.0F;
+
+        // 马在车头前方的世界偏移(已按马朝向旋转好的世界轴向量,直接 translate,不再手动 mulPose 朝向——朝向交给 yBodyRot)。
+        double bob = Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount;
+        net.minecraft.world.phys.Vec3 worldOffset = CarriageVisualRig.renderedHorseWorldOffset(yaw, bob);
+        float scale = CarriageVisualRig.horseModelScale();
 
         poseStack.pushPose();
-        poseStack.mulPose(Axis.YP.rotationDegrees(CarriageVisualRig.horseRootYawRotation(yaw)));
-        poseStack.translate(attachment.localOffset().x, attachment.localOffset().y, attachment.localOffset().z);
-        // 在马自身坐标系绕 Y 轴加转向偏转(translate 到马位置后再转,马绕自身中心转向不漂移)。
-        poseStack.mulPose(Axis.YP.rotationDegrees(smoothedHorseTurn * HORSE_TURN_GAIN));
-        poseStack.scale(-attachment.scale(), -attachment.scale(), attachment.scale());
+        poseStack.translate(worldOffset.x, worldOffset.y, worldOffset.z);
+        // 缩放正值:模型上下翻转交给 dispatcher 内部 LivingEntityRenderer 的 scale(-1,-1,1),这里别再带负号(否则马颠倒)。
+        poseStack.scale(scale, scale, scale);
+        // 补偿 dispatcher 内部 LivingEntityRenderer 的 translate(0,-1.501,0)(实体渲染原点在脚底偏移):
+        // 原手画路径无此下沉,不补的话马会整体下沉 ~1.501*scale 埋地。补 +1.501 让 HORSE_MODEL_Y 语义接近原路径。
+        poseStack.translate(0.0D, 1.501D, 0.0D);
 
-        horseModel.prepareMobModel(horse, limbSwing, limbSwingAmount, partialTick);
-        horseModel.setupAnim(horse, limbSwing, limbSwingAmount, animationTime, 0.0F, 0.0F);
-        VertexConsumer buffer = bufferSource.getBuffer(RenderType.entityCutoutNoCull(HORSE_TEXTURE));
-        horseModel.renderToBuffer(poseStack, buffer, packedLight, OverlayTexture.NO_OVERLAY, 1.0F, 1.0F, 1.0F, 1.0F);
+        // 关阴影/名牌:车自己有阴影,马只渲染模型本体。try/finally 还原,别污染 dispatcher 全局状态。
+        net.minecraft.client.renderer.entity.EntityRenderDispatcher dispatcher =
+                Minecraft.getInstance().getEntityRenderDispatcher();
+        // shouldRenderShadow 是 private 读不到;dispatcher 渲染每个实体时会自行控制此标志,渲染后还原 true 安全。
+        dispatcher.setRenderShadow(false);
+        try {
+            // x/y/z=0:马位置已由上面 translate 摆好;rotationYaw=0:朝向已用 yBodyRot 设好,别再传 yaw(双重旋转)。
+            dispatcher.render(horse, 0.0D, 0.0D, 0.0D, 0.0F, partialTick, poseStack, bufferSource, packedLight);
+        } finally {
+            dispatcher.setRenderShadow(true);
+        }
         poseStack.popPose();
     }
 
