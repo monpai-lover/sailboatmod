@@ -26,10 +26,13 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     private static final int ARRIVAL_HOLOGRAM_COLOR = 0xF8E7A0;
     private static final int ARRIVAL_HOLOGRAM_BACKGROUND = 0x66000000;
     private static final float ARRIVAL_HOLOGRAM_SCALE = 0.025F;
+    private static final float HORSE_TURN_SMOOTH_ALPHA = 0.18F; // 马转向角每帧逼近目标的比例(越大越跟手,越小越平滑)
+    private static final float HORSE_TURN_GAIN = 1.0F;          // 马转向幅度增益(1=直接用马车转向角;游戏内觉得转太多/少改此值)
 
     private final HorseModel<Horse> horseModel;
     @Nullable
     private Horse renderHorse;
+    private float smoothedHorseTurn = 0.0F; // 马转向角平滑值(度),逼近 entity.getRenderTurnAngle() 防突变抖动
 
     public CarriageEntityRenderer(EntityRendererProvider.Context renderManager) {
         super(renderManager, new CarriageEntityModel());
@@ -120,9 +123,15 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         double bob = Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount;
         CarriageVisualRig.HorseAttachmentPose attachment = CarriageVisualRig.horseAttachmentPose(yaw, bob);
 
+        // 马整体跟转向方向偏转(同 MrCrayfish 前轮转向):平滑逼近马车转向角,左/右打方向马朝对应方向转。
+        float targetTurn = entity.getRenderTurnAngle();
+        smoothedHorseTurn += (targetTurn - smoothedHorseTurn) * HORSE_TURN_SMOOTH_ALPHA;
+
         poseStack.pushPose();
         poseStack.mulPose(Axis.YP.rotationDegrees(CarriageVisualRig.horseRootYawRotation(yaw)));
         poseStack.translate(attachment.localOffset().x, attachment.localOffset().y, attachment.localOffset().z);
+        // 在马自身坐标系绕 Y 轴加转向偏转(translate 到马位置后再转,马绕自身中心转向不漂移)。
+        poseStack.mulPose(Axis.YP.rotationDegrees(smoothedHorseTurn * HORSE_TURN_GAIN));
         poseStack.scale(-attachment.scale(), -attachment.scale(), attachment.scale());
 
         horseModel.prepareMobModel(horse, limbSwing, limbSwingAmount, partialTick);

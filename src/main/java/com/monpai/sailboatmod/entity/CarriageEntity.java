@@ -1152,6 +1152,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
     }
 
+    /**
+     * 客户端渲染用:当前转向角(度,±MAX_TURN_ANGLE)。来自 entityData 同步的目标转向角,客户端可读。
+     * 供渲染器让马整体跟转向方向偏转(同 MrCrayfish 前轮转向)。左打方向为负/正由 turnAngle 符号决定。
+     */
+    public float getRenderTurnAngle() {
+        return entityData.get(DATA_TARGET_TURN_ANGLE);
+    }
+
     private void updateTurning() {
         CarriageDriveInput.TurnDirection turnDir = getTurnDirectionEnum();
         float targetAngle = entityData.get(DATA_TARGET_TURN_ANGLE);
@@ -3132,11 +3140,23 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (level() == null) {
             return false;
         }
-        if (onGround()) {
-            return isDryGround(blockPosition().below());
+        // 2026-06 改宽松:遍历碰撞箱底面覆盖的所有格,**只要有一格是干地面就算 grounded**(避免马车 1.8 宽碰撞箱
+        // 质心悬空/卡台阶缝时单格判 false 导致整车不能动卡死)。原来只查质心下方单格,破坏游戏性。
+        double footY = (onGround() ? getY() : getBoundingBox().minY) - 0.15D;
+        AABB box = getBoundingBox();
+        int y = Mth.floor(footY);
+        int x0 = Mth.floor(box.minX);
+        int x1 = Mth.floor(box.maxX);
+        int z0 = Mth.floor(box.minZ);
+        int z1 = Mth.floor(box.maxZ);
+        for (int x = x0; x <= x1; x++) {
+            for (int z = z0; z <= z1; z++) {
+                if (isDryGround(new BlockPos(x, y, z))) {
+                    return true; // 底面任一格干地面 → 可行驶
+                }
+            }
         }
-        BlockPos below = BlockPos.containing(getX(), getBoundingBox().minY - 0.15D, getZ());
-        return isDryGround(below);
+        return false;
     }
 
     private boolean isDryGround(BlockPos pos) {
