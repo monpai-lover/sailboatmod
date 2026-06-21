@@ -131,9 +131,6 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         poseStack.translate(worldOffset.x, worldOffset.y, worldOffset.z);
         // 缩放正值:模型上下翻转交给 dispatcher 内部 LivingEntityRenderer 的 scale(-1,-1,1),这里别再带负号(否则马颠倒)。
         poseStack.scale(scale, scale, scale);
-        // 补偿 dispatcher 内部 LivingEntityRenderer 的 translate(0,-1.501,0)(实体渲染原点在脚底偏移):
-        // 原手画路径无此下沉,不补的话马会整体下沉 ~1.501*scale 埋地。补 +1.501 让 HORSE_MODEL_Y 语义接近原路径。
-        poseStack.translate(0.0D, 1.501D, 0.0D);
 
         // 关阴影/名牌:车自己有阴影,马只渲染模型本体。try/finally 还原,别污染 dispatcher 全局状态。
         net.minecraft.client.renderer.entity.EntityRenderDispatcher dispatcher =
@@ -157,7 +154,21 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         }
         if (renderHorse == null || renderHorse.level() != minecraft.level) {
             renderHorse = new Horse(EntityType.HORSE, minecraft.level);
+            applyBrownVariant(renderHorse);
         }
         return renderHorse;
+    }
+
+    /**
+     * 固定马毛色为棕色(原手画路径用 horse_brown.png)。dispatcher 渲染读马自身变体,默认随机/白。
+     * Horse.setTypeVariant 是 private 且 reobf 后混淆名会变(反射不稳),改用 public 的 Entity.load(NBT):
+     * Horse.readAdditionalSaveData 读 "Variant" int = base(BROWN=2) | (markings(NONE=0)<<8) = 2。
+     * NBT 字段名 "Variant" 是存档格式常量,不随混淆变,稳定。
+     */
+    private static void applyBrownVariant(Horse horse) {
+        net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
+        horse.saveWithoutId(tag); // 先存全量,只覆盖 Variant,避免缺字段读 NBT 时异常。
+        tag.putInt("Variant", 2);  // BROWN base, NONE markings
+        horse.load(tag);
     }
 }
