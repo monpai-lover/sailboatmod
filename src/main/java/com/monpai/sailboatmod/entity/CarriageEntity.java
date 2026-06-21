@@ -1245,12 +1245,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         controllers.add(new AnimationController<>(this, "carriage_state", 0, state -> {
-            // 2026-06 改用真实每 tick 位移判行驶,不用 getDeltaMovement():自动驾驶服务端权威 + lerp 同步时
-            // 客户端 deltaMovement≈0 → 车身/轮子动画不播。xo/zo 差值=真实位移,准确反映是否在动。
-            double dx = getX() - xo;
-            double dz = getZ() - zo;
-            double horizontalSpeed = dx * dx + dz * dz;
-            if (horizontalSpeed <= 0.0008D) {
+            // 2026-06 用服务端同步的真实行驶速度判行驶(getCurrentSpeedForHud,与马腿/HUD 同源)。
+            // 不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 插值步进位移偏小)。
+            if (Math.abs(getCurrentSpeedForHud()) <= 0.05F) { // m/s,几乎不动则停
                 return PlayState.STOP;
             }
             return state.setAndContinue(CARRIAGE_DRIVE_ANIMATION);

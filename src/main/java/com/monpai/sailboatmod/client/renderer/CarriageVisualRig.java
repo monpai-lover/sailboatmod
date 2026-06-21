@@ -6,9 +6,9 @@ public final class CarriageVisualRig {
     private static final double MODEL_UNIT = 1.0D / 16.0D;
     private static final double CARRIAGE_MODEL_Y_OFFSET = 0.0D;
     private static final float CARRIAGE_MODEL_SCALE = 1.04F;
-    // 2026-06 新模型车头朝 X 轴(长边在 X),实体前方是 Z 轴,差 90°(马跑到右侧)。给车身模型加固定偏航把车头转到 Z。
-    // 游戏内若方向反了改 -90;若车头朝后改 180。这是渲染层视觉旋转,不影响实体碰撞/移动方向。
-    private static final float CARRIAGE_MODEL_YAW_OFFSET = 90.0F;
+    // 2026-06 新模型车头朝向校正:先 90° 把长边(X)转到 Z,实测车头前后反了再 +180 = 270°。让车头(辕杆)与马同向。
+    // 这是渲染层视觉旋转,不影响实体碰撞/移动方向。若再反改回 90,左右偏改 ±90。
+    private static final float CARRIAGE_MODEL_YAW_OFFSET = 270.0F;
     private static final double SHAFT_TIP_Z_UNITS = 25.0D;
     private static final double HORSE_FORWARD_CLEARANCE = 0.18D;
     private static final double HORSE_MODEL_Y = 1.42D;

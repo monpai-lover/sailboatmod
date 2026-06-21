@@ -278,8 +278,10 @@ public final class WaterRouteNbtVerifier {
     /** 出站/进站段判别:距首/尾端点(泊位)这么多个航点内,视作出/进站段——穿的是码头建筑,外推不删。 */
     private static final int BERTH_SEGMENT_NODES = 4;
 
-    /** 出/进站段穿码头建筑时,外推螺旋半径渐进放大序列(绕开大型码头建筑)。 */
-    private static final int[] BERTH_ESCAPE_RADII = {96, 192, 320};
+    /** 出/进站段穿码头建筑时,外推螺旋半径渐进放大序列(绕开码头建筑)。
+     *  ⚠️ 上限必须小:escapeToOpenWater 是螺旋遍历 O(r²),每格还做 segmentHullClear(supercover DDA + NBT 查),
+     *  半径 320 → 41万格 × 连线校验 = 单点 62 秒 + NBT 缓存爆 → 服务器崩溃(2026-06 实测崩过)。码头建筑撑死几十格,48/96 够。 */
+    private static final int[] BERTH_ESCAPE_RADII = {32, 64};
 
     /** 离岸余量阈值(环数):航点离岸 < 此值视作「贴岸」,即便是水也要往水心侧移拉离。1 = 8 邻里有陆就算贴岸。 */
     private static final int MIN_OFFSHORE = 1;
@@ -351,9 +353,14 @@ public final class WaterRouteNbtVerifier {
         return escapeToOpenWater(map, mid, prev, next, halfWidth, ESCAPE_MAX_R);
     }
 
+    /** 候选格做 2 次 segmentHullClear(贵)的预算上限:超此停(止血,防单点几十秒卡死崩服)。每次 segmentHullClear
+     *  扫整条 prev→cand 线(可能几百格 supercover + NBT 查),候选多时是 O(r²×连线长)灾难,必须封顶。 */
+    private static final int ESCAPE_LINK_CHECK_BUDGET = 800;
+
     /** 同上,可指定螺旋最大半径(出站/进站段穿码头建筑时渐进放大半径用)。 */
     private static BlockPos escapeToOpenWater(RealBlockWaterMap map, BlockPos mid, BlockPos prev, BlockPos next,
                                               int halfWidth, int maxR) {
+        int linkChecks = 0; // 已做的连线校验次数(贵),封顶防卡死
         for (int r = 1; r <= maxR; r++) {
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
@@ -363,16 +370,25 @@ public final class WaterRouteNbtVerifier {
                     int cx = mid.getX() + dx;
                     int cz = mid.getZ() + dz;
                     if (!map.hullClear(cx, cz, halfWidth)) {
-                        continue;
+                        continue; // hullClear 便宜,先过滤
+                    }
+                    if (linkChecks >= ESCAPE_LINK_CHECK_BUDGET) {
+                        return null; // 连线校验预算耗尽 → 放弃外推(止血),上层保留/剔除
                     }
                     BlockPos cand = new BlockPos(cx, mid.getY(), cz);
-                    if (map.segmentHullClear(prev, cand, halfWidth) && map.segmentHullClear(cand, next, halfWidth)) {
-                        return cand; // 出了湖、与前后主航道点连得上
+                    linkChecks++;
+                    // 先验近的(到 prev,prev 是上一已确认好点,通常近),不通直接跳过省掉到 next 的远线扫描。
+                    if (!map.segmentHullClear(prev, cand, halfWidth)) {
+                        continue;
+                    }
+                    linkChecks++;
+                    if (map.segmentHullClear(cand, next, halfWidth)) {
+                        return cand; // 出了陆、与前后点都连得上
                     }
                 }
             }
         }
-        return null; // 螺旋半径内出不去 → 上层剔除
+        return null; // 半径内出不去 → 上层剔除/保留
     }
 
     /** How many rings (1..8) around (x,z) stay fully hull-clear -> a cheap "distance from shore" score. */

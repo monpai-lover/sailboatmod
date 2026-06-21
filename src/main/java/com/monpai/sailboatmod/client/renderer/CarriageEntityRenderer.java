@@ -103,13 +103,11 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
         float yaw = entity.getViewYRot(partialTick);
         float animationTime = entity.tickCount + partialTick;
-        // 2026-06 马腿幅度改用「客户端真实每 tick 位移」算,不用 getDeltaMovement():自动驾驶马车服务端权威 + lerp 位置同步,
-        // 客户端 deltaMovement≈0 → 旧算法马腿幅度≈0 → 马只待机不跑。xo/zo 是 vanilla 上一 tick 位置(super.tick 更新,
-        // lerp 同步的位移也算进去),差值=真实位移,准确反映行驶速度。
-        double dx = entity.getX() - entity.xo;
-        double dz = entity.getZ() - entity.zo;
-        double speed = Math.sqrt(dx * dx + dz * dz);
-        float limbSwingAmount = Mth.clamp((float) (speed * 8.0D), 0.0F, 1.15F);
+        // 2026-06 马腿幅度用「服务端同步的真实行驶速度」(getCurrentSpeedForHud,= DATA_CURRENT_SPEED entityData 同步,
+        // 与 HUD 同源)。不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 插值步进位移偏小,马腿仍不动)。
+        // currentSpeed 单位 m/s(0~10.5),巡航几 m/s,×0.15 让巡航时腿摆幅度≈0.5~1.0。
+        double speed = Math.abs(entity.getCurrentSpeedForHud());
+        float limbSwingAmount = Mth.clamp((float) (speed * 0.15D), 0.0F, 1.15F);
         float limbSwing = animationTime * (0.8F + limbSwingAmount * 2.2F);
 
         horse.setYRot(0.0F);
