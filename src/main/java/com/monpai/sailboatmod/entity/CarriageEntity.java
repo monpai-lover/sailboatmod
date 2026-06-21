@@ -230,8 +230,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private static final float AUTOPILOT_TURN_IN_PLACE_DEGREES = 95.0F;
     private static final float AUTOPILOT_SLOW_TURN_DEGREES = 55.0F;
     private static final int NETWORK_LERP_STEPS = 10;
+    // 2026-06 驾驶员(seat0)挪到马背:马在车头前方(-Z,辕杆尖外)、马背高度。z 大负值=朝车头远处到马身,y 抬到马背。
+    // 这是可调初值,游戏内对准马背微调(z 更负=更靠马、y 更大=更高)。其余 4 座留车厢不动。
     private static final Vec3[] PASSENGER_OFFSETS = new Vec3[] {
-            new Vec3(0.0D, 0.65D, 0.15D),
+            new Vec3(0.0D, 1.35D, -2.6D),   // seat0 驾驶员 → 马背
             new Vec3(-0.75D, 0.65D, -0.25D),
             new Vec3(0.75D, 0.65D, -0.25D),
             new Vec3(-0.65D, 0.65D, -1.05D),
