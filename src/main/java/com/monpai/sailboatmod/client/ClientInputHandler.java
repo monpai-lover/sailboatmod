@@ -12,15 +12,21 @@ import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.entity.TransportEntity;
 import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.registry.ModItems;
+import com.monpai.sailboatmod.entity.CarriageHitboxModel;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CarriageControlInputPacket;
+import com.monpai.sailboatmod.network.packet.InteractCarriagePacket;
 import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
 import com.monpai.sailboatmod.network.packet.SailboatControlInputPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.InputEvent;
@@ -108,6 +114,77 @@ public final class ClientInputHandler {
                 event.setCanceled(true);
             }
         }
+    }
+
+    /**
+     * 整模型点击上车:vanilla 实体拾取只用单一正方 AABB,点不到车头辕杆/车尾/车篷(露在实体 AABB 外)。
+     * 这里对马车「整模型子框」(CarriageHitboxModel)做客户端 raytrace——右键时若射线命中子框且没有更近的
+     * 阻挡(方块/别的实体),就掐断 vanilla 默认行为 + 发包请求服务端 interact。命中正方框内时 vanilla 自己已能
+     * 命中该马车 → 放行老路(不接管),避免双触发(见互斥不变量)。
+     *
+     * <p>用 InteractionKeyMappingTriggered(而非 PlayerInteractEvent.EntityInteract):后者只在 vanilla 已命中
+     * 实体 AABB 后才 fire,对框外部位根本不触发。
+     */
+    @SubscribeEvent
+    public static void onInteractionKeyTriggered(InputEvent.InteractionKeyMappingTriggered event) {
+        if (!event.isUseItem()) {
+            return; // 只接管右键(use)。攻击/拾取键不处理。
+        }
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || mc.level == null || mc.screen != null) {
+            return;
+        }
+        if (player.getVehicle() instanceof CarriageEntity) {
+            return; // 已坐在马车上,右键不重新触发上车 raytrace。
+        }
+
+        float partialTick = mc.getFrameTime();
+        Vec3 eye = player.getEyePosition(partialTick);
+        double reach = player.getEntityReach();
+        Vec3 end = eye.add(player.getViewVector(partialTick).scale(reach));
+        AABB searchBox = new AABB(eye, end).inflate(1.0D);
+
+        CarriageEntity hitCarriage = null;
+        double bestSqr = Double.MAX_VALUE;
+        for (CarriageEntity carriage : mc.level.getEntitiesOfClass(CarriageEntity.class, searchBox, CarriageEntity::isAlive)) {
+            for (AABB box : CarriageHitboxModel.getInteractionBoxesWorld(carriage, partialTick)) {
+                var clip = box.clip(eye, end);
+                if (clip.isPresent()) {
+                    double sqr = eye.distanceToSqr(clip.get());
+                    if (sqr < bestSqr) {
+                        bestSqr = sqr;
+                        hitCarriage = carriage;
+                    }
+                }
+            }
+        }
+        if (hitCarriage == null) {
+            return; // 没命中任何马车子框,放行 vanilla。
+        }
+
+        // vanilla 当前瞄准结果:若它已命中本马车(站正方框内)→ 放行老路,不接管,防双触发。
+        HitResult vanillaHit = mc.hitResult;
+        if (vanillaHit != null && vanillaHit.getType() == HitResult.Type.ENTITY
+                && vanillaHit instanceof net.minecraft.world.phys.EntityHitResult ehr
+                && ehr.getEntity() == hitCarriage) {
+            return;
+        }
+        // 若有更近的阻挡(方块/别的实体)挡在子框命中点之前 → 玩家瞄的是那个,不接管。
+        if (vanillaHit != null && vanillaHit.getType() != HitResult.Type.MISS) {
+            double vanillaSqr = eye.distanceToSqr(vanillaHit.getLocation());
+            if (vanillaSqr < bestSqr) {
+                Entity vanillaEntity = vanillaHit instanceof net.minecraft.world.phys.EntityHitResult e2 ? e2.getEntity() : null;
+                if (vanillaEntity != hitCarriage) {
+                    return;
+                }
+            }
+        }
+
+        // 接管:掐断 vanilla 默认右键,发包请求服务端 interact(服务端再做距离/owner 校验)。
+        event.setSwingHand(true);
+        event.setCanceled(true);
+        ModNetwork.CHANNEL.sendToServer(new InteractCarriagePacket(hitCarriage.getId(), event.getHand()));
     }
 
     @SubscribeEvent

@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.CancelPurchaseOrderPacket;
 import com.monpai.sailboatmod.network.packet.CarriageControlInputPacket;
+import com.monpai.sailboatmod.network.packet.InteractCarriagePacket;
 import com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket;
 import com.monpai.sailboatmod.network.packet.CloseClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
@@ -113,7 +114,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "10"; // 9→10:RoadPlannerAutoCompleteRequestPacket 加 useRealChunk 寻路精度字节;版本不匹配握手即拒(防新旧 jar 混用运行时崩)
+    private static final String PROTOCOL_VERSION = "11"; // 10→11:新增 InteractCarriagePacket(整模型点击上车);版本不匹配握手即拒(防新旧 jar 混用运行时崩)
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(SailboatMod.MODID, "main"),
             () -> PROTOCOL_VERSION,
@@ -892,6 +893,14 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::encode,
                 com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::decode,
                 com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                InteractCarriagePacket.class,
+                InteractCarriagePacket::encode,
+                InteractCarriagePacket::decode,
+                InteractCarriagePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
     }
 

@@ -40,6 +40,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MoverType;
@@ -235,7 +236,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 2026-06 驾驶员(seat0)挪到马背:马在车头前方(-Z,辕杆尖外)、马背高度。z 大负值=朝车头远处到马身,y 抬到马背。
     // 这是可调初值,游戏内对准马背微调(z 更负=更靠马、y 更大=更高)。其余 4 座留车厢不动。
     private static final Vec3[] PASSENGER_OFFSETS = new Vec3[] {
-            new Vec3(2.6D, 1.8D, 0.0D),   // seat0 驾驶员 → 马背。yRot(-yaw-90°)后 x 轴=前后(实测 x=-2.6 落车尾,反号 +2.6 往车头马背);y 抬到马背
+            new Vec3(2.3D, 0.8D, 0.0D),   // seat0 驾驶员 → 马背。yRot(-yaw-90°)后 x 轴=前后(+往车头马背,-往车尾);y 直接进 world y。2026-06 用户:下调1格(1.8→0.8) + 往车尾后移0.3(2.6→2.3)
             new Vec3(-0.75D, 0.65D, -0.25D),
             new Vec3(0.75D, 0.65D, -0.25D),
             new Vec3(-0.65D, 0.65D, -1.05D),
@@ -511,6 +512,71 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!level().isClientSide && tickCount % PICKUP_LOAD_SCAN_INTERVAL_TICKS == 0) {
             tickPickupLoadDetection();
         }
+        pushIntersectingEntities();
+    }
+
+    /**
+     * 软推:正方 AABB(2.2)罩不住车头辕杆/车尾突出段(整模型长~5.16),这些部位靠软推挡住实体不让钻进车身。
+     * 遍历整模型子框(CarriageHitboxModel)相交的非乘客实体,沿水平最小穿入轴外法线轻推出去。
+     * 防抖动:① 只推正方框外突出段(穿入正方框内的交给硬挡,避免与硬挡同轴叠加抖);② 沿最小穿入轴(最短路径挤出,
+     * 别每 tick 反向);③ 力度按穿入深度缩放、钳上限、无 Y 分量;④ 穿入过浅不推。
+     */
+    private void pushIntersectingEntities() {
+        if (level().isClientSide || !isAlive()) {
+            return;
+        }
+        AABB sweep = CarriageHitboxModel.getSweepBox(this);
+        List<Entity> nearby = level().getEntities(this, sweep.inflate(0.2D, 0.0D, 0.2D), EntitySelector.pushableBy(this));
+        if (nearby.isEmpty()) {
+            return;
+        }
+        List<AABB> boxes = CarriageHitboxModel.getInteractionBoxesWorld(this, 1.0F);
+        AABB squareBox = getBoundingBox(); // 正方硬挡框:其内的穿入交给引擎硬挡,软推只补框外突出。
+        for (Entity e : nearby) {
+            if (e == this || hasPassenger(e) || e.isPassengerOfSameVehicle(this)) {
+                continue;
+            }
+            AABB target = e.getBoundingBox();
+            // 已在正方硬挡框水平范围内的实体由硬挡处理,软推跳过(防与硬挡同轴叠加抖)。
+            if (horizontalIntersects(squareBox, target)) {
+                continue;
+            }
+            for (AABB box : boxes) {
+                if (!box.intersects(target)) {
+                    continue;
+                }
+                // 水平最小穿入轴:比较 X、Z 两轴的重叠深度,沿较浅一轴外法线挤出(最短路径)。
+                double overlapX = Math.min(box.maxX, target.maxX) - Math.max(box.minX, target.minX);
+                double overlapZ = Math.min(box.maxZ, target.maxZ) - Math.max(box.minZ, target.minZ);
+                if (overlapX <= 0.0D || overlapZ <= 0.0D) {
+                    continue;
+                }
+                double penetration;
+                double pushX = 0.0D;
+                double pushZ = 0.0D;
+                double boxCenterX = (box.minX + box.maxX) * 0.5D;
+                double boxCenterZ = (box.minZ + box.maxZ) * 0.5D;
+                if (overlapX < overlapZ) {
+                    penetration = overlapX;
+                    pushX = e.getX() >= boxCenterX ? 1.0D : -1.0D;
+                } else {
+                    penetration = overlapZ;
+                    pushZ = e.getZ() >= boxCenterZ ? 1.0D : -1.0D;
+                }
+                if (penetration < 0.05D) {
+                    continue; // 穿入过浅不推,防边缘抖。
+                }
+                // 力度 vanilla 0.05 量级按穿入深度缩放,钳上限 0.12/tick,无 Y。
+                double strength = Math.min(0.12D, 0.05D + penetration * 0.1D);
+                e.push(pushX * strength, 0.0D, pushZ * strength);
+                break; // 一个实体每 tick 只被一个子框推一次,防多框叠加。
+            }
+        }
+    }
+
+    /** 两个 AABB 的水平(X/Z)投影是否相交(忽略 Y)。 */
+    private static boolean horizontalIntersects(AABB a, AABB b) {
+        return a.minX < b.maxX && a.maxX > b.minX && a.minZ < b.maxZ && a.maxZ > b.minZ;
     }
 
     /**
@@ -1312,6 +1378,17 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     public boolean isPickable() {
+        return isAlive();
+    }
+
+    /**
+     * 让马车的正方 AABB 对其他实体形成「硬挡」(玩家/生物移动被阻挡,不只是软推)。
+     * vanilla 默认 Entity 不挡别的实体移动;Boat 同样靠 canBeCollidedWith()=true 才能站上去/被挡。
+     * 硬挡形状是单一正方框(引擎 EntityGetter.getEntityCollisions 写死单 AABB),车头辕杆/车尾突出段
+     * 罩不到,靠 pushIntersectingEntities 软推补挡。
+     */
+    @Override
+    public boolean canBeCollidedWith() {
         return isAlive();
     }
 

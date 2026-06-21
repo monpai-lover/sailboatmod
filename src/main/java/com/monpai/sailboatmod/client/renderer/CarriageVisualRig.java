@@ -4,8 +4,8 @@ import net.minecraft.world.phys.Vec3;
 
 public final class CarriageVisualRig {
     private static final double MODEL_UNIT = 1.0D / 16.0D;
-    // 车离地高度偏移:0.55 浮空太高→降到 0.12 让车轮落地。车悬空改小、轮埋地改大。
-    private static final double CARRIAGE_MODEL_Y_OFFSET = 0.12D;
+    // 车离地高度偏移:0.55→0.12;2026-06 用户「还浮空一点点」→ 0.12→0.02 让车轮压地。车悬空改小、轮埋地改大。
+    private static final double CARRIAGE_MODEL_Y_OFFSET = 0.02D;
     // 2026-06 车放大:2.2 太大→1.8。游戏内觉得大/小改此值,记得连同 CARRIAGE_MODEL_Y_OFFSET 调高度。
     private static final float CARRIAGE_MODEL_SCALE = 1.8F;
     // 2026-06 新模型车头朝向校正:先 90° 把长边(X)转到 Z,实测车头前后反了再 +180 = 270°。让车头(辕杆)与马同向。

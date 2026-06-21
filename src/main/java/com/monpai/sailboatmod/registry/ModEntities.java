@@ -28,9 +28,12 @@ public final class ModEntities {
     public static final RegistryObject<EntityType<CarriageEntity>> CARRIAGE = ENTITY_TYPES.register(
             "carriage",
             () -> EntityType.Builder.<CarriageEntity>of(CarriageEntity::new, MobCategory.MISC)
-                    // 2026-06 新模型:碰撞箱是正方底面(width×width),取罩住车身主体的值(轮子/辕杆超出部分不计碰撞,正常)。
-                    // 原 3.0 太大(截图白框超模型一圈)。1.8 罩主体;游戏内觉得大/小再调此值与高度 1.6。
-                    .sized(1.8F, 1.6F)
+                    // 2026-06 碰撞箱:MC 实体 AABB 引擎硬限制只能正方(width×width),罩不住长方形马车(世界长~5.16×宽~2.12)。
+                    // width 2.2≈真实车宽 2.12:贴车宽消除「左右假挡墙」(长期痛点);height 2.9 罩到车篷顶防站顶穿模。
+                    // 长方向 2.2<5.16 罩不住,辕杆/车尾突出段靠 CarriageEntity.pushIntersectingEntities 软推补挡;
+                    // 配合 CarriageEntity.canBeCollidedWith()=true 让此正方框对其他实体硬挡。点击靠子框 raytrace
+                    // (见 CarriageHitboxModel + ClientInputHandler),不依赖此框。
+                    .sized(2.2F, 2.9F)
                     .clientTrackingRange(10)
                     .updateInterval(1)
                     .build("carriage")
