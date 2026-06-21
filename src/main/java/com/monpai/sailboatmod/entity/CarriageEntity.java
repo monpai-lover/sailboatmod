@@ -1249,14 +1249,11 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         controllers.add(new AnimationController<>(this, "carriage_state", 0, state -> {
-            // 2026-06 用服务端同步的真实行驶速度判行驶(getCurrentSpeedForHud,与马腿/HUD 同源)。
+            // 2026-06 动画速度与车速联动,**永不 PlayState.STOP**:STOP 会让 GeckoLib 从当前帧过渡回默认姿势,
+            // 那个过渡就是"停车时动画快速倒播一遍"的元凶。改为低速时 animSpeed 趋近 0,动画近乎冻结在当前帧不跳变。
             float speed = Math.abs(getCurrentSpeedForHud()); // m/s
-            if (speed <= 0.05F) { // 几乎不动则停
-                return PlayState.STOP;
-            }
-            // 2026-06 动画播放速度与车速联动:慢则慢、快则快、停下时(speed→0)动画速度→0 平滑停,
-            // 不再固定速度播放导致"停车时动画突然全速截断"。CARRIAGE_ANIM_SPEED_BASE=车速对应 1× 播放的基准。
-            double animSpeed = Mth.clamp(speed / CARRIAGE_ANIM_SPEED_BASE, 0.15D, 2.5D);
+            // 停车(speed≈0)→ animSpeed≈0.02 几乎静止;巡航→正常;快→更快。下限不取 0(取0部分版本会卡帧)。
+            double animSpeed = Mth.clamp(speed / CARRIAGE_ANIM_SPEED_BASE, 0.02D, 2.5D);
             state.getController().setAnimationSpeed(animSpeed);
             return state.setAndContinue(CARRIAGE_DRIVE_ANIMATION);
         }));
@@ -1298,14 +1295,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             seatIndex = Math.min(getPassengers().indexOf(passenger), PASSENGER_OFFSETS.length - 1);
         }
         Vec3 seat = PASSENGER_OFFSETS[seatIndex];
-        double yawRad = -getYRot() * (Math.PI / 180.0D);
-        double cos = Math.cos(yawRad);
-        double sin = Math.sin(yawRad);
-        double x = getX() + seat.x * cos - seat.z * sin;
-        double y = getY() + getPassengersRidingOffset() + seat.y + passenger.getMyRidingOffset();
-        double z = getZ() + seat.x * sin + seat.z * cos;
+        // 2026-06 照 MrCrayfish(AbstractLandVehicleRenderer/VehicleEntity.updatePassengerPosition):座位向量用 Vec3.yRot
+        // 旋转,带 -90°(-π/2)偏移对齐模型朝向坐标系——之前手写 cos/sin 无偏移导致座位转 90°飘到车侧。
+        Vec3 seatVec = seat.yRot(-getYRot() * (float) (Math.PI / 180.0D) - ((float) Math.PI / 2F));
+        double x = getX() + seatVec.x;
+        double y = getY() + getPassengersRidingOffset() + seatVec.y + passenger.getMyRidingOffset();
+        double z = getZ() + seatVec.z;
         moveFunction.accept(passenger, x, y, z);
-        // 驾驶员/乘客身体朝向 = 车头朝向(= 马头朝向,马不转身时一致)。不叠加转向角抖动(之前叠加导致座位朝向抖)。
+        // 驾驶员/乘客身体朝向 = 车头朝向。不叠加转向角抖动(之前叠加导致座位朝向抖)。
         passenger.setYBodyRot(getYRot());
     }
 
