@@ -12,12 +12,12 @@ public final class CarriageVisualRig {
     // 这是渲染层视觉旋转,不影响实体碰撞/移动方向。若再反改回 90,左右偏改 ±90。
     private static final float CARRIAGE_MODEL_YAW_OFFSET = 270.0F;
     private static final double SHAFT_TIP_Z_UNITS = 25.0D;
-    // 马离辕杆尖的前向间隙(格):增大=马更靠车头前方。2026-06 马放大到约2.5需更往前→增大。
-    private static final double HORSE_FORWARD_CLEARANCE = 1.2D;
-    // 马离地高度:放大后马变高,Y 相应抬高否则腿插地里。约2.5倍 → 3.0。游戏内悬空改小、埋地改大。
-    private static final double HORSE_MODEL_Y = 3.0D;
-    // 马模型缩放:1.0=vanilla 原比例。2026-06 用户"再放大1倍",1.8→2.5(再大改 3.6=精确×2,先 2.5 防过大)。
-    private static final float HORSE_MODEL_SCALE = 2.5F;
+    // 马离辕杆尖的前向间隙(格):增大=马更靠车头前方,减小=往车身后靠。2026-06 用户要往后→减小。
+    private static final double HORSE_FORWARD_CLEARANCE = 0.5D;
+    // 马离地高度:放大后变高,Y 抬高否则腿插地里(2.5倍 Y3.0 仍埋地)。2.2倍 → 3.4 让马脚落地面。悬空改小、埋地改大。
+    private static final double HORSE_MODEL_Y = 3.4D;
+    // 马模型缩放:2026-06 用户要稍缩小,2.5→2.2。
+    private static final float HORSE_MODEL_SCALE = 2.2F;
 
     private CarriageVisualRig() {
     }
