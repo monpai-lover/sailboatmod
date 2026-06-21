@@ -75,4 +75,20 @@ public record WaterRoutePolicy(int stepSize,
     public static WaterRoutePolicy nbtRefine() {
         return new WaterRoutePolicy(8, 2, 1, 3, 12288, 160000, 0, 128, 0, 20 * 90);
     }
+
+    /**
+     * <b>HYBRID 中段·真实 NBT 粗寻阶段</b>:取代旧 HYBRID 用噪声粗寻当走廊中心线(噪声=WorldPainter 错地形,
+     * 不知真实海峡在哪 → 走廊框死真实海峡之外 → 精寻找不到 → 失败/穿陆)。改为<b>粗寻本身就走真实 NBT 水体连通性</b>:
+     * <ul>
+     *   <li><b>step=12</b>:跨大洋够快,又不取 24/16——海峡可能比 24 窄且斜穿,大 step 网格点不落进海峡 → A* 没有
+     *       "站在海峡里"的可航节点 → 跳过海峡。12 是跳窄缝风险 vs 省节点的折中(同 {@link #longDistance()})。</li>
+     *   <li><b>boatHalfWidth=0</b>:只求水体连通走向,不卡船宽——1 格宽的窄海峡也当通路,让粗路能穿过去;船宽校验
+     *       交阶段二走廊精寻(halfWidth=1 + 软代价挤过)。</li>
+     * </ul>
+     * 其余比照 {@link #longDistance()}(maxSearchRadius=8192、maxExpandedNodes=160000 群岛绕行节点多、timeout=60s)。
+     * 配 {@link RealBlockWaterWorld#coarse}(无约束全开 + 泊位信任,judging 真实 NBT,onDemand 前沿后台读)。
+     */
+    public static WaterRoutePolicy hybridCoarse() {
+        return new WaterRoutePolicy(12, 2, 0, 3, 8192, 160000, 0, 256, 0, 20 * 60);
+    }
 }

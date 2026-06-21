@@ -1474,7 +1474,7 @@
     "message.sailboatmod.auto_route.water.failed.already_pending": "A water route between these docks is already being calculated.",
     "message.sailboatmod.auto_route.water.failed.generic": "Water route creation failed.",
     "entity.sailboatmod.autopilot.stuck": "Stuck — needs help",
-    "message.sailboatmod.autopilot.stuck": "Your sailboat is stuck in a narrow channel. Autopilot paused — please go rescue it.",
+    "message.sailboatmod.autopilot.stuck": "Your sailboat is stuck in a narrow channel at (%1$s, %2$s, %3$s). Autopilot paused — please go rescue it.",
     "message.sailboatmod.autopilot.arrived.broadcast": "Vehicle has arrived at %1$s (travel time %2$s).",
     "block.sailboatmod.post_station.no_target":  "No available carriage was found inside this station.",
     "block.sailboatmod.post_station.no_route":  "This station has no usable route.",

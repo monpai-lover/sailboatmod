@@ -2892,7 +2892,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         net.minecraft.server.level.ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(playerId);
         if (player != null) {
-            player.sendSystemMessage(Component.translatable("message.sailboatmod.autopilot.stuck"));
+            BlockPos pos = blockPosition();
+            player.sendSystemMessage(Component.translatable("message.sailboatmod.autopilot.stuck",
+                    pos.getX(), pos.getY(), pos.getZ()));
         }
     }
 
