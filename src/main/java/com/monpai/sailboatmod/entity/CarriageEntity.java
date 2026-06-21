@@ -235,7 +235,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 2026-06 驾驶员(seat0)挪到马背:马在车头前方(-Z,辕杆尖外)、马背高度。z 大负值=朝车头远处到马身,y 抬到马背。
     // 这是可调初值,游戏内对准马背微调(z 更负=更靠马、y 更大=更高)。其余 4 座留车厢不动。
     private static final Vec3[] PASSENGER_OFFSETS = new Vec3[] {
-            new Vec3(0.0D, 1.35D, -2.6D),   // seat0 驾驶员 → 马背
+            new Vec3(0.0D, 1.5D, 2.6D),   // seat0 驾驶员 → 马背(z 正=车头方向,实测 -2.6 落车尾故取正;y 抬到马背)
             new Vec3(-0.75D, 0.65D, -0.25D),
             new Vec3(0.75D, 0.65D, -0.25D),
             new Vec3(-0.65D, 0.65D, -1.05D),
@@ -1305,10 +1305,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         double y = getY() + getPassengersRidingOffset() + seat.y + passenger.getMyRidingOffset();
         double z = getZ() + seat.x * sin + seat.z * cos;
         moveFunction.accept(passenger, x, y, z);
-        // 2026-06 驾驶员(seat0,在马背)正面永远和马头同朝向:马头随转向角偏转,驾驶员身体朝向跟着偏(只改朝向,不动位置)。
-        // 用 entityData 同步的真实转向角(getRenderTurnAngle),与马渲染转向同源。其余座位朝车头不偏。
-        float seatTurn = seatIndex == 0 ? getRenderTurnAngle() : 0.0F;
-        passenger.setYBodyRot(getYRot() - seatTurn);
+        // 驾驶员/乘客身体朝向 = 车头朝向(= 马头朝向,马不转身时一致)。不叠加转向角抖动(之前叠加导致座位朝向抖)。
+        passenger.setYBodyRot(getYRot());
     }
 
     @Override
