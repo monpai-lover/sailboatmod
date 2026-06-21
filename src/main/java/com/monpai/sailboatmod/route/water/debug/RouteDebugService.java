@@ -175,6 +175,8 @@ public final class RouteDebugService {
             }
         }
 
+        // 去回折(与游戏同口径:平滑前删开阔水回折赘点,治窄水道出口三角)
+        raw = WaterRouteNbtVerifier.dropOpenWaterBackfolds(map, raw, halfWidth);
         // smooth + NBT verify (use production WaterPathSmoother so debug images match in-game behavior:
         // 撞陆感知平滑前/中/后三层,与 WaterAutoRouteService 同口径)
         List<BlockPos> smoothPath = com.monpai.sailboatmod.route.water.WaterPathSmoother.smooth(

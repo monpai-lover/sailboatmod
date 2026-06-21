@@ -336,6 +336,9 @@ public final class WaterAutoRouteService {
         }
 
         bar.update(80, "拼接平滑");
+        // 2026-06 去回折(治窄水道出口三角岔路):双向 A* 前向饿死→相遇点偏置→窄→宽喇叭口拼出三角赘路。平滑前先删
+        // 开阔水里的回折赘点(只删「删后 a→c 仍 2×2 全水」者,绕陆拐点删了会穿陆故保留,不切陆)。
+        raw = WaterRouteNbtVerifier.dropOpenWaterBackfolds(map, raw, boatHalfWidth);
         // 2026-06 撞陆感知平滑(治本:所有撞陆都是平滑过冲造成):前-折线离岸预留、中-过冲段逐级收紧重平滑、
         // 后-逐点抽陆回推。取代裸 PathSmoother.smooth2DWithOrigin(只纯几何,过冲甩岸靠 verify 事后绕)。
         List<BlockPos> smoothed = WaterPathSmoother.smooth(map, raw, seaY, 2.0D, boatHalfWidth);

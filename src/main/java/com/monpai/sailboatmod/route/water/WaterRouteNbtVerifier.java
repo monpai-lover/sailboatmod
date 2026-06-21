@@ -99,16 +99,15 @@ public final class WaterRouteNbtVerifier {
 
             // 1.5) 连线穿陆扫描(2026-06):步① 只查单点是否水,漏掉「单点是水但与前后航点连线穿陆」的点——
             //      典型是内陆湖航点(湖也是 minecraft:water,hullClear=true,但与主航道不连通,连前后点的连线必穿陆)。
-            //      逐三元组 (prev,cur,next) 用 segmentHullClear 查 cur 两条连线;穿陆则先沿法线侧移到「两条连线都通」的
-            //      水格(normalOffsetRepairLinked),侧移不成走条件剔除护栏:仅当「删 cur 后 prev→next 能大预算绕通」才删,
-            //      否则保留原 cur(虽在湖里,但点数不变、绝不把湖里点换成 prev→next 大跳断点)。([[water_midseg_pierce_land_fixes]])
-            int linkRepaired = 0;  // 连线穿陆→法线侧移修好
-            int linkDropped = 0;   // 连线穿陆→侧移不成但删后能绕通,删除
-            int linkKept = 0;      // 连线穿陆→侧移/删都不行,保留原点(护栏)
+            //      逐三元组 (prev,mid,next) 用 segmentHullClear 查 mid 两条连线;穿陆则先 escapeToOpenWater 全向螺旋
+            //      外推到「到 prev、到 next 两条连线都通」的真海面格;**外推失败直接剔除**(用户要求:湖点宁可剔除/留大跳,
+            //      也绝不留在湖里——湖里点会把船导进死湖,比大跳更糟)。([[water_midseg_pierce_land_fixes]])
+            int linkRepaired = 0;  // 连线穿陆→螺旋外推到真海面
+            int linkDropped = 0;   // 连线穿陆→外推不出湖,直接剔除
             List<BlockPos> linked = new ArrayList<>();
             linked.add(kept.get(0));
             for (int i = 1; i < kept.size() - 1; i++) {
-                BlockPos prev = linked.get(linked.size() - 1);
+                BlockPos prev = linked.get(linked.size() - 1); // 取已确认好点(连续湖段时不会用到也在湖里的原 kept[i-1])
                 BlockPos mid = kept.get(i);
                 BlockPos next = kept.get(i + 1);
                 boolean prevClear = map.segmentHullClear(prev, mid, halfWidth);
@@ -117,31 +116,20 @@ public final class WaterRouteNbtVerifier {
                     linked.add(mid); // 两条连线都通,保留
                     continue;
                 }
-                // 连线穿陆:先法线侧移到「到 prev、到 next 两条连线都通」的水格。
-                BlockPos fixed = normalOffsetRepairLinked(map, mid, prev, next, halfWidth);
+                // 连线穿陆:全向螺旋外推到「到 prev、到 next 两条连线都通」的真海面格。
+                BlockPos fixed = escapeToOpenWater(map, mid, prev, next, halfWidth);
                 if (fixed != null) {
                     linked.add(fixed);
                     linkRepaired++;
                     if (linkRepaired <= 8) {
-                        LOGGER.info("[WaterPath] 航点NBT校验:连线穿陆侧移 #{} {} -> {}", i, mid, fixed);
+                        LOGGER.info("[WaterPath] 航点NBT校验:连线穿陆外推(出湖) #{} {} -> {}", i, mid, fixed);
                     }
                     continue;
                 }
-                // 侧移不成 → 条件剔除护栏:仅当删 mid 后 prev→next 能大预算局部绕通才删,否则保留原 mid(不制造大跳)。
-                boolean canBridge = map.segmentHullClear(prev, next, halfWidth)
-                        || !map.localRerouteNbt(prev, next, halfWidth, BRIDGE_MARGIN, BRIDGE_MAX_CELLS).isEmpty();
-                if (canBridge) {
-                    linkDropped++;
-                    if (linkDropped <= 8) {
-                        LOGGER.info("[WaterPath] 航点NBT校验:连线穿陆删点(删后可绕通) #{} {}", i, mid);
-                    }
-                    // 不加入 linked;prev→next 的实际绕行航点交步② 用大预算重连(见下)。
-                } else {
-                    linked.add(mid); // 护栏:删了反而留大跳 → 保留原点
-                    linkKept++;
-                    if (linkKept <= 4) {
-                        LOGGER.info("[WaterPath] 航点NBT校验:连线穿陆但删后绕不通,保留原点 #{} {}", i, mid);
-                    }
+                // 外推出不了湖 → 直接剔除(不加入 linked);prev→next 交步② 用大预算重连,绕不通就大跳(用户接受)。
+                linkDropped++;
+                if (linkDropped <= 8) {
+                    LOGGER.info("[WaterPath] 航点NBT校验:连线穿陆剔除(出不了湖) #{} {}", i, mid);
                 }
             }
             linked.add(kept.get(kept.size() - 1));
@@ -180,8 +168,8 @@ public final class WaterRouteNbtVerifier {
             }
 
             cur = rebuilt;
-            LOGGER.info("[WaterPath] 航点NBT校验 第{}轮:法线侧移修复={} 删非水点={} 连线侧移={} 连线删点={} 连线保留={} 局部绕行重连={} 绕不开保留={} 航点{}→{}",
-                    iter + 1, repaired, dropped, linkRepaired, linkDropped, linkKept, rerouted, keptBad, waypoints.size(), cur.size());
+            LOGGER.info("[WaterPath] 航点NBT校验 第{}轮:法线侧移修复={} 删非水点={} 连线外推={} 连线剔除={} 局部绕行重连={} 绕不开保留={} 航点{}→{}",
+                    iter + 1, repaired, dropped, linkRepaired, linkDropped, rerouted, keptBad, waypoints.size(), cur.size());
 
             // 收敛:本轮无任何修复/删除/绕行(单点 + 连线 + 段重连全静默 = 全程全水且连线全通)→ 完成。
             if (repaired == 0 && dropped == 0 && linkRepaired == 0 && linkDropped == 0 && rerouted == 0) {
@@ -195,8 +183,71 @@ public final class WaterRouteNbtVerifier {
         return cur;
     }
 
+    /** 去回折:中间点到 a→c 直线垂距 < 此值视作回折赘点(同 ThreeSegmentPlanner.BACKFOLD_PERP_DIST)。 */
+    private static final int BACKFOLD_PERP_DIST = 6;
+
+    /**
+     * <b>安全去回折</b>(2026-06,治 NBT「窄水道出口三角岔路」):双向 A* 前向饿死 → 相遇点偏置 → 拼接处在窄→宽
+     * 喇叭口甩出三角赘路。逐三点 (a,b,c) 若 b 到 a→c 垂距 < {@link #BACKFOLD_PERP_DIST}(回折赘点)<b>且删 b 后
+     * a→c 直连仍 2×2 全水可航</b>({@link RealBlockWaterMap#segmentHullClear})→ 删 b。
+     *
+     * <p><b>为什么安全(不切陆)</b>:只删「删后 a→c 仍全水」的回折点——真实绕陆拐点删掉会让 a→c 穿陆,
+     * segmentHullClear 不过 → 保留。故只清开阔水里的纯赘余三角,绝不拉直绕陆拐点穿陆
+     * (这正是 PathSmoother 停用 Douglas-Peucker 所担心的,这里用 segmentHullClear 兜住)。保首尾。迭代到稳定。
+     */
+    public static List<BlockPos> dropOpenWaterBackfolds(RealBlockWaterMap map, List<BlockPos> path, int halfWidth) {
+        if (map == null || path == null || path.size() <= 2) {
+            return path;
+        }
+        List<BlockPos> cur = new ArrayList<>(path);
+        boolean changed = true;
+        int removed = 0;
+        while (changed && cur.size() > 2) {
+            changed = false;
+            List<BlockPos> out = new ArrayList<>();
+            out.add(cur.get(0));
+            int i = 1;
+            while (i < cur.size() - 1) {
+                BlockPos a = out.get(out.size() - 1);
+                BlockPos b = cur.get(i);
+                BlockPos c = cur.get(i + 1);
+                if (perpDistToLine(b, a, c) < BACKFOLD_PERP_DIST && map.segmentHullClear(a, c, halfWidth)) {
+                    i++;        // 删 b(回折赘点 + 删后 a→c 仍全水)
+                    removed++;
+                    changed = true;
+                } else {
+                    out.add(b);
+                    i++;
+                }
+            }
+            out.add(cur.get(cur.size() - 1)); // 末点必留
+            cur = out;
+        }
+        if (removed > 0) {
+            LOGGER.info("[WaterPath] 去回折:删开阔水回折赘点 {} 个 航点 {}→{}", removed, path.size(), cur.size());
+        }
+        return cur;
+    }
+
+    /** 点 p 到直线 a→c 的垂距(2D,XZ;a==c 退化为 p 到 a 距离)。 */
+    private static double perpDistToLine(BlockPos p, BlockPos a, BlockPos c) {
+        double acx = c.getX() - a.getX();
+        double acz = c.getZ() - a.getZ();
+        double lenSq = acx * acx + acz * acz;
+        if (lenSq < 1.0E-9D) {
+            double dx = p.getX() - a.getX();
+            double dz = p.getZ() - a.getZ();
+            return Math.sqrt(dx * dx + dz * dz);
+        }
+        double cross = Math.abs((p.getX() - a.getX()) * acz - (p.getZ() - a.getZ()) * acx);
+        return cross / Math.sqrt(lenSq);
+    }
+
     /** 法线侧移最大偏移量(格):land 点最远向法线两侧找这么多格的 2×2 全水替换点。 */
     private static final int NORMAL_OFFSET_MAX = 48;
+
+    /** 连线穿陆点全向螺旋外推最大半径(格):内陆湖点出湖到主航道,湖点到主航道实测几十格,给 96 覆盖。 */
+    private static final int ESCAPE_MAX_R = 96;
 
     /** 离岸余量阈值(环数):航点离岸 < 此值视作「贴岸」,即便是水也要往水心侧移拉离。1 = 8 邻里有陆就算贴岸。 */
     private static final int MIN_OFFSHORE = 1;
@@ -257,41 +308,33 @@ public final class WaterRouteNbtVerifier {
     }
 
     /**
-     * <b>连线穿陆专用法线侧移</b>(2026-06):骨架同 {@link #normalOffsetRepair},但候选格验收从「单点 hullClear」
-     * 升级为「候选格到 {@code prev}、到 {@code next} 两条 {@link RealBlockWaterMap#segmentHullClear} 都通」——
-     * 解决内陆湖航点:它自己 hullClear=true(单点验收会原地通过),但与前后点连线穿陆。这里强制找一个「连线都不穿陆」
-     * 的水格,找不到返回 null(交上层条件剔除护栏)。沿 prev→next 航向法线两侧逐格(1..{@link #NORMAL_OFFSET_MAX})找,
-     * 取最近的合格点。
+     * <b>全向螺旋外推到真海面</b>(2026-06,取代旧法线单向版):内陆湖航点要出湖到主航道,主航道方位任意——
+     * 旧版只沿 prev→next 航向法线一个方向找,主航道在航向前/后方就永远够不到 → 外推必失败 → 湖点留湖里。
+     * 改为以 {@code mid} 为心<b>螺旋向外</b>(环 r=1..{@link #ESCAPE_MAX_R},全向),候选格验收=2×2 全水
+     * <b>且到 {@code prev}、到 {@code next} 两条 {@link RealBlockWaterMap#segmentHullClear} 都通</b>(出了湖、
+     * 与前后主航道点连得上)。找到最近合格者返回;{@link #ESCAPE_MAX_R} 内找不到返回 null(湖太大/出不去 → 上层剔除)。
      */
-    private static BlockPos normalOffsetRepairLinked(RealBlockWaterMap map, BlockPos cur, BlockPos prev, BlockPos next,
-                                                     int halfWidth) {
-        double hx = next.getX() - prev.getX();
-        double hz = next.getZ() - prev.getZ();
-        double len = Math.sqrt(hx * hx + hz * hz);
-        double nx;
-        double nz;
-        if (len < 1.0E-6D) {
-            nx = 1.0D;
-            nz = 0.0D;
-        } else {
-            nx = -hz / len;
-            nz = hx / len;
-        }
-        for (int d = 1; d <= NORMAL_OFFSET_MAX; d++) {
-            for (int sign = -1; sign <= 1; sign += 2) {
-                int cx = cur.getX() + (int) Math.round(nx * d * sign);
-                int cz = cur.getZ() + (int) Math.round(nz * d * sign);
-                if (!map.hullClear(cx, cz, halfWidth)) {
-                    continue;
-                }
-                BlockPos cand = new BlockPos(cx, cur.getY(), cz);
-                // 候选必须让「到 prev、到 next」两条连线都不穿陆,否则没解决问题(内陆湖里挪一格仍穿陆)。
-                if (map.segmentHullClear(prev, cand, halfWidth) && map.segmentHullClear(cand, next, halfWidth)) {
-                    return cand;
+    private static BlockPos escapeToOpenWater(RealBlockWaterMap map, BlockPos mid, BlockPos prev, BlockPos next,
+                                              int halfWidth) {
+        for (int r = 1; r <= ESCAPE_MAX_R; r++) {
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
+                        continue; // 只查当前环(由近及远,先命中的最近)
+                    }
+                    int cx = mid.getX() + dx;
+                    int cz = mid.getZ() + dz;
+                    if (!map.hullClear(cx, cz, halfWidth)) {
+                        continue;
+                    }
+                    BlockPos cand = new BlockPos(cx, mid.getY(), cz);
+                    if (map.segmentHullClear(prev, cand, halfWidth) && map.segmentHullClear(cand, next, halfWidth)) {
+                        return cand; // 出了湖、与前后主航道点连得上
+                    }
                 }
             }
         }
-        return null;
+        return null; // 螺旋半径内出不去 → 上层剔除
     }
 
     /** How many rings (1..8) around (x,z) stay fully hull-clear -> a cheap "distance from shore" score. */
