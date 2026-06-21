@@ -119,6 +119,10 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         horse.yHeadRotO = 0.0F;
         horse.setXRot(0.0F);
         horse.xRotO = 0.0F;
+        // 2026-06 关键:Fresh Animations(及 vanilla 1.20+)从 entity.walkAnimation.speed()/position() 读腿摆,
+        // 不读 setupAnim 的 limbSwing 参数!临时马 renderHorse 从不移动→walkAnimation.speed()=0→FA 一直播待机。
+        // 这里把真实行驶速度喂进 walkAnimation,FA 才会播 move(跑动)动画。update(speed,decay) 内部推进相位+速度。
+        horse.walkAnimation.update(limbSwingAmount, 1.0F);
 
         double bob = Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount;
         CarriageVisualRig.HorseAttachmentPose attachment = CarriageVisualRig.horseAttachmentPose(yaw, bob);

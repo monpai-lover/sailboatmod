@@ -183,6 +183,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.BOOLEAN);
 
     private static final RawAnimation CARRIAGE_DRIVE_ANIMATION = RawAnimation.begin().thenLoop("animation.carriage.drive");
+    // 动画播放速度联动基准:车速(m/s)=此值时动画 1× 播放。越小则同速下动画越快。游戏内觉得动画太快/慢改此值。
+    private static final double CARRIAGE_ANIM_SPEED_BASE = 5.0D;
     private static final int INVENTORY_SIZE = 27;
     private static final int SEAT_COUNT = 5;
     private static final String NBT_PENDING_RETURN_STATION_POS = "PendingReturnStationPos";
@@ -1248,10 +1250,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         controllers.add(new AnimationController<>(this, "carriage_state", 0, state -> {
             // 2026-06 用服务端同步的真实行驶速度判行驶(getCurrentSpeedForHud,与马腿/HUD 同源)。
-            // 不用 getDeltaMovement(≈0,服务端权威)、也不用 xo/zo(lerp 插值步进位移偏小)。
-            if (Math.abs(getCurrentSpeedForHud()) <= 0.05F) { // m/s,几乎不动则停
+            float speed = Math.abs(getCurrentSpeedForHud()); // m/s
+            if (speed <= 0.05F) { // 几乎不动则停
                 return PlayState.STOP;
             }
+            // 2026-06 动画播放速度与车速联动:慢则慢、快则快、停下时(speed→0)动画速度→0 平滑停,
+            // 不再固定速度播放导致"停车时动画突然全速截断"。CARRIAGE_ANIM_SPEED_BASE=车速对应 1× 播放的基准。
+            double animSpeed = Mth.clamp(speed / CARRIAGE_ANIM_SPEED_BASE, 0.15D, 2.5D);
+            state.getController().setAnimationSpeed(animSpeed);
             return state.setAndContinue(CARRIAGE_DRIVE_ANIMATION);
         }));
     }
