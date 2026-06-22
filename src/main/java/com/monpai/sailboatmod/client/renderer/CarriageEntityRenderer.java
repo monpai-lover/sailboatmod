@@ -96,12 +96,14 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
         float yaw = entity.getViewYRot(partialTick);
         float animationTime = entity.tickCount + partialTick;
-        // 马腿摆速度=walkAnimation.speed:FA 腿摆相位 var.ls≈limb_swing*0.8,limb_swing 每帧推进=walkAnimation.speed。
-        // currentSpeed m/s(0~10.5)。×0.025:让行驶时 speed 稳定落在 0.15~0.35(真马正常走/小跑区间),
-        // 原 0.08(0.1~0.8)到了 vanilla 疾驰量级→相位每帧跳太多→腿摆频率成倍偏高「太快」,且会在 FA walk/trot/run
-        // 状态间(阈值 0.4/0.8)反复横跳加剧抽搐。系数游戏内对照真马微调。
+        // 马腿摆速度=walkAnimation.speed(EMF limb_speed)。FA 马 walk/trot/run 状态机门控(临时马 is_ridden=0,成年马阈值):
+        //   walk<0.6,trot 0.6~0.97,run≥0.97(jpm horse_animations 第23-25行)。
+        // 之前 ×0.025+clamp 0.4 永远 <0.6 → 连小跑都够不到、恒走路(就是「开快了还走路」的根因)。
+        // 改 ×0.12+clamp 1.05:满速10.5→1.05(run疾驰)、中速~6→0.72(trot小跑)、慢速~3→0.36(walk),自然分层。
+        // 不抽搐:FA 用 var.ls_offset(jpm 第14-15行)把跑步步频从 limb_swing 相位解耦,调大 limb_speed 只改状态+幅度,
+        //   不会让相位推进变快(抽搐源是 limb_swing 相位,这里没动)。
         double speed = Math.abs(entity.getCurrentSpeedForHud());
-        float limbSwingAmount = Mth.clamp((float) (speed * 0.025D), 0.0F, 0.4F);
+        float limbSwingAmount = Mth.clamp((float) (speed * 0.12D), 0.0F, 1.05F);
 
         // 2026-06 关键改造:改用 EntityRenderDispatcher.render 渲染这匹临时马,而非直接 horseModel.setupAnim。
         // 原因:Fresh Animations + EMF(entity_model_features) 通过 mixin 钩在 EntityRenderDispatcher.render HEAD 捕获
