@@ -64,6 +64,7 @@ public final class RealBlockWaterMap {
     private final java.util.concurrent.atomic.AtomicLong accessClock = new java.util.concurrent.atomic.AtomicLong();
     private static final int MAX_RESIDENT_CHUNKS = 4096; // 常驻区块上限(超此 evict 最久未访问);4096 区块 ≈ 1M 列内存
     private static final int ON_DEMAND_NBT_TIMEOUT_MS = 1500; // 按需单区块 NBT 读超时(短,读不到当陆绕开)
+    private static final int MAX_PRELOAD_CHUNKS = 600; // 预加载区块硬上限(防航线异常长爆内存/耗时);超此只读前 N 并 warn
 
     public RealBlockWaterMap(ServerLevel level, int seaLevel) {
         this.level = level;
@@ -483,17 +484,103 @@ public final class RealBlockWaterMap {
      * 不碰主线程,可大批并行。
      */
     public boolean loadNbtOffThread(int cx, int cz) {
+        return loadNbtOffThread(cx, cz, NBT_READ_TIMEOUT_MS);
+    }
+
+    /** 同上,但用自定义超时(预加载用更宽松超时,尽量读到真实数据,别像按需路径快速 fallback 判陆)。 */
+    public boolean loadNbtOffThread(int cx, int cz, long timeoutMs) {
         long k = key(cx, cz);
         if (cache.containsKey(k)) {
             return true;
         }
-        Optional<NbtChunkWaterReader.ChunkColumns> snap = NbtChunkWaterReader.readOffThread(level, cx, cz, NBT_READ_TIMEOUT_MS);
+        Optional<NbtChunkWaterReader.ChunkColumns> snap = NbtChunkWaterReader.readOffThread(level, cx, cz, timeoutMs);
         if (snap.isPresent()) {
             cache.put(k, toChunkWater(snap.get()));
             hitNbt.incrementAndGet();
             return true;
         }
         return false;
+    }
+
+    /**
+     * <b>校验前预加载</b>:枚举航线沿途(航点连线 2×2 船宽覆盖)经过的所有区块,用宽松超时后台预读真实 NBT 填缓存。
+     * 解决「中段海峡区块未预加载 → verify 按需读超时 → fallback 判全陆 → 把真实是水的航点成片误删」的根因。
+     * 必须在后台线程(WaterRoute-Worker)调用,readOffThread 真后台不卡主线程。返回成功预读的区块数。
+     */
+    public int preloadAlongPath(java.util.List<BlockPos> waypoints, int halfWidth, long perChunkTimeoutMs) {
+        if (waypoints == null || waypoints.size() < 2) {
+            return 0;
+        }
+        java.util.Set<Long> chunks = new java.util.LinkedHashSet<>();
+        for (int i = 1; i < waypoints.size(); i++) {
+            enumerateChunksAlong(waypoints.get(i - 1), waypoints.get(i), halfWidth, chunks);
+        }
+        int total = chunks.size();
+        boolean capped = total > MAX_PRELOAD_CHUNKS;
+        int loaded = 0;
+        int attempted = 0;
+        int failed = 0;
+        for (long ck : chunks) {
+            if (attempted >= MAX_PRELOAD_CHUNKS) {
+                break; // 有界:航线异常长时只预读前 N,verify 仍可对剩余按需读(退化但不爆)。
+            }
+            attempted++;
+            int cx = ChunkPos.getX(ck);
+            int cz = ChunkPos.getZ(ck);
+            if (cache.containsKey(ck)) {
+                loaded++;
+                continue;
+            }
+            if (loadNbtOffThread(cx, cz, perChunkTimeoutMs)) {
+                loaded++;
+            } else {
+                failed++;
+            }
+        }
+        LOGGER.info("[WaterPath] 预加载航线区块:连线覆盖 {} 块,预读 {} 块成功 {} 失败 {}{}",
+                total, attempted, loaded, failed, capped ? "(超上限 " + MAX_PRELOAD_CHUNKS + " 已截断)" : "");
+        return loaded;
+    }
+
+    /** 枚举 a→b 连线(2×2 船宽)经过的所有区块坐标(supercover,与 segmentHullClear 同口径),写入 set(打包成 long)。 */
+    private void enumerateChunksAlong(BlockPos a, BlockPos b, int halfWidth, java.util.Set<Long> out) {
+        int x0 = a.getX(), z0 = a.getZ();
+        int x1 = b.getX(), z1 = b.getZ();
+        int dx = Math.abs(x1 - x0);
+        int dz = Math.abs(z1 - z0);
+        int sx = Integer.signum(x1 - x0);
+        int sz = Integer.signum(z1 - z0);
+        int x = x0, z = z0;
+        addCellChunks(x, z, halfWidth, out);
+        int err = dx - dz;
+        int guard = (dx + dz) * 2 + 4;
+        while ((x != x1 || z != z1) && guard-- > 0) {
+            int e2 = err * 2;
+            if (e2 > -dz && e2 < dx) {
+                addCellChunks(x + sx, z, halfWidth, out);
+                addCellChunks(x, z + sz, halfWidth, out);
+                x += sx;
+                z += sz;
+                err += dx - dz;
+            } else if (e2 > -dz) {
+                err -= dz;
+                x += sx;
+            } else {
+                err += dx;
+                z += sz;
+            }
+            addCellChunks(x, z, halfWidth, out);
+        }
+    }
+
+    /** 一个格 (x,z) 的 2×2 船宽占地(x..x+halfWidth+1, z..z+halfWidth+1)覆盖的区块都加入 set。 */
+    private void addCellChunks(int x, int z, int halfWidth, java.util.Set<Long> out) {
+        int span = Math.max(1, halfWidth);
+        for (int ox = 0; ox <= span; ox++) {
+            for (int oz = 0; oz <= span; oz++) {
+                out.add(ChunkPos.asLong((x + ox) >> 4, (z + oz) >> 4));
+            }
+        }
     }
 
     /**

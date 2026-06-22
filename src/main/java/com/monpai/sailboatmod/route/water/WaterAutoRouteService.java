@@ -205,6 +205,12 @@ public final class WaterAutoRouteService {
                         // NOISE/HYBRID 走噪声/NoiseChunk 判障可能漏陆 → 末端真实 NBT 兜底,保证最终全程可航水域。
                         int verifyHalfWidth = Math.max(1, policy.boatHalfWidth());
                         RealBlockWaterMap verifyMap = new RealBlockWaterMap(level, seaY).enableOnDemand();
+                        // 校验前主动预加载航线沿途真实 NBT 区块(后台 Worker 线程,readOffThread 不卡主线程):
+                        // 否则 verify 边查边按需读超时 → fallback 判全陆 → 把真实是水的海峡航点成片误删(中段覆盖真空根因)。
+                        // 预读用宽松超时 4000ms,尽量读到真实数据填缓存,verify 时全部命中。
+                        long preloadStart = System.currentTimeMillis();
+                        verifyMap.preloadAlongPath(smoothed, verifyHalfWidth, 4000L);
+                        LOGGER.info("[WaterPath] 航线区块预加载耗时={}ms", System.currentTimeMillis() - preloadStart);
                         java.util.List<BlockPos> verified = WaterRouteNbtVerifier.verify(verifyMap, smoothed, verifyHalfWidth);
                         verifyMap.logLayerStats("三段末端NBT校验");
                         if (verified == null || verified.size() < 2) {
