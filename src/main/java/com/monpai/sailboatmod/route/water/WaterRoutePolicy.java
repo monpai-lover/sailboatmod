@@ -11,7 +11,7 @@ public record WaterRoutePolicy(int stepSize,
                                int chunkLoadsPerTick,
                                int timeoutTicks) {
     public static WaterRoutePolicy defaults() {
-        // stepSize=8, berthSearchStep=2, boatHalfWidth=1(船 3×3), clearanceHeight=3(=最小水深),
+        // stepSize=8, berthSearchStep=2, boatHalfWidth=1(船 2×2:锚点+X/+Z/+X+Z), clearanceHeight=3(=最小水深),
         // maxSearchRadius=6144(双向A*防发散,噪声采样后不再当主闸门),maxExpandedNodes=80000,
         // maxChunkLoads=2048(已忽略,噪声采样零区块加载),nodesPerTick=128(网格对齐修好相遇后正常航线
         // 几千~万节点内即收敛,128/tick 分摊到多 tick 防卡顿;密度函数查询仍有成本但 snap 后总节点数大降),
@@ -68,7 +68,7 @@ public record WaterRoutePolicy(int stepSize,
     }
 
     /**
-     * <b>NBT 两阶段·走廊精寻阶段</b>:step=8 + halfWidth=1(船 3×3),沿粗路 ±走廊精寻。搜索空间被走廊收死 →
+     * <b>NBT 两阶段·走廊精寻阶段</b>:step=8 + halfWidth=1(船 2×2:锚点+X/+Z/+X+Z),沿粗路 ±走廊精寻。搜索空间被走廊收死 →
      * 双向 A* 不发散。maxSearchRadius 同粗阶段(走廊约束才是主闸门);maxExpandedNodes=160000(走廊内绕岛节点多)。
      */
     public static WaterRoutePolicy nbtRefine() {

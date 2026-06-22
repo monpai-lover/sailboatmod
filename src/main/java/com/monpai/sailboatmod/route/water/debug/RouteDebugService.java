@@ -386,23 +386,29 @@ public final class RouteDebugService {
         java.awt.image.BufferedImage terrain = server.submit(() -> RouteDebugRenderer.renderTerrain(level, view)).join();
 
         // water overlay + path lines: worker thread (RealBlockWaterMap off-thread NBT read + pure Java2D).
+        // 底图判水用 hullClear(2×2),与 verifier 同标准 → 蓝色区=verifier 认可可航区(不再骗人)。
+        int halfWidth = Math.max(1, WaterRoutePolicy.defaults().boatHalfWidth());
         RealBlockWaterMap map = new RealBlockWaterMap(level, level.getSeaLevel()).enableOnDemand();
+        // 底图 map 预加载航线沿途真实区块,与 verify 同数据状态(否则底图 map 缓存空、按需读超时 fallback 判陆,又是假象)。
+        if (bundle.verified() != null && bundle.verified().path() != null && bundle.verified().path().size() >= 2) {
+            map.preloadAlongPath(bundle.verified().path(), halfWidth, 4000L);
+        }
 
         StringBuilder json = new StringBuilder("{\"images\":{");
         boolean first = true;
         first = appendImage(json, first, "berth",
-                RouteDebugRenderer.renderStage(terrain, view, map, null, bundle.berth(), bundle.start(), bundle.goal(), null));
+                RouteDebugRenderer.renderStage(terrain, view, map, null, bundle.berth(), bundle.start(), bundle.goal(), null, halfWidth));
         first = appendImage(json, first, "coarse",
-                RouteDebugRenderer.renderStage(terrain, view, map, null, bundle.coarse(), bundle.start(), bundle.goal(), null));
+                RouteDebugRenderer.renderStage(terrain, view, map, null, bundle.coarse(), bundle.start(), bundle.goal(), null, halfWidth));
         first = appendImage(json, first, "fine",
-                RouteDebugRenderer.renderStage(terrain, view, map, bundle.coarse(), bundle.fine(), bundle.start(), bundle.goal(), null));
+                RouteDebugRenderer.renderStage(terrain, view, map, bundle.coarse(), bundle.fine(), bundle.start(), bundle.goal(), null, halfWidth));
         first = appendImage(json, first, "smooth",
-                RouteDebugRenderer.renderStage(terrain, view, map, bundle.fine(), bundle.smooth(), bundle.start(), bundle.goal(), null));
+                RouteDebugRenderer.renderStage(terrain, view, map, bundle.fine(), bundle.smooth(), bundle.start(), bundle.goal(), null, halfWidth));
         // verified image: mark ONLY the nodes that verified as land.
         first = appendImage(json, first, "verified",
-                RouteDebugRenderer.renderStage(terrain, view, map, bundle.smooth(), bundle.verified(), bundle.start(), bundle.goal(), bundle.nodeDiags()));
+                RouteDebugRenderer.renderStage(terrain, view, map, bundle.smooth(), bundle.verified(), bundle.start(), bundle.goal(), bundle.nodeDiags(), halfWidth));
         appendImage(json, first, "overview",
-                RouteDebugRenderer.renderOverview(terrain, view, map, bundle.coarse(), bundle.fine(), bundle.smooth(), bundle.verified(), bundle.start(), bundle.goal()));
+                RouteDebugRenderer.renderOverview(terrain, view, map, bundle.coarse(), bundle.fine(), bundle.smooth(), bundle.verified(), bundle.start(), bundle.goal(), halfWidth));
         json.append("},\"mode\":\"").append(mode == null ? "nbt" : mode.name().toLowerCase())
             .append("\",\"log\":\"").append(escapeJson(bundle.summary())).append("\"}");
         return json.toString();

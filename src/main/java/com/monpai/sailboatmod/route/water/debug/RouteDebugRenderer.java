@@ -67,14 +67,18 @@ public final class RouteDebugRenderer {
         return img;
     }
 
-    /** Worker-thread (map already enableOnDemand): navigable cells get a translucent blue overlay. */
-    public static void overlayWater(BufferedImage img, RealBlockWaterMap map, ViewTransform v) {
+    /**
+     * Worker-thread (map already enableOnDemand): 画可航蓝层。
+     * 2026-06 关键修正:判水用 hullClear(2×2 船宽全水),与 verifier 完全同标准——否则底图用 sample(单格是水)
+     * 太宽松,海峡边缘单格有水就画蓝、但 verifier 用 2×2 判陆删点 → debug 图「看着是水」是假象,骗人。
+     * 现在底图蓝色区 = verifier 认可的可航区,海峡若 2×2 不全水会显白,一眼看出 verifier 会在哪删点。
+     */
+    public static void overlayWater(BufferedImage img, RealBlockWaterMap map, ViewTransform v, int halfWidth) {
         for (int py = 0; py < v.height(); py++) {
             int worldZ = v.minZ() + py * v.scale();
             for (int px = 0; px < v.width(); px++) {
                 int worldX = v.minX() + px * v.scale();
-                WaterColumn col = map.sample(worldX, worldZ);
-                if (col != null && col.passable()) {
+                if (map.hullClear(worldX, worldZ, halfWidth)) {
                     img.setRGB(px, py, blendOver(img.getRGB(px, py), 0x4D3AA0FF)); // ~30% blue
                 }
             }
@@ -87,9 +91,9 @@ public final class RouteDebugRenderer {
      */
     public static BufferedImage renderStage(BufferedImage terrain, ViewTransform v, RealBlockWaterMap map,
                                             StageResult prev, StageResult cur, BlockPos start, BlockPos goal,
-                                            java.util.List<RouteDebugDtos.NodeDiag> markLandNodes) {
+                                            java.util.List<RouteDebugDtos.NodeDiag> markLandNodes, int halfWidth) {
         BufferedImage img = copy(terrain);
-        overlayWater(img, map, v);
+        overlayWater(img, map, v, halfWidth);
         Graphics2D g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         if (prev != null) {
@@ -118,9 +122,9 @@ public final class RouteDebugRenderer {
     /** Overview image: all four path layers stacked on one terrain+water base. */
     public static BufferedImage renderOverview(BufferedImage terrain, ViewTransform v, RealBlockWaterMap map,
                                                StageResult coarse, StageResult fine, StageResult smooth,
-                                               StageResult verified, BlockPos start, BlockPos goal) {
+                                               StageResult verified, BlockPos start, BlockPos goal, int halfWidth) {
         BufferedImage img = copy(terrain);
-        overlayWater(img, map, v);
+        overlayWater(img, map, v, halfWidth);
         Graphics2D g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         if (coarse != null) {

@@ -120,7 +120,13 @@ public final class WaterAutoRouteService {
         DockSnapshot sourceSnapshot = snapshot(source);
         DockSnapshot targetSnapshot = snapshot(target);
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
-        ServerWaterRouteWorld berthWorld = new ServerWaterRouteWorld(level);
+        // 2026-06 泊位解析改【真实方块判水】(与 debug 工具同口径):原 ServerWaterRouteWorld 用噪声判水,
+        // WorldPainter/populate 地图下噪声≠真实方块,会解析到「噪声以为水、真实是陆」的坏泊位 → HYBRID 从陆地点
+        // 出发、真实精寻找不到出水路 → refined==null → HYBRID 失败退回 NOISE → 出穿陆坏线。改真实判水后泊位必落
+        // 真实可航水格,HYBRID 从真实水点出发即成功。berthWorld 仅用于本次 canListCandidate,不影响列目的地探测。
+        int berthSeaY = level.getSeaLevel();
+        RealBlockWaterMap berthProbeMap = new RealBlockWaterMap(level, berthSeaY).enableOnDemand();
+        RealBlockWaterWorld berthWorld = RealBlockWaterWorld.coarse(berthProbeMap, berthSeaY, null, null);
         WaterRouteResult<BerthPair> candidate = canListCandidate(
                 sourceSnapshot,
                 targetSnapshot,

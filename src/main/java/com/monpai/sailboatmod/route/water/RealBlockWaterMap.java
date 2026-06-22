@@ -107,10 +107,10 @@ public final class RealBlockWaterMap {
     private static final double HULL_LAND_COST = 12.0D; // 3×3 占地内每个陆格的额外通行代价(软引导,越贴岸越贵)
 
     /**
-     * <b>3×3 船宽软校验</b>(2026-06 调整,原硬约束太严):硬约束<b>只要求中心格是水</b>(船能浮);3×3 占地里有陆
-     * 不再直接 blocked,而是<b>每个陆格加重通行代价</b>({@link #HULL_LAND_COST})。A* 优先走宽水(占地全水零附加),
-     * 窄水道/河口实在没宽水也能挤过去(占地有陆但可通行,只是贵)+ 叠加 coastHugCost 贴岸惩罚双重引导离岸。
-     * <p>Why:原 3×3 全水硬 blocked 要求航道≥5格宽,大量河口/窄道判不可航 → 双向 A* 前向闷死、寻路失败。
+     * <b>2×2 船宽软校验</b>(船实际 ~2宽,占地=锚点 +X/+Z/+X+Z 四格):硬约束<b>只要求中心格是水</b>(船能浮);
+     * 2×2 占地里有陆不再直接 blocked,而是<b>每个陆格加重通行代价</b>({@link #HULL_LAND_COST})。A* 优先走宽水
+     * (占地全水零附加),窄水道/河口实在没宽水也能挤过去(占地有陆但可通行,只是贵)+ 叠加 coastHugCost 贴岸惩罚引导离岸。
+     * <p>Why:全水硬 blocked 要求航道够宽,大量河口/窄道判不可航 → 双向 A* 前向闷死、寻路失败。
      * 改软代价后既保留「优先离岸不搁浅」的引导,又不把窄道堵死。中心非水/区块读不到 → blocked(真不能浮)。
      */
     public WaterColumn sampleHull(int x, int z, int halfWidth) {
@@ -137,7 +137,9 @@ public final class RealBlockWaterMap {
     }
 
     /**
-     * <b>3×3 校验诊断</b>:返回 (x,z) 该格在船宽校验下不可航/可航的<b>精确原因</b>(给寻路失败定位用)。
+     * <b>2×2 校验诊断</b>:返回 (x,z) 该格在船宽校验下不可航/可航的<b>精确原因</b>(给寻路失败定位用)。
+     * 占地与实际判定 {@link #sampleHull}/{@link #hullClear} 一致 = 锚点 + +X/+Z/+X+Z 四格(2×2),不查 -X/-Z
+     * (否则诊断日志与真实判定不一致、骗人)。
      * <ul>
      *   <li>中心区块读不到(按需也读不到)→ {@code "区块(cx,cz)读不到(未存盘/超时)"}</li>
      *   <li>中心格非水(船浮不起来,真 blocked)→ {@code "中心(x,z)非水(NBT判陆)"}</li>
@@ -146,7 +148,6 @@ public final class RealBlockWaterMap {
      * </ul>
      */
     public String sampleHullDiagnostic(int x, int z, int halfWidth) {
-        int hw = Math.max(0, halfWidth);
         int cx = x >> 4, cz = z >> 4;
         ChunkWater center = chunkAt(cx, cz);
         if (center == null) {
@@ -156,19 +157,14 @@ public final class RealBlockWaterMap {
             int sy = center.surfaceY[(z & 15) * CHUNK + (x & 15)];
             return "中心(" + x + "," + z + ")非水(NBT判陆,表面Y=" + sy + ")";
         }
+        // 2×2 占地三个正向邻格(与 sampleHull 行 124-134 同口径)。
         StringBuilder landCells = new StringBuilder();
         int landInHull = 0;
-        for (int dx = -hw; dx <= hw; dx++) {
-            for (int dz = -hw; dz <= hw; dz++) {
-                if (dx == 0 && dz == 0) {
-                    continue;
-                }
-                if (!isWaterAt(x + dx, z + dz)) {
-                    landInHull++;
-                    if (landInHull <= 4) { // 最多列 4 个陆格坐标,避免日志爆
-                        landCells.append("(").append(x + dx).append(",").append(z + dz).append(")");
-                    }
-                }
+        int[][] hull = {{1, 0}, {0, 1}, {1, 1}};
+        for (int[] d : hull) {
+            if (!isWaterAt(x + d[0], z + d[1])) {
+                landInHull++;
+                landCells.append("(").append(x + d[0]).append(",").append(z + d[1]).append(")");
             }
         }
         if (landInHull == 0) {
