@@ -120,18 +120,13 @@ public final class MarketWebMapRenderService {
                 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
             return;
         }
-        ServerLevel level = server.getLevel(Level.OVERWORLD);
-        if (level == null) {
-            return;
-        }
-        enqueueSquareTileChunksForTest(
-                queue,
-                dimensionId,
-                zoom,
-                tileX,
-                tileZ,
-                System.currentTimeMillis(),
-                (chunkX, chunkZ) -> isChunkLoaded(level, chunkX, chunkZ));
+        // 2026-06 修复看门狗卡死(见 marketweb_snapshot_deadlock):web 瓦片请求经 callOnServerThread 在【主线程】
+        // 同步执行。原实现当场遍历整片瓦片(zoom 大时几百~上千区块)逐个 getChunk 探测,一个 tick task 里全部跑完 →
+        // 配合 Chunky 预生成抢占主线程,单 tick 耗时爆 60s → ServerHangWatchdog 杀服。
+        // 改为 O(1) 登记一个游标即返回,真正的区块扫描/登记交给 tick() 的 processSquareTileCursors 按
+        // SQUARE_TILE_CURSOR_CHUNKS_PER_TICK 限额节流后台处理,绝不卡主线程。瓦片 PNG 本就由 readSquareTile
+        // 读已渲染缓存返回,此处不需要也不应该同步现扫区块。
+        addSquareTileCursor(dimensionId, zoom, tileX, tileZ);
     }
 
     public void tick(MinecraftServer server) {
