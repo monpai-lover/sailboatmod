@@ -87,7 +87,12 @@ public final class RouteDebugServer {
                 writeText(ex, 400, "bad a/b index (a=" + ai + " b=" + bi + " n=" + docks.size() + ")");
                 return;
             }
-            String json = RouteDebugService.renderBundle(minecraftServer, docks.get(ai), docks.get(bi));
+            com.monpai.sailboatmod.route.water.WaterMidMode mode =
+                    com.monpai.sailboatmod.route.water.WaterMidMode.parse(paramString(q, "mode", "nbt"));
+            if (mode == null) {
+                mode = com.monpai.sailboatmod.route.water.WaterMidMode.NBT;
+            }
+            String json = RouteDebugService.renderBundle(minecraftServer, docks.get(ai), docks.get(bi), mode);
             writeJson(ex, 200, json);
         });
         ctx("/", ex -> writeHtml(ex, RouteDebugHtml.PAGE));
@@ -160,6 +165,19 @@ public final class RouteDebugServer {
                 } catch (NumberFormatException e) {
                     return def;
                 }
+            }
+        }
+        return def;
+    }
+
+    static String paramString(String rawQuery, String key, String def) {
+        if (rawQuery == null) {
+            return def;
+        }
+        for (String kv : rawQuery.split("&")) {
+            String[] p = kv.split("=", 2);
+            if (p.length == 2 && p[0].equals(key)) {
+                return p[1];
             }
         }
         return def;

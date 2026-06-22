@@ -101,6 +101,18 @@ public final class RouteDebugService {
      * PRODUCTION route.water classes the game actually uses. Per-node diagnosis hops to main thread internally.
      */
     public static RouteDebugBundle runRoute(MinecraftServer server, DockInfo a, DockInfo b) {
+        return runRoute(server, a, b, com.monpai.sailboatmod.route.water.WaterMidMode.NBT);
+    }
+
+    /**
+     * 按指定中段模式跑寻路:NBT=两阶段(粗渐进step+走廊精寻);HYBRID/NOISE=生产三段编排(runSerialPlanned),
+     * 与游戏实际跑的【完全同口径】,这样 webmap 图就是游戏真实结果,可图像判断 HYBRID 判水对不对、在哪穿陆。
+     */
+    public static RouteDebugBundle runRoute(MinecraftServer server, DockInfo a, DockInfo b,
+                                            com.monpai.sailboatmod.route.water.WaterMidMode mode) {
+        if (mode != null && mode != com.monpai.sailboatmod.route.water.WaterMidMode.NBT) {
+            return runRouteThreeSeg(server, a, b, mode);
+        }
         ServerLevel level = server.overworld();
         int seaY = level.getSeaLevel();
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
@@ -195,6 +207,79 @@ public final class RouteDebugService {
         return new RouteDebugBundle(startBerth, goalBerth, berth, coarse, fine, smooth, verified, diags, log.toString());
     }
 
+    /**
+     * HYBRID/NOISE 三段编排 debug(生产同口径 ThreeSegmentPlanner.runSerialPlanned)。
+     * 阶段填充:coarse=三段原始航点(中段编排产物),fine=空(三段无独立精寻阶段),smooth=平滑,verified=NBT校验。
+     * 校验前【预加载航线沿途真实区块】(与生产同),verify 红点标 NBT 判陆点 → 图像看 HYBRID 在哪与真实判水冲突。
+     * RealChunkRouteWorld.load 需主线程,用 server.submit().join()。
+     */
+    private static RouteDebugBundle runRouteThreeSeg(MinecraftServer server, DockInfo a, DockInfo b,
+                                                     com.monpai.sailboatmod.route.water.WaterMidMode mode) {
+        ServerLevel level = server.overworld();
+        int seaY = level.getSeaLevel();
+        WaterRoutePolicy policy = WaterRoutePolicy.defaults();
+        int halfWidth = Math.max(1, policy.boatHalfWidth());
+        StringBuilder log = new StringBuilder();
+        log.append("mode=").append(mode).append('\n');
+
+        // berth 解析(与 NBT 同口径)
+        RealBlockWaterMap probeMap = new RealBlockWaterMap(level, seaY).enableOnDemand();
+        RealBlockWaterWorld berthProbe = RealBlockWaterWorld.coarse(probeMap, seaY, null, null);
+        BlockPos startBerth = resolveBerth(berthProbe, a, policy);
+        BlockPos goalBerth = resolveBerth(berthProbe, b, policy);
+        if (startBerth == null || goalBerth == null) {
+            log.append("berth resolve failed: start=").append(startBerth).append(" goal=").append(goalBerth);
+            StageResult berthFail = new StageResult("berth", pair(startBerth, goalBerth), "FAILED", 0, "NO_BERTH");
+            return new RouteDebugBundle(startBerth, goalBerth, berthFail, empty("coarse"), empty("fine"),
+                    empty("smooth"), empty("verified"), List.of(), log.toString());
+        }
+        StageResult berth = new StageResult("berth", pair(startBerth, goalBerth), "OK", 0, "");
+        log.append("start=").append(startBerth).append(" goal=").append(goalBerth).append('\n');
+
+        // 三段编排:RealChunkRouteWorld.load 主线程预读港口快照,然后 runSerialPlanned(生产同口径)。
+        int radius = com.monpai.sailboatmod.route.water.RealChunkRouteWorld.DEFAULT_RADIUS;
+        int threshold = com.monpai.sailboatmod.route.water.RealChunkRouteWorld.OFFSHORE_THRESHOLD;
+        final BlockPos sB = startBerth;
+        final BlockPos gB = goalBerth;
+        com.monpai.sailboatmod.route.water.RealChunkRouteWorld startWorld =
+                server.submit(() -> com.monpai.sailboatmod.route.water.RealChunkRouteWorld.load(level, sB, radius)).join();
+        com.monpai.sailboatmod.route.water.RealChunkRouteWorld endWorld =
+                server.submit(() -> com.monpai.sailboatmod.route.water.RealChunkRouteWorld.load(level, gB, radius)).join();
+        com.monpai.sailboatmod.route.water.ServerWaterRouteWorld midWorld =
+                new com.monpai.sailboatmod.route.water.ServerWaterRouteWorld(level);
+
+        WaterRouteResult<com.monpai.sailboatmod.route.water.ThreeSegmentPlanner.PlannedPath> raw =
+                com.monpai.sailboatmod.route.water.ThreeSegmentPlanner.runSerialPlanned(
+                        startWorld, endWorld, midWorld, startBerth, goalBerth, radius, threshold, mode,
+                        com.monpai.sailboatmod.route.water.ThreeSegmentPlanner.ProgressSink.NOOP);
+        if (!raw.successful()) {
+            log.append("three-seg failed: ").append(raw.reason());
+            StageResult midFail = new StageResult("coarse", List.of(), "FAILED", 0, raw.reason().name());
+            return new RouteDebugBundle(startBerth, goalBerth, berth, midFail, empty("fine"),
+                    empty("smooth"), empty("verified"), List.of(), log.toString());
+        }
+        com.monpai.sailboatmod.route.water.ThreeSegmentPlanner.PlannedPath planned = raw.value();
+        StageResult coarse = new StageResult("coarse", planned.path(), "OK", 0, "");
+        log.append("three-seg ok wp=").append(planned.path().size())
+           .append(" jointA=").append(planned.jointA()).append(" jointB=").append(planned.jointB()).append('\n');
+
+        // 平滑 + 校验(与生产同:校验前预加载航线沿途真实区块,verify 用真实 NBT)
+        List<BlockPos> smoothPath = PathSmoother.smooth2DWithOrigin(planned.path(), seaY, 2.0D).points();
+        StageResult smooth = new StageResult("smooth", smoothPath, "OK", 0, "");
+        log.append("smooth wp=").append(smoothPath == null ? 0 : smoothPath.size()).append('\n');
+
+        RealBlockWaterMap verifyMap = new RealBlockWaterMap(level, seaY).enableOnDemand();
+        verifyMap.preloadAlongPath(smoothPath, halfWidth, 4000L);
+        List<BlockPos> verifiedPath = WaterRouteNbtVerifier.verify(verifyMap, smoothPath, halfWidth);
+        StageResult verified = new StageResult("verified", verifiedPath, "OK", 0, "");
+        log.append("verified wp=").append(verifiedPath == null ? 0 : verifiedPath.size()).append('\n');
+
+        List<NodeDiag> diags = diagnoseNodes(server, level, verifyMap, verifiedPath, seaY);
+        appendNodeLog(log, diags);
+        // fine 阶段三段编排没有,留空(图库不显示);coarse 即中段原始线。
+        return new RouteDebugBundle(startBerth, goalBerth, berth, coarse, empty("fine"), smooth, verified, diags, log.toString());
+    }
+
     private static WaterRoutePathfinder runToCompletion(WaterRouteWorld world, BlockPos start, BlockPos goal,
                                                         WaterRoutePolicy policy) {
         WaterRoutePathfinder pf = new WaterRoutePathfinder(world, start, goal, policy);
@@ -285,8 +370,13 @@ public final class RouteDebugService {
      * render each stage image on the worker, return a JSON object {images:{stage:dataUrl,...}, log:"..."}.
      */
     public static String renderBundle(MinecraftServer server, DockInfo a, DockInfo b) {
+        return renderBundle(server, a, b, com.monpai.sailboatmod.route.water.WaterMidMode.NBT);
+    }
+
+    public static String renderBundle(MinecraftServer server, DockInfo a, DockInfo b,
+                                      com.monpai.sailboatmod.route.water.WaterMidMode mode) {
         ServerLevel level = server.overworld();
-        RouteDebugBundle bundle = runRoute(server, a, b);
+        RouteDebugBundle bundle = runRoute(server, a, b, mode);
         BlockPos viewA = bundle.start() != null ? bundle.start() : a.pos();
         BlockPos viewB = bundle.goal() != null ? bundle.goal() : b.pos();
         // 1:1 pixel-per-block; 8192 is only an OOM safety clamp for extreme routes.
@@ -313,7 +403,8 @@ public final class RouteDebugService {
                 RouteDebugRenderer.renderStage(terrain, view, map, bundle.smooth(), bundle.verified(), bundle.start(), bundle.goal(), bundle.nodeDiags()));
         appendImage(json, first, "overview",
                 RouteDebugRenderer.renderOverview(terrain, view, map, bundle.coarse(), bundle.fine(), bundle.smooth(), bundle.verified(), bundle.start(), bundle.goal()));
-        json.append("},\"log\":\"").append(escapeJson(bundle.summary())).append("\"}");
+        json.append("},\"mode\":\"").append(mode == null ? "nbt" : mode.name().toLowerCase())
+            .append("\",\"log\":\"").append(escapeJson(bundle.summary())).append("\"}");
         return json.toString();
     }
 
