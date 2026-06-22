@@ -13,9 +13,13 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.WalkAnimationState;
 import net.minecraft.world.entity.animal.horse.Horse;
+import net.minecraftforge.fml.util.ObfuscationReflectionHelper;
 import org.jetbrains.annotations.Nullable;
 import software.bernie.geckolib.renderer.GeoEntityRenderer;
+
+import java.lang.reflect.Field;
 
 public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     private static final int ARRIVAL_HOLOGRAM_COLOR = 0xF8E7A0;
@@ -24,9 +28,35 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     private static final float HORSE_TURN_SMOOTH_ALPHA = 0.18F; // 马转向角每帧逼近目标的比例(越大越跟手,越小越平滑)
     private static final float HORSE_TURN_GAIN = 1.0F;          // 马转向幅度增益(1=直接用马车转向角;游戏内觉得转太多/少改此值)
 
+    // ── 马腿动画 speed/position 解耦(治「播放太快/没walk」)──
+    // WalkAnimationState.update 里 position(=limb_swing,控腿摆频率)推进=speed(=limb_speed,控walk/trot/run状态),
+    // 两者绑死。FA 腿频死绑 limb_swing,凑 run 把 speed 调大→position 飞快。故直写两字段解耦:
+    // speed=状态量(凑门控)、position=按真马步频慢推。用 ObfuscationReflectionHelper(传 SRG 名,reobf 两端都对)。
+    private static final Field WALK_POSITION_FIELD = findWalkField("f_267358_"); // position
+    private static final Field WALK_SPEED_FIELD = findWalkField("f_267371_");    // speed
+    private static final Field WALK_SPEED_OLD_FIELD = findWalkField("f_267406_");// speedOld
+
+    // FA 门控阈值(临时马 is_ridden=0 成年马):walk<0.6,trot≥0.6,run≥0.97。状态量按速度分段映射到这些区间。
+    private static final float V_FULL = 10.5F;     // 马车满速(m/s,=MAX_FORWARD_SPEED)
+    private static final float V_WALK_MAX = 3.0F;  // ≤此速 walk
+    private static final float V_TROT_MAX = 7.0F;  // 此速~V_TROT_MAX trot,以上 run
+    private static final float F_WALK_FREQ = 0.45F;// 走路时 position 每 tick 推进(=真马走路步频)
+    private static final float F_RUN_FREQ = 1.0F;  // 疾驰时 position 每 tick 推进(=真马疾驰步频,封顶不飞)
+
     @Nullable
     private Horse renderHorse;
     private float smoothedHorseTurn = 0.0F; // 马转向角平滑值(度),逼近 entity.getRenderTurnAngle() 防突变抖动
+    private int lastHorseAnimTick = Integer.MIN_VALUE; // 上次推进 position 的 tickCount(差分,只在 tick 跨越时推,防每渲染帧多推)
+
+    /** ObfuscationReflectionHelper 按 SRG 名取 WalkAnimationState 私有字段;失败置 null(运行时退化到 update 兜底,不崩)。 */
+    @Nullable
+    private static Field findWalkField(String srg) {
+        try {
+            return ObfuscationReflectionHelper.findField(WalkAnimationState.class, srg);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
 
     public CarriageEntityRenderer(EntityRendererProvider.Context renderManager) {
         super(renderManager, new CarriageEntityModel());
@@ -96,23 +126,14 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
         float yaw = entity.getViewYRot(partialTick);
         float animationTime = entity.tickCount + partialTick;
-        // 马腿摆速度=walkAnimation.speed(EMF limb_speed)。FA 马 walk/trot/run 状态机门控(临时马 is_ridden=0,成年马阈值):
-        //   walk<0.6,trot 0.6~0.97,run≥0.97(jpm horse_animations 第23-25行)。
-        // 之前 ×0.025+clamp 0.4 永远 <0.6 → 连小跑都够不到、恒走路(就是「开快了还走路」的根因)。
-        // 改 ×0.12+clamp 1.05:满速10.5→1.05(run疾驰)、中速~6→0.72(trot小跑)、慢速~3→0.36(walk),自然分层。
-        // 不抽搐:FA 用 var.ls_offset(jpm 第14-15行)把跑步步频从 limb_swing 相位解耦,调大 limb_speed 只改状态+幅度,
-        //   不会让相位推进变快(抽搐源是 limb_swing 相位,这里没动)。
-        double speed = Math.abs(entity.getCurrentSpeedForHud());
-        float limbSwingAmount = Mth.clamp((float) (speed * 0.12D), 0.0F, 1.05F);
-
         // 2026-06 关键改造:改用 EntityRenderDispatcher.render 渲染这匹临时马,而非直接 horseModel.setupAnim。
         // 原因:Fresh Animations + EMF(entity_model_features) 通过 mixin 钩在 EntityRenderDispatcher.render HEAD 捕获
         // 当前渲染实体上下文,并从 entity.walkAnimation 读腿摆相位。手画马绕过 dispatcher → EMF 没捕获到它 → 一直播待机。
         // 走 dispatcher.render 后 EMF 才会把这匹马设为 current entity、读它的 walkAnimation,播跑动动画。
-        // walkAnimation 同时驱动 vanilla HorseModel 和 FA(都读同一个),所以喂真实速度一处即可。speed≈0→归 idle。
-        // decay=0.4(同 vanilla 真马,非 1.0):speed 指数平滑收敛,别逐帧硬跳——车速测量逐帧抖动时 decay=1.0 会让
-        // 相位推进时快时慢「抽搐/卡顿」。每帧调一次 update 让平滑生效。
-        horse.walkAnimation.update(limbSwingAmount, 0.4F);
+
+        // 腿摆 speed(状态:walk/trot/run)和 position(频率)解耦驱动。返回 stateValue 供 bob 幅度用。
+        double speed = Math.abs(entity.getCurrentSpeedForHud());
+        float stateValue = driveDecoupledWalkAnimation(horse, entity, speed);
 
         // FA 的 idle(待机)动画(呼吸/摆尾)用 `age` 变量 = entity.tickCount 做时间轴(EMF MixinEntity.emf$age 读 f_19797_)。
         // 临时马从不 tick→tickCount 恒 0→age 卡死第 0 帧→idle 静止「不播待机」。每帧把 tickCount 同步成车的,idle 才动。
@@ -133,7 +154,7 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
         horse.xRotO = 0.0F;
 
         // 马在车头前方的世界偏移(已按马朝向旋转好的世界轴向量,直接 translate,不再手动 mulPose 朝向——朝向交给 yBodyRot)。
-        double bob = Mth.sin(animationTime * 0.34F) * 0.02F * limbSwingAmount;
+        double bob = Mth.sin(animationTime * 0.34F) * 0.02F * stateValue;
         net.minecraft.world.phys.Vec3 worldOffset = CarriageVisualRig.renderedHorseWorldOffset(yaw, bob);
         float scale = CarriageVisualRig.horseModelScale();
 
@@ -154,6 +175,70 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
             dispatcher.setRenderShadow(true);
         }
         poseStack.popPose();
+    }
+
+    /**
+     * 解耦驱动腿摆动画:speed(状态:walk/trot/run 门控+幅度)和 position(频率)分开喂,绕过 WalkAnimationState.update
+     * 的 position+=speed 绑死。直写字段(ObfuscationReflectionHelper SRG);反射不可用则退化到 update(stateValue,0.4)。
+     * 返回 stateValue(供 bob 幅度等复用)。
+     */
+    private float driveDecoupledWalkAnimation(Horse horse, CarriageEntity entity, double mps) {
+        float stateValue = computeStateValue(mps);   // walk/trot/run 状态量(喂 speed)
+        float realMareLimb = computeRealMareLimb(mps);// 真马步频(每 tick 推 position)
+        WalkAnimationState walk = horse.walkAnimation;
+
+        // 反射不可用 → 退化:用 update(绑死,频率会偏快但不崩)。
+        if (WALK_POSITION_FIELD == null || WALK_SPEED_FIELD == null || WALK_SPEED_OLD_FIELD == null) {
+            walk.update(stateValue, 0.4F);
+            return stateValue;
+        }
+        try {
+            // position 按真马步频每 tick 推进(tickCount 差分,只在 tick 跨越时推,防每渲染帧 60fps 多推 3 倍)。
+            int now = entity.tickCount;
+            if (lastHorseAnimTick == Integer.MIN_VALUE) {
+                lastHorseAnimTick = now;
+            }
+            int dtick = now - lastHorseAnimTick;
+            if (dtick < 0 || dtick > 8) {
+                dtick = 0; // 换车/回退/异常 → 丢弃防暴冲
+            }
+            float position = WALK_POSITION_FIELD.getFloat(walk);
+            WALK_POSITION_FIELD.setFloat(walk, position + realMareLimb * dtick);
+            lastHorseAnimTick = now;
+            // speed=speedOld=stateValue → speed(pt)=lerp 恒定不闪;状态进 trot/run、幅度正确。
+            WALK_SPEED_FIELD.setFloat(walk, stateValue);
+            WALK_SPEED_OLD_FIELD.setFloat(walk, stateValue);
+        } catch (Throwable t) {
+            walk.update(stateValue, 0.4F); // 写字段异常 → 退化兜底
+        }
+        return stateValue;
+    }
+
+    /** 速度(m/s)→状态量(喂 speed):分段映射到 FA 门控区间。walk<0.6 / trot 0.6~0.97 / run≥0.97。停车→0(配 idle)。 */
+    private static float computeStateValue(double mps) {
+        float v = (float) Math.abs(mps);
+        if (v < 0.05F) {
+            return 0.0F; // 停车 → idle
+        }
+        if (v <= V_WALK_MAX) {
+            return Mth.clamp(v / V_WALK_MAX * 0.59F, 0.0F, 0.59F);          // walk [0,0.59]
+        }
+        if (v <= V_TROT_MAX) {
+            float t = (v - V_WALK_MAX) / (V_TROT_MAX - V_WALK_MAX);
+            return 0.62F + t * (0.95F - 0.62F);                            // trot [0.62,0.95]
+        }
+        float t = Mth.clamp((v - V_TROT_MAX) / (V_FULL - V_TROT_MAX), 0.0F, 1.0F);
+        return 0.98F + t * (1.0F - 0.98F);                                 // run [0.98,1.0]
+    }
+
+    /** 速度(m/s)→真马步频(每 tick 推 position):马车量程重映射到真马步频[F_WALK_FREQ,F_RUN_FREQ],走慢跑快不飞。 */
+    private static float computeRealMareLimb(double mps) {
+        float v = (float) Math.abs(mps);
+        if (v < 0.05F) {
+            return 0.0F; // 停车不推进相位
+        }
+        float norm = Mth.clamp(v / V_FULL, 0.0F, 1.0F);
+        return Mth.lerp(norm, F_WALK_FREQ, F_RUN_FREQ);
     }
 
     @Nullable
