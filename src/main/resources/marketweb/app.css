@@ -1444,6 +1444,21 @@ select#create-listing-storage {
     color: var(--text);
 }
 
+.crumb-strip .link-button {
+    border: none;
+    background: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    color: var(--accent, #2563eb);
+    font-size: inherit;
+    font-family: inherit;
+}
+
+.crumb-strip .link-button:hover {
+    text-decoration: underline;
+}
+
 .goods-hero {
     display: grid;
     grid-template-columns: 96px minmax(0, 1fr) 240px;

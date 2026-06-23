@@ -42,6 +42,7 @@
   aggregatedAuthenticated: false,
   aggregatedViewerTownId: "",
   aggregatedQuery: "",
+  aggregatedSelectedCommodityKey: "",
   mineColoniesItems: [],
   mineColoniesLoaded: false,
   mineColoniesMarketId: "",
@@ -1121,6 +1122,7 @@ Object.assign(I18N["en-US"], {
   all_listings_col_stock: "Stock",
   all_listings_col_action: "Action",
   all_listings_buy: "Buy",
+  all_listings_back: "Back to All Goods",
   all_listings_loading: "Loading listings...",
   all_listings_purchased: "Purchase submitted.",
   reason_not_logged_in: "Sign in to purchase.",
@@ -1158,6 +1160,7 @@ Object.assign(I18N["zh-CN"], {
   all_listings_col_stock: "库存",
   all_listings_col_action: "操作",
   all_listings_buy: "购买",
+  all_listings_back: "返回全部商品",
   all_listings_loading: "正在加载商品...",
   all_listings_purchased: "已提交购买。",
   reason_not_logged_in: "请先登录后再购买。",
@@ -1817,6 +1820,20 @@ function bindDetailActions() {
       state.selectedCommodityKey = node.getAttribute("data-card-commodity-key") || "";
       state.activeProductTab = normalizePageRoute(node.getAttribute("data-card-route") || "buy");
       syncRouteUrl(false);
+      renderDetailPreservingScroll();
+    });
+  });
+
+  document.querySelectorAll("[data-aggregate-card-commodity-key]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.aggregatedSelectedCommodityKey = node.getAttribute("data-aggregate-card-commodity-key") || "";
+      renderDetailPreservingScroll();
+    });
+  });
+
+  document.querySelectorAll("[data-aggregate-detail-back]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.aggregatedSelectedCommodityKey = "";
       renderDetailPreservingScroll();
     });
   });
@@ -5379,78 +5396,138 @@ function filteredAggregatedListings() {
   });
 }
 
-function renderAggregatedView() {
-  const listings = filteredAggregatedListings();
-  const head = `
-    <section class="market-overview">
-      <div class="market-header-card">
-        <div class="detail-header">
-          <div class="overview-title">
-            <p class="section-kicker">${escapeHtml(t("all_listings_kicker"))}</p>
-            <h2>${escapeHtml(t("all_listings_title"))}</h2>
-            <div class="overview-subtitle">${escapeHtml(t("all_listings_hint"))}</div>
-          </div>
-          <div class="market-meta">
-            <span class="pill">${escapeHtml(t("all_listings_count", { count: number(state.aggregatedListings.length) }))}</span>
-          </div>
-        </div>
-        <label class="market-search-field" for="aggregated-search">
-          <span class="hero-chip-label">${escapeHtml(t("all_listings_col_item"))}</span>
-          <input id="aggregated-search" type="search" value="${escapeHtml(state.aggregatedQuery || "")}" placeholder="${escapeHtml(t("all_listings_search_placeholder"))}">
-        </label>
+function renderAggregatedPurchaseButton(listing) {
+  const listingId = String(listing.listingId || "");
+  const purchasable = !!listing.purchasable && !!state.selectedMarketId;
+  const reason = !state.selectedMarketId && listing.purchasable
+    ? t("reason_no_market_selected")
+    : aggregatedPurchaseReasonText(listing.purchaseReason);
+  return purchasable
+    ? `<button type="button" data-aggregate-purchase="${escapeHtml(listingId)}">${escapeHtml(t("all_listings_buy"))}</button>`
+    : `<button type="button" class="danger" disabled title="${escapeHtml(reason)}">${escapeHtml(t("all_listings_buy"))}</button>`;
+}
+
+// 聚合卡片:复用市场浏览卡的样式(图标+类别+稀有度+在售数+最低价),但 route 用聚合专属标识,
+// 点击进聚合商品详情(全服在售列表)而非单市场详情。
+function renderAggregatedCommodityCard(commodity) {
+  return `
+    <button type="button" class="goods-card ${commodity.commodityKey === state.aggregatedSelectedCommodityKey ? "active" : ""}" data-aggregate-card-commodity-key="${escapeHtml(commodity.commodityKey)}">
+      ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
+      <div class="goods-card-topline">
+        <span class="goods-category-tag">${escapeHtml(categoryLabel(commodity.category))}</span>
+        <span class="goods-rarity-tag ${rarityClassName(commodity.rarity)}">${escapeHtml(rarityLabel(commodity.rarity))}</span>
       </div>
-    </section>
+      <h3>${escapeHtml(commodity.displayName)}</h3>
+      <div class="goods-key">${escapeHtml(commodity.commodityKey)}</div>
+      <div class="goods-summary">
+        <span class="goods-badge">${number(commodity.totalListings)} ${escapeHtml(t("selling"))}</span>
+        <span class="goods-badge">${number(commodity.sellUnits)} ${escapeHtml(t("units_live"))}</span>
+      </div>
+      <div class="goods-card-footer">
+        <strong>${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
+        <span>${escapeHtml(t("lowest_sell"))}</span>
+      </div>
+    </button>
   `;
+}
 
-  if (!state.aggregatedLoaded) {
-    return `
-      <section class="goods-market">
-        ${head}
-        <div class="empty-state">${escapeHtml(t("all_listings_loading"))}</div>
-      </section>
-    `;
-  }
-
-  const rows = listings.map((listing) => {
-    const listingId = String(listing.listingId || "");
-    const purchasable = !!listing.purchasable && !!state.selectedMarketId;
-    const reason = !state.selectedMarketId && listing.purchasable
-      ? t("reason_no_market_selected")
-      : aggregatedPurchaseReasonText(listing.purchaseReason);
-    const button = purchasable
-      ? `<button type="button" data-aggregate-purchase="${escapeHtml(listingId)}">${escapeHtml(t("all_listings_buy"))}</button>`
-      : `<button type="button" class="danger" disabled title="${escapeHtml(reason)}">${escapeHtml(t("all_listings_buy"))}</button>`;
+function renderAggregatedCommodityDetail(commodity) {
+  const rows = (commodity.listings || []).slice().sort((left, right) => {
+    const leftPrice = Number(left.unitPrice ?? Infinity);
+    const rightPrice = Number(right.unitPrice ?? Infinity);
+    return leftPrice - rightPrice;
+  }).map((listing) => {
     return `
       <tr>
-        <td><strong>${escapeHtml(listing.itemName || listing.commodityKey || "-")}</strong></td>
-        <td>${escapeHtml(listing.sourceTownName || "-")}</td>
         <td>
           <strong>${escapeHtml(listing.sellerName || "-")}</strong>
           ${listing.sellerNote ? `<div class="muted-inline">${escapeHtml(listing.sellerNote)}</div>` : ""}
         </td>
+        <td>${escapeHtml(listing.sourceTownName || "-")}</td>
         <td>${number(listing.unitPrice)}</td>
         <td>${number(listing.availableCount)}</td>
-        <td><div class="actions">${button}</div></td>
+        <td><div class="actions">${renderAggregatedPurchaseButton(listing)}</div></td>
       </tr>
     `;
   }).join("");
 
   return `
-    ${head}
+    <div class="goods-detail">
+      <div class="crumb-strip">
+        <button type="button" class="link-button" data-aggregate-detail-back>${escapeHtml(t("all_listings_back"))}</button>
+        <span>/</span>
+        <strong>${escapeHtml(commodity.displayName)}</strong>
+      </div>
+
+      <section class="goods-hero">
+        ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
+        <div class="goods-main">
+          <div class="tiny-label">${escapeHtml(t("selected_commodity"))}</div>
+          <h2>${escapeHtml(commodity.displayName)}</h2>
+          <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
+          <div class="price-line">
+            ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}
+            <span class="minor">${escapeHtml(t("lowest_sell"))}</span>
+          </div>
+          <div class="goods-stats">
+            ${metricBox(t("sell_listings"), number(commodity.totalListings))}
+            ${metricBox(t("on_sale"), number(commodity.sellUnits))}
+          </div>
+        </div>
+      </section>
+
+      <section class="goods-market">
+        ${tableSection(
+          t("all_listings_title"),
+          [
+            t("all_listings_col_seller"),
+            t("all_listings_col_town"),
+            t("all_listings_col_price"),
+            t("all_listings_col_stock"),
+            t("all_listings_col_action")
+          ],
+          rows,
+          t("all_listings_empty")
+        )}
+      </section>
+    </div>
+  `;
+}
+
+function renderAggregatedView() {
+  if (!state.aggregatedLoaded) {
+    return `
+      <section class="goods-market">
+        <div class="empty-state">${escapeHtml(t("all_listings_loading"))}</div>
+      </section>
+    `;
+  }
+
+  const catalog = buildCommodityCatalog({ listings: state.aggregatedListings });
+
+  if (state.aggregatedSelectedCommodityKey) {
+    const selected = findCommodityByKey(catalog, state.aggregatedSelectedCommodityKey);
+    if (selected) {
+      return `
+        <section class="goods-market">
+          ${renderAggregatedCommodityDetail(selected)}
+        </section>
+      `;
+    }
+    state.aggregatedSelectedCommodityKey = "";
+  }
+
+  const filteredCatalog = filterCatalog(catalog);
+  return `
     <section class="goods-market">
-      ${tableSection(
-        t("all_listings_title"),
-        [
-          t("all_listings_col_item"),
-          t("all_listings_col_town"),
-          t("all_listings_col_seller"),
-          t("all_listings_col_price"),
-          t("all_listings_col_stock"),
-          t("all_listings_col_action")
-        ],
-        rows,
-        t("all_listings_empty")
-      )}
+      ${renderCatalogShelf({
+        catalog,
+        filteredCatalog,
+        kicker: t("all_listings_kicker"),
+        title: t("all_listings_title"),
+        emptyMessage: t("all_listings_empty"),
+        cardRenderer: (commodity) => renderAggregatedCommodityCard(commodity)
+      })}
     </section>
   `;
 }
@@ -5809,6 +5886,7 @@ els.refreshMarkets.addEventListener("click", async () => {
 els.allListingsNav?.addEventListener("click", () => {
   state.activeProductTab = "all";
   state.aggregatedLoaded = false;
+  state.aggregatedSelectedCommodityKey = "";
   syncRouteUrl(false);
   renderDetail();
 });

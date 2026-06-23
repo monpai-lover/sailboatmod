@@ -282,6 +282,8 @@ public final class MarketWebService {
         List<MarketListing> listings = new ArrayList<>(market.getListings());
         listings.sort(Comparator.comparing(l -> l.itemStack() == null ? "" : l.itemStack().getHoverName().getString(),
                 String.CASE_INSENSITIVE_ORDER));
+        // 卡片网格需要 category/rarity 做分类与稀有度筛选。按 commodityKey 缓存解析结果,避免全服遍历时重复建 CommodityDefinition。
+        java.util.Map<String, CommodityDefinition> definitionCache = new java.util.HashMap<>();
         for (MarketListing listing : listings) {
             if (listing == null || listing.itemStack() == null || listing.itemStack().isEmpty()) {
                 continue;
@@ -309,10 +311,20 @@ public final class MarketWebService {
                 reason = "no_route";
             }
 
+            String commodityKey = com.monpai.sailboatmod.market.commodity.CommodityKeyResolver.resolve(listing.itemStack());
+            String itemName = listing.itemStack().getHoverName().getString();
+            CommodityDefinition definition = definitionCache.computeIfAbsent(commodityKey, key ->
+                    CommodityConfigLoader.apply(CommodityInitializer.createDefault(key, key, itemName)));
+            String category = definition != null && definition.category() != null && !definition.category().isBlank()
+                    ? definition.category() : "other";
+            int rarity = definition != null ? definition.rarity() : 0;
+
             JsonObject json = new JsonObject();
             json.addProperty("listingId", listing.listingId());
-            json.addProperty("commodityKey", com.monpai.sailboatmod.market.commodity.CommodityKeyResolver.resolve(listing.itemStack()));
-            json.addProperty("itemName", listing.itemStack().getHoverName().getString());
+            json.addProperty("commodityKey", commodityKey);
+            json.addProperty("itemName", itemName);
+            json.addProperty("category", category);
+            json.addProperty("rarity", rarity);
             json.addProperty("availableCount", listing.availableCount());
             json.addProperty("unitPrice", listing.unitPrice());
             json.addProperty("sellerName", listing.sellerName());
