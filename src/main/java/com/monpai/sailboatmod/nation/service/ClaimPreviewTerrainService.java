@@ -44,8 +44,12 @@ public final class ClaimPreviewTerrainService {
     private static final int DEFAULT_COLOR = 0xFF33414A;
     private static final int WATER_COLOR = 0xFF4466B0;
     private static final int FALLBACK_GRASS_COLOR = 0xFF000000 | (MapColor.GRASS.col & 0x00FFFFFF);
-    private static final int DEFAULT_VISIBLE_BUDGET_PER_TICK = 16;
-    private static final int DEFAULT_PREFETCH_BUDGET_PER_TICK = 16;
+    // 每 tick 从队列取多少 chunk 投递处理。getChunkNow 非阻塞、未加载则只是把离线读入队到后台,主线程成本极低,
+    // 故可大幅调高以加快铺图(瓶颈在后台读盘并发,不在投递)。原 16 太保守,大视野铺满要十几秒。
+    private static final int DEFAULT_VISIBLE_BUDGET_PER_TICK = 64;
+    private static final int DEFAULT_PREFETCH_BUDGET_PER_TICK = 64;
+    // 每 tick 主线程回填后台读完瓦片的上限,削峰(后台 4 线程可能瞬时读完几百个堆队列)。
+    private static final int MAX_NBT_DRAIN_PER_TICK = 128;
     private static final int QUEUE_AROUND_PREFETCH_RADIUS = 1;
     private static final AtomicReference<ClaimPreviewTerrainService> ACTIVE = new AtomicReference<>();
 
@@ -91,7 +95,8 @@ public final class ClaimPreviewTerrainService {
     // 2026-06:未加载区块改"投后台读 region NBT 补画",而非跳过不画(见 plan)。
     // NBT 读 chunkMap.read().get(timeout) 只能在 worker 跑(主线程跑会卡服)。
     private static final long NBT_READ_TIMEOUT_MS = 2000L;
-    private final ExecutorService nbtExecutor = Executors.newFixedThreadPool(2, runnable -> {
+    // 后台离线读盘是 IO 密集,线程数决定铺图并发。原 2 太少,大视野时后台读不过来。提到 4 翻倍并发(daemon,服务停时 shutdownNow)。
+    private final ExecutorService nbtExecutor = Executors.newFixedThreadPool(4, runnable -> {
         Thread thread = new Thread(runnable, "SailboatClaimTerrainNbt");
         thread.setDaemon(true);
         return thread;
@@ -452,11 +457,19 @@ public final class ClaimPreviewTerrainService {
         });
     }
 
-    /** 主线程回填后台读完成的瓦片(storeTile + markViewportDirty 必须主线程)。 */
+    /**
+     * 主线程回填后台读完成的瓦片(storeTile + markViewportDirty 必须主线程)。
+     * 每 tick 限 {@value #MAX_NBT_DRAIN_PER_TICK} 个削峰:线程提速后后台可能一下读完几百个全堆进队列,
+     * 无上限 drain 会让单 tick 回填几百次造成卡顿尖峰;剩余的下 tick 继续(不丢,队列里排着)。
+     */
     private void drainNbtCompleted(TerrainPreviewSavedData savedData) {
+        int drained = 0;
         for (SampledTile tile = nbtCompleted.poll(); tile != null; tile = nbtCompleted.poll()) {
             storeTile(tile.dimensionId(), tile.chunkX(), tile.chunkZ(), tile.tile(), savedData);
             markViewportDirty(tile.viewportKey());
+            if (++drained >= MAX_NBT_DRAIN_PER_TICK) {
+                break;
+            }
         }
     }
 

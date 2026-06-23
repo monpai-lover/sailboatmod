@@ -59,7 +59,8 @@ public final class RoadPlannerMapPreloadService {
 
     private final Map<JobKey, ActiveJob> jobs = new LinkedHashMap<>();
     // 离线 NBT 后台读 worker:chunkMap.read().get(timeout) 只能在非主线程跑(主线程跑会卡服,见 route.water 教训)。
-    private final ExecutorService nbtExecutor = Executors.newFixedThreadPool(2, runnable -> {
+    // 4 线程(原 2):后台读盘 IO 密集,多并发加快铺图。
+    private final ExecutorService nbtExecutor = Executors.newFixedThreadPool(4, runnable -> {
         Thread thread = new Thread(runnable, "SailboatRoadMapNbt");
         thread.setDaemon(true);
         return thread;
