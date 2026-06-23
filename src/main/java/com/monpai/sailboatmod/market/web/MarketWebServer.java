@@ -433,6 +433,23 @@ public final class MarketWebServer {
             writeJson(exchange, 200, out == null ? error("listings_unavailable", "Listings unavailable") : out);
             return;
         }
+        // GET /api/listings/commodity?key=xxx → 全服该商品的"伪 detail"(对标终端详情,数据全服聚合)。
+        // commodityKey 含冒号(如 minecraft:diamond),用 query param 而非路径段避免编码问题。
+        if (path.size() == 3 && "commodity".equals(path.get(2))) {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+                return;
+            }
+            String commodityKey = queryParam(exchange, "key");
+            if (commodityKey == null || commodityKey.isBlank()) {
+                writeJson(exchange, 400, error("missing_key", "Missing commodity key"));
+                return;
+            }
+            MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
+            JsonObject out = callOnServerThread(() -> service.aggregatedCommodityDetail(minecraftServer, identity, commodityKey));
+            writeJson(exchange, 200, out == null ? error("commodity_unavailable", "Commodity detail unavailable") : out);
+            return;
+        }
         if (path.size() == 4 && "purchase".equals(path.get(3))) {
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));

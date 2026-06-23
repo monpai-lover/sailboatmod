@@ -18,12 +18,14 @@ import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsPoint;
 import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
+import com.monpai.sailboatmod.market.analytics.MarketAnalyticsService;
 import com.monpai.sailboatmod.market.commodity.BuyOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityConfigLoader;
 import com.monpai.sailboatmod.market.commodity.CommodityDefinition;
 import com.monpai.sailboatmod.market.commodity.CommodityInitializer;
 import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
+import com.monpai.sailboatmod.market.commodity.CommodityPriceChartPoint;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import com.monpai.sailboatmod.market.web.map.MarketWebFlagService;
@@ -61,6 +63,7 @@ import java.util.UUID;
 
 public final class MarketWebService {
     private static final CommodityMarketService COMMODITY_MARKET = new CommodityMarketService();
+    private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
     private final MarketWebMapLayerService mapLayers = new MarketWebMapLayerService();
     private final MarketWebFlagService mapFlags = new MarketWebFlagService();
 
@@ -370,6 +373,286 @@ public final class MarketWebService {
                 fulfillment,
                 targetWarehousePos
         );
+    }
+
+    /**
+     * 聚合视图单商品详情:返回与 {@link #marketDetail} 同结构的"伪 detail",但数据为<b>全服该 commodityKey</b>聚合,
+     * 让前端直接复用 buildCommodityCatalog + renderCommodityDetailPage 渲染完整 5 个 tab(浏览/在售/求购/K线/指数)。
+     *
+     * <p>数据源:在售挂单来自 {@link MarketSavedData#getListings()}(全服根级表,与具体市场无关);
+     * 图表/求购/K线/指数来自 SQLite(COMMODITY_MARKET / MARKET_ANALYTICS)按 commodityKey 全局查询——这些本就与市场无关。
+     *
+     * <p>线程红线:全部查询走 SQLite + 内存 SavedData,不碰区块/NBT。必须由路由层在 callOnServerThread 内调用。
+     */
+    public JsonObject aggregatedCommodityDetail(MinecraftServer server, MarketPlayerIdentity identity, String commodityKey) {
+        if (server == null || commodityKey == null || commodityKey.isBlank()) {
+            return null;
+        }
+        String targetKey = commodityKey.trim();
+        ServerLevel overworld = server.overworld();
+        MarketSavedData market = MarketSavedData.get(overworld);
+        com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData net =
+                com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(overworld);
+        com.monpai.sailboatmod.nation.data.NationSavedData nations =
+                com.monpai.sailboatmod.nation.data.NationSavedData.get(overworld);
+
+        boolean authenticated = identity != null && identity.playerUuid() != null;
+        String viewerTownId = authenticated ? resolveViewerTownId(server, identity) : "";
+
+        // 全服该 commodityKey 的在售挂单(逐条结构对齐 aggregatedListings,含 listingId / purchasable / reason)。
+        JsonArray listings = new JsonArray();
+        String displayName = targetKey;
+        String category = "other";
+        int rarity = 0;
+        List<MarketListing> all = new ArrayList<>(market.getListings());
+        all.sort(Comparator.comparing(l -> l.unitPrice()));
+        for (MarketListing listing : all) {
+            if (listing == null || listing.itemStack() == null || listing.itemStack().isEmpty()) {
+                continue;
+            }
+            String key = CommodityKeyResolver.resolve(listing.itemStack());
+            if (!targetKey.equals(key)) {
+                continue;
+            }
+            String sourceTownId = listing.townId() == null ? "" : listing.townId();
+            String sourceTownName = townNameOf(nations, sourceTownId);
+            String itemName = listing.itemStack().getHoverName().getString();
+            CommodityDefinition definition = CommodityConfigLoader.apply(
+                    CommodityInitializer.createDefault(key, key, itemName));
+            if (definition != null && definition.category() != null && !definition.category().isBlank()) {
+                category = definition.category();
+            }
+            rarity = definition != null ? definition.rarity() : rarity;
+            if (displayName.equals(targetKey)) {
+                displayName = itemName;
+            }
+
+            boolean purchasable;
+            String reason;
+            if (!authenticated) {
+                purchasable = false;
+                reason = "not_logged_in";
+            } else if (viewerTownId == null || viewerTownId.isBlank()) {
+                purchasable = false;
+                reason = "no_town";
+            } else if (identity.playerUuidString().equals(listing.sellerUuid())) {
+                purchasable = false;
+                reason = "own_listing";
+            } else if (com.monpai.sailboatmod.market.terminal.TerminalVisibility.isVisible(net, sourceTownId, viewerTownId)) {
+                purchasable = true;
+                reason = "";
+            } else {
+                purchasable = false;
+                reason = "no_route";
+            }
+
+            JsonObject json = new JsonObject();
+            json.addProperty("listingId", listing.listingId());
+            json.addProperty("commodityKey", key);
+            json.addProperty("itemName", itemName);
+            json.addProperty("category", category);
+            json.addProperty("rarity", rarity);
+            json.addProperty("availableCount", listing.availableCount());
+            json.addProperty("reservedCount", 0);
+            json.addProperty("unitPrice", listing.unitPrice());
+            json.addProperty("sellerName", listing.sellerName());
+            json.addProperty("sourceDockName", listing.sourceDockName());
+            json.addProperty("sourceTownId", sourceTownId);
+            json.addProperty("sourceTownName", sourceTownName);
+            json.addProperty("nationId", listing.nationId());
+            json.addProperty("sellerNote", listing.sellerNote());
+            json.addProperty("purchasable", purchasable);
+            json.addProperty("purchaseReason", reason);
+            listings.add(json);
+        }
+
+        java.util.Map<String, String> single = java.util.Map.of(targetKey, displayName);
+
+        JsonObject root = new JsonObject();
+        // 顶层占位字段,对齐 marketDetail 中前端详情页/各 tab 可能读取的键,避免 undefined。
+        root.addProperty("marketId", "");
+        root.addProperty("marketName", "");
+        root.addProperty("commodityKey", targetKey);
+        root.addProperty("displayName", displayName);
+        root.addProperty("category", category);
+        root.addProperty("rarity", rarity);
+        root.addProperty("canManage", false);
+        root.addProperty("canChooseReceiving", false);
+        root.addProperty("linkedDock", false);
+        root.addProperty("linkedDockName", "");
+        root.addProperty("linkedWarehouseName", "");
+        root.addProperty("townName", "");
+        root.addProperty("walletBalance", 0L);
+        root.addProperty("walletAvailableBalance", 0L);
+        root.addProperty("walletReservedBalance", 0L);
+        root.addProperty("walletTotalBalance", 0L);
+        root.addProperty("treasuryBalance", 0L);
+        root.addProperty("cashBalance", 0L);
+        root.addProperty("pendingCredits", 0L);
+        root.addProperty("netBalance", 0L);
+        root.addProperty("stockpileTotalUnits", 0L);
+        root.addProperty("openDemandUnits", 0L);
+        root.add("receivingWarehouseOptions", new JsonArray());
+        // 聚合上下文没有"单市场库存 / 我的求购 / 我的订单 / 货运派发"概念,给空数组让相关 tab 自然降级为空。
+        root.add("storageEntries", new JsonArray());
+        root.add("buyOrderEntries", new JsonArray());
+        root.add("myOrders", new JsonArray());
+        root.add("sourceOrders", new JsonArray());
+        root.add("shippingEntries", new JsonArray());
+        root.add("listings", listings);
+        root.add("priceCharts", aggregatedPriceCharts(targetKey, displayName));
+        root.add("commodityBuyBooks", aggregatedCommodityBuyBooks(targetKey, displayName));
+        root.add("candleSeries", aggregatedCandleSeries(single));
+        root.add("impactSnapshots", aggregatedImpactSnapshots(single));
+        root.add("analyticsSeries", aggregatedAnalyticsSeries(overworld, category));
+        root.add("chartCapabilities", aggregatedChartCapabilities(root));
+        return root;
+    }
+
+    /** 单 commodityKey 价格K线(分时均价),结构对齐 {@link #priceCharts}。数据走 SQLite。 */
+    private JsonArray aggregatedPriceCharts(String commodityKey, String displayName) {
+        JsonArray out = new JsonArray();
+        JsonObject series = new JsonObject();
+        series.addProperty("commodityKey", commodityKey);
+        series.addProperty("displayName", displayName);
+        JsonArray points = new JsonArray();
+        try {
+            for (CommodityPriceChartPoint point : COMMODITY_MARKET.listPriceChart(commodityKey)) {
+                JsonObject p = new JsonObject();
+                p.addProperty("bucketAt", point.bucketAt());
+                p.addProperty("averageUnitPrice", point.averageUnitPrice());
+                p.addProperty("minUnitPrice", point.minUnitPrice());
+                p.addProperty("maxUnitPrice", point.maxUnitPrice());
+                p.addProperty("volume", point.volume());
+                p.addProperty("tradeCount", point.tradeCount());
+                points.add(p);
+            }
+        } catch (Exception ignored) {
+        }
+        series.add("points", points);
+        out.add(series);
+        return out;
+    }
+
+    /** 单 commodityKey 全服求购挂单,结构对齐 {@link #commodityBuyBooks}。数据走 SQLite。 */
+    private JsonArray aggregatedCommodityBuyBooks(String commodityKey, String displayName) {
+        JsonArray out = new JsonArray();
+        JsonObject book = new JsonObject();
+        book.addProperty("commodityKey", commodityKey);
+        book.addProperty("displayName", displayName);
+        JsonArray entries = new JsonArray();
+        try {
+            for (BuyOrder order : COMMODITY_MARKET.listBuyOrders(commodityKey)) {
+                JsonObject e = new JsonObject();
+                e.addProperty("orderId", order.orderId());
+                e.addProperty("buyerName", order.buyerName());
+                e.addProperty("quantity", order.quantity());
+                e.addProperty("minPriceBp", order.minPriceBp());
+                e.addProperty("maxPriceBp", order.maxPriceBp());
+                e.addProperty("createdAt", order.createdAt());
+                e.addProperty("status", order.status());
+                entries.add(e);
+            }
+        } catch (Exception ignored) {
+        }
+        book.add("entries", entries);
+        out.add(book);
+        return out;
+    }
+
+    /** 单 commodityKey K线序列(1h/1d/1w),结构对齐 {@link #candleSeries}。数据走 SQLite。 */
+    private JsonArray aggregatedCandleSeries(java.util.Map<String, String> single) {
+        JsonArray out = new JsonArray();
+        for (CommodityCandleSeries series : MARKET_ANALYTICS.loadCandleSeries(single)) {
+            JsonObject json = new JsonObject();
+            json.addProperty("commodityKey", series.commodityKey());
+            json.addProperty("displayName", series.displayName());
+            json.addProperty("timeframe", series.timeframe());
+            JsonArray points = new JsonArray();
+            for (CommodityCandlePoint point : series.points()) {
+                JsonObject p = new JsonObject();
+                p.addProperty("bucketAt", point.bucketAt());
+                p.addProperty("openUnitPrice", point.openUnitPrice());
+                p.addProperty("highUnitPrice", point.highUnitPrice());
+                p.addProperty("lowUnitPrice", point.lowUnitPrice());
+                p.addProperty("closeUnitPrice", point.closeUnitPrice());
+                p.addProperty("volume", point.volume());
+                p.addProperty("tradeCount", point.tradeCount());
+                points.add(p);
+            }
+            json.add("points", points);
+            out.add(json);
+        }
+        return out;
+    }
+
+    /** 单 commodityKey 价格影响快照,结构对齐 {@link #impactSnapshots}。数据走 SQLite。 */
+    private JsonArray aggregatedImpactSnapshots(java.util.Map<String, String> single) {
+        JsonArray out = new JsonArray();
+        for (CommodityImpactSnapshot snapshot : MARKET_ANALYTICS.loadImpactSnapshots(single)) {
+            JsonObject json = new JsonObject();
+            json.addProperty("commodityKey", snapshot.commodityKey());
+            json.addProperty("referenceUnitPrice", snapshot.referenceUnitPrice());
+            json.addProperty("currentClosePrice", snapshot.currentClosePrice());
+            json.addProperty("liquidityScore", snapshot.liquidityScore());
+            json.addProperty("inventoryPressureBp", snapshot.inventoryPressureBp());
+            json.addProperty("buyPressureBp", snapshot.buyPressureBp());
+            json.addProperty("volatilityBp", snapshot.volatilityBp());
+            out.add(json);
+        }
+        return out;
+    }
+
+    /** 市场指数 / 该商品类别指数 / CPI / 未偿贷款,结构对齐 {@link #analyticsSeries}。数据走 SQLite。 */
+    private JsonArray aggregatedAnalyticsSeries(ServerLevel level, String category) {
+        JsonArray out = new JsonArray();
+        java.util.List<String> categories = category == null || category.isBlank()
+                ? java.util.List.of()
+                : java.util.List.of(category);
+        for (MarketAnalyticsSeries series : MARKET_ANALYTICS.loadAnalyticsSeries(level, categories)) {
+            JsonObject json = new JsonObject();
+            json.addProperty("scopeType", series.scopeType());
+            json.addProperty("scopeKey", series.scopeKey());
+            json.addProperty("displayName", series.displayName());
+            JsonArray points = new JsonArray();
+            for (MarketAnalyticsPoint point : series.points()) {
+                JsonObject p = new JsonObject();
+                p.addProperty("bucketAt", point.bucketAt());
+                p.addProperty("value", point.value());
+                p.addProperty("volume", point.volume());
+                p.addProperty("tradeCount", point.tradeCount());
+                points.add(p);
+            }
+            json.add("points", points);
+            out.add(json);
+        }
+        return out;
+    }
+
+    /** chartCapabilities,从已构建的 root.candleSeries / analyticsSeries 推断(对齐 {@link #chartCapabilities})。 */
+    private JsonObject aggregatedChartCapabilities(JsonObject root) {
+        JsonArray candleSeries = root.getAsJsonArray("candleSeries");
+        JsonArray analyticsSeries = root.getAsJsonArray("analyticsSeries");
+        boolean candles = candleSeries != null && candleSeries.size() > 0;
+        boolean macroCharts = analyticsSeries != null && analyticsSeries.size() > 0;
+        boolean inflation = false;
+        if (analyticsSeries != null) {
+            for (com.google.gson.JsonElement el : analyticsSeries) {
+                JsonObject series = el.getAsJsonObject();
+                if ("MACRO_INDEX".equals(series.get("scopeType").getAsString())
+                        && "cpi".equals(series.get("scopeKey").getAsString())
+                        && series.getAsJsonArray("points").size() > 0) {
+                    inflation = true;
+                    break;
+                }
+            }
+        }
+        JsonObject json = new JsonObject();
+        json.addProperty("candles", candles);
+        json.addProperty("macroCharts", macroCharts);
+        json.addProperty("logScale", true);
+        json.addProperty("inflation", inflation);
+        return json;
     }
 
     /** 查看者所属城镇:在线优先按其当前坐标所在城镇,否则按成员表。 */

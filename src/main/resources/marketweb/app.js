@@ -43,6 +43,11 @@
   aggregatedViewerTownId: "",
   aggregatedQuery: "",
   aggregatedSelectedCommodityKey: "",
+  aggregatedDetail: null,
+  aggregatedDetailKey: "",
+  aggregatedDetailLoaded: false,
+  aggregatedDetailLoading: false,
+  aggregatedDetailTab: "browse",
   mineColoniesItems: [],
   mineColoniesLoaded: false,
   mineColoniesMarketId: "",
@@ -1620,10 +1625,55 @@ async function postAggregatedPurchase(listingId, payload = {}) {
       body: JSON.stringify(payload)
     });
     setStatus(t("all_listings_purchased"));
-    await loadAggregatedListings();
+    // 详情上下文:刷新该商品的全服伪 detail(挂单数随购买变化);否则刷新聚合网格。
+    if (state.aggregatedDetailKey) {
+      await loadAggregatedDetail(state.aggregatedDetailKey, { force: true });
+    } else {
+      await loadAggregatedListings();
+    }
   } catch (error) {
     setStatus(error.message, true);
   }
+}
+
+// 拉取某商品的全服"伪 detail"(对标终端详情,数据全服聚合)。race-guard:返回时选中商品已切换则丢弃。
+async function loadAggregatedDetail(commodityKey, { force = false } = {}) {
+  const key = String(commodityKey || "").trim();
+  if (!key) {
+    return;
+  }
+  if (!force && state.aggregatedDetailKey === key && state.aggregatedDetailLoaded) {
+    return;
+  }
+  state.aggregatedDetailKey = key;
+  state.aggregatedDetailLoaded = false;
+  state.aggregatedDetailLoading = true;
+  state.aggregatedDetail = null;
+  renderDetail();
+  try {
+    const data = await api(`/api/listings/commodity?key=${encodeURIComponent(key)}`);
+    // 防竞态:返回时用户已切到别的商品或离开详情则丢弃。
+    if (state.aggregatedSelectedCommodityKey !== key) {
+      return;
+    }
+    state.aggregatedDetail = data || null;
+    state.aggregatedDetailLoaded = true;
+    state.aggregatedDetailLoading = false;
+    renderDetail();
+  } catch (error) {
+    if (state.aggregatedSelectedCommodityKey === key) {
+      state.aggregatedDetailLoaded = true;
+      state.aggregatedDetailLoading = false;
+      setStatus(error.message, true);
+      renderDetail();
+    }
+  }
+}
+
+// 聚合详情子 tab(browse/sell/chart/index/demand 等),与终端 activeProductTab 隔离,
+// 切换聚合详情 tab 不影响终端,也不会把 activeProductTab 切出 "all"。
+function currentProductTab(options) {
+  return options && options.aggregate ? state.aggregatedDetailTab : state.activeProductTab;
 }
 
 function renderPurchaseModalInner(options, canReceive, fulfillment, targetWarehouse, modes) {
@@ -1826,7 +1876,20 @@ function bindDetailActions() {
 
   document.querySelectorAll("[data-aggregate-card-commodity-key]").forEach((node) => {
     node.addEventListener("click", () => {
-      state.aggregatedSelectedCommodityKey = node.getAttribute("data-aggregate-card-commodity-key") || "";
+      const key = node.getAttribute("data-aggregate-card-commodity-key") || "";
+      state.aggregatedSelectedCommodityKey = key;
+      state.aggregatedDetailTab = "browse";
+      renderDetailPreservingScroll();
+      if (key) {
+        loadAggregatedDetail(key);
+      }
+    });
+  });
+
+  // 聚合详情子 tab 切换:只改 aggregatedDetailTab(与终端 activeProductTab 隔离,保持在 "all" 视图内)。
+  document.querySelectorAll("[data-aggregate-tab]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.aggregatedDetailTab = normalizePageRoute(node.getAttribute("data-aggregate-tab") || "browse");
       renderDetailPreservingScroll();
     });
   });
@@ -1834,6 +1897,10 @@ function bindDetailActions() {
   document.querySelectorAll("[data-aggregate-detail-back]").forEach((node) => {
     node.addEventListener("click", () => {
       state.aggregatedSelectedCommodityKey = "";
+      state.aggregatedDetail = null;
+      state.aggregatedDetailKey = "";
+      state.aggregatedDetailLoaded = false;
+      state.aggregatedDetailTab = "browse";
       renderDetailPreservingScroll();
     });
   });
@@ -3440,23 +3507,24 @@ function renderInventoryDetailPage(commodity, detail, canManage, canAct) {
   `;
 }
 
-function renderCommodityPage(commodity, detail, canManage, canAct) {
-  if (state.activeProductTab === "buy" || state.activeProductTab === "demand") {
-    return renderBuyingTab(commodity, canManage, canAct);
+function renderCommodityPage(commodity, detail, canManage, canAct, options = null) {
+  const tab = currentProductTab(options);
+  if (tab === "buy" || tab === "demand") {
+    return renderBuyingTab(commodity, canManage, canAct, options);
   }
-  if (state.activeProductTab === "chart") {
-    return renderChartTab(commodity, detail);
+  if (tab === "chart") {
+    return renderChartTab(commodity, detail, options);
   }
-  if (state.activeProductTab === "index") {
-    return renderIndexTab(commodity, detail);
+  if (tab === "index") {
+    return renderIndexTab(commodity, detail, options);
   }
-  if (state.activeProductTab === "sell") {
-    return renderSellingTab(commodity, detail, canManage, canAct);
+  if (tab === "sell") {
+    return renderSellingTab(commodity, detail, canManage, canAct, options);
   }
-  return renderBrowseTab(commodity, detail);
+  return renderBrowseTab(commodity, detail, options);
 }
 
-function renderBrowseTab(commodity, detail) {
+function renderBrowseTab(commodity, detail, options = null) {
   const topListings = commodity.listings.slice(0, 8);
   const buyRows = (commodity.buyBookEntries || []).slice(0, 6);
   const activeSeries = primaryChartSeries(commodity);
@@ -3514,7 +3582,45 @@ function renderBrowseTab(commodity, detail) {
   `;
 }
 
-function renderSellingTab(commodity, detail, canManage, canAct) {
+// 聚合详情"在售购买"tab:全服该商品在售挂单按价升序,带来源城镇与聚合购买按钮(data-aggregate-purchase + listingId)。
+function renderAggregateSellingTab(commodity) {
+  const rows = (commodity.listings || []).slice().sort((left, right) => {
+    return Number(left.unitPrice ?? Infinity) - Number(right.unitPrice ?? Infinity);
+  }).map((listing) => `
+    <tr>
+      <td>
+        <strong>${escapeHtml(listing.sellerName || "-")}</strong>
+        ${listing.sellerNote ? `<div class="muted-inline">${escapeHtml(listing.sellerNote)}</div>` : ""}
+      </td>
+      <td>${escapeHtml(listing.sourceTownName || "-")}</td>
+      <td>${number(listing.unitPrice)}</td>
+      <td>${number(listing.availableCount)}</td>
+      <td><div class="actions">${renderAggregatedPurchaseButton(listing)}</div></td>
+    </tr>
+  `).join("");
+  return `
+    <div class="goods-detail">
+      ${tableSection(
+        t("all_listings_title"),
+        [
+          t("all_listings_col_seller"),
+          t("all_listings_col_town"),
+          t("all_listings_col_price"),
+          t("all_listings_col_stock"),
+          t("all_listings_col_action")
+        ],
+        rows,
+        t("all_listings_empty")
+      )}
+    </div>
+  `;
+}
+
+function renderSellingTab(commodity, detail, canManage, canAct, options = null) {
+  // 聚合详情:无单市场库存/创建挂单,只展示全服在售列表 + 聚合购买按钮(走 listingId 端点)。
+  if (options && options.aggregate) {
+    return renderAggregateSellingTab(commodity);
+  }
   const dockStorage = detail.storageEntries || [];
   const matchingStorage = storageEntriesForCommodity(commodity, detail);
   const preferredStorage = preferredStorageEntry(matchingStorage);
@@ -3609,7 +3715,33 @@ function renderSellingTab(commodity, detail, canManage, canAct) {
   `;
 }
 
-function renderBuyingTab(commodity, canManage, canAct) {
+// 聚合详情"求购订单"tab:只读展示全服该商品的求购挂单(无单市场上下文,不提供建单/派发面板)。
+function renderAggregateBuyingTab(commodity) {
+  const buyRows = commodity.buyBookEntries || [];
+  return `
+    <div class="goods-detail">
+      ${tableSection(
+        t("buying"),
+        [t("buyer"), t("quantity"), t("price_band"), t("implied_bid"), t("status")],
+        buyRows.map((entry) => `
+          <tr>
+            <td><strong>${escapeHtml(entry.buyerName || "-")}</strong></td>
+            <td>${number(entry.quantity)}</td>
+            <td>${number(entry.minPriceBp)} ${escapeHtml(t("to_word"))} ${number(entry.maxPriceBp)} bp</td>
+            <td>${estimateBidText(commodity.bestSell, entry.minPriceBp, entry.maxPriceBp)}</td>
+            <td>${escapeHtml(entry.status || "-")}</td>
+          </tr>
+        `).join(""),
+        t("no_buy_rows")
+      )}
+    </div>
+  `;
+}
+
+function renderBuyingTab(commodity, canManage, canAct, options = null) {
+  if (options && options.aggregate) {
+    return renderAggregateBuyingTab(commodity);
+  }
   const pureDemandPage = state.activeProductTab === "demand";
   const buyRows = commodity.buyBookEntries || [];
   const ownRows = commodity.myBuyOrders || [];
@@ -3732,7 +3864,7 @@ function renderBuyingTab(commodity, canManage, canAct) {
   `;
 }
 
-function renderChartTab(commodity, detail) {
+function renderChartTab(commodity, detail, options = null) {
   const chart = primaryChartSeriesForTimeframe(commodity, state.activeChartTimeframe);
   const points = normalizedChartPoints(chart);
   const cpiSeries = analyticsSeries(detail, "MACRO_INDEX", "cpi");
@@ -3837,7 +3969,7 @@ function renderChartTab(commodity, detail) {
   `;
 }
 
-function renderIndexTab(commodity, detail) {
+function renderIndexTab(commodity, detail, options = null) {
   const impact = commodity.impact || null;
   const marketIndex = analyticsSeries(detail, "MARKET_INDEX", "global");
   const categoryIndex = analyticsSeries(detail, "CATEGORY_INDEX", firstListingCategory(commodity) || "");
@@ -4044,7 +4176,10 @@ function renderWalletTransferPanel(detail, canAct) {
   `;
 }
 
-function routeButton(key, label) {
+function routeButton(key, label, options = null) {
+  if (options && options.aggregate) {
+    return `<button type="button" class="tab-button ${state.aggregatedDetailTab === key ? "active" : ""}" data-aggregate-tab="${key}">${escapeHtml(label)}</button>`;
+  }
   return `<button type="button" class="tab-button ${state.activeProductTab === key ? "active" : ""}" data-route="${key}">${escapeHtml(label)}</button>`;
 }
 
@@ -4379,17 +4514,25 @@ function destroyLightweightChart() {
 
 function hydrateLightweightChart() {
   destroyLightweightChart();
-  if (!state.detail || !state.settings.showPriceCharts) {
+  if (!state.settings.showPriceCharts) {
     return;
   }
-  const detail = state.detail;
+  // 聚合详情上下文:用 aggregatedDetail + 选中商品 + 子 tab,与终端隔离。
+  const aggregate = state.activeProductTab === "all" && !!state.aggregatedSelectedCommodityKey;
+  const detail = aggregate ? state.aggregatedDetail : state.detail;
+  if (!detail) {
+    return;
+  }
+  const activeTab = aggregate ? state.aggregatedDetailTab : state.activeProductTab;
   const catalog = buildCommodityCatalog(detail);
-  const commodity = getSelectedCommodity(filterCatalog(catalog), catalog);
-  if (state.activeProductTab === "index") {
+  const commodity = aggregate
+    ? findCommodityByKey(catalog, state.aggregatedSelectedCommodityKey)
+    : getSelectedCommodity(filterCatalog(catalog), catalog);
+  if (activeTab === "index") {
     hydrateMacroCharts(detail, commodity);
     return;
   }
-  if (state.activeProductTab !== "chart") {
+  if (activeTab !== "chart") {
     return;
   }
   const container = document.querySelector("#lw-chart");
@@ -4825,7 +4968,7 @@ function renderBuyOrderItemPreview(item) {
   `;
 }
 
-function renderDemandOnlyPage(commodity, canAct) {
+function renderDemandOnlyPage(commodity, canAct, options = null) {
   const ownRows = commodity.myBuyOrders || [];
   const buyOrderReference = buyOrderReferencePrice(commodity);
   const buyOrderDefaultPrice = buyOrderReference;
@@ -5431,69 +5574,6 @@ function renderAggregatedCommodityCard(commodity) {
   `;
 }
 
-function renderAggregatedCommodityDetail(commodity) {
-  const rows = (commodity.listings || []).slice().sort((left, right) => {
-    const leftPrice = Number(left.unitPrice ?? Infinity);
-    const rightPrice = Number(right.unitPrice ?? Infinity);
-    return leftPrice - rightPrice;
-  }).map((listing) => {
-    return `
-      <tr>
-        <td>
-          <strong>${escapeHtml(listing.sellerName || "-")}</strong>
-          ${listing.sellerNote ? `<div class="muted-inline">${escapeHtml(listing.sellerNote)}</div>` : ""}
-        </td>
-        <td>${escapeHtml(listing.sourceTownName || "-")}</td>
-        <td>${number(listing.unitPrice)}</td>
-        <td>${number(listing.availableCount)}</td>
-        <td><div class="actions">${renderAggregatedPurchaseButton(listing)}</div></td>
-      </tr>
-    `;
-  }).join("");
-
-  return `
-    <div class="goods-detail">
-      <div class="crumb-strip">
-        <button type="button" class="link-button" data-aggregate-detail-back>${escapeHtml(t("all_listings_back"))}</button>
-        <span>/</span>
-        <strong>${escapeHtml(commodity.displayName)}</strong>
-      </div>
-
-      <section class="goods-hero">
-        ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
-        <div class="goods-main">
-          <div class="tiny-label">${escapeHtml(t("selected_commodity"))}</div>
-          <h2>${escapeHtml(commodity.displayName)}</h2>
-          <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
-          <div class="price-line">
-            ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}
-            <span class="minor">${escapeHtml(t("lowest_sell"))}</span>
-          </div>
-          <div class="goods-stats">
-            ${metricBox(t("sell_listings"), number(commodity.totalListings))}
-            ${metricBox(t("on_sale"), number(commodity.sellUnits))}
-          </div>
-        </div>
-      </section>
-
-      <section class="goods-market">
-        ${tableSection(
-          t("all_listings_title"),
-          [
-            t("all_listings_col_seller"),
-            t("all_listings_col_town"),
-            t("all_listings_col_price"),
-            t("all_listings_col_stock"),
-            t("all_listings_col_action")
-          ],
-          rows,
-          t("all_listings_empty")
-        )}
-      </section>
-    </div>
-  `;
-}
-
 function renderAggregatedView() {
   if (!state.aggregatedLoaded) {
     return `
@@ -5506,11 +5586,26 @@ function renderAggregatedView() {
   const catalog = buildCommodityCatalog({ listings: state.aggregatedListings });
 
   if (state.aggregatedSelectedCommodityKey) {
-    const selected = findCommodityByKey(catalog, state.aggregatedSelectedCommodityKey);
-    if (selected) {
+    // 详情:用全服伪 detail 喂 buildCommodityCatalog + renderCommodityDetailPage(aggregate 模式),
+    // 复用终端的 5 个 tab / quote-panel / 图表;数据全服,购买走聚合端点。
+    const detailReady = state.aggregatedDetailLoaded
+      && state.aggregatedDetail
+      && state.aggregatedDetailKey === state.aggregatedSelectedCommodityKey;
+    if (!detailReady) {
       return `
         <section class="goods-market">
-          ${renderAggregatedCommodityDetail(selected)}
+          <div class="empty-state">${escapeHtml(t("all_listings_loading"))}</div>
+        </section>
+      `;
+    }
+    const detailCatalog = buildCommodityCatalog(state.aggregatedDetail);
+    const selected = findCommodityByKey(detailCatalog, state.aggregatedSelectedCommodityKey)
+      || findCommodityByKey(catalog, state.aggregatedSelectedCommodityKey);
+    if (selected) {
+      const canAct = !!state.session;
+      return `
+        <section class="goods-market">
+          ${renderCommodityDetailPage(selected, state.aggregatedDetail, false, canAct, { aggregate: true })}
         </section>
       `;
     }
@@ -5564,6 +5659,17 @@ function renderDetail() {
     bindDetailActions();
     if (!state.aggregatedLoaded) {
       loadAggregatedListings();
+    }
+    // 选中某商品但其全服伪 detail 未加载/已过期时按需拉取。
+    if (state.aggregatedSelectedCommodityKey
+        && !state.aggregatedDetailLoading
+        && (state.aggregatedDetailKey !== state.aggregatedSelectedCommodityKey || !state.aggregatedDetailLoaded)) {
+      loadAggregatedDetail(state.aggregatedSelectedCommodityKey);
+    }
+    // 详情已就绪时挂载图标与图表(K线/指数 tab 复用终端图表渲染,数据来自 aggregatedDetail)。
+    if (state.aggregatedSelectedCommodityKey && state.aggregatedDetailLoaded && state.aggregatedDetail) {
+      hydrateCommodityIcons();
+      hydrateLightweightChart();
     }
     return;
   }
@@ -5778,31 +5884,46 @@ function renderMyOrdersPage(detail) {
   `;
 }
 
-function renderCommodityDetailPage(commodity, detail, canManage, canAct) {
-  if (state.activeProductTab === "demand" || activeWorkspaceSection() === "demand") {
-    return renderDemandOnlyPage(commodity, canAct);
+function renderCommodityDetailPage(commodity, detail, canManage, canAct, options = null) {
+  const tab = currentProductTab(options);
+  const aggregate = !!(options && options.aggregate);
+  if (tab === "demand" || activeWorkspaceSection(tab) === "demand") {
+    return renderDemandOnlyPage(commodity, canAct, options);
   }
   const activeSeries = primaryChartSeries(commodity);
   const latestPoint = latestChartPoint(activeSeries);
   const chartStats = chartSummary(activeSeries);
-  const workspaceSection = activeWorkspaceSection();
-  const detailNav = workspaceSection === "trade"
-    ? `<div class="tab-strip">${routeButton("sell", t("selling"))}${routeButton("buy", t("buying"))}</div>`
+  const workspaceSection = activeWorkspaceSection(tab);
+  // 聚合详情:固定展示对标终端的全部 5 个 tab(浏览/在售购买/求购订单/价格K线/市场指数),全服数据。
+  const detailNav = aggregate
+    ? `<div class="tab-strip">${routeButton("browse", t("browse_tab"), options)}${routeButton("sell", t("selling"), options)}${routeButton("buy", t("buying"), options)}${routeButton("chart", t("chart_tab"), options)}${routeButton("index", t("market_index_tab"), options)}</div>`
+    : workspaceSection === "trade"
+    ? `<div class="tab-strip">${routeButton("sell", t("selling"), options)}${routeButton("buy", t("buying"), options)}</div>`
     : workspaceSection === "demand"
-      ? `<div class="tab-strip">${routeButton("demand", t("buy_order_tab"))}</div>`
+      ? `<div class="tab-strip">${routeButton("demand", t("buy_order_tab"), options)}</div>`
     : workspaceSection === "analytics"
-      ? `<div class="tab-strip">${routeButton("chart", t("chart_tab"))}${routeButton("index", t("market_index_tab"))}</div>`
-      : `<div class="tab-strip">${routeButton("browse", t("browse_tab"))}${routeButton("sell", t("selling"))}${routeButton("chart", t("chart_tab"))}</div>`;
+      ? `<div class="tab-strip">${routeButton("chart", t("chart_tab"), options)}${routeButton("index", t("market_index_tab"), options)}</div>`
+      : `<div class="tab-strip">${routeButton("browse", t("browse_tab"), options)}${routeButton("sell", t("selling"), options)}${routeButton("chart", t("chart_tab"), options)}</div>`;
 
-  return `
-    <div class="goods-detail">
+  const crumb = aggregate
+    ? `
+      <div class="crumb-strip">
+        <button type="button" class="link-button" data-aggregate-detail-back>${escapeHtml(t("all_listings_back"))}</button>
+        <span>/</span>
+        <strong>${escapeHtml(commodity.displayName)}</strong>
+      </div>`
+    : `
       <div class="crumb-strip">
         <span>${escapeHtml(t("market"))}</span>
         <span>/</span>
         <span>${escapeHtml(detail.marketName)}</span>
         <span>/</span>
         <strong>${escapeHtml(commodity.displayName)}</strong>
-      </div>
+      </div>`;
+
+  return `
+    <div class="goods-detail">
+      ${crumb}
 
       <section class="goods-hero">
         ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
@@ -5851,7 +5972,7 @@ function renderCommodityDetailPage(commodity, detail, canManage, canAct) {
 
       ${detailNav}
 
-      ${renderCommodityPage(commodity, detail, canManage, canAct)}
+      ${renderCommodityPage(commodity, detail, canManage, canAct, options)}
     </div>
   `;
 }
@@ -5887,6 +6008,10 @@ els.allListingsNav?.addEventListener("click", () => {
   state.activeProductTab = "all";
   state.aggregatedLoaded = false;
   state.aggregatedSelectedCommodityKey = "";
+  state.aggregatedDetail = null;
+  state.aggregatedDetailKey = "";
+  state.aggregatedDetailLoaded = false;
+  state.aggregatedDetailTab = "browse";
   syncRouteUrl(false);
   renderDetail();
 });
