@@ -12,7 +12,10 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadPr
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.OfflineChunkSnapshotReader;
+import com.monpai.sailboatmod.roadplanner.map.OfflineRoadMapColumnSampler;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColorizer;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapColumnSample;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColumnSampler;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapRegion;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlan;
@@ -37,18 +40,30 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Optional;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class RoadPlannerMapPreloadService {
     private static final int MAX_FORCE_CHUNKS_PER_TICK = 8;
+    // 离线 NBT 读超时(后台 worker 单 chunk 等磁盘 IO 上限);读不到=从没生成,走 force 兜底。
+    private static final long NBT_READ_TIMEOUT_MS = 2000L;
     private static final RoadMapRoutePreloadPlanner ROUTE_PLANNER = new RoadMapRoutePreloadPlanner(4096, 4, 3, 8);
     private static RoadPlannerMapPreloadService GLOBAL = new RoadPlannerMapPreloadService();
 
     private final Map<JobKey, ActiveJob> jobs = new LinkedHashMap<>();
+    // 离线 NBT 后台读 worker:chunkMap.read().get(timeout) 只能在非主线程跑(主线程跑会卡服,见 route.water 教训)。
+    private final ExecutorService nbtExecutor = Executors.newFixedThreadPool(2, runnable -> {
+        Thread thread = new Thread(runnable, "SailboatRoadMapNbt");
+        thread.setDaemon(true);
+        return thread;
+    });
     private MinecraftServer server;
 
     public static RoadPlannerMapPreloadService global() {
@@ -66,6 +81,7 @@ public final class RoadPlannerMapPreloadService {
         }
         GLOBAL.jobs.clear();
         GLOBAL.server = null;
+        GLOBAL.nbtExecutor.shutdownNow(); // 关后台 NBT worker,避免 onServerStarted 重建 GLOBAL 时旧线程池泄漏。
     }
 
     public void enqueue(ServerPlayer player, RoadPlannerMapPreloadRequestPacket packet) {
@@ -228,7 +244,9 @@ public final class RoadPlannerMapPreloadService {
     }
 
     private RoadMapSnapshot buildSnapshot(ServerLevel level, RoadPlannerTileKey key, ActiveJob active) {
-        if (!prepareCoveredChunks(level, key, active)) {
+        // 2026-06 改造:优先离线读 NBT 渲染,只对从没生成过的 chunk 走 force 兜底(见 plan / route.water 范例)。
+        // prepareTileData 投递后台 NBT 读 + 检查就绪;没全就绪返回 null,本 tick 不出图,下 tick 再来(沿用原等待机制)。
+        if (!prepareTileData(level, key, active)) {
             return null;
         }
         BlockPos center = new BlockPos(
@@ -237,53 +255,131 @@ public final class RoadPlannerMapPreloadService {
                 key.tileZ() * RoadMapTileSpec.TILE_BLOCKS + RoadMapTileSpec.TILE_BLOCKS / 2);
         RoadMapRegion region = RoadMapRegion.centeredOn(center, RoadMapTileSpec.TILE_BLOCKS, MapLod.LOD_1);
         RoadMapSnapshotService service = RoadMapSnapshotService.directExecutorForTest(new RoadMapColorizer());
-        RoadMapServerColumnSampler delegate = new RoadMapServerColumnSampler(level);
+
+        TileNbtState state = active == null ? null : active.nbtStates.get(key);
+        // 离线 sampler:命中 NBT 缓存的 chunk 走离线列样本(主线程零读盘)。
+        OfflineRoadMapColumnSampler offline = new OfflineRoadMapColumnSampler(state == null ? Map.of() : state.cache);
+        // 实时 sampler:仅用于 missing(NBT 没有→已 force 加载)的 chunk 兜底。
+        RoadMapServerColumnSampler live = new RoadMapServerColumnSampler(level);
+        Set<Long> missing = state == null ? Set.of() : state.missing;
         RoadMapColumnSampler sampler = (worldX, worldZ) -> {
             int chunkX = Math.floorDiv(worldX, 16);
             int chunkZ = Math.floorDiv(worldZ, 16);
             if (active != null && active.job != null && !active.job.coversChunk(chunkX, chunkZ)) {
                 return RoadMapServerColumnSampler.unavailableSampleForTest(worldX, worldZ);
             }
-            return delegate.sample(worldX, worldZ);
+            // missing 的 chunk(磁盘从没生成)已被 force 加载,用实时采样;其余走离线 NBT 缓存。
+            if (missing.contains(ChunkPos.asLong(chunkX, chunkZ))) {
+                return live.sample(worldX, worldZ);
+            }
+            return offline.sample(worldX, worldZ);
         };
         RoadMapSnapshot snapshot = service.buildSnapshotAsync(level.getGameTime(), region, sampler).join();
         releaseForcedTile(level, active, key);
+        if (active != null) {
+            active.nbtStates.remove(key); // 本瓦片出图完成,丢弃其 NBT 状态/缓存。
+        }
         return snapshot;
     }
 
-    private boolean prepareCoveredChunks(ServerLevel level, RoadPlannerTileKey key, ActiveJob active) {
+    /**
+     * 两段式瓦片数据准备(取代原 prepareCoveredChunks 的纯 force 逻辑):
+     * ① 首次进入:对瓦片覆盖的所有 chunk 投递<b>后台</b> NBT 读(chunkMap.read().get 只能在 worker 跑)。
+     * ② 每 tick:已加载的 chunk 直接算就绪(无需 NBT);后台读回来的填进 cache;读不到的(missing=从没生成)走 force 兜底。
+     * ③ 当所有覆盖 chunk 都"就绪"(NBT 缓存命中 / 已加载 / missing 已 force 加载完)→ 返回 true 可出图;否则 false 等下个 tick。
+     * 主线程零阻塞:只投递/检查,不在主线程 get(timeout)。
+     */
+    private boolean prepareTileData(ServerLevel level, RoadPlannerTileKey key, ActiveJob active) {
         if (level == null || key == null || active == null || active.job == null
                 || !forcesMissingChunks(active.job.purpose())) {
             return true;
         }
-        Set<Long> forcedForTile = active.forcedChunks.computeIfAbsent(key, ignored -> new LinkedHashSet<>());
+        TileNbtState state = active.nbtStates.computeIfAbsent(key, ignored -> new TileNbtState());
         int tileStartChunkX = key.tileX() * (RoadMapTileSpec.TILE_BLOCKS / 16);
         int tileStartChunkZ = key.tileZ() * (RoadMapTileSpec.TILE_BLOCKS / 16);
+        int axis = RoadMapTileSpec.TILE_BLOCKS / 16;
+
+        // ① 首次:投递所有覆盖 chunk 的后台 NBT 读(只投一次)。
+        if (!state.dispatched) {
+            state.dispatched = true;
+            for (int dz = 0; dz < axis; dz++) {
+                for (int dx = 0; dx < axis; dx++) {
+                    int chunkX = tileStartChunkX + dx;
+                    int chunkZ = tileStartChunkZ + dz;
+                    if (!active.job.coversChunk(chunkX, chunkZ)) {
+                        continue;
+                    }
+                    long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
+                    if (state.cache.containsKey(chunkKey) || state.pending.contains(chunkKey)) {
+                        continue;
+                    }
+                    state.pending.add(chunkKey);
+                    dispatchNbtRead(level, state, chunkX, chunkZ, chunkKey);
+                }
+            }
+        }
+
+        // ② + ③:检查就绪,对 missing 的 chunk force 兜底。
+        Set<Long> forcedForTile = active.forcedChunks.computeIfAbsent(key, ignored -> new LinkedHashSet<>());
         int startedThisTick = 0;
-        boolean allLoaded = true;
+        boolean allReady = true;
         BlockPos owner = forceOwnerPosition(key, level);
-        for (int dz = 0; dz < RoadMapTileSpec.TILE_BLOCKS / 16; dz++) {
-            for (int dx = 0; dx < RoadMapTileSpec.TILE_BLOCKS / 16; dx++) {
+        for (int dz = 0; dz < axis; dz++) {
+            for (int dx = 0; dx < axis; dx++) {
                 int chunkX = tileStartChunkX + dx;
                 int chunkZ = tileStartChunkZ + dz;
                 if (!active.job.coversChunk(chunkX, chunkZ)) {
                     continue;
                 }
-                if (isChunkLoaded(level, chunkX, chunkZ)) {
-                    continue;
-                }
-                allLoaded = false;
                 long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
-                if (forcedForTile.contains(chunkKey) || startedThisTick >= MAX_FORCE_CHUNKS_PER_TICK) {
+                // NBT 缓存命中 → 就绪。
+                if (state.cache.containsKey(chunkKey)) {
                     continue;
                 }
-                if (ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false)) {
-                    forcedForTile.add(chunkKey);
-                    startedThisTick++;
+                // 后台读尚未返回 → 等。
+                if (state.pending.contains(chunkKey)) {
+                    allReady = false;
+                    continue;
                 }
+                // 后台读已返回但不在 cache → 是 missing(磁盘从没生成),走 force 兜底。
+                if (state.missing.contains(chunkKey)) {
+                    if (isChunkLoaded(level, chunkX, chunkZ)) {
+                        continue; // 已 force 加载好 → 就绪(出图时走实时 sampler)。
+                    }
+                    allReady = false;
+                    if (forcedForTile.contains(chunkKey) || startedThisTick >= MAX_FORCE_CHUNKS_PER_TICK) {
+                        continue;
+                    }
+                    if (ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false)) {
+                        forcedForTile.add(chunkKey);
+                        startedThisTick++;
+                    }
+                    continue;
+                }
+                // 既不在 cache/pending/missing(理论上不该发生)→ 视为未就绪等待。
+                allReady = false;
             }
         }
-        return allLoaded;
+        return allReady;
+    }
+
+    /** 把单个 chunk 的离线 NBT 读投到后台 worker。读到→填 cache;读不到(empty/异常)→记 missing。最后移出 pending。 */
+    private void dispatchNbtRead(ServerLevel level, TileNbtState state, int chunkX, int chunkZ, long chunkKey) {
+        nbtExecutor.execute(() -> {
+            try {
+                Optional<RoadMapColumnSample[]> samples =
+                        OfflineChunkSnapshotReader.readOffThread(level, chunkX, chunkZ, NBT_READ_TIMEOUT_MS);
+                if (samples.isPresent()) {
+                    state.cache.put(chunkKey, samples.get());
+                } else {
+                    state.missing.add(chunkKey);
+                }
+            } catch (Throwable t) {
+                state.missing.add(chunkKey); // 异常也当作 missing,走 force 兜底,绝不让 worker 异常逃逸。
+            } finally {
+                state.pending.remove(chunkKey);
+            }
+        });
     }
 
     private void releaseForcedTile(ServerLevel level, ActiveJob active, RoadPlannerTileKey key) {
@@ -384,7 +480,8 @@ public final class RoadPlannerMapPreloadService {
                              String worldId,
                              String dimensionId,
                              RoadPlannerMapPreloadJob job,
-                             Map<RoadPlannerTileKey, Set<Long>> forcedChunks) {
+                             Map<RoadPlannerTileKey, Set<Long>> forcedChunks,
+                             Map<RoadPlannerTileKey, TileNbtState> nbtStates) {
         private ActiveJob(UUID playerId,
                           UUID sessionId,
                           long requestId,
@@ -392,7 +489,7 @@ public final class RoadPlannerMapPreloadService {
                           String worldId,
                           String dimensionId,
                           RoadPlannerMapPreloadJob job) {
-            this(playerId, sessionId, requestId, purpose, worldId, dimensionId, job, new LinkedHashMap<>());
+            this(playerId, sessionId, requestId, purpose, worldId, dimensionId, job, new LinkedHashMap<>(), new LinkedHashMap<>());
         }
 
         private ActiveJob {
@@ -401,6 +498,22 @@ public final class RoadPlannerMapPreloadService {
             worldId = worldId == null ? "" : worldId;
             dimensionId = dimensionId == null ? "" : dimensionId;
             forcedChunks = forcedChunks == null ? new LinkedHashMap<>() : forcedChunks;
+            nbtStates = nbtStates == null ? new LinkedHashMap<>() : nbtStates;
         }
+    }
+
+    /**
+     * 单个瓦片的离线 NBT 后台读状态。主线程只读这里的标志/缓存,后台 worker 只写 cache/pending(并发安全结构)。
+     * 生命周期:瓦片首次进入 buildSnapshot 时建,出图或释放时随 nbtStates.remove 丢弃。
+     */
+    private static final class TileNbtState {
+        // chunkKey(ChunkPos.asLong) → 该区块离线解码出的 256 列样本。后台 worker 读到后填入。
+        private final Map<Long, RoadMapColumnSample[]> cache = new ConcurrentHashMap<>();
+        // 已投递后台读、尚未返回的 chunk(防重复投递)。
+        private final Set<Long> pending = ConcurrentHashMap.newKeySet();
+        // 后台读返回 empty(磁盘没有=从没生成)的 chunk → 需走 force 兜底。
+        private final Set<Long> missing = ConcurrentHashMap.newKeySet();
+        // 是否已对本瓦片投递过后台读(只投一次,后续 tick 只等结果)。
+        private volatile boolean dispatched;
     }
 }
