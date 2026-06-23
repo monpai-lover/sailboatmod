@@ -2,11 +2,9 @@ package com.monpai.sailboatmod.market.wallet;
 
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
-import com.monpai.sailboatmod.economy.GoldStandardEconomy;
-import com.monpai.sailboatmod.registry.ModItems;
+import com.monpai.sailboatmod.economy.CurrencyStandard;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -206,18 +204,21 @@ public final class MarketWalletGoldSource {
     }
 
     private static long maxWarehouseCurrency() {
+        // 注意:紫水晶本位下最大面额仅 8(金本位 162),仓容货币上限随之缩水约 95%——
+        // 大额货币存款会被拒。这是本位面额体系的直接后果，如实反映而非静默改 STORAGE_SIZE。
         return (long) TownWarehouseBlockEntity.STORAGE_SIZE
                 * 64L
-                * GoldStandardEconomy.BALANCE_PER_GOLD_BLOCK;
+                * CurrencyStandard.current().topDenominationValue();
     }
 
     private static Denomination[] denominations() {
-        return new Denomination[]{
-                new Denomination(Items.GOLD_BLOCK, GoldStandardEconomy.BALANCE_PER_GOLD_BLOCK),
-                new Denomination(Items.GOLD_INGOT, GoldStandardEconomy.BALANCE_PER_GOLD_INGOT),
-                new Denomination(Items.GOLD_NUGGET, GoldStandardEconomy.BALANCE_PER_GOLD_NUGGET),
-                new Denomination(ModItems.HALF_NUGGET_ITEM.get(), 1)
-        };
+        // 单一数据源:跟随当前货币本位的面额表(金本位 or 紫水晶本位),与玩家背包侧 GoldStandardEconomy 一致。
+        List<CurrencyStandard.Denomination> standard = CurrencyStandard.current().denominations();
+        Denomination[] result = new Denomination[standard.size()];
+        for (int i = 0; i < standard.size(); i++) {
+            result[i] = new Denomination(standard.get(i).item(), standard.get(i).unitValue());
+        }
+        return result;
     }
 
     private record Denomination(Item item, int unitValue) {

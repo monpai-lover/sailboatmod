@@ -1487,6 +1487,7 @@
     "screen.sailboatmod.nation.core.removing":  "Removing nation core...",
     "command.sailboatmod.nation.structure.overlap_existing":  "This build area overlaps an existing structure: %s at %s, %s, %s."
     ,"item.sailboatmod.half_nugget":  "Half Gold Nugget"
+    ,"item.sailboatmod.half_amethyst":  "Half Amethyst"
     ,"screen.sailboatmod.market.catalog.filter.plant":  "Plant"
     ,"screen.sailboatmod.market.catalog.filter.crop":  "Crop"
     ,"screen.sailboatmod.market.catalog.filter.material":  "Material"

@@ -131,6 +131,12 @@ public final class ModItems {
             () -> new Item(new Item.Properties().stacksTo(64))
     );
 
+    /** 紫水晶本位的半单位货币(值 1):2 个合成 1 个原版紫水晶(amethyst_shard,值 2)。照搬 half_nugget。 */
+    public static final RegistryObject<Item> HALF_AMETHYST_ITEM = ITEMS.register(
+            "half_amethyst",
+            () -> new Item(new Item.Properties().stacksTo(64))
+    );
+
     public static final RegistryObject<Item> CARRIAGE_ITEM = ITEMS.register(
             "carriage",
             () -> new CarriageItem(new Item.Properties().stacksTo(1))

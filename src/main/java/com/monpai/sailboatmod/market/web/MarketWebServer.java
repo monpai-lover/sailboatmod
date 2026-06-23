@@ -138,6 +138,7 @@ public final class MarketWebServer {
         createContext("/api/session/me", this::handleSessionMe);
         createContext("/api/debug/version", this::handleDebugVersion);
         createContext("/api/markets", this::handleMarkets);
+        createContext("/api/listings", this::handleAggregatedListings);
         createContext("/api/map/snapshot", this::handleMapSnapshot);
         createContext("/api/map/markets", this::handleMapMarkets);
         createContext("/api/map/territories", this::handleMapTerritories);
@@ -388,6 +389,54 @@ public final class MarketWebServer {
             }
             JsonObject detail = callOnServerThread(() -> service.marketDetail(minecraftServer, identity, marketId));
             writeJson(exchange, 200, detail == null ? success() : detail);
+            return;
+        }
+        writeJson(exchange, 404, error("not_found", "Endpoint not found"));
+    }
+
+    /**
+     * 聚合视图端点:
+     * GET  /api/listings                      → 全服所有挂单 + 来源标注 + 对查看者的可购买性(访客可读)。
+     * POST /api/listings/{listingId}/purchase → 按全局 listingId 购买,可见性按买家城镇,货送买家城镇仓库(需登录)。
+     *   body: { executorMarketId, quantity, fulfillment, targetWarehouse }
+     */
+    private void handleAggregatedListings(HttpExchange exchange) throws IOException {
+        List<String> path = pathParts(exchange.getRequestURI().getPath());
+        if (path.size() == 2) {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+                return;
+            }
+            MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
+            JsonObject out = callOnServerThread(() -> service.aggregatedListings(minecraftServer, identity));
+            writeJson(exchange, 200, out == null ? error("listings_unavailable", "Listings unavailable") : out);
+            return;
+        }
+        if (path.size() == 4 && "purchase".equals(path.get(3))) {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+                return;
+            }
+            MarketPlayerIdentity identity = requireIdentity(exchange);
+            if (identity == null) {
+                return;
+            }
+            String listingId = path.get(2);
+            JsonObject body = readBody(exchange);
+            boolean ok = callOnServerThread(() -> service.purchaseAggregated(
+                    minecraftServer,
+                    identity,
+                    stringValue(body, "executorMarketId", ""),
+                    listingId,
+                    intValue(body, "quantity", 1),
+                    stringValue(body, "fulfillment", "SELLER_SHIP"),
+                    parseWarehousePos(stringValue(body, "targetWarehouse", ""))
+            ));
+            if (!ok) {
+                writeJson(exchange, 400, error("action_failed", "Action failed"));
+                return;
+            }
+            writeJson(exchange, 200, success());
             return;
         }
         writeJson(exchange, 404, error("not_found", "Endpoint not found"));

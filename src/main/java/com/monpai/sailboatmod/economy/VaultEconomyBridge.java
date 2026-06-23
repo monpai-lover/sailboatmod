@@ -22,6 +22,14 @@ public final class VaultEconomyBridge {
     private VaultEconomyBridge() {
     }
 
+    /**
+     * 是否存在可用的 Vault 经济 provider。供货币本位判定用("无 Vault" 是紫水晶本位的前提之一)。
+     * 复用 {@link #resolveEconomyProvider()} 的内部重试节流缓存,不额外触发反射风暴。
+     */
+    public static boolean hasProvider() {
+        return resolveEconomyProvider() != null;
+    }
+
     @Nullable
     public static Boolean tryWithdraw(Player player, int amount) {
         if (player == null || amount <= 0) {

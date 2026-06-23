@@ -3,7 +3,6 @@ package com.monpai.sailboatmod.economy;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Locale;
@@ -15,13 +14,15 @@ public final class GoldStandardEconomy {
     public static final int BALANCE_PER_GOLD_BLOCK = BALANCE_PER_GOLD_INGOT * 9;
     public static final String LEDGER_CURRENCY = "GOLD_STANDARD";
 
-    /** Returns the market currency value of a gold item stack, or 0 if not a gold item. */
+    /**
+     * Returns the market currency value of a currency item stack under the <b>current standard</b>, or 0 if not a
+     * currency item of the active standard. 货币作硬通货，双向换算统一用固定面额率，杜绝"高估值存、固定率取"的套利。
+     * 注意:语义随本位变化——金本位下只认金物品，紫水晶本位下只认紫水晶物品(金返回 0)。
+     */
     public static long goldItemMarketValue(net.minecraft.world.item.ItemStack stack) {
         if (stack == null || stack.isEmpty()) return 0;
-        if (!stack.is(Items.GOLD_INGOT) && !stack.is(Items.GOLD_BLOCK) && !stack.is(Items.GOLD_NUGGET)) return 0;
-        // 金作硬通货，双向换算统一用固定率，杜绝"高估值存、固定率取"的套利刷金。
-        int unitValue = stack.is(Items.GOLD_BLOCK) ? BALANCE_PER_GOLD_BLOCK
-                : stack.is(Items.GOLD_INGOT) ? BALANCE_PER_GOLD_INGOT : BALANCE_PER_GOLD_NUGGET;
+        int unitValue = CurrencyStandard.current().unitValueOf(stack);
+        if (unitValue <= 0) return 0;
         return (long) unitValue * stack.getCount();
     }
 
@@ -49,9 +50,12 @@ public final class GoldStandardEconomy {
             return Boolean.TRUE;
         }
         int safeAmount = saturatingInt(amount);
-        Boolean vaultResult = VaultEconomyBridge.tryWithdraw(player, safeAmount);
-        if (vaultResult != null) {
-            return vaultResult;
+        // 紫水晶本位的前提就是"无 Vault",直接走物理物品路径,不碰 Vault(避免本位判定与 VaultBridge 结果矛盾)。
+        if (CurrencyStandard.current() != CurrencyStandard.AMETHYST) {
+            Boolean vaultResult = VaultEconomyBridge.tryWithdraw(player, safeAmount);
+            if (vaultResult != null) {
+                return vaultResult;
+            }
         }
         return withdrawPhysicalGold(player, safeAmount);
     }
@@ -70,9 +74,12 @@ public final class GoldStandardEconomy {
             return Boolean.TRUE;
         }
         int safeAmount = saturatingInt(amount);
-        Boolean vaultResult = VaultEconomyBridge.tryDeposit(player, safeAmount);
-        if (vaultResult != null && vaultResult) {
-            return Boolean.TRUE;
+        // 紫水晶本位无 Vault，直接给物理物品。
+        if (CurrencyStandard.current() != CurrencyStandard.AMETHYST) {
+            Boolean vaultResult = VaultEconomyBridge.tryDeposit(player, safeAmount);
+            if (vaultResult != null && vaultResult) {
+                return Boolean.TRUE;
+            }
         }
         givePhysicalGold(player, safeAmount);
         return Boolean.TRUE;
@@ -90,9 +97,12 @@ public final class GoldStandardEconomy {
         if (player == null) {
             return 0L;
         }
-        long vault = getBalanceByIdentity(player.getUUID(), player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName());
-        if (vault > 0L) {
-            return vault;
+        // 紫水晶本位无 Vault，余额即背包内当前本位货币物品折算。
+        if (CurrencyStandard.current() != CurrencyStandard.AMETHYST) {
+            long vault = getBalanceByIdentity(player.getUUID(), player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName());
+            if (vault > 0L) {
+                return vault;
+            }
         }
         return countPhysicalGoldBalance(player.getInventory());
     }
@@ -130,14 +140,9 @@ public final class GoldStandardEconomy {
 
     private static void givePhysicalGold(Player player, int amount) {
         int remaining = Math.max(0, amount);
-        remaining = giveCurrencyStacks(player, Items.GOLD_BLOCK, BALANCE_PER_GOLD_BLOCK, remaining);
-        remaining = giveCurrencyStacks(player, Items.GOLD_INGOT, BALANCE_PER_GOLD_INGOT, remaining);
-        remaining = giveCurrencyStacks(player, Items.GOLD_NUGGET, BALANCE_PER_GOLD_NUGGET, remaining);
-        // Give half-nuggets for odd remainder (value=1 each)
-        if (remaining > 0) {
-            ItemStack halfNugget = new ItemStack(com.monpai.sailboatmod.registry.ModItems.HALF_NUGGET_ITEM.get(), remaining);
-            boolean added = player.getInventory().add(halfNugget);
-            if (!added || !halfNugget.isEmpty()) player.drop(halfNugget, false);
+        // 按当前本位面额表降序给币(大面额在前)。末位面额值为 1，会吃掉所有奇数余额，无需硬编码半币尾巴。
+        for (CurrencyStandard.Denomination denomination : CurrencyStandard.current().denominations()) {
+            remaining = giveCurrencyStacks(player, denomination.item(), denomination.unitValue(), remaining);
         }
         player.getInventory().setChanged();
         player.containerMenu.broadcastChanges();
@@ -173,22 +178,8 @@ public final class GoldStandardEconomy {
     }
 
     private static int balanceValue(ItemStack stack) {
-        if (stack == null || stack.isEmpty()) {
-            return 0;
-        }
-        if (stack.is(Items.GOLD_BLOCK)) {
-            return BALANCE_PER_GOLD_BLOCK;
-        }
-        if (stack.is(Items.GOLD_INGOT)) {
-            return BALANCE_PER_GOLD_INGOT;
-        }
-        if (stack.is(Items.GOLD_NUGGET)) {
-            return BALANCE_PER_GOLD_NUGGET;
-        }
-        if (stack.is(com.monpai.sailboatmod.registry.ModItems.HALF_NUGGET_ITEM.get())) {
-            return 1;
-        }
-        return 0;
+        // 查当前本位面额表;非本本位货币物品返回 0(紫水晶本位下金不被当钱)。
+        return CurrencyStandard.current().unitValueOf(stack);
     }
 
     private static int saturatingInt(long amount) {

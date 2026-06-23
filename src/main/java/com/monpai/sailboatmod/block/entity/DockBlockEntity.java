@@ -105,6 +105,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 com.monpai.sailboatmod.dock.DockLocationSavedData.get(level)
                         .register(level.dimension().location().toString(), worldPosition.asLong());
             }
+            refreshTerminalNetworkEntry();
             syncFacilityMarkers();
         }
     }
@@ -113,6 +114,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public void setChanged() {
         super.setChanged();
         if (level != null && !level.isClientSide) {
+            refreshTerminalNetworkEntry();
             syncFacilityMarkers();
         }
     }
@@ -121,8 +123,49 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public void setRemoved() {
         if (level != null && !level.isClientSide) {
             unregisterFacility(level, worldPosition);
+            com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
+                    .removeEntry(level.dimension().location().toString(), worldPosition.asLong());
         }
         super.setRemoved();
+    }
+
+    /**
+     * 把本终端(港口/驿站)的连通快照刷进 {@link com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData}:
+     * 名称/城镇/路线终点名实时提取;<b>reachableTownIds 保留已存值</b>(onLoad/setChanged 不知陆路可达,那是
+     * RoadAutoRouteService 建航线时算的,这里不能清掉)。putEntry 内部 equals 短路,setChanged 每 tick 调也不反复写盘。
+     */
+    protected void refreshTerminalNetworkEntry() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        String dimId = level.dimension().location().toString();
+        com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData net =
+                com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level);
+        com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind kind =
+                this instanceof PostStationBlockEntity
+                        ? com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.POST_STATION
+                        : com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.PORT;
+        java.util.List<String> endDockNames = new java.util.ArrayList<>();
+        for (RouteDefinition route : getRoutesForMap()) {
+            String endDockName = route.endDockName();
+            if (endDockName != null && !endDockName.isBlank()) {
+                endDockNames.add(endDockName);
+            }
+        }
+        com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.TerminalEntry existing =
+                net.getEntry(dimId, worldPosition.asLong());
+        java.util.Set<String> reachable = existing == null
+                ? java.util.Set.of()
+                : existing.reachableTownIds();
+        net.putEntry(new com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.TerminalEntry(
+                dimId,
+                worldPosition.asLong(),
+                kind,
+                getDockName(),
+                getTownId(),
+                getNationId(),
+                endDockNames,
+                reachable));
     }
 
     protected void registerFacility(Level level, BlockPos pos) {

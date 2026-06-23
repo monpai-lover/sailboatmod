@@ -679,6 +679,25 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return purchaseListingResolved(playerUuid, playerName, onlinePlayer, listing, quantity, fulfillment, targetWarehousePos);
     }
 
+    /**
+     * web 聚合视图购买:按全局 listingId 购买,可见性按<b>买家所属城镇</b>(viewerTownId)判定而非 this 市场,
+     * 货送到买家所属城镇的收货仓(由 buyerUuid 解析)。任意一个已加载市场方块都可承载本调用(扣款按买家钱包、
+     * 收货按买家城镇,与 this 市场无关;this 仅用于走通购买管线)。
+     */
+    public boolean purchaseAggregatedById(String buyerUuid, String buyerName, @Nullable Player onlinePlayer,
+                                          String listingId, int quantity, String viewerTownId,
+                                          String fulfillment, @Nullable BlockPos targetWarehousePos) {
+        if (level == null || level.isClientSide) {
+            return false;
+        }
+        MarketSavedData market = MarketSavedData.get(level);
+        MarketListing listing = market.getListing(listingId);
+        if (listing == null) {
+            return false;
+        }
+        return purchaseListingResolved(buyerUuid, buyerName, onlinePlayer, listing, quantity, fulfillment, targetWarehousePos, viewerTownId);
+    }
+
     /** 买家当前所属 town 内、其可写入的收货仓坐标列表（默认仓首位）。供下单回退与下拉同源。 */
     public java.util.List<BlockPos> receivingWarehouseCandidatesFor(String buyerUuid) {
         java.util.List<BlockPos> out = new java.util.ArrayList<>();
@@ -757,6 +776,17 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private boolean purchaseListingResolved(String playerUuid, String playerName, @Nullable Player onlinePlayer,
                                             MarketListing listing, int quantity,
                                             String fulfillment, @Nullable BlockPos targetWarehousePos) {
+        return purchaseListingResolved(playerUuid, playerName, onlinePlayer, listing, quantity, fulfillment, targetWarehousePos, null);
+    }
+
+    /**
+     * @param viewerTownIdOverride 非空时用它(买家所属城镇)判可见性,供 web 聚合购买——买家不站在某个市场前,
+     *                             可见性应按买家城镇而非 this 市场关联仓库城镇判定。为 null 时走原 canViewerReachListing。
+     */
+    private boolean purchaseListingResolved(String playerUuid, String playerName, @Nullable Player onlinePlayer,
+                                            MarketListing listing, int quantity,
+                                            String fulfillment, @Nullable BlockPos targetWarehousePos,
+                                            @Nullable String viewerTownIdOverride) {
         TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
         String safePlayerName = playerName == null ? "" : playerName.trim();
@@ -766,7 +796,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (safePlayerUuid.equals(listing.sellerUuid())) {
             return false;
         }
-        if (!canViewerReachListing(safePlayerUuid, listing)) {
+        boolean reachable = viewerTownIdOverride != null && !viewerTownIdOverride.isBlank()
+                ? isListingVisibleToTown(viewerTownIdOverride, listing)
+                : canViewerReachListing(safePlayerUuid, listing);
+        if (!reachable) {
             return false;
         }
         int amount = Math.max(1, Math.min(quantity, listing.availableCount()));
@@ -1928,50 +1961,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (level == null || viewerTownId == null || viewerTownId.isBlank() || listing == null) {
             return false;
         }
+        // sourceTownId 来自 listing(已持久,declaredTownId 非空时 DockTownResolver 短路不触方块)。
         String sourceTownId = DockTownResolver.resolveTownForSource(level, listing.sourceDockPos(), listing.townId());
         if (sourceTownId == null || sourceTownId.isBlank()) {
             return false;
         }
-        if (viewerTownId.equals(sourceTownId)) {
-            return true;
-        }
-        return hasPortRoute(sourceTownId, viewerTownId) || hasLandRoute(sourceTownId, viewerTownId);
-    }
-
-    private boolean hasPortRoute(String sourceTownId, String targetTownId) {
-        List<DockBlockEntity> sourcePorts = terminalsForTown(sourceTownId, TransportTerminalKind.PORT);
-        List<DockBlockEntity> targetPorts = terminalsForTown(targetTownId, TransportTerminalKind.PORT);
-        for (DockBlockEntity source : sourcePorts) {
-            for (DockBlockEntity target : targetPorts) {
-                if (source.findRouteIndexByDestinationDock(target.getBlockPos(), target.getDockName()) >= 0) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean hasLandRoute(String sourceTownId, String targetTownId) {
-        if (!(level instanceof ServerLevel serverLevel)) {
-            return false;
-        }
-        LandTransportNetworkService service = new LandTransportNetworkService();
-        List<DockBlockEntity> sourceStations = terminalsForTown(sourceTownId, TransportTerminalKind.POST_STATION);
-        for (DockBlockEntity source : sourceStations) {
-            if (!(source instanceof PostStationBlockEntity station)) {
-                continue;
-            }
-            LandTransportNetworkService.RouteAvailability availability = service.planRouteToTown(
-                    serverLevel,
-                    service.stationRef(level, station),
-                    targetTownId,
-                    ALLOW_TERRAIN_FALLBACK_FOR_POST_STATION_DISPATCH
-            );
-            if (availability.reachable()) {
-                return true;
-            }
-        }
-        return false;
+        // 委托唯一判定实现:纯读持久连通网络,脱离区块加载/实时寻路(修复"有航路也看不到")。
+        com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData net =
+                com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level);
+        return com.monpai.sailboatmod.market.terminal.TerminalVisibility.isVisible(net, sourceTownId, viewerTownId);
     }
 
     @Nullable

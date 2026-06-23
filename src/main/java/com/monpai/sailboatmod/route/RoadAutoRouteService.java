@@ -137,6 +137,16 @@ public final class RoadAutoRouteService {
         List<RouteDefinition> routes = new ArrayList<>(startDock.getRoutesForMap());
         routes.add(route);
         startDock.setRoutes(routes, routes.size() - 1);
+
+        // 决策:陆路可达"建航线时算一次存起来"。把"起点驿站→终点城镇可达"写进持久连通网络,
+        // 供市场可见性判定(TerminalVisibility)脱离实时寻路。双向由判定侧处理,这里只记单向。
+        String endTownId = com.monpai.sailboatmod.nation.service.DockTownResolver
+                .resolveTownForArrival(level, endDock.getBlockPos(), endDock.getTownId());
+        if (endTownId != null && !endTownId.isBlank()) {
+            String dimId = level.dimension().location().toString();
+            com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
+                    .addReachableTown(dimId, startDock.getBlockPos().asLong(), endTownId);
+        }
         return true;
     }
 

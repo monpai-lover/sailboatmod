@@ -492,6 +492,15 @@ code {
     gap: 6px;
 }
 
+.all-listings-nav {
+    width: 100%;
+    text-align: center;
+}
+
+.all-listings-nav.active {
+    background: var(--accent-strong);
+}
+
 .dashboard-grid {
     margin-top: 18px;
     display: grid;

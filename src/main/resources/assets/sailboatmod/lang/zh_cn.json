@@ -1484,6 +1484,7 @@
     "screen.sailboatmod.nation.core.removing": "正在拆除国家核心...",
     "command.sailboatmod.nation.structure.overlap_existing": "这个建造区域与现有建筑重叠：%s 位于 %s, %s, %s。",
     "item.sailboatmod.half_nugget": "半粒金粒",
+    "item.sailboatmod.half_amethyst": "半块紫水晶",
     "screen.sailboatmod.market.catalog.filter.plant": "植物",
     "screen.sailboatmod.market.catalog.filter.crop": "作物",
     "screen.sailboatmod.market.catalog.filter.material": "材料",

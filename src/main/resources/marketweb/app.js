@@ -37,6 +37,11 @@
   catalogExpandedGroup: "all",
   catalogHoverGroup: "all",
   detail: null,
+  aggregatedListings: [],
+  aggregatedLoaded: false,
+  aggregatedAuthenticated: false,
+  aggregatedViewerTownId: "",
+  aggregatedQuery: "",
   selectedDispatchOrderIndex: 0,
   selectedDispatchTerminal: localStorage.getItem("marketWebDispatchTerminal") || "PORT",
   settings: {
@@ -81,7 +86,7 @@ const commodityIconBatchRequests = new Map();
 const COMMODITY_ICON_BATCH_SIZE = 24;
 let buyOrderResolveTimer = 0;
 let buyOrderResolveSequence = 0;
-const PAGE_ROUTES = new Set(["browse", "inventory", "sell", "buy", "demand", "chart", "index", "map", "my_orders"]);
+const PAGE_ROUTES = new Set(["browse", "inventory", "sell", "buy", "demand", "chart", "index", "map", "my_orders", "all"]);
 const BROWSE_ORDER_VIEWS = new Set(["purchase", "demand"]);
 const CATALOG_SORT_MODES = new Set(["name", "price", "time", "quantity"]);
 const CATALOG_CATEGORY_ORDER = ["wood", "luxury", "food", "fishery", "livestock", "ore", "gems", "metal", "tools", "spices", "plant", "crop", "textile", "material", "construction", "building", "decoration", "furniture", "lighting", "flooring", "landscaping", "machinery", "mob_drop", "alchemy", "magic", "nether", "end", "treasure", "redstone", "utility", "weapon", "armor", "other"];
@@ -179,6 +184,7 @@ const els = {
   marketNetworkKicker: document.querySelector("#market-network-kicker"),
   browseMarketsTitle: document.querySelector("#browse-markets-title"),
   refreshMarkets: document.querySelector("#refresh-markets"),
+  allListingsNav: document.querySelector("#all-listings-nav"),
   marketSearchLabel: document.querySelector("#market-search-label"),
   marketSearch: document.querySelector("#market-search"),
   marketSidebarHint: document.querySelector("#market-sidebar-hint"),
@@ -1096,6 +1102,56 @@ Object.assign(I18N["zh-CN"], {
   order_status_cancelled: "已取消"
 });
 
+Object.assign(I18N["en-US"], {
+  all_listings_tab: "All Goods",
+  all_listings_nav_hint: "Browse every listing across all markets.",
+  all_listings_title: "All Goods Across Markets",
+  all_listings_kicker: "Server Marketplace",
+  all_listings_hint: "Every listing on the server, with its source town. Buy items reachable by road or sea route.",
+  all_listings_search_placeholder: "Search by item name",
+  all_listings_count: "{count} listings",
+  all_listings_empty: "No listings are available right now.",
+  all_listings_col_item: "Item",
+  all_listings_col_town: "Source Town",
+  all_listings_col_seller: "Seller",
+  all_listings_col_price: "Unit Price",
+  all_listings_col_stock: "Stock",
+  all_listings_col_action: "Action",
+  all_listings_buy: "Buy",
+  all_listings_loading: "Loading listings...",
+  all_listings_purchased: "Purchase submitted.",
+  reason_not_logged_in: "Sign in to purchase.",
+  reason_no_town: "You do not belong to any town.",
+  reason_own_listing: "This is your own listing.",
+  reason_no_route: "No road or sea route connects you to this town.",
+  reason_no_market_selected: "Open a market first to use it as the purchase carrier."
+});
+
+Object.assign(I18N["zh-CN"], {
+  all_listings_tab: "全部商品",
+  all_listings_nav_hint: "浏览全服所有市场的在售商品。",
+  all_listings_title: "全服商品总览",
+  all_listings_kicker: "全服市场",
+  all_listings_hint: "全服所有在售商品及其来源城镇。可通过道路或航路连通的商品即可购买。",
+  all_listings_search_placeholder: "按商品名搜索",
+  all_listings_count: "{count} 件挂单",
+  all_listings_empty: "当前没有任何在售商品。",
+  all_listings_col_item: "商品",
+  all_listings_col_town: "来源城镇",
+  all_listings_col_seller: "卖家",
+  all_listings_col_price: "单价",
+  all_listings_col_stock: "库存",
+  all_listings_col_action: "操作",
+  all_listings_buy: "购买",
+  all_listings_loading: "正在加载商品...",
+  all_listings_purchased: "已提交购买。",
+  reason_not_logged_in: "请先登录后再购买。",
+  reason_no_town: "你不属于任何城镇。",
+  reason_own_listing: "这是你自己的挂单。",
+  reason_no_route: "无道路或航路连接,无法购买。",
+  reason_no_market_selected: "请先打开一个市场作为购买管线载体。"
+});
+
 function t(key, vars = {}) {
   const locale = I18N[state.locale] || I18N["en-US"];
   let text = locale[key] || I18N["en-US"][key] || key;
@@ -1148,6 +1204,7 @@ function updateStaticCopy() {
   setNodeText(els.marketNetworkKicker, t("market_network"));
   setNodeText(els.browseMarketsTitle, t("browse_markets"));
   setNodeText(els.refreshMarkets, t("refresh"));
+  setNodeText(els.allListingsNav, t("all_listings_tab"));
   setNodeText(els.marketSearchLabel, t("market_search_label"));
   setNodeText(els.marketSidebarHint, t("market_sidebar_hint"));
   setNodePlaceholder(els.chatCapture, t("paste_chat_placeholder"));
@@ -1450,6 +1507,44 @@ async function postMarketAction(suffix, payload = {}) {
   }
 }
 
+async function loadAggregatedListings() {
+  try {
+    const data = await api("/api/listings");
+    state.aggregatedListings = Array.isArray(data.listings) ? data.listings : [];
+    state.aggregatedAuthenticated = !!data.authenticated;
+    state.aggregatedViewerTownId = String(data.viewerTownId || "");
+    state.aggregatedLoaded = true;
+    renderDetail();
+  } catch (error) {
+    state.aggregatedLoaded = true;
+    setStatus(error.message, true);
+  }
+}
+
+async function postAggregatedPurchase(listingId, payload = {}) {
+  if (!state.session) {
+    setStatus(t("sign_in_to_trade"), true);
+    return;
+  }
+  if (!state.selectedMarketId) {
+    setStatus(t("reason_no_market_selected"), true);
+    return;
+  }
+  if (!listingId) {
+    return;
+  }
+  try {
+    await api(`/api/listings/${listingId}/purchase`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    setStatus(t("all_listings_purchased"));
+    await loadAggregatedListings();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
 function renderPurchaseModalInner(options, canReceive, fulfillment, targetWarehouse, modes) {
   const row = (mode, key, reachable) => {
     const disabled = mode === "REAL_PICKUP" ? !reachable : !(canReceive && reachable);
@@ -1655,7 +1750,7 @@ function bindDetailActions() {
     });
   });
 
-  document.querySelectorAll("[data-route]").forEach((node) => {
+  (els.marketDetail || document).querySelectorAll("[data-route]").forEach((node) => {
     node.addEventListener("click", () => {
       const nextRoute = normalizePageRoute(node.getAttribute("data-route") || "browse");
       if (nextRoute === "inventory" && state.activeProductTab !== "inventory") {
@@ -1824,6 +1919,32 @@ function bindDetailActions() {
   document.querySelectorAll("[data-purchase-index]").forEach((node) => {
     node.addEventListener("click", () => openPurchaseModal(
       Number(node.getAttribute("data-purchase-index") || "-1")
+    ));
+  });
+
+  const aggregatedSearch = document.querySelector("#aggregated-search");
+  if (aggregatedSearch) {
+    aggregatedSearch.addEventListener("input", (event) => {
+      const value = event.target.value || "";
+      state.aggregatedQuery = value;
+      renderDetailPreservingScroll();
+      const nextSearch = document.querySelector("#aggregated-search");
+      if (nextSearch) {
+        nextSearch.focus({ preventScroll: true });
+        nextSearch.setSelectionRange(value.length, value.length);
+      }
+    });
+  }
+
+  document.querySelectorAll("[data-aggregate-purchase]").forEach((node) => {
+    node.addEventListener("click", () => postAggregatedPurchase(
+      node.getAttribute("data-aggregate-purchase") || "",
+      {
+        executorMarketId: state.selectedMarketId,
+        quantity: 1,
+        fulfillment: "SELLER_SHIP",
+        targetWarehouse: ""
+      }
     ));
   });
 
@@ -5063,7 +5184,118 @@ function mountMarketMapIfNeeded() {
   }
 }
 
+function aggregatedPurchaseReasonText(reason) {
+  switch (String(reason || "")) {
+    case "not_logged_in":
+      return t("reason_not_logged_in");
+    case "no_town":
+      return t("reason_no_town");
+    case "own_listing":
+      return t("reason_own_listing");
+    case "no_route":
+      return t("reason_no_route");
+    default:
+      return "";
+  }
+}
+
+function filteredAggregatedListings() {
+  const query = String(state.aggregatedQuery || "").trim().toLowerCase();
+  if (!query) {
+    return state.aggregatedListings;
+  }
+  return state.aggregatedListings.filter((listing) => {
+    const haystack = [
+      listing.itemName,
+      listing.commodityKey,
+      listing.sourceTownName,
+      listing.sellerName,
+      listing.sourceDockName
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function renderAggregatedView() {
+  const listings = filteredAggregatedListings();
+  const head = `
+    <section class="market-overview">
+      <div class="market-header-card">
+        <div class="detail-header">
+          <div class="overview-title">
+            <p class="section-kicker">${escapeHtml(t("all_listings_kicker"))}</p>
+            <h2>${escapeHtml(t("all_listings_title"))}</h2>
+            <div class="overview-subtitle">${escapeHtml(t("all_listings_hint"))}</div>
+          </div>
+          <div class="market-meta">
+            <span class="pill">${escapeHtml(t("all_listings_count", { count: number(state.aggregatedListings.length) }))}</span>
+          </div>
+        </div>
+        <label class="market-search-field" for="aggregated-search">
+          <span class="hero-chip-label">${escapeHtml(t("all_listings_col_item"))}</span>
+          <input id="aggregated-search" type="search" value="${escapeHtml(state.aggregatedQuery || "")}" placeholder="${escapeHtml(t("all_listings_search_placeholder"))}">
+        </label>
+      </div>
+    </section>
+  `;
+
+  if (!state.aggregatedLoaded) {
+    return `
+      <section class="goods-market">
+        ${head}
+        <div class="empty-state">${escapeHtml(t("all_listings_loading"))}</div>
+      </section>
+    `;
+  }
+
+  const rows = listings.map((listing) => {
+    const listingId = String(listing.listingId || "");
+    const purchasable = !!listing.purchasable && !!state.selectedMarketId;
+    const reason = !state.selectedMarketId && listing.purchasable
+      ? t("reason_no_market_selected")
+      : aggregatedPurchaseReasonText(listing.purchaseReason);
+    const button = purchasable
+      ? `<button type="button" data-aggregate-purchase="${escapeHtml(listingId)}">${escapeHtml(t("all_listings_buy"))}</button>`
+      : `<button type="button" class="danger" disabled title="${escapeHtml(reason)}">${escapeHtml(t("all_listings_buy"))}</button>`;
+    return `
+      <tr>
+        <td><strong>${escapeHtml(listing.itemName || listing.commodityKey || "-")}</strong></td>
+        <td>${escapeHtml(listing.sourceTownName || "-")}</td>
+        <td>
+          <strong>${escapeHtml(listing.sellerName || "-")}</strong>
+          ${listing.sellerNote ? `<div class="muted-inline">${escapeHtml(listing.sellerNote)}</div>` : ""}
+        </td>
+        <td>${number(listing.unitPrice)}</td>
+        <td>${number(listing.availableCount)}</td>
+        <td><div class="actions">${button}</div></td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    ${head}
+    <section class="goods-market">
+      ${tableSection(
+        t("all_listings_title"),
+        [
+          t("all_listings_col_item"),
+          t("all_listings_col_town"),
+          t("all_listings_col_seller"),
+          t("all_listings_col_price"),
+          t("all_listings_col_stock"),
+          t("all_listings_col_action")
+        ],
+        rows,
+        t("all_listings_empty")
+      )}
+    </section>
+  `;
+}
+
 function renderDetail() {
+  if (els.allListingsNav) {
+    els.allListingsNav.classList.toggle("active", state.activeProductTab === "all");
+  }
   const bars = [];
   if (state.status) {
     bars.push(`<div class="status-bar" aria-live="polite">${escapeHtml(state.status)}</div>`);
@@ -5085,6 +5317,16 @@ function renderDetail() {
       </div>
     </div>
   `;
+
+  if (state.activeProductTab === "all") {
+    renderTopbarWallet();
+    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${renderAggregatedView()}</div>`;
+    bindDetailActions();
+    if (!state.aggregatedLoaded) {
+      loadAggregatedListings();
+    }
+    return;
+  }
 
   if (!state.detail) {
     renderTopbarWallet();
@@ -5392,6 +5634,12 @@ els.refreshMarkets.addEventListener("click", async () => {
   } catch (error) {
     setStatus(error.message, true);
   }
+});
+els.allListingsNav?.addEventListener("click", () => {
+  state.activeProductTab = "all";
+  state.aggregatedLoaded = false;
+  syncRouteUrl(false);
+  renderDetail();
 });
 els.localeSelect?.addEventListener("change", (event) => {
   state.locale = event.target.value || "zh-CN";

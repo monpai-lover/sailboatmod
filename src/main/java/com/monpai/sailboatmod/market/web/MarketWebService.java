@@ -256,6 +256,133 @@ public final class MarketWebService {
         return root;
     }
 
+    /**
+     * 聚合视图:列出<b>全服</b>所有活跃挂单(脱离区块——getListings 是 overworld 根级全服表),每条标注来源城镇,
+     * 并对当前查看者算 purchasable(连通性,委托 {@link com.monpai.sailboatmod.market.terminal.TerminalVisibility})+ 不可购买原因。
+     */
+    public JsonObject aggregatedListings(MinecraftServer server, MarketPlayerIdentity identity) {
+        JsonObject root = new JsonObject();
+        JsonArray out = new JsonArray();
+        if (server == null) {
+            root.add("listings", out);
+            return root;
+        }
+        ServerLevel overworld = server.overworld();
+        MarketSavedData market = MarketSavedData.get(overworld);
+        com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData net =
+                com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(overworld);
+        com.monpai.sailboatmod.nation.data.NationSavedData nations =
+                com.monpai.sailboatmod.nation.data.NationSavedData.get(overworld);
+
+        boolean authenticated = identity != null && identity.playerUuid() != null;
+        String viewerTownId = authenticated ? resolveViewerTownId(server, identity) : "";
+        root.addProperty("viewerTownId", viewerTownId);
+        root.addProperty("authenticated", authenticated);
+
+        List<MarketListing> listings = new ArrayList<>(market.getListings());
+        listings.sort(Comparator.comparing(l -> l.itemStack() == null ? "" : l.itemStack().getHoverName().getString(),
+                String.CASE_INSENSITIVE_ORDER));
+        for (MarketListing listing : listings) {
+            if (listing == null || listing.itemStack() == null || listing.itemStack().isEmpty()) {
+                continue;
+            }
+            String sourceTownId = listing.townId() == null ? "" : listing.townId();
+            String sourceTownName = townNameOf(nations, sourceTownId);
+
+            // 可购买性 + 原因(纯读内存连通网络,不碰区块)。
+            boolean purchasable;
+            String reason;
+            if (!authenticated) {
+                purchasable = false;
+                reason = "not_logged_in";
+            } else if (viewerTownId == null || viewerTownId.isBlank()) {
+                purchasable = false;
+                reason = "no_town";
+            } else if (identity.playerUuidString().equals(listing.sellerUuid())) {
+                purchasable = false;
+                reason = "own_listing";
+            } else if (com.monpai.sailboatmod.market.terminal.TerminalVisibility.isVisible(net, sourceTownId, viewerTownId)) {
+                purchasable = true;
+                reason = "";
+            } else {
+                purchasable = false;
+                reason = "no_route";
+            }
+
+            JsonObject json = new JsonObject();
+            json.addProperty("listingId", listing.listingId());
+            json.addProperty("commodityKey", com.monpai.sailboatmod.market.commodity.CommodityKeyResolver.resolve(listing.itemStack()));
+            json.addProperty("itemName", listing.itemStack().getHoverName().getString());
+            json.addProperty("availableCount", listing.availableCount());
+            json.addProperty("unitPrice", listing.unitPrice());
+            json.addProperty("sellerName", listing.sellerName());
+            json.addProperty("sourceDockName", listing.sourceDockName());
+            json.addProperty("sourceTownId", sourceTownId);
+            json.addProperty("sourceTownName", sourceTownName);
+            json.addProperty("nationId", listing.nationId());
+            json.addProperty("sellerNote", listing.sellerNote());
+            json.addProperty("purchasable", purchasable);
+            json.addProperty("purchaseReason", reason);
+            out.add(json);
+        }
+        root.add("listings", out);
+        return root;
+    }
+
+    /**
+     * 聚合视图购买:按全局 listingId 购买,可见性按买家所属城镇判定,货送买家城镇仓库。
+     * executorMarketId = 买家当前打开的市场(作为已加载的购买管线载体;扣款/收货均按买家解析,与该市场无关)。
+     */
+    public boolean purchaseAggregated(MinecraftServer server, MarketPlayerIdentity identity, String executorMarketId,
+                                      String listingId, int quantity, String fulfillment,
+                                      net.minecraft.core.BlockPos targetWarehousePos) {
+        if (server == null || identity == null || identity.playerUuid() == null
+                || listingId == null || listingId.isBlank()) {
+            return false;
+        }
+        String viewerTownId = resolveViewerTownId(server, identity);
+        if (viewerTownId == null || viewerTownId.isBlank()) {
+            return false;
+        }
+        ResolvedMarket executor = resolveMarket(server, executorMarketId);
+        if (executor == null) {
+            return false;
+        }
+        return executor.market().purchaseAggregatedById(
+                identity.playerUuidString(),
+                identity.playerName(),
+                identity.onlinePlayer(),
+                listingId,
+                quantity,
+                viewerTownId,
+                fulfillment,
+                targetWarehousePos
+        );
+    }
+
+    /** 查看者所属城镇:在线优先按其当前坐标所在城镇,否则按成员表。 */
+    private String resolveViewerTownId(MinecraftServer server, MarketPlayerIdentity identity) {
+        if (identity == null || identity.playerUuid() == null) {
+            return "";
+        }
+        if (identity.onlinePlayer() != null) {
+            TownRecord town = TownService.getTownAt(identity.onlinePlayer().level(), identity.onlinePlayer().blockPosition());
+            if (town != null && town.townId() != null && !town.townId().isBlank()) {
+                return town.townId();
+            }
+        }
+        List<String> towns = NationSavedData.get(server.overworld()).getTownsForPlayer(identity.playerUuid());
+        return towns.isEmpty() ? "" : towns.get(0);
+    }
+
+    private static String townNameOf(NationSavedData nations, String townId) {
+        if (nations == null || townId == null || townId.isBlank()) {
+            return "";
+        }
+        TownRecord town = nations.getTown(townId);
+        return town == null ? "" : town.name();
+    }
+
     private static long cashBalance(MarketPlayerIdentity identity) {
         if (identity == null) {
             return 0L;

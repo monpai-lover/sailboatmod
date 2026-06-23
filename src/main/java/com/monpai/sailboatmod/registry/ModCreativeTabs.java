@@ -40,6 +40,7 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.WORKSTATION_ITEM.get());
                         output.accept(ModItems.SCHOOL_ITEM.get());
                         output.accept(ModItems.HALF_NUGGET_ITEM.get());
+                        output.accept(ModItems.HALF_AMETHYST_ITEM.get());
                     })
                     .build()
     );

@@ -38,6 +38,7 @@ public final class ModConfig {
     public static final ForgeConfigSpec.DoubleValue BANK_NATION_COLLATERAL_RATIO;
     public static final ForgeConfigSpec.DoubleValue BANK_LOAN_DAILY_INTEREST_RATE;
     public static final ForgeConfigSpec.IntValue BANK_LOAN_MIN_DAILY_INTEREST;
+    public static final ForgeConfigSpec.ConfigValue<String> CURRENCY_STANDARD;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -156,6 +157,19 @@ public final class ModConfig {
                 .comment("Minimum daily interest charged when a loan is outstanding.")
                 .defineInRange("loanMinDailyInterest", 5, 0, Integer.MAX_VALUE);
         builder.pop();
+
+        builder.comment("Economy Settings").push("economy");
+        CURRENCY_STANDARD = builder
+                .comment(
+                        "Market currency standard. AUTO = amethyst standard when MineColonies is installed and no Vault economy is present, otherwise gold standard.",
+                        "Allowed: AUTO, GOLD, AMETHYST.")
+                .define("currencyStandard", "AUTO", value ->
+                        value instanceof String string
+                                && ("AUTO".equalsIgnoreCase(string)
+                                || "GOLD".equalsIgnoreCase(string)
+                                || "AMETHYST".equalsIgnoreCase(string)));
+        builder.pop();
+
         COMMON_SPEC = builder.build();
     }
 
@@ -293,6 +307,10 @@ public final class ModConfig {
 
     public static int bankLoanMinDailyInterest() {
         return BANK_LOAN_MIN_DAILY_INTEREST.get();
+    }
+
+    public static String currencyStandard() {
+        return CURRENCY_STANDARD.get();
     }
 
     private ModConfig() {}
