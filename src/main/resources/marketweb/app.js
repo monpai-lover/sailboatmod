@@ -42,6 +42,9 @@
   aggregatedAuthenticated: false,
   aggregatedViewerTownId: "",
   aggregatedQuery: "",
+  mineColoniesItems: [],
+  mineColoniesLoaded: false,
+  mineColoniesMarketId: "",
   selectedDispatchOrderIndex: 0,
   selectedDispatchTerminal: localStorage.getItem("marketWebDispatchTerminal") || "PORT",
   settings: {
@@ -1124,7 +1127,19 @@ Object.assign(I18N["en-US"], {
   reason_no_town: "You do not belong to any town.",
   reason_own_listing: "This is your own listing.",
   reason_no_route: "No road or sea route connects you to this town.",
-  reason_no_market_selected: "Open a market first to use it as the purchase carrier."
+  reason_no_market_selected: "Open a market first to use it as the purchase carrier.",
+  mc_warehouse_title: "List from Colony Warehouse",
+  mc_warehouse_kicker: "MineColonies",
+  mc_warehouse_hint: "Pull items straight from the linked colony warehouse and list them on the market.",
+  mc_warehouse_col_item: "Item",
+  mc_warehouse_col_stock: "In Warehouse",
+  mc_warehouse_col_quantity: "Quantity",
+  mc_warehouse_col_price: "Unit Price",
+  mc_warehouse_col_action: "Action",
+  mc_warehouse_list: "List",
+  mc_warehouse_empty: "No colony warehouse linked, or it has no listable items.",
+  mc_warehouse_count: "{count} item types",
+  mc_warehouse_listed: "Listed from colony warehouse."
 });
 
 Object.assign(I18N["zh-CN"], {
@@ -1149,7 +1164,19 @@ Object.assign(I18N["zh-CN"], {
   reason_no_town: "你不属于任何城镇。",
   reason_own_listing: "这是你自己的挂单。",
   reason_no_route: "无道路或航路连接,无法购买。",
-  reason_no_market_selected: "请先打开一个市场作为购买管线载体。"
+  reason_no_market_selected: "请先打开一个市场作为购买管线载体。",
+  mc_warehouse_title: "从殖民地仓库上架",
+  mc_warehouse_kicker: "殖民地仓库",
+  mc_warehouse_hint: "直接从关联殖民地仓库抽取物品并上架到市场。",
+  mc_warehouse_col_item: "物品",
+  mc_warehouse_col_stock: "仓库库存",
+  mc_warehouse_col_quantity: "数量",
+  mc_warehouse_col_price: "单价",
+  mc_warehouse_col_action: "操作",
+  mc_warehouse_list: "上架",
+  mc_warehouse_empty: "未关联殖民地仓库,或仓库无可上架物品。",
+  mc_warehouse_count: "{count} 种物品",
+  mc_warehouse_listed: "已从殖民地仓库上架。"
 });
 
 function t(key, vars = {}) {
@@ -1475,9 +1502,60 @@ async function loadMarketDetail(marketId, historyMode = "replace") {
   try {
     state.detail = await api(`/api/markets/${marketId}`);
     state.selectedMarketId = marketId;
+    if (state.mineColoniesMarketId !== marketId) {
+      state.mineColoniesItems = [];
+      state.mineColoniesLoaded = false;
+      state.mineColoniesMarketId = marketId;
+    }
     syncCommoditySelection();
     syncRouteUrl(historyMode !== "push");
     renderMarkets();
+    renderDetail();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function loadMineColoniesWarehouse(marketId) {
+  if (!marketId) {
+    return;
+  }
+  try {
+    const data = await api(`/api/markets/${marketId}/minecolonies-warehouse`);
+    // 防竞态:返回时市场已切换则丢弃。
+    if (state.selectedMarketId !== marketId) {
+      return;
+    }
+    state.mineColoniesItems = Array.isArray(data.items) ? data.items : [];
+    state.mineColoniesLoaded = true;
+    state.mineColoniesMarketId = marketId;
+    renderDetail();
+  } catch (error) {
+    state.mineColoniesLoaded = true;
+    setStatus(error.message, true);
+  }
+}
+
+async function postMineColoniesListing(itemId, payload = {}) {
+  if (!state.session) {
+    setStatus(t("sign_in_to_trade"), true);
+    return;
+  }
+  if (!state.selectedMarketId) {
+    setStatus(t("reason_no_market_selected"), true);
+    return;
+  }
+  try {
+    const data = await api(`/api/markets/${state.selectedMarketId}/minecolonies-listing`, {
+      method: "POST",
+      body: JSON.stringify(Object.assign({ itemId }, payload))
+    });
+    state.detail = data;
+    // 上架成功后货已离开殖民地仓库,标记未加载;renderDetail 会在库存页按需重拉刷新库存。
+    state.mineColoniesLoaded = false;
+    syncCommoditySelection();
+    syncRouteUrl(true);
+    setStatus(t("mc_warehouse_listed"));
     renderDetail();
   } catch (error) {
     setStatus(error.message, true);
@@ -1962,6 +2040,23 @@ function bindDetailActions() {
       if (orderId) {
         postMarketAction(`/purchase-orders/${orderId}/cancel`);
       }
+    });
+  });
+
+  document.querySelectorAll("[data-mc-list]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const itemId = node.getAttribute("data-mc-list") || "";
+      const index = node.getAttribute("data-mc-index") || "";
+      const colonyId = Number(node.getAttribute("data-mc-colony") || "0");
+      if (!itemId) {
+        return;
+      }
+      postMineColoniesListing(itemId, {
+        colonyId,
+        quantity: numberValue(`#mc-qty-${index}`, 1),
+        unitPrice: numberValue(`#mc-price-${index}`, 0),
+        sellerNote: ""
+      });
     });
   });
 }
@@ -3187,6 +3282,74 @@ function renderCreateListingPanel(commodity, detail, canManage, canAct) {
           </div>
         </div>
       ` : `<div class="empty-state">${escapeHtml(t("no_storage_match"))}</div>`}
+    </div>
+  `;
+}
+
+// 从殖民地(MineColonies)仓库上架面板:仅 canManage 渲染。物品列表来自 state.mineColoniesItems(独立端点拉取)。
+function renderMineColoniesPanel(detail, canManage, canAct) {
+  if (!canManage) {
+    return "";
+  }
+  const items = Array.isArray(state.mineColoniesItems) ? state.mineColoniesItems : [];
+  const head = `
+    <div class="panel-head">
+      <div>
+        <p class="section-kicker">${escapeHtml(t("mc_warehouse_kicker"))}</p>
+        <h3>${escapeHtml(t("mc_warehouse_title"))}</h3>
+      </div>
+      <span class="pill">${escapeHtml(t("mc_warehouse_count", { count: number(items.length) }))}</span>
+    </div>
+    <p class="muted">${escapeHtml(t("mc_warehouse_hint"))}</p>
+  `;
+  if (!items.length) {
+    return `
+      <div class="surface-card stack">
+        ${head}
+        <div class="empty-state">${escapeHtml(state.mineColoniesLoaded ? t("mc_warehouse_empty") : t("all_listings_loading"))}</div>
+      </div>
+    `;
+  }
+  const rows = items.map((item, index) => {
+    const itemId = String(item.itemId || "");
+    const colonyId = Number(item.colonyId || 0);
+    const stock = Number(item.count || 0);
+    const suggested = Math.max(1, Number(item.suggestedUnitPrice) || 1);
+    const defaultQty = Math.max(1, Math.min(stock, Number(state.settings.defaultListingQuantity) || 1));
+    return `
+      <tr>
+        <td>
+          <strong>${escapeHtml(item.itemName || itemId || "-")}</strong>
+          <div class="muted-inline">${escapeHtml(item.commodityKey || itemId)}</div>
+        </td>
+        <td>${number(stock)}</td>
+        <td><input id="mc-qty-${index}" type="number" min="1" max="${escapeHtml(String(stock))}" value="${escapeHtml(String(defaultQty))}" placeholder="${escapeHtml(t("mc_warehouse_col_quantity"))}"></td>
+        <td><input id="mc-price-${index}" type="number" min="1" value="${escapeHtml(String(suggested))}" placeholder="${escapeHtml(t("mc_warehouse_col_price"))}"></td>
+        <td>
+          <button type="button"
+            data-mc-list="${escapeHtml(itemId)}"
+            data-mc-index="${index}"
+            data-mc-colony="${escapeHtml(String(colonyId))}"
+            ${canAct ? "" : "disabled"}>${escapeHtml(t("mc_warehouse_list"))}</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+  return `
+    <div class="table-card">
+      ${head}
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>${escapeHtml(t("mc_warehouse_col_item"))}</th>
+            <th>${escapeHtml(t("mc_warehouse_col_stock"))}</th>
+            <th>${escapeHtml(t("mc_warehouse_col_quantity"))}</th>
+            <th>${escapeHtml(t("mc_warehouse_col_price"))}</th>
+            <th>${escapeHtml(t("mc_warehouse_col_action"))}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -5425,7 +5588,7 @@ function renderDetail() {
           : (state.activeProductTab === "inventory"
             ? (inventorySelectedCommodity
               ? renderInventoryDetailPage(inventorySelectedCommodity, detail, canManage, canAct)
-              : inventorySection)
+              : `${inventorySection}${renderMineColoniesPanel(detail, canManage, canAct)}`)
             : (selectedCommodity
               ? renderCommodityDetailPage(selectedCommodity, detail, canManage, canAct)
               : browseSection))))}
@@ -5437,6 +5600,14 @@ function renderDetail() {
   hydrateCommodityIcons();
   hydrateLightweightChart();
   mountMarketMapIfNeeded();
+
+  // 进入库存(管理)工作区时按需拉取殖民地仓库可上架列表(仅 canManage)。
+  // 市场切换 / 上架成功后(mineColoniesLoaded=false)都会触发重拉。
+  if (canManage && state.activeProductTab === "inventory"
+      && (!state.mineColoniesLoaded || state.mineColoniesMarketId !== state.selectedMarketId)) {
+    state.mineColoniesMarketId = state.selectedMarketId;
+    loadMineColoniesWarehouse(state.selectedMarketId);
+  }
 }
 
 const CANCELLABLE_ORDER_STATUSES = new Set(["PAID", "WAITING_SHIPMENT", "PICKUP_LOCKED"]);

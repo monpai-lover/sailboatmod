@@ -412,6 +412,76 @@ public final class MarketWebService {
                 : ActionResult.failure(result.messageKey(), result.message().getString());
     }
 
+    /**
+     * 列出市场关联殖民地(MineColonies)仓库内可上架物品。仅对已认证且能管理本市场的身份返回非空数组,否则空数组。
+     * 外层不再单独返回 colonyId(每项内嵌 colonyId),前端上架时按物品携带的 colonyId 回传。
+     */
+    public JsonArray mineColoniesWarehouseItems(MinecraftServer server, MarketPlayerIdentity identity, String marketId) {
+        JsonArray out = new JsonArray();
+        ResolvedMarket resolved = resolveMarket(server, marketId);
+        if (resolved == null || identity == null || identity.playerUuid() == null) {
+            return out;
+        }
+        MarketBlockEntity market = resolved.market();
+        // 仅市场管理者可见(与 marketDetail 的 canManage 同源)。
+        MarketOverviewData overview = market.buildOverviewForIdentity(
+                identity.playerUuidString(),
+                identity.playerName(),
+                identity.onlinePlayer()
+        );
+        if (!overview.canManage()) {
+            return out;
+        }
+        int colonyId = market.resolveLinkedColonyId();
+        for (com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration.WarehouseItem item
+                : market.listMineColoniesWarehouseItems()) {
+            if (item == null || item.stack() == null || item.stack().isEmpty() || item.count() <= 0) {
+                continue;
+            }
+            ItemStack stack = item.stack();
+            JsonObject json = new JsonObject();
+            ResourceLocation regId = ForgeRegistries.ITEMS.getKey(stack.getItem());
+            json.addProperty("itemId", regId != null ? regId.toString() : CommodityKeyResolver.resolve(stack));
+            json.addProperty("commodityKey", CommodityKeyResolver.resolve(stack));
+            json.addProperty("itemName", stack.getHoverName().getString());
+            json.addProperty("count", item.count());
+            json.addProperty("suggestedUnitPrice", CommodityMarketService.estimateBaseUnitPrice(stack));
+            json.addProperty("colonyId", colonyId);
+            out.add(json);
+        }
+        return out;
+    }
+
+    /**
+     * 从殖民地仓库上架:把 itemId 解析成 ItemStack,委托 {@link MarketBlockEntity#createListingFromMineColoniesWarehouse}
+     * (权限/抽货/入库/建 listing 全在后端原子完成)。返回 ActionResult 供路由层拼成功/失败 JSON。
+     */
+    public ActionResult createMineColoniesListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId,
+                                                  int colonyId, String itemId, int quantity, int unitPrice, String sellerNote) {
+        ResolvedMarket resolved = resolveMarket(server, marketId);
+        if (resolved == null || identity == null) {
+            return ActionResult.failure("market_not_found", "Market not found");
+        }
+        ItemStack stack = resolveItemStack(itemId);
+        if (stack.isEmpty()) {
+            return ActionResult.failure("invalid_item", "Invalid item");
+        }
+        com.monpai.sailboatmod.block.entity.MarketBlockEntity.CreateListingResult result =
+                resolved.market().createListingFromMineColoniesWarehouse(
+                        identity.playerUuidString(),
+                        identity.playerName(),
+                        identity.onlinePlayer(),
+                        colonyId,
+                        stack,
+                        quantity,
+                        unitPrice,
+                        sellerNote
+                );
+        return result.success()
+                ? ActionResult.success()
+                : ActionResult.failure(result.messageKey(), result.message().getString());
+    }
+
     public boolean purchaseListing(MinecraftServer server, MarketPlayerIdentity identity, String marketId, int listingIndex, int quantity) {
         return purchaseListing(server, identity, marketId, listingIndex, quantity, "SELLER_SHIP", null);
     }

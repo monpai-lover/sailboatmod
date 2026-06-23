@@ -151,6 +151,8 @@ public final class ServerEvents {
         com.monpai.sailboatmod.route.water.WaterRouteTaskExecutor.shutdown(); // 停掉水路寻路+自救共享的后台线程池
         com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository.clearCache();
         com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration.onServerStopped();
+        com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration.onServerStopped();
+        com.monpai.sailboatmod.economy.CurrencyStandardService.invalidate();
         MarketDatabase.shutdown();
         BlueMapIntegration.onServerStopped();
     }

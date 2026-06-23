@@ -294,6 +294,15 @@ public final class MarketWebServer {
                 writeJson(exchange, 200, detail);
                 return;
             }
+            if (path.size() == 4 && "minecolonies-warehouse".equals(path.get(3))
+                    && "GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
+                JsonArray items = callOnServerThread(() -> service.mineColoniesWarehouseItems(minecraftServer, identity, marketId));
+                JsonObject out = new JsonObject();
+                out.add("items", items == null ? new JsonArray() : items);
+                writeJson(exchange, 200, out);
+                return;
+            }
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
                 return;
@@ -332,6 +341,18 @@ public final class MarketWebServer {
                         identity,
                         marketId,
                         intValue(body, "storageIndex", -1),
+                        intValue(body, "quantity", 1),
+                        intValue(body, "unitPrice", 0),
+                        stringValue(body, "sellerNote")
+                ));
+                ok = actionResult != null && actionResult.ok();
+            } else if (path.size() == 4 && "minecolonies-listing".equals(path.get(3))) {
+                actionResult = callOnServerThread(() -> service.createMineColoniesListing(
+                        minecraftServer,
+                        identity,
+                        marketId,
+                        intValue(body, "colonyId", 0),
+                        stringValue(body, "itemId", ""),
                         intValue(body, "quantity", 1),
                         intValue(body, "unitPrice", 0),
                         stringValue(body, "sellerNote")

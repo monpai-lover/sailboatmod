@@ -632,6 +632,145 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return CreateListingResult.created();
     }
 
+    /**
+     * 解析本市场关联 town 对应的殖民地 id;无 MineColonies / 未匹配到殖民地返回 0。
+     * 复用 {@link com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration} 的 town→colony 匹配。
+     */
+    public int resolveLinkedColonyId() {
+        if (!(level instanceof ServerLevel serverLevel) || linkedDockPos == null) {
+            return 0;
+        }
+        String townId = level.getBlockEntity(linkedDockPos) instanceof TownWarehouseBlockEntity w ? w.getTownId() : "";
+        NationSavedData nations = NationSavedData.get(serverLevel);
+        TownRecord town = townId.isBlank() ? TownService.getTownAt(level, linkedDockPos) : nations.getTown(townId);
+        if (town == null) {
+            return 0;
+        }
+        com.monpai.sailboatmod.nation.model.NationRecord nation =
+                town.nationId().isBlank() ? null : nations.getNation(town.nationId());
+        com.monpai.sailboatmod.nation.menu.ExternalColonyOverview colony =
+                com.monpai.sailboatmod.integration.minecolonies.MineColoniesIntegration.findTownColony(serverLevel, nations, town, nation);
+        return colony != null && colony.present() ? colony.colonyId() : 0;
+    }
+
+    /**
+     * 列出本市场关联殖民地仓库内可上架的物品(合并同类)。无 MineColonies / 未匹配殖民地 / 仓库未加载返回空。
+     * 供 UI/web 渲染"从殖民地仓库上架"的候选列表。
+     */
+    public List<com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration.WarehouseItem>
+            listMineColoniesWarehouseItems() {
+        if (!(level instanceof ServerLevel serverLevel) || linkedDockPos == null) {
+            return List.of();
+        }
+        int colonyId = resolveLinkedColonyId();
+        if (colonyId <= 0) {
+            return List.of();
+        }
+        return com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration
+                .readWarehouse(serverLevel, colonyId, linkedDockPos);
+    }
+
+    /**
+     * 从殖民地(MineColonies)仓库直接上架:反射抽货 → 存进市场关联仓库的发货池(归卖家)→ 建 listing(同 dock storage 范式)。
+     *
+     * <p>决策:<b>上架即扣货,货进市场关联仓库</b>——殖民地仓库的货被反射抽出后立刻入 sailboatmod TownWarehouse,
+     * 从此走现有船/马车发货物流,买家无感知差异。<b>权限:殖民地有权者 + 市场管理者</b>双重校验。</p>
+     *
+     * <p><b>原子性</b>:先抽货(已从殖民地扣除),再尝试 insertCargo 进市场仓库;入库失败则把抽出的货还回殖民地无门
+     * (跨 mod 还货不可靠),故入库前用 maxWarehouseCurrency 之外的容量预检——这里直接尝试 insertCargo,失败则记录
+     * 并把货 drop 给玩家(在线时)兜底,不让货凭空消失。</p>
+     *
+     * @param colonyId 目标殖民地 id(UI/web 列货时已从 ExternalColonyOverview 拿到)
+     * @param sample   要上架的物品种类(count 忽略,用 quantity)
+     */
+    public CreateListingResult createListingFromMineColoniesWarehouse(String playerUuid, String playerName,
+                                                                      @Nullable Player onlinePlayer, int colonyId,
+                                                                      ItemStack sample, int quantity,
+                                                                      int requestedUnitPrice, String sellerNote) {
+        TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
+        String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
+        String safePlayerName = playerName == null ? "" : playerName.trim();
+        if (level == null || level.isClientSide || warehouse == null || safePlayerUuid.isBlank()
+                || sample == null || sample.isEmpty()) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+        if (!(level instanceof ServerLevel serverLevel)) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+        UUID sellerId = parseUuid(safePlayerUuid);
+        if (sellerId == null || requestedUnitPrice <= 0) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+        // 权限:市场管理者 + 殖民地有权者(双重校验,防越权)。殖民地侧需在线 Player 对象做 hasPermission。
+        if (!canManageMarket(safePlayerUuid)) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+        if (onlinePlayer == null
+                || !com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration
+                .canManageWarehouse(serverLevel, colonyId, onlinePlayer)) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+
+        int amount = Math.max(1, quantity);
+        // anchor 用市场关联仓库坐标(与殖民地同属一片区域,getClosestWarehouseInColony 可定位)。
+        BlockPos anchor = warehouse.getBlockPos();
+        List<ItemStack> extracted = com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration
+                .extractFromWarehouse(serverLevel, colonyId, anchor, sample, amount);
+        if (extracted.isEmpty()) {
+            return CreateListingResult.failure("screen.sailboatmod.market.storage_empty");
+        }
+        int extractedCount = 0;
+        for (ItemStack stack : extracted) {
+            extractedCount += stack.getCount();
+        }
+
+        // 抽出的货入市场关联仓库的发货池(归卖家)。入库失败→兜底 drop 给在线玩家,不让货消失。
+        if (!warehouse.insertCargo(sellerId, extracted)) {
+            if (onlinePlayer != null) {
+                for (ItemStack stack : extracted) {
+                    if (!stack.isEmpty()) {
+                        onlinePlayer.drop(stack, false);
+                    }
+                }
+                MARKET_LOGGER.warn("殖民地仓库上架:货入市场仓库失败,已把 {} 个 {} 退还给玩家 {}",
+                        extractedCount, sample.getHoverName().getString(), safePlayerName);
+            } else {
+                MARKET_LOGGER.error("殖民地仓库上架:货入市场仓库失败且玩家离线,{} 个 {} 丢失(已从殖民地扣除)",
+                        extractedCount, sample.getHoverName().getString());
+            }
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+
+        ItemStack listed = sample.copy();
+        listed.setCount(1);
+        ListingPriceWindow priceWindow = listingPriceWindow(listed, extractedCount, requestedUnitPrice);
+        MarketSavedData market = MarketSavedData.get(level);
+        String listingTownId = warehouse.getTownId();
+        String listingNationId = "";
+        TownRecord town = TownService.getTownAt(level, warehouse.getBlockPos());
+        if (town != null) {
+            listingTownId = town.townId();
+            listingNationId = town.nationId();
+        }
+        market.putListing(new MarketListing(
+                market.nextId(),
+                safePlayerUuid,
+                safePlayerName,
+                listed,
+                Math.max(1, priceWindow.requestedUnitPrice()),
+                extractedCount,
+                0,
+                linkedDockPos,
+                warehouse.getDisplayName().getString(),
+                listingTownId,
+                listingNationId,
+                priceWindow.constrained() ? priceWindow.derivedPriceAdjustmentBp() : 0,
+                sellerNote
+        ));
+        syncTerminalRegistry();
+        return CreateListingResult.created();
+    }
+
     public boolean purchaseListing(Player player, int listingIndex, int quantity) {
         if (player == null) {
             return false;
