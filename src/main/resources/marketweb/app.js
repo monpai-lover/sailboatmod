@@ -6,7 +6,7 @@
   markets: [],
   selectedMarketId: "",
   selectedCommodityKey: "",
-  activeProductTab: "browse",
+  activeProductTab: "all",
   browseOrderView: localStorage.getItem("marketWebBrowseOrderView") || "purchase",
   accessPanelOpen: localStorage.getItem("marketWebAccessPanelOpenV2") === "1",
   walletCollapsed: localStorage.getItem("marketWebWalletCollapsed") !== "0",
@@ -265,7 +265,8 @@ function routePath(route = state.activeProductTab) {
 
 function routeFromLocation(pathname) {
   const raw = String(pathname || "/").trim().replace(/^\/+|\/+$/g, "");
-  return normalizePageRoute(raw || "browse");
+  // 默认进"全部商品"(全服商品总览),无需先点某个终端。
+  return normalizePageRoute(raw || "all");
 }
 
 function applyRouteFromLocation() {
@@ -5234,6 +5235,9 @@ function shortTime(epochMs) {
 
 function activeWorkspaceSection(route = state.activeProductTab) {
   const normalized = normalizePageRoute(route);
+  if (normalized === "all") {
+    return "all";
+  }
   if (normalized === "map") {
     return "map";
   }
@@ -5256,6 +5260,9 @@ function activeWorkspaceSection(route = state.activeProductTab) {
 }
 
 function workspaceTargetRoute(section) {
+  if (section === "all") {
+    return "all";
+  }
   if (section === "map") {
     return "map";
   }
@@ -5639,9 +5646,11 @@ function renderDetail() {
     bars.push(`<div class="status-bar error" aria-live="polite">${escapeHtml(state.error)}</div>`);
   }
 
+  // 全部商品作为一级入口放导航首位;点它留在全服视图,点其余进选中市场对应功能。全服视图与市场详情共用这排导航。
   const workspaceNav = `
     <div class="workspace-toolbar">
       <div class="workspace-switch">
+        ${workspaceButton("all", t("all_listings_tab"))}
         ${workspaceButton("explore", t("explore_tab"))}
         ${workspaceButton("trade", t("trade_tab"))}
         ${workspaceButton("orders", t("my_orders_tab"))}
@@ -5655,7 +5664,7 @@ function renderDetail() {
 
   if (state.activeProductTab === "all") {
     renderTopbarWallet();
-    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${renderAggregatedView()}</div>`;
+    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${workspaceNav}${renderAggregatedView()}</div>`;
     bindDetailActions();
     if (!state.aggregatedLoaded) {
       loadAggregatedListings();
@@ -5666,9 +5675,10 @@ function renderDetail() {
         && (state.aggregatedDetailKey !== state.aggregatedSelectedCommodityKey || !state.aggregatedDetailLoaded)) {
       loadAggregatedDetail(state.aggregatedSelectedCommodityKey);
     }
-    // 详情已就绪时挂载图标与图表(K线/指数 tab 复用终端图表渲染,数据来自 aggregatedDetail)。
+    // 网格视图(未选商品)和详情视图都要挂载图标——否则全服商品卡片图标永远不加载(不依赖选中终端)。
+    hydrateCommodityIcons();
+    // 详情已就绪时再挂图表(K线/指数 tab 复用终端图表渲染,数据来自 aggregatedDetail)。
     if (state.aggregatedSelectedCommodityKey && state.aggregatedDetailLoaded && state.aggregatedDetail) {
-      hydrateCommodityIcons();
       hydrateLightweightChart();
     }
     return;
