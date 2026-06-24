@@ -127,12 +127,16 @@ class ClaimPreviewTerrainServiceTest {
                 Path.of("src/main/java/com/monpai/sailboatmod/nation/service/ClaimPreviewTerrainService.java"),
                 StandardCharsets.UTF_8);
 
+        // 改用后台 IOWorker 异步读盘 + 后台自解颜色:主线程只发起异步读、派后台解码,绝不 force/阻塞。
+        // 允许 CompletableFuture(后台异步读 future);禁的是「主线程同步阻塞」与「force 生成区块」。
         assertFalse(source.contains("ChunkStatus.FULL"),
-                "Claim preview terrain sampling must not request FULL chunks during server tick");
-        assertFalse(source.contains("CompletableFuture"),
-                "Claim preview terrain sampling must not enqueue work and immediately wait from server tick");
+                "Claim preview must not request FULL chunks (sync generation) during server tick");
+        assertFalse(source.contains("ForgeChunkManager"),
+                "Claim preview must not force-load/generate chunks (use OfflineChunkNbtReader async read instead)");
+        assertFalse(source.contains("forceChunk"),
+                "Claim preview must not force chunks (force ungenerated chunk = sync worldgen = watchdog hang)");
         assertFalse(source.contains(".join()"),
-                "Claim preview terrain sampling must not block server tick waiting for worker futures");
+                "Claim preview must not block server tick with .join() on worker futures");
     }
 
     @Test
