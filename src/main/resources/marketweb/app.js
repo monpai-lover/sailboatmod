@@ -2694,7 +2694,9 @@ function buildCommodityCatalog(detail) {
     const bestSell = minValue(commodity.listings, "unitPrice");
     const bestBuy = maxValue(commodity.buyBookEntries, "maxPriceBp");
     const storageUnits = sumBy(commodity.storageEntries, "quantity");
-    const sellUnits = sumBy(commodity.listings, "availableCount");
+    // 无限库存项的 availableCount 是哨兵大数,排除出在售总量统计,避免污染排序/热度/显示(∞ 已在各 listing 行单独显示)。
+    const sellUnits = (commodity.listings || []).reduce(
+      (sum, l) => sum + (isInfiniteStock(l) ? 0 : Number(l.availableCount || 0)), 0);
     const demandUnits = sumBy(commodity.buyBookEntries, "quantity");
     const result = {
       ...commodity,
@@ -3543,7 +3545,7 @@ function renderBrowseTab(commodity, detail, options = null) {
               <strong>${escapeHtml(entry.sellerName || "-")}</strong>
               <div class="muted-inline">${escapeHtml(entry.sellerNote || entry.nationId || "")}</div>
             </td>
-            <td>${number(entry.availableCount)}</td>
+            <td>${stockDisplay(entry)}</td>
             <td>${number(entry.unitPrice)}</td>
             <td>${escapeHtml(entry.sourceDockName || "-")}</td>
           </tr>
@@ -3595,7 +3597,7 @@ function renderAggregateSellingTab(commodity) {
       </td>
       <td>${escapeHtml(listing.sourceTownName || "-")}</td>
       <td>${number(listing.unitPrice)}</td>
-      <td>${number(listing.availableCount)}</td>
+      <td>${stockDisplay(listing)}</td>
       <td><div class="actions">${renderAggregatedPurchaseButton(listing)}</div></td>
     </tr>
   `).join("");
@@ -3642,10 +3644,10 @@ function renderSellingTab(commodity, detail, canManage, canAct, options = null) 
               <strong>${escapeHtml(entry.sellerName || "-")}</strong>
               <div class="muted-inline">${escapeHtml(entry.sellerNote || entry.nationId || "")}</div>
             </td>
-            <td>${number(entry.availableCount)}</td>
+            <td>${stockDisplay(entry)}</td>
             <td>${number(entry.reservedCount)}</td>
             <td>${number(entry.unitPrice)}</td>
-            <td>${number((Number(entry.unitPrice) || 0) * (Number(entry.availableCount) || 0))}</td>
+            <td>${isInfiniteStock(entry) ? "∞" : number((Number(entry.unitPrice) || 0) * (Number(entry.availableCount) || 0))}</td>
             <td>${escapeHtml(entry.sourceDockName || "-")}</td>
             <td>
               <div class="actions">
@@ -5208,6 +5210,18 @@ function sumBy(entries, field) {
 
 function number(value) {
   return Number(value || 0).toLocaleString(state.locale);
+}
+
+// 无限库存系统商店:后端发 infinite=true,或 availableCount 是哨兵大数(>= 5 亿)→ 显示 ∞,不显示 10 亿这个数字。
+const INFINITE_STOCK_THRESHOLD = 500000000;
+function isInfiniteStock(entry) {
+  if (entry && entry.infinite === true) {
+    return true;
+  }
+  return entry && Number(entry.availableCount || 0) >= INFINITE_STOCK_THRESHOLD;
+}
+function stockDisplay(entry) {
+  return isInfiniteStock(entry) ? "∞" : number(entry.availableCount);
 }
 
 function percent(value) {

@@ -39,6 +39,7 @@ public final class ServerEvents {
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         com.monpai.sailboatmod.route.water.SailboatRouteCommands.register(event.getDispatcher());
+        com.monpai.sailboatmod.command.MarketAdminCommands.register(event.getDispatcher());
     }
 
     @SubscribeEvent

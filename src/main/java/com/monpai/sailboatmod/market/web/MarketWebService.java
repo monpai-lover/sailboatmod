@@ -329,6 +329,7 @@ public final class MarketWebService {
             json.addProperty("category", category);
             json.addProperty("rarity", rarity);
             json.addProperty("availableCount", listing.availableCount());
+            json.addProperty("infinite", listing.isInfinite());
             json.addProperty("unitPrice", listing.unitPrice());
             json.addProperty("sellerName", listing.sellerName());
             json.addProperty("sourceDockName", listing.sourceDockName());
@@ -453,6 +454,7 @@ public final class MarketWebService {
             json.addProperty("category", category);
             json.addProperty("rarity", rarity);
             json.addProperty("availableCount", listing.availableCount());
+            json.addProperty("infinite", listing.isInfinite());
             json.addProperty("reservedCount", 0);
             json.addProperty("unitPrice", listing.unitPrice());
             json.addProperty("sellerName", listing.sellerName());
@@ -1144,6 +1146,7 @@ public final class MarketWebService {
             json.addProperty("commodityKey", entry.commodityKey());
             json.addProperty("itemName", entry.itemName());
             json.addProperty("availableCount", entry.availableCount());
+            json.addProperty("infinite", entry.availableCount() >= com.monpai.sailboatmod.market.MarketListing.INFINITE_THRESHOLD);
             json.addProperty("reservedCount", entry.reservedCount());
             json.addProperty("unitPrice", entry.unitPrice());
             json.addProperty("sellerName", entry.sellerName());

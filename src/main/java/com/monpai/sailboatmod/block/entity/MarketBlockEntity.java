@@ -87,6 +87,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private String marketName = "";
     private String ownerName = "";
     private String ownerUuid = "";
+    // 无限库存系统商店标记:上架不扣货、库存无限不减(其它逻辑与普通终端一致)。OP 指令 /marketadmin infinitestock 切换。
+    private boolean infiniteStock = false;
+    // 无限库存下单次购买上限(944 行原靠 availableCount 兜底,无限后失效;防一次买爆/int 溢出)。
+    private static final int MAX_SINGLE_PURCHASE = 2304;
     @Nullable
     private BlockPos linkedDockPos;
 
@@ -601,7 +605,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
         ListingPriceWindow priceWindow = listingPriceWindow(listed, amount, requestedUnitPrice);
         // 指导价只做参考，不再按区间拒单——任何 >0 价格均可上架（上方已拦截 ≤0）。
-        if (!warehouse.extractVisibleStorage(sellerId, visibleStorageIndex, amount)) {
+        // 无限库存系统商店:不扣仓库货(凭空供应),也不因仓库不足拒单。
+        if (!infiniteStock && !warehouse.extractVisibleStorage(sellerId, visibleStorageIndex, amount)) {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
         // pricing: listing no longer bumps stock (stock no longer drives price)
@@ -619,7 +624,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 safePlayerName,
                 listed,
                 Math.max(1, priceWindow.requestedUnitPrice()),
-                amount,
+                infiniteStock ? MarketListing.INFINITE_SENTINEL : amount,
                 0,
                 linkedDockPos,
                 warehouse.getDisplayName().getString(),
@@ -712,33 +717,39 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
 
         int amount = Math.max(1, quantity);
-        // anchor 用市场关联仓库坐标(与殖民地同属一片区域,getClosestWarehouseInColony 可定位)。
-        BlockPos anchor = warehouse.getBlockPos();
-        List<ItemStack> extracted = com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration
-                .extractFromWarehouse(serverLevel, colonyId, anchor, sample, amount);
-        if (extracted.isEmpty()) {
-            return CreateListingResult.failure("screen.sailboatmod.market.storage_empty");
-        }
-        int extractedCount = 0;
-        for (ItemStack stack : extracted) {
-            extractedCount += stack.getCount();
-        }
-
-        // 抽出的货入市场关联仓库的发货池(归卖家)。入库失败→兜底 drop 给在线玩家,不让货消失。
-        if (!warehouse.insertCargo(sellerId, extracted)) {
-            if (onlinePlayer != null) {
-                for (ItemStack stack : extracted) {
-                    if (!stack.isEmpty()) {
-                        onlinePlayer.drop(stack, false);
-                    }
-                }
-                MARKET_LOGGER.warn("殖民地仓库上架:货入市场仓库失败,已把 {} 个 {} 退还给玩家 {}",
-                        extractedCount, sample.getHoverName().getString(), safePlayerName);
-            } else {
-                MARKET_LOGGER.error("殖民地仓库上架:货入市场仓库失败且玩家离线,{} 个 {} 丢失(已从殖民地扣除)",
-                        extractedCount, sample.getHoverName().getString());
+        int extractedCount;
+        if (infiniteStock) {
+            // 无限库存系统商店:不抽殖民地货、不入市场仓,extractedCount 取名义量(仅供 priceWindow)。
+            extractedCount = amount;
+        } else {
+            // anchor 用市场关联仓库坐标(与殖民地同属一片区域,getClosestWarehouseInColony 可定位)。
+            BlockPos anchor = warehouse.getBlockPos();
+            List<ItemStack> extracted = com.monpai.sailboatmod.integration.minecolonies.MineColoniesWarehouseIntegration
+                    .extractFromWarehouse(serverLevel, colonyId, anchor, sample, amount);
+            if (extracted.isEmpty()) {
+                return CreateListingResult.failure("screen.sailboatmod.market.storage_empty");
             }
-            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+            extractedCount = 0;
+            for (ItemStack stack : extracted) {
+                extractedCount += stack.getCount();
+            }
+
+            // 抽出的货入市场关联仓库的发货池(归卖家)。入库失败→兜底 drop 给在线玩家,不让货消失。
+            if (!warehouse.insertCargo(sellerId, extracted)) {
+                if (onlinePlayer != null) {
+                    for (ItemStack stack : extracted) {
+                        if (!stack.isEmpty()) {
+                            onlinePlayer.drop(stack, false);
+                        }
+                    }
+                    MARKET_LOGGER.warn("殖民地仓库上架:货入市场仓库失败,已把 {} 个 {} 退还给玩家 {}",
+                            extractedCount, sample.getHoverName().getString(), safePlayerName);
+                } else {
+                    MARKET_LOGGER.error("殖民地仓库上架:货入市场仓库失败且玩家离线,{} 个 {} 丢失(已从殖民地扣除)",
+                            extractedCount, sample.getHoverName().getString());
+                }
+                return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+            }
         }
 
         ItemStack listed = sample.copy();
@@ -758,7 +769,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 safePlayerName,
                 listed,
                 Math.max(1, priceWindow.requestedUnitPrice()),
-                extractedCount,
+                infiniteStock ? MarketListing.INFINITE_SENTINEL : extractedCount,
                 0,
                 linkedDockPos,
                 warehouse.getDisplayName().getString(),
@@ -941,7 +952,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (!reachable) {
             return false;
         }
-        int amount = Math.max(1, Math.min(quantity, listing.availableCount()));
+        // 无限库存:不被 availableCount(哨兵)卡上限,改用 MAX_SINGLE_PURCHASE 单次上限防一次买爆/溢出。
+        int requested = Math.max(1, quantity);
+        int amount = listing.isInfinite()
+                ? Math.min(requested, MAX_SINGLE_PURCHASE)
+                : Math.max(1, Math.min(requested, listing.availableCount()));
         int total = currentListingTotalPrice(listing, amount);
         // 先解析收货仓与模式：②③（非真人自提）无可用收货仓时，必须在扣款前拒单，避免钱货已动才发现 null。
         FulfillmentMode resolvedMode = FulfillmentMode.fromString(fulfillment);
@@ -974,7 +989,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 listing.sellerName(),
                 listing.itemStack(),
                 listing.unitPrice(),
-                Math.max(0, listing.availableCount() - amount),
+                // 无限库存:哨兵原样保留不减;否则正常 -= amount。
+                listing.isInfinite() ? listing.availableCount() : Math.max(0, listing.availableCount() - amount),
                 listing.reservedCount() + amount,
                 listing.sourceDockPos(),
                 listing.sourceDockName(),
@@ -1091,15 +1107,20 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (listing.availableCount() <= 0) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_no_stock");
         }
-        WarehouseSelectionResult targetWarehouseSelection = resolveCancelListingWarehouse(safePlayerUuid, listing);
-        if (targetWarehouseSelection.result() != null) {
-            return targetWarehouseSelection.result();
+        // 无限库存系统商店:凭空供应,撤单不该把哨兵(10 亿)当真实数量造货退仓。跳过造货入库 + 供应调整,直接删 listing/退款。
+        boolean usedLinkedWarehouseFallback = false;
+        if (!listing.isInfinite()) {
+            WarehouseSelectionResult targetWarehouseSelection = resolveCancelListingWarehouse(safePlayerUuid, listing);
+            if (targetWarehouseSelection.result() != null) {
+                return targetWarehouseSelection.result();
+            }
+            List<ItemStack> cargo = splitCargo(listing.itemStack(), listing.availableCount());
+            if (!targetWarehouseSelection.warehouse().insertCargo(sellerId, cargo)) {
+                return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_storage_full");
+            }
+            adjustCommoditySupply(listing.itemStack(), -listing.availableCount());
+            usedLinkedWarehouseFallback = targetWarehouseSelection.usedLinkedWarehouseFallback();
         }
-        List<ItemStack> cargo = splitCargo(listing.itemStack(), listing.availableCount());
-        if (!targetWarehouseSelection.warehouse().insertCargo(sellerId, cargo)) {
-            return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_storage_full");
-        }
-        adjustCommoditySupply(listing.itemStack(), -listing.availableCount());
         // 场景③：卖家撤单时，挂单下未发货的买家订单已无法履约——退款给买家（货物随撤单已回卖家仓，不再归还）。
         List<PurchaseOrder> strandedOrders = market.getActiveOrdersForListing(listing.listingId());
         if (listing.reservedCount() <= 0) {
@@ -1124,7 +1145,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         for (PurchaseOrder stranded : strandedOrders) {
             refundAndReleaseOrder(market, stranded, "seller_cancel", false);
         }
-        return CancelListingResult.success(targetWarehouseSelection.usedLinkedWarehouseFallback()
+        return CancelListingResult.success(usedLinkedWarehouseFallback
                 ? "screen.sailboatmod.market.unlist.success_linked_dock"
                 : "screen.sailboatmod.market.unlist.success");
     }
@@ -1321,6 +1342,20 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return ownerUuid == null ? "" : ownerUuid;
     }
 
+    public boolean isInfiniteStock() {
+        return infiniteStock;
+    }
+
+    /** 切换无限库存系统商店标记,返回切换后的新状态。OP 指令调用。 */
+    public boolean toggleInfiniteStock() {
+        infiniteStock = !infiniteStock;
+        setChanged();
+        if (level != null && !level.isClientSide) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
+        return infiniteStock;
+    }
+
     public boolean canManageMarket(Player player) {
         if (player == null || player.getAbilities().instabuild) {
             return player != null;
@@ -1371,6 +1406,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         tag.putString("MarketName", marketName == null ? "" : marketName);
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
         tag.putString("OwnerUuid", ownerUuid == null ? "" : ownerUuid);
+        tag.putBoolean("InfiniteStock", infiniteStock);
         if (linkedDockPos != null) {
             tag.putLong("LinkedDockPos", linkedDockPos.asLong());
         }
@@ -1382,6 +1418,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         marketName = tag.getString("MarketName");
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");
+        infiniteStock = tag.getBoolean("InfiniteStock");
         linkedDockPos = tag.contains("LinkedDockPos") ? BlockPos.of(tag.getLong("LinkedDockPos")) : null;
     }
 

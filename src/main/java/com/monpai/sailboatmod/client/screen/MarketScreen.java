@@ -62,6 +62,17 @@ import java.util.function.Consumer;
 
 public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>, MarketOverviewConsumer {
     private static final Logger LOGGER = LogUtils.getLogger();
+    // 无限库存系统商店:同步过来的 availableCount 是哨兵大数(>= 5 亿),显示 ∞ 而非 10 亿这个数字。
+    private static final int INFINITE_STOCK_THRESHOLD = com.monpai.sailboatmod.market.MarketListing.INFINITE_THRESHOLD;
+
+    private static boolean isInfiniteStock(int availableCount) {
+        return availableCount >= INFINITE_STOCK_THRESHOLD;
+    }
+
+    /** 库存数字 → 显示文本:无限显示 ∞,否则原数字。 */
+    private static String stockText(int availableCount) {
+        return isInfiniteStock(availableCount) ? "∞" : Integer.toString(availableCount);
+    }
     private static final boolean SCROLL_TRACE_ENABLED = true;
     private static final int MAX_PANEL_WIDTH = 2400;
     private static final int MAX_PANEL_HEIGHT = 1600;
@@ -1051,7 +1062,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         if (listing != null) {
             createItemIcon(visual, 10, 10, iconBox - 20, iconBox - 20, resolveCommodityStack(listing.commodityKey()), true);
             createBadge(visual, 8, 8, 68, 18, rarityLabel(listing.rarity()), rarityColor(listing.rarity()), TEXT_PRIMARY);
-            createText(visual, Math.max(8, iconBox - 54), Math.max(12, iconBox - 20), Component.translatable("screen.sailboatmod.market.count_short", listing.availableCount()).getString(), 0.72f, TEXT_PRIMARY);
+            createText(visual, Math.max(8, iconBox - 54), Math.max(12, iconBox - 20), Component.translatable("screen.sailboatmod.market.count_short", stockText(listing.availableCount())).getString(), 0.72f, TEXT_PRIMARY);
         } else {
             createText(visual, 16, iconBox / 2 - 8, Component.translatable("screen.sailboatmod.market.header.brand_bottom").getString(), 0.92f, ACCENT);
         }
@@ -1458,7 +1469,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         createItemIcon(preview, 10, 8, width - 36, previewSize - 18, resolveCommodityStack(entry.commodityKey()), true);
         createBadge(preview, 6, 6, 64, 16, rarityLabel(entry.rarity()), rarityColor(entry.rarity()), TEXT_PRIMARY);
 
-        createText(card, Math.max(12, width - 34), 12, "x" + entry.availableCount(), 0.68f, TEXT_MUTED);
+        createText(card, Math.max(12, width - 34), 12, "x" + stockText(entry.availableCount()), 0.68f, TEXT_MUTED);
         createText(card, 12, previewSize + 16,
                 shortenToWidth(entry.itemName(), width - 24, 0.78f), 0.78f, TEXT_PRIMARY);
         createText(card, 12, previewSize + 30,
@@ -1496,7 +1507,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         createText(row, 12, 5, shorten(entry.itemName(), 30), 0.72f, TEXT_PRIMARY);
         createText(row, 12, 18, shorten(entry.sourceDockName().isBlank() ? entry.commodityKey() : entry.sourceDockName(), 32), 0.58f, TEXT_SOFT);
         createText(row, goodsCatalogSellerX(width), 10, shorten(entry.sellerName(), 16), 0.65f, TEXT_MUTED);
-        createText(row, goodsCatalogStockX(width), 10, Integer.toString(entry.availableCount()), 0.68f, entry.availableCount() > 0 ? POSITIVE : NEGATIVE);
+        createText(row, goodsCatalogStockX(width), 10, stockText(entry.availableCount()), 0.68f, entry.availableCount() > 0 ? POSITIVE : NEGATIVE);
         createText(row, goodsCatalogPriceX(width), 10, formatCompactLong(entry.unitPrice()), 0.72f, selected ? ACCENT : TEXT_PRIMARY);
     }
 
@@ -2805,7 +2816,9 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             seen.add(entry.commodityKey());
             int buyDepth = buyDepthFor(entry.commodityKey());
             int chartActivity = chartActivityFor(entry.commodityKey());
-            int heat = entry.availableCount() * 2 + buyDepth + chartActivity;
+            // 无限库存哨兵会让热度爆表恒排第一 → 计热度时按 0 处理。
+            int stockForHeat = isInfiniteStock(entry.availableCount()) ? 0 : entry.availableCount();
+            int heat = stockForHeat * 2 + buyDepth + chartActivity;
             String summary = Component.translatable("screen.sailboatmod.market.hot_row",
                     formatCompactLong(entry.unitPrice()), buyDepth, chartActivity).getString();
             hot.add(new HotCommodity(entry.commodityKey(), entry.itemName(), i, heat, summary));
@@ -2907,7 +2920,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private String buildListingRowSubtitle(MarketOverviewData.ListingEntry entry) {
         return Component.translatable("screen.sailboatmod.market.catalog.row_format",
                 entry.sellerName(),
-                entry.availableCount(),
+                stockText(entry.availableCount()),
                 entry.sourceDockName().isBlank() ? "-" : entry.sourceDockName()).getString();
     }
 
@@ -2960,7 +2973,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.metric.price").getString(),
                     formatCompactLong(entry.unitPrice()), ACCENT));
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.metric.available").getString(),
-                    Integer.toString(entry.availableCount()), POSITIVE));
+                    stockText(entry.availableCount()), POSITIVE));
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.metric.reserved").getString(),
                     Integer.toString(entry.reservedCount()), NEGATIVE));
             metrics.add(metric(Component.translatable("screen.sailboatmod.market.metric.total").getString(),
@@ -3243,7 +3256,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
         }
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.catalog.column.item").getString(), entry.itemName(), TEXT_PRIMARY));
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.catalog.column.seller").getString(), entry.sellerName(), TEXT_PRIMARY));
-        rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.catalog.column.stock").getString(), "x" + entry.availableCount(), POSITIVE));
+        rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.catalog.column.stock").getString(), "x" + stockText(entry.availableCount()), POSITIVE));
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.metric.price").getString(), formatCompactLong(entry.unitPrice()), ACCENT));
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.detail.dock_label").getString(), entry.sourceDockName().isBlank() ? Component.translatable("screen.sailboatmod.market.value.none").getString() : entry.sourceDockName(), TEXT_MUTED));
         rows.add(new DetailRow(Component.translatable("screen.sailboatmod.market.detail.note_label").getString(), entry.sellerNote().isBlank() ? Component.translatable("screen.sailboatmod.market.value.none").getString() : entry.sellerNote(), TEXT_SOFT));
@@ -3300,7 +3313,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
                     shortenToWidth((entry.sourceDockName().isBlank() ? Component.translatable("screen.sailboatmod.market.value.none").getString() : entry.sourceDockName())
                             + (entry.sellerNote().isBlank() ? "" : " | " + entry.sellerNote()), width - 130, 0.64f),
                     0.64f, TEXT_SOFT);
-            createText(card, 14, 44, Component.translatable("screen.sailboatmod.market.goods.quantity_line", entry.availableCount()).getString(), 0.68f, POSITIVE);
+            createText(card, 14, 44, Component.translatable("screen.sailboatmod.market.goods.quantity_line", stockText(entry.availableCount())).getString(), 0.68f, POSITIVE);
             createText(card, Math.max(14, width - 94), 16, formatCompactLong(entry.unitPrice()), 0.9f, ACCENT);
             createText(card, Math.max(14, width - 94), 36, Component.translatable(selected ? "screen.sailboatmod.market.goods.current_selected" : "screen.sailboatmod.market.goods.click_view").getString(), 0.64f, selected ? TEXT_PRIMARY : TEXT_MUTED);
             rowY += 72;

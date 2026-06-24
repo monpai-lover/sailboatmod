@@ -40,7 +40,8 @@ public final class MarketRefundService {
                     listing.sellerName(),
                     listing.itemStack(),
                     listing.unitPrice(),
-                    listing.availableCount() + order.quantity(),
+                    // 无限库存:availableCount 是哨兵,不 +quantity(保持哨兵纯净);否则正常退回库存。
+                    listing.isInfinite() ? listing.availableCount() : listing.availableCount() + order.quantity(),
                     Math.max(0, listing.reservedCount() - order.quantity()),
                     listing.sourceDockPos(),
                     listing.sourceDockName(),

@@ -40,6 +40,15 @@ public record MarketListing(
         }
     }
 
+    // 无限库存系统商店:上架时把 availableCount 设为哨兵基准(10 亿,远离 Integer.MAX_VALUE 留 buffer 防退货 +quantity 溢出),
+    // 所有「是否无限」判定一律用 availableCount >= 阈值(绝不用等值判定,因退货会 +quantity 改变值)。
+    public static final int INFINITE_SENTINEL = 1_000_000_000;
+    public static final int INFINITE_THRESHOLD = 500_000_000;
+
+    public boolean isInfinite() {
+        return availableCount >= INFINITE_THRESHOLD;
+    }
+
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag();
         tag.putString("ListingId", listingId);
@@ -84,9 +93,9 @@ public record MarketListing(
         String itemName = itemStack.isEmpty() ? "-" : itemStack.getHoverName().getString();
         return String.format(
                 Locale.ROOT,
-                "%s x%d | %d ea | %s",
+                "%s x%s | %d ea | %s",
                 itemName,
-                availableCount,
+                isInfinite() ? "∞" : String.valueOf(availableCount),
                 Math.max(0, displayUnitPrice),
                 sourceDockName.isBlank() ? sourceDockPos.toShortString() : sourceDockName
         );
