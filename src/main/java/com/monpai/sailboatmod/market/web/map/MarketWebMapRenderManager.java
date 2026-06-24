@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.ModConfig;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.border.WorldBorder;
@@ -17,9 +18,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -42,6 +45,16 @@ public final class MarketWebMapRenderManager {
     private static final int CHUNKS_PER_REGION_AXIS = MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS;
     private static final int CHUNKS_PER_REGION = CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
 
+    // ── 未加载区块的主线程 probe + force-load 采样节流(squaremap 模式,见 marketweb_snapshot_deadlock 修复) ──
+    // 崩服根因:后台 renderExecutor 调 chunkMap.read().thenApplyAsync(decode) 并发遍历共享 CompoundTag 的 HashMap,
+    // 被 vanilla 在 ForkJoinPool 并发 datafix 改写 → 桶损坏崩。唯一安全=主线程对【已生成】区块 force 加载拿区块再采样。
+    // force-load 已生成虽比生成轻,full render 上千区块仍要限量;wall-clock 双闸保底不卡 tick。
+    private static final int GENERATED_SAMPLES_PER_TICK = 8;
+    private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 25L;
+    private static final int PROBE_STARTS_PER_TICK = 32;
+    private static final int MAX_PROBE_WAIT_TICKS = 40;
+    private static final int MAX_SKIPPED_UNGENERATED = 4096;
+
     private final MarketWebMapRegionRenderer regionRenderer = new MarketWebMapRegionRenderer();
     private final MarketWebSquareMapImageIOExecutor imageIO = new MarketWebSquareMapImageIOExecutor();
     private final MarketWebMapDirtyChunkQueue dirtyChunks = new MarketWebMapDirtyChunkQueue();
@@ -52,8 +65,15 @@ public final class MarketWebMapRenderManager {
     private final AtomicInteger renderingRegions = new AtomicInteger();
     private final AtomicInteger failedChunks = new AtomicInteger();
     private final ExecutorService renderExecutor;
-    private MarketWebMapSnapshotManager snapshotManager;
-    private ServerLevel snapshotLevel;
+    // 已生成探测:chunkKey(asLong) → 异步 chunkMap.read future + 发起 tick(超时降级未生成)。仅主线程读写。
+    private final Map<Long, ChunkProbe> pendingProbe = new HashMap<>();
+    // 已判定未生成(empty/超时)的 chunk LRU,避免反复 probe 同一个空区块。仅主线程读写。
+    private final LinkedHashSet<Long> skippedUngenerated = new LinkedHashSet<>();
+    // 本 tick force-load 采样配额计数(beginSnapshotTick 重置)。仅主线程读写。
+    private int generatedSamplesThisTick;
+    private long generatedSampleMillisThisTick;
+    private int probeStartsThisTick;
+    private long snapshotTick;
     private RenderJob activeJob;
     private boolean paused;
     private int tickCounter;
@@ -123,56 +143,180 @@ public final class MarketWebMapRenderManager {
         }
     }
 
-    public void submitSnapshot(ServerLevel level,
-                               MarketWebMapTileCache cache,
-                               MarketWebMapRenderQueue.Task task,
-                               long nowMillis) {
-        if (level == null || cache == null || task == null || !MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
-            return;
-        }
-        // 主线程旁路:已加载的 chunk 直接在主线程 capture(读 ServerLevel 在主线程是安全的),
-        // 完全绕开 SnapshotManager 与 worker 线程。只有未加载的 chunk 才进 SnapshotManager 走异步 NBT 读盘。
-        // 这样 worker 线程永不需要读 ServerLevel,从根上消除「worker join 主线程」的死锁边。
-        if (submitLoadedSnapshotOnMainThread(level, cache, task, nowMillis)) {
-            return;
-        }
-        MarketWebMapSnapshotManager manager = snapshotManager(level);
-        manager.snapshotDirect(task.dimensionId(), task.chunkX(), task.chunkZ() - 1, task.quality())
-                .thenAccept(optional -> optional.ifPresent(this::cacheBottomRow));
-        CompletableFuture<Optional<MarketWebMapChunkSnapshot>> future = manager.snapshotWithVerticalNeighbors(
-                task.dimensionId(),
-                task.chunkX(),
-                task.chunkZ(),
-                task.quality());
-        future.whenComplete((optional, failure) -> {
-            if (failure != null || optional == null || optional.isEmpty()) {
-                if (failure != null) {
-                    failedChunks.incrementAndGet();
-                }
-                acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
-                return;
-            }
-            acceptSnapshot(cache, optional.get(), task.quality(), nowMillis);
-        });
+    /**
+     * 提交结果:{@code CONSUMED} 已处理完(采样/标记缺失/probe 已生成判定);{@code DEFER} 本 tick 处理不了
+     * (probe 未决 / force-load 配额用尽),调用方须把该 chunk 重新入队下 tick 重试。
+     */
+    public enum SubmitResult {
+        CONSUMED,
+        DEFER
     }
 
     /**
-     * 主线程旁路:若目标 chunk 已加载,在主线程直接 capture 并消费,返回 true。
-     * 同时趁机 capture 北邻(chunkZ-1)喂 bottomRow 缓存,与异步路径的 cacheBottomRow 语义一致。
-     * 目标 chunk 未加载时返回 false,交给异步 NBT 路径。
+     * 每 tick 开始(processSnapshotBudget 入口)调用一次:重置本 tick 的 probe 发起 / force-load 采样配额。
      */
-    private boolean submitLoadedSnapshotOnMainThread(ServerLevel level,
-                                                     MarketWebMapTileCache cache,
-                                                     MarketWebMapRenderQueue.Task task,
-                                                     long nowMillis) {
-        Optional<MarketWebMapChunkSnapshot> target = MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ());
-        if (target.isEmpty()) {
-            return false;
+    public synchronized void beginSnapshotTick() {
+        snapshotTick++;
+        generatedSamplesThisTick = 0;
+        generatedSampleMillisThisTick = 0L;
+        probeStartsThisTick = 0;
+    }
+
+    /**
+     * 主线程提交一个 chunk 的快照请求(squaremap 模式,全程主线程,绝不把共享 CompoundTag 交后台)。
+     * <ul>
+     *   <li>已加载 → 直接 {@link MarketWebMapChunkSnapshot#capture} 采样 → acceptSnapshot(CONSUMED)。</li>
+     *   <li>未加载 → 主线程 probe 判是否已生成存盘(只读 Status 单字段就丢,不解码整块):
+     *     <ul>
+     *       <li>已生成 → force-load 采样(配额内)→ acceptSnapshot;配额满 → DEFER 下 tick 重试。</li>
+     *       <li>未生成(empty/超时)→ acceptMissingSnapshot 留空 + 记入 skippedUngenerated 避免反复 probe(CONSUMED)。</li>
+     *       <li>probe 未决 → DEFER 下 tick 再看。</li>
+     *     </ul>
+     *   </li>
+     * </ul>
+     * <b>绝不 force 未生成区块</b>(地图 full render 上千区块,force 生成会炸服)。
+     */
+    public SubmitResult submitSnapshot(ServerLevel level,
+                                       MarketWebMapTileCache cache,
+                                       MarketWebMapRenderQueue.Task task,
+                                       long nowMillis) {
+        if (level == null || cache == null || task == null || !MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
+            return SubmitResult.CONSUMED;
         }
-        // 北邻已加载则缓存其底行(供 height shading 接缝)。北邻未加载就跳过——异步路径后续也会补。
-        MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ() - 1).ifPresent(this::cacheBottomRow);
-        acceptSnapshot(cache, target.get(), task.quality(), nowMillis);
-        return true;
+        // 已加载旁路(保留不动):主线程直接 capture 并消费。
+        Optional<MarketWebMapChunkSnapshot> loaded = MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ());
+        if (loaded.isPresent()) {
+            MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ() - 1).ifPresent(this::cacheBottomRow);
+            acceptSnapshot(cache, loaded.get(), task.quality(), nowMillis);
+            return SubmitResult.CONSUMED;
+        }
+
+        long chunkKey = ChunkPos.asLong(task.chunkX(), task.chunkZ());
+        if (isSkippedUngenerated(chunkKey)) {
+            acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
+            return SubmitResult.CONSUMED;
+        }
+
+        Boolean generated = resolveGenerated(level, task.chunkX(), task.chunkZ(), chunkKey);
+        if (generated == null) {
+            return SubmitResult.DEFER; // probe 未决:下 tick 再看
+        }
+        if (!generated) {
+            markSkippedUngenerated(chunkKey);
+            acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
+            return SubmitResult.CONSUMED;
+        }
+
+        // 已生成:force-load 采样,受 GENERATED_SAMPLES_PER_TICK + wall-clock 双闸限速。配额满 → DEFER。
+        synchronized (this) {
+            if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
+                    || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
+                return SubmitResult.DEFER;
+            }
+        }
+        long startNanos = System.nanoTime();
+        Optional<MarketWebMapChunkSnapshot> target =
+                MarketWebMapChunkSnapshot.captureGeneratedViaForce(level, task.chunkX(), task.chunkZ());
+        // 北邻底行(供 height shading 接缝):也只对已生成的北邻 force 采(未生成就跳过,acceptSnapshot 会用 unknownLastY)。
+        Optional<MarketWebMapChunkSnapshot> north =
+                captureGeneratedNorthNeighbor(level, task.chunkX(), task.chunkZ() - 1);
+        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000L;
+        synchronized (this) {
+            generatedSamplesThisTick++;
+            generatedSampleMillisThisTick += elapsedMillis;
+        }
+        north.ifPresent(this::cacheBottomRow);
+        if (target.isPresent()) {
+            acceptSnapshot(cache, target.get(), task.quality(), nowMillis);
+        } else {
+            // probe 说已生成但 force 后仍没拿到(罕见):标记缺失,不无限重试。
+            failedChunks.incrementAndGet();
+            acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
+        }
+        return SubmitResult.CONSUMED;
+    }
+
+    /**
+     * 北邻底行采样:仅对已生成且未加载的北邻 force 采样喂 bottomRow 缓存。北邻已加载时由 capture 直接采;
+     * 未生成 / probe 未决则返回 empty(接缝退化为 unknownLastY,可接受)。北邻 force 不计入主配额(轻量、最多一次)。
+     */
+    private Optional<MarketWebMapChunkSnapshot> captureGeneratedNorthNeighbor(ServerLevel level, int chunkX, int chunkZ) {
+        Optional<MarketWebMapChunkSnapshot> loadedNorth = MarketWebMapChunkSnapshot.capture(level, chunkX, chunkZ);
+        if (loadedNorth.isPresent()) {
+            return loadedNorth;
+        }
+        long northKey = ChunkPos.asLong(chunkX, chunkZ);
+        if (isSkippedUngenerated(northKey)) {
+            return Optional.empty();
+        }
+        Boolean generated = resolveGenerated(level, chunkX, chunkZ, northKey);
+        if (generated == null || !generated) {
+            return Optional.empty();
+        }
+        return MarketWebMapChunkSnapshot.captureGeneratedViaForce(level, chunkX, chunkZ);
+    }
+
+    /**
+     * 判断区块是否已生成存盘(复刻 ClaimPreviewTerrainService.resolveGeneratedOrProbe):主线程异步发起
+     * {@code chunkMap.read}(只发起异步 IO 不阻塞),后续 tick 看 isDone 读出 tag 的 Status 单字段。
+     * 返回 TRUE=已生成 / FALSE=未生成 / null=探测未决(下 tick 再看)。超时 / 异常 / empty → FALSE(保守当未生成)。
+     * <p><b>为什么安全</b>:只在主线程读 Status 单字段就丢,不遍历整块 HashMap 解码地形 —— 即使偶发命中
+     * pendingWrites 共享引用被 datafix 并发改,最坏只是 Status 判错一次,绝不会像整块解码那样桶损坏崩。</p>
+     */
+    private synchronized Boolean resolveGenerated(ServerLevel level, int chunkX, int chunkZ, long chunkKey) {
+        ChunkProbe probe = pendingProbe.get(chunkKey);
+        if (probe == null) {
+            if (probeStartsThisTick >= PROBE_STARTS_PER_TICK) {
+                return null; // 本 tick probe 发起额度用尽:下 tick 再发起
+            }
+            try {
+                CompletableFuture<Optional<CompoundTag>> future =
+                        level.getChunkSource().chunkMap.read(new ChunkPos(chunkX, chunkZ));
+                pendingProbe.put(chunkKey, new ChunkProbe(future, snapshotTick));
+                probeStartsThisTick++;
+            } catch (RuntimeException exception) {
+                return Boolean.FALSE; // 发起失败:保守当未生成
+            }
+            return null; // 刚发起,未决
+        }
+        if (!probe.future().isDone()) {
+            if (snapshotTick - probe.startedTick() >= MAX_PROBE_WAIT_TICKS) {
+                pendingProbe.remove(chunkKey);
+                return Boolean.FALSE; // 等太久:保守当未生成
+            }
+            return null; // 仍在读盘,下 tick 再看
+        }
+        pendingProbe.remove(chunkKey);
+        try {
+            Optional<CompoundTag> tag = probe.future().getNow(Optional.empty());
+            if (tag.isEmpty()) {
+                return Boolean.FALSE; // 磁盘上没有 → 未生成
+            }
+            String status = tag.get().getString("Status"); // 只读单字段,不解码整块
+            return (status.equals("minecraft:full") || status.equals("full")) ? Boolean.TRUE : Boolean.FALSE;
+        } catch (RuntimeException exception) {
+            return Boolean.FALSE; // 读 Status 出错:保守当未生成
+        }
+    }
+
+    private synchronized boolean isSkippedUngenerated(long chunkKey) {
+        return skippedUngenerated.contains(chunkKey);
+    }
+
+    private synchronized void markSkippedUngenerated(long chunkKey) {
+        skippedUngenerated.remove(chunkKey);
+        skippedUngenerated.add(chunkKey);
+        while (skippedUngenerated.size() > MAX_SKIPPED_UNGENERATED) {
+            Iterator<Long> iterator = skippedUngenerated.iterator();
+            if (!iterator.hasNext()) {
+                break;
+            }
+            iterator.next();
+            iterator.remove();
+        }
+    }
+
+    private record ChunkProbe(CompletableFuture<Optional<CompoundTag>> future, long startedTick) {
     }
 
     public synchronized boolean startFullRender(ServerLevel level) {
@@ -302,14 +446,13 @@ public final class MarketWebMapRenderManager {
 
     public synchronized RenderStatus status(int queueSize) {
         RenderJob job = activeJob;
-        MarketWebMapSnapshotManager manager = snapshotManager;
         return new RenderStatus(
                 job == null ? "idle" : job.type,
                 paused,
                 queueSize,
-                manager == null ? 0 : manager.activeRequests(),
-                manager == null ? 0 : manager.pendingRequests(),
-                manager == null ? 0 : manager.cachedSnapshots(),
+                pendingProbe.size(),
+                skippedUngenerated.size(),
+                0,
                 dirtyRegions.size(),
                 dirtyChunks.size(),
                 regionStates.size(),
@@ -326,12 +469,13 @@ public final class MarketWebMapRenderManager {
     }
 
     public int pendingTasks() {
-        MarketWebMapSnapshotManager manager = snapshotManager;
-        return (manager == null ? 0 : manager.activeRequests() + manager.pendingRequests())
-                + dirtyRegions.size()
-                + dirtyChunks.size()
-                + renderingRegions.get()
-                + imageIO.pendingTasks();
+        synchronized (this) {
+            return pendingProbe.size()
+                    + dirtyRegions.size()
+                    + dirtyChunks.size()
+                    + renderingRegions.get()
+                    + imageIO.pendingTasks();
+        }
     }
 
     public synchronized void loadDirtyChunks(ServerLevel level) {
@@ -353,6 +497,11 @@ public final class MarketWebMapRenderManager {
     public void shutdown() {
         renderExecutor.shutdownNow();
         imageIO.shutdown();
+        synchronized (this) {
+            // force 是即采即放(captureGeneratedViaForce 的 try/finally 同方法内释放),无残留票据。
+            pendingProbe.clear();
+            skippedUngenerated.clear();
+        }
     }
 
     private void acceptSnapshot(MarketWebMapTileCache cache,
@@ -531,57 +680,6 @@ public final class MarketWebMapRenderManager {
                 iterator.next();
                 iterator.remove();
             }
-        }
-    }
-
-    private synchronized MarketWebMapSnapshotManager snapshotManager(ServerLevel level) {
-        if (snapshotManager != null && snapshotLevel == level) {
-            return snapshotManager;
-        }
-        snapshotLevel = level;
-        int renderThreads = configuredRenderThreads();
-        int configuredActiveRequests = configuredInt(ModConfig::marketWebMaxActiveSnapshotRequests, 0);
-        int activeRequests = configuredActiveRequests <= 0
-                ? renderThreads * 48
-                : configuredActiveRequests;
-        snapshotManager = new MarketWebMapSnapshotManager(
-                (dimensionId, chunkX, chunkZ, quality) -> readSnapshot(level, dimensionId, chunkX, chunkZ, quality),
-                configuredInt(ModConfig::marketWebSnapshotCacheSize, MarketWebMapSnapshotManager.DEFAULT_CACHE_SIZE),
-                activeRequests,
-                true);
-        return snapshotManager;
-    }
-
-    private CompletableFuture<Optional<MarketWebMapChunkSnapshot>> readSnapshot(ServerLevel level,
-                                                                               String dimensionId,
-                                                                               int chunkX,
-                                                                               int chunkZ,
-                                                                               MarketWebMapTileQuality quality) {
-        if (level == null || !MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
-            return CompletableFuture.completedFuture(Optional.empty());
-        }
-        // 注意:这里绝不调 MarketWebMapChunkSnapshot.capture / getChunk —— 该 provider 会在 worker 线程
-        // (renderExecutor)执行,而 getChunk 在非主线程上会 join 主线程,与 SnapshotManager 锁构成死锁。
-        // 已加载的 chunk 由 submitSnapshot 在主线程旁路 capture,根本不会走到这里。
-        // 未加载的 chunk 只走纯异步 NBT 读盘(chunkMap.read 返回 future 不 join 主线程)。
-        if (quality != MarketWebMapTileQuality.SERVER_REGION_SCAN) {
-            return CompletableFuture.completedFuture(Optional.empty());
-        }
-        try {
-            int minBuildHeight = level.getMinBuildHeight();
-            int maxBuildHeight = level.getMaxBuildHeight();
-            return level.getChunkSource()
-                    .chunkMap
-                    .read(new ChunkPos(chunkX, chunkZ))
-                    .thenApplyAsync(tag -> tag.flatMap(value -> MarketWebMapNbtChunkSnapshotReader.capture(
-                            dimensionId,
-                            chunkX,
-                            chunkZ,
-                            value,
-                            minBuildHeight,
-                            maxBuildHeight)), renderExecutor);
-        } catch (RuntimeException exception) {
-            return CompletableFuture.completedFuture(Optional.empty());
         }
     }
 

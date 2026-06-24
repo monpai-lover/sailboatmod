@@ -332,6 +332,7 @@ class MarketWebAppResourceTest {
     void serverWebMapUsesGeneratedRegionSnapshotsLikeSquaremap() throws IOException {
         String snapshot = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapChunkSnapshot.java"), StandardCharsets.UTF_8);
         String renderService = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapRenderService.java"), StandardCharsets.UTF_8);
+        String renderManager = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapRenderManager.java"), StandardCharsets.UTF_8);
         String queue = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapRenderQueue.java"), StandardCharsets.UTF_8);
 
         assertTrue(snapshot.contains("captureGenerated"),
@@ -346,20 +347,31 @@ class MarketWebAppResourceTest {
                 "web map generated snapshots must not use chunk futures as a storage read shortcut");
         assertFalse(snapshot.contains(".join()"),
                 "generated snapshot reads should not block the server tick waiting for disk IO");
-        assertTrue(renderService.contains("pendingGeneratedReads"),
-                "render service should track asynchronous generated chunk NBT reads");
-        assertFalse(renderService.contains("CompletableFuture<Optional<CompoundTag>> future"),
-                "server tick should not hold raw NBT futures because completion handling would decode NBT on tick");
-        assertTrue(renderService.contains("CompletableFuture<Optional<MarketWebMapChunkSnapshot>> future"),
-                "generated region reads should complete as immutable snapshots before the server tick consumes them");
-        assertTrue(renderService.contains("thenApplyAsync(tag -> tag.flatMap(value -> MarketWebMapNbtChunkSnapshotReader.capture"),
-                "generated chunk NBT should be decoded off the server tick before completion processing");
+        // 崩服根因修复:后台 decode 共享 CompoundTag 的路径已删,生成区块改为主线程 probe + force-load 采样(squaremap 模式)。
+        assertTrue(snapshot.contains("captureGeneratedViaForce"),
+                "generated chunks must be sampled on the main thread via a force-load, never decoded off-thread");
+        assertTrue(snapshot.contains("ForgeChunkManager.forceChunk"),
+                "force-load is the only safe way to materialize a generated chunk before main-thread sampling");
+        assertFalse(renderService.contains("pendingGeneratedReads"),
+                "off-thread generated NBT read queue must be removed (it decoded shared CompoundTags off-thread and crashed the server)");
+        assertFalse(renderService.contains("enqueueGeneratedRead"),
+                "render service must not enqueue async generated chunk NBT reads anymore");
+        assertFalse(renderService.contains("thenApplyAsync"),
+                "render service must never decode chunk NBT off the server thread");
+        assertFalse(renderService.contains("generatedDecodeExecutor"),
+                "the off-thread generated decode executor must be removed");
+        assertTrue(renderManager.contains("resolveGenerated"),
+                "unloaded chunks must be probed on the main thread for a generated status before force-loading");
+        assertTrue(renderManager.contains("captureGeneratedViaForce"),
+                "generated unloaded chunks must be force-loaded and sampled on the main thread");
+        assertTrue(renderManager.contains("getString(\"Status\")"),
+                "the generated probe must read only the Status field, never decode the whole chunk tag");
+        assertTrue(renderManager.contains("GENERATED_SAMPLES_PER_TICK"),
+                "main-thread force-load sampling must be throttled per tick so a full render cannot stall the server");
         assertTrue(queue.contains("MarketWebMapTileQuality quality"),
                 "render tasks should preserve whether work came from loaded chunks or region scans");
         assertTrue(renderService.contains("MarketWebMapTileQuality.SERVER_REGION_SCAN"),
                 "region cursors should enqueue server_region_scan work so it can overwrite stale loaded/client tiles");
-        assertTrue(renderService.contains("enqueueGeneratedRead"),
-                "region scan work should enqueue async generated chunk NBT reads instead of skipping unloaded chunks");
         assertTrue(renderService.contains("squareTileCursors"),
                 "missing square tiles should register bounded tile-local cursors instead of only checking currently loaded chunks");
     }
@@ -471,7 +483,7 @@ class MarketWebAppResourceTest {
         assertTrue(appJs.contains("function renderDemandOnlyPage("),
                 "standalone demand workspace should have a focused renderer");
         assertTrue(appJs.contains("state.activeProductTab === \"demand\"")
-                        && appJs.contains("renderDemandOnlyPage(commodity, canAct)"),
+                        && appJs.contains("renderDemandOnlyPage(commodity, canAct"),
                 "demand tab should bypass the full commodity buying layout");
         assertTrue(appJs.contains("demand-only-grid"),
                 "demand page should use a compact two-card layout");

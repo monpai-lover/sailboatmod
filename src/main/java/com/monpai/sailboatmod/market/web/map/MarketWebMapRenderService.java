@@ -6,16 +6,11 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.function.IntSupplier;
 
 public final class MarketWebMapRenderService {
@@ -33,9 +28,6 @@ public final class MarketWebMapRenderService {
     private static final int TILE_MISS_MAX_QUEUED_CHUNKS = 64;
     private static final int SQUARE_TILE_CURSOR_CHUNKS_PER_TICK = 128;
     private static final int MAX_SQUARE_TILE_CURSORS = 128;
-    private static final int GENERATED_READ_COMPLETIONS_PER_TICK = 4;
-    private static final int MAX_PENDING_GENERATED_READS = 1024;
-    private static final long GENERATED_READ_TTL_MILLIS = 30_000L;
     private static final int CHUNKS_PER_REGION_AXIS = 32;
     private static final int MAX_REGION_CURSORS = 512;
 
@@ -47,9 +39,7 @@ public final class MarketWebMapRenderService {
     private final MarketWebMapRegionWatcher regionWatcher = new MarketWebMapRegionWatcher();
     private final LinkedHashMap<Long, RegionCursor> regionCursors = new LinkedHashMap<>();
     private final LinkedHashMap<TileCursorKey, TileCursor> squareTileCursors = new LinkedHashMap<>();
-    private final LinkedHashMap<Long, PendingGeneratedRead> pendingGeneratedReads = new LinkedHashMap<>();
     private MarketWebMapRenderManager renderManager = new MarketWebMapRenderManager();
-    private ExecutorService generatedDecodeExecutor = newGeneratedDecodeExecutor();
     private MarketWebSquareMapRenderer squareRenderer = new MarketWebSquareMapRenderer();
     private int tickCounter;
 
@@ -85,11 +75,6 @@ public final class MarketWebMapRenderService {
         synchronized (squareTileCursors) {
             squareTileCursors.clear();
         }
-        synchronized (pendingGeneratedReads) {
-            pendingGeneratedReads.clear();
-        }
-        generatedDecodeExecutor.shutdownNow();
-        generatedDecodeExecutor = newGeneratedDecodeExecutor();
         squareRenderer.shutdown();
         squareRenderer = new MarketWebSquareMapRenderer();
         renderManager.shutdown();
@@ -194,12 +179,9 @@ public final class MarketWebMapRenderService {
     private int scheduledQueueSize() {
         synchronized (squareTileCursors) {
             synchronized (regionCursors) {
-                synchronized (pendingGeneratedReads) {
-                    return queue.size()
-                            + squareTileCursors.size()
-                            + regionCursors.size()
-                            + pendingGeneratedReads.size();
-                }
+                return queue.size()
+                        + squareTileCursors.size()
+                        + regionCursors.size();
             }
         }
     }
@@ -285,77 +267,17 @@ public final class MarketWebMapRenderService {
         MarketWebMapTileCache cache = MarketWebMapTileCache.forServer(level.getServer());
         int snapshotsPerTick = configuredInt(ModConfig::marketWebSnapshotTasksPerTick, DEFAULT_SNAPSHOTS_PER_TICK);
         int sameTileBurstLimit = configuredInt(ModConfig::marketWebSameTileBurstLimit, DEFAULT_SAME_TILE_BURST_LIMIT);
+        // 每 tick 重置 render manager 的 probe 发起 / force-load 采样配额(主线程节流的起点)。
+        renderManager.beginSnapshotTick();
         for (MarketWebMapRenderQueue.Task task : queue.pollCoalesced(snapshotsPerTick, sameTileBurstLimit, nowMillis)) {
             if (!MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
                 continue;
             }
-            renderManager.submitSnapshot(level, cache, task, nowMillis);
-        }
-    }
-
-    private void enqueueGeneratedRead(ServerLevel level, MarketWebMapRenderQueue.Task task, long nowMillis) {
-        long key = ChunkPos.asLong(task.chunkX(), task.chunkZ());
-        synchronized (pendingGeneratedReads) {
-            if (pendingGeneratedReads.containsKey(key) || pendingGeneratedReads.size() >= MAX_PENDING_GENERATED_READS) {
-                return;
-            }
-            CompletableFuture<Optional<MarketWebMapChunkSnapshot>> future;
-            try {
-                int minBuildHeight = level.getMinBuildHeight();
-                int maxBuildHeight = level.getMaxBuildHeight();
-                future = level.getChunkSource()
-                        .chunkMap
-                        .read(new ChunkPos(task.chunkX(), task.chunkZ()))
-                        .thenApplyAsync(tag -> tag.flatMap(value -> MarketWebMapNbtChunkSnapshotReader.capture(
-                                        task.dimensionId(),
-                                        task.chunkX(),
-                                        task.chunkZ(),
-                                        value,
-                                        minBuildHeight,
-                                        maxBuildHeight)),
-                                generatedDecodeExecutor);
-            } catch (RuntimeException exception) {
-                return;
-            }
-            pendingGeneratedReads.put(key, new PendingGeneratedRead(
-                    task.dimensionId(),
-                    task.chunkX(),
-                    task.chunkZ(),
-                    task.quality(),
-                    nowMillis,
-                    future));
-            while (pendingGeneratedReads.size() > MAX_PENDING_GENERATED_READS) {
-                Iterator<Long> keys = pendingGeneratedReads.keySet().iterator();
-                if (!keys.hasNext()) {
-                    break;
-                }
-                keys.next();
-                keys.remove();
-            }
-        }
-    }
-
-    private void processCompletedGeneratedReads(ServerLevel level, MarketWebMapTileCache cache, long nowMillis) {
-        int processed = 0;
-        synchronized (pendingGeneratedReads) {
-            Iterator<PendingGeneratedRead> iterator = pendingGeneratedReads.values().iterator();
-            while (iterator.hasNext() && processed < GENERATED_READ_COMPLETIONS_PER_TICK) {
-                PendingGeneratedRead read = iterator.next();
-                if (!read.future().isDone()) {
-                    if (nowMillis - read.createdAtMillis() > GENERATED_READ_TTL_MILLIS) {
-                        iterator.remove();
-                    }
-                    continue;
-                }
-                iterator.remove();
-                processed++;
-                try {
-                    read.future()
-                            .getNow(Optional.empty())
-                            .ifPresent(snapshot -> squareRenderer.submit(cache, snapshot, read.quality(), nowMillis));
-                } catch (RuntimeException ignored) {
-                    // Bad or partially-written region data should not break the server tick.
-                }
+            // submitSnapshot 全程主线程:已加载直接采样;未加载经 probe 判已生成才 force-load 采样(配额内),
+            // 未生成留空。probe 未决 / force-load 配额用尽 → DEFER:把该 chunk 同质量重新入队,下 tick 重试。
+            MarketWebMapRenderManager.SubmitResult result = renderManager.submitSnapshot(level, cache, task, nowMillis);
+            if (result == MarketWebMapRenderManager.SubmitResult.DEFER) {
+                queue.enqueue(task.dimensionId(), task.chunkX(), task.chunkZ(), nowMillis, task.quality());
             }
         }
     }
@@ -575,14 +497,6 @@ public final class MarketWebMapRenderService {
         }
     }
 
-    private static ExecutorService newGeneratedDecodeExecutor() {
-        return Executors.newFixedThreadPool(1, runnable -> {
-            Thread thread = new Thread(runnable, "SailboatMarketWebMap-GeneratedDecode");
-            thread.setDaemon(true);
-            return thread;
-        });
-    }
-
     private static int configuredInt(IntSupplier supplier, int fallback) {
         try {
             return supplier.getAsInt();
@@ -621,13 +535,5 @@ public final class MarketWebMapRenderService {
         private boolean done() {
             return nextLocal >= CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
         }
-    }
-
-    private record PendingGeneratedRead(String dimensionId,
-                                        int chunkX,
-                                        int chunkZ,
-                                        MarketWebMapTileQuality quality,
-                                        long createdAtMillis,
-                                        CompletableFuture<Optional<MarketWebMapChunkSnapshot>> future) {
     }
 }
