@@ -287,6 +287,9 @@ public final class MarketWebService {
                 String.CASE_INSENSITIVE_ORDER));
         // 卡片网格需要 category/rarity 做分类与稀有度筛选。按 commodityKey 缓存解析结果,避免全服遍历时重复建 CommodityDefinition。
         java.util.Map<String, CommodityDefinition> definitionCache = new java.util.HashMap<>();
+        // 逐 listing 判可达性,循环外建一次 town↔town 连通图复用,避免每条挂单重建图。
+        java.util.Map<String, java.util.Set<String>> reachabilityGraph =
+                com.monpai.sailboatmod.market.terminal.TerminalVisibility.buildGraph(net);
         for (MarketListing listing : listings) {
             if (listing == null || listing.itemStack() == null || listing.itemStack().isEmpty()) {
                 continue;
@@ -306,7 +309,7 @@ public final class MarketWebService {
             } else if (identity.playerUuidString().equals(listing.sellerUuid())) {
                 purchasable = false;
                 reason = "own_listing";
-            } else if (com.monpai.sailboatmod.market.terminal.TerminalVisibility.isVisible(net, sourceTownId, viewerTownId)) {
+            } else if (com.monpai.sailboatmod.market.terminal.TerminalVisibility.isVisible(reachabilityGraph, sourceTownId, viewerTownId)) {
                 purchasable = true;
                 reason = "";
             } else {
@@ -407,6 +410,9 @@ public final class MarketWebService {
         int rarity = 0;
         List<MarketListing> all = new ArrayList<>(market.getListings());
         all.sort(Comparator.comparing(l -> l.unitPrice()));
+        // 逐 listing 判可达性,循环外建一次 town↔town 连通图复用。
+        java.util.Map<String, java.util.Set<String>> reachabilityGraph =
+                com.monpai.sailboatmod.market.terminal.TerminalVisibility.buildGraph(net);
         for (MarketListing listing : all) {
             if (listing == null || listing.itemStack() == null || listing.itemStack().isEmpty()) {
                 continue;
@@ -439,7 +445,7 @@ public final class MarketWebService {
             } else if (identity.playerUuidString().equals(listing.sellerUuid())) {
                 purchasable = false;
                 reason = "own_listing";
-            } else if (com.monpai.sailboatmod.market.terminal.TerminalVisibility.isVisible(net, sourceTownId, viewerTownId)) {
+            } else if (com.monpai.sailboatmod.market.terminal.TerminalVisibility.isVisible(reachabilityGraph, sourceTownId, viewerTownId)) {
                 purchasable = true;
                 reason = "";
             } else {
