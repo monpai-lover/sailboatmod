@@ -1,7 +1,6 @@
 package com.monpai.sailboatmod.market.web.map;
 
 import com.mojang.logging.LogUtils;
-import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.roadplanner.map.MapBlockColors;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColorizer;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColumnSample;
@@ -12,10 +11,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
-import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
-import net.minecraftforge.common.world.ForgeChunkManager;
 import org.slf4j.Logger;
 
 import java.util.Optional;
@@ -83,50 +80,6 @@ public record MarketWebMapChunkSnapshot(
                         tag,
                         level.getMinBuildHeight(),
                         level.getMaxBuildHeight()));
-    }
-
-    /**
-     * <b>主线程</b>:对【已生成】区块 force 加载后采样(squaremap 模式安全拿区块方式)。
-     *
-     * <p>调用方负责先经 probe 确认该 chunk 已生成存盘(Status=full),并对未加载 chunk 才走到这里。这里
-     * force 该区块(同 tick 同步完成磁盘读),getChunkNow 取出走与已加载 chunk 完全相同的 {@link #captureLoaded}
-     * 主线程采样,try/finally 即采即放票据不常驻。</p>
-     *
-     * <p><b>为什么安全</b>:整个流程都在主线程,绝不把共享 {@link CompoundTag} 交给后台线程并发 datafix 改写
-     * (那是崩服根因)。force 已生成只是同步读盘,比 force 生成轻;配额节流由调用方负责。</p>
-     */
-    public static Optional<MarketWebMapChunkSnapshot> captureGeneratedViaForce(ServerLevel level, int chunkX, int chunkZ) {
-        if (level == null || !MarketWebMapConstants.OVERWORLD.equals(level.dimension().location().toString())) {
-            return Optional.empty();
-        }
-        if (!level.getServer().isSameThread()) {
-            LOGGER.warn("MarketWebMapChunkSnapshot.captureGeneratedViaForce called off the server thread for chunk {},{} — skipping to avoid unsafe chunk access", chunkX, chunkZ);
-            return Optional.empty();
-        }
-        ChunkAccess loaded = level.getChunkSource().getChunk(chunkX, chunkZ, false);
-        if (loaded != null) {
-            return Optional.of(captureLoaded(level, chunkX, chunkZ));
-        }
-        BlockPos owner = new BlockPos(chunkX << 4, level.getSeaLevel(), chunkZ << 4);
-        boolean forced = false;
-        try {
-            forced = ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false);
-            LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
-            if (chunk == null) {
-                return Optional.empty();
-            }
-            return Optional.of(captureLoaded(level, chunkX, chunkZ));
-        } catch (RuntimeException exception) {
-            return Optional.empty();
-        } finally {
-            if (forced) {
-                try {
-                    ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, false, false);
-                } catch (RuntimeException ignored) {
-                    // 释放失败不致命:存档卸载时随票据自然清理。
-                }
-            }
-        }
     }
 
     private static MarketWebMapChunkSnapshot captureLoaded(ServerLevel level, int chunkX, int chunkZ) {

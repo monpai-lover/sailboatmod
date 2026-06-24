@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.ModConfig;
+import com.monpai.sailboatmod.util.OfflineChunkNbtReader;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
@@ -197,48 +198,44 @@ public final class MarketWebMapRenderManager {
             return SubmitResult.CONSUMED;
         }
 
-        Boolean generated = resolveGenerated(level, task.chunkX(), task.chunkZ(), chunkKey);
-        if (generated == null) {
-            return SubmitResult.DEFER; // probe 未决:下 tick 再看
-        }
-        if (!generated) {
-            markSkippedUngenerated(chunkKey);
-            acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
-            return SubmitResult.CONSUMED;
-        }
-
-        // 已生成:force-load 采样,受 GENERATED_SAMPLES_PER_TICK + wall-clock 双闸限速。配额满 → DEFER。
-        synchronized (this) {
-            if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
-                    || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
-                return SubmitResult.DEFER;
+        // 未加载:发起【离线异步读盘】(OfflineChunkNbtReader.beginProbe → IOWorker 异步读,绝不 force),
+        // 后续 tick 看 future done:非 full → 未生成留空;full → 主线程纯内存解码成快照(不碰世界,不 force)。
+        // 这是 squaremap/Xaero 范式,根除 forceChunk 同步 worldgen 卡服(spark 实锤 forceChunk 占满主线程)。
+        SnapshotReadResult read = resolveSnapshotRead(level, task.chunkX(), task.chunkZ(), chunkKey, task.dimensionId());
+        switch (read.state()) {
+            case PENDING -> {
+                return SubmitResult.DEFER; // 读盘未决:下 tick 再看
+            }
+            case UNGENERATED -> {
+                markSkippedUngenerated(chunkKey);
+                acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
+                return SubmitResult.CONSUMED;
+            }
+            case DECODE_THROTTLED -> {
+                return SubmitResult.DEFER; // 本 tick 解码配额用尽:tag 已就绪,下 tick 解码
+            }
+            case READY -> {
+                // 北邻底行(供 height shading 接缝):异步拿已解码北邻喂 bottomRow,拿不到就退化 unknownLastY。绝不 force。
+                captureGeneratedNorthNeighbor(level, task.chunkX(), task.chunkZ() - 1).ifPresent(this::cacheBottomRow);
+                if (read.snapshot().isPresent()) {
+                    acceptSnapshot(cache, read.snapshot().get(), task.quality(), nowMillis);
+                } else {
+                    // tag 是 full 但解码失败(罕见):标记缺失,不无限重试。
+                    failedChunks.incrementAndGet();
+                    acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
+                }
+                return SubmitResult.CONSUMED;
+            }
+            default -> {
+                return SubmitResult.CONSUMED;
             }
         }
-        long startNanos = System.nanoTime();
-        Optional<MarketWebMapChunkSnapshot> target =
-                MarketWebMapChunkSnapshot.captureGeneratedViaForce(level, task.chunkX(), task.chunkZ());
-        // 北邻底行(供 height shading 接缝):也只对已生成的北邻 force 采(未生成就跳过,acceptSnapshot 会用 unknownLastY)。
-        Optional<MarketWebMapChunkSnapshot> north =
-                captureGeneratedNorthNeighbor(level, task.chunkX(), task.chunkZ() - 1);
-        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000L;
-        synchronized (this) {
-            generatedSamplesThisTick++;
-            generatedSampleMillisThisTick += elapsedMillis;
-        }
-        north.ifPresent(this::cacheBottomRow);
-        if (target.isPresent()) {
-            acceptSnapshot(cache, target.get(), task.quality(), nowMillis);
-        } else {
-            // probe 说已生成但 force 后仍没拿到(罕见):标记缺失,不无限重试。
-            failedChunks.incrementAndGet();
-            acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
-        }
-        return SubmitResult.CONSUMED;
     }
 
     /**
-     * 北邻底行采样:仅对已生成且未加载的北邻 force 采样喂 bottomRow 缓存。北邻已加载时由 capture 直接采;
-     * 未生成 / probe 未决则返回 empty(接缝退化为 unknownLastY,可接受)。北邻 force 不计入主配额(轻量、最多一次)。
+     * 北邻底行采样:北邻已加载时直接 {@link MarketWebMapChunkSnapshot#capture} 采;未加载则查异步读盘结果,
+     * 若已解码成快照就返回喂 bottomRow,否则返回 empty(接缝退化为 unknownLastY,可接受)。<b>绝不 force</b>。
+     * 北邻解码不计入主配额(轻量、最多一次),DECODE_THROTTLED/PENDING 当作拿不到处理。
      */
     private Optional<MarketWebMapChunkSnapshot> captureGeneratedNorthNeighbor(ServerLevel level, int chunkX, int chunkZ) {
         Optional<MarketWebMapChunkSnapshot> loadedNorth = MarketWebMapChunkSnapshot.capture(level, chunkX, chunkZ);
@@ -249,54 +246,87 @@ public final class MarketWebMapRenderManager {
         if (isSkippedUngenerated(northKey)) {
             return Optional.empty();
         }
-        Boolean generated = resolveGenerated(level, chunkX, chunkZ, northKey);
-        if (generated == null || !generated) {
-            return Optional.empty();
+        SnapshotReadResult read = resolveSnapshotRead(level, chunkX, chunkZ, northKey, MarketWebMapConstants.OVERWORLD);
+        if (read.state() == SnapshotReadState.UNGENERATED) {
+            markSkippedUngenerated(northKey);
         }
-        return MarketWebMapChunkSnapshot.captureGeneratedViaForce(level, chunkX, chunkZ);
+        return read.snapshot();
+    }
+
+    private enum SnapshotReadState {
+        PENDING,          // 读盘未决,下 tick 再看
+        UNGENERATED,      // 磁盘上没有 / 非 full → 当未生成留空
+        DECODE_THROTTLED, // tag 已就绪,但本 tick 解码配额用尽,下 tick 解码
+        READY             // 已就绪(snapshot present=解码成功;empty=full 但解码失败)
+    }
+
+    private record SnapshotReadResult(SnapshotReadState state, Optional<MarketWebMapChunkSnapshot> snapshot) {
+        static SnapshotReadResult of(SnapshotReadState state) {
+            return new SnapshotReadResult(state, Optional.empty());
+        }
+        static SnapshotReadResult ready(Optional<MarketWebMapChunkSnapshot> snapshot) {
+            return new SnapshotReadResult(SnapshotReadState.READY, snapshot);
+        }
     }
 
     /**
-     * 判断区块是否已生成存盘(复刻 ClaimPreviewTerrainService.resolveGeneratedOrProbe):主线程异步发起
-     * {@code chunkMap.read}(只发起异步 IO 不阻塞),后续 tick 看 isDone 读出 tag 的 Status 单字段。
-     * 返回 TRUE=已生成 / FALSE=未生成 / null=探测未决(下 tick 再看)。超时 / 异常 / empty → FALSE(保守当未生成)。
-     * <p><b>为什么安全</b>:只在主线程读 Status 单字段就丢,不遍历整块 HashMap 解码地形 —— 即使偶发命中
-     * pendingWrites 共享引用被 datafix 并发改,最坏只是 Status 判错一次,绝不会像整块解码那样桶损坏崩。</p>
+     * 离线异步读一个区块并(就绪时)解码成快照。<b>squaremap/Xaero 范式,绝不 force</b>:
+     * 主线程经 {@link OfflineChunkNbtReader#beginProbe} 发起 IOWorker 异步读(不阻塞、不生成),
+     * 后续 tick 看 future done。done 后取 tag:empty/非 full → UNGENERATED;full → 受 DECODE_PER_TICK +
+     * wall-clock 双闸,主线程纯内存 {@link MarketWebMapNbtChunkSnapshotReader#capture} 解码(不碰世界)。
+     * <p><b>为什么安全</b>:beginProbe 返回 IOWorker 独占的 CompoundTag(非 pendingWrites 共享引用),
+     * 主线程单线程解码,绝无并发 datafix 改写桶损坏(见 [[marketweb_snapshot_deadlock]]);且永不触发同步 worldgen。</p>
      */
-    private synchronized Boolean resolveGenerated(ServerLevel level, int chunkX, int chunkZ, long chunkKey) {
+    private synchronized SnapshotReadResult resolveSnapshotRead(ServerLevel level, int chunkX, int chunkZ,
+                                                                long chunkKey, String dimensionId) {
         ChunkProbe probe = pendingProbe.get(chunkKey);
         if (probe == null) {
             if (probeStartsThisTick >= PROBE_STARTS_PER_TICK) {
-                return null; // 本 tick probe 发起额度用尽:下 tick 再发起
+                return SnapshotReadResult.of(SnapshotReadState.PENDING); // 本 tick 发起额度用尽:下 tick 再发起
             }
             try {
                 CompletableFuture<Optional<CompoundTag>> future =
-                        level.getChunkSource().chunkMap.read(new ChunkPos(chunkX, chunkZ));
+                        OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
                 pendingProbe.put(chunkKey, new ChunkProbe(future, snapshotTick));
                 probeStartsThisTick++;
             } catch (RuntimeException exception) {
-                return Boolean.FALSE; // 发起失败:保守当未生成
+                return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 发起失败:保守当未生成
             }
-            return null; // 刚发起,未决
+            return SnapshotReadResult.of(SnapshotReadState.PENDING); // 刚发起,未决
         }
         if (!probe.future().isDone()) {
             if (snapshotTick - probe.startedTick() >= MAX_PROBE_WAIT_TICKS) {
                 pendingProbe.remove(chunkKey);
-                return Boolean.FALSE; // 等太久:保守当未生成
+                return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 等太久:保守当未生成
             }
-            return null; // 仍在读盘,下 tick 再看
+            return SnapshotReadResult.of(SnapshotReadState.PENDING); // 仍在读盘,下 tick 再看
+        }
+        // future done:取独占 tag。非 full → 未生成;full → 配额内主线程解码。
+        Optional<CompoundTag> tag;
+        try {
+            tag = probe.future().getNow(Optional.empty());
+        } catch (RuntimeException exception) {
+            pendingProbe.remove(chunkKey);
+            return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 读出错:保守当未生成
+        }
+        if (tag.isEmpty() || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
+            pendingProbe.remove(chunkKey);
+            return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 磁盘没有 / 非 full → 未生成
+        }
+        // 解码限速(纯内存快,但一 tick 太多 tag 解码仍占主线程):配额满则保留 tag,下 tick 解码。
+        if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
+                || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
+            return SnapshotReadResult.of(SnapshotReadState.DECODE_THROTTLED); // tag 留在 pendingProbe,下 tick 解码
         }
         pendingProbe.remove(chunkKey);
-        try {
-            Optional<CompoundTag> tag = probe.future().getNow(Optional.empty());
-            if (tag.isEmpty()) {
-                return Boolean.FALSE; // 磁盘上没有 → 未生成
-            }
-            String status = tag.get().getString("Status"); // 只读单字段,不解码整块
-            return (status.equals("minecraft:full") || status.equals("full")) ? Boolean.TRUE : Boolean.FALSE;
-        } catch (RuntimeException exception) {
-            return Boolean.FALSE; // 读 Status 出错:保守当未生成
-        }
+        long startNanos = System.nanoTime();
+        Optional<MarketWebMapChunkSnapshot> snapshot = MarketWebMapNbtChunkSnapshotReader.capture(
+                dimensionId, chunkX, chunkZ, tag.get(),
+                level.getMinBuildHeight(), level.getMaxBuildHeight());
+        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000L;
+        generatedSamplesThisTick++;
+        generatedSampleMillisThisTick += elapsedMillis;
+        return SnapshotReadResult.ready(snapshot);
     }
 
     private synchronized boolean isSkippedUngenerated(long chunkKey) {
@@ -498,7 +528,7 @@ public final class MarketWebMapRenderManager {
         renderExecutor.shutdownNow();
         imageIO.shutdown();
         synchronized (this) {
-            // force 是即采即放(captureGeneratedViaForce 的 try/finally 同方法内释放),无残留票据。
+            // 离线异步读不 force、不占票据(beginProbe 走 IOWorker),清掉未决读盘 future 即可,无残留。
             pendingProbe.clear();
             skippedUngenerated.clear();
         }

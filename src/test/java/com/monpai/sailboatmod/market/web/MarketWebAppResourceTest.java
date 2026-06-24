@@ -347,11 +347,14 @@ class MarketWebAppResourceTest {
                 "web map generated snapshots must not use chunk futures as a storage read shortcut");
         assertFalse(snapshot.contains(".join()"),
                 "generated snapshot reads should not block the server tick waiting for disk IO");
-        // 崩服根因修复:后台 decode 共享 CompoundTag 的路径已删,生成区块改为主线程 probe + force-load 采样(squaremap 模式)。
-        assertTrue(snapshot.contains("captureGeneratedViaForce"),
-                "generated chunks must be sampled on the main thread via a force-load, never decoded off-thread");
-        assertTrue(snapshot.contains("ForgeChunkManager.forceChunk"),
-                "force-load is the only safe way to materialize a generated chunk before main-thread sampling");
+        // 卡服根因修复(spark 实锤 forceChunk 占满主线程):删除 force-load 路径,生成区块改为离线 IOWorker 异步读盘
+        // (OfflineChunkNbtReader.beginProbe,绝不触发同步 worldgen)+ 主线程纯内存解码(MarketWebMapNbtChunkSnapshotReader.capture)。
+        assertFalse(snapshot.contains("captureGeneratedViaForce"),
+                "web map must NOT force-load generated chunks for sampling (forceChunk = sync worldgen = server freeze, proven by spark)");
+        assertFalse(snapshot.contains("ForgeChunkManager"),
+                "web map snapshot must NOT use ForgeChunkManager (offline async read replaces force-load)");
+        assertFalse(snapshot.contains("forceChunk"),
+                "web map snapshot must NOT call forceChunk (root cause of the 30s+ server freeze)");
         assertFalse(renderService.contains("pendingGeneratedReads"),
                 "off-thread generated NBT read queue must be removed (it decoded shared CompoundTags off-thread and crashed the server)");
         assertFalse(renderService.contains("enqueueGeneratedRead"),
@@ -360,14 +363,16 @@ class MarketWebAppResourceTest {
                 "render service must never decode chunk NBT off the server thread");
         assertFalse(renderService.contains("generatedDecodeExecutor"),
                 "the off-thread generated decode executor must be removed");
-        assertTrue(renderManager.contains("resolveGenerated"),
-                "unloaded chunks must be probed on the main thread for a generated status before force-loading");
-        assertTrue(renderManager.contains("captureGeneratedViaForce"),
-                "generated unloaded chunks must be force-loaded and sampled on the main thread");
-        assertTrue(renderManager.contains("getString(\"Status\")"),
-                "the generated probe must read only the Status field, never decode the whole chunk tag");
+        assertFalse(renderManager.contains("captureGeneratedViaForce"),
+                "render manager must NOT force-load generated chunks (offline async read replaces it)");
+        assertFalse(renderManager.contains("ForgeChunkManager"),
+                "render manager must NOT use ForgeChunkManager for map rendering (root cause of server freeze)");
+        assertTrue(renderManager.contains("OfflineChunkNbtReader.beginProbe"),
+                "unloaded generated chunks must be read offline via IOWorker async (never force-loaded / synchronously generated)");
+        assertTrue(renderManager.contains("MarketWebMapNbtChunkSnapshotReader.capture"),
+                "generated chunk tags must be decoded on the main thread purely in-memory (no world access, no force)");
         assertTrue(renderManager.contains("GENERATED_SAMPLES_PER_TICK"),
-                "main-thread force-load sampling must be throttled per tick so a full render cannot stall the server");
+                "main-thread NBT decode must be throttled per tick so a full render cannot stall the server");
         assertTrue(queue.contains("MarketWebMapTileQuality quality"),
                 "render tasks should preserve whether work came from loaded chunks or region scans");
         assertTrue(renderService.contains("MarketWebMapTileQuality.SERVER_REGION_SCAN"),
