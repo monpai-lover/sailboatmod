@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.nation.service;
 
+import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.nation.data.TerrainPreviewSavedData;
 import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -13,13 +15,16 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.material.MapColor;
+import net.minecraftforge.common.world.ForgeChunkManager;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
@@ -42,6 +47,15 @@ public final class ClaimPreviewTerrainService {
     private static final int DEFAULT_VISIBLE_BUDGET_PER_TICK = 16;
     private static final int DEFAULT_PREFETCH_BUDGET_PER_TICK = 16;
     private static final int QUEUE_AROUND_PREFETCH_RADIUS = 1;
+    // 远处未加载区块的两档 force 节流(force 是主线程操作:已生成只读盘较快,未生成要同步跑地形生成最重)。
+    // 绝不后台读 NBT(会崩:pendingWrites 共享引用被 vanilla 并发 datafix 改写 HashMap)。force 是 vanilla 唯一安全方式。
+    private static final int MAX_GENERATED_FORCE_PER_TICK = 16;
+    private static final int MAX_UNGENERATED_FORCE_PER_TICK = 2;
+    // 探测区块是否已生成:主线程异步发起 chunkMap.read(不阻塞),后续 tick 看 isDone 读 Status 单字段判档。
+    // 超过此 tick 数还没读完 → 保守当未生成走慢档(宁慢不卡)。
+    private static final int MAX_PROBE_WAIT_TICKS = 40;
+    // 单 tick 慢档(未生成)force 的累计 wall-clock 上限(ms),超了就停、剩余下 tick(比纯计数更稳,生成耗时差异大)。
+    private static final long MAX_UNGENERATED_FORCE_MILLIS_PER_TICK = 35L;
     private static final AtomicReference<ClaimPreviewTerrainService> ACTIVE = new AtomicReference<>();
 
     /** Sub-samples per chunk axis (2 = 2x2 sub-chunks per chunk, each 8x8 blocks). */
@@ -82,6 +96,14 @@ public final class ClaimPreviewTerrainService {
     private final ConcurrentMap<String, ViewportRequestState> viewportRequests = new ConcurrentHashMap<>();
     private final Set<String> visibleQueuedKeys = ConcurrentHashMap.newKeySet();
     private final Set<String> prefetchQueuedKeys = ConcurrentHashMap.newKeySet();
+    // 已生成探测:chunkKey(asLong) → 异步 chunkMap.read future + 发起 tick(超时降级慢档)。仅主线程读写。
+    private final java.util.Map<Long, ChunkProbe> pendingProbe = new java.util.HashMap<>();
+    // 已 force 加载未释放的 chunk(防重复 force;关停遍历释放票据)。dimId → set(chunkKey)。仅主线程读写。
+    private final java.util.Map<String, Set<Long>> forcedChunks = new java.util.HashMap<>();
+    private long currentTick;
+
+    private record ChunkProbe(CompletableFuture<Optional<CompoundTag>> future, long startedTick) {
+    }
 
     public ClaimPreviewTerrainService() {
     }
@@ -317,10 +339,19 @@ public final class ClaimPreviewTerrainService {
         }
     }
 
+    // 每 tick force 配额(visible+prefetch 两次 drain 共享),processBudgetedWork 开头重置。
+    private int genForcedThisTick;
+    private int ungenForcedThisTick;
+    private long ungenForceMillisThisTick;
+
     public void processBudgetedWork(ServerLevel level, int visibleBudget, int prefetchBudget) {
         if (level == null) {
             return;
         }
+        currentTick++;
+        genForcedThisTick = 0;
+        ungenForcedThisTick = 0;
+        ungenForceMillisThisTick = 0L;
         String dimensionId = level.dimension().location().toString();
         drainQueue(level, visibleQueue, visibleQueuedKeys, dimensionId, Math.max(0, visibleBudget));
         if (visibleQueue.isEmpty()) {
@@ -384,20 +415,154 @@ public final class ClaimPreviewTerrainService {
             } catch (Exception ignored) {
                 chunk = null;
             }
-            if (chunk == null) {
+            if (chunk != null) {
+                // 已加载内存:最快路径,直接采样(不变)。
+                batch.add(new ResolvedTileRequest(
+                        request.dimensionId(),
+                        request.chunkX(),
+                        request.chunkZ(),
+                        request.viewportKey(),
+                        chunk));
                 continue;
             }
-            batch.add(new ResolvedTileRequest(
-                    request.dimensionId(),
-                    request.chunkX(),
-                    request.chunkZ(),
-                    request.viewportKey(),
-                    chunk
-            ));
+            // 未加载:两档节流 force(已生成快档 / 未生成慢档),采到的直接进 savedData(不进 batch,batch 只装 getChunkNow 命中)。
+            forceLoadAndSample(level, queue, queueKeys, request, savedData);
         }
         for (SampledTile sampledTile : sampleResolvedBatch(batch)) {
             storeTile(sampledTile.dimensionId(), sampledTile.chunkX(), sampledTile.chunkZ(), sampledTile.tile(), savedData);
             markViewportDirty(sampledTile.viewportKey());
+        }
+    }
+
+    /**
+     * 未加载区块的两档 force 加载 + 采样。先异步探测是否已生成(只读 Status,不解码地形,不后台读),按档限速 force,
+     * 采到即进 savedData,采不到/未决/配额满则把瓦片回队等下 tick。force 即采即放票据(try/finally),不常驻。
+     */
+    private void forceLoadAndSample(ServerLevel level,
+                                    Queue<TileRequest> queue,
+                                    Set<String> queueKeys,
+                                    TileRequest request,
+                                    TerrainPreviewSavedData savedData) {
+        int chunkX = request.chunkX();
+        int chunkZ = request.chunkZ();
+        long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
+
+        Boolean generated = resolveGeneratedOrProbe(level, chunkX, chunkZ, chunkKey);
+        if (generated == null) {
+            requeue(queue, queueKeys, request); // 探测未决:下 tick 再看
+            return;
+        }
+
+        // 按档限速:已生成快档 / 未生成慢档(慢档还有 wall-clock 守门)。配额满则回队等下 tick。
+        if (generated) {
+            if (genForcedThisTick >= MAX_GENERATED_FORCE_PER_TICK) {
+                requeue(queue, queueKeys, request);
+                return;
+            }
+        } else {
+            if (ungenForcedThisTick >= MAX_UNGENERATED_FORCE_PER_TICK
+                    || ungenForceMillisThisTick >= MAX_UNGENERATED_FORCE_MILLIS_PER_TICK) {
+                requeue(queue, queueKeys, request);
+                return;
+            }
+        }
+
+        long startNanos = System.nanoTime();
+        int[] tile = forceSampleRelease(level, request.dimensionId(), chunkX, chunkZ, chunkKey);
+        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000L;
+        if (generated) {
+            genForcedThisTick++;
+        } else {
+            ungenForcedThisTick++;
+            ungenForceMillisThisTick += elapsedMillis;
+        }
+        if (tile != null) {
+            storeTile(request.dimensionId(), chunkX, chunkZ, tile, savedData);
+            markViewportDirty(request.viewportKey());
+        } else {
+            // force 后同 tick 仍没拿到(罕见):回队下 tick 重试。
+            requeue(queue, queueKeys, request);
+        }
+    }
+
+    /**
+     * 判断区块是否已生成存盘:主线程异步发起 {@code chunkMap.read}(只发起异步 IO,不阻塞、不后台解码),
+     * 后续 tick 看 isDone 读出 tag 的 Status 字段。返回 TRUE=已生成 / FALSE=未生成 / null=探测未决(下 tick 再看)。
+     * 超时 / 非主世界 / 异常 → 保守 FALSE(当未生成走慢档,宁慢不卡)。
+     * <p><b>为什么安全</b>:只在主线程读 tag 的 Status 单字段就丢,不遍历整个 HashMap 解码地形 —— 即使偶发命中
+     * pendingWrites 共享引用被 datafix 并发改,最坏只是 Status 判错一次(降级慢档),绝不会像整块解码那样桶损坏崩。
+     */
+    private Boolean resolveGeneratedOrProbe(ServerLevel level, int chunkX, int chunkZ, long chunkKey) {
+        ChunkProbe probe = pendingProbe.get(chunkKey);
+        if (probe == null) {
+            try {
+                CompletableFuture<Optional<CompoundTag>> future =
+                        level.getChunkSource().chunkMap.read(new ChunkPos(chunkX, chunkZ));
+                pendingProbe.put(chunkKey, new ChunkProbe(future, currentTick));
+            } catch (Throwable t) {
+                return Boolean.FALSE; // 发起失败:保守当未生成
+            }
+            return null; // 刚发起,未决
+        }
+        if (!probe.future().isDone()) {
+            if (currentTick - probe.startedTick() >= MAX_PROBE_WAIT_TICKS) {
+                pendingProbe.remove(chunkKey);
+                return Boolean.FALSE; // 等太久:保守当未生成
+            }
+            return null; // 仍在读盘,下 tick 再看
+        }
+        pendingProbe.remove(chunkKey);
+        try {
+            Optional<CompoundTag> tag = probe.future().getNow(Optional.empty());
+            if (tag.isEmpty()) {
+                return Boolean.FALSE; // 磁盘上没有 → 未生成
+            }
+            String status = tag.get().getString("Status"); // 只读单字段
+            return (status.equals("minecraft:full") || status.equals("full")) ? Boolean.TRUE : Boolean.FALSE;
+        } catch (Throwable t) {
+            return Boolean.FALSE; // 读 Status 出错:保守当未生成
+        }
+    }
+
+    /** force 加载该区块(同 tick 同步生成/加载完),getChunkNow 取出采样,try/finally 即采即放票据。采到返回 tile,否则 null。 */
+    private int[] forceSampleRelease(ServerLevel level, String dimensionId, int chunkX, int chunkZ, long chunkKey) {
+        BlockPos owner = new BlockPos(chunkX << 4, level.getSeaLevel(), chunkZ << 4);
+        boolean forced = false;
+        try {
+            forced = ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false);
+            if (forced) {
+                forcedChunks.computeIfAbsent(dimensionId, ignored -> new LinkedHashSet<>()).add(chunkKey);
+            }
+            LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+            if (chunk == null) {
+                return null;
+            }
+            return sampleChunkSubColors(chunk, chunkX, chunkZ);
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            if (forced) {
+                try {
+                    ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, false, false);
+                } catch (Throwable ignored) {
+                    // 释放失败不致命:关停时 releaseAllForcedChunks 兜底
+                }
+                Set<Long> set = forcedChunks.get(dimensionId);
+                if (set != null) {
+                    set.remove(chunkKey);
+                    if (set.isEmpty()) {
+                        forcedChunks.remove(dimensionId);
+                    }
+                }
+            }
+        }
+    }
+
+    /** 瓦片回队等下 tick(去重:queueKeys 没有才加,避免重复堆积)。 */
+    private void requeue(Queue<TileRequest> queue, Set<String> queueKeys, TileRequest request) {
+        String key = queueKey(request.dimensionId(), request.chunkX(), request.chunkZ());
+        if (queueKeys.add(key)) {
+            queue.add(request);
         }
     }
 
@@ -448,6 +613,8 @@ public final class ClaimPreviewTerrainService {
         viewportRequests.clear();
         visibleQueuedKeys.clear();
         prefetchQueuedKeys.clear();
+        pendingProbe.clear();
+        forcedChunks.clear();
     }
 
     private List<SampledTile> sampleResolvedBatch(List<ResolvedTileRequest> batch) {
@@ -815,5 +982,9 @@ public final class ClaimPreviewTerrainService {
     }
 
     private void shutdown() {
+        // force 是即采即放(forceSampleRelease 的 try/finally 同方法内释放),正常残留为空。
+        // 关停只清内存探测/记账状态;残留票据由 server 停止时 ForgeChunkManager 随存档卸载自然清理。
+        pendingProbe.clear();
+        forcedChunks.clear();
     }
 }

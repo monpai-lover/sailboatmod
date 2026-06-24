@@ -44,7 +44,7 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class RoadPlannerMapPreloadService {
-    private static final int MAX_FORCE_CHUNKS_PER_TICK = 8;
+    private static final int MAX_FORCE_CHUNKS_PER_TICK = 12;
     private static final RoadMapRoutePreloadPlanner ROUTE_PLANNER = new RoadMapRoutePreloadPlanner(4096, 4, 3, 8);
     private static RoadPlannerMapPreloadService GLOBAL = new RoadPlannerMapPreloadService();
 
