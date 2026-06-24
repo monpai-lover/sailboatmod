@@ -129,29 +129,6 @@ public record MarketWebMapChunkSnapshot(
         }
     }
 
-    /**
-     * <b>后台线程</b>异步读磁盘 region NBT 并解码成水图快照(供水路真实地形判水复用,见 route.water.RealBlockWaterMap)。
-     * {@code chunkMap.read} 只发起异步磁盘读、不 join 主线程,可在 worker 线程直接调;此处 {@code future.get(timeout)}
-     * 单向等磁盘 IO 完成再解码。仅主世界已存盘区块有效;未存盘/超时返回 empty(调用方 force 兜底)。
-     */
-    public static Optional<MarketWebMapChunkSnapshot> readGeneratedOffThread(ServerLevel level, int chunkX, int chunkZ,
-                                                                             long timeoutMs) {
-        if (level == null || !MarketWebMapConstants.OVERWORLD.equals(level.dimension().location().toString())) {
-            return Optional.empty();
-        }
-        try {
-            int minY = level.getMinBuildHeight();
-            int maxY = level.getMaxBuildHeight();
-            Optional<CompoundTag> tag = level.getChunkSource().chunkMap
-                    .read(new ChunkPos(chunkX, chunkZ))
-                    .get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
-            return tag.flatMap(value -> MarketWebMapNbtChunkSnapshotReader.capture(
-                    MarketWebMapConstants.OVERWORLD, chunkX, chunkZ, value, minY, maxY));
-        } catch (Throwable t) {
-            return Optional.empty();
-        }
-    }
-
     private static MarketWebMapChunkSnapshot captureLoaded(ServerLevel level, int chunkX, int chunkZ) {
         RoadMapServerColumnSampler sampler = new RoadMapServerColumnSampler(level);
         RoadMapColumnSample[] samples = new RoadMapColumnSample[MarketWebMapConstants.CHUNK_SIZE * MarketWebMapConstants.CHUNK_SIZE];
