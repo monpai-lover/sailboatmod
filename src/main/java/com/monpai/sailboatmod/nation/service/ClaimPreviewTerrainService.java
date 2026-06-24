@@ -453,18 +453,16 @@ public final class ClaimPreviewTerrainService {
             return;
         }
 
-        // 按档限速:已生成快档 / 未生成慢档(慢档还有 wall-clock 守门)。配额满则回队等下 tick。
-        if (generated) {
-            if (genForcedThisTick >= MAX_GENERATED_FORCE_PER_TICK) {
-                requeue(queue, queueKeys, request);
-                return;
-            }
-        } else {
-            if (ungenForcedThisTick >= MAX_UNGENERATED_FORCE_PER_TICK
-                    || ungenForceMillisThisTick >= MAX_UNGENERATED_FORCE_MILLIS_PER_TICK) {
-                requeue(queue, queueKeys, request);
-                return;
-            }
+        // 止血(2026-06):绝不 force 未生成区块——force 未生成区块会在主线程同步跑地形生成,
+        // 在重整合包里单次可卡 60 秒触发 watchdog 崩服(crash 栈 forceSampleRelease→forceChunk→park)。
+        // 未生成 → 直接留空不画(等该区块真生成后由 invalidateChunk 重新入队采样)。仅已生成(磁盘 full status)
+        // 才 force,那只是读盘反序列化、有界不卡。照 Xaero World Map「只画磁盘已存在的区块,绝不生成」。
+        if (!generated) {
+            return; // 未生成:不 force、不回队,留空
+        }
+        if (genForcedThisTick >= MAX_GENERATED_FORCE_PER_TICK) {
+            requeue(queue, queueKeys, request);
+            return;
         }
 
         long startNanos = System.nanoTime();
