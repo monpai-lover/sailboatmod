@@ -182,6 +182,10 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     // 服务端权威判定「车轮是否在正式建成道路上」,同步给客户端读,避免客户端自查路网(SavedData 仅服务端有)。
     private static final EntityDataAccessor<Boolean> DATA_ON_ROAD =
             SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.BOOLEAN);
+    // 车主名同步给客户端:CarriageInfoScreen 客户端读 getOwnerName()。owner 旧版只存本地字段+NBT,实体同步包不带,
+    // 导致新放的马车 UI 显示「车主:-」(放置者没被识别为车主)。照帆船 DATA_OWNER_NAME 补同步。
+    private static final EntityDataAccessor<String> DATA_OWNER_NAME =
+            SynchedEntityData.defineId(CarriageEntity.class, EntityDataSerializers.STRING);
 
     private static final RawAnimation CARRIAGE_DRIVE_ANIMATION = RawAnimation.begin().thenLoop("animation.carriage.drive");
     // 动画播放速度联动基准:车速(m/s)=此值时动画 1× 播放。越小则同速下动画越快。游戏内觉得动画太快/慢改此值。
@@ -397,6 +401,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
         this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
         this.entityData.define(DATA_ON_ROAD, false);
+        this.entityData.define(DATA_OWNER_NAME, "");
     }
 
     @Override
@@ -440,6 +445,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         setWoodType(CarriageWoodType.fromSerialized(tag.getString("WoodType")));
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");
+        entityData.set(DATA_OWNER_NAME, ownerName == null ? "" : ownerName); // 重载存档后同步给客户端
         rentalPrice = Mth.clamp(tag.getInt("RentalPrice"), SailboatEntity.MIN_RENTAL_PRICE, SailboatEntity.MAX_RENTAL_PRICE);
         entityData.set(DATA_RENTAL_PRICE, rentalPrice);
         routeCatalog.clear();
@@ -1568,6 +1574,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
         ownerUuid = player.getUUID().toString();
         ownerName = player.getGameProfile() == null ? player.getName().getString() : player.getGameProfile().getName();
+        entityData.set(DATA_OWNER_NAME, ownerName); // 同步给客户端(否则新放的马车 UI 显示「车主:-」)
     }
 
     @Override
@@ -1577,7 +1584,9 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     public String getOwnerName() {
-        return ownerName == null || ownerName.isBlank() ? "-" : ownerName;
+        // 客户端读 synched 字段(本地 ownerName 仅服务端有,实体同步包不带 → UI 显示「车主:-」)
+        String name = level().isClientSide ? entityData.get(DATA_OWNER_NAME) : ownerName;
+        return name == null || name.isBlank() ? "-" : name;
     }
 
     @Override
