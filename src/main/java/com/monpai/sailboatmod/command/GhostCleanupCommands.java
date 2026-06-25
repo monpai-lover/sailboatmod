@@ -11,11 +11,16 @@ import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.registry.ModBlocks;
+import com.monpai.sailboatmod.util.OfflineChunkNbtReader;
+import com.monpai.sailboatmod.util.OfflineChunkPalette;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
@@ -23,6 +28,7 @@ import net.minecraft.server.level.ServerLevel;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * <b>幽灵数据清理</b>:崩服回档后,world 区块/方块回滚,但 mod 的 NBT SavedData(town/nation/market listing)
@@ -45,30 +51,44 @@ public final class GhostCleanupCommands {
     /** 单条记录相对世界对象的判定结果。 */
     public enum Verdict {
         OK,                 // 世界对象存在 → 健康
-        GHOST,             // 区块已加载且确认无对应方块 → 可删
-        SKIPPED_UNLOADED,  // 区块未加载,无法验证 → 绝不删
+        GHOST,             // 已确认(内存或磁盘)无对应方块 → 可删
+        SKIPPED_UNLOADED,  // 区块未加载且磁盘也读不到,无法验证 → 绝不删
         SKIPPED_DIM        // 维度解析失败 → 保守跳过
     }
 
     /**
-     * <b>判定纯函数</b>(不依赖 MC 世界,便于单测)。<b>最重要保证:chunkLoaded=false 永远不返回 GHOST。</b>
+     * 目标坐标处方块的<b>三态</b>探测结果。区分"确认不在"和"读不到无法验证"是关键——
+     * 前者才是幽灵,后者绝不删。
+     */
+    public enum BlockProbe {
+        PRESENT,       // 确认是期望的 core/dock 方块
+        ABSENT,        // 确认不是(内存已加载读到别的,或磁盘 NBT 已生成但该格不是)→ 幽灵
+        UNVERIFIABLE   // 区块未加载且磁盘也读不到(从未生成)→ 无法验证
+    }
+
+    /**
+     * <b>判定纯函数</b>(不依赖 MC 世界,便于单测)。<b>最重要保证:probe==UNVERIFIABLE 永远不返回 GHOST。</b>
      *
      * @param hasReference 记录是否声明了世界引用(town/nation 的 hasCore;listing 的 dockPos!=ZERO)。false→OK(不在职责内)
      * @param dimResolved  维度是否解析成功
-     * @param chunkLoaded  目标坐标所在区块是否已加载
-     * @param blockPresent 已加载时,目标方块是否就是期望的 core/dock 方块
+     * @param probe        目标方块三态探测结果(内存→离线磁盘→读不到)
      */
-    public static Verdict classify(boolean hasReference, boolean dimResolved, boolean chunkLoaded, boolean blockPresent) {
+    public static Verdict classify(boolean hasReference, boolean dimResolved, BlockProbe probe) {
         if (!hasReference) {
             return Verdict.OK; // 无世界引用的记录不在本命令职责内,绝不动
         }
         if (!dimResolved) {
             return Verdict.SKIPPED_DIM;
         }
-        if (!chunkLoaded) {
-            return Verdict.SKIPPED_UNLOADED; // 铁律:未加载绝不判幽灵
+        switch (probe) {
+            case PRESENT:
+                return Verdict.OK;
+            case ABSENT:
+                return Verdict.GHOST;   // 已确认不在(内存或磁盘) = 幽灵
+            case UNVERIFIABLE:
+            default:
+                return Verdict.SKIPPED_UNLOADED; // 铁律:读不到绝不判幽灵
         }
-        return blockPresent ? Verdict.OK : Verdict.GHOST;
     }
 
     // ============================ 命令树 ============================
@@ -166,10 +186,11 @@ public final class GhostCleanupCommands {
         boolean hasRef = town.hasCore();
         ServerLevel level = hasRef ? resolveDimension(server, town.coreDimension()) : null;
         boolean dimOk = level != null;
-        BlockPos pos = hasRef ? BlockPos.of(town.corePos()) : BlockPos.ZERO;
-        boolean loaded = dimOk && level.hasChunkAt(pos);
-        boolean present = loaded && level.getBlockState(pos).getBlock() instanceof TownCoreBlock;
-        return classify(hasRef, dimOk, loaded, present);
+        if (!hasRef || !dimOk) {
+            return classify(hasRef, dimOk, BlockProbe.UNVERIFIABLE);
+        }
+        BlockProbe probe = probeBlock(level, BlockPos.of(town.corePos()), ModBlocks.TOWN_CORE_BLOCK.get(), TownCoreBlock.class);
+        return classify(true, true, probe);
     }
 
     // ---- nation ----
@@ -204,10 +225,11 @@ public final class GhostCleanupCommands {
         boolean hasRef = nation.hasCore();
         ServerLevel level = hasRef ? resolveDimension(server, nation.coreDimension()) : null;
         boolean dimOk = level != null;
-        BlockPos pos = hasRef ? BlockPos.of(nation.corePos()) : BlockPos.ZERO;
-        boolean loaded = dimOk && level.hasChunkAt(pos);
-        boolean present = loaded && level.getBlockState(pos).getBlock() instanceof NationCoreBlock;
-        return classify(hasRef, dimOk, loaded, present);
+        if (!hasRef || !dimOk) {
+            return classify(hasRef, dimOk, BlockProbe.UNVERIFIABLE);
+        }
+        BlockProbe probe = probeBlock(level, BlockPos.of(nation.corePos()), ModBlocks.NATION_CORE_BLOCK.get(), NationCoreBlock.class);
+        return classify(true, true, probe);
     }
 
     // ---- market listing ----
@@ -245,23 +267,65 @@ public final class GhostCleanupCommands {
     private enum ListingVerdict { OK, GHOST, SKIPPED_UNLOADED }
 
     /**
-     * listing 无维度字段,全维度扫描 dock。<b>宁漏删不误删</b>:存在已加载区块但都无 dock→GHOST;
-     * 任一坐标处区块都未加载→SKIPPED_UNLOADED。DockRegistry 只反映已加载 dock,故叠加 hasChunkAt+instanceof 复核。
+     * listing 无维度字段,全维度扫描 dock。每个维度三态探测(内存→离线磁盘);<b>宁漏删不误删</b>:
+     * 任一维度确认有 dock→OK;某维度确认无(已加载或磁盘已生成)记为 ABSENT;全维度都读不到→SKIPPED_UNLOADED。
+     * DockRegistry 是已加载 dock 快路径。
      */
     private static ListingVerdict classifyListing(MinecraftServer server, BlockPos dockPos) {
-        boolean anyChunkLoaded = false;
+        boolean anyAbsent = false;
         for (ServerLevel level : server.getAllLevels()) {
             if (DockRegistry.get(level).contains(dockPos)) {
                 return ListingVerdict.OK; // 已注册 dock(快路径)
             }
-            if (level.hasChunkAt(dockPos)) {
-                anyChunkLoaded = true;
-                if (level.getBlockState(dockPos).getBlock() instanceof DockBlock) {
-                    return ListingVerdict.OK;
-                }
+            BlockProbe probe = probeBlock(level, dockPos, ModBlocks.DOCK_BLOCK.get(), DockBlock.class);
+            if (probe == BlockProbe.PRESENT) {
+                return ListingVerdict.OK;
+            }
+            if (probe == BlockProbe.ABSENT) {
+                anyAbsent = true; // 该维度确认无 dock;继续看别的维度有没有
             }
         }
-        return anyChunkLoaded ? ListingVerdict.GHOST : ListingVerdict.SKIPPED_UNLOADED;
+        return anyAbsent ? ListingVerdict.GHOST : ListingVerdict.SKIPPED_UNLOADED;
+    }
+
+    // ---- 核心:三态方块探测(内存 → 离线磁盘 NBT → 读不到) ----
+
+    /**
+     * 探测 {@code pos} 处是否是期望方块。<b>不 force 加载区块</b>:
+     * <ol>
+     *   <li>区块已加载 → 内存 {@code getBlockState}(最准),instanceof 命中=PRESENT,否则 ABSENT。</li>
+     *   <li>未加载 → {@link OfflineChunkNbtReader#readSafeOnMainThread} 离线读磁盘 NBT(不生成),
+     *       {@link OfflineChunkPalette} 解出该坐标 blockId:命中 expectedId=PRESENT,full 但不是=ABSENT。</li>
+     *   <li>磁盘也读不到(从未生成/读失败)→ UNVERIFIABLE(绝不删)。</li>
+     * </ol>
+     * 只主世界等可解析维度;离线读纯磁盘只读,安全。
+     */
+    static BlockProbe probeBlock(ServerLevel level, BlockPos pos, net.minecraft.world.level.block.Block expected,
+                                 Class<? extends net.minecraft.world.level.block.Block> expectedClass) {
+        // 1) 已加载:内存判最准。
+        if (level.hasChunkAt(pos)) {
+            return expectedClass.isInstance(level.getBlockState(pos).getBlock())
+                    ? BlockProbe.PRESENT : BlockProbe.ABSENT;
+        }
+        // 2) 未加载:离线读磁盘 NBT(不 force 生成)。
+        ChunkPos chunkPos = new ChunkPos(pos);
+        Optional<CompoundTag> tag = OfflineChunkNbtReader.readSafeOnMainThread(level, chunkPos, 2000L, false);
+        if (tag.isEmpty()
+                || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
+            return BlockProbe.UNVERIFIABLE; // 磁盘没有/非 full → 无法验证
+        }
+        try {
+            OfflineChunkPalette.OfflineChunkBlocks blocks =
+                    OfflineChunkPalette.decode(tag.get(), level.getMinBuildHeight(), level.getMaxBuildHeight());
+            if (blocks.isEmpty()) {
+                return BlockProbe.UNVERIFIABLE;
+            }
+            String expectedId = net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(expected).toString();
+            String actualId = blocks.blockId(pos.getX() & 15, pos.getY(), pos.getZ() & 15);
+            return expectedId.equals(actualId) ? BlockProbe.PRESENT : BlockProbe.ABSENT;
+        } catch (RuntimeException e) {
+            return BlockProbe.UNVERIFIABLE; // 解码异常:保守当无法验证,绝不删
+        }
     }
 
     // ---- helper(照搬 NationService.resolveDimension) ----

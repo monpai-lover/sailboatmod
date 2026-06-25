@@ -594,7 +594,7 @@
     "command.sailboatmod.marketadmin.cleanghosts.ghost_town":  "  GHOST town: %s (%s) — core block missing.",
     "command.sailboatmod.marketadmin.cleanghosts.ghost_nation":  "  GHOST nation: %s (%s) — core missing; deleting cascades %s town(s).",
     "command.sailboatmod.marketadmin.cleanghosts.ghost_listing":  "  GHOST listing: %s — source dock missing (%s active order(s)).",
-    "command.sailboatmod.marketadmin.cleanghosts.skipped_unloaded":  "  Skipped %2$s %1$s record(s): chunk not loaded, cannot verify (never deleted).",
+    "command.sailboatmod.marketadmin.cleanghosts.skipped_unloaded":  "  Skipped %2$s %1$s record(s): chunk never generated on disk, cannot verify (never deleted).",
     "command.sailboatmod.marketadmin.cleanghosts.more":  "  ... and %s more (not shown).",
     "command.sailboatmod.marketadmin.cleanghosts.done_dryrun":  "[Ghost Cleanup] Found %s ghost record(s). Re-run with 'confirm' to delete.",
     "command.sailboatmod.marketadmin.cleanghosts.done_apply":  "[Ghost Cleanup] Deleted %s ghost record(s).",

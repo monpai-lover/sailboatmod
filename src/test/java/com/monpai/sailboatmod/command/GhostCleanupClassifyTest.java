@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.command;
 
+import com.monpai.sailboatmod.command.GhostCleanupCommands.BlockProbe;
 import com.monpai.sailboatmod.command.GhostCleanupCommands.Verdict;
 import org.junit.jupiter.api.Test;
 
@@ -8,60 +9,59 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * {@link GhostCleanupCommands#classify} 判定真值表(纯内存,不起服)。
- * 最重要保证:chunkLoaded=false 永远不能是 GHOST(回档后未加载区块绝不误删)。
+ * 最重要保证:probe==UNVERIFIABLE 永远不能是 GHOST(磁盘读不到的绝不误删)。
  */
 class GhostCleanupClassifyTest {
 
     @Test
     void noReference_alwaysOk() {
-        // 无世界引用的记录不在职责内,无论后续如何都 OK,绝不动。
-        assertEquals(Verdict.OK, GhostCleanupCommands.classify(false, false, false, false));
-        assertEquals(Verdict.OK, GhostCleanupCommands.classify(false, true, true, true));
-        assertEquals(Verdict.OK, GhostCleanupCommands.classify(false, true, true, false));
+        // 无世界引用的记录不在职责内,无论后续如何都 OK。
+        assertEquals(Verdict.OK, GhostCleanupCommands.classify(false, false, BlockProbe.UNVERIFIABLE));
+        assertEquals(Verdict.OK, GhostCleanupCommands.classify(false, true, BlockProbe.ABSENT));
+        assertEquals(Verdict.OK, GhostCleanupCommands.classify(false, true, BlockProbe.PRESENT));
     }
 
     @Test
     void dimUnresolved_skipped() {
-        assertEquals(Verdict.SKIPPED_DIM, GhostCleanupCommands.classify(true, false, false, false));
-        assertEquals(Verdict.SKIPPED_DIM, GhostCleanupCommands.classify(true, false, true, true));
+        assertEquals(Verdict.SKIPPED_DIM, GhostCleanupCommands.classify(true, false, BlockProbe.ABSENT));
+        assertEquals(Verdict.SKIPPED_DIM, GhostCleanupCommands.classify(true, false, BlockProbe.PRESENT));
     }
 
     @Test
-    void chunkUnloaded_neverGhost() {
-        // 铁律:有引用、维度解析成功,但区块未加载 → SKIPPED_UNLOADED,绝不 GHOST。
-        assertEquals(Verdict.SKIPPED_UNLOADED, GhostCleanupCommands.classify(true, true, false, false));
-        assertEquals(Verdict.SKIPPED_UNLOADED, GhostCleanupCommands.classify(true, true, false, true));
+    void present_ok() {
+        assertEquals(Verdict.OK, GhostCleanupCommands.classify(true, true, BlockProbe.PRESENT));
     }
 
     @Test
-    void loadedAndPresent_ok() {
-        assertEquals(Verdict.OK, GhostCleanupCommands.classify(true, true, true, true));
+    void absent_ghost() {
+        // 确认不在(内存已加载读到别的 或 磁盘 NBT 已生成但该格不是)= 幽灵,可删。
+        assertEquals(Verdict.GHOST, GhostCleanupCommands.classify(true, true, BlockProbe.ABSENT));
     }
 
     @Test
-    void loadedAndAbsent_ghost() {
-        // 唯一会判 GHOST 的组合:有引用 + 维度OK + 区块已加载 + 方块确认不在。
-        assertEquals(Verdict.GHOST, GhostCleanupCommands.classify(true, true, true, false));
+    void unverifiable_neverGhost() {
+        // 铁律:磁盘读不到(从未生成/读失败)→ SKIPPED_UNLOADED,绝不 GHOST。
+        assertEquals(Verdict.SKIPPED_UNLOADED, GhostCleanupCommands.classify(true, true, BlockProbe.UNVERIFIABLE));
     }
 
     @Test
-    void ghostRequiresAllFourConditions_exhaustive() {
-        // 穷举 4 个布尔的全部 16 种组合,断言只有 (true,true,true,false) 才是 GHOST。
-        for (int mask = 0; mask < 16; mask++) {
-            boolean hasRef = (mask & 8) != 0;
-            boolean dimOk = (mask & 4) != 0;
-            boolean loaded = (mask & 2) != 0;
-            boolean present = (mask & 1) != 0;
-            Verdict v = GhostCleanupCommands.classify(hasRef, dimOk, loaded, present);
-            boolean shouldBeGhost = hasRef && dimOk && loaded && !present;
-            if (shouldBeGhost) {
-                assertEquals(Verdict.GHOST, v, "mask=" + mask);
-            } else {
-                assertNotEquals(Verdict.GHOST, v, "mask=" + mask + " must not be GHOST");
-            }
-            // 额外铁律:未加载绝不 GHOST。
-            if (!loaded) {
-                assertNotEquals(Verdict.GHOST, v, "unloaded must never be GHOST, mask=" + mask);
+    void ghostOnlyWhenRefDimAbsent_exhaustive() {
+        // 穷举 hasRef × dimOk × probe(2×2×3=12),断言只有 (true,true,ABSENT) 是 GHOST,
+        // 且 UNVERIFIABLE 任何情况都不是 GHOST。
+        for (boolean hasRef : new boolean[] {false, true}) {
+            for (boolean dimOk : new boolean[] {false, true}) {
+                for (BlockProbe probe : BlockProbe.values()) {
+                    Verdict v = GhostCleanupCommands.classify(hasRef, dimOk, probe);
+                    boolean shouldBeGhost = hasRef && dimOk && probe == BlockProbe.ABSENT;
+                    if (shouldBeGhost) {
+                        assertEquals(Verdict.GHOST, v, hasRef + "," + dimOk + "," + probe);
+                    } else {
+                        assertNotEquals(Verdict.GHOST, v, hasRef + "," + dimOk + "," + probe);
+                    }
+                    if (probe == BlockProbe.UNVERIFIABLE) {
+                        assertNotEquals(Verdict.GHOST, v, "UNVERIFIABLE must never be GHOST: " + hasRef + "," + dimOk);
+                    }
+                }
             }
         }
     }
