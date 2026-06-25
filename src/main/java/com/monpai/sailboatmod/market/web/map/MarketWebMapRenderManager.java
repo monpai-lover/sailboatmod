@@ -55,8 +55,12 @@ public final class MarketWebMapRenderManager {
     // 解码纯内存快,GENERATED_SAMPLES_PER_TICK 实为"每 tick 解码完成数";wall-clock 闸兜底不卡 tick。
     private static final int GENERATED_SAMPLES_PER_TICK = 48;
     private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 30L;
-    private static final int PROBE_STARTS_PER_TICK = 128;
+    private static final int PROBE_STARTS_PER_TICK = 32;
     private static final int MAX_PROBE_WAIT_TICKS = 60;
+    // 在途异步读硬上限(背压):每个 pending probe 的 future 完成后挂一整块区块 NBT(几十 KB~MB)。
+    // 无此上限 + 高发起速度 + 读盘慢(VMware IO 抖)会堆积成百上千块 → 内存暴涨 → Full GC → watchdog 卡死。
+    // 256 块 × ~平均几十 KB ≈ 几十 MB 量级,有界可控;读盘跟不上时自动背压不再发起。
+    private static final int MAX_INFLIGHT_PROBES = 256;
     private static final int MAX_SKIPPED_UNGENERATED = 4096;
 
     private final MarketWebMapRegionRenderer regionRenderer = new MarketWebMapRegionRenderer();
@@ -286,6 +290,12 @@ public final class MarketWebMapRenderManager {
         if (probe == null) {
             if (probeStartsThisTick >= PROBE_STARTS_PER_TICK) {
                 return SnapshotReadResult.of(SnapshotReadState.PENDING); // 本 tick 发起额度用尽:下 tick 再发起
+            }
+            // 背压硬上限:每个在途 probe 的 future 完成后挂着一整块区块 NBT(几十 KB~MB)。
+            // 读盘慢时(VMware IO 抖动)若无上限,堆积成百上千块 → 内存暴涨 → Full GC → watchdog 卡死。
+            // 达上限就不再发起,等已有的完成腾空间。内存占用因此有界 = MAX_INFLIGHT × 单块 NBT。
+            if (pendingProbe.size() >= MAX_INFLIGHT_PROBES) {
+                return SnapshotReadResult.of(SnapshotReadState.PENDING);
             }
             try {
                 CompletableFuture<Optional<CompoundTag>> future =
