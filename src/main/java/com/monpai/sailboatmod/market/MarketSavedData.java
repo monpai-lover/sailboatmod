@@ -103,6 +103,14 @@ public class MarketSavedData extends SavedData {
         return out;
     }
 
+    /**
+     * <b>全量</b>挂单(不过滤售罄 availableCount<=0)。供幽灵清理扫描用——售罄但仍残留的挂单
+     * 也可能是回档幽灵(其 sourceDock 已不存在),必须能扫到。返回副本,改它不影响内部存储。
+     */
+    public List<MarketListing> getAllListingsRaw() {
+        return new ArrayList<>(listings.values());
+    }
+
     /** 在售最低价：扫描活跃挂单中匹配该 commodityKey 的最低 unitPrice；无匹配返回 0。 */
     public int lowestActiveAsk(String commodityKey) {
         return lowestUnitPriceForCommodity(getListings(), commodityKey);

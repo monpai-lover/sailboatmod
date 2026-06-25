@@ -32,7 +32,8 @@ public final class MarketAdminCommands {
         dispatcher.register(Commands.literal("marketadmin")
                 .requires(source -> source.hasPermission(2))
                 .then(Commands.literal("infinitestock")
-                        .executes(MarketAdminCommands::toggleInfiniteStock)));
+                        .executes(MarketAdminCommands::toggleInfiniteStock))
+                .then(GhostCleanupCommands.cleanGhostsNode()));
     }
 
     private static int toggleInfiniteStock(CommandContext<CommandSourceStack> ctx) {
