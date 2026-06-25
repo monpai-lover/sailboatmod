@@ -14,6 +14,8 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -563,6 +565,66 @@ public final class MarketWebMapTileCache {
             LOGGER.warn("Failed to list market web square map tiles under {}", dir, exception);
         }
         return List.copyOf(coords);
+    }
+
+    // === 接缝底行种子持久化 ============================================================================
+    // 跨 region 的 height-shading 需要北邻 region 最底行的 surfaceY 作种子(lastY),否则 region 顶边出现
+    // 亮度断层水平线。旧逻辑只用易失内存 LRU 缓存,渲染乱序/淘汰后种子拿不到 → 退化 → 细线。这里把每个
+    // region 的底行(32 个 chunk 列 × 16 个 x 的 surfaceY = int[32][16])落盘,seedLastY 内存未命中时从磁盘读回。
+
+    private static final int SEAM_MAGIC = 0x53454D31; // "SEM1"
+    private static final int SEAM_COLS = MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS; // 32
+    private static final int SEAM_ROW_LEN = MarketWebMapConstants.CHUNK_SIZE;             // 16
+
+    private Path seamPath(int regionX, int regionZ) {
+        return root.resolve("overworld").resolve("seam")
+                .resolve(regionX + "_" + regionZ + ".bin").normalize();
+    }
+
+    /** 落盘一个 region 的底行种子。rows 为 int[32][] (每列 16 个 surfaceY),null 列写成全 Integer.MIN_VALUE。后台 IO 安全。 */
+    void writeBottomRows(int regionX, int regionZ, int[][] rows) {
+        Path path = seamPath(regionX, regionZ);
+        if (path == null || !path.startsWith(root) || rows == null || rows.length != SEAM_COLS) {
+            return;
+        }
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(8 + SEAM_COLS * SEAM_ROW_LEN * 4);
+        try (DataOutputStream out = new DataOutputStream(buffer)) {
+            out.writeInt(SEAM_MAGIC);
+            out.writeInt(SEAM_COLS);
+            for (int col = 0; col < SEAM_COLS; col++) {
+                int[] row = rows[col];
+                for (int i = 0; i < SEAM_ROW_LEN; i++) {
+                    out.writeInt(row != null && i < row.length ? row[i] : Integer.MIN_VALUE);
+                }
+            }
+            Files.createDirectories(path.getParent());
+            writeBytesAtomically(path, buffer.toByteArray());
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to write market web map seam rows for region {},{}", regionX, regionZ, exception);
+        }
+    }
+
+    /** 读回一个 region 的底行种子,int[32][16];文件不存在/损坏返回 null。纯磁盘读,渲染线程可调。 */
+    int[][] readBottomRows(int regionX, int regionZ) {
+        Path path = seamPath(regionX, regionZ);
+        if (path == null || !path.startsWith(root) || !Files.isRegularFile(path)) {
+            return null;
+        }
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(Files.readAllBytes(path)))) {
+            if (in.readInt() != SEAM_MAGIC || in.readInt() != SEAM_COLS) {
+                return null;
+            }
+            int[][] rows = new int[SEAM_COLS][SEAM_ROW_LEN];
+            for (int col = 0; col < SEAM_COLS; col++) {
+                for (int i = 0; i < SEAM_ROW_LEN; i++) {
+                    rows[col][i] = in.readInt();
+                }
+            }
+            return rows;
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.warn("Failed to read market web map seam rows for region {},{}", regionX, regionZ, exception);
+            return null;
+        }
     }
 
     boolean writeSquareTilePixels(String dimensionId, int zoom, int tileX, int tileZ, int[] argbPixels) {

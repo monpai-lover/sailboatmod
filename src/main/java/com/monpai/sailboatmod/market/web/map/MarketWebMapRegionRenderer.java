@@ -14,9 +14,13 @@ import java.util.Arrays;
  */
 public final class MarketWebMapRegionRenderer {
     private static final int UNKNOWN_ARGB = 0xFF2A2A2A;
+    /** 与 MarketWebMapRegionImage.UNTOUCHED 一致:缺数据像素返回此值,mergeTouchedPixels 会跳过它、保留磁盘旧值,绝不写黑。 */
+    private static final int UNTOUCHED = Integer.MIN_VALUE;
 
     public int[] renderChunk(MarketWebMapChunkSnapshot snapshot, int[] lastY) {
         int[] pixels = new int[MarketWebMapConstants.CHUNK_SIZE * MarketWebMapConstants.CHUNK_SIZE];
+        // 缺数据(null sample)默认 UNTOUCHED:不写黑、merge 时跳过保留旧像素。整块缺数据 → 整块 UNTOUCHED → 不污染底图。
+        Arrays.fill(pixels, UNTOUCHED);
         if (snapshot == null || snapshot.samples() == null) {
             return pixels;
         }
@@ -54,7 +58,7 @@ public final class MarketWebMapRegionRenderer {
 
     private int color(RoadMapColumnSample sample, int[] lastY, int localX) {
         if (sample == null || isUnavailableSample(sample)) {
-            return 0x00000000;
+            return UNTOUCHED; // 缺数据不写黑:返回 UNTOUCHED,merge 时跳过保留磁盘旧像素(根除渲染产生的黑块/黑条)。
         }
         if (sample.water()) {
             return RoadMapRenderStyle.styleWater(sample.waterDepth());

@@ -57,6 +57,10 @@ public final class MarketWebMapRenderManager {
     private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 30L;
     private static final int PROBE_STARTS_PER_TICK = 32;
     private static final int MAX_PROBE_WAIT_TICKS = 60;
+    // 读盘超时不再立刻判"未生成":磁盘上 chunk 实际存在、只是 IO 抖动读得慢(VMware/机械盘)。
+    // 旧逻辑超时即 UNGENERATED → acceptMissingSnapshot 永久记 missing → 该 16×16 区写黑且永不重读 → 黑块永久。
+    // 改为超时后重新 beginProbe 重试,最多 MAX_PROBE_RETRIES 次,只有真 empty/非 FULL 才算未生成。
+    private static final int MAX_PROBE_RETRIES = 3;
     // 在途异步读硬上限(背压):每个 pending probe 的 future 完成后挂一整块区块 NBT(几十 KB~MB)。
     // 无此上限 + 高发起速度 + 读盘慢(VMware IO 抖)会堆积成百上千块 → 内存暴涨 → Full GC → watchdog 卡死。
     // 256 块 × ~平均几十 KB ≈ 几十 MB 量级,有界可控;读盘跟不上时自动背压不再发起。
@@ -371,8 +375,22 @@ public final class MarketWebMapRenderManager {
         }
         if (!probe.future().isDone()) {
             if (snapshotTick - probe.startedTick() >= MAX_PROBE_WAIT_TICKS) {
+                // 读太久:不再立刻判未生成(chunk 实际存在、只是 IO 抖动)。还有重试额度就重新发起 beginProbe,
+                // 耗尽才保守当未生成。避免把"存在但读慢"误杀成永久 missing → 永久黑块。
                 pendingProbe.remove(chunkKey);
-                return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 等太久:保守当未生成
+                if (probe.attempts() < MAX_PROBE_RETRIES && probeStartsThisTick < PROBE_STARTS_PER_TICK
+                        && pendingProbe.size() < MAX_INFLIGHT_PROBES) {
+                    try {
+                        CompletableFuture<Optional<CompoundTag>> retry =
+                                OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
+                        pendingProbe.put(chunkKey, new ChunkProbe(retry, snapshotTick, probe.attempts() + 1));
+                        probeStartsThisTick++;
+                        return SnapshotReadResult.of(SnapshotReadState.PENDING); // 重试已发起,下 tick 再看
+                    } catch (RuntimeException exception) {
+                        return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 重新发起失败:保守当未生成
+                    }
+                }
+                return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 重试耗尽:保守当未生成
             }
             return SnapshotReadResult.of(SnapshotReadState.PENDING); // 仍在读盘,下 tick 再看
         }
@@ -421,7 +439,10 @@ public final class MarketWebMapRenderManager {
         }
     }
 
-    private record ChunkProbe(CompletableFuture<Optional<CompoundTag>> future, long startedTick) {
+    private record ChunkProbe(CompletableFuture<Optional<CompoundTag>> future, long startedTick, int attempts) {
+        ChunkProbe(CompletableFuture<Optional<CompoundTag>> future, long startedTick) {
+            this(future, startedTick, 1);
+        }
     }
 
     public synchronized boolean startFullRender(ServerLevel level) {
@@ -687,8 +708,9 @@ public final class MarketWebMapRenderManager {
         renderExecutor.execute(() -> {
             try {
                 MarketWebMapRegionImage image = new MarketWebMapRegionImage(state.dimensionId, state.regionX, state.regionZ);
+                int[][] northDiskRows = seedDiskRows(cache, state.regionX, state.regionZ);
                 for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
-                    int[] lastY = seedLastY(state.regionX, state.regionZ, localX);
+                    int[] lastY = seedLastY(state.regionX, state.regionZ, localX, northDiskRows);
                     for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
                         MarketWebMapChunkSnapshot snapshot = state.snapshotOrNull(localX, localZ);
                         if (snapshot == null) {
@@ -702,7 +724,7 @@ public final class MarketWebMapRenderManager {
                         image.putChunkPixels(snapshot.chunkX(), snapshot.chunkZ(), regionRenderer.renderChunk(snapshot, lastY));
                     }
                 }
-                cacheBottomRows(state);
+                cacheBottomRows(cache, state);
                 imageIO.submit(() -> {
                     image.writeDirty(cache, state.bestQuality(), nowMillis);
                 });
@@ -722,7 +744,15 @@ public final class MarketWebMapRenderManager {
                 expectedRegionChunks.get(packRegion(regionX, regionZ)));
     }
 
-    private int[] seedLastY(int regionX, int regionZ, int localX) {
+    /** 一次性读北邻 region 的持久化底行(磁盘),供本 region 32 列 seed 复用,避免每列各读一次磁盘。无则 null。 */
+    private int[][] seedDiskRows(MarketWebMapTileCache cache, int regionX, int regionZ) {
+        if (cache == null) {
+            return null;
+        }
+        return cache.readBottomRows(regionX, regionZ - 1);
+    }
+
+    private int[] seedLastY(int regionX, int regionZ, int localX, int[][] northDiskRows) {
         synchronized (this) {
             int[][] cachedRows = bottomRowCache.get(packRegion(regionX, regionZ - 1));
             if (cachedRows != null && localX >= 0 && localX < cachedRows.length && cachedRows[localX] != null) {
@@ -735,6 +765,10 @@ public final class MarketWebMapRenderManager {
                     return regionRenderer.lastYFromBottomRow(snapshot);
                 }
             }
+        }
+        // 内存(LRU 缓存 + 在途 regionStates)都没命中北邻底行 → 从磁盘持久化种子读回,根除"渲染乱序/淘汰致细线"。
+        if (northDiskRows != null && localX >= 0 && localX < northDiskRows.length && northDiskRows[localX] != null) {
+            return java.util.Arrays.copyOf(northDiskRows[localX], northDiskRows[localX].length);
         }
         return regionRenderer.unknownLastY();
     }
@@ -763,10 +797,11 @@ public final class MarketWebMapRenderManager {
         }
     }
 
-    private void cacheBottomRows(RegionState state) {
+    private void cacheBottomRows(MarketWebMapTileCache cache, RegionState state) {
         if (state == null) {
             return;
         }
+        int[][] persistRows = null;
         synchronized (this) {
             int[][] rows = bottomRowCache.computeIfAbsent(
                     packRegion(state.regionX, state.regionZ),
@@ -777,6 +812,8 @@ public final class MarketWebMapRenderManager {
                     rows[localX] = regionRenderer.lastYFromBottomRow(snapshot);
                 }
             }
+            // 落盘快照(脱离锁外写):底行种子持久化,seedLastY 内存未命中时可从磁盘读北邻,不再依赖渲染顺序/LRU。
+            persistRows = java.util.Arrays.copyOf(rows, rows.length);
             while (bottomRowCache.size() > 512) {
                 Iterator<Long> iterator = bottomRowCache.keySet().iterator();
                 if (!iterator.hasNext()) {
@@ -785,6 +822,12 @@ public final class MarketWebMapRenderManager {
                 iterator.next();
                 iterator.remove();
             }
+        }
+        if (cache != null && persistRows != null) {
+            final int[][] toWrite = persistRows;
+            final int rx = state.regionX;
+            final int rz = state.regionZ;
+            imageIO.submit(() -> cache.writeBottomRows(rx, rz, toWrite)); // 异步落盘,不卡渲染线程
         }
     }
 

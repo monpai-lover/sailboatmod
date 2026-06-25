@@ -29,8 +29,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class MarketWebMapBlackTileRepair {
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    /** 黑像素占比达到该阈值即判为黑洞瓦片。单个真实 chunk≈256/262144≈0.1%,远低于 2%,故任何有真实地形的瓦片都不会被误判。 */
-    private static final double BLACK_FRACTION_THRESHOLD = 0.98D;
+    /** 一张 zoom-0 瓦片 = 32×32 chunk 格,每格 16×16 像素。按 chunk 格判黑,无需比例阈值。 */
+    private static final int TILE_SIZE = MarketWebMapTileCoordinate.BASE_TILE_SIZE; // 512
+    private static final int CELL = MarketWebMapConstants.CHUNK_SIZE;                // 16
+    private static final int CELLS_PER_AXIS = TILE_SIZE / CELL;                      // 32
 
     private static final ExecutorService SCAN_POOL = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "marketweb-blacktile-repair");
@@ -49,18 +51,39 @@ public final class MarketWebMapBlackTileRepair {
         return alpha == 0 || rgb == 0x000000;
     }
 
-    /** 整张瓦片是否黑洞:黑像素占比 >= 阈值。空/null 视为损坏(只对磁盘已存在的文件调用,故等于损坏)。 */
-    static boolean isBlackTile(int[] pixels) {
-        if (pixels == null || pixels.length == 0) {
+    /**
+     * 瓦片是否存在"整块全黑的 chunk 格"。把 512×512 切成 32×32 个 16×16 chunk 格,逐格检查:
+     * 该格 256 像素若全部 isBlackPixel → 这是渲染漏填的黑块 → 整张瓦片需修。命中任意一格即返回 true。
+     * <p>为何按格而非比例:行状黑块只占整张 30~60%,旧 0.98 比例阈值抓不到;而真实地形 chunk 几乎不可能
+     * 16×16 全黑(深色方块也有亮度抖动),海洋=饱和蓝、未知色=0xFF2A2A2A 都非黑 → 不误伤。空/null 视为损坏。
+     */
+    static boolean hasBlackChunkCell(int[] pixels) {
+        if (pixels == null || pixels.length != TILE_SIZE * TILE_SIZE) {
             return true;
         }
-        long black = 0;
-        for (int argb : pixels) {
-            if (isBlackPixel(argb)) {
-                black++;
+        for (int cellZ = 0; cellZ < CELLS_PER_AXIS; cellZ++) {
+            for (int cellX = 0; cellX < CELLS_PER_AXIS; cellX++) {
+                if (isCellAllBlack(pixels, cellX, cellZ)) {
+                    return true;
+                }
             }
         }
-        return (double) black / pixels.length >= BLACK_FRACTION_THRESHOLD;
+        return false;
+    }
+
+    /** 单个 16×16 chunk 格是否整块全黑。任一像素非黑即提前返回 false。 */
+    private static boolean isCellAllBlack(int[] pixels, int cellX, int cellZ) {
+        int baseX = cellX * CELL;
+        int baseZ = cellZ * CELL;
+        for (int z = 0; z < CELL; z++) {
+            int rowOffset = (baseZ + z) * TILE_SIZE + baseX;
+            for (int x = 0; x < CELL; x++) {
+                if (!isBlackPixel(pixels[rowOffset + x])) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static long packRegion(int regionX, int regionZ) {
@@ -104,7 +127,7 @@ public final class MarketWebMapBlackTileRepair {
                 continue; // 未生成区域 → 黑是对的,跳过(否则会永远重渲)
             }
             int[] pixels = cache.readSquareTilePixels(MarketWebMapConstants.OVERWORLD, 0, regionX, regionZ);
-            if (isBlackTile(pixels)) {
+            if (hasBlackChunkCell(pixels)) {
                 holes.add(new int[]{regionX, regionZ});
             }
         }
