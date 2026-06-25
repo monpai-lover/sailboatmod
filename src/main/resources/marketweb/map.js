@@ -7,6 +7,7 @@
   const MAX_ZOOM = 8;
   const MAX_TILE_ZOOM = 4;
   const SHIPMENT_REFRESH_MS = 2000;
+  const MAP_REFRESH_MS = 5000;
   const DESKTOP_TILE_CACHE_LIMIT = 320;
   const MOBILE_TILE_CACHE_LIMIT = 96;
   const TILE_OVERDRAW_PIXELS = 1;
@@ -464,6 +465,7 @@
     const snapshot = state.snapshot || {};
     return [
       snapshot.renderVersion || snapshot.tileCacheVersion || 0,
+      snapshot.tileEpoch || 0,
       snapshot.territoryRevision || 0,
       snapshot.marketRevision || 0,
       state.localTileRevision || 0
@@ -1619,6 +1621,24 @@
     scheduleRender();
   }
 
+  // 轻量轮询 snapshot:服务端每渲染一张瓦片 tileEpoch +1。检测到变化就清本地瓦片缓存重绘,
+  // 这样 render 指令渲染完(radius/full/area)网页能自动拉到新瓦片,无需手动刷新页面。
+  async function pollMapRefresh() {
+    const focused = encodeURIComponent(state.focusedMarketId || "");
+    const next = await fetchOptionalJson(`/api/map/snapshot${focused ? `?focusedMarketId=${focused}` : ""}`, null);
+    if (!next) {
+      return;
+    }
+    const prev = state.snapshot || {};
+    const changed = (next.tileEpoch || 0) !== (prev.tileEpoch || 0)
+      || (next.renderVersion || 0) !== (prev.renderVersion || 0);
+    if (!changed) {
+      return;
+    }
+    state.snapshot = next;
+    clearLocalTileImages(); // 清瓦片缓存 + bump localTileRevision → 重新拉新瓦片
+  }
+
   function mount(root, options = {}) {
     if (state.root === root) {
       state.locale = options.locale || state.locale;
@@ -1676,6 +1696,7 @@
       scheduleRender();
     });
     state.shipmentTimer = window.setInterval(loadShipments, SHIPMENT_REFRESH_MS);
+    state.mapRefreshTimer = window.setInterval(pollMapRefresh, MAP_REFRESH_MS);
   }
 
   function unmount() {
@@ -1683,6 +1704,10 @@
     if (state.shipmentTimer) {
       window.clearInterval(state.shipmentTimer);
       state.shipmentTimer = 0;
+    }
+    if (state.mapRefreshTimer) {
+      window.clearInterval(state.mapRefreshTimer);
+      state.mapRefreshTimer = 0;
     }
     if (state.animationFrame) {
       cancelAnimationFrame(state.animationFrame);

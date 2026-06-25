@@ -473,6 +473,12 @@ public final class TownService {
                 chosen.cultureId()
         );
         data.putTown(updated);
+
+        // 建国时把首都 town 在无国家阶段圈下的所有 claim 的 nationId 改写为新国,
+        // 否则会出现 town 一致而 claim/nation 为空的幽灵领地（与 bindTownToNation 收口一致）。
+        for (NationClaimRecord claim : managedClaimsForNationRewrite(data, chosen, updated)) {
+            data.putClaim(rewriteTownClaim(claim, nationId, updated.townId()));
+        }
         return updated;
     }
 

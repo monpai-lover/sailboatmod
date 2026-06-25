@@ -32,6 +32,16 @@ public final class MarketWebMapTileCache {
     private static final Gson GSON = new Gson();
     public static final int RENDER_VERSION = 5;
     private static final int METADATA_VERSION = 2;
+    /**
+     * 运行时瓦片写入计数:每成功写一张瓦片 +1。给前端 snapshot 的 renderVersion 用,让 ?v= 缓存破坏参数
+     * 随实际渲染变化,渲染完网页能拉到新瓦片(RENDER_VERSION 是编译期常量,不随渲染变,单用它网页永远显示旧图)。
+     */
+    private static final java.util.concurrent.atomic.AtomicLong TILE_WRITE_EPOCH =
+            new java.util.concurrent.atomic.AtomicLong(0L);
+
+    public static long tileWriteEpoch() {
+        return TILE_WRITE_EPOCH.get();
+    }
 
     private final Path root;
 
@@ -567,7 +577,11 @@ public final class MarketWebMapTileCache {
         try {
             Files.createDirectories(pngPath.getParent());
             writeBytesAtomically(pngPath, pngBytes);
-            return writeMetadata(metadataPath, metadata);
+            boolean ok = writeMetadata(metadataPath, metadata);
+            if (ok) {
+                TILE_WRITE_EPOCH.incrementAndGet(); // 写成功 → bump epoch,前端据此刷新缓存破坏参数
+            }
+            return ok;
         } catch (IOException exception) {
             LOGGER.warn("Failed to merge market web map tile {}", pngPath, exception);
             return false;
