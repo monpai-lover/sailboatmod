@@ -8,22 +8,43 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
 class MarketWebMapRenderManagerTest {
+    // 部分刷新阈值现按 config 值生效(异步离线读模式下,死等满 1024 会让含 PENDING chunk 的 region
+    // 永不写图 → 底图全黑)。两类 SERVER_* quality 用同一阈值;writeDirty 的 mergeTouchedPixels 增量合并
+    // 保证渐进显示不画脏条纹,故不再需要"等满整个 region"。
     @Test
-    void regionScanFlushesOnlyAfterAFullRegionToAvoidStripedHalfTiles() {
+    void partialRegionFlushUsesConfiguredThresholdForRegionScan() {
         assertEquals(
-                MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS * MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS,
+                32,
                 MarketWebMapRenderManager.effectivePartialRegionFlushChunks(
                         MarketWebMapTileQuality.SERVER_REGION_SCAN,
                         32));
     }
 
     @Test
-    void loadedChunkUpdatesAlsoWaitForFullRegionToAvoidBrowserVisibleChunkGrids() {
+    void partialRegionFlushUsesConfiguredThresholdForLoadedChunks() {
         assertEquals(
-                MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS * MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS,
+                32,
                 MarketWebMapRenderManager.effectivePartialRegionFlushChunks(
                         MarketWebMapTileQuality.SERVER_LOADED_CHUNK,
                         32));
+    }
+
+    @Test
+    void partialRegionFlushFallsBackWhenConfiguredValueNonPositive() {
+        assertEquals(
+                64,
+                MarketWebMapRenderManager.effectivePartialRegionFlushChunks(
+                        MarketWebMapTileQuality.SERVER_REGION_SCAN,
+                        0));
+    }
+
+    @Test
+    void partialRegionFlushClampsToFullRegion() {
+        assertEquals(
+                MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS * MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS,
+                MarketWebMapRenderManager.effectivePartialRegionFlushChunks(
+                        MarketWebMapTileQuality.SERVER_REGION_SCAN,
+                        99999));
     }
 
     @Test

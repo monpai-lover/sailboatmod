@@ -168,6 +168,30 @@ public final class MarketWebMapRenderManager {
         generatedSamplesThisTick = 0;
         generatedSampleMillisThisTick = 0L;
         probeStartsThisTick = 0;
+        sweepStalePendingProbes();
+    }
+
+    /**
+     * 每 tick 主动清理超时未决 probe。原本超时判定(resolveSnapshotRead 行内)只在该 chunk 的 task
+     * <b>再次被 poll</b> 时触发;但 task 队列很长(数千)时,卡死/读盘极慢的 future 长期轮不到复查,
+     * 一直占着 {@link #MAX_INFLIGHT_PROBES} 在途槽位 → 新 chunk 一直发起不了(背压满)→ region 攒不齐 →
+     * 不写图(底图全黑)。这里每 tick 扫一遍,超时的直接移除腾槽,下次该 chunk 被 poll 时重新 beginProbe。
+     * <p>只丢弃 pendingProbe 引用(不调 future.cancel:beginProbe 走 IOWorker,丢引用后 future 自行
+     * 跑完并 GC 其 NBT,不泄漏);只<b>减少</b>在途 future,内存上界更低,不放大发起速度、不动背压上限。</p>
+     */
+    private void sweepStalePendingProbes() {
+        if (pendingProbe.isEmpty()) {
+            return;
+        }
+        Iterator<Map.Entry<Long, ChunkProbe>> iterator = pendingProbe.entrySet().iterator();
+        while (iterator.hasNext()) {
+            ChunkProbe probe = iterator.next().getValue();
+            if (probe != null
+                    && !probe.future().isDone()
+                    && snapshotTick - probe.startedTick() >= MAX_PROBE_WAIT_TICKS) {
+                iterator.remove();
+            }
+        }
     }
 
     /**
@@ -860,7 +884,13 @@ public final class MarketWebMapRenderManager {
     }
 
     static int effectivePartialRegionFlushChunks(MarketWebMapTileQuality quality, int configuredValue) {
-        return CHUNKS_PER_REGION;
+        // 部分刷新阈值:攒够这么多 accounted chunk(snapshot 或 missing 都算)就先渲染+增量写盘一版,
+        // 不再死等整个 region 的 1024 个 chunk 全到齐。异步离线读模式下,region 里只要有 chunk 长期卡在
+        // PENDING(读盘慢/在途上限满/future 不 done),旧的"等满 1024"会让整个 region 永不写图 → 底图全黑。
+        // MarketWebMapRegionImage.writeDirty 的 mergeTouchedPixels 只覆盖本批 touched 像素、保留磁盘旧值,
+        // 所以多次部分刷新是干净的渐进显示(逐步成片),不会画脏条纹。quality 不再决定阈值。
+        int threshold = configuredValue > 0 ? configuredValue : 64;
+        return Math.max(1, Math.min(CHUNKS_PER_REGION, threshold));
     }
 
     private static int configuredInt(IntSupplier supplier, int fallback) {

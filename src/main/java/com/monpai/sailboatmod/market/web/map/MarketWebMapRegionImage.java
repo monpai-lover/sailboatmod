@@ -84,6 +84,7 @@ public final class MarketWebMapRegionImage {
         return completedChunks;
     }
 
+    // 历史别名,委托 writeDirty。注意:writeDirty 现已支持部分写盘,本方法不再"仅 complete 才写"。
     public boolean writeIfComplete(MarketWebMapTileCache cache,
                                    MarketWebMapTileQuality quality,
                                    long nowMillis) {
@@ -93,7 +94,11 @@ public final class MarketWebMapRegionImage {
     public boolean writeDirty(MarketWebMapTileCache cache,
                               MarketWebMapTileQuality quality,
                               long nowMillis) {
-        if (cache == null || !complete()) {
+        // 允许【部分完成】的 region 增量写盘:只要有 ≥1 个 chunk 已就绪就 merge 进 base tile。
+        // 不再要求整个 region 1024 chunk 全到齐(旧 !complete() 门禁在异步离线读模式下会让任何
+        // 含长期 PENDING chunk 的 region 永不写图 → 底图全黑)。mergeTouchedPixels 只覆盖本批 touched
+        // 像素、未渲染区保留磁盘旧值,故多次部分刷新是干净的渐进显示。
+        if (cache == null || completedChunks <= 0) {
             return false;
         }
         if (written) {
@@ -102,7 +107,9 @@ public final class MarketWebMapRegionImage {
         int[] base = cache.readSquareTilePixels(dimensionId, 0, regionX, regionZ);
         boolean changed = mergeTouchedPixels(base, pixels);
         boolean wrote = changed && cache.writeSquareTilePixels(dimensionId, 0, regionX, regionZ, base);
-        if (complete()) {
+        // base tile 有改动就同步更新 zoom 金字塔(部分完成也更新,否则缩略级别永远落后仍全黑)。
+        // writeZoomTile 内部逐像素 diff,反复部分刷新不会无谓重写未变的 zoom tile。
+        if (wrote) {
             for (int zoom = 1; zoom <= MarketWebMapPyramidWriter.MAX_ZOOM; zoom++) {
                 wrote |= writeZoomTile(cache, zoom, base);
             }
