@@ -49,7 +49,8 @@
       vehicle: "Vehicle",
       owner: "Owner",
       emptySelection: "Hover or click a market, territory, or shipment.",
-      flag: "Flag"
+      flag: "Flag",
+      coords: "Coords"
     },
     "zh-CN": {
       terrain: "地形",
@@ -80,7 +81,8 @@
       vehicle: "载具",
       owner: "拥有者",
       emptySelection: "悬停或点击市场、领地、物流线路。",
-      flag: "国旗"
+      flag: "国旗",
+      coords: "坐标"
     }
   };
 
@@ -131,7 +133,12 @@
       rightCollapsed: true
     },
     mountedToken: 0,
-    localTileRevision: 0
+    localTileRevision: 0,
+    lastTerrainSync: null,
+    shipmentLoop: 0,
+    lastShipmentFrameMs: 0,
+    staticCanvas: null,
+    staticKey: ""
   };
 
   function label(key) {
@@ -366,16 +373,25 @@
     state.leafletRefreshToken = 0;
     state.leafletLayer = state.leafletLayers[0];
     state.leafletLayer.setZIndex(1).addTo(state.leafletMap);
-    syncSquaremapTerrain();
+    syncSquaremapTerrain(true);
   }
 
-  function syncSquaremapTerrain() {
+  function syncSquaremapTerrain(force) {
     if (!state.leafletMap) {
       return;
     }
-    state.leafletMap.invalidateSize(false);
     const leafletZoom = Math.log2(Math.max(1 / (1 << MAX_TILE_ZOOM), Number(state.zoom) || 1));
-    state.leafletMap.setView(window.L.latLng(-state.center.z, state.center.x), leafletZoom, { animate: false });
+    const cx = state.center.x;
+    const cz = state.center.z;
+    const last = state.lastTerrainSync;
+    // center/zoom 未变且非强制 → 跳过昂贵的 Leaflet invalidateSize+setView 全量回流。
+    // 这是 Safari 卡顿根因:物流动画每帧调 renderCanvas 会触发 60次/秒回流。
+    if (!force && last && last.x === cx && last.z === cz && last.zoom === leafletZoom) {
+      return;
+    }
+    state.lastTerrainSync = { x: cx, z: cz, zoom: leafletZoom };
+    state.leafletMap.invalidateSize(false);
+    state.leafletMap.setView(window.L.latLng(-cz, cx), leafletZoom, { animate: false });
   }
 
   function destroySquaremapTerrain() {
@@ -441,6 +457,26 @@
       x: (x - state.canvas.width / 2) / state.zoom + state.center.x,
       z: (y - state.canvas.height / 2) / state.zoom + state.center.z
     };
+  }
+
+  // 把鼠标客户端坐标换算成世界方块坐标(X/Z)显示在工具栏。传 null 则清空(鼠标移出/拖拽时)。
+  function updateCoordReadout(clientX, clientY) {
+    if (!state.toolbar) {
+      return;
+    }
+    const readout = state.toolbar.querySelector("[data-map-coord]");
+    if (!readout) {
+      return;
+    }
+    if (clientX == null || clientY == null || !state.canvas) {
+      readout.innerHTML = "X: —   Z: —";
+      return;
+    }
+    const rect = state.canvas.getBoundingClientRect();
+    const x = (clientX - rect.left) * (state.canvas.width / rect.width);
+    const y = (clientY - rect.top) * (state.canvas.height / rect.height);
+    const world = screenToWorld(x, y);
+    readout.innerHTML = `X: ${Math.round(world.x)}   Z: ${Math.round(world.z)}`;
   }
 
   function activeTileZoom() {
@@ -538,7 +574,8 @@
       state.canvas.height = height;
       state.ctx.setTransform(1, 0, 0, 1, 0, 0);
       state.ctx.imageSmoothingEnabled = false;
-      syncSquaremapTerrain();
+      state.staticKey = ""; // 画布尺寸变 → 静态层缓存失效
+      syncSquaremapTerrain(true);
       scheduleRender();
     }
   }
@@ -551,6 +588,7 @@
       <button type="button" data-map-action="zoom-out" aria-label="${escapeHtml(label("zoomOut"))}">-</button>
       <span class="map-zoom-readout">${Math.round(state.zoom * 100)}%</span>
       <button type="button" data-map-action="zoom-in" aria-label="${escapeHtml(label("zoomIn"))}">+</button>
+      <span class="map-coord-readout" data-map-coord title="${escapeHtml(label("coords"))}">X: — &nbsp; Z: —</span>
       <button type="button" data-map-action="focus">${escapeHtml(label("focus"))}</button>
       <button type="button" data-map-action="reset">${escapeHtml(label("reset"))}</button>
     `;
@@ -1295,29 +1333,72 @@
     }
   }
 
+  // 静态层(地形兜底 + 领地 + 市场)缓存键:仅 center/zoom/画布尺寸/数据修订/图层开关变化才需重建。
+  // 物流动画每帧只需 blit 这张缓存,避免重复跑 O(n) 的领地两遍绘制。
+  function staticLayerKey() {
+    const snapshot = state.snapshot || {};
+    return [
+      state.center.x, state.center.z, state.zoom,
+      state.canvas.width, state.canvas.height,
+      snapshot.territoryRevision || 0,
+      snapshot.marketRevision || 0,
+      state.localTileRevision || 0,
+      state.leafletMap ? 1 : 0,
+      state.layers.terrain ? 1 : 0,
+      state.layers.territories ? 1 : 0,
+      state.layers.markets ? 1 : 0
+    ].join("|");
+  }
+
+  function ensureStaticLayer() {
+    const key = staticLayerKey();
+    if (state.staticKey === key && state.staticCanvas) {
+      return state.staticCanvas;
+    }
+    let off = state.staticCanvas;
+    if (!off) {
+      off = document.createElement("canvas");
+      state.staticCanvas = off;
+    }
+    if (off.width !== state.canvas.width || off.height !== state.canvas.height) {
+      off.width = state.canvas.width;
+      off.height = state.canvas.height;
+    }
+    const octx = off.getContext("2d");
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    octx.imageSmoothingEnabled = false;
+    octx.clearRect(0, 0, off.width, off.height);
+    // 无 Leaflet 时由 canvas 自己画地形兜底(Leaflet 模式下地形是独立 DOM 瓦片层,不进 canvas)。
+    if (!state.leafletMap) {
+      octx.fillStyle = "#000000";
+      octx.fillRect(0, 0, off.width, off.height);
+      drawTerrain(octx);
+    }
+    drawTerritories(octx);
+    drawMarkets(octx);
+    state.staticKey = key;
+    return off;
+  }
+
+  // 覆盖层帧:绝不触碰 Leaflet。静态层(缓存位图)+ 物流 + 悬停高亮。物流动画循环只调它。
+  function renderOverlayFrame() {
+    if (!state.ctx || !state.canvas) {
+      return;
+    }
+    const ctx = state.ctx;
+    ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+    ctx.drawImage(ensureStaticLayer(), 0, 0);
+    drawShipments(ctx);
+    drawHoverHighlight(ctx);
+  }
+
   function renderCanvas() {
     if (!state.ctx || !state.canvas) {
       return;
     }
-    syncSquaremapTerrain();
-    const ctx = state.ctx;
-    ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
-    if (!state.leafletMap) {
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
-      drawTerrain(ctx);
-    }
-    drawTerritories(ctx);
-    drawShipments(ctx);
-    drawMarkets(ctx);
-    drawHoverHighlight(ctx);
-    // 有在途运输时持续重绘，让实时插值动画连续推进
-    if (state.layers.shipments && (state.shipments || []).length > 0 && !state.animationFrame) {
-      state.animationFrame = requestAnimationFrame(() => {
-        state.animationFrame = 0;
-        renderCanvas();
-      });
-    }
+    syncSquaremapTerrain(); // 已门控:center/zoom 不动时几乎免费
+    renderOverlayFrame();
+    maybeStartShipmentLoop();
   }
 
   function scheduleRender() {
@@ -1328,6 +1409,32 @@
       state.animationFrame = 0;
       renderCanvas();
     });
+  }
+
+  // 物流动画:限频(移动端 ~20fps,桌面 ~30fps),只重绘覆盖层(不碰 Leaflet);物流排空后自动停止回空闲。
+  const SHIPMENT_FRAME_MS = isMobileMapDevice() ? 50 : 33;
+
+  function shipmentsActive() {
+    return !!state.layers.shipments && (state.shipments || []).length > 0;
+  }
+
+  function maybeStartShipmentLoop() {
+    if (!shipmentsActive() || state.shipmentLoop) {
+      return;
+    }
+    state.shipmentLoop = requestAnimationFrame(stepShipmentLoop);
+  }
+
+  function stepShipmentLoop(ts) {
+    state.shipmentLoop = 0;
+    if (!shipmentsActive()) {
+      return;
+    }
+    if (!state.lastShipmentFrameMs || ts - state.lastShipmentFrameMs >= SHIPMENT_FRAME_MS) {
+      state.lastShipmentFrameMs = ts;
+      renderOverlayFrame();
+    }
+    state.shipmentLoop = requestAnimationFrame(stepShipmentLoop);
   }
 
   function nearestShipment(world, maxScreenDistance) {
@@ -1521,6 +1628,7 @@
       state.canvas.setPointerCapture(event.pointerId);
     });
     state.canvas.addEventListener("pointermove", (event) => {
+      updateCoordReadout(event.clientX, event.clientY);
       if (state.dragging && state.dragStart) {
         const rect = state.canvas.getBoundingClientRect();
         const scaleX = state.canvas.width / rect.width;
@@ -1561,6 +1669,7 @@
       state.dragging = false;
       state.dragStart = null;
       state.hover = null;
+      updateCoordReadout(null, null);
       renderTooltip(null);
       renderSelection();
       scheduleRender();
@@ -1713,6 +1822,13 @@
       cancelAnimationFrame(state.animationFrame);
       state.animationFrame = 0;
     }
+    if (state.shipmentLoop) {
+      cancelAnimationFrame(state.shipmentLoop);
+      state.shipmentLoop = 0;
+    }
+    state.staticCanvas = null;
+    state.staticKey = "";
+    state.lastTerrainSync = null;
     if (state.resizeObserver) {
       state.resizeObserver.disconnect();
       state.resizeObserver = null;

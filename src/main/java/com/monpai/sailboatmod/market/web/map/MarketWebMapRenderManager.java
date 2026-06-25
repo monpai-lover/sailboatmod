@@ -114,6 +114,8 @@ public final class MarketWebMapRenderManager {
             }
         }
         int budget = Math.max(1, configuredInt(ModConfig::marketWebBackgroundMaxChunksPerInterval, 512));
+        List<RegionState> residualReady = null;
+        MarketWebMapTileCache cache = null;
         synchronized (this) {
             if (job != null) {
                 int attempted = 0;
@@ -135,7 +137,9 @@ public final class MarketWebMapRenderManager {
                 if (job.done()) {
                     clearProgress(level);
                     activeJob = null;
-                    expectedRegionChunks.clear();
+                    // 注意:此刻 queue/pendingProbe 里可能还有未读完的 chunk,所以【不在这里】清 expectedRegionChunks,
+                    // 否则后续 acceptSnapshot 新建的 RegionState 取不到 expected → expectedCount 退化成 1024 →
+                    // 稀疏 region(<1024 chunk)永远 complete 不了。残留 region 改由下方排空后统一兜底 flush。
                     paused = false;
                 }
             } else {
@@ -147,6 +151,40 @@ public final class MarketWebMapRenderManager {
                 if (!dirty.isEmpty()) {
                     saveDirtyChunks(level);
                 }
+            }
+
+            // 排空兜底 flush:无活跃 job、读盘队列与在途 probe 都已排空、无在途渲染时,把仍攒着 chunk 但从未
+            // 排程的残留 RegionState 全部 schedule 出去。覆盖 fullrender 尾部"NBT 读了但没 image"的稀疏 region
+            // (count 永远到不了部分刷新阈值、且 complete 失效)→ 否则这些 region 永不写盘。flush 本身走 imageIO
+            // 异步队列,主线程只做 schedule,不卡服。expected 在确认彻底排空后才清,避免上面提到的退化。
+            if (activeJob == null
+                    && queue.size() == 0
+                    && pendingProbe.isEmpty()
+                    && dirtyChunks.size() == 0
+                    && renderingRegions.get() == 0
+                    && !regionStates.isEmpty()) {
+                residualReady = new ArrayList<>();
+                Iterator<Map.Entry<Long, RegionState>> iterator = regionStates.entrySet().iterator();
+                while (iterator.hasNext()) {
+                    Map.Entry<Long, RegionState> entry = iterator.next();
+                    RegionState state = entry.getValue();
+                    if (state != null && state.count() > 0 && !state.renderScheduled) {
+                        state.renderScheduled = true;
+                        residualReady.add(state);
+                    }
+                    iterator.remove();
+                }
+                if (!expectedRegionChunks.isEmpty()) {
+                    expectedRegionChunks.clear();
+                }
+                if (!residualReady.isEmpty()) {
+                    cache = MarketWebMapTileCache.forServer(level.getServer());
+                }
+            }
+        }
+        if (residualReady != null && cache != null) {
+            for (RegionState ready : residualReady) {
+                scheduleRegionRender(cache, ready, nowMillis);
             }
         }
     }

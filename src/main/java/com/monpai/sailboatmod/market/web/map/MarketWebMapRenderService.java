@@ -33,6 +33,9 @@ public final class MarketWebMapRenderService {
     private static final int MAX_SQUARE_TILE_CURSORS = 128;
     private static final int CHUNKS_PER_REGION_AXIS = 32;
     private static final int MAX_REGION_CURSORS = 512;
+    // 黑块自动修复:稀疏(~5 分钟)且有限(每次最多查 64 张瓦片),磁盘解码在守护线程,不卡 tick。
+    private static final int BLACK_TILE_SCAN_INTERVAL_TICKS = 6000;
+    private static final int BLACK_TILE_SCAN_BUDGET = 64;
 
     private static final MarketWebMapRenderService GLOBAL = new MarketWebMapRenderService(
             new MarketWebMapRenderQueue(MAX_QUEUE_TASKS));
@@ -135,6 +138,9 @@ public final class MarketWebMapRenderService {
         }
         if (tickCounter % REGION_SCAN_INTERVAL_TICKS == 0) {
             enqueueRegionRepairScan(level, REGION_SCAN_REGIONS_PER_PASS);
+        }
+        if (tickCounter % BLACK_TILE_SCAN_INTERVAL_TICKS == 0) {
+            MarketWebMapBlackTileRepair.scanAndRepairAsync(server, level, BLACK_TILE_SCAN_BUDGET);
         }
         renderManager.tickBackground(level, queue, now);
         drainDirtyRegions();

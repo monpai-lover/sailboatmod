@@ -22,8 +22,10 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -533,6 +535,34 @@ public final class MarketWebMapTileCache {
         return readSquareTile(dimensionId, zoom, tileX, tileZ)
                 .flatMap(MarketWebMapTileCache::decodeSquareArgb)
                 .orElseGet(() -> new int[MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE]);
+    }
+
+    /** 方形瓦片所在目录:root/overworld/square/&lt;zoom&gt;。zoom 越界返回 null。供黑块修复枚举磁盘瓦片用。 */
+    Path squareTileDir(int zoom) {
+        if (zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return null;
+        }
+        return root.resolve("overworld").resolve("square").resolve(Integer.toString(zoom)).normalize();
+    }
+
+    /** 列出指定 zoom 下磁盘上实际存在的所有方形瓦片坐标 [tileX, tileZ]。复用 parseTileName。纯磁盘读,可后台线程调用。 */
+    List<int[]> listSquareTileCoords(int zoom) {
+        Path dir = squareTileDir(zoom);
+        if (dir == null || !dir.startsWith(root) || !Files.isDirectory(dir)) {
+            return List.of();
+        }
+        List<int[]> coords = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.png")) {
+            for (Path png : stream) {
+                TileName tile = parseTileName(png);
+                if (tile != null) {
+                    coords.add(new int[]{tile.tileX(), tile.tileZ()});
+                }
+            }
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to list market web square map tiles under {}", dir, exception);
+        }
+        return List.copyOf(coords);
     }
 
     boolean writeSquareTilePixels(String dimensionId, int zoom, int tileX, int tileZ, int[] argbPixels) {

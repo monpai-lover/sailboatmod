@@ -133,6 +133,36 @@ public final class MarketWebMapRegionScanService {
         return List.copyOf(regions.subList(0, limit));
     }
 
+    /**
+     * Level-free 列出某 region 目录下所有有存盘 chunk 的 region(按坐标排序,不依赖玩家/spawn)。
+     * 纯磁盘文件头解析,可在后台线程安全调用——黑块修复用它判定"该 region 是否本应有地形"。
+     */
+    static List<RegionFile> scanRegionFilesByDir(Path regionDir, int maxRegions) {
+        int limit = Math.max(0, maxRegions);
+        if (limit == 0 || regionDir == null || !Files.isDirectory(regionDir)) {
+            return List.of();
+        }
+        List<RegionFile> regions = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(regionDir, "r.*.*.mca")) {
+            for (Path file : stream) {
+                RegionFile region = parseRegionFile(file);
+                if (region != null) {
+                    regions.add(region);
+                }
+            }
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to scan market web map region files under {}", regionDir, exception);
+            return List.of();
+        }
+        regions.sort(Comparator
+                .comparingInt(RegionFile::regionX)
+                .thenComparingInt(RegionFile::regionZ));
+        if (regions.size() <= limit) {
+            return regions;
+        }
+        return List.copyOf(regions.subList(0, limit));
+    }
+
     private static RegionFile parseRegionFile(Path file) {
         if (file == null || file.getFileName() == null) {
             return null;

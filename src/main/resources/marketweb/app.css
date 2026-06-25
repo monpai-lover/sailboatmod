@@ -5253,8 +5253,22 @@ textarea,
 }
 
 .squaremap-leaflet img.leaflet-tile {
+    /* 只保留一个 image-rendering 值:pixelated 与 crisp-edges 在 Safari 上相互覆盖,留 pixelated。 */
     image-rendering: pixelated;
-    image-rendering: crisp-edges;
+    /* 强制 GPU 合成,消除 Safari 子像素瓦片接缝(细条纹根因)。 */
+    transform: translateZ(0);
+    will-change: transform;
+    backface-visibility: hidden;
+    /* 非整数缩放下相邻 512px 瓦片间会留 ~0.5px 接缝;向右下叠 0.5px 盖住(经典 squaremap/dynmap 修法)。
+       负 margin 只挪渲染盒,不影响 Leaflet 布局数学(它按 options.tileSize 计算,不读 computed style)。
+       若 hi-DPR 下覆盖层略偏,可调到 -0.25px。 */
+    margin-right: -0.5px;
+    margin-bottom: -0.5px;
+}
+
+/* 瓦片层整体提升为独立合成层,进一步压制 Safari 的子像素接缝。 */
+.squaremap-leaflet .leaflet-tile-pane {
+    transform: translateZ(0);
 }
 
 .squaremap-leaflet .leaflet-control-container {
@@ -5297,6 +5311,17 @@ textarea,
     color: var(--terminal-muted-strong);
     font-size: 0.84rem;
     font-weight: 720;
+    text-align: center;
+}
+
+.map-coord-readout {
+    min-width: 130px;
+    padding: 0 8px;
+    color: var(--terminal-muted-strong);
+    font-size: 0.8rem;
+    font-weight: 640;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
     text-align: center;
 }
 

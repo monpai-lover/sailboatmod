@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.market.web;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.market.logistics.ShippingTraceRecord;
 import com.monpai.sailboatmod.market.logistics.ShippingTraceSavedData;
+import com.monpai.sailboatmod.market.web.map.MarketWebMapBlackTileRepair;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapRenderService;
@@ -88,6 +89,12 @@ public final class MarketWebCommands {
                                 .executes(context -> startWorldBorderMapRender(context.getSource())))
                         .then(Commands.literal("scan")
                                 .executes(context -> enqueueMapRegionScan(context.getSource())))
+                        .then(Commands.literal("repairblack")
+                                .executes(context -> repairBlackTiles(context.getSource(), 0))
+                                .then(Commands.argument("budgetTiles", IntegerArgumentType.integer(1))
+                                        .executes(context -> repairBlackTiles(
+                                                context.getSource(),
+                                                IntegerArgumentType.getInteger(context, "budgetTiles")))))
                         .then(Commands.literal("status")
                                 .executes(context -> showMapRenderStatus(context.getSource()))))
                 .then(Commands.literal("debugroute")
@@ -183,6 +190,15 @@ public final class MarketWebCommands {
     private static int enqueueMapRegionScan(CommandSourceStack source) {
         int queued = MarketWebMapRenderService.global().enqueueRegionRepairScan(source.getServer().overworld(), 16);
         source.sendSuccess(() -> Component.literal("Market web map region scan queued saved regions: " + queued), true);
+        return queued;
+    }
+
+    private static int repairBlackTiles(CommandSourceStack source, int budgetTiles) {
+        int queued = MarketWebMapBlackTileRepair.scanAndRepair(
+                source.getServer(), source.getServer().overworld(), budgetTiles);
+        source.sendSuccess(() -> Component.literal(
+                "Market web map repairblack: scanned disk tiles, queued " + queued
+                        + " black-hole region(s) for incremental re-render (no force-loading)."), true);
         return queued;
     }
 
