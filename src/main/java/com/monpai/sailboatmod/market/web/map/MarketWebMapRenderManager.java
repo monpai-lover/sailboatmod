@@ -50,10 +50,13 @@ public final class MarketWebMapRenderManager {
     // 崩服根因:后台 renderExecutor 调 chunkMap.read().thenApplyAsync(decode) 并发遍历共享 CompoundTag 的 HashMap,
     // 被 vanilla 在 ForkJoinPool 并发 datafix 改写 → 桶损坏崩。唯一安全=主线程对【已生成】区块 force 加载拿区块再采样。
     // force-load 已生成虽比生成轻,full render 上千区块仍要限量;wall-clock 双闸保底不卡 tick。
-    private static final int GENERATED_SAMPLES_PER_TICK = 8;
-    private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 25L;
-    private static final int PROBE_STARTS_PER_TICK = 32;
-    private static final int MAX_PROBE_WAIT_TICKS = 40;
+    // 离线异步读模式吞吐量:每个 chunk 跨多 tick(发起异步读→等读盘→解码),不像旧版 force 1 tick 完成。
+    // 所以这些配额按"同时挂多个在途异步读"放大,否则管线被旧版的小配额(4/8/32)卡死、渲染显著变慢。
+    // 解码纯内存快,GENERATED_SAMPLES_PER_TICK 实为"每 tick 解码完成数";wall-clock 闸兜底不卡 tick。
+    private static final int GENERATED_SAMPLES_PER_TICK = 48;
+    private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 30L;
+    private static final int PROBE_STARTS_PER_TICK = 128;
+    private static final int MAX_PROBE_WAIT_TICKS = 60;
     private static final int MAX_SKIPPED_UNGENERATED = 4096;
 
     private final MarketWebMapRegionRenderer regionRenderer = new MarketWebMapRegionRenderer();

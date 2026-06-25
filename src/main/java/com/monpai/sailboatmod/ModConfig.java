@@ -112,8 +112,9 @@ public final class ModConfig {
                 .comment("Warn when market web map ImageIO pending tasks exceed this value.")
                 .defineInRange("webMapImageIoBacklogWarningThreshold", 100, 1, 100000);
         MARKET_WEB_MAP_SNAPSHOT_TASKS_PER_TICK = builder
-                .comment("Market web map snapshot tasks consumed from the queue per server tick.")
-                .defineInRange("webMapSnapshotTasksPerTick", 4, 1, 1024);
+                .comment("Market web map snapshot tasks consumed from the queue per server tick.",
+                        "Offline-async read mode: tasks DEFER across ticks, so this must be large to keep the async-read pipeline full (was 4 = too slow).")
+                .defineInRange("webMapSnapshotTasksPerTick", 96, 1, 1024);
         MARKET_WEB_MAP_SAME_TILE_BURST_LIMIT = builder
                 .comment("Maximum same-square-tile snapshot tasks consumed in one coalesced tick burst.")
                 .defineInRange("webMapSameTileBurstLimit", 8, 1, 4096);

@@ -15,7 +15,10 @@ import java.util.function.IntSupplier;
 
 public final class MarketWebMapRenderService {
     private static final int MAX_QUEUE_TASKS = 4096;
-    private static final int DEFAULT_SNAPSHOTS_PER_TICK = 4;
+    // 离线异步读模式:每 tick 取出的任务多数会 DEFER(异步读盘未完成下 tick 再来),
+    // 旧值 4 会把在途异步读卡在 ~4 个,远低于 PROBE_STARTS_PER_TICK 的读盘能力 → 渲染显著变慢。
+    // 放大到 96 让管线喂满到读盘能力上限(异步读不阻塞 tick;解码有 wall-clock 闸兜底)。
+    private static final int DEFAULT_SNAPSHOTS_PER_TICK = 96;
     private static final int DEFAULT_SAME_TILE_BURST_LIMIT = 8;
     private static final int REGION_CHUNK_CHECKS_PER_TICK = 128;
     private static final int PLAYER_SCAN_INTERVAL_TICKS = 80;
