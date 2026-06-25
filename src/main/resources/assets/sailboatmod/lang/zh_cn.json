@@ -594,6 +594,7 @@
     "command.sailboatmod.marketadmin.cleanghosts.ghost_town": "  幽灵城镇：%s（%s）— 核心方块已不存在。",
     "command.sailboatmod.marketadmin.cleanghosts.ghost_nation": "  幽灵国家：%s（%s）— 核心已不存在；删除将级联清除 %s 个城镇。",
     "command.sailboatmod.marketadmin.cleanghosts.ghost_listing": "  幽灵挂单：%s — 来源码头已不存在（%s 个未完成订单）。",
+    "command.sailboatmod.marketadmin.cleanghosts.ghost_terminal": "  幽灵市场终端：%s（%s）— 市场方块已不存在。",
     "command.sailboatmod.marketadmin.cleanghosts.skipped_unloaded": "  已跳过 %2$s 条 %1$s 记录：磁盘上区块从未生成，无法验证（绝不删除）。",
     "command.sailboatmod.marketadmin.cleanghosts.more": "  ……另有 %s 条未显示。",
     "command.sailboatmod.marketadmin.cleanghosts.done_dryrun": "【幽灵清理】发现 %s 条幽灵记录。加 confirm 重新执行即可删除。",

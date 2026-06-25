@@ -3,11 +3,13 @@ package com.monpai.sailboatmod.command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.monpai.sailboatmod.block.DockBlock;
+import com.monpai.sailboatmod.block.MarketBlock;
 import com.monpai.sailboatmod.block.NationCoreBlock;
 import com.monpai.sailboatmod.block.TownCoreBlock;
 import com.monpai.sailboatmod.dock.DockRegistry;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.MarketSavedData;
+import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
@@ -99,7 +101,8 @@ public final class GhostCleanupCommands {
                 .then(Commands.literal("confirm").executes(ctx -> run(ctx, Scope.ALL, true)))
                 .then(scopeNode("towns", Scope.TOWNS))
                 .then(scopeNode("nations", Scope.NATIONS))
-                .then(scopeNode("listings", Scope.LISTINGS));
+                .then(scopeNode("listings", Scope.LISTINGS))
+                .then(scopeNode("terminals", Scope.TERMINALS));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> scopeNode(String name, Scope scope) {
@@ -108,7 +111,7 @@ public final class GhostCleanupCommands {
                 .then(Commands.literal("confirm").executes(ctx -> run(ctx, scope, true)));
     }
 
-    private enum Scope { ALL, TOWNS, NATIONS, LISTINGS }
+    private enum Scope { ALL, TOWNS, NATIONS, LISTINGS, TERMINALS }
 
     // ============================ 执行 ============================
 
@@ -134,6 +137,9 @@ public final class GhostCleanupCommands {
         }
         if (scope == Scope.ALL || scope == Scope.LISTINGS) {
             ghostTotal += cleanListings(server, marketData, apply, lines);
+        }
+        if (scope == Scope.ALL || scope == Scope.TERMINALS) {
+            ghostTotal += cleanTerminals(server, MarketTerminalSavedData.get(anyLevel), apply, lines);
         }
 
         int shown = 0;
@@ -259,6 +265,38 @@ public final class GhostCleanupCommands {
         if (apply) {
             for (String id : toRemove) {
                 data.removeListing(id);
+            }
+        }
+        return toRemove.size();
+    }
+
+    // ---- market terminal(地图标记来源:MarketTerminalSavedData,持久化,回档后残留=幽灵)----
+
+    private static int cleanTerminals(MinecraftServer server, MarketTerminalSavedData data, boolean apply, List<Component> lines) {
+        List<MarketTerminalSavedData.MarketTerminalEntry> toRemove = new ArrayList<>();
+        int unloaded = 0;
+        for (MarketTerminalSavedData.MarketTerminalEntry entry : data.entries()) {
+            ServerLevel level = resolveDimension(server, entry.dimensionId());
+            if (level == null) {
+                continue; // 维度解析失败:保守跳过
+            }
+            BlockProbe probe = probeBlock(level, entry.marketPos(), ModBlocks.MARKET_BLOCK.get(), MarketBlock.class);
+            if (probe == BlockProbe.ABSENT) {
+                lines.add(Component.translatable("command.sailboatmod.marketadmin.cleanghosts.ghost_terminal",
+                        entry.marketName().isBlank() ? entry.marketPos().toShortString() : entry.marketName(),
+                        entry.marketPos().toShortString()));
+                toRemove.add(entry);
+            } else if (probe == BlockProbe.UNVERIFIABLE) {
+                unloaded++;
+            }
+        }
+        if (unloaded > 0) {
+            int u = unloaded;
+            lines.add(Component.translatable("command.sailboatmod.marketadmin.cleanghosts.skipped_unloaded", "terminal", u));
+        }
+        if (apply) {
+            for (MarketTerminalSavedData.MarketTerminalEntry e : toRemove) {
+                data.removeEntry(e.dimensionId(), e.marketPos());
             }
         }
         return toRemove.size();
