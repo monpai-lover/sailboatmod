@@ -633,7 +633,7 @@ public final class MarketWebServer {
             writeStatic(exchange, "marketweb/index.html", "text/html; charset=utf-8");
             return;
         }
-        if ("/browse".equals(path) || "/inventory".equals(path) || "/sell".equals(path) || "/buy".equals(path) || "/demand".equals(path) || "/chart".equals(path) || "/index".equals(path) || "/map".equals(path)) {
+        if ("/browse".equals(path) || "/inventory".equals(path) || "/sell".equals(path) || "/buy".equals(path) || "/demand".equals(path) || "/chart".equals(path) || "/index".equals(path) || "/map".equals(path) || "/all".equals(path) || "/my_orders".equals(path)) {
             writeStatic(exchange, "marketweb/index.html", "text/html; charset=utf-8");
             return;
         }
