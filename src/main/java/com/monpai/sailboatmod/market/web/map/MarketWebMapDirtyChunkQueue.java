@@ -48,6 +48,10 @@ public final class MarketWebMapDirtyChunkQueue {
         return out;
     }
 
+    public synchronized void clear() {
+        chunks.clear();
+    }
+
     public synchronized void requeue(List<ChunkCoordinate> failedChunks) {
         if (failedChunks == null || failedChunks.isEmpty()) {
             return;

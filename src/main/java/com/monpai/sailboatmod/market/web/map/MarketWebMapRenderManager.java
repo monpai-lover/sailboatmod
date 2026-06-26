@@ -705,6 +705,28 @@ public final class MarketWebMapRenderManager {
         return true;
     }
 
+    /**
+     * 清空所有渲染队列与在途状态,让后台彻底停止写盘。clearall 前调用,避免"边清边写"并发:
+     * 否则清瓦片的同时后台渲染又往 square 目录写新文件 → 目录删不掉(DirectoryNotEmptyException)、
+     * 清完又被立刻重写回半成品。调用后 dirtyChunks/dirtyRegions/queue/regionStates 全空,渲染静止。
+     */
+    public synchronized void clearAllRenderState(ServerLevel level) {
+        activeJob = null;
+        paused = false;
+        expectedRegionChunks.clear();
+        regionStates.clear();
+        bottomRowCache.clear();
+        pendingProbe.clear();
+        pendingDecoded.clear();
+        skippedUngenerated.clear();
+        dirtyChunks.clear();
+        dirtyRegions.clear();
+        if (level != null) {
+            clearProgress(level);
+            saveDirtyChunks(level); // 把"已清空"持久化,避免重启又从盘上读回旧 dirty
+        }
+    }
+
     public synchronized RenderStatus status(int queueSize) {
         RenderJob job = activeJob;
         return new RenderStatus(

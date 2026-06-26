@@ -33,6 +33,12 @@ public final class MarketWebMapDirtyRegionQueue {
     private RegionCoordinate currentRegion;
     private int currentLocalChunk;
 
+    public synchronized void clear() {
+        regions.clear();
+        currentRegion = null;
+        currentLocalChunk = 0;
+    }
+
     public synchronized boolean markDirty(String dimensionId, int regionX, int regionZ) {
         if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
             return false;

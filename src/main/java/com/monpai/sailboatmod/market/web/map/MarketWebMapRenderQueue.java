@@ -101,6 +101,10 @@ public final class MarketWebMapRenderQueue {
         return tasks.size();
     }
 
+    public synchronized void clear() {
+        tasks.clear();
+    }
+
     // 上次实际执行 prune 的时间戳。enqueue/poll 高频调用(单 tick 数百次),若每次都全表 removeIf 扫 30 万项
     // → 单 tick 上千万次比较 → 60s 卡死崩服(实测 watchdog)。两层优化:
     // (1) 限频:距上次 prune 不足 PRUNE_INTERVAL 直接跳过;

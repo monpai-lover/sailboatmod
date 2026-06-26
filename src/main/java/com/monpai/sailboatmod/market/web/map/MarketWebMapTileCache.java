@@ -865,6 +865,9 @@ public final class MarketWebMapTileCache {
                         cleared[0]++;
                     }
                     Files.deleteIfExists(path);
+                } catch (java.nio.file.DirectoryNotEmptyException ignored) {
+                    // 删目录瞬间有并发写入的残留文件 → 目录非空。非致命:文件本身会在下次清理/重渲覆盖,降为 debug 不刷屏。
+                    LOGGER.debug("Market web square map dir not empty (concurrent write), skipping {}", path);
                 } catch (IOException exception) {
                     LOGGER.warn("Failed to delete market web square map tile {}", path, exception);
                 }

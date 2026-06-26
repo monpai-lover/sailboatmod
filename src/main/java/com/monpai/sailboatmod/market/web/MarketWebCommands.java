@@ -165,8 +165,12 @@ public final class MarketWebCommands {
     }
 
     private static int clearAllMapCache(CommandSourceStack source) {
+        // 先彻底静止渲染(停 job、清 dirty/queue/在途),否则后台渲染线程会边删边写 square 目录 →
+        // DirectoryNotEmptyException + 清完又被立刻重写回半成品。静止后再删盘,干净。
+        MarketWebMapRenderService.global().haltAndClearRenderState(source.getServer().overworld());
         int cleared = MarketWebMapTileCache.forServer(source.getServer()).clearAllTiles();
-        source.sendSuccess(() -> Component.literal("Market web map all cached tiles cleared: " + cleared), true);
+        source.sendSuccess(() -> Component.literal("Market web map all cached tiles cleared: " + cleared
+                + " (rendering halted; run fullrender to rebuild)."), true);
         return cleared;
     }
 

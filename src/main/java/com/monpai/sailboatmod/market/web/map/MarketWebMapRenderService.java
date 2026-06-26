@@ -195,6 +195,18 @@ public final class MarketWebMapRenderService {
         return renderManager.cancel(level);
     }
 
+    /** clearall 专用:彻底静止渲染(停 job、清 dirty/queue/在途/游标),让磁盘清理不与后台写盘并发。 */
+    public void haltAndClearRenderState(ServerLevel level) {
+        renderManager.clearAllRenderState(level);
+        queue.clear();
+        synchronized (squareTileCursors) {
+            squareTileCursors.clear();
+        }
+        synchronized (regionCursors) {
+            regionCursors.clear();
+        }
+    }
+
     private int scheduledQueueSize() {
         synchronized (squareTileCursors) {
             synchronized (regionCursors) {
