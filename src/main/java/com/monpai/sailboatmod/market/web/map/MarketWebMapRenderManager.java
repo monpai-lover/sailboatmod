@@ -116,6 +116,12 @@ public final class MarketWebMapRenderManager {
     // rowBarrierWaitTicks:当前行等待落盘的 tick 计数,超过 ROW_BARRIER_TIMEOUT_TICKS 强制放行(防个别读不到的 chunk 卡死)。
     private int rowBarrierZ = Integer.MIN_VALUE;
     private int rowBarrierWaitTicks;
+    // 按行落盘计数(行同步解耦的核心):rowZ → 本行还有多少个 region 没写盘。startFullRender 预填(每行 expected region 数),
+    // region 首次成功 writeDirty 落盘后递减。行屏障放行条件 = 本行计数归零(或超时),【不再】依赖 queue/probe 的"瞬时全零"
+    // (那个判据被 defer 无限循环永久拖住:fullrender 把整行 chunk 全塞进 queue,读不动的 chunk 被 submitSnapshot 反复
+    // DEFER 回 queue → queue.size() 永不为 0 → 旧 rowDrained 永假 → 每行只能等 30s 超时步进,龟速)。
+    // 单调递减、与 defer 解耦,必然收敛。imageIO 写盘线程会改它,统一在 synchronized(this) 内读写。
+    private final Map<Integer, Integer> rowRemaining = new HashMap<>();
     // 行屏障超时:某行有永远读不到的 chunk 时,等够这么多个【后台 interval tick】仍不满足"全落盘"就强制推进下一行,
     // 接受该行少数残缺。interval 默认 40 tick,这里 15 次≈600 tick≈30s,足够正常行读完,又不会无限卡死。
     private static final int ROW_BARRIER_TIMEOUT_TICKS = 15;
@@ -156,7 +162,7 @@ public final class MarketWebMapRenderManager {
                 while (attempted < budget && activeJob == job && !job.done()) {
                     // ── fullrender 行屏障 ──
                     // 语义:rowBarrierZ = 正在 enqueue / 等待落盘的"当前行" regionZ。游标的 regionZ 一旦超过它,
-                    // 说明当前行已全部 enqueue 完,必须等当前行整行落盘(queue/probe/渲染/regionStates 全空)才放行进下一行。
+                    // 说明当前行已全部 enqueue 完,必须等当前行【所有 region 写盘完成】(rowRemaining 归零)才放行进下一行。
                     if (job.fullRender()) {
                         int cursorRowZ = job.currentRowZ();
                         if (rowBarrierZ == Integer.MIN_VALUE) {
@@ -164,24 +170,20 @@ public final class MarketWebMapRenderManager {
                             rowBarrierZ = cursorRowZ;
                             rowBarrierWaitTicks = 0;
                         } else if (cursorRowZ > rowBarrierZ) {
-                            // 当前行已 enqueue 完,游标停在下一行行首。等当前行整行【真正落盘】后才放行。
-                            // 五个条件缺一不可:queue 空(chunk 全读完)、pendingProbe 空(无在途读盘)、
-                            // regionStates 空(全 schedule 出去)、renderingRegions==0(渲染线程跑完)、
-                            // imageIO.pendingTasks()==0(PNG/seam/缩略层真正写到磁盘了 —— 否则下一行从磁盘读北邻种子可能读到旧值 → 偶发细线)。
-                            boolean rowDrained = queue.size() == 0
-                                    && pendingProbe.isEmpty()
-                                    && renderingRegions.get() == 0
-                                    && regionStates.isEmpty()
-                                    && imageIO.pendingTasks() == 0;
-                            if (rowDrained) {
+                            // 当前行已 enqueue 完,游标停在下一行行首。放行条件 = 本行所有 region 都已写盘(rowRemaining 归零)。
+                            // 这是【单调递减、与 defer 解耦】的判据:region 落盘回调递减计数,必然收敛。不再用 queue/probe 的
+                            // "瞬时全零"(那个被 defer 无限循环永久拖住 → 每行只能等 30s 超时步进,龟速)。
+                            if (rowFullyWritten(rowBarrierZ)) {
                                 rowBarrierZ = cursorRowZ; // 整行落盘:放行,进入下一行
                                 rowBarrierWaitTicks = 0;
                             } else if (++rowBarrierWaitTicks >= ROW_BARRIER_TIMEOUT_TICKS) {
-                                // 超时兜底:个别 chunk 永远读不到(读盘失败/在途卡住),强制放行接受该行少数残缺,不无限卡死。
+                                // 超时兜底:本行个别 region 永远 complete 不了(缺读不到的 chunk)且残留 flush 也没救活(罕见),
+                                // 强制放行、把本行计数清零,接受少数残缺,不无限卡死。
+                                rowRemaining.put(rowBarrierZ, 0);
                                 rowBarrierZ = cursorRowZ;
                                 rowBarrierWaitTicks = 0;
                             } else {
-                                break; // 仍在等当前行落盘:本 tick 不 enqueue 下一行
+                                break; // 本行还有 region 没落盘:本 tick 不 enqueue 下一行(残留 flush 在下方兜底救活卡住的 region)
                             }
                         }
                         // cursorRowZ == rowBarrierZ:仍在填充当前行,直接继续 enqueue(不阻塞,允许跨 tick 填满大行)。
@@ -223,14 +225,14 @@ public final class MarketWebMapRenderManager {
                 }
             }
 
-            // 排空兜底 flush:把仍攒着 chunk 但从未排程(count < partial 阈值)的残留 RegionState 全部 schedule 出去。
-            // 两种触发:
+            // 排空兜底 flush:把仍攒着 chunk 但从未排程(没到 complete、没自动 flush)的残留 RegionState schedule 出去,
+            // 让它们落盘 + 递减本行计数,使行屏障尽快放行(不必每行干等 30s 超时)。两种触发:
             //  (1) 无活跃 job 的收尾:覆盖任意渲染尾部"NBT 读了但没 image"的稀疏 region → 否则这些 region 永不写盘。
-            //  (2) fullrender 行屏障等待中:当前行的 chunk 已读完(queue/probe/渲染都空),但本行末尾几个稀疏 region
-            //      还卡在 regionStates(不到 partial 阈值不会自动 flush)→ 行屏障会一直等到超时。这里主动把它们 flush 出去,
-            //      让 regionStates 清空、本行落盘完成,行屏障下 tick 即可放行进下一行(不必每行都干等 30s 超时)。
-            boolean readPipelineIdle = queue.size() == 0
-                    && pendingProbe.isEmpty()
+            //  (2) fullrender 行屏障等待中(当前行已全 enqueue、在途读盘已清空、无在途渲染):本行剩下卡在 regionStates 的
+            //      region 是缺读不到 chunk、永远 complete 不了的 → 主动 flush 它们已有内容,落盘后递减计数,行才能推进。
+            //  注意:【不】用 queue.size()==0 当 idle 判据 —— 它被 defer 无限循环永久拖住(死锁根因)。用 pendingProbe 空
+            //  (无在途读盘 = 本行该读的都已 resolve)+ renderingRegions==0 即可,与 defer 解耦。
+            boolean readPipelineIdle = pendingProbe.isEmpty()
                     && dirtyChunks.size() == 0
                     && renderingRegions.get() == 0;
             // 仅在【当前行已全部 enqueue 完、正在等落盘】时才允许行内残留 flush(游标已跨到下一行行首,或 job 已 done)。
@@ -626,8 +628,10 @@ public final class MarketWebMapRenderManager {
                 .thenComparingInt(MarketWebMapRegionScanService.RegionFile::regionX));
         activeJob = RenderJob.full(regions);
         expectedRegionChunks.clear();
+        rowRemaining.clear();
         for (MarketWebMapRegionScanService.RegionFile region : regions) {
             expectedRegionChunks.put(packRegion(region.regionX(), region.regionZ()), region.localChunks());
+            rowRemaining.merge(region.regionZ(), 1, Integer::sum); // 预统计每行 region 数
         }
         restoreProgress(level, activeJob);
         paused = false;
@@ -767,6 +771,7 @@ public final class MarketWebMapRenderManager {
         }
         activeJob = null;
         expectedRegionChunks.clear();
+        rowRemaining.clear();
         paused = false;
         rowBarrierZ = Integer.MIN_VALUE;
         rowBarrierWaitTicks = 0;
@@ -786,6 +791,7 @@ public final class MarketWebMapRenderManager {
         paused = false;
         rowBarrierZ = Integer.MIN_VALUE;
         rowBarrierWaitTicks = 0;
+        rowRemaining.clear();
         expectedRegionChunks.clear();
         regionStates.clear();
         bottomRowCache.clear();
@@ -860,6 +866,8 @@ public final class MarketWebMapRenderManager {
                 + " defer=" + diagResultDefer.get()
                 + " | inflight=" + pendingProbeSizeSnapshot()
                 + " regionStates=" + regionStatesSizeSnapshot()
+                + " | rowBarrierZ=" + rowBarrierSnapshot()
+                + " rowRemaining=" + rowRemainingSnapshot()
                 + " | captureOK=" + MarketWebMapNbtChunkSnapshotReader.DIAG_OK.get()
                 + " failStatus=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_STATUS.get()
                 + " failNoSections=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_NO_SECTIONS.get();
@@ -871,6 +879,19 @@ public final class MarketWebMapRenderManager {
 
     private synchronized int regionStatesSizeSnapshot() {
         return regionStates.size();
+    }
+
+    private synchronized int rowBarrierSnapshot() {
+        return rowBarrierZ;
+    }
+
+    /** 当前屏障行还剩多少 region 没落盘(-1=无活跃屏障行)。看它是否单调下降即可确认行同步在推进。 */
+    private synchronized int rowRemainingSnapshot() {
+        if (rowBarrierZ == Integer.MIN_VALUE) {
+            return -1;
+        }
+        Integer remaining = rowRemaining.get(rowBarrierZ);
+        return remaining == null ? -1 : remaining;
     }
 
     public synchronized void loadDirtyChunks(ServerLevel level) {
@@ -971,6 +992,11 @@ public final class MarketWebMapRenderManager {
 
     private void scheduleRegionRender(MarketWebMapTileCache cache, RegionState state, long nowMillis) {
         renderingRegions.incrementAndGet();
+        // 行同步:若本 region 的行在 rowRemaining 里登记过(仅 fullrender 预填),则其落盘要计入本行计数。
+        // 单一漏斗(所有排程都经此),覆盖 acceptSnapshot / acceptMissing / 残留 flush / overflow 四处排程点。
+        synchronized (this) {
+            state.countTowardRow = rowRemaining.containsKey(state.regionZ);
+        }
         renderExecutor.execute(() -> {
             try {
                 MarketWebMapRegionImage image = new MarketWebMapRegionImage(state.dimensionId, state.regionX, state.regionZ);
@@ -1002,9 +1028,18 @@ public final class MarketWebMapRenderManager {
                 }
                 cacheBottomRows(cache, state);
                 diagRegionsScheduled.incrementAndGet();
+                final int rowZ = state.regionZ;
+                final boolean countTowardRow = state.countTowardRow;
                 imageIO.submit(() -> {
-                    if (image.writeDirty(cache, state.bestQuality(), nowMillis)) {
+                    boolean wrote = image.writeDirty(cache, state.bestQuality(), nowMillis);
+                    if (wrote) {
                         diagTilesWritten.incrementAndGet();
+                    }
+                    // 行同步:region 落盘后递减本行计数(无论 writeDirty 是否真写了像素 —— 该 region 已处理完,
+                    // 不能因"内容无变化 writeDirty=false"就不递减,否则该行计数永不归零 → 行屏障卡死)。
+                    // 仅对 fullrender 排程的 region 计数(countTowardRow);残留 flush / overflow 也算,各 region 只递减一次。
+                    if (countTowardRow) {
+                        decrementRowRemaining(rowZ);
                     }
                 });
             } catch (RuntimeException exception) {
@@ -1291,6 +1326,26 @@ public final class MarketWebMapRenderManager {
         return job != null && job.fullRender();
     }
 
+    /** 行同步:某 region 落盘后递减其所在行计数(imageIO 写盘线程调用,故 synchronized)。归零=该行全落盘。 */
+    private synchronized void decrementRowRemaining(int rowZ) {
+        Integer remaining = rowRemaining.get(rowZ);
+        if (remaining == null) {
+            return;
+        }
+        int next = remaining - 1;
+        if (next <= 0) {
+            rowRemaining.put(rowZ, 0);
+        } else {
+            rowRemaining.put(rowZ, next);
+        }
+    }
+
+    /** 行同步:本行是否已全部落盘(rowRemaining 归零或该行未登记)。供行屏障放行判定。 */
+    private synchronized boolean rowFullyWritten(int rowZ) {
+        Integer remaining = rowRemaining.get(rowZ);
+        return remaining == null || remaining <= 0;
+    }
+
     static int effectivePartialRegionFlushChunks(MarketWebMapTileQuality quality, int configuredValue) {
         // 部分刷新阈值:攒够这么多 accounted chunk(snapshot 或 missing 都算)就先渲染+增量写盘一版,
         // 不再死等整个 region 的 1024 个 chunk 全到齐。异步离线读模式下,region 里只要有 chunk 长期卡在
@@ -1521,6 +1576,8 @@ public final class MarketWebMapRenderManager {
         private MarketWebMapTileQuality bestQuality = MarketWebMapTileQuality.UNKNOWN;
         private int count;
         private boolean renderScheduled;
+        // 行同步:此 region 是否计入"本行落盘计数"(仅 fullrender 排程时 = true)。落盘回调据此递减 rowRemaining。
+        private boolean countTowardRow;
 
         private RegionState(String dimensionId, int regionX, int regionZ, List<Integer> expectedLocalChunks) {
             this.dimensionId = dimensionId;
