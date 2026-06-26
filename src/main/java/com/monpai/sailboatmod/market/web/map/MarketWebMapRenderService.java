@@ -137,10 +137,13 @@ public final class MarketWebMapRenderService {
         if (tickCounter % POINT_SCAN_INTERVAL_TICKS == 0) {
             enqueueImportantPoints(level, now);
         }
-        if (tickCounter % REGION_SCAN_INTERVAL_TICKS == 0) {
+        // fullrender(或任何 activeJob)进行中时,跳过黑块修复 / region 修复扫描:fullrender 本身就在全量重画,
+        // 再叠加黑块修复会抢资源、互相干扰(还会把 fullrender 刚渲好的区域当黑块重排队),且 imageIO 已积压。
+        boolean rendering = renderManager.hasActiveJob();
+        if (!rendering && tickCounter % REGION_SCAN_INTERVAL_TICKS == 0) {
             enqueueRegionRepairScan(level, REGION_SCAN_REGIONS_PER_PASS);
         }
-        if (tickCounter % BLACK_TILE_SCAN_INTERVAL_TICKS == 0) {
+        if (!rendering && tickCounter % BLACK_TILE_SCAN_INTERVAL_TICKS == 0) {
             MarketWebMapBlackTileRepair.scanAndRepairAsync(server, level, BLACK_TILE_SCAN_BUDGET);
         }
         renderManager.tickBackground(level, queue, now);

@@ -621,6 +621,9 @@ public final class MarketWebMapTileCache {
                 }
             }
             return rows;
+        } catch (java.nio.file.NoSuchFileException ignored) {
+            // 文件不存在/被并发删除(clearall 或 isRegularFile 检查后的 TOCTOU 竞态)是常态,不是错误 → 静默。
+            return null;
         } catch (IOException | RuntimeException exception) {
             LOGGER.warn("Failed to read market web map seam rows for region {},{}", regionX, regionZ, exception);
             return null;

@@ -727,6 +727,10 @@ public final class MarketWebMapRenderManager {
         }
     }
 
+    public synchronized boolean hasActiveJob() {
+        return activeJob != null;
+    }
+
     public synchronized RenderStatus status(int queueSize) {
         RenderJob job = activeJob;
         return new RenderStatus(
