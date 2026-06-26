@@ -78,6 +78,11 @@ public final class MarketWebMapRenderManager {
     private final Map<Long, RegionState> regionStates = new LinkedHashMap<>();
     private final Map<Long, List<Integer>> expectedRegionChunks = new LinkedHashMap<>();
     private final LinkedHashMap<Long, int[][]> bottomRowCache = new LinkedHashMap<>();
+    // 逐 chunk 底行种子缓存:key=chunk packed 坐标,value=该 chunk 最南行 16 个 surfaceY。
+    // partial-flush 渲染时若某 chunk 的北邻这批不在 RegionState 内,但北邻在更早批次已渲过(fullrender 北→南顺序),
+    // 就从这里拿北邻底行做种子 → 准确(同次渲染刚算,非磁盘旧值)→ 不偏平、不画错误线。内存小(每 chunk 16 int)。
+    private final LinkedHashMap<Long, int[]> chunkBottomRowCache = new LinkedHashMap<>();
+    private static final int MAX_CHUNK_BOTTOM_ROW_CACHE = 200_000;
     private final AtomicInteger renderingRegions = new AtomicInteger();
     private final AtomicInteger failedChunks = new AtomicInteger();
     // === 诊断累计计数器(只增,定位 fullrender 卡点用)。imageIO/渲染线程可更新,故用 AtomicLong。 ===
@@ -716,6 +721,7 @@ public final class MarketWebMapRenderManager {
         expectedRegionChunks.clear();
         regionStates.clear();
         bottomRowCache.clear();
+        chunkBottomRowCache.clear();
         pendingProbe.clear();
         pendingDecoded.clear();
         skippedUngenerated.clear();
@@ -901,19 +907,29 @@ public final class MarketWebMapRenderManager {
             try {
                 MarketWebMapRegionImage image = new MarketWebMapRegionImage(state.dimensionId, state.regionX, state.regionZ);
                 int[][] northDiskRows = seedDiskRows(cache, state.regionX, state.regionZ);
+                int baseChunkX = state.regionX * CHUNKS_PER_REGION_AXIS;
+                int baseChunkZ = state.regionZ * CHUNKS_PER_REGION_AXIS;
                 for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
                     int[] lastY = seedLastY(state.regionX, state.regionZ, localX, northDiskRows);
                     for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
+                        int chunkX = baseChunkX + localX;
+                        int chunkZ = baseChunkZ + localZ;
                         MarketWebMapChunkSnapshot snapshot = state.snapshotOrNull(localX, localZ);
                         if (snapshot == null) {
                             if (state.accounted(localX, localZ) || !state.expected(localX, localZ)) {
-                                image.markChunkSkipped(
-                                        state.regionX * CHUNKS_PER_REGION_AXIS + localX,
-                                        state.regionZ * CHUNKS_PER_REGION_AXIS + localZ);
+                                image.markChunkSkipped(chunkX, chunkZ);
+                            }
+                            // 该 chunk 这批不在场:若它在更早批次已渲过,用其缓存底行续 lastY,让南边 chunk 有准确种子
+                            // (不偏平);拿不到则保持 lastY 不变(可能上行已传下来)。绝不在此读磁盘像素(不准)。
+                            int[] cachedRow = getChunkBottomRow(chunkX, chunkZ);
+                            if (cachedRow != null) {
+                                lastY = java.util.Arrays.copyOf(cachedRow, cachedRow.length);
                             }
                             continue;
                         }
-                        image.putChunkPixels(snapshot.chunkX(), snapshot.chunkZ(), regionRenderer.renderChunk(snapshot, lastY));
+                        image.putChunkPixels(chunkX, chunkZ, regionRenderer.renderChunk(snapshot, lastY));
+                        // 渲完缓存本 chunk 底行(lastY 此刻已是本 chunk 最南行高度),供南邻/后续批次做种子。
+                        putChunkBottomRow(chunkX, chunkZ, lastY);
                     }
                 }
                 cacheBottomRows(cache, state);
@@ -966,6 +982,25 @@ public final class MarketWebMapRenderManager {
             return java.util.Arrays.copyOf(northDiskRows[localX], northDiskRows[localX].length);
         }
         return regionRenderer.unknownLastY();
+    }
+
+    private synchronized int[] getChunkBottomRow(int chunkX, int chunkZ) {
+        return chunkBottomRowCache.get(ChunkPos.asLong(chunkX, chunkZ));
+    }
+
+    private synchronized void putChunkBottomRow(int chunkX, int chunkZ, int[] bottomRow) {
+        if (bottomRow == null) {
+            return;
+        }
+        chunkBottomRowCache.put(ChunkPos.asLong(chunkX, chunkZ), java.util.Arrays.copyOf(bottomRow, bottomRow.length));
+        while (chunkBottomRowCache.size() > MAX_CHUNK_BOTTOM_ROW_CACHE) {
+            Iterator<Long> iterator = chunkBottomRowCache.keySet().iterator();
+            if (!iterator.hasNext()) {
+                break;
+            }
+            iterator.next();
+            iterator.remove();
+        }
     }
 
     private void cacheBottomRow(MarketWebMapChunkSnapshot snapshot) {
@@ -1160,17 +1195,14 @@ public final class MarketWebMapRenderManager {
     }
 
     /**
-     * 本次渲染该用的 partial-flush 阈值。fullrender 模式下返回满 region(CHUNKS_PER_REGION=1024),
-     * 等价于"禁用 partial、只靠 complete() 触发"——这样一个 region 攒满全部 chunk 才渲一次,region 内每个
-     * chunk 的北邻种子都齐全 → 高度阴影完整、无条纹(partial-flush 32 个就渲会让大量 chunk 北邻缺失 → 线)。
-     * <p>不会卡死:complete() 用的是该 region 真实 expectedCount(存盘 chunk 数),读不到的 chunk 走
-     * acceptMissingSnapshot 也 count++,最终能 complete;且 tickBackground 收尾有排空兜底 flush 兜住残留。
-     * 非 fullrender(dirty 增量/手动区域渲)仍用配置的小阈值,保持渐进显示反馈。调用须持 this 锁(读 activeJob)。</p>
+     * 本次渲染该用的 partial-flush 阈值。
+     * <p>曾尝试 fullrender 模式下"满 region(1024)才 flush"以求种子完整无线,但实测会卡死:inflight 上限(96)
+     * 下总有几个 chunk 还在途,region 永远差几个 complete 不了 → 解码出的 chunk 全憋在 regionStates 出不来
+     * (decoded 飞涨但 regionsScheduled/tilesWritten 冻结)。这正是 effectivePartialRegionFlushChunks 注释
+     * 警告的"等满 → 永不写图"。故回退:始终用配置的小阈值,让 region 渐进 flush、不憋死。
+     * 条纹由 RegionRenderer "北邻种子缺失时不画阴影(delta=0)"兜底解决,不再依赖满-region 攒齐种子。</p>
      */
     private int currentPartialFlushChunks() {
-        if (activeJob != null && activeJob.fullRender()) {
-            return CHUNKS_PER_REGION; // 满 region 才 flush:种子完整、无线
-        }
         return effectivePartialRegionFlushChunks(
                 MarketWebMapTileQuality.SERVER_REGION_SCAN,
                 configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
