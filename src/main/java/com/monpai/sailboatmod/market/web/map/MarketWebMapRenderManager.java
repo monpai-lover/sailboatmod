@@ -164,11 +164,15 @@ public final class MarketWebMapRenderManager {
                             rowBarrierZ = cursorRowZ;
                             rowBarrierWaitTicks = 0;
                         } else if (cursorRowZ > rowBarrierZ) {
-                            // 当前行已 enqueue 完,游标停在下一行行首。等当前行整行落盘后才放行。
+                            // 当前行已 enqueue 完,游标停在下一行行首。等当前行整行【真正落盘】后才放行。
+                            // 五个条件缺一不可:queue 空(chunk 全读完)、pendingProbe 空(无在途读盘)、
+                            // regionStates 空(全 schedule 出去)、renderingRegions==0(渲染线程跑完)、
+                            // imageIO.pendingTasks()==0(PNG/seam/缩略层真正写到磁盘了 —— 否则下一行从磁盘读北邻种子可能读到旧值 → 偶发细线)。
                             boolean rowDrained = queue.size() == 0
                                     && pendingProbe.isEmpty()
                                     && renderingRegions.get() == 0
-                                    && regionStates.isEmpty();
+                                    && regionStates.isEmpty()
+                                    && imageIO.pendingTasks() == 0;
                             if (rowDrained) {
                                 rowBarrierZ = cursorRowZ; // 整行落盘:放行,进入下一行
                                 rowBarrierWaitTicks = 0;
@@ -229,10 +233,13 @@ public final class MarketWebMapRenderManager {
                     && pendingProbe.isEmpty()
                     && dirtyChunks.size() == 0
                     && renderingRegions.get() == 0;
+            // 仅在【当前行已全部 enqueue 完、正在等落盘】时才允许行内残留 flush(游标已跨到下一行行首,或 job 已 done)。
+            // 否则填充当前行中途若 pipeline 短暂 idle,会把还没 complete 的 region 提前 flush 成残缺图(黑块根因)。
             boolean fullRenderRowFlush = activeJob != null
                     && activeJob == job
                     && job.fullRender()
-                    && rowBarrierZ != Integer.MIN_VALUE;
+                    && rowBarrierZ != Integer.MIN_VALUE
+                    && job.currentRowZ() > rowBarrierZ;
             if ((activeJob == null || fullRenderRowFlush)
                     && readPipelineIdle
                     && !regionStates.isEmpty()) {
@@ -1264,9 +1271,24 @@ public final class MarketWebMapRenderManager {
      * 条纹由 RegionRenderer "北邻种子缺失时不画阴影(delta=0)"兜底解决,不再依赖满-region 攒齐种子。</p>
      */
     private int currentPartialFlushChunks() {
+        // fullrender(行同步)模式:【满 region 才 flush】,不提前 partial flush。
+        // 为什么:partial flush(攒 32 chunk 就写一版 + 从 regionStates 移除)会让 region 写出只含 32/1024 chunk 的
+        // 残缺图(实测=网页行内那些黑色断块),且提前 remove 后 regionStates 提前为空 → 行屏障误判"整行落盘"放行。
+        // 行同步下不会死锁:同一时刻只处理一行,inflight(96)足够让一行的 region 逐个 complete;个别永远读不到的
+        // chunk 由 tickBackground 的"行内残留主动 flush"(pipeline idle 时)兜底 flush 出去 → region 仍能落盘、行能推进。
+        // 返回 CHUNKS_PER_REGION 即"仅 complete() 才 flush"(complete 用的是 region 真实 expectedCount,稀疏 region 也能满)。
+        // 非 fullrender(黑块修复/area/radius):保持小阈值,渐进出图、不憋死(那些路径无行屏障兜底)。
+        if (activeJobIsFullRender()) {
+            return CHUNKS_PER_REGION;
+        }
         return effectivePartialRegionFlushChunks(
                 MarketWebMapTileQuality.SERVER_REGION_SCAN,
                 configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
+    }
+
+    private boolean activeJobIsFullRender() {
+        RenderJob job = activeJob;
+        return job != null && job.fullRender();
     }
 
     static int effectivePartialRegionFlushChunks(MarketWebMapTileQuality quality, int configuredValue) {
