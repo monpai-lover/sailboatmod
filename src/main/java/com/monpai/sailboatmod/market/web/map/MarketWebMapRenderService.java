@@ -288,6 +288,9 @@ public final class MarketWebMapRenderService {
         int sameTileBurstLimit = configuredInt(ModConfig::marketWebSameTileBurstLimit, DEFAULT_SAME_TILE_BURST_LIMIT);
         // 每 tick 重置 render manager 的 probe 发起 / force-load 采样配额(主线程节流的起点)。
         renderManager.beginSnapshotTick();
+        // 关键:先排干已完成的在途 probe(解码/判定、腾槽位),不依赖该 chunk 的 task 在数十万长队列里再次被 poll。
+        // 否则 done 的 256 个 probe 长期占满 inflight → 新 probe 发不出 → 管线冻结(defer 疯涨、progress 停)。
+        renderManager.drainCompletedProbes(level, cache, nowMillis);
         for (MarketWebMapRenderQueue.Task task : queue.pollCoalesced(snapshotsPerTick, sameTileBurstLimit, nowMillis)) {
             if (!MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
                 continue;

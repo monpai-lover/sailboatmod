@@ -92,6 +92,8 @@ public final class MarketWebMapRenderManager {
     private final Map<Long, ChunkProbe> pendingProbe = new HashMap<>();
     // 已判定未生成(empty/超时)的 chunk LRU,避免反复 probe 同一个空区块。仅主线程读写。
     private final LinkedHashSet<Long> skippedUngenerated = new LinkedHashSet<>();
+    // drainCompletedProbes 锁内解码后的临时暂存(chunkKey → snapshot),锁外 accept 时取出。仅主线程读写。
+    private final Map<Long, MarketWebMapChunkSnapshot> pendingDecoded = new HashMap<>();
     // 本 tick force-load 采样配额计数(beginSnapshotTick 重置)。仅主线程读写。
     private int generatedSamplesThisTick;
     private long generatedSampleMillisThisTick;
@@ -246,6 +248,85 @@ public final class MarketWebMapRenderManager {
             }
         }
     }
+
+    /**
+     * 每 tick 主动排干【已完成】的在途 probe(解码或判未生成),不依赖该 chunk 的 task 再次被 poll。
+     * <p><b>死锁根因</b>:旧逻辑里 future done 的 probe 只在其 task 被 {@link #submitSnapshot} 重新处理时才解码;
+     * 但 fullrender 队列有数十万 task、每 tick 只 poll ~96 个,DEFER 重入队到队尾后要数千 tick 才轮到 →
+     * 已 done 的 256 个 probe 长期占着 {@link #MAX_INFLIGHT_PROBES} 槽位不释放 → inflight 永满 → 新 probe
+     * 发不出 → 整个管线冻结(实测:probes/decoded/tilesWritten 全停,只有 defer 疯涨)。
+     * <p>这里每 tick 把所有 done 的 probe 直接解码完、accept 出去、腾空槽位,受同一 GENERATED_SAMPLES/wall-clock
+     * 双闸节流(不卡主线程)。槽位及时释放后 inflight 不再永满,新 chunk 持续流入,管线恢复流动。</p>
+     */
+    public void drainCompletedProbes(ServerLevel level, MarketWebMapTileCache cache, long nowMillis) {
+        if (level == null || cache == null) {
+            return;
+        }
+        List<long[]> readyToDecode = new ArrayList<>();
+        List<long[]> ungenerated = new ArrayList<>();
+        synchronized (this) {
+            if (pendingProbe.isEmpty()) {
+                return;
+            }
+            Iterator<Map.Entry<Long, ChunkProbe>> iterator = pendingProbe.entrySet().iterator();
+            while (iterator.hasNext()) {
+                // 解码闸:本 tick 解码额度用尽就停,剩下的 done probe 留到下 tick(不删,槽位下 tick 再腾)。
+                if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
+                        || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
+                    break;
+                }
+                Map.Entry<Long, ChunkProbe> entry = iterator.next();
+                ChunkProbe probe = entry.getValue();
+                if (probe == null || !probe.future().isDone()) {
+                    continue;
+                }
+                long chunkKey = entry.getKey();
+                int chunkX = ChunkPos.getX(chunkKey);
+                int chunkZ = ChunkPos.getZ(chunkKey);
+                Optional<CompoundTag> tag;
+                try {
+                    tag = probe.future().getNow(Optional.empty());
+                } catch (RuntimeException exception) {
+                    tag = Optional.empty();
+                }
+                diagProbesCompleted.incrementAndGet();
+                iterator.remove(); // 无论结果都腾槽位
+                if (tag.isEmpty() || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
+                    skippedUngenerated.remove(chunkKey);
+                    skippedUngenerated.add(chunkKey);
+                    ungenerated.add(new long[]{chunkX, chunkZ});
+                    continue;
+                }
+                long startNanos = System.nanoTime();
+                Optional<MarketWebMapChunkSnapshot> snapshot = MarketWebMapNbtChunkSnapshotReader.capture(
+                        MarketWebMapConstants.OVERWORLD, chunkX, chunkZ, tag.get(),
+                        level.getMinBuildHeight(), level.getMaxBuildHeight());
+                generatedSamplesThisTick++;
+                generatedSampleMillisThisTick += (System.nanoTime() - startNanos) / 1_000_000L;
+                if (snapshot.isPresent()) {
+                    diagSnapshotsDecoded.incrementAndGet();
+                    readyToDecode.add(new long[]{chunkX, chunkZ});
+                    // 暂存 snapshot 以便锁外 accept(避免在锁内调 acceptSnapshot 再取锁)。
+                    pendingDecoded.put(chunkKey, snapshot.get());
+                } else {
+                    ungenerated.add(new long[]{chunkX, chunkZ});
+                }
+            }
+        }
+        // 锁外 accept:解码成功的入 region,未生成的记 missing。
+        for (long[] xz : readyToDecode) {
+            long key = ChunkPos.asLong((int) xz[0], (int) xz[1]);
+            MarketWebMapChunkSnapshot snapshot = pendingDecoded.remove(key);
+            if (snapshot != null) {
+                acceptSnapshot(cache, snapshot, MarketWebMapTileQuality.SERVER_REGION_SCAN, nowMillis);
+            }
+        }
+        for (long[] xz : ungenerated) {
+            acceptMissingSnapshot(cache, MarketWebMapConstants.OVERWORLD, (int) xz[0], (int) xz[1],
+                    MarketWebMapTileQuality.SERVER_REGION_SCAN, nowMillis);
+        }
+    }
+
 
     /**
      * 主线程提交一个 chunk 的快照请求(squaremap 模式,全程主线程,绝不把共享 CompoundTag 交后台)。
