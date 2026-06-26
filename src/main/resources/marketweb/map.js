@@ -138,8 +138,14 @@
     shipmentLoop: 0,
     lastShipmentFrameMs: 0,
     staticCanvas: null,
-    staticKey: ""
+    staticKey: "",
+    staticAnchor: null
   };
+
+  // 静态层(领地/市场)缓存:画布比视口大一圈 padding,以"锚点 center"画一次。拖动时不重画领地,
+  // 只按 (anchor - center) 像素偏移 drawImage 平移位图(Safari/Retina 上把每帧 O(n) 路径重画降为一次贴图)。
+  // 仅当 zoom/数据/图层变,或 center 拖出 padding 缓冲区时才重建。
+  const STATIC_LAYER_PAD = 256;
 
   function label(key) {
     return (LABELS[state.locale] || LABELS["zh-CN"] || LABELS["en-US"])[key] || LABELS["en-US"][key] || key;
@@ -1335,10 +1341,12 @@
 
   // 静态层(地形兜底 + 领地 + 市场)缓存键:仅 center/zoom/画布尺寸/数据修订/图层开关变化才需重建。
   // 物流动画每帧只需 blit 这张缓存,避免重复跑 O(n) 的领地两遍绘制。
+  // 缓存键【不含 center】:拖动(仅 center 变)不触发重建,改由 renderOverlayFrame 平移贴图。
+  // zoom/数据/图层/尺寸变才换 key 重建。
   function staticLayerKey() {
     const snapshot = state.snapshot || {};
     return [
-      state.center.x, state.center.z, state.zoom,
+      state.zoom,
       state.canvas.width, state.canvas.height,
       snapshot.territoryRevision || 0,
       snapshot.marketRevision || 0,
@@ -1350,9 +1358,20 @@
     ].join("|");
   }
 
+  // 拖动时 center 偏离锚点的像素距离;超过 padding 缓冲就必须重建(否则贴图边缘露白)。
+  function staticAnchorDriftPx() {
+    if (!state.staticAnchor) {
+      return Infinity;
+    }
+    const dx = Math.abs(state.center.x - state.staticAnchor.x) * state.zoom;
+    const dz = Math.abs(state.center.z - state.staticAnchor.z) * state.zoom;
+    return Math.max(dx, dz);
+  }
+
   function ensureStaticLayer() {
     const key = staticLayerKey();
-    if (state.staticKey === key && state.staticCanvas) {
+    const fresh = state.staticKey === key && state.staticCanvas && staticAnchorDriftPx() <= STATIC_LAYER_PAD;
+    if (fresh) {
       return state.staticCanvas;
     }
     let off = state.staticCanvas;
@@ -1360,18 +1379,23 @@
       off = document.createElement("canvas");
       state.staticCanvas = off;
     }
-    if (off.width !== state.canvas.width || off.height !== state.canvas.height) {
-      off.width = state.canvas.width;
-      off.height = state.canvas.height;
+    const w = state.canvas.width + STATIC_LAYER_PAD * 2;
+    const h = state.canvas.height + STATIC_LAYER_PAD * 2;
+    if (off.width !== w || off.height !== h) {
+      off.width = w;
+      off.height = h;
     }
     const octx = off.getContext("2d");
     octx.setTransform(1, 0, 0, 1, 0, 0);
     octx.imageSmoothingEnabled = false;
     octx.clearRect(0, 0, off.width, off.height);
-    // 无 Leaflet 时由 canvas 自己画地形兜底(Leaflet 模式下地形是独立 DOM 瓦片层,不进 canvas)。
+    // 以"当前 center"为锚点画静态层。画函数用 worldToScreen(读 state.center 与 state.canvas 尺寸),
+    // 故临时把视口原点平移 +PAD(等价于在更大画布上、坐标系整体右下移 PAD),画完恢复 transform。
+    state.staticAnchor = { x: state.center.x, z: state.center.z, zoom: state.zoom };
+    octx.translate(STATIC_LAYER_PAD, STATIC_LAYER_PAD);
     if (!state.leafletMap) {
       octx.fillStyle = "#000000";
-      octx.fillRect(0, 0, off.width, off.height);
+      octx.fillRect(-STATIC_LAYER_PAD, -STATIC_LAYER_PAD, off.width, off.height);
       drawTerrain(octx);
     }
     drawTerritories(octx);
@@ -1380,14 +1404,19 @@
     return off;
   }
 
-  // 覆盖层帧:绝不触碰 Leaflet。静态层(缓存位图)+ 物流 + 悬停高亮。物流动画循环只调它。
+  // 覆盖层帧:绝不触碰 Leaflet。静态层(缓存位图,按锚点 center 画)+ 物流 + 悬停高亮。物流动画循环只调它。
+  // 静态层贴图按 (anchor - center)*zoom 偏移:拖动时只平移位图,不重画领地/市场。
   function renderOverlayFrame() {
     if (!state.ctx || !state.canvas) {
       return;
     }
     const ctx = state.ctx;
+    const layer = ensureStaticLayer();
     ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
-    ctx.drawImage(ensureStaticLayer(), 0, 0);
+    const anchor = state.staticAnchor || { x: state.center.x, z: state.center.z };
+    const offsetX = (anchor.x - state.center.x) * state.zoom - STATIC_LAYER_PAD;
+    const offsetZ = (anchor.z - state.center.z) * state.zoom - STATIC_LAYER_PAD;
+    ctx.drawImage(layer, Math.round(offsetX), Math.round(offsetZ));
     drawShipments(ctx);
     drawHoverHighlight(ctx);
   }
@@ -1828,6 +1857,7 @@
     }
     state.staticCanvas = null;
     state.staticKey = "";
+    state.staticAnchor = null;
     state.lastTerrainSync = null;
     if (state.resizeObserver) {
       state.resizeObserver.disconnect();
