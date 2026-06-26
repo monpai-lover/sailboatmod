@@ -33,9 +33,10 @@ public final class MarketWebMapRenderService {
     private static final int MAX_SQUARE_TILE_CURSORS = 128;
     private static final int CHUNKS_PER_REGION_AXIS = 32;
     private static final int MAX_REGION_CURSORS = 512;
-    // 黑块自动修复:稀疏(~5 分钟)且有限(每次最多查 64 张瓦片),磁盘解码在守护线程,不卡 tick。
-    private static final int BLACK_TILE_SCAN_INTERVAL_TICKS = 6000;
-    private static final int BLACK_TILE_SCAN_BUDGET = 64;
+    // 黑块自动修复:~1 分钟扫一次,每次全量扫盘(budget=0)。扫描只读 PNG 在守护线程,不卡 tick;
+    // 命中的黑块 region 走 enqueueRegionsForRepair 一次性全入队(非独占),后台持续并行消费,不再一轮只修 1 个。
+    private static final int BLACK_TILE_SCAN_INTERVAL_TICKS = 1200;
+    private static final int BLACK_TILE_SCAN_BUDGET = 0;
 
     private static final MarketWebMapRenderService GLOBAL = new MarketWebMapRenderService(
             new MarketWebMapRenderQueue(MAX_QUEUE_TASKS));
@@ -167,6 +168,11 @@ public final class MarketWebMapRenderService {
 
     public boolean startAreaRender(ServerLevel level, int x1, int z1, int x2, int z2) {
         return renderManager.startAreaRender(level, x1, z1, x2, z2);
+    }
+
+    /** 黑块修复专用:把多个黑块 region 一次性标脏入队(非独占,不互相丢弃),由后台持续消费。返回入队 region 数。 */
+    public int enqueueRegionsForRepair(ServerLevel level, java.util.List<int[]> regions) {
+        return renderManager.enqueueRegionsForRepair(level, regions);
     }
 
     public boolean startWorldBorderRender(ServerLevel level) {

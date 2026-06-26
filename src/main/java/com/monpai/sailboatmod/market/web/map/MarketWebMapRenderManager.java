@@ -510,6 +510,38 @@ public final class MarketWebMapRenderManager {
         return true;
     }
 
+    /**
+     * 把若干黑块 region 的全部 chunk 标脏入 dirtyChunks 队列(非独占,不抢 activeJob、不互相丢弃)。
+     * 黑块修复专用:旧路径每次只能 startAreaRender 一个 region(activeJob 互斥)→ 一轮只修 1 个 → 极慢。
+     * 走 dirtyChunks 后可一次塞进成百上千 region 的 chunk,由 tickBackground 空闲时持续消费,大幅提速。
+     * 返回实际入队的 region 数(已在队列上限内的部分可能被 markDirty 丢弃)。
+     */
+    public synchronized int enqueueRegionsForRepair(ServerLevel level, List<int[]> regions) {
+        if (level == null || regions == null || regions.isEmpty()) {
+            return 0;
+        }
+        int queuedRegions = 0;
+        for (int[] region : regions) {
+            int baseChunkX = region[0] * CHUNKS_PER_REGION_AXIS;
+            int baseChunkZ = region[1] * CHUNKS_PER_REGION_AXIS;
+            boolean any = false;
+            for (int cz = 0; cz < CHUNKS_PER_REGION_AXIS; cz++) {
+                for (int cx = 0; cx < CHUNKS_PER_REGION_AXIS; cx++) {
+                    if (dirtyChunks.markDirty(MarketWebMapConstants.OVERWORLD, baseChunkX + cx, baseChunkZ + cz)) {
+                        any = true;
+                    }
+                }
+            }
+            if (any) {
+                queuedRegions++;
+            }
+        }
+        if (queuedRegions > 0) {
+            saveDirtyChunks(level);
+        }
+        return queuedRegions;
+    }
+
     public synchronized boolean startWorldBorderRender(ServerLevel level) {
         if (level == null || activeJob != null) {
             return false;

@@ -89,10 +89,10 @@ public final class ModConfig {
                 .defineInRange("webMapMaxActiveSnapshotRequests", 0, 0, 65536);
         MARKET_WEB_MAP_BACKGROUND_MAX_CHUNKS_PER_INTERVAL = builder
                 .comment("Maximum chunks enqueued by market web map background jobs per interval.")
-                .defineInRange("webMapBackgroundMaxChunksPerInterval", 512, 1, 65536);
+                .defineInRange("webMapBackgroundMaxChunksPerInterval", 2048, 1, 65536);
         MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS = builder
                 .comment("Ticks between market web map background render enqueue passes.")
-                .defineInRange("webMapBackgroundIntervalTicks", 200, 1, 72000);
+                .defineInRange("webMapBackgroundIntervalTicks", 40, 1, 72000);
         MARKET_WEB_MAP_PARTIAL_REGION_FLUSH_CHUNKS = builder
                 .comment("Chunks collected in a region before writing a partial square map tile.")
                 .defineInRange("webMapPartialRegionFlushChunks", 32, 1, 1024);

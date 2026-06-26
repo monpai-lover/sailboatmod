@@ -134,23 +134,16 @@ public final class MarketWebMapBlackTileRepair {
         return holes;
     }
 
-    /** 对一批黑洞 region 触发离线增量重渲。必须在服务器主线程调用(startAreaRender 触碰 renderManager/level)。 */
+    /**
+     * 把一批黑洞 region 一次性标脏入队重渲。必须在服务器主线程调用。
+     * 走 enqueueRegionsForRepair(dirtyChunks 队列,非独占)而非旧的 startAreaRender:后者 activeJob 互斥,
+     * 一轮只能修 1 个 region(日志里"queued 1"),几百个黑块要修几十小时;新路径一次塞进全部,后台持续并行消费。
+     */
     private static int queueRepairs(ServerLevel level, List<int[]> holes) {
-        int queued = 0;
-        for (int[] region : holes) {
-            int regionX = region[0];
-            int regionZ = region[1];
-            boolean started = MarketWebMapRenderService.global().startAreaRender(
-                    level,
-                    regionX * MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                    regionZ * MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                    regionX * MarketWebMapTileCoordinate.BASE_TILE_SIZE + MarketWebMapTileCoordinate.BASE_TILE_SIZE - 1,
-                    regionZ * MarketWebMapTileCoordinate.BASE_TILE_SIZE + MarketWebMapTileCoordinate.BASE_TILE_SIZE - 1);
-            if (started) {
-                queued++;
-            }
+        if (holes.isEmpty()) {
+            return 0;
         }
-        return queued;
+        return MarketWebMapRenderService.global().enqueueRegionsForRepair(level, holes);
     }
 
     /**
