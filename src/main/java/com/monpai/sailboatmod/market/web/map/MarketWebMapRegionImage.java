@@ -131,15 +131,15 @@ public final class MarketWebMapRegionImage {
         int baseZ = Math.floorMod(regionZ, scale) * scaledSize;
         boolean changed = false;
         for (int z = 0; z < scaledSize; z++) {
-            int sourceZ = z * scale;
             int dstOffset = (baseZ + z) * SIZE + baseX;
             for (int x = 0; x < scaledSize; x++) {
-                int color = regionPixels[sourceZ * SIZE + x * scale];
-                // 降采样跳过未触碰/透明黑像素:partial-flush 时 base 里大片是 UNTOUCHED 或未写过的 0x00000000,
-                // 点采样若正好采中它们会把黑/无效值写进缩略瓦片 → 缩略层(放大前)出现大片黑块,而底层(放大后)正常。
-                // 跳过 → 保留缩略层原有像素,直到该处底层真正渲染出有效颜色才更新。
-                if (color == UNTOUCHED || (color & 0xFF000000) == 0) {
-                    continue;
+                // 块聚合降采样(非点采样):扫描 scale×scale 源块,取第一个有效(非 UNTOUCHED、非透明)像素代表。
+                // 点采样的问题:partial-flush 时 base 大片 UNTOUCHED/透明,采样点恰好命中空洞就跳过 → 缩略层
+                // 行行不连续 → 全图撕成断带(实测)。块聚合只要块里有【任意】有效像素就更新该缩略像素 → 只要
+                // 底图那片渲染过缩略层就有对应内容,不碎裂;整块全无效才跳过(保留缩略层原值)。
+                int color = sampleBlock(regionPixels, x * scale, z * scale, scale);
+                if (color == UNTOUCHED) {
+                    continue; // 整块无有效像素:不动缩略层该像素
                 }
                 int index = dstOffset + x;
                 if (tile[index] != color) {
@@ -149,6 +149,20 @@ public final class MarketWebMapRegionImage {
             }
         }
         return changed && cache.writeSquareTilePixels(dimensionId, zoom, tileX, tileZ, tile);
+    }
+
+    /** 扫描底图 [srcX,srcZ] 起的 scale×scale 块,返回第一个有效像素(非 UNTOUCHED、非透明);全无效返回 UNTOUCHED。 */
+    private int sampleBlock(int[] regionPixels, int srcX, int srcZ, int scale) {
+        for (int dz = 0; dz < scale; dz++) {
+            int row = (srcZ + dz) * SIZE + srcX;
+            for (int dx = 0; dx < scale; dx++) {
+                int color = regionPixels[row + dx];
+                if (color != UNTOUCHED && (color & 0xFF000000) != 0) {
+                    return color;
+                }
+            }
+        }
+        return UNTOUCHED;
     }
 
     private static boolean mergeTouchedPixels(int[] target, int[] source) {

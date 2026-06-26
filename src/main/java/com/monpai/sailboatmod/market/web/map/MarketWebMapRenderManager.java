@@ -111,6 +111,14 @@ public final class MarketWebMapRenderManager {
     private RenderJob activeJob;
     private boolean paused;
     private int tickCounter;
+    // ── fullrender 行屏障状态(仅 tickBackground 主线程读写)──
+    // rowBarrierZ:已 enqueue 完、正在等待落盘的当前行 regionZ;Integer.MIN_VALUE=无待落盘行(可进新行)。
+    // rowBarrierWaitTicks:当前行等待落盘的 tick 计数,超过 ROW_BARRIER_TIMEOUT_TICKS 强制放行(防个别读不到的 chunk 卡死)。
+    private int rowBarrierZ = Integer.MIN_VALUE;
+    private int rowBarrierWaitTicks;
+    // 行屏障超时:某行有永远读不到的 chunk 时,等够这么多个【后台 interval tick】仍不满足"全落盘"就强制推进下一行,
+    // 接受该行少数残缺。interval 默认 40 tick,这里 15 次≈600 tick≈30s,足够正常行读完,又不会无限卡死。
+    private static final int ROW_BARRIER_TIMEOUT_TICKS = 15;
 
     public MarketWebMapRenderManager() {
         int threads = configuredRenderThreads();
@@ -146,11 +154,43 @@ public final class MarketWebMapRenderManager {
             if (job != null) {
                 int attempted = 0;
                 while (attempted < budget && activeJob == job && !job.done()) {
+                    // ── fullrender 行屏障 ──
+                    // 语义:rowBarrierZ = 正在 enqueue / 等待落盘的"当前行" regionZ。游标的 regionZ 一旦超过它,
+                    // 说明当前行已全部 enqueue 完,必须等当前行整行落盘(queue/probe/渲染/regionStates 全空)才放行进下一行。
+                    if (job.fullRender()) {
+                        int cursorRowZ = job.currentRowZ();
+                        if (rowBarrierZ == Integer.MIN_VALUE) {
+                            // 进入新行:把它设为当前屏障行,继续 enqueue 它的全部 chunk(可能跨多个 budget tick)。
+                            rowBarrierZ = cursorRowZ;
+                            rowBarrierWaitTicks = 0;
+                        } else if (cursorRowZ > rowBarrierZ) {
+                            // 当前行已 enqueue 完,游标停在下一行行首。等当前行整行落盘后才放行。
+                            boolean rowDrained = queue.size() == 0
+                                    && pendingProbe.isEmpty()
+                                    && renderingRegions.get() == 0
+                                    && regionStates.isEmpty();
+                            if (rowDrained) {
+                                rowBarrierZ = cursorRowZ; // 整行落盘:放行,进入下一行
+                                rowBarrierWaitTicks = 0;
+                            } else if (++rowBarrierWaitTicks >= ROW_BARRIER_TIMEOUT_TICKS) {
+                                // 超时兜底:个别 chunk 永远读不到(读盘失败/在途卡住),强制放行接受该行少数残缺,不无限卡死。
+                                rowBarrierZ = cursorRowZ;
+                                rowBarrierWaitTicks = 0;
+                            } else {
+                                break; // 仍在等当前行落盘:本 tick 不 enqueue 下一行
+                            }
+                        }
+                        // cursorRowZ == rowBarrierZ:仍在填充当前行,直接继续 enqueue(不阻塞,允许跨 tick 填满大行)。
+                    }
                     MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk = job.chunk();
                     queue.enqueue(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ(), nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                     job.advance();
                     job.processedChunks = job.completedChunkCount();
                     attempted++;
+                    // 刚 advance 后若游标跨入了新行,本 tick 停止 enqueue(下一 tick 进上面的"等落盘"分支)。
+                    if (job.fullRender() && !job.done() && job.currentRowZ() > rowBarrierZ) {
+                        break;
+                    }
                 }
                 if (attempted > 0) {
                     job.processedRegions = job.completedRegionCount();
@@ -179,15 +219,22 @@ public final class MarketWebMapRenderManager {
                 }
             }
 
-            // 排空兜底 flush:无活跃 job、读盘队列与在途 probe 都已排空、无在途渲染时,把仍攒着 chunk 但从未
-            // 排程的残留 RegionState 全部 schedule 出去。覆盖 fullrender 尾部"NBT 读了但没 image"的稀疏 region
-            // (count 永远到不了部分刷新阈值、且 complete 失效)→ 否则这些 region 永不写盘。flush 本身走 imageIO
-            // 异步队列,主线程只做 schedule,不卡服。expected 在确认彻底排空后才清,避免上面提到的退化。
-            if (activeJob == null
-                    && queue.size() == 0
+            // 排空兜底 flush:把仍攒着 chunk 但从未排程(count < partial 阈值)的残留 RegionState 全部 schedule 出去。
+            // 两种触发:
+            //  (1) 无活跃 job 的收尾:覆盖任意渲染尾部"NBT 读了但没 image"的稀疏 region → 否则这些 region 永不写盘。
+            //  (2) fullrender 行屏障等待中:当前行的 chunk 已读完(queue/probe/渲染都空),但本行末尾几个稀疏 region
+            //      还卡在 regionStates(不到 partial 阈值不会自动 flush)→ 行屏障会一直等到超时。这里主动把它们 flush 出去,
+            //      让 regionStates 清空、本行落盘完成,行屏障下 tick 即可放行进下一行(不必每行都干等 30s 超时)。
+            boolean readPipelineIdle = queue.size() == 0
                     && pendingProbe.isEmpty()
                     && dirtyChunks.size() == 0
-                    && renderingRegions.get() == 0
+                    && renderingRegions.get() == 0;
+            boolean fullRenderRowFlush = activeJob != null
+                    && activeJob == job
+                    && job.fullRender()
+                    && rowBarrierZ != Integer.MIN_VALUE;
+            if ((activeJob == null || fullRenderRowFlush)
+                    && readPipelineIdle
                     && !regionStates.isEmpty()) {
                 residualReady = new ArrayList<>();
                 Iterator<Map.Entry<Long, RegionState>> iterator = regionStates.entrySet().iterator();
@@ -200,7 +247,8 @@ public final class MarketWebMapRenderManager {
                     }
                     iterator.remove();
                 }
-                if (!expectedRegionChunks.isEmpty()) {
+                // 只有彻底收尾(无活跃 job)才清 expected;fullrender 行内 flush 不能清,后续行的 region 还要靠它取 expectedCount。
+                if (activeJob == null && !expectedRegionChunks.isEmpty()) {
                     expectedRegionChunks.clear();
                 }
                 if (!residualReady.isEmpty()) {
@@ -562,6 +610,13 @@ public final class MarketWebMapRenderManager {
         if (regions.isEmpty()) {
             return false;
         }
+        // 行同步推进:fullrender 按 (regionZ, regionX) 重排为【北→南行,行内西→东】,覆盖 scanRegions 的距中心螺旋序。
+        // 配合 tickBackground 的行屏障(整行落盘才推进下一行),保证渲第 N 行时第 N-1 行(北邻)已全部落盘 →
+        // 每个 chunk 北邻种子都在 → 无条纹、缩略层有完整源不碎裂。其它渲染(radius/area/repair)不受影响。
+        regions = new ArrayList<>(regions);
+        regions.sort(java.util.Comparator
+                .comparingInt(MarketWebMapRegionScanService.RegionFile::regionZ)
+                .thenComparingInt(MarketWebMapRegionScanService.RegionFile::regionX));
         activeJob = RenderJob.full(regions);
         expectedRegionChunks.clear();
         for (MarketWebMapRegionScanService.RegionFile region : regions) {
@@ -570,6 +625,8 @@ public final class MarketWebMapRenderManager {
         restoreProgress(level, activeJob);
         paused = false;
         tickCounter = 0;
+        rowBarrierZ = Integer.MIN_VALUE; // 新 fullrender:复位行屏障
+        rowBarrierWaitTicks = 0;
         activeJob.lastSavedChunkIndex = activeJob.processedChunks;
         saveProgress(level, activeJob);
         return true;
@@ -704,6 +761,8 @@ public final class MarketWebMapRenderManager {
         activeJob = null;
         expectedRegionChunks.clear();
         paused = false;
+        rowBarrierZ = Integer.MIN_VALUE;
+        rowBarrierWaitTicks = 0;
         if (level != null) {
             clearProgress(level);
         }
@@ -718,6 +777,8 @@ public final class MarketWebMapRenderManager {
     public synchronized void clearAllRenderState(ServerLevel level) {
         activeJob = null;
         paused = false;
+        rowBarrierZ = Integer.MIN_VALUE;
+        rowBarrierWaitTicks = 0;
         expectedRegionChunks.clear();
         regionStates.clear();
         bottomRowCache.clear();
@@ -1674,6 +1735,19 @@ public final class MarketWebMapRenderManager {
 
         private boolean fullRender() {
             return !regions.isEmpty();
+        }
+
+        /** 行同步用:游标当前指向 region 的 regionZ(=即将 enqueue 的那一行)。done 时返回 Integer.MAX_VALUE。 */
+        private int currentRowZ() {
+            if (!fullRender() || regionIndex < 0 || regionIndex >= regions.size()) {
+                return Integer.MAX_VALUE;
+            }
+            return regions.get(regionIndex).regionZ();
+        }
+
+        /** 行同步用:游标是否正处于某行的行首(localChunkIndex==0,即还没 enqueue 这行任何 chunk)。 */
+        private boolean atRowStart() {
+            return localChunkIndex == 0;
         }
 
         private int currentRegionChunkCount() {
