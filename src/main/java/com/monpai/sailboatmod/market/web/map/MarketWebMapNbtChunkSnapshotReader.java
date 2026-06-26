@@ -20,6 +20,11 @@ import java.util.Optional;
 final class MarketWebMapNbtChunkSnapshotReader {
     private static final int UNKNOWN_ARGB = 0xFF2A2A2A;
 
+    // 诊断:capture 失败原因分桶(定位 missing 大量产生的真因)。
+    static final java.util.concurrent.atomic.AtomicLong DIAG_FAIL_STATUS = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DIAG_FAIL_NO_SECTIONS = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DIAG_OK = new java.util.concurrent.atomic.AtomicLong();
+
     private MarketWebMapNbtChunkSnapshotReader() {
     }
 
@@ -33,13 +38,16 @@ final class MarketWebMapNbtChunkSnapshotReader {
                 || chunkTag == null
                 || !isFullStatus(chunkTag)
                 || maxBuildHeight <= minBuildHeight) {
+            DIAG_FAIL_STATUS.incrementAndGet();
             return Optional.empty();
         }
         CompoundTag data = chunkTag.contains("Level", Tag.TAG_COMPOUND) ? chunkTag.getCompound("Level") : chunkTag;
         List<SectionSnapshot> sections = readSections(data);
         if (sections.isEmpty()) {
+            DIAG_FAIL_NO_SECTIONS.incrementAndGet();
             return Optional.empty();
         }
+        DIAG_OK.incrementAndGet();
         OfflineChunk chunk = new OfflineChunk(sections, minBuildHeight, maxBuildHeight);
         RoadMapColumnSample[] samples = new RoadMapColumnSample[MarketWebMapConstants.CHUNK_SIZE * MarketWebMapConstants.CHUNK_SIZE];
         int[] firstAvailableHeights = new int[MarketWebMapConstants.CHUNK_SIZE * MarketWebMapConstants.CHUNK_SIZE];

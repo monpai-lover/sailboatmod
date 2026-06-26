@@ -755,7 +755,10 @@ public final class MarketWebMapRenderManager {
                 + " | submit consumed=" + diagResultConsumed.get()
                 + " defer=" + diagResultDefer.get()
                 + " | inflight=" + pendingProbeSizeSnapshot()
-                + " regionStates=" + regionStatesSizeSnapshot();
+                + " regionStates=" + regionStatesSizeSnapshot()
+                + " | captureOK=" + MarketWebMapNbtChunkSnapshotReader.DIAG_OK.get()
+                + " failStatus=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_STATUS.get()
+                + " failNoSections=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_NO_SECTIONS.get();
     }
 
     private synchronized int pendingProbeSizeSnapshot() {
