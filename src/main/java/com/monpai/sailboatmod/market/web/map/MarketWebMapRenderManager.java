@@ -76,6 +76,17 @@ public final class MarketWebMapRenderManager {
     private final LinkedHashMap<Long, int[][]> bottomRowCache = new LinkedHashMap<>();
     private final AtomicInteger renderingRegions = new AtomicInteger();
     private final AtomicInteger failedChunks = new AtomicInteger();
+    // === 诊断累计计数器(只增,定位 fullrender 卡点用)。imageIO/渲染线程可更新,故用 AtomicLong。 ===
+    private final java.util.concurrent.atomic.AtomicLong diagProbesStarted = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagProbesCompleted = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagProbesTimedOut = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagSnapshotsDecoded = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagSnapshotsMissing = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagRegionsScheduled = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagTilesWritten = new java.util.concurrent.atomic.AtomicLong();
+    // submitSnapshot 各结果累计
+    private final java.util.concurrent.atomic.AtomicLong diagResultConsumed = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagResultDefer = new java.util.concurrent.atomic.AtomicLong();
     private final ExecutorService renderExecutor;
     // 已生成探测:chunkKey(asLong) → 异步 chunkMap.read future + 发起 tick(超时降级未生成)。仅主线程读写。
     private final Map<Long, ChunkProbe> pendingProbe = new HashMap<>();
@@ -368,6 +379,7 @@ public final class MarketWebMapRenderManager {
                         OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
                 pendingProbe.put(chunkKey, new ChunkProbe(future, snapshotTick));
                 probeStartsThisTick++;
+                diagProbesStarted.incrementAndGet();
             } catch (RuntimeException exception) {
                 return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 发起失败:保守当未生成
             }
@@ -385,6 +397,8 @@ public final class MarketWebMapRenderManager {
                                 OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
                         pendingProbe.put(chunkKey, new ChunkProbe(retry, snapshotTick, probe.attempts() + 1));
                         probeStartsThisTick++;
+                        diagProbesStarted.incrementAndGet();
+                        diagProbesTimedOut.incrementAndGet();
                         return SnapshotReadResult.of(SnapshotReadState.PENDING); // 重试已发起,下 tick 再看
                     } catch (RuntimeException exception) {
                         return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 重新发起失败:保守当未生成
@@ -395,6 +409,7 @@ public final class MarketWebMapRenderManager {
             return SnapshotReadResult.of(SnapshotReadState.PENDING); // 仍在读盘,下 tick 再看
         }
         // future done:取独占 tag。非 full → 未生成;full → 配额内主线程解码。
+        diagProbesCompleted.incrementAndGet();
         Optional<CompoundTag> tag;
         try {
             tag = probe.future().getNow(Optional.empty());
@@ -419,6 +434,9 @@ public final class MarketWebMapRenderManager {
         long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000L;
         generatedSamplesThisTick++;
         generatedSampleMillisThisTick += elapsedMillis;
+        if (snapshot.isPresent()) {
+            diagSnapshotsDecoded.incrementAndGet();
+        }
         return SnapshotReadResult.ready(snapshot);
     }
 
@@ -636,6 +654,37 @@ public final class MarketWebMapRenderManager {
         }
     }
 
+    public void recordSubmitResult(SubmitResult result) {
+        if (result == SubmitResult.DEFER) {
+            diagResultDefer.incrementAndGet();
+        } else if (result == SubmitResult.CONSUMED) {
+            diagResultConsumed.incrementAndGet();
+        }
+    }
+
+    /** 诊断快照:一行字符串,定位 fullrender 卡点(读盘发起/完成/超时、解码、缺失、调度、写盘、submit 结果)。 */
+    public String diagLine() {
+        return "probes started=" + diagProbesStarted.get()
+                + " done=" + diagProbesCompleted.get()
+                + " timedOut=" + diagProbesTimedOut.get()
+                + " | decoded=" + diagSnapshotsDecoded.get()
+                + " missing=" + diagSnapshotsMissing.get()
+                + " | regionsScheduled=" + diagRegionsScheduled.get()
+                + " tilesWritten=" + diagTilesWritten.get()
+                + " | submit consumed=" + diagResultConsumed.get()
+                + " defer=" + diagResultDefer.get()
+                + " | inflight=" + pendingProbeSizeSnapshot()
+                + " regionStates=" + regionStatesSizeSnapshot();
+    }
+
+    private synchronized int pendingProbeSizeSnapshot() {
+        return pendingProbe.size();
+    }
+
+    private synchronized int regionStatesSizeSnapshot() {
+        return regionStates.size();
+    }
+
     public synchronized void loadDirtyChunks(ServerLevel level) {
         dirtyChunks.load(dirtyChunksFile(level));
         dirtyRegions.load(dirtyRegionsFile(level));
@@ -703,6 +752,7 @@ public final class MarketWebMapRenderManager {
                     regionX(chunkX),
                     regionZ(chunkZ)));
             state.missing(chunkX, chunkZ, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
+            diagSnapshotsMissing.incrementAndGet();
             int partialFlushChunks = effectivePartialRegionFlushChunks(
                     state.bestQuality(),
                     configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
@@ -757,8 +807,11 @@ public final class MarketWebMapRenderManager {
                     }
                 }
                 cacheBottomRows(cache, state);
+                diagRegionsScheduled.incrementAndGet();
                 imageIO.submit(() -> {
-                    image.writeDirty(cache, state.bestQuality(), nowMillis);
+                    if (image.writeDirty(cache, state.bestQuality(), nowMillis)) {
+                        diagTilesWritten.incrementAndGet();
+                    }
                 });
             } catch (RuntimeException exception) {
                 LOGGER.warn("Market web map region render failed for {},{}", state.regionX, state.regionZ, exception);

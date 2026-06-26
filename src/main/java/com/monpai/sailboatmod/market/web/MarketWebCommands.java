@@ -305,6 +305,7 @@ public final class MarketWebCommands {
         source.sendSuccess(() -> Component.literal("Current cursor: region " + status.currentRegionX() + "," + status.currentRegionZ()
                 + " localChunk=" + status.currentLocalChunk()), false);
         source.sendSuccess(() -> Component.literal("Renderer version: " + MarketWebMapTileCache.RENDER_VERSION), false);
+        source.sendSuccess(() -> Component.literal("Diag: " + service.renderDiagLine()), false);
         return queueSize;
     }
 

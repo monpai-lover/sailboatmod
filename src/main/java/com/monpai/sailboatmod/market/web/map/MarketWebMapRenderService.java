@@ -154,6 +154,10 @@ public final class MarketWebMapRenderService {
         return scheduledQueueSize() + renderManager.pendingTasks() + squareRenderer.pendingTasks();
     }
 
+    public String renderDiagLine() {
+        return renderManager.diagLine();
+    }
+
     public MarketWebMapRenderManager.RenderStatus renderStatus() {
         return renderManager.status(scheduledQueueSize());
     }
@@ -291,6 +295,7 @@ public final class MarketWebMapRenderService {
             // submitSnapshot 全程主线程:已加载直接采样;未加载经 probe 判已生成才 force-load 采样(配额内),
             // 未生成留空。probe 未决 / force-load 配额用尽 → DEFER:把该 chunk 同质量重新入队,下 tick 重试。
             MarketWebMapRenderManager.SubmitResult result = renderManager.submitSnapshot(level, cache, task, nowMillis);
+            renderManager.recordSubmitResult(result);
             if (result == MarketWebMapRenderManager.SubmitResult.DEFER) {
                 queue.enqueue(task.dimensionId(), task.chunkX(), task.chunkZ(), nowMillis, task.quality());
             }
