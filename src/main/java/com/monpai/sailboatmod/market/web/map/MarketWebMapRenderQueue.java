@@ -101,8 +101,26 @@ public final class MarketWebMapRenderQueue {
         return tasks.size();
     }
 
+    // 上次实际执行 prune 的时间戳。enqueue/poll 高频调用(单 tick 数百次),若每次都全表 removeIf 扫 30 万项
+    // → 单 tick 上千万次比较 → 60s 卡死崩服(实测 watchdog)。两层优化:
+    // (1) 限频:距上次 prune 不足 PRUNE_INTERVAL 直接跳过;
+    // (2) 早退:tasks 是 LinkedHashMap 按插入(=createdAt)顺序,过期项必在队首,扫到第一个未过期即停。
+    private long lastPruneMillis = Long.MIN_VALUE;
+    private static final long PRUNE_INTERVAL_MILLIS = 1_000L;
+
     private void prune(long nowMillis) {
-        tasks.entrySet().removeIf(entry -> nowMillis - entry.getValue().createdAtMillis() > TASK_TTL_MILLIS);
+        if (nowMillis - lastPruneMillis < PRUNE_INTERVAL_MILLIS) {
+            return;
+        }
+        lastPruneMillis = nowMillis;
+        Iterator<Map.Entry<Key, Task>> iterator = tasks.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Task task = iterator.next().getValue();
+            if (nowMillis - task.createdAtMillis() <= TASK_TTL_MILLIS) {
+                break; // 按插入序,后面的都更新,不会过期 → 早退
+            }
+            iterator.remove();
+        }
     }
 
     private record Key(String dimensionId, int chunkX, int chunkZ) {
