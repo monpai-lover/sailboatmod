@@ -833,9 +833,7 @@ public final class MarketWebMapRenderManager {
                     regionX(snapshot.chunkX()),
                     regionZ(snapshot.chunkZ())));
             state.put(snapshot, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
-            int partialFlushChunks = effectivePartialRegionFlushChunks(
-                    state.bestQuality(),
-                    configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
+            int partialFlushChunks = currentPartialFlushChunks();
             if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled) {
                 state.renderScheduled = true;
                 readyStates.add(state);
@@ -863,9 +861,7 @@ public final class MarketWebMapRenderManager {
                     regionZ(chunkZ)));
             state.missing(chunkX, chunkZ, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
             diagSnapshotsMissing.incrementAndGet();
-            int partialFlushChunks = effectivePartialRegionFlushChunks(
-                    state.bestQuality(),
-                    configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
+            int partialFlushChunks = currentPartialFlushChunks();
             if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled) {
                 state.renderScheduled = true;
                 readyStates.add(state);
@@ -1157,6 +1153,23 @@ public final class MarketWebMapRenderManager {
             return configured;
         }
         return Math.max(1, Runtime.getRuntime().availableProcessors() / 3);
+    }
+
+    /**
+     * 本次渲染该用的 partial-flush 阈值。fullrender 模式下返回满 region(CHUNKS_PER_REGION=1024),
+     * 等价于"禁用 partial、只靠 complete() 触发"——这样一个 region 攒满全部 chunk 才渲一次,region 内每个
+     * chunk 的北邻种子都齐全 → 高度阴影完整、无条纹(partial-flush 32 个就渲会让大量 chunk 北邻缺失 → 线)。
+     * <p>不会卡死:complete() 用的是该 region 真实 expectedCount(存盘 chunk 数),读不到的 chunk 走
+     * acceptMissingSnapshot 也 count++,最终能 complete;且 tickBackground 收尾有排空兜底 flush 兜住残留。
+     * 非 fullrender(dirty 增量/手动区域渲)仍用配置的小阈值,保持渐进显示反馈。调用须持 this 锁(读 activeJob)。</p>
+     */
+    private int currentPartialFlushChunks() {
+        if (activeJob != null && activeJob.fullRender()) {
+            return CHUNKS_PER_REGION; // 满 region 才 flush:种子完整、无线
+        }
+        return effectivePartialRegionFlushChunks(
+                MarketWebMapTileQuality.SERVER_REGION_SCAN,
+                configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
     }
 
     static int effectivePartialRegionFlushChunks(MarketWebMapTileQuality quality, int configuredValue) {
