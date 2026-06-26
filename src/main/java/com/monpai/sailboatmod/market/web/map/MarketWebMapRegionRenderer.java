@@ -63,8 +63,12 @@ public final class MarketWebMapRegionRenderer {
         if (sample.water()) {
             return RoadMapRenderStyle.styleWater(sample.waterDepth());
         }
-        int previousY = lastY[localX] == Integer.MIN_VALUE ? sample.reliefBaseY() : lastY[localX];
-        int delta = sample.surfaceY() - previousY;
+        // 北邻种子缺失(lastY==MIN_VALUE,北邻 chunk 未渲染)时:不用 reliefBaseY 兜底算 delta。
+        // 兜底取的是自己南/西格高度,几乎总≠真北邻 → delta 非零 → 整行被错误提亮 → 水平浅线(条纹根因)。
+        // 改为 delta=0(原色,无阴影):该格暂时不画高度阴影,但仍更新 lastY 让南边格恢复正确种子;
+        // 等北邻 chunk 真正渲染到、本 region 重渲时,这格才补上正确阴影。线彻底消失。
+        boolean seedMissing = lastY[localX] == Integer.MIN_VALUE;
+        int delta = seedMissing ? 0 : sample.surfaceY() - lastY[localX];
         lastY[localX] = sample.surfaceY();
         return RoadMapRenderStyle.styleTerrainByDelta(sample.baseArgb(), delta);
     }
