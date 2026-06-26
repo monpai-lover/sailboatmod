@@ -53,9 +53,12 @@ public final class MarketWebMapRenderManager {
     // 离线异步读模式吞吐量:每个 chunk 跨多 tick(发起异步读→等读盘→解码),不像旧版 force 1 tick 完成。
     // 所以这些配额按"同时挂多个在途异步读"放大,否则管线被旧版的小配额(4/8/32)卡死、渲染显著变慢。
     // 解码纯内存快,GENERATED_SAMPLES_PER_TICK 实为"每 tick 解码完成数";wall-clock 闸兜底不卡 tick。
-    private static final int GENERATED_SAMPLES_PER_TICK = 48;
-    private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 30L;
-    private static final int PROBE_STARTS_PER_TICK = 32;
+    // spark 实测:fullrender 卡服热点是 vanilla ServerChunkCache$MainThreadExecutor + 海量 chunk
+    // CompletableFuture 完成回调淹主线程(beginProbe 的读盘完成全涌回主线程)。下调这些节流量减轻主线程压力:
+    // 每 tick 解码量、发起量、在途上限都减半左右,牺牲 fullrender 速度换 tick 不超时。可继续按服务器负载调。
+    private static final int GENERATED_SAMPLES_PER_TICK = 24;
+    private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 15L;
+    private static final int PROBE_STARTS_PER_TICK = 16;
     private static final int MAX_PROBE_WAIT_TICKS = 60;
     // 读盘超时不再立刻判"未生成":磁盘上 chunk 实际存在、只是 IO 抖动读得慢(VMware/机械盘)。
     // 旧逻辑超时即 UNGENERATED → acceptMissingSnapshot 永久记 missing → 该 16×16 区写黑且永不重读 → 黑块永久。
@@ -63,8 +66,9 @@ public final class MarketWebMapRenderManager {
     private static final int MAX_PROBE_RETRIES = 3;
     // 在途异步读硬上限(背压):每个 pending probe 的 future 完成后挂一整块区块 NBT(几十 KB~MB)。
     // 无此上限 + 高发起速度 + 读盘慢(VMware IO 抖)会堆积成百上千块 → 内存暴涨 → Full GC → watchdog 卡死。
-    // 256 块 × ~平均几十 KB ≈ 几十 MB 量级,有界可控;读盘跟不上时自动背压不再发起。
-    private static final int MAX_INFLIGHT_PROBES = 256;
+    // 256→96:在途 probe 越多,它们同时完成时涌回主线程的 CompletableFuture 回调越多(spark 实测主线程热点)。
+    // 96 仍能填满 IOWorker 流水线(单线程读盘,96 个排队足够),但完成回调峰值更低 → 主线程不被淹 → tick 不超时。
+    private static final int MAX_INFLIGHT_PROBES = 96;
     private static final int MAX_SKIPPED_UNGENERATED = 4096;
 
     private final MarketWebMapRegionRenderer regionRenderer = new MarketWebMapRegionRenderer();
