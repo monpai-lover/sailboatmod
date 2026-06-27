@@ -125,19 +125,19 @@ public class RoadPlannerItem extends Item {
             sendPlannerPacket(player, hand, townRoute, session.sessionId(), RoadPlannerClaimOverlayService.collectRouteClaims(data, startTown, destinationTown));
             return;
         }
-        player.sendSystemMessage(Component.literal("请先站在当前 Town 区块内 Shift+右键选择目的地 Town，再打开道路规划器。"));
+        player.sendSystemMessage(Component.translatable("message.sailboatmod.roadplanner.need_town_select"));
     }
 
     private void selectTownDestination(ServerPlayer player, @Nullable BlockPos clickedPos) {
         TownRecord sourceTown = TownService.getManagedTownAt(player, player.blockPosition());
         if (sourceTown == null) {
-            player.sendSystemMessage(Component.literal("需要站在你可管理的当前 Town 区块内再选择道路目的地。"));
+            player.sendSystemMessage(Component.translatable("message.sailboatmod.roadplanner.need_managed_town"));
             return;
         }
         NationSavedData data = NationSavedData.get(player.level());
         TownRecord destinationTown = resolveDestinationTown(player, data, sourceTown, clickedPos);
         if (destinationTown == null) {
-            player.sendSystemMessage(Component.literal("没有找到可连接的目的地 Town。Shift+右键目标 Town 区块，或先创建另一个 Town。"));
+            player.sendSystemMessage(Component.translatable("message.sailboatmod.roadplanner.no_destination"));
             return;
         }
 
@@ -148,7 +148,7 @@ public class RoadPlannerItem extends Item {
                 new RoadPlannerDestinationService.TownEndpoint(destinationTown.townId(), destinationTown.name(), destinationAnchor)
         );
         RoadPlannerDestinationService.global().saveTownDestination(player.getUUID(), route.start(), route.destination());
-        player.sendSystemMessage(Component.literal("已设置道路目的地 Town: " + destinationTown.name() + "。再次普通右键道路规划器打开规划地图。"));
+        player.sendSystemMessage(Component.translatable("message.sailboatmod.roadplanner.destination_set", destinationTown.name()));
     }
 
     private TownRecord resolveDestinationTown(ServerPlayer player, NationSavedData data, TownRecord sourceTown, @Nullable BlockPos clickedPos) {
