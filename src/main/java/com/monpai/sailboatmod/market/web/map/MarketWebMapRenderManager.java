@@ -1169,6 +1169,11 @@ public final class MarketWebMapRenderManager {
                 int[][] northDiskRows = seedDiskRows(cache, state.regionX, state.regionZ);
                 int baseChunkX = state.regionX * CHUNKS_PER_REGION_AXIS;
                 int baseChunkZ = state.regionZ * CHUNKS_PER_REGION_AXIS;
+                // 收集每个 chunk 列渲染到【最南端】时的 lastY(连续传递的真实结果),作为本 region 的 seam 底行种子。
+                // 关键:不再事后从"最南 chunk 的 snapshot"重算 seam —— 那个 chunk 可能 missing(稀疏世界 region 南缘常见)
+                // 导致该列 seam 为空 → 南邻 region 顶行拿不到种子 → 画平 → 横线。用循环末态 lastY 则即使最南 chunk 缺,
+                // 该列也保留"最近已知高度",seam 永不为空。lastY 数组是 16 像素(一个 chunk 宽)。
+                int[][] regionBottomSeed = new int[CHUNKS_PER_REGION_AXIS][];
                 for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
                     int[] lastY = seedLastY(state.regionX, state.regionZ, localX, northDiskRows);
                     for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
@@ -1191,8 +1196,10 @@ public final class MarketWebMapRenderManager {
                         // 渲完缓存本 chunk 底行(lastY 此刻已是本 chunk 最南行高度),供南邻/后续批次做种子。
                         putChunkBottomRow(chunkX, chunkZ, lastY);
                     }
+                    // 该列渲完:lastY 现在是这一列传到最南端的高度(含跨 missing chunk 的连续续传)。存为 seam 种子。
+                    regionBottomSeed[localX] = java.util.Arrays.copyOf(lastY, lastY.length);
                 }
-                cacheBottomRows(cache, state);
+                cacheBottomRows(cache, state, regionBottomSeed);
                 diagRegionsScheduled.incrementAndGet();
                 final long regionKey = packRegion(state.regionX, state.regionZ);
                 imageIO.submit(() -> {
@@ -1293,22 +1300,25 @@ public final class MarketWebMapRenderManager {
         }
     }
 
-    private void cacheBottomRows(MarketWebMapTileCache cache, RegionState state) {
-        if (state == null) {
+    /**
+     * 持久化本 region 的 seam 底行种子(供南邻 region 顶行做高度阴影北邻参考)。
+     * {@code regionBottomSeed[localX]} = 渲染时第 localX 列传到【最南端】的连续 lastY(scheduleRegionRender 收集),
+     * 比"从最南 chunk snapshot 重算"可靠:最南 chunk 缺数据时该列仍有最近已知高度,seam 不为空 → 无 region 边界横线。
+     */
+    private void cacheBottomRows(MarketWebMapTileCache cache, RegionState state, int[][] regionBottomSeed) {
+        if (state == null || regionBottomSeed == null) {
             return;
         }
-        int[][] persistRows = null;
+        int[][] persistRows;
         synchronized (this) {
             int[][] rows = bottomRowCache.computeIfAbsent(
                     packRegion(state.regionX, state.regionZ),
                     ignored -> new int[CHUNKS_PER_REGION_AXIS][]);
             for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
-                MarketWebMapChunkSnapshot snapshot = state.snapshotOrNull(localX, CHUNKS_PER_REGION_AXIS - 1);
-                if (snapshot != null) {
-                    rows[localX] = regionRenderer.lastYFromBottomRow(snapshot);
+                if (regionBottomSeed[localX] != null) {
+                    rows[localX] = regionBottomSeed[localX];
                 }
             }
-            // 落盘快照(脱离锁外写):底行种子持久化,seedLastY 内存未命中时可从磁盘读北邻,不再依赖渲染顺序/LRU。
             persistRows = java.util.Arrays.copyOf(rows, rows.length);
             while (bottomRowCache.size() > 512) {
                 Iterator<Long> iterator = bottomRowCache.keySet().iterator();
@@ -1319,7 +1329,7 @@ public final class MarketWebMapRenderManager {
                 iterator.remove();
             }
         }
-        if (cache != null && persistRows != null) {
+        if (cache != null) {
             final int[][] toWrite = persistRows;
             final int rx = state.regionX;
             final int rz = state.regionZ;
