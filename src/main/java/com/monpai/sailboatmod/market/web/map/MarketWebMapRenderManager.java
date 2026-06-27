@@ -111,24 +111,25 @@ public final class MarketWebMapRenderManager {
     private RenderJob activeJob;
     private boolean paused;
     private int tickCounter;
-    // ── fullrender region 串行屏障(tickBackground 主线程 + imageIO 写盘线程读写,统一 synchronized(this))──
-    // 设计:fullrender 一次只把【一个 region】的全部 chunk enqueue 出去,等它攒满(complete)、渲染、真正写盘落地后,
-    // 才推进下一个 region。这样同时满足三条硬要求:
-    //   ① 不死锁:同一时刻只有 1 个 region 的 chunk 在途,inflight(96)足够覆盖它的 1024 chunk 逐步 resolve
-    //      (读到/missing 都算 accounted)→ 必能 complete;不会像"整行 36 region 同时在途"那样谁都凑不齐 1024;
-    //   ② 无黑块:region 只在 complete 时一次性渲染落盘 → 永不写残缺的 partial 图;
-    //   ③ 无高度横线:渲染前北邻(上一 region + seam 持久化种子)已落盘 → 北邻种子齐全。
-    // barrierRegionIndex:已 enqueue 完、正在等落盘的 region 序号;-1=无待落盘 region(可 enqueue 下一个)。
-    // barrierRegionKey:正在等落盘的那个 region 的 packed 坐标(-1=未设)。其写盘回调匹配此 key 时置 barrierRegionWritten。
-    // barrierRegionWritten:屏障 region 是否已真正写盘落地。用 packed-key 匹配而非计数,避免"region 填得太快、跨出前
-    //   就已落盘"导致计数错位。
-    private int barrierRegionIndex = -1;
-    private long barrierRegionKey = -1L;
-    private boolean barrierRegionWritten;
-    private int barrierWaitTicks;
-    // region 屏障超时:某 region 有永远读不到的 chunk(complete 不了)且残留 flush 没救活时,等够这么多个后台
-    // interval tick 就强制推进下一个 region,接受少数残缺,不无限卡死。interval 默认 40 tick,15 次≈600 tick≈30s。
-    private static final int ROW_BARRIER_TIMEOUT_TICKS = 15;
+    // ── fullrender 专用 region 读取器(完全绕开全局 queue/defer)──
+    // 为什么:fullrender 之前把当前 region 的 1024 chunk 塞进全局共享 queue,被黑块修复/玩家区域/历史残留 task 混杂、
+    // 被 submitSnapshot 每 tick 只 poll 96 个 + 无限 DEFER 回队尾搅乱 → 当前 region 的 chunk 沉在队底轮不到 →
+    // region 永远 complete 不了 → 几乎不写图(实测 tilesWritten=5/regions=47)。本读取器自己掌控当前 region 的
+    // chunk:直接 beginProbe(专用 probe map,不和全局混)→ 解码 → 填 RegionState → complete 即渲染+写盘 → 下一个 region。
+    // 同一时刻只读一个 region → inflight 96 足够覆盖其 1024 chunk → 必 complete → 一次性满图落盘:
+    //   ① 无黑块(complete 才渲染,不写残缺)② 无横线(串行保证北邻已落盘,种子齐全)③ 不死锁(不进 queue/defer)。
+    // 全部字段仅 tickBackground 主线程 + imageIO 写盘线程读写,统一 synchronized(this)。
+    private int readerRegionIndex = -1;                       // 读取器当前处理的 region 序号(-1=未开始/已 done)
+    private RegionState readerState;                          // 当前 region 的累积 state(复用 RegionState)
+    private final Map<Long, ChunkProbe> readerProbes = new HashMap<>(); // 当前 region 的在途 probe(独立于全局 pendingProbe)
+    private int readerNextLocalChunk;                         // 当前 region localChunks 列表里下一个待发起 probe 的下标
+    private boolean readerScheduled;                          // 当前 region 是否已 complete 并 schedule 渲染(等写盘)
+    private long readerAwaitWriteKey = -1L;                   // 已 schedule、正在等写盘落地的 region packed key
+    private boolean readerRegionWritten;                      // 该 region 是否已真正写盘落地(imageIO 回调置位)
+    private int readerRegionWaitTicks;                        // 当前 region 已等待的后台 interval tick 数(整 region 级超时)
+    // 整 region 级超时:极端情况下个别 chunk 的 probe 永远 done 不了(sweepStale 重试也救不回),等够这么多个后台
+    // interval tick(默认 interval=40,30 次≈1200 tick≈60s)就把未到的 chunk 当 missing 强制 complete,不无限卡死。
+    private static final int READER_REGION_TIMEOUT_TICKS = 30;
 
     public MarketWebMapRenderManager() {
         int threads = configuredRenderThreads();
@@ -146,6 +147,7 @@ public final class MarketWebMapRenderManager {
             return;
         }
         RenderJob job;
+        boolean intervalPass;
         synchronized (this) {
             job = activeJob;
             if (paused) {
@@ -153,61 +155,46 @@ public final class MarketWebMapRenderManager {
             }
             tickCounter++;
             int interval = Math.max(1, configuredInt(ModConfig::marketWebBackgroundIntervalTicks, 200));
-            if (tickCounter % interval != 0) {
+            intervalPass = (tickCounter % interval == 0);
+            // fullrender 专用读取器【每 tick】都跑(其 probe 发起 / 解码已有 per-tick 双闸节流,不需要外层 interval 再节流;
+            // 若也按 interval=40 节流,读取器每 2s 才动一次,极慢)。非 fullrender 路径仍按 interval 节流(沿用旧行为)。
+            boolean fullRenderActive = job != null && job.fullRender();
+            if (!fullRenderActive && !intervalPass) {
                 return;
             }
         }
         int budget = Math.max(1, configuredInt(ModConfig::marketWebBackgroundMaxChunksPerInterval, 512));
         List<RegionState> residualReady = null;
         MarketWebMapTileCache cache = null;
+        RegionState readerReady = null; // fullrender 专用读取器本 tick complete 的 region(锁外 schedule)
         synchronized (this) {
-            if (job != null) {
+            if (job != null && job.fullRender()) {
+                // ── fullrender 专用 region 读取器:完全绕开 queue/defer,自己读当前 region 的 chunk ──
+                // 自管 per-tick 节流计数(probe 发起 / 解码额度),不依赖 processSnapshotBudget.beginSnapshotTick 的时序。
+                snapshotTick++;
+                generatedSamplesThisTick = 0;
+                generatedSampleMillisThisTick = 0L;
+                probeStartsThisTick = 0;
+                cache = MarketWebMapTileCache.forServer(level.getServer());
+                readerReady = driveRegionReader(level, cache, job, nowMillis);
+                if (job.done()) {
+                    clearProgress(level);
+                    activeJob = null;
+                    resetRegionReader();
+                    if (!expectedRegionChunks.isEmpty()) {
+                        expectedRegionChunks.clear();
+                    }
+                    paused = false;
+                }
+            } else if (job != null) {
+                // 非 fullrender(radius/area/border):沿用旧 queue 流水线。
                 int attempted = 0;
                 while (attempted < budget && activeJob == job && !job.done()) {
-                    // ── fullrender region 串行屏障 ──
-                    // 语义:barrierRegionIndex = 正在 enqueue / 等待落盘的那个 region。游标的 regionIndex 一旦超过它,
-                    // 说明该 region 已全部 enqueue 完,必须等它【写盘落地】(regionsAwaitingWrite 归零)才放行进下一个 region。
-                    // 同一时刻只喂一个 region 的 chunk → regionStates 最多 1~2 个,永不爆 512 上限被 overflow 丢弃 →
-                    // 该 region 必能 complete(inflight 96 足够覆盖单 region 1024 chunk 逐步 resolve)→ 一次性满图落盘。
-                    if (job.fullRender()) {
-                        int cursorRegion = job.currentRegionIndex();
-                        if (barrierRegionIndex < 0) {
-                            barrierRegionIndex = cursorRegion; // 开始喂这个 region
-                            barrierWaitTicks = 0;
-                        } else if (cursorRegion > barrierRegionIndex) {
-                            // 当前 region 已全 enqueue,游标停在下一个 region 起始。等它写盘落地(barrierRegionWritten)才放行。
-                            if (barrierRegionKey < 0 || barrierRegionWritten) {
-                                barrierRegionIndex = cursorRegion; // 已落盘:放行下一个 region
-                                barrierRegionKey = -1L;
-                                barrierRegionWritten = false;
-                                barrierWaitTicks = 0;
-                            } else if (++barrierWaitTicks >= ROW_BARRIER_TIMEOUT_TICKS) {
-                                // 超时兜底:该 region 缺读不到的 chunk、complete 不了且残留 flush 没救活 → 强制放行,接受残缺。
-                                barrierRegionIndex = cursorRegion;
-                                barrierRegionKey = -1L;
-                                barrierRegionWritten = false;
-                                barrierWaitTicks = 0;
-                            } else {
-                                break; // 等当前 region 落盘:本 tick 不 enqueue 下一个 region
-                            }
-                        }
-                        // cursorRegion == barrierRegionIndex:仍在填充当前 region,继续 enqueue 它剩余的 chunk。
-                    }
-                    // 记录正在 enqueue 的这个 region 的 packed key(供写盘回调匹配),在游标跨出前确定。
-                    long enqueuingRegionKey = job.fullRender()
-                            ? packRegion(job.currentRegionX(), job.currentRegionZ())
-                            : -1L;
                     MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk = job.chunk();
                     queue.enqueue(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ(), nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                     job.advance();
                     job.processedChunks = job.completedChunkCount();
                     attempted++;
-                    // 当前 region 的 chunk 刚全部 enqueue 完(游标跨入下一个 region):本 tick 停止,登记"等这个 region 落盘"。
-                    if (job.fullRender() && !job.done() && job.currentRegionIndex() > barrierRegionIndex) {
-                        barrierRegionKey = enqueuingRegionKey;
-                        barrierRegionWritten = false;
-                        break;
-                    }
                 }
                 if (attempted > 0) {
                     job.processedRegions = job.completedRegionCount();
@@ -220,9 +207,6 @@ public final class MarketWebMapRenderManager {
                 if (job.done()) {
                     clearProgress(level);
                     activeJob = null;
-                    // 注意:此刻 queue/pendingProbe 里可能还有未读完的 chunk,所以【不在这里】清 expectedRegionChunks,
-                    // 否则后续 acceptSnapshot 新建的 RegionState 取不到 expected → expectedCount 退化成 1024 →
-                    // 稀疏 region(<1024 chunk)永远 complete 不了。残留 region 改由下方排空后统一兜底 flush。
                     paused = false;
                 }
             } else {
@@ -236,25 +220,13 @@ public final class MarketWebMapRenderManager {
                 }
             }
 
-            // 排空兜底 flush:把仍攒着 chunk 但没到 complete、从未排程的残留 RegionState schedule 出去,落盘后置位
-            // barrierRegionWritten,让 region 串行屏障尽快放行(不必干等 30s 超时)。两种触发:
-            //  (1) 无活跃 job 的收尾:覆盖任意渲染尾部"NBT 读了但没 image"的稀疏 region → 否则这些 region 永不写盘。
-            //  (2) fullrender 屏障等待中(当前 region 已全 enqueue、在途读盘已清空、无在途渲染):它缺读不到的 chunk、
-            //      complete 不了 → 主动 flush 已有内容,落盘后放行下一个 region。
-            //  注意:【不】用 queue.size()==0 当 idle 判据 —— 它被 defer 无限循环永久拖住(死锁根因)。用 pendingProbe 空
-            //  (无在途读盘 = 该读的都已 resolve)+ renderingRegions==0 即可,与 defer 解耦。
-            boolean readPipelineIdle = pendingProbe.isEmpty()
+            // 排空兜底 flush(仅非 fullrender 收尾):无活跃 job、读盘/渲染已清空时,把仍攒着 chunk 但没到 complete、
+            // 从未排程的残留 RegionState schedule 出去(覆盖增量更新尾部"NBT 读了但没 image"的稀疏 region)。
+            // fullrender 由专用读取器自管,不走这里。
+            if (activeJob == null
+                    && pendingProbe.isEmpty()
                     && dirtyChunks.size() == 0
-                    && renderingRegions.get() == 0;
-            // 仅在【当前 region 已全 enqueue、正在等落盘】时才允许残留 flush;否则填充中途 pipeline 短暂 idle 会把还没
-            // complete 的 region 提前 flush 成残缺图(黑块根因)。
-            boolean fullRenderRegionFlush = activeJob != null
-                    && activeJob == job
-                    && job.fullRender()
-                    && barrierRegionKey >= 0
-                    && !barrierRegionWritten;
-            if ((activeJob == null || fullRenderRegionFlush)
-                    && readPipelineIdle
+                    && renderingRegions.get() == 0
                     && !regionStates.isEmpty()) {
                 residualReady = new ArrayList<>();
                 Iterator<Map.Entry<Long, RegionState>> iterator = regionStates.entrySet().iterator();
@@ -267,8 +239,7 @@ public final class MarketWebMapRenderManager {
                     }
                     iterator.remove();
                 }
-                // 只有彻底收尾(无活跃 job)才清 expected;fullrender 行内 flush 不能清,后续行的 region 还要靠它取 expectedCount。
-                if (activeJob == null && !expectedRegionChunks.isEmpty()) {
+                if (!expectedRegionChunks.isEmpty()) {
                     expectedRegionChunks.clear();
                 }
                 if (!residualReady.isEmpty()) {
@@ -276,11 +247,190 @@ public final class MarketWebMapRenderManager {
                 }
             }
         }
+        // 锁外 schedule(scheduleRegionRender 内部会取锁,避免锁内嵌套)。
+        if (readerReady != null && cache != null) {
+            scheduleRegionRender(cache, readerReady, nowMillis);
+        }
         if (residualReady != null && cache != null) {
             for (RegionState ready : residualReady) {
                 scheduleRegionRender(cache, ready, nowMillis);
             }
         }
+    }
+
+    /**
+     * fullrender 专用 region 读取器:每 tick 推进当前 region 的 chunk 读取(完全绕开全局 queue/defer)。
+     * 流程:发起 probe(专用 map)→ 解码 done 的 → 填 readerState → complete 即返回该 state 供锁外 schedule →
+     * 等其写盘落地 → advance 到下一 region。返回本 tick 需要 schedule 的 RegionState(无则 null)。
+     * <b>必须在 synchronized(this) 内调用</b>。
+     */
+    private RegionState driveRegionReader(ServerLevel level, MarketWebMapTileCache cache, RenderJob job, long nowMillis) {
+        // 1) 等写盘:已 schedule 的 region 还没写盘落地 → 本 tick 只等,不动游标。
+        if (readerScheduled) {
+            if (readerRegionWritten) {
+                // 该 region 已落盘:推进 job 游标到下一 region,复位读取器,下 tick 开新 region。
+                advanceJobPastReaderRegion(job);
+                resetRegionReaderForNextRegion();
+            }
+            return null;
+        }
+        // 2) 绑定当前 region:首次或换 region 时,新建 readerState + 准备 localChunks 列表。
+        int cursorRegion = job.currentRegionIndex();
+        if (job.done()) {
+            return null;
+        }
+        if (readerRegionIndex != cursorRegion || readerState == null) {
+            readerRegionIndex = cursorRegion;
+            readerState = newRegionState(MarketWebMapConstants.OVERWORLD, job.currentRegionX(), job.currentRegionZ());
+            readerProbes.clear();
+            readerNextLocalChunk = 0;
+            readerRegionWaitTicks = 0;
+        }
+        List<Integer> localChunks = job.currentRegionLocalChunks();
+        int regionX = job.currentRegionX();
+        int regionZ = job.currentRegionZ();
+        int baseChunkX = regionX * CHUNKS_PER_REGION_AXIS;
+        int baseChunkZ = regionZ * CHUNKS_PER_REGION_AXIS;
+
+        // 3) 发起 probe:本 tick 在 inflight 上限 + 发起额度内,把还没发起的 chunk 发出去。
+        while (readerNextLocalChunk < localChunks.size()
+                && readerProbes.size() < MAX_INFLIGHT_PROBES
+                && probeStartsThisTick < PROBE_STARTS_PER_TICK) {
+            int local = localChunks.get(readerNextLocalChunk++);
+            int chunkX = baseChunkX + Math.floorMod(local, CHUNKS_PER_REGION_AXIS);
+            int chunkZ = baseChunkZ + Math.floorDiv(local, CHUNKS_PER_REGION_AXIS);
+            long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
+            try {
+                CompletableFuture<Optional<CompoundTag>> future =
+                        OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
+                readerProbes.put(chunkKey, new ChunkProbe(future, snapshotTick));
+                probeStartsThisTick++;
+                diagProbesStarted.incrementAndGet();
+            } catch (RuntimeException ignored) {
+                // 发起失败:当 missing,不卡死。
+                readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                diagSnapshotsMissing.incrementAndGet();
+            }
+        }
+
+        // 4) drain done 的 probe:受双闸(解码数 / wall-clock)节流,解码成 snapshot 或判 missing。
+        Iterator<Map.Entry<Long, ChunkProbe>> iterator = readerProbes.entrySet().iterator();
+        while (iterator.hasNext()) {
+            if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
+                    || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
+                break; // 本 tick 解码额度用尽,剩下的下 tick 继续
+            }
+            Map.Entry<Long, ChunkProbe> entry = iterator.next();
+            ChunkProbe probe = entry.getValue();
+            if (probe == null || !probe.future().isDone()) {
+                continue;
+            }
+            long chunkKey = entry.getKey();
+            int chunkX = ChunkPos.getX(chunkKey);
+            int chunkZ = ChunkPos.getZ(chunkKey);
+            iterator.remove();
+            Optional<CompoundTag> tag;
+            try {
+                tag = probe.future().getNow(Optional.empty());
+            } catch (RuntimeException ex) {
+                tag = Optional.empty();
+            }
+            diagProbesCompleted.incrementAndGet();
+            if (tag.isEmpty() || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
+                readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                diagSnapshotsMissing.incrementAndGet();
+                continue;
+            }
+            long startNanos = System.nanoTime();
+            Optional<MarketWebMapChunkSnapshot> snapshot = MarketWebMapNbtChunkSnapshotReader.capture(
+                    MarketWebMapConstants.OVERWORLD, chunkX, chunkZ, tag.get(),
+                    level.getMinBuildHeight(), level.getMaxBuildHeight());
+            generatedSamplesThisTick++;
+            generatedSampleMillisThisTick += (System.nanoTime() - startNanos) / 1_000_000L;
+            if (snapshot.isPresent()) {
+                diagSnapshotsDecoded.incrementAndGet();
+                readerState.put(snapshot.get(), MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                cacheBottomRow(snapshot.get());
+            } else {
+                readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                diagSnapshotsMissing.incrementAndGet();
+            }
+        }
+
+        // 5) 整 region 级超时:个别 chunk 的 probe 永远 done 不了 → 等够 READER_REGION_TIMEOUT_TICKS 就把【尚未发起 +
+        //    在途未决】的 chunk 全当 missing,强制 complete,不无限卡死。
+        boolean allEnqueued = readerNextLocalChunk >= localChunks.size();
+        if (allEnqueued && !readerState.complete()) {
+            readerRegionWaitTicks++;
+            if (readerRegionWaitTicks >= READER_REGION_TIMEOUT_TICKS) {
+                for (Integer local : localChunks) {
+                    int chunkX = baseChunkX + Math.floorMod(local, CHUNKS_PER_REGION_AXIS);
+                    int chunkZ = baseChunkZ + Math.floorDiv(local, CHUNKS_PER_REGION_AXIS);
+                    if (!readerState.accounted(
+                            chunkX - regionX * CHUNKS_PER_REGION_AXIS,
+                            chunkZ - regionZ * CHUNKS_PER_REGION_AXIS)) {
+                        readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                        diagSnapshotsMissing.incrementAndGet();
+                    }
+                }
+                readerProbes.clear();
+            }
+        }
+
+        // 6) complete → schedule(锁外)。标记 readerScheduled + 待写盘 key,等写盘回调置位 readerRegionWritten。
+        if (readerState.complete() && !readerState.renderScheduled) {
+            readerState.renderScheduled = true;
+            readerScheduled = true;
+            readerAwaitWriteKey = packRegion(regionX, regionZ);
+            readerRegionWritten = false;
+            job.processedChunks = job.completedChunkCount();
+            job.processedRegions = job.completedRegionCount();
+            return readerState; // 锁外 scheduleRegionRender
+        }
+        return null;
+    }
+
+    /** 读取器:当前 region 写盘落地后,推进 job 游标越过这一整个 region 到下一 region 起始。 */
+    private void advanceJobPastReaderRegion(RenderJob job) {
+        if (job == null || !job.fullRender()) {
+            return;
+        }
+        int target = readerRegionIndex + 1;
+        int guard = 0;
+        while (!job.done() && job.currentRegionIndex() < target && guard++ < CHUNKS_PER_REGION + 8) {
+            job.advance();
+        }
+        job.processedChunks = job.completedChunkCount();
+        job.processedRegions = job.completedRegionCount();
+        int saveInterval = Math.max(1, configuredInt(ModConfig::marketWebProgressSaveIntervalChunks, 512));
+        if (job.processedChunks - job.lastSavedChunkIndex >= saveInterval) {
+            job.lastSavedChunkIndex = job.processedChunks;
+            // saveProgress 不在锁内做磁盘 IO 也可,但此处量小、低频(每 region 一次),可接受。
+        }
+    }
+
+    /** 读取器:当前 region 落盘后复位,准备下一 region(保留 readerRegionIndex 由 driveRegionReader 重新绑定)。 */
+    private void resetRegionReaderForNextRegion() {
+        readerState = null;
+        readerProbes.clear();
+        readerNextLocalChunk = 0;
+        readerScheduled = false;
+        readerAwaitWriteKey = -1L;
+        readerRegionWritten = false;
+        readerRegionWaitTicks = 0;
+        readerRegionIndex = -1; // 强制下 tick 按游标重新绑定
+    }
+
+    /** 完全复位读取器(start/cancel/clearAll)。 */
+    private void resetRegionReader() {
+        readerState = null;
+        readerProbes.clear();
+        readerNextLocalChunk = 0;
+        readerScheduled = false;
+        readerAwaitWriteKey = -1L;
+        readerRegionWritten = false;
+        readerRegionWaitTicks = 0;
+        readerRegionIndex = -1;
     }
 
     /**
@@ -645,7 +795,7 @@ public final class MarketWebMapRenderManager {
         restoreProgress(level, activeJob);
         paused = false;
         tickCounter = 0;
-        resetRegionBarrier(); // 新 fullrender:复位 region 串行屏障
+        resetRegionReader(); // 新 fullrender:复位专用 region 读取器
         activeJob.lastSavedChunkIndex = activeJob.processedChunks;
         saveProgress(level, activeJob);
         return true;
@@ -780,7 +930,7 @@ public final class MarketWebMapRenderManager {
         activeJob = null;
         expectedRegionChunks.clear();
         paused = false;
-        resetRegionBarrier();
+        resetRegionReader();
         if (level != null) {
             clearProgress(level);
         }
@@ -795,7 +945,7 @@ public final class MarketWebMapRenderManager {
     public synchronized void clearAllRenderState(ServerLevel level) {
         activeJob = null;
         paused = false;
-        resetRegionBarrier();
+        resetRegionReader();
         expectedRegionChunks.clear();
         regionStates.clear();
         bottomRowCache.clear();
@@ -813,6 +963,11 @@ public final class MarketWebMapRenderManager {
 
     public synchronized boolean hasActiveJob() {
         return activeJob != null;
+    }
+
+    /** fullrender 是否活跃(专用 region 读取器在跑)。processSnapshotBudget 据此让出主线程预算,不抢 queue。 */
+    public synchronized boolean hasActiveFullRender() {
+        return activeJob != null && activeJob.fullRender();
     }
 
     public synchronized RenderStatus status(int queueSize) {
@@ -870,8 +1025,10 @@ public final class MarketWebMapRenderManager {
                 + " defer=" + diagResultDefer.get()
                 + " | inflight=" + pendingProbeSizeSnapshot()
                 + " regionStates=" + regionStatesSizeSnapshot()
-                + " | barrierRegion=" + barrierRegionSnapshot()
-                + " awaitingWrite=" + barrierAwaitingWriteSnapshot()
+                + " | reader region=" + readerRegionSnapshot()
+                + " resolved=" + readerResolvedSnapshot() + "/" + readerExpectedSnapshot()
+                + " probes=" + readerProbesSnapshot()
+                + " await=" + readerAwaitSnapshot()
                 + " | captureOK=" + MarketWebMapNbtChunkSnapshotReader.DIAG_OK.get()
                 + " failStatus=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_STATUS.get()
                 + " failNoSections=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_NO_SECTIONS.get();
@@ -885,13 +1042,25 @@ public final class MarketWebMapRenderManager {
         return regionStates.size();
     }
 
-    private synchronized int barrierRegionSnapshot() {
-        return barrierRegionIndex;
+    private synchronized int readerRegionSnapshot() {
+        return readerRegionIndex;
     }
 
-    /** 屏障是否正在等某 region 落盘(1=在等、0=不在等)。看 barrierRegion 单调推进即可确认 region 串行在前进。 */
-    private synchronized int barrierAwaitingWriteSnapshot() {
-        return (barrierRegionKey >= 0 && !barrierRegionWritten) ? 1 : 0;
+    private synchronized int readerResolvedSnapshot() {
+        return readerState == null ? 0 : readerState.count();
+    }
+
+    private synchronized int readerExpectedSnapshot() {
+        return readerState == null ? 0 : readerState.expectedCount;
+    }
+
+    private synchronized int readerProbesSnapshot() {
+        return readerProbes.size();
+    }
+
+    /** 读取器是否正在等当前 region 写盘落地(1=已 schedule 在等、0=在读)。 */
+    private synchronized int readerAwaitSnapshot() {
+        return (readerScheduled && !readerRegionWritten) ? 1 : 0;
     }
 
     public synchronized void loadDirtyChunks(ServerLevel level) {
@@ -1029,10 +1198,10 @@ public final class MarketWebMapRenderManager {
                     if (wrote) {
                         diagTilesWritten.incrementAndGet();
                     }
-                    // region 串行:此 region 真正写盘落地后,若它正是屏障在等的 region,置 barrierRegionWritten → 放行下一个。
+                    // fullrender 读取器:此 region 真正写盘落地后,若它正是读取器在等的 region,置 readerRegionWritten → 下一个。
                     // 无论 writeDirty 是否真写像素(全 missing 的 region 无像素变化 writeDirty=false,但它已处理完)都置位,
-                    // 否则屏障永远等不到 → 卡死。
-                    markBarrierRegionWritten(regionKey);
+                    // 否则读取器永远等不到 → 卡死。
+                    markReaderRegionWritten(regionKey);
                 });
             } catch (RuntimeException exception) {
                 LOGGER.warn("Market web map region render failed for {},{}", state.regionX, state.regionZ, exception);
@@ -1318,18 +1487,10 @@ public final class MarketWebMapRenderManager {
         return job != null && job.fullRender();
     }
 
-    /** 复位 region 串行屏障(start/cancel/clearAll 调用,均已在 synchronized 上下文)。 */
-    private void resetRegionBarrier() {
-        barrierRegionIndex = -1;
-        barrierRegionKey = -1L;
-        barrierRegionWritten = false;
-        barrierWaitTicks = 0;
-    }
-
-    /** region 串行:某 region 写盘落地后调用(imageIO 线程,故 synchronized)。若它正是屏障在等的 region,置位放行。 */
-    private synchronized void markBarrierRegionWritten(long regionKey) {
-        if (barrierRegionKey >= 0 && regionKey == barrierRegionKey) {
-            barrierRegionWritten = true;
+    /** fullrender 读取器:某 region 写盘落地后调用(imageIO 线程,故 synchronized)。若它正是读取器在等的 region,置位放行。 */
+    private synchronized void markReaderRegionWritten(long regionKey) {
+        if (readerAwaitWriteKey >= 0 && regionKey == readerAwaitWriteKey) {
+            readerRegionWritten = true;
         }
     }
 
@@ -1772,6 +1933,14 @@ public final class MarketWebMapRenderManager {
                 return 0;
             }
             return regionX(chunks.get(Math.min(chunkIndex, chunks.size() - 1)).chunkX());
+        }
+
+        /** fullrender 专用读取器:当前 region 的 expected localChunks 列表(local = localZ*32 + localX)。done 返回空。 */
+        private List<Integer> currentRegionLocalChunks() {
+            if (!fullRender() || done() || regionIndex < 0 || regionIndex >= regions.size()) {
+                return List.of();
+            }
+            return regions.get(regionIndex).localChunks();
         }
 
         private int currentRegionZ() {

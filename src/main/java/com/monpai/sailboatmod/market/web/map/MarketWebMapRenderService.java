@@ -306,6 +306,12 @@ public final class MarketWebMapRenderService {
         // 关键:先排干已完成的在途 probe(解码/判定、腾槽位),不依赖该 chunk 的 task 在数十万长队列里再次被 poll。
         // 否则 done 的 256 个 probe 长期占满 inflight → 新 probe 发不出 → 管线冻结(defer 疯涨、progress 停)。
         renderManager.drainCompletedProbes(level, cache, nowMillis);
+        // fullrender 活跃时,当前 region 的读取由 tickBackground 的专用读取器全权负责(绕开 queue/defer)。此处不再
+        // poll queue 抢主线程预算 —— 否则双方共用 GENERATED_SAMPLES/wall-clock 闸会互相饿死。queue 里只剩非 fullrender
+        // 的零散 task(玩家区域等),它们不急,fullrender 结束后再消费。drainCompletedProbes 仍跑(清非 fullrender 残留)。
+        if (renderManager.hasActiveFullRender()) {
+            return;
+        }
         for (MarketWebMapRenderQueue.Task task : queue.pollCoalesced(snapshotsPerTick, sameTileBurstLimit, nowMillis)) {
             if (!MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
                 continue;
