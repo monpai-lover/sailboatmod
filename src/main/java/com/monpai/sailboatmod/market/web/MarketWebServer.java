@@ -860,9 +860,10 @@ public final class MarketWebServer {
             Headers headers = exchange.getResponseHeaders();
             headers.set("Content-Type", contentType);
             headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
-            if (com.monpai.sailboatmod.ModConfig.marketWebDevMode()) {
-                applyNoCache(headers);
-            }
+            // 生产环境也禁用缓存:之前仅 devMode 才发 no-cache,生产下 /app.css /app.js /index.html 不带任何缓存头 →
+            // 浏览器(尤其 Safari)按启发式强缓存旧文件 → 改了前端却"毫无变化"(实测 Safari 卡顿修复不生效根因)。
+            // 这些核心静态资源很小且只在市场页加载,每次重新取/重新校验不影响性能,但保证更新立即可见。
+            applyNoCache(headers);
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream output = exchange.getResponseBody()) {
                 output.write(bytes);
