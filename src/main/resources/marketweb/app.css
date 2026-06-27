@@ -5938,3 +5938,23 @@ textarea,
     font-size: 12px;
     margin-left: 8px;
 }
+
+/* ============================================================================
+   Safari 性能修复:Safari(尤其 Retina)上 backdrop-filter: blur() 每个面板都是
+   昂贵合成层,每帧重新模糊背后全部内容 → 整页卡顿(切页签/点按钮/滚动都卡)。
+   Chrome/Windows 有 GPU 优化所以不卡。这里仅在 <html class="is-safari"> 下(由
+   index.html 头部的 UA 检测添加)把所有 backdrop-filter 关掉,并把半透明毛玻璃
+   背景换成接近不透明的纯色(否则没了模糊会透出杂乱内容)。视觉略有差异但近似,
+   换来 macOS 流畅。其它浏览器毛玻璃效果完全不变。
+   ============================================================================ */
+html.is-safari * {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+html.is-safari {
+    /* 毛玻璃面板原本依赖背景模糊,关掉模糊后把表面调到接近不透明,保持可读、不透杂色 */
+    --surface-glass: rgba(248, 250, 253, 0.97);
+    --glass-surface: rgba(248, 250, 253, 0.97);
+    --glass-surface-strong: rgba(250, 252, 254, 0.99);
+    --glass-border: rgba(214, 224, 238, 0.95);
+}

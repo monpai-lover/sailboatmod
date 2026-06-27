@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" href="/brand-mark.svg" sizes="any" type="image/svg+xml">
     <title>Monpai Online Market</title>
+    <script>
+    // Safari 检测(在 CSS 之前、尽早执行,避免闪烁):给 <html> 加 is-safari class。
+    // Safari 上 backdrop-filter: blur() 每个面板都强制昂贵合成层、每帧重新模糊背后内容 → 整页卡顿
+    // (Retina 4x 像素更甚);Chrome/Windows 有 GPU 优化所以不卡。CSS 里据此对 Safari 关掉毛玻璃换纯色背景。
+    (function () {
+      try {
+        var ua = navigator.userAgent;
+        var isSafari = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(ua);
+        if (isSafari) { document.documentElement.classList.add('is-safari'); }
+      } catch (e) {}
+    })();
+    </script>
 <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/app.css">
 </head>
