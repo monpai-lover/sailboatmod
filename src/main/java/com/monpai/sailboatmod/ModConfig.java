@@ -27,6 +27,7 @@ public final class ModConfig {
     public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_TASKS_PER_TICK;
     public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SAME_TILE_BURST_LIMIT;
     public static final ForgeConfigSpec.BooleanValue MARKET_WEB_MAP_BIOME_COLORS_ENABLED;
+    public static final ForgeConfigSpec.BooleanValue MARKET_WEB_MAP_BLACK_TILE_AUTO_REPAIR_ENABLED;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES;
     public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_RETENTION_DAYS;
     public static final ForgeConfigSpec.BooleanValue BANK_PERSONAL_LOANS_ENABLED;
@@ -121,6 +122,10 @@ public final class ModConfig {
         MARKET_WEB_MAP_BIOME_COLORS_ENABLED = builder
                 .comment("Enable biome color tinting for market web map terrain. Disabled by default to preserve Sailboat's fixed palette.")
                 .define("webMapBiomeColorsEnabled", false);
+        MARKET_WEB_MAP_BLACK_TILE_AUTO_REPAIR_ENABLED = builder
+                .comment("Periodically scan rendered web map tiles for fully-black chunk cells and re-render them automatically.",
+                        "Disable to stop the background black-tile repair pass (the manual /marketweb map repairblack command still works).")
+                .define("webMapBlackTileAutoRepairEnabled", true);
         MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES = builder
                 .comment("How often market analytics snapshots are recorded into SQLite.")
                 .defineInRange("analyticsSnapshotIntervalMinutes", 60, 5, 1440);
@@ -264,6 +269,15 @@ public final class ModConfig {
 
     public static boolean marketWebBiomeColorsEnabled() {
         return MARKET_WEB_MAP_BIOME_COLORS_ENABLED.get();
+    }
+
+    public static boolean marketWebBlackTileAutoRepairEnabled() {
+        return MARKET_WEB_MAP_BLACK_TILE_AUTO_REPAIR_ENABLED.get();
+    }
+
+    public static void setMarketWebBlackTileAutoRepairEnabled(boolean enabled) {
+        MARKET_WEB_MAP_BLACK_TILE_AUTO_REPAIR_ENABLED.set(enabled);
+        MARKET_WEB_MAP_BLACK_TILE_AUTO_REPAIR_ENABLED.save(); // 立即持久化到配置文件,重启保留
     }
 
     public static int marketAnalyticsSnapshotIntervalMinutes() {

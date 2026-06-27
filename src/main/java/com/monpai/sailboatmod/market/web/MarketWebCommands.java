@@ -95,6 +95,14 @@ public final class MarketWebCommands {
                                         .executes(context -> repairBlackTiles(
                                                 context.getSource(),
                                                 IntegerArgumentType.getInteger(context, "budgetTiles")))))
+                        .then(Commands.literal("autorepair")
+                                .executes(context -> showBlackTileAutoRepair(context.getSource()))
+                                .then(Commands.literal("on")
+                                        .executes(context -> setBlackTileAutoRepair(context.getSource(), true)))
+                                .then(Commands.literal("off")
+                                        .executes(context -> setBlackTileAutoRepair(context.getSource(), false)))
+                                .then(Commands.literal("status")
+                                        .executes(context -> showBlackTileAutoRepair(context.getSource()))))
                         .then(Commands.literal("status")
                                 .executes(context -> showMapRenderStatus(context.getSource()))))
                 .then(Commands.literal("debugroute")
@@ -204,6 +212,22 @@ public final class MarketWebCommands {
                 "Market web map repairblack: scanned disk tiles, queued " + queued
                         + " black-hole region(s) for incremental re-render (no force-loading)."), true);
         return queued;
+    }
+
+    /** 切换黑块自动扫描修复开关(持久化到配置)。手动 /marketweb map repairblack 不受此开关影响,总能用。 */
+    private static int setBlackTileAutoRepair(CommandSourceStack source, boolean enabled) {
+        com.monpai.sailboatmod.ModConfig.setMarketWebBlackTileAutoRepairEnabled(enabled);
+        source.sendSuccess(() -> Component.literal("Market web map black-tile auto-repair "
+                + (enabled ? "ENABLED" : "DISABLED")
+                + ". (Manual /marketweb map repairblack still works either way.)"), true);
+        return enabled ? 1 : 0;
+    }
+
+    private static int showBlackTileAutoRepair(CommandSourceStack source) {
+        boolean enabled = com.monpai.sailboatmod.ModConfig.marketWebBlackTileAutoRepairEnabled();
+        source.sendSuccess(() -> Component.literal("Market web map black-tile auto-repair is "
+                + (enabled ? "ENABLED" : "DISABLED") + "."), false);
+        return enabled ? 1 : 0;
     }
 
     private static int startFullMapRender(CommandSourceStack source) {

@@ -143,7 +143,9 @@ public final class MarketWebMapRenderService {
         if (!rendering && tickCounter % REGION_SCAN_INTERVAL_TICKS == 0) {
             enqueueRegionRepairScan(level, REGION_SCAN_REGIONS_PER_PASS);
         }
-        if (!rendering && tickCounter % BLACK_TILE_SCAN_INTERVAL_TICKS == 0) {
+        if (!rendering
+                && configuredBoolean(ModConfig::marketWebBlackTileAutoRepairEnabled, true)
+                && tickCounter % BLACK_TILE_SCAN_INTERVAL_TICKS == 0) {
             MarketWebMapBlackTileRepair.scanAndRepairAsync(server, level, BLACK_TILE_SCAN_BUDGET);
         }
         renderManager.tickBackground(level, queue, now);
@@ -546,6 +548,14 @@ public final class MarketWebMapRenderService {
             return supplier.getAsInt();
         } catch (IllegalStateException exception) {
             return fallback;
+        }
+    }
+
+    private static boolean configuredBoolean(java.util.function.BooleanSupplier supplier, boolean fallback) {
+        try {
+            return supplier.getAsBoolean();
+        } catch (IllegalStateException exception) {
+            return fallback; // 配置未加载(早期 tick)时退回默认值
         }
     }
 
