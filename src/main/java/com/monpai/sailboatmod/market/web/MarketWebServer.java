@@ -559,7 +559,10 @@ public final class MarketWebServer {
             return;
         }
         Headers headers = exchange.getResponseHeaders();
-        headers.set("Cache-Control", "no-cache, max-age=0");
+        // 地形瓦片是"内容寻址"的不可变资源:URL 带 ?v=tileRefreshKey(),内容变则 ?v 变成新 URL。
+        // 长缓存 + immutable 让浏览器对同一 ?v 永不重校验、直接磁盘命中(拖动/缩放复用零网络);
+        // 内容更新走新 URL 自然取新图。修复"地图慢 + 移走回来重下"的根因。
+        headers.set("Cache-Control", "public, max-age=86400, immutable");
         writeBytes(exchange, 200, "image/png", bytes);
     }
 
@@ -586,7 +589,8 @@ public final class MarketWebServer {
             return;
         }
         Headers headers = exchange.getResponseHeaders();
-        headers.set("Cache-Control", "no-cache, max-age=0");
+        // 见 handleMapTile:瓦片 URL 带 ?v 版本号,长缓存 + immutable 安全且能更新。
+        headers.set("Cache-Control", "public, max-age=86400, immutable");
         writeBytes(exchange, 200, "image/png", bytes);
     }
 

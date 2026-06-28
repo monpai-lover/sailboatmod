@@ -7,7 +7,7 @@
   const MAX_ZOOM = 8;
   const MAX_TILE_ZOOM = 4;
   const SHIPMENT_REFRESH_MS = 2000;
-  const MAP_REFRESH_MS = 5000;
+  const MAP_REFRESH_MS = 30000;
   const DESKTOP_TILE_CACHE_LIMIT = 320;
   const MOBILE_TILE_CACHE_LIMIT = 96;
   const TILE_OVERDRAW_PIXELS = 1;
@@ -236,36 +236,12 @@
 
   function createSquaremapTileLayer() {
     const L = window.L;
-    const SquaremapTileLayer = L.TileLayer.extend({
-      createTile(coords, done) {
-        const tile = document.createElement("img");
-        L.DomEvent.on(tile, "load", () => {
-          if (tile.src && tile.src.startsWith("blob:")) {
-            URL.revokeObjectURL(tile.src);
-          }
-          this._tileOnLoad(done, tile);
-        });
-        L.DomEvent.on(tile, "error", L.Util.bind(this._tileOnError, this, done, tile));
-        if (this.options.crossOrigin || this.options.crossOrigin === "") {
-          tile.crossOrigin = this.options.crossOrigin === true ? "" : this.options.crossOrigin;
-        }
-        tile.alt = "";
-        tile.setAttribute("role", "presentation");
-        fetch(this.getTileUrl(coords))
-          .then((res) => {
-            if (!res.ok) {
-              this._tileOnError(done, tile, null);
-              return;
-            }
-            res.blob().then((blob) => {
-              tile.src = URL.createObjectURL(blob);
-            });
-          })
-          .catch(() => this._tileOnError(done, tile, null));
-        return tile;
-      }
-    });
-    return new SquaremapTileLayer("", {
+    // 用原生 L.TileLayer(img.src=url)而非自定义 fetch()+createObjectURL(blob)。
+    // blob 路径会在 load 后 revokeObjectURL 即焚:Leaflet keepBuffer 复用旧 img DOM 时 blob 已失效,
+    // 缩放/平移要复用旧瓦片只能重新 createTile→重新 fetch → "缩放就丢图、白屏重下"。
+    // 原生 img.src 直接吃浏览器 HTTP 缓存:同 URL(同 ?v)复用零网络、瞬间显示。瓦片接口不鉴权,
+    // 原生路径与原 fetch(未带 auth 头)行为一致。
+    return new L.TileLayer("", {
       tileSize: TILE_SIZE,
       minZoom: -MAX_TILE_ZOOM,
       maxZoom: 4,
@@ -517,6 +493,15 @@
   function clearLocalTileImages() {
     state.tileCache = new Map();
     state.missingTiles = new Map();
+    state.localTileRevision = (state.localTileRevision || 0) + 1;
+    redrawSquaremapTerrain();
+  }
+
+  // 软刷新:后台渲染更新瓦片时调,不 new Map() 清空整个缓存(那会让全图重下、每次轮询都闪),
+  // 只 bump localTileRevision → tileRefreshKey 变 → 新 ?v。可见瓦片按新 URL 取真正变了的内容;
+  // 未变的瓦片旧 URL 仍在浏览器磁盘缓存,长缓存命中零网络。reset 按钮仍用 clearLocalTileImages 强清。
+  function softRefreshTiles() {
+    state.missingTiles = new Map(); // 给之前 404 的瓦片一次重试机会(渲染后可能已出图)
     state.localTileRevision = (state.localTileRevision || 0) + 1;
     redrawSquaremapTerrain();
   }
@@ -1774,7 +1759,7 @@
       return;
     }
     state.snapshot = next;
-    clearLocalTileImages(); // 清瓦片缓存 + bump localTileRevision → 重新拉新瓦片
+    softRefreshTiles(); // 软刷新:只 bump 版本号让可见瓦片按新 ?v 增量取新图,不清空整个缓存
   }
 
   function mount(root, options = {}) {
