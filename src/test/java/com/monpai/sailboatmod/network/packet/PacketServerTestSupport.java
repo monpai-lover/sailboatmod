@@ -18,6 +18,9 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.DimensionDataStorage;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import sun.misc.Unsafe;
@@ -87,6 +90,7 @@ final class PacketServerTestSupport {
     static final class TestLevel extends ServerLevel {
         private DedicatedServer server;
         private DimensionDataStorage storage;
+        Map<BlockPos, BlockEntity> blockEntities = Map.of();
 
         private TestLevel() {
             super(null, command -> { }, null, null, null, null, null, false, 0L, List.of(), false, null);
@@ -95,6 +99,8 @@ final class PacketServerTestSupport {
         @Override public MinecraftServer getServer() { return server; }
         @Override public DimensionDataStorage getDataStorage() { return storage; }
         @Override public net.minecraft.resources.ResourceKey<Level> dimension() { return Level.OVERWORLD; }
+        @Override public BlockEntity getBlockEntity(BlockPos pos) { return blockEntities == null ? null : blockEntities.get(pos); }
+        @Override public BlockState getBlockState(BlockPos pos) { return Blocks.STONE.defaultBlockState(); }
     }
 
     static final class TestPlayer extends ServerPlayer {
@@ -104,6 +110,7 @@ final class PacketServerTestSupport {
         private Abilities abilities;
         Component lastMessage;
         Consumer<Component> onSystemMessage;
+        boolean operator;
 
         private TestPlayer() { super(null, null, null, null); }
 
@@ -114,6 +121,7 @@ final class PacketServerTestSupport {
         @Override public Inventory getInventory() { return inventory; }
         @Override public Abilities getAbilities() { return abilities; }
         @Override public boolean hasInfiniteMaterials() { return false; }
+        @Override public boolean hasPermissions(int level) { return operator; }
         @Override public void sendSystemMessage(Component message) {
             lastMessage = message;
             if (onSystemMessage != null) onSystemMessage.accept(message);

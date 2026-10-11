@@ -879,6 +879,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return selectedWaybillIndex;
     }
 
+    public boolean hasPrivateRecoveryCargo() {
+        return waybills.stream().anyMatch(waybill -> waybill.privateRecoveryCargo && !waybill.cargo.isEmpty());
+    }
+
     public boolean claimSelectedWaybill(Player player) {
         if (player == null) {
             return false;
@@ -917,7 +921,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             ), true);
             return false;
         }
-        String stockpileTownId = resolvedTownId();
+        String stockpileTownId = removed.privateRecoveryCargo ? "" : resolvedTownId();
         if (!stockpileTownId.isBlank() && !TownStockpileService.canRemoveCargo(level, stockpileTownId, removed.cargo)) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.error.stockpile_shipment_missing"), true);
             return false;
@@ -990,7 +994,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             TownDeliveryService.deliverDockArrival(level, worldPosition, townId, packed, safeManifest);
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, packed,
-                    "", "", "", "");
+                    "", "", "", "", false);
             return;
         }
 
@@ -1020,18 +1024,21 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
             PurchaseOrder currentOrder = level == null || level.isClientSide ? null
                     : MarketSavedData.get(level).getPurchaseOrder(entry.purchaseOrderId());
-            ShipmentManifestEntry fallbackEntry = currentOrder != null && PurchaseOrder.STATUS_CANCELLED.equals(currentOrder.status())
-                    ? recoveryEntry : entry;
-            TownDeliveryService.deliverDockArrival(level, worldPosition, townId, entryCargo, List.of(fallbackEntry));
+            boolean privateRecoveryCargo = currentOrder != null && PurchaseOrder.STATUS_CANCELLED.equals(currentOrder.status());
+            ShipmentManifestEntry fallbackEntry = privateRecoveryCargo ? recoveryEntry : entry;
+            if (!privateRecoveryCargo) {
+                TownDeliveryService.deliverDockArrival(level, worldPosition, townId, entryCargo, List.of(fallbackEntry));
+            }
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, entryCargo,
-                    fallbackEntry.recipientName(), fallbackEntry.recipientUuid(), fallbackEntry.purchaseOrderId(), fallbackEntry.shippingOrderId());
+                    fallbackEntry.recipientName(), fallbackEntry.recipientUuid(), fallbackEntry.purchaseOrderId(), fallbackEntry.shippingOrderId(),
+                    privateRecoveryCargo);
         }
         if (!cargoPool.isEmpty()) {
             TownDeliveryService.deliverDockArrival(level, worldPosition, townId, cargoPool, List.of());
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, cargoPool,
-                    "", "", "", "");
+                    "", "", "", "", false);
         }
     }
 
@@ -1068,13 +1075,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         if (!(level.getBlockEntity(order.targetDockPos()) instanceof TownWarehouseBlockEntity warehouse)) {
-            // 收货仓已不存在：货物无法入买家仓，退款给买家（货物由上层兜底存入镇仓）。
+            // 收货仓已不存在：退款成功后，货物由上层提单私有保管供卖家领回。
             refundFailedPhysicalDelivery(market, order, "delivery_failed_no_warehouse");
             return false;
         }
         UUID buyerId = parseUuid(order.buyerUuid());
         if (buyerId == null || !warehouse.insertCargo(buyerId, cargo)) {
-            // 收货仓已满或买家身份无效：退款给买家（货物由上层兜底存入镇仓）。
+            // 收货仓已满或买家身份无效：退款成功后，货物由上层提单私有保管供卖家领回。
             refundFailedPhysicalDelivery(market, order, "delivery_failed_full");
             return false;
         }
@@ -1137,7 +1144,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     private void refundFailedPhysicalDelivery(MarketSavedData market, PurchaseOrder order, String reason) {
-        // Dispatch already released this order's reservation. Its real cargo goes to the town fallback.
+        // Dispatch already released this order's reservation. Refunded cargo goes into private waybill custody.
         // Recreating stock or decreasing other pending reservations would corrupt the listing.
         com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(
                 level, market, order, reason, false);
@@ -1156,7 +1163,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             String recipientName,
             String recipientUuid,
             String purchaseOrderId,
-            String shippingOrderId
+            String shippingOrderId,
+            boolean privateRecoveryCargo
     ) {
         List<ItemStack> packed = copyCargo(cargo);
         if (packed.isEmpty()) {
@@ -1190,13 +1198,21 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 safeRecipientName,
                 safeRecipientUuid,
                 safePurchaseOrderId,
-                safeShippingOrderId
+                safeShippingOrderId,
+                privateRecoveryCargo
         ));
-        if (waybills.size() > MAX_WAYBILLS) {
-            int overflow = waybills.size() - MAX_WAYBILLS;
-            for (int i = 0; i < overflow; i++) {
-                waybills.remove(0);
+        while (waybills.size() > MAX_WAYBILLS) {
+            int removableIndex = -1;
+            for (int i = 0; i < waybills.size(); i++) {
+                if (!waybills.get(i).privateRecoveryCargo) {
+                    removableIndex = i;
+                    break;
+                }
             }
+            if (removableIndex < 0) {
+                break;
+            }
+            waybills.remove(removableIndex);
         }
         markArrivedOrders(safePurchaseOrderId, safeShippingOrderId);
         selectedWaybillIndex = Math.max(0, waybills.size() - 1);
@@ -2402,6 +2418,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         private final String recipientUuid;
         private final String purchaseOrderId;
         private final String shippingOrderId;
+        private final boolean privateRecoveryCargo;
 
         private WaybillEntry(
                 String waybillName,
@@ -2417,7 +2434,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 String recipientName,
                 String recipientUuid,
                 String purchaseOrderId,
-                String shippingOrderId
+                String shippingOrderId,
+                boolean privateRecoveryCargo
         ) {
             this.waybillName = sanitize(waybillName, "-");
             this.routeName = sanitize(routeName, "-");
@@ -2433,6 +2451,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             this.recipientUuid = sanitize(recipientUuid, "");
             this.purchaseOrderId = sanitize(purchaseOrderId, "");
             this.shippingOrderId = sanitize(shippingOrderId, "");
+            this.privateRecoveryCargo = privateRecoveryCargo;
             for (ItemStack stack : cargo) {
                 if (stack != null && !stack.isEmpty()) {
                     this.cargo.add(stack.copy());
@@ -2455,6 +2474,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             tag.putString("RecipientUuid", recipientUuid);
             tag.putString("PurchaseOrderId", purchaseOrderId);
             tag.putString("ShippingOrderId", shippingOrderId);
+            tag.putBoolean("PrivateRecoveryCargo", privateRecoveryCargo);
             ListTag cargoTag = new ListTag();
             for (ItemStack stack : cargo) {
                 cargoTag.add(com.monpai.sailboatmod.compat.ItemStackNbt.save(registries, stack, new CompoundTag()));
@@ -2492,7 +2512,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     tag.getString("RecipientName"),
                     tag.getString("RecipientUuid"),
                     tag.getString("PurchaseOrderId"),
-                    tag.getString("ShippingOrderId")
+                    tag.getString("ShippingOrderId"),
+                    tag.getBoolean("PrivateRecoveryCargo")
             );
         }
 
@@ -2508,7 +2529,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
         private WaybillEntry withRecipient(String name, String uuid) {
             return new WaybillEntry(waybillName, routeName, boatName, shipperName, startDockName, endDockName,
-                    departureEpochMillis, elapsedMillis, distanceMeters, cargo, name, uuid, purchaseOrderId, shippingOrderId);
+                    departureEpochMillis, elapsedMillis, distanceMeters, cargo, name, uuid, purchaseOrderId, shippingOrderId,
+                    privateRecoveryCargo);
         }
 
         private String recipientNameOrFallback() {

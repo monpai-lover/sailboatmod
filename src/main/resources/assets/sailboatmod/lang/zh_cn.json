@@ -81,6 +81,7 @@
   "block.sailboatmod.dock.rent_paid": "已花费 %s 租用船只 %s。",
   "block.sailboatmod.dock.not_for_rent": "船只 %s 当前不出租。",
   "block.sailboatmod.dock.waybill_claim_denied": "只有 %s 可以领取这份运单。",
+  "block.sailboatmod.dock.private_cargo_break_denied": "请先领完所有私有退货运单，再拆除此码头或驿站。",
   "screen.sailboatmod.route_start": "启动",
   "screen.sailboatmod.route_start_need_zone": "船只必须位于出发码头等待区内，才能启动这条航线",
   "screen.sailboatmod.route_pause": "暂停",

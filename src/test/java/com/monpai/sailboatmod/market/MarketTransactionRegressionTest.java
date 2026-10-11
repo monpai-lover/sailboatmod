@@ -8,9 +8,12 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.service.TaxService;
+import com.monpai.sailboatmod.nation.service.TownStockpileService;
+import com.monpai.sailboatmod.market.commodity.CommodityKeyResolver;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.NonNullList;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.Bootstrap;
@@ -25,6 +28,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -327,6 +331,8 @@ class MarketTransactionRegressionTest {
             MarketWalletService.deposit(level, SELLER, "Seller", 100L);
         }
         TestDock dock = arrivalDock(level);
+        setField(DockBlockEntity.class, dock, "townId", "buyer-town");
+        setField(DockBlockEntity.class, dock, "ownerUuid", BUYER);
         ShipmentManifestEntry entry = new ShipmentManifestEntry("listing", new ItemStack(Items.OAK_LOG),
                 "order", "", BUYER, "Buyer", 4);
 
@@ -335,16 +341,118 @@ class MarketTransactionRegressionTest {
 
         assertEquals(PurchaseOrder.STATUS_CANCELLED, data.getPurchaseOrder("order").status());
         assertEquals(100L, MarketWalletService.availableBalance(level, BUYER, "Buyer"));
-        assertEquals(4, dock.receivedQuantity);
+        assertTrue(dock.copyAllStorageCargo().isEmpty(), "refunded cargo must stay out of shared dock storage");
+        assertTrue(dock.hasPrivateRecoveryCargo());
+        String commodity = CommodityKeyResolver.resolve(new ItemStack(Items.OAK_LOG));
+        assertEquals(0, TownStockpileService.getAvailable(level, "buyer-town", commodity),
+                "refunded cargo must stay out of the public town stockpile");
         Object waybill = waybills(dock).getFirst();
         assertEquals(SELLER, fieldValue(waybill.getClass(), waybill, "recipientUuid"));
         TestPlayer buyer = player(level, BUYER, "Buyer");
+        assertFalse(dock.extractVisibleStorage(buyer, 0, 4));
+        assertFalse(dock.takeSelectedStorage(buyer), "dock ownership cannot bypass private recovery custody");
         assertFalse(dock.claimSelectedWaybill(buyer), "refunded buyers cannot also claim the physical goods");
+        TownStockpileService.add(level, "buyer-town", commodity, 2);
         TestPlayer seller = player(level, SELLER, "Seller");
         assertTrue(dock.claimSelectedWaybill(seller), "the seller must be able to recover the returned cargo");
+        assertFalse(dock.hasPrivateRecoveryCargo());
         assertEquals(4, seller.getInventory().countItem(Items.OAK_LOG));
         assertEquals(0, buyer.getInventory().countItem(Items.OAK_LOG));
+        assertEquals(2, TownStockpileService.getAvailable(level, "buyer-town", commodity),
+                "private claims must neither require nor remove public stockpile cargo");
         assertEquals(PurchaseOrder.STATUS_CANCELLED, data.getPurchaseOrder("order").status());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void privateRecoveryCustodySurvivesDockNbtReload(boolean knownSeller) throws Exception {
+        TestServerLevel level = newLevel();
+        MarketSavedData data = seedEscrow(level, 100);
+        if (!knownSeller) {
+            data.removeEscrow("order");
+            data.removeListing("listing");
+        }
+        data.putPurchaseOrder(withStatus(order(4, 100), knownSeller ? "IN_TRANSIT" : PurchaseOrder.STATUS_CANCELLED));
+        TestDock dock = arrivalDock(level);
+        setField(DockBlockEntity.class, dock, "ownerUuid", BUYER);
+        ShipmentManifestEntry entry = new ShipmentManifestEntry("listing", new ItemStack(Items.OAK_LOG),
+                "order", "", BUYER, "Buyer", 4);
+        dock.receiveShipment(null, "Route", "Shipper", "Source", "Destination", 1L, 1L, 10D,
+                List.of(new ItemStack(Items.OAK_LOG, 4)), List.of(entry));
+
+        CompoundTag saved = dock.saveTestData(level.registryAccess());
+        assertTrue(saved.getList("Waybills", Tag.TAG_COMPOUND).getCompound(0).getBoolean("PrivateRecoveryCargo"));
+        TestDock reloaded = arrivalDock(level);
+        reloaded.loadAdditional(saved, level.registryAccess());
+        assertTrue(reloaded.hasPrivateRecoveryCargo());
+        assertTrue(reloaded.copyAllStorageCargo().isEmpty());
+        TestPlayer buyer = player(level, BUYER, "Buyer");
+        buyer.recoveryPermission = true;
+        assertFalse(reloaded.takeSelectedStorage(buyer));
+        assertFalse(reloaded.claimSelectedWaybill(buyer), "refund denial must survive reload and permission level 2");
+        TestPlayer administrator = player(level, "00000000-0000-0000-0000-000000000003", "Recovery");
+        assertFalse(reloaded.claimSelectedWaybill(administrator));
+        administrator.recoveryPermission = true;
+        if (knownSeller) {
+            assertFalse(reloaded.claimSelectedWaybill(administrator), "only orphaned recovery markers permit admin claims");
+            TestPlayer seller = player(level, SELLER, "Seller");
+            assertTrue(reloaded.claimSelectedWaybill(seller));
+            assertEquals(4, seller.getInventory().countItem(Items.OAK_LOG));
+        } else {
+            assertTrue(reloaded.claimSelectedWaybill(administrator));
+            assertEquals(4, administrator.getInventory().countItem(Items.OAK_LOG));
+        }
+        assertFalse(reloaded.hasPrivateRecoveryCargo());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void waybillLimitNeverEvictsPrivateRecoveryCargo(boolean allPrivate) throws Exception {
+        TestServerLevel level = newLevel();
+        MarketSavedData data = MarketSavedData.get(level);
+        data.putListing(listing(6, 0));
+        TestDock dock = arrivalDock(level);
+        for (int i = 0; i < 65; i++) {
+            boolean privateCargo = allPrivate || i == 0;
+            String orderId = "cancelled-" + i;
+            PurchaseOrder cancelled = new PurchaseOrder(orderId, "listing", BUYER, "Buyer", 4, 100,
+                    SOURCE, "Source", TARGET, "Target", PurchaseOrder.STATUS_CANCELLED, "SHIP", TARGET);
+            data.putPurchaseOrder(cancelled);
+            List<ShipmentManifestEntry> manifest = privateCargo
+                    ? List.of(new ShipmentManifestEntry("listing", new ItemStack(Items.OAK_LOG),
+                    orderId, "", BUYER, "Buyer", 4)) : List.of();
+            dock.receiveShipment(null, "Route", "Shipper", "Source", "Destination", 1L, 1L, 10D,
+                    List.of(new ItemStack(privateCargo ? Items.OAK_LOG : Items.BIRCH_LOG, 4)), manifest);
+        }
+
+        assertEquals(allPrivate ? 65 : 64, waybills(dock).size());
+        assertEquals(SELLER, fieldValue(waybills(dock).getFirst().getClass(), waybills(dock).getFirst(), "recipientUuid"));
+        TestPlayer seller = player(level, SELLER, "Seller");
+        for (int i = 0; i < (allPrivate ? 65 : 1); i++) {
+            dock.selectWaybillIndex(0);
+            assertTrue(dock.claimSelectedWaybill(seller));
+        }
+        assertEquals(allPrivate ? 260 : 4, seller.getInventory().countItem(Items.OAK_LOG));
+    }
+
+    @Test
+    void ordinaryArrivalKeepsSharedDockStorageAndLegacyCustodyDefault() throws Exception {
+        TestServerLevel level = newLevel();
+        TestDock dock = arrivalDock(level);
+        setField(DockBlockEntity.class, dock, "ownerUuid", BUYER);
+        dock.receiveShipment(null, "Route", "Shipper", "Source", "Destination", 1L, 1L, 10D,
+                List.of(new ItemStack(Items.OAK_LOG, 4)));
+        CompoundTag saved = dock.saveTestData(level.registryAccess());
+        CompoundTag waybill = saved.getList("Waybills", Tag.TAG_COMPOUND).getCompound(0);
+        assertFalse(waybill.getBoolean("PrivateRecoveryCargo"));
+        waybill.remove("PrivateRecoveryCargo");
+        TestDock reloaded = arrivalDock(level);
+        reloaded.loadAdditional(saved, level.registryAccess());
+        assertFalse(reloaded.hasPrivateRecoveryCargo(), "legacy NBT must default to shared custody");
+        TestPlayer buyer = player(level, BUYER, "Buyer");
+
+        assertTrue(reloaded.takeSelectedStorage(buyer));
+        assertEquals(4, buyer.getInventory().countItem(Items.OAK_LOG));
     }
 
     @Test
@@ -385,6 +493,7 @@ class MarketTransactionRegressionTest {
         TestPlayer buyer = player(level, BUYER, "Buyer");
 
         assertFalse(dock.claimSelectedWaybill(buyer));
+        assertFalse(dock.hasPrivateRecoveryCargo(), "legacy cancelled waybills must not become private custody implicitly");
 
         assertEquals(0, buyer.getInventory().countItem(Items.OAK_LOG));
         assertEquals(1, waybills(dock).size(), "rejected claims must preserve the recoverable cargo");
@@ -432,6 +541,10 @@ class MarketTransactionRegressionTest {
         setField(DockBlockEntity.class, dock, "townId", "");
         setField(DockBlockEntity.class, dock, "nationId", "");
         setField(DockBlockEntity.class, dock, "waybills", new ArrayList<>());
+        setField(DockBlockEntity.class, dock, "storage", NonNullList.withSize(DockBlockEntity.STORAGE_SIZE, ItemStack.EMPTY));
+        setField(DockBlockEntity.class, dock, "routes", new ArrayList<>());
+        setField(DockBlockEntity.class, dock, "assignments", new LinkedHashMap<>());
+        setField(DockBlockEntity.class, dock, "routeBook", ItemStack.EMPTY);
         dock.setLevel(level);
         level.arrivalDock = dock;
         return dock;
@@ -453,6 +566,11 @@ class MarketTransactionRegressionTest {
         player.testLevel = level;
         player.profile = new GameProfile(UUID.fromString(uuid), name);
         player.inventory = new Inventory(player);
+        player.containerMenu = new AbstractContainerMenu(null, 0) {
+            @Override public ItemStack quickMoveStack(Player player, int index) { return ItemStack.EMPTY; }
+            @Override public boolean stillValid(Player player) { return true; }
+            @Override public void broadcastChanges() { }
+        };
         return player;
     }
 
@@ -588,16 +706,15 @@ class MarketTransactionRegressionTest {
     }
 
     private static final class TestDock extends DockBlockEntity {
-        private int receivedQuantity;
-
         private TestDock() {
             super(null, null);
         }
 
         @Override public void setChanged() { }
-        @Override public boolean insertCargo(List<ItemStack> cargo) {
-            receivedQuantity += cargo.stream().mapToInt(ItemStack::getCount).sum();
-            return true;
+        private CompoundTag saveTestData(net.minecraft.core.HolderLookup.Provider registries) {
+            CompoundTag tag = new CompoundTag();
+            saveAdditional(tag, registries);
+            return tag;
         }
     }
 

@@ -81,6 +81,7 @@
   "block.sailboatmod.dock.rent_paid": "Rented boat %s for %s.",
   "block.sailboatmod.dock.not_for_rent": "Boat %s is not for rent.",
   "block.sailboatmod.dock.waybill_claim_denied": "Only %s can claim this delivery.",
+  "block.sailboatmod.dock.private_cargo_break_denied": "Claim all private recovery deliveries before removing this dock.",
   "screen.sailboatmod.route_start": "Start",
   "screen.sailboatmod.route_start_need_zone": "Boat must be inside the departure dock waiting zone to start this route",
   "screen.sailboatmod.route_pause": "Pause",

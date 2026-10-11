@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.nation;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.NationCoreBlock;
 import com.monpai.sailboatmod.block.TownCoreBlock;
+import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.nation.command.NationCommands;
@@ -187,6 +188,12 @@ public final class NationEvents {
         if (!(event.getPlayer() instanceof ServerPlayer player)) {
             return;
         }
+        if (event.getLevel().getBlockEntity(event.getPos()) instanceof DockBlockEntity dock
+                && dock.hasPrivateRecoveryCargo()) {
+            event.setCanceled(true);
+            player.sendSystemMessage(Component.translatable("block.sailboatmod.dock.private_cargo_break_denied"));
+            return;
+        }
         if (bypassesProtection(player)) {
             TerrainCacheInvalidator.onBlockBreak(event);
             return;
@@ -332,7 +339,9 @@ public final class NationEvents {
         if (event.getLevel().isClientSide()) {
             return;
         }
-        event.getAffectedBlocks().removeIf(pos -> NationClaimService.isClaimed(event.getLevel(), pos)
+        event.getAffectedBlocks().removeIf(pos -> (event.getLevel().getBlockEntity(pos) instanceof DockBlockEntity dock
+                && dock.hasPrivateRecoveryCargo())
+                || NationClaimService.isClaimed(event.getLevel(), pos)
                 || event.getLevel().getBlockState(pos).getBlock() instanceof TownCoreBlock
                 || event.getLevel().getBlockState(pos).getBlock() instanceof NationCoreBlock);
     }

@@ -11,4 +11,6 @@ The user supplied Claude's archive and authorized internal bug fixes and push. T
 5. Run focused regressions, independent review, full tests, frontend checks and production packaging. Test final startup alongside Tellus/TellusMinimap in the isolated test world.
 6. Document evidence and limitations, selectively commit source/tests/docs/tools (leave generated logs untouched), push and verify remote HEAD. Link production artifacts and test environment.
 
+Final ownership review found that a seller-owned refund waybill could still expose the same cargo through the receiving dock's shared inventory. Keep refunded cargo exclusively in persisted private waybill custody, exclude it from town stockpiles and history trimming, and guard ordinary breaking/explosions until recovery. Verify real shared-storage withdrawal, NBT reload and seller/admin recovery paths before the final build and push.
+
 Escrow persists gross, seller net and tax recipients/amounts at purchase. Settlement consumes the escrow exactly once when the authoritative order reaches ARRIVED/CLAIMED. Partial shipments conserve the gross and every tax/net component. Legacy refunds fail without balance/stock changes when seller funds cannot be recovered; historic taxes cannot be identified and are included in gross seller recovery.
