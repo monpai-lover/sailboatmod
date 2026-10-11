@@ -25,10 +25,16 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 
 public class TownWarehouseBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<TownWarehouseBlock> CODEC = simpleCodec(TownWarehouseBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public static final net.minecraft.world.level.block.state.properties.DirectionProperty FACING = HorizontalDirectionalBlock.FACING;
 
     public TownWarehouseBlock(Properties properties) {
@@ -94,7 +100,7 @@ public class TownWarehouseBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide) {
             return InteractionResult.SUCCESS;
         }
@@ -109,12 +115,12 @@ public class TownWarehouseBlock extends BaseEntityBlock {
             serverPlayer.sendSystemMessage(Component.translatable("screen.sailboatmod.town_warehouse.member_only"));
             return InteractionResult.CONSUME;
         }
-        NetworkHooks.openScreen(serverPlayer, warehouse, pos);
+        serverPlayer.openMenu(warehouse, pos);
         return InteractionResult.CONSUME;
     }
 
     @Override
-    public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+    public boolean isPathfindable(BlockState state, net.minecraft.world.level.pathfinder.PathComputationType type) {
         return false;
     }
 }

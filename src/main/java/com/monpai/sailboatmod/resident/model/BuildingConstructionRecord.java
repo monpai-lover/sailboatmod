@@ -56,14 +56,14 @@ public record BuildingConstructionRecord(
 
     public static BuildingConstructionRecord load(CompoundTag tag) {
         List<String> builders = new ArrayList<>();
-        ListTag builderList = tag.getList("Builders", 8);
+        ListTag builderList = tag.getList("Builders", net.minecraft.nbt.Tag.TAG_STRING);
         for (int i = 0; i < builderList.size(); i++) {
             builders.add(builderList.getString(i));
         }
 
         List<BlockPos> scaffolds = new ArrayList<>();
         if (tag.contains("Scaffolds")) {
-            ListTag scaffoldList = tag.getList("Scaffolds", 10);
+            ListTag scaffoldList = tag.getList("Scaffolds", net.minecraft.nbt.Tag.TAG_COMPOUND);
             for (int i = 0; i < scaffoldList.size(); i++) {
                 CompoundTag posTag = scaffoldList.getCompound(i);
                 scaffolds.add(new BlockPos(posTag.getInt("X"), posTag.getInt("Y"), posTag.getInt("Z")));

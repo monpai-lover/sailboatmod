@@ -3,9 +3,9 @@ package com.monpai.sailboatmod.network.packet;
 import com.monpai.sailboatmod.client.MarketClientHooks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -36,7 +36,7 @@ public class MarketStatusNoticePacket {
 
     public static void handle(MarketStatusNoticePacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
                 MarketClientHooks.showNotice(packet.marketPos, packet.message, packet.positive)));
         context.setPacketHandled(true);
     }

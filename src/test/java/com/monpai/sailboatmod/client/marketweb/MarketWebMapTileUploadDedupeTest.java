@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.client.marketweb;
 
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
-import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import org.junit.jupiter.api.Test;

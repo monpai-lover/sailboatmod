@@ -70,7 +70,7 @@ public record TownStockpileRecord(
 
     public static TownStockpileRecord load(CompoundTag tag) {
         Map<String, Integer> commodityAmounts = new LinkedHashMap<>();
-        ListTag entries = tag.getList("Entries", Tag.TAG_COMPOUND);
+        ListTag entries = tag.getList("Entries", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : entries) {
             if (!(raw instanceof CompoundTag entryTag)) {
                 continue;

@@ -7,15 +7,15 @@ import com.monpai.sailboatmod.resident.entity.ResidentEntity;
 import com.monpai.sailboatmod.resident.entity.SoldierEntity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
-import net.minecraftforge.registries.DeferredRegister;
-import net.minecraftforge.registries.ForgeRegistries;
-import net.minecraftforge.registries.RegistryObject;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.minecraft.core.registries.Registries;
+import net.neoforged.neoforge.registries.DeferredHolder;
 
 public final class ModEntities {
     public static final DeferredRegister<EntityType<?>> ENTITY_TYPES =
-            DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, SailboatMod.MODID);
+            DeferredRegister.create(Registries.ENTITY_TYPE, SailboatMod.MODID);
 
-    public static final RegistryObject<EntityType<SailboatEntity>> SAILBOAT = ENTITY_TYPES.register(
+    public static final DeferredHolder<EntityType<?>, EntityType<SailboatEntity>> SAILBOAT = ENTITY_TYPES.register(
             "sailboat",
             () -> EntityType.Builder.<SailboatEntity>of(SailboatEntity::new, MobCategory.MISC)
                     // 2026-06: 船模型窄长,占地从 3x3 缩到 2x2(vanilla 实体 hitbox 只能方形)。[[sailboat_hitbox_narrow_long]]
@@ -25,7 +25,7 @@ public final class ModEntities {
                     .build("sailboat")
     );
 
-    public static final RegistryObject<EntityType<CarriageEntity>> CARRIAGE = ENTITY_TYPES.register(
+    public static final DeferredHolder<EntityType<?>, EntityType<CarriageEntity>> CARRIAGE = ENTITY_TYPES.register(
             "carriage",
             () -> EntityType.Builder.<CarriageEntity>of(CarriageEntity::new, MobCategory.MISC)
                     // 2026-06 碰撞箱:MC 实体 AABB 引擎硬限制只能正方(width×width),罩不住长方形马车(世界长~5.16×宽~2.12)。
@@ -39,7 +39,7 @@ public final class ModEntities {
                     .build("carriage")
     );
 
-    public static final RegistryObject<EntityType<ResidentEntity>> RESIDENT = ENTITY_TYPES.register(
+    public static final DeferredHolder<EntityType<?>, EntityType<ResidentEntity>> RESIDENT = ENTITY_TYPES.register(
             "resident",
             () -> EntityType.Builder.<ResidentEntity>of(ResidentEntity::new, MobCategory.CREATURE)
                     .sized(0.6F, 1.95F)
@@ -48,7 +48,7 @@ public final class ModEntities {
                     .build("resident")
     );
 
-    public static final RegistryObject<EntityType<SoldierEntity>> SOLDIER = ENTITY_TYPES.register(
+    public static final DeferredHolder<EntityType<?>, EntityType<SoldierEntity>> SOLDIER = ENTITY_TYPES.register(
             "soldier",
             () -> EntityType.Builder.<SoldierEntity>of(SoldierEntity::new, MobCategory.CREATURE)
                     .sized(0.6F, 1.95F)

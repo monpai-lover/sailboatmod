@@ -38,17 +38,17 @@ public class SailboatItemRenderer extends GeoItemRenderer<SailboatItem> {
     private static final class Model extends GeoModel<SailboatItem> {
         @Override
         public ResourceLocation getModelResource(SailboatItem animatable) {
-            return new ResourceLocation(SailboatMod.MODID, "geo/sailboat.geo.json");
+            return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "geo/sailboat.geo.json");
         }
 
         @Override
         public ResourceLocation getTextureResource(SailboatItem animatable) {
-            return new ResourceLocation(SailboatMod.MODID, "textures/entity/sailboat.png");
+            return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "textures/entity/sailboat.png");
         }
 
         @Override
         public ResourceLocation getAnimationResource(SailboatItem animatable) {
-            return new ResourceLocation(SailboatMod.MODID, "animations/sailboat.animation.json");
+            return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "animations/sailboat.animation.json");
         }
     }
 }

@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class ResidentEntityRenderer extends HumanoidMobRenderer<ResidentEntity, HumanoidModel<ResidentEntity>> {
     private static final ResourceLocation DEFAULT_SKIN =
-            new ResourceLocation(SailboatMod.MODID, "textures/entity/resident/default.png");
+            ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "textures/entity/resident/default.png");
     private static final Map<String, ResourceLocation> SKIN_CACHE = new ConcurrentHashMap<>();
 
     public ResidentEntityRenderer(EntityRendererProvider.Context context) {
@@ -91,6 +91,6 @@ public class ResidentEntityRenderer extends HumanoidMobRenderer<ResidentEntity, 
     }
 
     private ResourceLocation texture(String relativePath) {
-        return new ResourceLocation(SailboatMod.MODID, "textures/entity/resident/" + relativePath + ".png");
+        return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "textures/entity/resident/" + relativePath + ".png");
     }
 }

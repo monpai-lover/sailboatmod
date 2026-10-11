@@ -17,7 +17,7 @@ import java.util.List;
  * Main resident management window (MineColonies style)
  */
 public class ResidentListWindow extends AbstractSailboatWindow {
-    private static final ResourceLocation LAYOUT = new ResourceLocation(SailboatMod.MODID, "gui/resident/residentlist.xml");
+    private static final ResourceLocation LAYOUT = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "gui/resident/residentlist.xml");
 
     private static final String LIST_RESIDENTS = "residents";
     private static final String LABEL_NAME = "name";

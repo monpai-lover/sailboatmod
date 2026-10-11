@@ -78,7 +78,7 @@ class TerrainPreviewSavedDataTest {
         data.putTile("minecraft:overworld", 10, 11, new int[] {0xFF010203, 0xFF111213, 0xFF212223, 0xFF313233});
 
         CompoundTag saved = data.save(new CompoundTag());
-        ListTag entries = saved.getList("Entries", Tag.TAG_COMPOUND);
+        ListTag entries = saved.getList("Entries", net.minecraft.nbt.Tag.TAG_COMPOUND);
         assertFalse(entries.isEmpty());
         CompoundTag entry = entries.getCompound(0);
 

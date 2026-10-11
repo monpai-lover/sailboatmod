@@ -17,7 +17,7 @@ class RoadPlannerTileTextureIdTest {
 
         String registrationName = RoadPlannerTile.textureRegistrationName(key);
 
-        ResourceLocation location = assertDoesNotThrow(() -> new ResourceLocation("dynamic/" + registrationName + "_1"));
+        ResourceLocation location = assertDoesNotThrow(() -> ResourceLocation.parse("dynamic/" + registrationName + "_1"));
         assertEquals(location.getPath().toLowerCase(Locale.ROOT), location.getPath());
         assertTrue(location.getPath().contains("_lod_1_1_-3_1"));
     }

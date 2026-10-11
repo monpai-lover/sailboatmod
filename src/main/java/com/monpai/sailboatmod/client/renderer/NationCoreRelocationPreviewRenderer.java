@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.renderer;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import com.monpai.sailboatmod.registry.ModItems;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -16,14 +17,14 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.RenderLevelStageEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
-@Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
+@EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.GAME)
 public final class NationCoreRelocationPreviewRenderer {
     private NationCoreRelocationPreviewRenderer() {
     }
@@ -45,8 +46,8 @@ public final class NationCoreRelocationPreviewRenderer {
         }
 
         BlockHitResult hit = player.level().clip(new ClipContext(
-                player.getEyePosition(event.getPartialTick()),
-                player.getEyePosition(event.getPartialTick()).add(player.getViewVector(event.getPartialTick()).scale(6.0D)),
+                player.getEyePosition(event.getPartialTick().getGameTimeDeltaPartialTick(true)),
+                player.getEyePosition(event.getPartialTick().getGameTimeDeltaPartialTick(true)).add(player.getViewVector(event.getPartialTick().getGameTimeDeltaPartialTick(true)).scale(6.0D)),
                 ClipContext.Block.OUTLINE,
                 ClipContext.Fluid.NONE,
                 player
@@ -81,8 +82,8 @@ public final class NationCoreRelocationPreviewRenderer {
 
     private static boolean isRelocatingCore(ItemStack stack) {
         return !stack.isEmpty()
-                && ((stack.is(ModItems.NATION_CORE_ITEM.get()) && stack.hasTag() && stack.getTag().contains("RelocatingNationId"))
-                || (stack.is(ModItems.TOWN_CORE_ITEM.get()) && stack.hasTag() && stack.getTag().contains("RelocatingTownId")));
+                && ((stack.is(ModItems.NATION_CORE_ITEM.get()) && ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains("RelocatingNationId"))
+                || (stack.is(ModItems.TOWN_CORE_ITEM.get()) && ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains("RelocatingTownId")));
     }
 
     private static void renderFloatingLabel(PoseStack poseStack,
@@ -107,12 +108,12 @@ public final class NationCoreRelocationPreviewRenderer {
 
     private static String labelText(ItemStack stack) {
         if (stack.is(ModItems.NATION_CORE_ITEM.get())) {
-            String name = stack.hasTag() ? stack.getTag().getString("RelocatingNationName") : "";
+            String name = ItemStackNbt.hasTag(stack) ? ItemStackNbt.tag(stack).getString("RelocatingNationName") : "";
             String coreName = Component.translatable("item.sailboatmod.nation_core").getString();
             return name.isBlank() ? coreName : coreName + ": " + name;
         }
         if (stack.is(ModItems.TOWN_CORE_ITEM.get())) {
-            String name = stack.hasTag() ? stack.getTag().getString("RelocatingTownName") : "";
+            String name = ItemStackNbt.hasTag(stack) ? ItemStackNbt.tag(stack).getString("RelocatingTownName") : "";
             String coreName = Component.translatable("item.sailboatmod.town_core").getString();
             return name.isBlank() ? coreName : coreName + ": " + name;
         }
@@ -137,7 +138,7 @@ public final class NationCoreRelocationPreviewRenderer {
     private static void line(VertexConsumer consumer, Matrix4f matrix, Vector3f normal,
                              float x1, float y1, float z1, float x2, float y2, float z2,
                              float r, float g, float b, float a) {
-        consumer.vertex(matrix, x1, y1, z1).color(r, g, b, a).normal(normal.x(), normal.y(), normal.z()).endVertex();
-        consumer.vertex(matrix, x2, y2, z2).color(r, g, b, a).normal(normal.x(), normal.y(), normal.z()).endVertex();
+        consumer.addVertex(matrix, x1, y1, z1).setColor(r, g, b, a).setNormal(normal.x(), normal.y(), normal.z());
+        consumer.addVertex(matrix, x2, y2, z2).setColor(r, g, b, a).setNormal(normal.x(), normal.y(), normal.z());
     }
 }

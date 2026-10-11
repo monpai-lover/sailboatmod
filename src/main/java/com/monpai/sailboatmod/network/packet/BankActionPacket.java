@@ -15,7 +15,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -57,11 +57,11 @@ public class BankActionPacket {
         buf.writeBlockPos(msg.pos);
         buf.writeLong(msg.amount);
         buf.writeInt(msg.slot);
-        buf.writeItem(msg.stack);
+        com.monpai.sailboatmod.network.PacketItemCodec.write(buf, msg.stack);
     }
 
     public static BankActionPacket decode(FriendlyByteBuf buf) {
-        return new BankActionPacket(buf.readEnum(Action.class), buf.readBlockPos(), buf.readLong(), buf.readInt(), buf.readItem());
+        return new BankActionPacket(buf.readEnum(Action.class), buf.readBlockPos(), buf.readLong(), buf.readInt(), com.monpai.sailboatmod.network.PacketItemCodec.read(buf));
     }
 
     public static void handle(BankActionPacket msg, Supplier<NetworkEvent.Context> ctx) {
@@ -214,7 +214,7 @@ public class BankActionPacket {
             }
             NationTreasuryRecord updatedTreasury = data.getOrCreateTreasury(town.nationId());
             com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(
-                    net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> player),
+                    player,
                     new SyncTreasuryPacket(
                             updatedTreasury,
                             BANK_LOANS.buildPersonalView(player),

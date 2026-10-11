@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.monpai.sailboatmod.market.map.MarketWebMapDtos;
+
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import com.monpai.sailboatmod.market.web.MarketWebService;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;

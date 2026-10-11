@@ -281,8 +281,6 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     @Override
     public void tick() {
         super.tick();
-        if (this.townNameInput != null) this.townNameInput.tick();
-        if (this.flagPathInput != null) this.flagPathInput.tick();
         tickAutoRefresh();
         updateButtonState();
     }
@@ -344,7 +342,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         if (this.joinNationOverlayOpen && isInsideJoinNationList(mouseX, mouseY)) {
             this.joinNationScroll = clampJoinNationScroll(this.joinNationScroll + (delta > 0 ? -1 : 1));
             return true;
@@ -369,7 +367,7 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
             updateButtonState();
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, delta);
+        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
     }
 
     @Override
@@ -430,9 +428,9 @@ public class TownHomeScreen extends Screen implements RoadPlannerTileSyncReceive
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
+        this.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         drawContents(guiGraphics, mouseX, mouseY);
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
     }
 
     @Override

@@ -26,12 +26,12 @@ public class MarketSavedData extends SavedData {
             return new MarketSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(MarketSavedData::load, MarketSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(MarketSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> MarketSavedData.load(tag))), DATA_NAME);
     }
 
     public static MarketSavedData load(CompoundTag tag) {
         MarketSavedData data = new MarketSavedData();
-        ListTag listingTag = tag.getList("Listings", Tag.TAG_COMPOUND);
+        ListTag listingTag = tag.getList("Listings", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : listingTag) {
             if (raw instanceof CompoundTag compound) {
                 MarketListing listing = MarketListing.load(compound);
@@ -40,7 +40,7 @@ public class MarketSavedData extends SavedData {
                 }
             }
         }
-        ListTag orderTag = tag.getList("PurchaseOrders", Tag.TAG_COMPOUND);
+        ListTag orderTag = tag.getList("PurchaseOrders", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : orderTag) {
             if (raw instanceof CompoundTag compound) {
                 PurchaseOrder order = PurchaseOrder.load(compound);
@@ -49,7 +49,7 @@ public class MarketSavedData extends SavedData {
                 }
             }
         }
-        ListTag shippingTag = tag.getList("ShippingOrders", Tag.TAG_COMPOUND);
+        ListTag shippingTag = tag.getList("ShippingOrders", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : shippingTag) {
             if (raw instanceof CompoundTag compound) {
                 ShippingOrder order = ShippingOrder.load(compound);
@@ -66,6 +66,10 @@ public class MarketSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag listingTag = new ListTag();
         for (MarketListing listing : listings.values()) {

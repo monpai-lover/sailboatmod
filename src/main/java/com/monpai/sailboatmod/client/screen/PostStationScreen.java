@@ -158,7 +158,6 @@ public class PostStationScreen extends AbstractContainerScreen<PostStationMenu> 
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         if (activeTab == TAB_RENAME_ZONE && hoveredMinimapBoatName != null && !hoveredMinimapBoatName.isBlank()) {
             guiGraphics.renderTooltip(this.font, Component.literal(hoveredMinimapBoatName), mouseX, mouseY);

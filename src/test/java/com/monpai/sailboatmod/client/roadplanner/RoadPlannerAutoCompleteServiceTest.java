@@ -4,6 +4,8 @@ import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -64,23 +66,33 @@ class RoadPlannerAutoCompleteServiceTest {
     }
 
     @Test
-    void usesInjectedPathfinderRunnerBeforeFallback() {
-        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> List.of(
-                from,
-                new BlockPos(48, 70, 12),
-                to
-        ));
+    void usesInjectedPathfinderAndResamplesItsRoute() {
+        BlockPos start = new BlockPos(0, 64, 0);
+        BlockPos destination = new BlockPos(96, 64, 0);
+        List<BlockPos> pathfinderNodes = List.of(start, new BlockPos(48, 70, 12), destination);
+        AtomicBoolean runnerCalled = new AtomicBoolean();
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> {
+            runnerCalled.set(true);
+            assertEquals(start, from);
+            assertEquals(destination, to);
+            return pathfinderNodes;
+        });
 
         RoadPlannerAutoCompleteResult result = service.complete(
-                new BlockPos(0, 64, 0),
-                new BlockPos(96, 64, 0),
+                start,
+                destination,
                 List.of(),
                 24
         );
 
+        assertTrue(runnerCalled.get());
         assertTrue(result.success());
-        assertEquals(new BlockPos(48, 70, 12), result.nodes().get(1));
-        assertEquals(3, result.nodes().size());
+        assertEquals(start, result.nodes().get(0));
+        assertEquals(destination, result.nodes().get(result.nodes().size() - 1));
+        assertTrue(result.nodes().size() > pathfinderNodes.size(), "the runner route should be resampled at the requested spacing");
+        assertTrue(result.nodes().stream().anyMatch(node -> node.getZ() > 0 && node.getY() > start.getY()),
+                "the resampled route should retain the runner's bend instead of taking the straight fallback");
+        assertEquals(result.nodes().size() - 1, result.segmentTypes().size());
     }
 
     @Test
@@ -166,19 +178,23 @@ class RoadPlannerAutoCompleteServiceTest {
                         new BlockPos(16, 66, 0),
                         new BlockPos(24, 64, 0)
                 ),
-                nodes -> List.of(
-                        RoadPlannerSegmentType.ROAD,
-                        RoadPlannerSegmentType.BRIDGE_MAJOR,
-                        RoadPlannerSegmentType.ROAD
-                ),
+                nodes -> IntStream.range(0, nodes.size() - 1)
+                        .mapToObj(index -> nodes.get(index).getX() == 0 || nodes.get(index + 1).getX() == 24
+                                ? RoadPlannerSegmentType.ROAD
+                                : RoadPlannerSegmentType.BRIDGE_MAJOR)
+                        .toList(),
                 (x, z) -> x == 0 || x == 24
         );
 
         RoadPlannerAutoCompleteResult result = service.complete(new BlockPos(0, 64, 0), new BlockPos(24, 64, 0), List.of(), 4);
 
         assertTrue(result.success());
+        assertEquals(new BlockPos(0, 64, 0), result.nodes().get(0));
+        assertEquals(new BlockPos(24, 64, 0), result.nodes().get(result.nodes().size() - 1));
+        assertEquals(result.nodes().size() - 1, result.segmentTypes().size());
         assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(0));
-        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(2));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, result.segmentTypes().get(result.segmentTypes().size() - 1));
+        assertTrue(result.segmentTypes().stream().allMatch(type -> type == RoadPlannerSegmentType.BRIDGE_MAJOR));
     }
 
     @Test

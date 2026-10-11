@@ -1,6 +1,5 @@
 package com.monpai.sailboatmod.network;
 
-import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
@@ -106,73 +105,76 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlayR
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerRoadOverlaySyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerSelectDemolitionRoadPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerSelectEditRoadPacket;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkRegistry;
-import net.minecraftforge.network.simple.SimpleChannel;
-
+import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
     private static final String PROTOCOL_VERSION = "11"; // 10→11:新增 InteractCarriagePacket(整模型点击上车);版本不匹配握手即拒(防新旧 jar 混用运行时崩)
-    public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            new ResourceLocation(SailboatMod.MODID, "main"),
-            () -> PROTOCOL_VERSION,
-            PROTOCOL_VERSION::equals,
-            PROTOCOL_VERSION::equals
-    );
+    public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
 
-    public static void register() {
+    public static void register(IEventBus modEventBus) {
+        registerPackets();
+        modEventBus.addListener(CHANNEL::registerPayloads);
+    }
+
+    private static void registerPackets() {
         CHANNEL.registerMessage(
                 packetId++,
                 OpenSailboatStoragePacket.class,
                 OpenSailboatStoragePacket::encode,
                 OpenSailboatStoragePacket::decode,
-                OpenSailboatStoragePacket::handle
+                OpenSailboatStoragePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RenameSailboatPacket.class,
                 RenameSailboatPacket::encode,
                 RenameSailboatPacket::decode,
-                RenameSailboatPacket::handle
+                RenameSailboatPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SetSailboatRentalPricePacket.class,
                 SetSailboatRentalPricePacket::encode,
                 SetSailboatRentalPricePacket::decode,
-                SetSailboatRentalPricePacket::handle
+                SetSailboatRentalPricePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SelectSailboatSeatPacket.class,
                 SelectSailboatSeatPacket::encode,
                 SelectSailboatSeatPacket::decode,
-                SelectSailboatSeatPacket::handle
+                SelectSailboatSeatPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 ToggleSailPacket.class,
                 ToggleSailPacket::encode,
                 ToggleSailPacket::decode,
-                ToggleSailPacket::handle
+                ToggleSailPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SetHandlingPresetPacket.class,
                 SetHandlingPresetPacket::encode,
                 SetHandlingPresetPacket::decode,
-                SetHandlingPresetPacket::handle
+                SetHandlingPresetPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 ControlAutopilotPacket.class,
                 ControlAutopilotPacket::encode,
                 ControlAutopilotPacket::decode,
-                ControlAutopilotPacket::handle
+                ControlAutopilotPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -195,14 +197,16 @@ public final class ModNetwork {
                 OpenDockScreenPacket.class,
                 OpenDockScreenPacket::encode,
                 OpenDockScreenPacket::decode,
-                OpenDockScreenPacket::handle
+                OpenDockScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 DockGuiActionPacket.class,
                 DockGuiActionPacket::encode,
                 DockGuiActionPacket::decode,
-                DockGuiActionPacket::handle
+                DockGuiActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -225,35 +229,40 @@ public final class ModNetwork {
                 FinalizeRouteNamePacket.class,
                 FinalizeRouteNamePacket::encode,
                 FinalizeRouteNamePacket::decode,
-                FinalizeRouteNamePacket::handle
+                FinalizeRouteNamePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RenameDockPacket.class,
                 RenameDockPacket::encode,
                 RenameDockPacket::decode,
-                RenameDockPacket::handle
+                RenameDockPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SetDockZonePacket.class,
                 SetDockZonePacket::encode,
                 SetDockZonePacket::decode,
-                SetDockZonePacket::handle
+                SetDockZonePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 OpenMarketScreenPacket.class,
                 OpenMarketScreenPacket::encode,
                 OpenMarketScreenPacket::decode,
-                OpenMarketScreenPacket::handle
+                OpenMarketScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 MarketGuiActionPacket.class,
                 MarketGuiActionPacket::encode,
                 MarketGuiActionPacket::decode,
-                MarketGuiActionPacket::handle
+                MarketGuiActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -268,84 +277,96 @@ public final class ModNetwork {
                 CreateMarketListingPacket.class,
                 CreateMarketListingPacket::encode,
                 CreateMarketListingPacket::decode,
-                CreateMarketListingPacket::handle
+                CreateMarketListingPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 PurchaseMarketListingPacket.class,
                 PurchaseMarketListingPacket::encode,
                 PurchaseMarketListingPacket::decode,
-                PurchaseMarketListingPacket::handle
+                PurchaseMarketListingPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 DispatchMarketOrderPacket.class,
                 DispatchMarketOrderPacket::encode,
                 DispatchMarketOrderPacket::decode,
-                DispatchMarketOrderPacket::handle
+                DispatchMarketOrderPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 CancelMarketListingPacket.class,
                 CancelMarketListingPacket::encode,
                 CancelMarketListingPacket::decode,
-                CancelMarketListingPacket::handle
+                CancelMarketListingPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 ClaimMarketCreditsPacket.class,
                 ClaimMarketCreditsPacket::encode,
                 ClaimMarketCreditsPacket::decode,
-                ClaimMarketCreditsPacket::handle
+                ClaimMarketCreditsPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 MarketWalletActionPacket.class,
                 MarketWalletActionPacket::encode,
                 MarketWalletActionPacket::decode,
-                MarketWalletActionPacket::handle
+                MarketWalletActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 OpenNationMenuPacket.class,
                 OpenNationMenuPacket::encode,
                 OpenNationMenuPacket::decode,
-                OpenNationMenuPacket::handle
+                OpenNationMenuPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 OpenTownMenuPacket.class,
                 OpenTownMenuPacket::encode,
                 OpenTownMenuPacket::decode,
-                OpenTownMenuPacket::handle
+                OpenTownMenuPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 NationGuiActionPacket.class,
                 NationGuiActionPacket::encode,
                 NationGuiActionPacket::decode,
-                NationGuiActionPacket::handle
+                NationGuiActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 TownGuiActionPacket.class,
                 TownGuiActionPacket::encode,
                 TownGuiActionPacket::decode,
-                TownGuiActionPacket::handle
+                TownGuiActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 OpenNationScreenPacket.class,
                 OpenNationScreenPacket::encode,
                 OpenNationScreenPacket::decode,
-                OpenNationScreenPacket::handle
+                OpenNationScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 OpenTownScreenPacket.class,
                 OpenTownScreenPacket::encode,
                 OpenTownScreenPacket::decode,
-                OpenTownScreenPacket::handle
+                OpenTownScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -360,35 +381,40 @@ public final class ModNetwork {
                 RequestClaimMapViewportPacket.class,
                 RequestClaimMapViewportPacket::encode,
                 RequestClaimMapViewportPacket::decode,
-                RequestClaimMapViewportPacket::handle
+                RequestClaimMapViewportPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RefreshClaimMapViewportPacket.class,
                 RefreshClaimMapViewportPacket::encode,
                 RefreshClaimMapViewportPacket::decode,
-                RefreshClaimMapViewportPacket::handle
+                RefreshClaimMapViewportPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 CloseClaimMapViewportPacket.class,
                 CloseClaimMapViewportPacket::encode,
                 CloseClaimMapViewportPacket::decode,
-                CloseClaimMapViewportPacket::handle
+                CloseClaimMapViewportPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SetClaimPermissionPacket.class,
                 SetClaimPermissionPacket::encode,
                 SetClaimPermissionPacket::decode,
-                SetClaimPermissionPacket::handle
+                SetClaimPermissionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SetTownClaimPermissionPacket.class,
                 SetTownClaimPermissionPacket::encode,
                 SetTownClaimPermissionPacket::decode,
-                SetTownClaimPermissionPacket::handle
+                SetTownClaimPermissionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -403,119 +429,136 @@ public final class ModNetwork {
                 SyncNationFlagChunkPacket.class,
                 SyncNationFlagChunkPacket::encode,
                 SyncNationFlagChunkPacket::decode,
-                SyncNationFlagChunkPacket::handle
+                SyncNationFlagChunkPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 UploadNationFlagChunkPacket.class,
                 UploadNationFlagChunkPacket::encode,
                 UploadNationFlagChunkPacket::decode,
-                UploadNationFlagChunkPacket::handle
+                UploadNationFlagChunkPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 UploadTownFlagChunkPacket.class,
                 UploadTownFlagChunkPacket::encode,
                 UploadTownFlagChunkPacket::decode,
-                UploadTownFlagChunkPacket::handle
+                UploadTownFlagChunkPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 NationToastPacket.class,
                 NationToastPacket::encode,
                 NationToastPacket::decode,
-                NationToastPacket::handle
+                NationToastPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RenameMarketPacket.class,
                 RenameMarketPacket::encode,
                 RenameMarketPacket::decode,
-                RenameMarketPacket::handle
+                RenameMarketPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 BankActionPacket.class,
                 BankActionPacket::encode,
                 BankActionPacket::decode,
-                BankActionPacket::handle
+                BankActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 PlaceBankStructurePacket.class,
                 PlaceBankStructurePacket::encode,
                 PlaceBankStructurePacket::decode,
-                PlaceBankStructurePacket::handle
+                PlaceBankStructurePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SyncTreasuryPacket.class,
                 SyncTreasuryPacket::encode,
                 SyncTreasuryPacket::decode,
-                SyncTreasuryPacket::handle
+                SyncTreasuryPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 OpenTradeScreenPacket.class,
                 OpenTradeScreenPacket::encode,
                 OpenTradeScreenPacket::decode,
-                OpenTradeScreenPacket::handle
+                OpenTradeScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 TradeScreenActionPacket.class,
                 TradeScreenActionPacket::encode,
                 TradeScreenActionPacket::decode,
-                TradeScreenActionPacket::handle
+                TradeScreenActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SyncConstructorSettingsPacket.class,
                 SyncConstructorSettingsPacket::encode,
                 SyncConstructorSettingsPacket::decode,
-                SyncConstructorSettingsPacket::handle
+                SyncConstructorSettingsPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RequestAutoRouteDocksPacket.class,
                 RequestAutoRouteDocksPacket::encode,
                 RequestAutoRouteDocksPacket::decode,
-                RequestAutoRouteDocksPacket::handle
+                RequestAutoRouteDocksPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SyncAutoRouteDocksPacket.class,
                 SyncAutoRouteDocksPacket::encode,
                 SyncAutoRouteDocksPacket::decode,
-                SyncAutoRouteDocksPacket::handle
+                SyncAutoRouteDocksPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 CreateAutoRoutePacket.class,
                 CreateAutoRoutePacket::encode,
                 CreateAutoRoutePacket::decode,
-                CreateAutoRoutePacket::handle
+                CreateAutoRoutePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 BuildingUpgradePacket.class,
                 BuildingUpgradePacket::encode,
                 BuildingUpgradePacket::decode,
-                BuildingUpgradePacket::handle
+                BuildingUpgradePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 ResidentActionPacket.class,
                 ResidentActionPacket::encode,
                 ResidentActionPacket::decode,
-                ResidentActionPacket::handle
+                ResidentActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 OpenResidentScreenPacket.class,
                 OpenResidentScreenPacket::encode,
                 OpenResidentScreenPacket::decode,
-                OpenResidentScreenPacket::handle
+                OpenResidentScreenPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -538,14 +581,16 @@ public final class ModNetwork {
                 CreateBuyOrderPacket.class,
                 CreateBuyOrderPacket::encode,
                 CreateBuyOrderPacket::decode,
-                CreateBuyOrderPacket::handle
+                CreateBuyOrderPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 CancelBuyOrderPacket.class,
                 CancelBuyOrderPacket::encode,
                 CancelBuyOrderPacket::decode,
-                CancelBuyOrderPacket::handle
+                CancelBuyOrderPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -568,14 +613,16 @@ public final class ModNetwork {
                 SelectRoadPlannerTargetPacket.class,
                 SelectRoadPlannerTargetPacket::encode,
                 SelectRoadPlannerTargetPacket::decode,
-                SelectRoadPlannerTargetPacket::handle
+                SelectRoadPlannerTargetPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 SelectRoadPlannerPreviewOptionPacket.class,
                 SelectRoadPlannerPreviewOptionPacket::encode,
                 SelectRoadPlannerPreviewOptionPacket::decode,
-                SelectRoadPlannerPreviewOptionPacket::handle
+                SelectRoadPlannerPreviewOptionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -614,21 +661,24 @@ public final class ModNetwork {
                 UseBuilderHammerPacket.class,
                 UseBuilderHammerPacket::encode,
                 UseBuilderHammerPacket::decode,
-                UseBuilderHammerPacket::handle
+                UseBuilderHammerPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 ConfigureRoadPlannerPacket.class,
                 ConfigureRoadPlannerPacket::encode,
                 ConfigureRoadPlannerPacket::decode,
-                ConfigureRoadPlannerPacket::handle
+                ConfigureRoadPlannerPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RoadMapSnapshotRequestPacket.class,
                 RoadMapSnapshotRequestPacket::encode,
                 RoadMapSnapshotRequestPacket::decode,
-                RoadMapSnapshotRequestPacket::handle
+                RoadMapSnapshotRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -643,14 +693,16 @@ public final class ModNetwork {
                 RoadPlannerMapPreloadRequestPacket.class,
                 RoadPlannerMapPreloadRequestPacket::encode,
                 RoadPlannerMapPreloadRequestPacket::decode,
-                RoadPlannerMapPreloadRequestPacket::handle
+                RoadPlannerMapPreloadRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RoadPlannerMapPreloadCancelPacket.class,
                 RoadPlannerMapPreloadCancelPacket::encode,
                 RoadPlannerMapPreloadCancelPacket::decode,
-                RoadPlannerMapPreloadCancelPacket::handle
+                RoadPlannerMapPreloadCancelPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -681,7 +733,8 @@ public final class ModNetwork {
                 RoadPlannerRegionNavigationPacket.class,
                 RoadPlannerRegionNavigationPacket::encode,
                 RoadPlannerRegionNavigationPacket::decode,
-                RoadPlannerRegionNavigationPacket::handle
+                RoadPlannerRegionNavigationPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -696,14 +749,16 @@ public final class ModNetwork {
                 RoadPlannerConfirmBuildPacket.class,
                 RoadPlannerConfirmBuildPacket::encode,
                 RoadPlannerConfirmBuildPacket::decode,
-                RoadPlannerConfirmBuildPacket::handle
+                RoadPlannerConfirmBuildPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RoadPlannerAutoCompleteRequestPacket.class,
                 RoadPlannerAutoCompleteRequestPacket::encode,
                 RoadPlannerAutoCompleteRequestPacket::decode,
-                RoadPlannerAutoCompleteRequestPacket::handle
+                RoadPlannerAutoCompleteRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -718,35 +773,40 @@ public final class ModNetwork {
                 RoadPlannerPreviewRequestPacket.class,
                 RoadPlannerPreviewRequestPacket::encode,
                 RoadPlannerPreviewRequestPacket::decode,
-                RoadPlannerPreviewRequestPacket::handle
+                RoadPlannerPreviewRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RoadPlannerMenuActionPacket.class,
                 RoadPlannerMenuActionPacket::encode,
                 RoadPlannerMenuActionPacket::decode,
-                RoadPlannerMenuActionPacket::handle
+                RoadPlannerMenuActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RoadPlannerCancelJobPacket.class,
                 RoadPlannerCancelJobPacket::encode,
                 RoadPlannerCancelJobPacket::decode,
-                RoadPlannerCancelJobPacket::handle
+                RoadPlannerCancelJobPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RoadPlannerRenameRoadPacket.class,
                 RoadPlannerRenameRoadPacket::encode,
                 RoadPlannerRenameRoadPacket::decode,
-                RoadPlannerRenameRoadPacket::handle
+                RoadPlannerRenameRoadPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RoadPlannerDemolishRoadPacket.class,
                 RoadPlannerDemolishRoadPacket::encode,
                 RoadPlannerDemolishRoadPacket::decode,
-                RoadPlannerDemolishRoadPacket::handle
+                RoadPlannerDemolishRoadPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -769,7 +829,8 @@ public final class ModNetwork {
                 RoadPlannerSelectDemolitionRoadPacket.class,
                 RoadPlannerSelectDemolitionRoadPacket::encode,
                 RoadPlannerSelectDemolitionRoadPacket::decode,
-                RoadPlannerSelectDemolitionRoadPacket::handle
+                RoadPlannerSelectDemolitionRoadPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -784,7 +845,8 @@ public final class ModNetwork {
                 RoadPlannerSelectEditRoadPacket.class,
                 RoadPlannerSelectEditRoadPacket::encode,
                 RoadPlannerSelectEditRoadPacket::decode,
-                RoadPlannerSelectEditRoadPacket::handle
+                RoadPlannerSelectEditRoadPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -855,7 +917,8 @@ public final class ModNetwork {
                 SetUnloadOnArrivalPacket.class,
                 SetUnloadOnArrivalPacket::encode,
                 SetUnloadOnArrivalPacket::decode,
-                SetUnloadOnArrivalPacket::handle
+                SetUnloadOnArrivalPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
@@ -878,21 +941,24 @@ public final class ModNetwork {
                 CancelPurchaseOrderPacket.class,
                 CancelPurchaseOrderPacket::encode,
                 CancelPurchaseOrderPacket::decode,
-                CancelPurchaseOrderPacket::handle
+                CancelPurchaseOrderPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 RenamePostStationPacket.class,
                 RenamePostStationPacket::encode,
                 RenamePostStationPacket::decode,
-                RenamePostStationPacket::handle
+                RenamePostStationPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,
                 com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket.class,
                 com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::encode,
                 com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::decode,
-                com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::handle
+                com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
         CHANNEL.registerMessage(
                 packetId++,

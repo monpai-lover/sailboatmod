@@ -25,7 +25,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.network.NetworkDirection;
 
 import java.util.List;
 import java.util.Optional;
@@ -313,7 +312,7 @@ public class RoadPlannerBuildControlService {
                             progress.progressPercent(),
                             progress.activeWorkers())))
                     .orElseGet(List::of);
-            ModNetwork.CHANNEL.sendTo(new SyncRoadConstructionProgressPacket(entries), player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
+            ModNetwork.CHANNEL.send(player, new SyncRoadConstructionProgressPacket(entries));
         }
     }
 

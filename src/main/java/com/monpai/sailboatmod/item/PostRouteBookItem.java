@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.item;
 
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.route.RouteDefinition;
@@ -132,7 +133,7 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
+    public void appendHoverText(ItemStack stack, net.minecraft.world.item.Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("item.sailboatmod.post_route_book.tip.record"));
         tooltip.add(Component.translatable("item.sailboatmod.post_route_book.tip.finish"));
         tooltip.add(Component.translatable("item.sailboatmod.post_route_book.tip.apply"));
@@ -140,7 +141,7 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
         if (hasFinalizedRoute(stack)) {
             tooltip.add(Component.translatable("item.sailboatmod.post_route_book.locked"));
         }
-        List<RouteDefinition> routes = RouteNbtUtil.readRoutes(stack.getOrCreateTag(), TAG_ROUTES);
+        List<RouteDefinition> routes = RouteNbtUtil.readRoutes(ItemStackNbt.tag(stack), TAG_ROUTES);
         int activeIndex = getActiveRouteIndex(stack);
         tooltip.add(Component.translatable("item.sailboatmod.post_route_book.active", activeIndex + 1, Math.max(routes.size(), 1)));
         int shown = 0;
@@ -162,7 +163,7 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
     }
 
     public static List<RouteDefinition> getRoutes(ItemStack stack) {
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null) {
             return List.of();
         }
@@ -177,7 +178,7 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
     }
 
     public static int getActiveRouteIndex(ItemStack stack) {
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null) {
             return 0;
         }
@@ -195,7 +196,7 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
             recordZ = carriage.getZ();
         }
 
-        List<RouteDefinition> routes = new ArrayList<>(RouteNbtUtil.readRoutes(stack.getOrCreateTag(), TAG_ROUTES));
+        List<RouteDefinition> routes = new ArrayList<>(RouteNbtUtil.readRoutes(ItemStackNbt.tag(stack), TAG_ROUTES));
         int active = getActiveRouteIndex(stack);
         RouteDefinition route = routes.get(active);
         List<Vec3> points = new ArrayList<>(route.waypoints());
@@ -211,13 +212,13 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
         }
         points.add(point);
         routes.set(active, new RouteDefinition(route.name(), points, route.authorName(), route.authorUuid(), route.createdAtEpochMillis(), route.routeLengthMeters()));
-        RouteNbtUtil.writeRoutes(stack.getOrCreateTag(), TAG_ROUTES, routes);
+        ItemStackNbt.updateTag(stack, tag -> RouteNbtUtil.writeRoutes(tag, TAG_ROUTES, routes));
         return points.size();
     }
 
     private boolean finalizeCurrentRoute(ItemStack stack, Player player, String name) {
         ensureAtLeastOneRoute(stack);
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         List<RouteDefinition> routes = new ArrayList<>(RouteNbtUtil.readRoutes(tag, TAG_ROUTES));
         int active = getActiveRouteIndex(stack);
         RouteDefinition route = routes.get(active);
@@ -250,6 +251,7 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
         );
         routes.set(active, finalized);
         RouteNbtUtil.writeRoutes(tag, TAG_ROUTES, routes);
+        ItemStackNbt.setTag(stack, tag);
         player.sendSystemMessage(Component.translatable("item.sailboatmod.post_route_book.finish", finalName, formatLength(length)));
         return true;
     }
@@ -289,18 +291,19 @@ public class PostRouteBookItem extends Item implements TransportRouteBook {
     }
 
     private void ensureAtLeastOneRoute(ItemStack stack) {
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         List<RouteDefinition> routes = RouteNbtUtil.readRoutes(tag, TAG_ROUTES);
         if (routes.isEmpty()) {
             routes = new ArrayList<>();
             routes.add(new RouteDefinition(nextRouteName(0), List.of()));
             tag.putInt(TAG_ACTIVE_ROUTE, 0);
             RouteNbtUtil.writeRoutes(tag, TAG_ROUTES, routes);
+            ItemStackNbt.setTag(stack, tag);
         }
     }
 
     private boolean hasFinalizedRoute(ItemStack stack) {
-        List<RouteDefinition> routes = RouteNbtUtil.readRoutes(stack.getOrCreateTag(), TAG_ROUTES);
+        List<RouteDefinition> routes = RouteNbtUtil.readRoutes(ItemStackNbt.tag(stack), TAG_ROUTES);
         for (RouteDefinition route : routes) {
             if (route.waypoints().size() >= MIN_ROUTE_POINTS && route.createdAtEpochMillis() > 0L) {
                 return true;

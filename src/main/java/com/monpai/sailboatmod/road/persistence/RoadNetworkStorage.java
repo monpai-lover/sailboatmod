@@ -51,12 +51,12 @@ public class RoadNetworkStorage {
 
     public void deserialize(CompoundTag tag) {
         roads.clear();
-        ListTag roadList = tag.getList("roads", Tag.TAG_COMPOUND);
+        ListTag roadList = tag.getList("roads", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int i = 0; i < roadList.size(); i++) {
             CompoundTag roadTag = roadList.getCompound(i);
             String roadId = roadTag.getString("roadId");
             int width = roadTag.getInt("width");
-            ListTag pathTag = roadTag.getList("centerPath", Tag.TAG_COMPOUND);
+            ListTag pathTag = roadTag.getList("centerPath", net.minecraft.nbt.Tag.TAG_COMPOUND);
             List<BlockPos> path = new ArrayList<>();
             for (int j = 0; j < pathTag.size(); j++) {
                 CompoundTag posTag = pathTag.getCompound(j);

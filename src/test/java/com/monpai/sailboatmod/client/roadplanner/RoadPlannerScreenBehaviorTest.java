@@ -110,6 +110,7 @@ class RoadPlannerScreenBehaviorTest {
 
         assertEquals(List.of(
                 RoadPlannerTopToolbar.ACTION_AUTO_COMPLETE,
+                RoadPlannerTopToolbar.ACTION_PATHFIND_MODE,
                 RoadPlannerTopToolbar.ACTION_MERGE_SCOPE,
                 "\u786e\u8ba4\u5e76\u5165",
                 RoadPlannerTopToolbar.ACTION_CONFIRM_BUILD,
@@ -138,7 +139,7 @@ class RoadPlannerScreenBehaviorTest {
         assertEquals(RoadPlannerMapPreloadRequestPacket.Purpose.ENTER_PLANNER_PRELOAD, first.purpose());
 
         RoadPlannerMapLayout.Rect map = screen.mapLayoutForTest().map();
-        screen.mouseScrolled(map.x() + 50, map.y() + 50, 1.0D);
+        screen.mouseScrolled(map.x() + 50, map.y() + 50, 0.0D, 1.0D);
 
         assertSame(first, screen.lastMapPreloadRequestForTest());
     }

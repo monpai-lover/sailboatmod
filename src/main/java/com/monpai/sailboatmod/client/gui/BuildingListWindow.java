@@ -18,7 +18,7 @@ import java.util.List;
  * Building management window (MineColonies style)
  */
 public class BuildingListWindow extends AbstractSailboatWindow {
-    private static final ResourceLocation LAYOUT = new ResourceLocation(SailboatMod.MODID, "gui/building/buildinglist.xml");
+    private static final ResourceLocation LAYOUT = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "gui/building/buildinglist.xml");
 
     private static final String LIST_BUILDINGS = "buildings";
     private static final String LABEL_TYPE = "type";

@@ -27,20 +27,17 @@ public class RoadEditableNetworkSavedData extends SavedData {
             return new RoadEditableNetworkSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(
-                RoadEditableNetworkSavedData::load,
-                RoadEditableNetworkSavedData::new,
-                DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(RoadEditableNetworkSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> RoadEditableNetworkSavedData.load(tag))), DATA_NAME);
     }
 
     public static RoadEditableNetworkSavedData load(CompoundTag tag) {
         RoadEditableNetworkSavedData data = new RoadEditableNetworkSavedData();
-        ListTag roadTag = tag.getList("Roads", Tag.TAG_COMPOUND);
+        ListTag roadTag = tag.getList("Roads", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int index = 0; index < roadTag.size(); index++) {
             RoadEditableRecord road = RoadEditableRecord.load(roadTag.getCompound(index));
             data.putRoadInternal(road);
         }
-        ListTag ledgerTag = tag.getList("Ledger", Tag.TAG_COMPOUND);
+        ListTag ledgerTag = tag.getList("Ledger", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int index = 0; index < ledgerTag.size(); index++) {
             RoadBlockLedgerEntry entry = RoadBlockLedgerEntry.load(ledgerTag.getCompound(index));
             data.ledgerByPos.put(entry.pos().asLong(), entry);
@@ -49,6 +46,10 @@ public class RoadEditableNetworkSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag roadTag = new ListTag();
         for (RoadEditableRecord road : roads.values()) {

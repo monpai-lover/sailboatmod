@@ -6,9 +6,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -37,7 +37,7 @@ public class OpenDockScreenPacket {
         buffer.writeBoolean(data.canManageDock());
         buffer.writeBoolean(data.nonOrderAutoReturnEnabled());
         buffer.writeBoolean(data.nonOrderAutoUnloadEnabled());
-        buffer.writeItem(data.routeBook());
+        com.monpai.sailboatmod.network.PacketItemCodec.write(buffer, data.routeBook());
 
         buffer.writeVarInt(data.routeNames().size());
         for (String routeName : data.routeNames()) {
@@ -105,7 +105,7 @@ public class OpenDockScreenPacket {
         boolean canManageDock = buffer.readBoolean();
         boolean nonOrderAutoReturnEnabled = buffer.readBoolean();
         boolean nonOrderAutoUnloadEnabled = buffer.readBoolean();
-        ItemStack routeBook = buffer.readItem();
+        ItemStack routeBook = com.monpai.sailboatmod.network.PacketItemCodec.read(buffer);
 
         int routeCount = buffer.readVarInt();
         List<String> routeNames = new ArrayList<>(routeCount);
@@ -174,7 +174,7 @@ public class OpenDockScreenPacket {
 
     public static void handle(OpenDockScreenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> DockClientHooks.openOrUpdate(packet.data)));
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> DockClientHooks.openOrUpdate(packet.data)));
         context.setPacketHandled(true);
     }
 }

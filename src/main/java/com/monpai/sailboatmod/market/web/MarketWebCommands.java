@@ -1,10 +1,12 @@
 package com.monpai.sailboatmod.market.web;
 
+import com.monpai.sailboatmod.market.logistics.DebugRouteNodeCache;
+
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.market.logistics.ShippingTraceRecord;
 import com.monpai.sailboatmod.market.logistics.ShippingTraceSavedData;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapBlackTileRepair;
-import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapRenderService;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -20,7 +22,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.PacketDistributor;
 
 import java.util.List;
 
@@ -128,7 +129,7 @@ public final class MarketWebCommands {
         String host = com.monpai.sailboatmod.ModConfig.marketWebBindHost();
         String urlHost = "0.0.0.0".equals(host) ? "127.0.0.1" : host;
         String url = "http://" + urlHost + ":" + com.monpai.sailboatmod.ModConfig.marketWebPort() + "/";
-        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new CopyMarketWebTokenPacket(token, url));
+        ModNetwork.CHANNEL.send(player, new CopyMarketWebTokenPacket(token, url));
         source.sendSuccess(() -> Component.literal("Market web URL: ")
                 .append(Component.literal(url).setStyle(Style.EMPTY.withClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, url)))), false);
         source.sendSuccess(() -> Component.literal("Fixed login token copied to clipboard."), false);
@@ -459,10 +460,10 @@ public final class MarketWebCommands {
             int cx = (int) (ck >> 32);
             int cz = (int) ck;
             BlockPos owner = new BlockPos(cx << 4, seaLevel, cz << 4);
-            net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+            com.monpai.sailboatmod.util.ModChunkLoading.forceChunk(
                     level, com.monpai.sailboatmod.SailboatMod.MODID, owner, cx, cz, true, false);
             try {
-                level.getChunk(cx, cz, net.minecraft.world.level.chunk.ChunkStatus.FULL, true);
+                level.getChunk(cx, cz, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, true);
                 for (int idx : e.getValue()) {
                     net.minecraft.world.phys.Vec3 wp = waypoints.get(idx);
                     int x = (int) Math.floor(wp.x);
@@ -482,7 +483,7 @@ public final class MarketWebCommands {
             } catch (Throwable t) {
                 // 单区块采样失败不影响整条:该 chunk 内的点留 null,下方补降级节点。
             } finally {
-                net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+                com.monpai.sailboatmod.util.ModChunkLoading.forceChunk(
                         level, com.monpai.sailboatmod.SailboatMod.MODID, owner, cx, cz, false, false);
             }
         }

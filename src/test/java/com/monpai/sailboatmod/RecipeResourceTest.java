@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RecipeResourceTest {
-    private static final Path RECIPE_DIR = Path.of("src/main/resources/data/sailboatmod/recipes");
+    private static final Path RECIPE_DIR = Path.of("src/main/resources/data/sailboatmod/recipe");
 
     private static final Map<String, String> CORE_CRAFTABLE_ITEMS = Map.ofEntries(
             Map.entry("sailboat", "sailboatmod:sailboat"),
@@ -51,7 +51,7 @@ class RecipeResourceTest {
             String type = recipe.get("type").getAsString();
             assertTrue(type.equals("minecraft:crafting_shaped") || type.equals("minecraft:crafting_shapeless"),
                     "Recipe must be a crafting recipe: " + recipePath);
-            assertEquals(entry.getValue(), recipe.getAsJsonObject("result").get("item").getAsString(),
+            assertEquals(entry.getValue(), recipe.getAsJsonObject("result").get("id").getAsString(),
                     "Wrong recipe output for " + recipePath);
         }
     }

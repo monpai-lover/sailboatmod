@@ -5,9 +5,9 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTerrainSample;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -86,7 +86,7 @@ public record RoadPlannerAutoCompleteResultPacket(UUID sessionId,
     }
 
     public static void handle(RoadPlannerAutoCompleteResultPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        contextSupplier.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
                 RoadPlannerClientHooks.applyAutoCompleteResult(
                         packet.sessionId(),
                         packet.success(),

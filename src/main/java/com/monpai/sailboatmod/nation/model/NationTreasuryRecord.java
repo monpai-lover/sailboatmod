@@ -91,7 +91,7 @@ public record NationTreasuryRecord(
         ItemStack remaining = incoming.copy();
         for (int i = 0; i < items.size() && !remaining.isEmpty(); i++) {
             ItemStack slot = items.get(i);
-            if (!slot.isEmpty() && ItemStack.isSameItemSameTags(slot, remaining) && slot.getCount() < slot.getMaxStackSize()) {
+            if (!slot.isEmpty() && ItemStack.isSameItemSameComponents(slot, remaining) && slot.getCount() < slot.getMaxStackSize()) {
                 int add = Math.min(slot.getMaxStackSize() - slot.getCount(), remaining.getCount());
                 slot.grow(add);
                 remaining.shrink(add);
@@ -119,7 +119,7 @@ public record NationTreasuryRecord(
         int remaining = amount;
         for (int i = 0; i < items.size() && remaining > 0; i++) {
             ItemStack slot = items.get(i);
-            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, template)) {
+            if (slot.isEmpty() || !ItemStack.isSameItemSameComponents(slot, template)) {
                 continue;
             }
             int takeFromSlot = Math.min(remaining, slot.getCount());
@@ -164,7 +164,7 @@ public record NationTreasuryRecord(
             if (!items.get(i).isEmpty()) {
                 CompoundTag itemTag = new CompoundTag();
                 itemTag.putInt("Slot", i);
-                items.get(i).save(itemTag);
+                com.monpai.sailboatmod.compat.ItemStackNbt.save(items.get(i), itemTag);
                 if (i < itemDepositors.length && itemDepositors[i] != null && !itemDepositors[i].isBlank()) {
                     itemTag.putString("Depositor", itemDepositors[i]);
                 }
@@ -182,7 +182,7 @@ public record NationTreasuryRecord(
         int importTariffBP = tag.contains("ImportTariffBP") ? tag.getInt("ImportTariffBP") : 1000;
         int recentTradeCount = tag.getInt("RecentTradeCount");
         long lastTaxAdjustTime = tag.getLong("LastTaxAdjustTime");
-        ListTag itemList = tag.getList("Items", Tag.TAG_COMPOUND);
+        ListTag itemList = tag.getList("Items", net.minecraft.nbt.Tag.TAG_COMPOUND);
 
         int maxSlot = TREASURY_SLOTS - 1;
         for (int i = 0; i < itemList.size(); i++) {
@@ -195,7 +195,7 @@ public record NationTreasuryRecord(
             CompoundTag itemTag = itemList.getCompound(i);
             int slot = itemTag.getInt("Slot");
             if (slot >= 0 && slot < items.size()) {
-                items.set(slot, ItemStack.of(itemTag));
+                items.set(slot, com.monpai.sailboatmod.compat.ItemStackNbt.read(itemTag));
                 if (itemTag.contains("Depositor")) {
                     depositors[slot] = itemTag.getString("Depositor");
                 }

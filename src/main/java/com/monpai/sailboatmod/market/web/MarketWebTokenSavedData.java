@@ -27,12 +27,12 @@ public class MarketWebTokenSavedData extends SavedData {
             return new MarketWebTokenSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(MarketWebTokenSavedData::load, MarketWebTokenSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(MarketWebTokenSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> MarketWebTokenSavedData.load(tag))), DATA_NAME);
     }
 
     public static MarketWebTokenSavedData load(CompoundTag tag) {
         MarketWebTokenSavedData data = new MarketWebTokenSavedData();
-        ListTag list = tag.getList("Entries", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Entries", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : list) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -48,6 +48,10 @@ public class MarketWebTokenSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (TokenEntry entry : byPlayerUuid.values()) {

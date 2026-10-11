@@ -48,8 +48,8 @@ public class StandingAndWallFlagBlockItem extends StandingAndWallBlockItem {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
-        super.appendHoverText(stack, level, tooltip, flag);
+    public void appendHoverText(ItemStack stack, net.minecraft.world.item.Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
+        super.appendHoverText(stack, context, tooltip, flag);
         if (!descriptionKey.isBlank()) {
             tooltip.add(Component.translatable(descriptionKey));
         }

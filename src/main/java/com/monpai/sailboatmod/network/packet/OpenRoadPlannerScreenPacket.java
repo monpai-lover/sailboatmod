@@ -4,9 +4,9 @@ import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerClaimOverlay;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -151,7 +151,7 @@ public class OpenRoadPlannerScreenPacket {
     }
 
     public static void handle(OpenRoadPlannerScreenPacket msg, Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        ctx.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
                 openClientPlanner(msg)));
         ctx.get().setPacketHandled(true);
     }

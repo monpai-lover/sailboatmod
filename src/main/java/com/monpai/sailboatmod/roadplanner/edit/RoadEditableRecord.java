@@ -105,8 +105,8 @@ public record RoadEditableRecord(String roadId,
                 tag.getString("MaterialId"),
                 parseStatus(tag.getString("Status")),
                 tag.getBoolean("LegacyMigrated"),
-                loadNodes(tag.getList("Nodes", Tag.TAG_COMPOUND)),
-                loadSegments(tag.getList("Segments", Tag.TAG_COMPOUND)),
+                loadNodes(tag.getList("Nodes", net.minecraft.nbt.Tag.TAG_COMPOUND)),
+                loadSegments(tag.getList("Segments", net.minecraft.nbt.Tag.TAG_COMPOUND)),
                 tag.getLong("CreatedAt"),
                 tag.getLong("UpdatedAt"));
     }

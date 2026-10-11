@@ -222,8 +222,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     @Override
-    public net.minecraft.nbt.CompoundTag getUpdateTag() {
-        return saveWithoutMetadata();
+    public net.minecraft.nbt.CompoundTag getUpdateTag(net.minecraft.core.HolderLookup.Provider registries) {
+        return saveWithoutMetadata(registries);
     }
 
     public void initializeOwnerIfAbsent(Player player) {
@@ -1168,7 +1168,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             if (remaining <= 0) {
                 break;
             }
-            if (stack.isEmpty() || !ItemStack.isSameItemSameTags(stack, template)) {
+            if (stack.isEmpty() || !ItemStack.isSameItemSameComponents(stack, template)) {
                 continue;
             }
             int take = Math.min(stack.getCount(), remaining);
@@ -1419,7 +1419,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         int total = 0;
         for (ItemStack stack : storage) {
-            if (!stack.isEmpty() && ItemStack.isSameItemSameTags(stack, sample)) {
+            if (!stack.isEmpty() && ItemStack.isSameItemSameComponents(stack, sample)) {
                 total += stack.getCount();
             }
         }
@@ -1436,7 +1436,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         int remaining = quantity;
         for (int i = 0; i < storage.size() && remaining > 0; i++) {
             ItemStack stack = storage.get(i);
-            if (stack.isEmpty() || !ItemStack.isSameItemSameTags(stack, sample)) {
+            if (stack.isEmpty() || !ItemStack.isSameItemSameComponents(stack, sample)) {
                 continue;
             }
             int consume = Math.min(stack.getCount(), remaining);
@@ -1695,7 +1695,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
             StorageGroupAccumulator target = null;
             for (StorageGroupAccumulator group : groups) {
-                if (ItemStack.isSameItemSameTags(group.template, stack)) {
+                if (ItemStack.isSameItemSameComponents(group.template, stack)) {
                     target = group;
                     break;
                 }
@@ -2119,8 +2119,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         RouteNbtUtil.writeRoutes(tag, "DockRoutes", routes);
         tag.putInt("SelectedRouteIndex", selectedRouteIndex);
         tag.putInt("SelectedBoatIndex", selectedBoatIndex);
@@ -2131,7 +2131,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         tag.putString("TownId", townId == null ? "" : townId);
         tag.putString("NationId", nationId == null ? "" : nationId);
         if (!routeBook.isEmpty()) {
-            tag.put("RouteBook", routeBook.save(new CompoundTag()));
+            tag.put("RouteBook", com.monpai.sailboatmod.compat.ItemStackNbt.save(registries, routeBook, new CompoundTag()));
         }
         tag.putString("DockName", dockName == null ? "" : dockName);
         tag.putBoolean("NonOrderAutoReturn", nonOrderAutoReturnEnabled);
@@ -2141,7 +2141,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         tag.putInt("ZoneMinZ", zoneMinZ);
         tag.putInt("ZoneMaxZ", zoneMaxZ);
         CompoundTag storageTag = new CompoundTag();
-        net.minecraft.world.ContainerHelper.saveAllItems(storageTag, storage);
+        net.minecraft.world.ContainerHelper.saveAllItems(storageTag, storage, registries);
         tag.put("Storage", storageTag);
         CompoundTag assignmentsTag = new CompoundTag();
         for (Map.Entry<UUID, Integer> entry : assignments.entrySet()) {
@@ -2150,14 +2150,14 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         tag.put("Assignments", assignmentsTag);
         ListTag waybillTag = new ListTag();
         for (WaybillEntry waybill : waybills) {
-            waybillTag.add(waybill.save());
+            waybillTag.add(waybill.save(registries));
         }
         tag.put("Waybills", waybillTag);
     }
 
     @Override
-    public void load(CompoundTag tag) {
-        super.load(tag);
+    public void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
         routes.clear();
         routes.addAll(RouteNbtUtil.readRoutes(tag, "DockRoutes"));
         selectedRouteIndex = routes.isEmpty() ? 0 : Mth.clamp(tag.getInt("SelectedRouteIndex"), 0, routes.size() - 1);
@@ -2168,7 +2168,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         ownerUuid = tag.getString("OwnerUuid");
         townId = tag.contains("TownId") ? tag.getString("TownId") : "";
         nationId = tag.contains("NationId") ? tag.getString("NationId") : "";
-        routeBook = tag.contains("RouteBook") ? ItemStack.of(tag.getCompound("RouteBook")) : ItemStack.EMPTY;
+        routeBook = tag.contains("RouteBook") ? com.monpai.sailboatmod.compat.ItemStackNbt.read(registries, tag.getCompound("RouteBook")) : ItemStack.EMPTY;
         dockName = tag.getString("DockName");
         nonOrderAutoReturnEnabled = tag.getBoolean("NonOrderAutoReturn");
         nonOrderAutoUnloadEnabled = tag.getBoolean("NonOrderAutoUnload");
@@ -2177,7 +2177,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         zoneMinZ = tag.contains("ZoneMinZ") ? tag.getInt("ZoneMinZ") : -ZONE_HALF_Z;
         zoneMaxZ = tag.contains("ZoneMaxZ") ? tag.getInt("ZoneMaxZ") : ZONE_HALF_Z;
         storage.clear();
-        net.minecraft.world.ContainerHelper.loadAllItems(tag.getCompound("Storage"), storage);
+        com.monpai.sailboatmod.compat.InventoryNbt.loadAllItems(tag.getCompound("Storage"), storage, registries);
         assignments.clear();
         CompoundTag assignmentsTag = tag.getCompound("Assignments");
         for (String key : assignmentsTag.getAllKeys()) {
@@ -2188,10 +2188,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
         waybills.clear();
-        ListTag waybillTag = tag.getList("Waybills", Tag.TAG_COMPOUND);
+        ListTag waybillTag = tag.getList("Waybills", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : waybillTag) {
             if (raw instanceof CompoundTag compound) {
-                WaybillEntry loaded = WaybillEntry.load(compound);
+                WaybillEntry loaded = WaybillEntry.load(compound, registries);
                 if (loaded != null) {
                     waybills.add(loaded);
                 }
@@ -2293,7 +2293,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     private void mergeIntoStorage(ItemStack remaining, NonNullList<ItemStack> targetStorage) {
         for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
             ItemStack slot = targetStorage.get(i);
-            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, remaining)) {
+            if (slot.isEmpty() || !ItemStack.isSameItemSameComponents(slot, remaining)) {
                 continue;
             }
             int limit = Math.min(slot.getMaxStackSize(), 64);
@@ -2380,7 +2380,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
 
-        private CompoundTag save() {
+        private CompoundTag save(net.minecraft.core.HolderLookup.Provider registries) {
             CompoundTag tag = new CompoundTag();
             tag.putString("WaybillName", waybillName);
             tag.putString("RouteName", routeName);
@@ -2397,19 +2397,19 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             tag.putString("ShippingOrderId", shippingOrderId);
             ListTag cargoTag = new ListTag();
             for (ItemStack stack : cargo) {
-                cargoTag.add(stack.save(new CompoundTag()));
+                cargoTag.add(com.monpai.sailboatmod.compat.ItemStackNbt.save(registries, stack, new CompoundTag()));
             }
             tag.put("Cargo", cargoTag);
             return tag;
         }
 
         @Nullable
-        private static WaybillEntry load(CompoundTag tag) {
+        private static WaybillEntry load(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
             List<ItemStack> cargo = new ArrayList<>();
-            ListTag cargoTag = tag.getList("Cargo", Tag.TAG_COMPOUND);
+            ListTag cargoTag = tag.getList("Cargo", net.minecraft.nbt.Tag.TAG_COMPOUND);
             for (Tag raw : cargoTag) {
                 if (raw instanceof CompoundTag compound) {
-                    ItemStack stack = ItemStack.of(compound);
+                    ItemStack stack = com.monpai.sailboatmod.compat.ItemStackNbt.read(registries, compound);
                     if (!stack.isEmpty()) {
                         cargo.add(stack);
                     }

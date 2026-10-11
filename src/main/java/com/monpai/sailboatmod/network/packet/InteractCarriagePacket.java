@@ -5,7 +5,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -42,7 +42,7 @@ public record InteractCarriagePacket(int carriageId, InteractionHand hand) {
                 return;
             }
             // 服务端距离门控:getEntityReach() 与客户端 raytrace 同源,+1.0 格留网络/插值余量。不信客户端命中点。
-            double maxReach = sender.getEntityReach() + 1.0D;
+            double maxReach = sender.entityInteractionRange() + 1.0D;
             if (sender.distanceToSqr(carriage) > maxReach * maxReach) {
                 return;
             }

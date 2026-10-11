@@ -149,13 +149,13 @@ public record ArmyRecord(
 
     public static ArmyRecord load(CompoundTag tag) {
         List<String> soldiers = new ArrayList<>();
-        ListTag soldierList = tag.getList("Soldiers", Tag.TAG_STRING);
+        ListTag soldierList = tag.getList("Soldiers", net.minecraft.nbt.Tag.TAG_STRING);
         for (int i = 0; i < soldierList.size(); i++) {
             soldiers.add(soldierList.getString(i));
         }
 
         List<BlockPos> route = new ArrayList<>();
-        ListTag routeList = tag.getList("Route", Tag.TAG_COMPOUND);
+        ListTag routeList = tag.getList("Route", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int i = 0; i < routeList.size(); i++) {
             route.add(BlockPos.of(routeList.getCompound(i).getLong("Pos")));
         }

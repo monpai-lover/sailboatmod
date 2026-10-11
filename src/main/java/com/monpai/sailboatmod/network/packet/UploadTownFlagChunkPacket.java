@@ -7,8 +7,7 @@ import com.monpai.sailboatmod.nation.service.TownOverviewService;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -45,8 +44,11 @@ public class UploadTownFlagChunkPacket {
         int totalBytes = buffer.readVarInt();
         int chunkIndex = buffer.readVarInt();
         int chunkCount = buffer.readVarInt();
-        buffer.readVarInt();
-        byte[] bytes = buffer.readByteArray();
+        int declaredLength = buffer.readVarInt();
+        byte[] bytes = buffer.readByteArray(TownFlagUploadService.CHUNK_SIZE);
+        if (declaredLength != bytes.length) {
+            throw new IllegalArgumentException("Town flag chunk length mismatch");
+        }
         return new UploadTownFlagChunkPacket(townId, uploadId, totalBytes, chunkIndex, chunkCount, bytes);
     }
 
@@ -63,7 +65,7 @@ public class UploadTownFlagChunkPacket {
             }
             if (result.success() && packet.chunkIndex == packet.chunkCount - 1) {
                 TownOverviewData data = TownOverviewService.buildFor(player, packet.townId);
-                ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTownScreenPacket(data));
+                ModNetwork.CHANNEL.send(player, new OpenTownScreenPacket(data));
             }
         });
         context.setPacketHandled(true);

@@ -47,7 +47,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.core.registries.BuiltInRegistries;
 import org.slf4j.Logger;
 import org.lwjgl.glfw.GLFW;
 
@@ -5252,7 +5252,7 @@ public class MarketScreen extends WindowScreen implements MenuAccess<MarketMenu>
     private ItemStack resolveCommodityStack(String commodityKey) {
         ResourceLocation key = ResourceLocation.tryParse(commodityKey == null ? "" : commodityKey.trim());
         if (key != null) {
-            Item item = ForgeRegistries.ITEMS.getValue(key);
+            Item item = BuiltInRegistries.ITEM.getOptional(key).orElse(null);
             if (item != null) {
                 return new ItemStack(item);
             }

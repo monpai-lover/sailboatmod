@@ -1,6 +1,6 @@
 # Sailboat Vehicle Mod
 
-Minecraft Forge 1.20.1 模组，核心方向是航海运输、国家城镇治理、领地控制、市场贸易和蓝图建筑。
+Minecraft NeoForge 1.21.1 模组，核心方向是航海运输、国家城镇治理、领地控制、市场贸易和蓝图建筑。
 
 ## 当前内容
 
@@ -11,20 +11,20 @@ Minecraft Forge 1.20.1 模组，核心方向是航海运输、国家城镇治理
 
 ## 环境要求
 
-- Minecraft: `1.20.1`
-- Forge: `47.2.0`
-- Java: `17`
+- Minecraft: `1.21.1`
+- NeoForge: `21.1.259`
+- Java: `21`
 
 ## 依赖库
 
 ### 必需依赖
 
-- Forge `47.2.0`
-- GeckoLib `4.4.9`
+- NeoForge `21.1.259`
+- GeckoLib `4.9.3`
 
 ### 项目依赖
 
-- BlockUI `1.20.1-1.0.190-snapshot`
+- BlockUI `1.21.1-1.0.182-beta`
 - gdx-ai `1.8.2`
 - SQLite JDBC `3.46.1.3`
 - webp-imageio `0.1.6`（JarJar 打包）
@@ -40,9 +40,10 @@ Minecraft Forge 1.20.1 模组，核心方向是航海运输、国家城镇治理
 
 ### 玩家使用
 
-1. 安装 Minecraft `1.20.1`
-2. 安装 Forge `47.2.0`
-3. 将本模组 jar 放入 `mods/`
+1. 安装 Minecraft `1.21.1`
+2. 安装 NeoForge `21.1.259`
+3. 将 `sailboatmod-<版本>-neoforge-1.21.1.jar` 和 GeckoLib 4.9.3 的 NeoForge 1.21.1 版本放入 `mods/`
+4. 网页市场可选：服务端另外安装 `sailboatmod-marketweb-<版本>-neoforge-1.21.1.jar`
 
 ## 开发命令
 
@@ -79,7 +80,11 @@ Minecraft Forge 1.20.1 模组，核心方向是航海运输、国家城镇治理
 ## 构建输出
 
 - 产物目录: `build/libs/`
-- 发布包: `*-reobf.jar`
+- 主模组: `sailboatmod-<版本>-neoforge-1.21.1.jar`（包含 JarJar 库依赖）
+- 可选网页市场: `sailboatmod-marketweb-<版本>-neoforge-1.21.1.jar`
+- 完整发行构建: `./gradlew releaseMod`
+
+本迁移快照的完整测试为 1,267 项、1,265 通过、2 项既有网页测试失败。主模组与 addon 可用 `./gradlew releaseMod -x test` 单独打包；验证范围和剩余问题见 [交接验证](docs/handoff/VALIDATION.md)。网页市场重构由 Claude 接手，入口见 [交接说明](docs/handoff/CLAUDE_WEB_MARKET_HANDOFF.md)。
 
 ## 当前进展
 

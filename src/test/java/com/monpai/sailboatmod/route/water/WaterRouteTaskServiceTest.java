@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -94,25 +96,43 @@ class WaterRouteTaskServiceTest {
     }
 
     @Test
-    void skippedDimensionTasksDoNotConsumePerTickTaskBudget() {
+    void skippedDimensionTasksDoNotConsumePerTickTaskBudget() throws InterruptedException {
         WaterRouteTaskService service = new WaterRouteTaskService(1);
+        AtomicInteger netherCompletions = new AtomicInteger();
         AtomicInteger overworldCompletions = new AtomicInteger();
+        CountDownLatch overworldCompleted = new CountDownLatch(1);
         WaterRouteTask netherTask = task(
                 "minecraft:the_nether",
                 new BlockPos(0, 64, 0),
                 new BlockPos(0, 64, 0),
-                result -> {});
+                result -> netherCompletions.incrementAndGet());
         WaterRouteTask overworldTask = task(
                 "minecraft:overworld",
                 new BlockPos(0, 64, 16),
                 new BlockPos(0, 64, 16),
-                result -> overworldCompletions.incrementAndGet());
+                result -> {
+                    assertTrue(result.successful());
+                    overworldCompletions.incrementAndGet();
+                    overworldCompleted.countDown();
+                });
 
         service.submit(netherTask);
         service.submit(overworldTask);
         service.tick("minecraft:overworld");
+        assertEquals(0, overworldCompletions.get(), "the first tick submits background work");
 
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (overworldCompleted.getCount() > 0 && System.nanoTime() < deadline) {
+            service.tick("minecraft:overworld");
+            overworldCompleted.await(1, TimeUnit.MILLISECONDS);
+        }
+
+        assertEquals(0L, overworldCompleted.getCount(), "the selected dimension task must complete before the deadline");
         assertEquals(1, overworldCompletions.get());
+        assertEquals(0, netherCompletions.get());
+        assertEquals(1, service.pendingCount(), "the skipped dimension task must remain pending");
+        service.tick("minecraft:overworld");
+        assertEquals(1, overworldCompletions.get(), "completed tasks must not call back twice");
     }
 
     private static WaterRouteTask task(BlockPos source, BlockPos target, WaterRouteTask.CompletionHandler callback) {

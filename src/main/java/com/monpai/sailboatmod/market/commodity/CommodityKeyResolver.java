@@ -5,7 +5,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.core.registries.BuiltInRegistries;
 
 public final class CommodityKeyResolver {
     private static final String FALLBACK_KEY = "minecraft:air";
@@ -22,7 +22,7 @@ public final class CommodityKeyResolver {
 
     public static String resolve(Item item) {
         Item safeItem = item == null ? Items.AIR : item;
-        ResourceLocation key = ForgeRegistries.ITEMS.getKey(safeItem);
+        ResourceLocation key = BuiltInRegistries.ITEM.getKey(safeItem);
         return key == null ? FALLBACK_KEY : key.toString();
     }
 

@@ -6,8 +6,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.fml.ModList;
-import net.minecraftforge.items.IItemHandlerModifiable;
+import net.neoforged.fml.ModList;
+import net.neoforged.neoforge.items.IItemHandlerModifiable;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Method;
@@ -182,7 +182,7 @@ public final class MineColoniesWarehouseIntegration {
                 }
                 WarehouseItem merged = null;
                 for (WarehouseItem existing : out) {
-                    if (ItemStack.isSameItemSameTags(existing.stack(), tuple.stack)) {
+                    if (ItemStack.isSameItemSameComponents(existing.stack(), tuple.stack)) {
                         merged = existing;
                         break;
                     }
@@ -204,7 +204,7 @@ public final class MineColoniesWarehouseIntegration {
                 return List.of();
             }
             Predicate<ItemStack> matcher = stack -> stack != null && !stack.isEmpty()
-                    && ItemStack.isSameItemSameTags(stack, sample);
+                    && ItemStack.isSameItemSameComponents(stack, sample);
             List<?> matches = (List<?>) this.getMatchingItemStacksMethod.invoke(tileWarehouse, matcher);
 
             List<ItemStack> extracted = new ArrayList<>();
@@ -240,7 +240,7 @@ public final class MineColoniesWarehouseIntegration {
             int drained = 0;
             for (int slot = 0; slot < inventory.getSlots() && drained < want; slot++) {
                 ItemStack inSlot = inventory.getStackInSlot(slot);
-                if (inSlot.isEmpty() || !ItemStack.isSameItemSameTags(inSlot, sample)) {
+                if (inSlot.isEmpty() || !ItemStack.isSameItemSameComponents(inSlot, sample)) {
                     continue;
                 }
                 int take = Math.min(want - drained, inSlot.getCount());

@@ -22,12 +22,12 @@ public class ShippingTraceSavedData extends SavedData {
             return new ShippingTraceSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(ShippingTraceSavedData::load, ShippingTraceSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(ShippingTraceSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> ShippingTraceSavedData.load(tag))), DATA_NAME);
     }
 
     public static ShippingTraceSavedData load(CompoundTag tag) {
         ShippingTraceSavedData data = new ShippingTraceSavedData();
-        ListTag list = tag.getList("Traces", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Traces", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : list) {
             if (raw instanceof CompoundTag compound) {
                 ShippingTraceRecord trace = ShippingTraceRecord.load(compound);
@@ -40,6 +40,10 @@ public class ShippingTraceSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (ShippingTraceRecord trace : traces.values()) {

@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimAccessLevel;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -129,22 +130,28 @@ class RoadSurfaceRouteServiceTest {
     }
 
     @Test
-    void autoRoutePreviewUsesBuiltRoadSurfaceWhenRoadGraphHasNoNodes() {
+    void findRoadRouteUsesBuiltRoadSurfaceWhenRoadGraphHasNoNodes() {
         TestServerLevel level = newPersistentLevel();
         seedTown(level, "town-a", "Alpha", 0, 0);
         seedTown(level, "town-c", "Cedar", 2, 0);
         seedRoadSurface(level, new BlockPos(4, 64, 0), new BlockPos(36, 64, 0));
 
-        RoadAutoRouteService.RouteResolution resolution = RoadAutoRouteService.resolveAutoRoutePreview(
+        assertTrue(RoadGraphRepository.forLevel(level).nodes().isEmpty());
+        // The explicit road-route lookup still scans built surfaces. Auto-route previews
+        // now require a persisted graph or terrain fallback to tolerate unloaded chunks.
+        List<BlockPos> route = RoadAutoRouteService.findRoadRoute(
                 level,
                 new BlockPos(0, 64, 0),
                 new BlockPos(40, 64, 0)
         );
 
-        assertTrue(resolution.found());
-        assertEquals(RoadAutoRouteService.PathSource.ROAD_NETWORK, resolution.source());
-        assertTrue(resolution.path().contains(new BlockPos(4, 64, 0)));
-        assertTrue(resolution.path().contains(new BlockPos(36, 64, 0)));
+        assertFalse(route.isEmpty());
+        assertEquals(new BlockPos(0, 64, 0), route.getFirst());
+        assertEquals(new BlockPos(40, 64, 0), route.getLast());
+        assertEquals(35, route.size());
+        for (int x = 4; x <= 36; x++) {
+            assertEquals(new BlockPos(x, 64, 0), route.get(x - 3));
+        }
     }
 
     private static final class TestRoadWorld implements RoadSurfaceRouteService.RoadSurfaceWorld {
@@ -257,7 +264,7 @@ class RoadSurfaceRouteServiceTest {
             level.surfaceHeights = new HashMap<>();
             level.biome = Holder.direct(allocate(Biome.class));
             level.dimensionKey = Level.OVERWORLD;
-            level.dataStorage = new DimensionDataStorage(Files.createTempDirectory("road-surface-route-test").toFile(), null);
+            level.dataStorage = new DimensionDataStorage(Files.createTempDirectory("road-surface-route-test").toFile(), null, level.registryAccess());
             level.registryAccess = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
             TestMinecraftServer server = allocate(TestMinecraftServer.class);
             setField(MinecraftServer.class, server, "levels", new LinkedHashMap<>(Map.of(Level.OVERWORLD, level)));
@@ -330,6 +337,11 @@ class RoadSurfaceRouteServiceTest {
         }
 
         @Override
+        public int getSeaLevel() {
+            return 63;
+        }
+
+        @Override
         public Holder<Biome> getBiome(BlockPos pos) {
             return biome;
         }
@@ -365,6 +377,17 @@ class RoadSurfaceRouteServiceTest {
     private static final class TestMinecraftServer extends MinecraftServer {
         private TestMinecraftServer() {
             super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        protected net.minecraft.util.debugchart.SampleLogger getTickTimeLogger() {
+            return new net.minecraft.util.debugchart.LocalSampleLogger(
+                    net.minecraft.util.debugchart.TpsDebugDimensions.values().length);
+        }
+
+        @Override
+        public boolean isTickTimeLoggingEnabled() {
+            return false;
         }
 
         @Override

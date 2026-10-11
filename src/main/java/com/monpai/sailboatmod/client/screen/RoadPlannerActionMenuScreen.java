@@ -60,14 +60,14 @@ public class RoadPlannerActionMenuScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        renderBackground(graphics, mouseX, mouseY, partialTick);
         graphics.drawCenteredString(font, title, width / 2, height / 2 - 86, 0xFFF1D9A0);
         if (mode == RoadPlannerActionMenuMode.PREVIEW) {
             graphics.drawCenteredString(font, Component.literal("\u5f53\u524d\u6709\u9053\u8def\u5e7d\u7075\u9884\u89c8\uff0c\u8bf7\u9009\u62e9\u4e0b\u4e00\u6b65\u64cd\u4f5c"), width / 2, height / 2 - 70, 0xFFB7C8D6);
         } else if (mode == RoadPlannerActionMenuMode.BUILDING) {
             graphics.drawCenteredString(font, Component.literal("\u5f53\u524d\u5b58\u5728\u65bd\u5de5\u4efb\u52a1\uff0c\u53ef\u53d6\u6d88\u5e76\u56de\u6eda"), width / 2, height / 2 - 70, 0xFFB7C8D6);
         }
-        super.render(graphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, graphics, mouseX, mouseY, partialTick);
     }
 
     private void confirmBuild() {

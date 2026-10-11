@@ -117,19 +117,7 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
     }
 
     @Override
-    public void containerTick() {
-        super.containerTick();
-        if (this.amountInput != null) {
-            this.amountInput.tick();
-        }
-        if (this.loanAmountInput != null) {
-            this.loanAmountInput.tick();
-        }
-    }
-
-    @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
         renderTreasuryItemTooltip(guiGraphics, mouseX, mouseY);
         this.renderTooltip(guiGraphics, mouseX, mouseY);
@@ -258,7 +246,7 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         if (activeTab == BankTab.STORAGE) {
             int listScreenX = this.leftPos + ITEM_LIST_X;
             int listScreenY = this.topPos + ITEM_LIST_Y;
@@ -268,7 +256,7 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
                 return true;
             }
         }
-        return super.mouseScrolled(mouseX, mouseY, delta);
+        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
     }
 
     @Override
@@ -362,7 +350,7 @@ public class BankScreen extends AbstractContainerScreen<BankMenu> {
         if (stack.isEmpty()) {
             return;
         }
-        List<Component> tooltip = new ArrayList<>(stack.getTooltipLines(Minecraft.getInstance().player, net.minecraft.world.item.TooltipFlag.NORMAL));
+        List<Component> tooltip = new ArrayList<>(stack.getTooltipLines(net.minecraft.world.item.Item.TooltipContext.of(Minecraft.getInstance().level), Minecraft.getInstance().player, net.minecraft.world.item.TooltipFlag.NORMAL));
         String depositor = getCachedDepositor(slot);
         if (!depositor.isBlank()) {
             tooltip.add(Component.translatable("screen.sailboatmod.bank.depositor", depositor).withStyle(ChatFormatting.GRAY));

@@ -7,8 +7,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -89,7 +88,7 @@ public class CreateBuyOrderPacket {
             } catch (Exception ignored) {
             }
             ModNetwork.CHANNEL.send(
-                    PacketDistributor.PLAYER.with(() -> player),
+                    player,
                     new OpenMarketScreenPacket(market.buildOverview(player))
             );
         });
@@ -97,8 +96,8 @@ public class CreateBuyOrderPacket {
     }
 
     private static net.minecraft.world.item.ItemStack resolveItemStack(String commodityKey) {
-        net.minecraft.resources.ResourceLocation itemId = new net.minecraft.resources.ResourceLocation(commodityKey);
-        net.minecraft.world.item.Item item = net.minecraftforge.registries.ForgeRegistries.ITEMS.getValue(itemId);
+        net.minecraft.resources.ResourceLocation itemId = net.minecraft.resources.ResourceLocation.parse(commodityKey);
+        net.minecraft.world.item.Item item = net.minecraft.core.registries.BuiltInRegistries.ITEM.get(itemId);
         if (item == null) {
             item = net.minecraft.core.registries.BuiltInRegistries.ITEM.getOptional(itemId).orElse(null);
         }

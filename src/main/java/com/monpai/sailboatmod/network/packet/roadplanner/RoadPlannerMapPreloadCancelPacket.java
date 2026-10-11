@@ -3,7 +3,7 @@ package com.monpai.sailboatmod.network.packet.roadplanner;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerMapPreloadService;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.UUID;
 import java.util.function.Supplier;

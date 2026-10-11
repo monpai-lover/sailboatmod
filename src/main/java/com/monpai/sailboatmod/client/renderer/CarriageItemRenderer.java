@@ -48,18 +48,18 @@ public class CarriageItemRenderer extends GeoItemRenderer<CarriageItem> {
     private static final class Model extends GeoModel<CarriageItem> {
         @Override
         public ResourceLocation getModelResource(CarriageItem animatable) {
-            return new ResourceLocation(SailboatMod.MODID, "geo/carriage.geo.json");
+            return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "geo/carriage.geo.json");
         }
 
         @Override
         public ResourceLocation getTextureResource(CarriageItem animatable) {
             // 2026-06 新模型用单贴图,不再按木材分三色。
-            return new ResourceLocation(SailboatMod.MODID, "textures/entity/carriage.png");
+            return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "textures/entity/carriage.png");
         }
 
         @Override
         public ResourceLocation getAnimationResource(CarriageItem animatable) {
-            return new ResourceLocation(SailboatMod.MODID, "animations/carriage.animation.json");
+            return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "animations/carriage.animation.json");
         }
     }
 }

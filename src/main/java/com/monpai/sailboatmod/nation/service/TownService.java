@@ -13,6 +13,7 @@ import com.monpai.sailboatmod.nation.model.TownNationRequestRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -368,9 +369,10 @@ public final class TownService {
         ClaimHighlightSyncService.syncAll(actor.getServer());
 
         ItemStack relocatedCore = new ItemStack(ModBlocks.TOWN_CORE_BLOCK.get());
-        CompoundTag tag = relocatedCore.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(relocatedCore);
         tag.putString("RelocatingTownId", town.townId());
         tag.putString("RelocatingTownName", town.name());
+        ItemStackNbt.setTag(relocatedCore, tag);
         if (!actor.getInventory().add(relocatedCore)) {
             actor.drop(relocatedCore, false);
         } else {
@@ -405,7 +407,7 @@ public final class TownService {
                     town.cultureId()
             );
             data.putTown(updated);
-            ClaimHighlightSyncService.syncAll(net.minecraftforge.server.ServerLifecycleHooks.getCurrentServer());
+            ClaimHighlightSyncService.syncAll(net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer());
             return;
         }
     }
@@ -742,10 +744,10 @@ public final class TownService {
     }
 
     private static TownRecord relocatingTown(ServerPlayer actor, NationSavedData data, ItemStack stack) {
-        if (actor == null || data == null || stack == null || !stack.hasTag()) {
+        if (actor == null || data == null || stack == null || !ItemStackNbt.hasTag(stack)) {
             return null;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null || !tag.contains("RelocatingTownId")) {
             return null;
         }
@@ -757,7 +759,7 @@ public final class TownService {
     }
 
     private static String requestedTownName(ItemStack stack) {
-        if (stack == null || stack.isEmpty() || !stack.hasCustomHoverName()) {
+        if (stack == null || stack.isEmpty() || !stack.has(net.minecraft.core.component.DataComponents.CUSTOM_NAME)) {
             return "";
         }
         return TownRecord.normalizeName(stack.getHoverName().getString());

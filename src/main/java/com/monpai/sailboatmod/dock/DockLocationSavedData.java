@@ -32,12 +32,12 @@ public class DockLocationSavedData extends SavedData {
             return new DockLocationSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(DockLocationSavedData::load, DockLocationSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(DockLocationSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> DockLocationSavedData.load(tag))), DATA_NAME);
     }
 
     public static DockLocationSavedData load(CompoundTag tag) {
         DockLocationSavedData data = new DockLocationSavedData();
-        ListTag list = tag.getList("Docks", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Docks", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : list) {
             if (raw instanceof CompoundTag compound) {
                 DockLocation dock = DockLocation.load(compound);
@@ -50,6 +50,10 @@ public class DockLocationSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (DockLocation dock : docks.values()) {

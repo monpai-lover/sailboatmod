@@ -3,29 +3,29 @@ package com.monpai.sailboatmod.registry;
 import com.monpai.sailboatmod.SailboatMod;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundEvent;
-import net.minecraftforge.registries.DeferredRegister;
-import net.minecraftforge.registries.ForgeRegistries;
-import net.minecraftforge.registries.RegistryObject;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.minecraft.core.registries.Registries;
+import net.neoforged.neoforge.registries.DeferredHolder;
 
 public final class ModSounds {
     public static final DeferredRegister<SoundEvent> SOUND_EVENTS =
-            DeferredRegister.create(ForgeRegistries.SOUND_EVENTS, SailboatMod.MODID);
+            DeferredRegister.create(Registries.SOUND_EVENT, SailboatMod.MODID);
 
-    public static final RegistryObject<SoundEvent> CARRIAGE_PLACE = register("entity.carriage.place");
-    public static final RegistryObject<SoundEvent> CARRIAGE_ATTACH = register("entity.carriage.attach");
-    public static final RegistryObject<SoundEvent> CARRIAGE_DETACH = register("entity.carriage.detach");
-    public static final RegistryObject<SoundEvent> CARRIAGE_MOVE = register("entity.carriage.move");
-    public static final RegistryObject<SoundEvent> CARRIAGE_MOVE_STONE = register("entity.carriage.move.stone");
-    public static final RegistryObject<SoundEvent> CARRIAGE_MOVE_GRASS = register("entity.carriage.move.grass");
-    public static final RegistryObject<SoundEvent> CARRIAGE_MOVE_SAND = register("entity.carriage.move.sand");
-    public static final RegistryObject<SoundEvent> CARRIAGE_MOVE_SNOW = register("entity.carriage.move.snow");
-    public static final RegistryObject<SoundEvent> CARRIAGE_MOVE_WOOD = register("entity.carriage.move.wood");
-    public static final RegistryObject<SoundEvent> CARRIAGE_MOVE_GROUND = register("entity.carriage.move.ground");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_PLACE = register("entity.carriage.place");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_ATTACH = register("entity.carriage.attach");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_DETACH = register("entity.carriage.detach");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_MOVE = register("entity.carriage.move");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_MOVE_STONE = register("entity.carriage.move.stone");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_MOVE_GRASS = register("entity.carriage.move.grass");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_MOVE_SAND = register("entity.carriage.move.sand");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_MOVE_SNOW = register("entity.carriage.move.snow");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_MOVE_WOOD = register("entity.carriage.move.wood");
+    public static final DeferredHolder<SoundEvent, SoundEvent> CARRIAGE_MOVE_GROUND = register("entity.carriage.move.ground");
 
     private ModSounds() {
     }
 
-    private static RegistryObject<SoundEvent> register(String path) {
-        return SOUND_EVENTS.register(path, () -> SoundEvent.createVariableRangeEvent(new ResourceLocation(SailboatMod.MODID, path)));
+    private static DeferredHolder<SoundEvent, SoundEvent> register(String path) {
+        return SOUND_EVENTS.register(path, () -> SoundEvent.createVariableRangeEvent(ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, path)));
     }
 }

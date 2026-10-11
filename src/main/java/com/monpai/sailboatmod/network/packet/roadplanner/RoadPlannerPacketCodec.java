@@ -35,6 +35,9 @@ final class RoadPlannerPacketCodec {
 
     static List<BlockPos> readBlockPosList(FriendlyByteBuf buffer) {
         int size = buffer.readVarInt();
+        if (size < 0 || size > buffer.readableBytes() / Long.BYTES) {
+            throw new IllegalArgumentException("Invalid road node count: " + size);
+        }
         List<BlockPos> positions = new ArrayList<>(size);
         for (int index = 0; index < size; index++) {
             positions.add(buffer.readBlockPos());

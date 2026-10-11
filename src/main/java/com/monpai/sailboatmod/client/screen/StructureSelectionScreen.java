@@ -55,7 +55,7 @@ public class StructureSelectionScreen extends Screen {
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(g);
+        this.renderBackground(g, mouseX, mouseY, partialTick);
 
         int left = left();
         int top = top();
@@ -76,7 +76,7 @@ public class StructureSelectionScreen extends Screen {
         renderDetailPanel(g);
         renderFooter(g);
 
-        super.render(g, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, g, mouseX, mouseY, partialTick);
     }
 
     private void renderListPanel(GuiGraphics g, int mouseX, int mouseY) {
@@ -242,14 +242,14 @@ public class StructureSelectionScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         int x = left() + LIST_X;
         int y = top() + LIST_Y;
         if (mouseX >= x && mouseX < x + LIST_W && mouseY >= y && mouseY < y + LIST_H) {
             this.scrollOffset = clampScroll(this.scrollOffset - (delta > 0 ? 1 : -1));
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, delta);
+        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
     }
 
     @Override

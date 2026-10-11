@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web;
 
+import com.monpai.sailboatmod.market.MarketPlayerIdentity;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
@@ -29,7 +31,7 @@ import com.monpai.sailboatmod.market.commodity.CommodityPriceChartPoint;
 import com.monpai.sailboatmod.market.commodity.CommodityQuote;
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import com.monpai.sailboatmod.market.web.map.MarketWebFlagService;
-import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapJson;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapLayerService;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapPyramidWriter;
@@ -52,7 +54,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.core.registries.BuiltInRegistries;
 
 import java.util.ArrayList;
 import java.util.Base64;
@@ -743,7 +745,7 @@ public final class MarketWebService {
             }
             ItemStack stack = item.stack();
             JsonObject json = new JsonObject();
-            ResourceLocation regId = ForgeRegistries.ITEMS.getKey(stack.getItem());
+            ResourceLocation regId = BuiltInRegistries.ITEM.getKey(stack.getItem());
             json.addProperty("itemId", regId != null ? regId.toString() : CommodityKeyResolver.resolve(stack));
             json.addProperty("commodityKey", CommodityKeyResolver.resolve(stack));
             json.addProperty("itemName", stack.getHoverName().getString());
@@ -1418,7 +1420,7 @@ public final class MarketWebService {
         if (itemId == null) {
             return ItemStack.EMPTY;
         }
-        Item item = ForgeRegistries.ITEMS.getValue(itemId);
+        Item item = BuiltInRegistries.ITEM.get(itemId);
         if (item == null) {
             item = BuiltInRegistries.ITEM.getOptional(itemId).orElse(null);
         }

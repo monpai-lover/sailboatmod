@@ -7,9 +7,9 @@ import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.TownOverviewData;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -324,7 +324,7 @@ public class OpenTownScreenPacket {
 
     public static void handle(OpenTownScreenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> TownClientHooks.openOrUpdate(packet.data)));
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> TownClientHooks.openOrUpdate(packet.data)));
         context.setPacketHandled(true);
     }
 

@@ -350,7 +350,7 @@ class RoadNodeStructureExpanderTest {
     }
 
     @Test
-    void roadCrestRampSlabsUseLocalSlopeDirection() {
+    void roadCrestUsesBottomSlabsOnlyOnLowSides() {
         List<RoadCenterlinePoint> crest = List.of(
                 point(0, 64, 0, 0.0D, RoadPlannerSegmentType.ROAD),
                 point(1, 65, 0, 1.0D, RoadPlannerSegmentType.ROAD),
@@ -364,7 +364,6 @@ class RoadNodeStructureExpanderTest {
                         0
                 ).stream()
                 .filter(step -> step.phase() == BuildPhase.RAMP)
-                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
                 .filter(step -> step.pos().getZ() == 0)
                 .filter(step -> step.pos().getX() >= 0 && step.pos().getX() <= 2)
                 .sorted(Comparator.comparingInt((BuildStep step) -> step.pos().getX())
@@ -372,48 +371,50 @@ class RoadNodeStructureExpanderTest {
                 .toList();
 
         assertEquals(3, centerRamp.size(), centerRamp.toString());
-        assertEquals(SlabType.TOP, centerRamp.get(0).state().getValue(SlabBlock.TYPE),
-                "the lower block before an uphill step must use a top slab");
-        assertEquals(SlabType.BOTTOM, centerRamp.get(1).state().getValue(SlabBlock.TYPE),
-                "the higher crest block must use a bottom slab before the downhill side");
-        assertEquals(SlabType.TOP, centerRamp.get(2).state().getValue(SlabBlock.TYPE),
-                "the lower block after a downhill step must use a top slab");
+        assertEquals(List.of(new BlockPos(0, 64, 0), new BlockPos(1, 64, 0), new BlockPos(2, 64, 0)),
+                centerRamp.stream().map(BuildStep::pos).toList());
+        assertEquals(RoadPlannerBuildSettings.DEFAULTS.slabBottomState(), centerRamp.get(0).state(),
+                "the low uphill side must provide a half-step above its target height");
+        assertEquals(RoadPlannerBuildSettings.DEFAULTS.surfaceState(), centerRamp.get(1).state(),
+                "the crest must keep a full block whose top reaches the higher target height");
+        assertEquals(RoadPlannerBuildSettings.DEFAULTS.slabBottomState(), centerRamp.get(2).state(),
+                "the low downhill side must provide the same half-step transition");
     }
 
     @Test
-    void roadRampSlabsReplaceTerrainSurfaceInsteadOfFloatingAboveIt() {
+    void roadRampLowSlabSplitsHeightDifferenceInHalf() {
         List<RoadCenterlinePoint> slope = List.of(
                 point(0, 64, 0, 0.0D, RoadPlannerSegmentType.ROAD),
                 point(1, 65, 0, 1.0D, RoadPlannerSegmentType.ROAD),
                 point(2, 65, 0, 2.0D, RoadPlannerSegmentType.ROAD)
         );
 
-        List<BuildStep> centerRamp = RoadSurfaceStepEmitter.emit(
+        List<BuildStep> steps = RoadSurfaceStepEmitter.emit(
                         slope,
                         List.of(new RoadSpan(RoadSpanType.ROAD, 0, 2, RoadPlannerSegmentType.ROAD)),
                         RoadPlannerBuildSettings.DEFAULTS,
                         0
-                ).stream()
+                );
+        List<BuildStep> centerRamp = steps.stream()
                 .filter(step -> step.phase() == BuildPhase.RAMP)
-                .filter(step -> step.state().hasProperty(SlabBlock.TYPE))
                 .filter(step -> step.pos().getZ() == 0)
                 .filter(step -> step.pos().getX() >= 0 && step.pos().getX() <= 2)
                 .sorted(Comparator.comparingInt((BuildStep step) -> step.pos().getX())
                         .thenComparingInt(BuildStep::order))
                 .toList();
 
-        assertTrue(centerRamp.stream().anyMatch(step ->
-                        step.pos().equals(new BlockPos(0, 63, 0))
-                                && step.state().getValue(SlabBlock.TYPE) == SlabType.TOP),
-                "the lower ramp approach must replace the terrain top block with a top slab");
-        assertTrue(centerRamp.stream().anyMatch(step ->
-                        step.pos().equals(new BlockPos(1, 64, 0))
-                                && step.state().getValue(SlabBlock.TYPE) == SlabType.BOTTOM),
-                "the uphill half-step must sit in the next terrain block space, not float one block higher");
-        assertFalse(centerRamp.stream().anyMatch(step -> step.pos().equals(new BlockPos(0, 64, 0))),
-                "road ramp slabs must not be placed in the air above the lower terrain surface");
+        assertEquals(2, centerRamp.size(), centerRamp.toString());
+        assertEquals(new BlockPos(0, 64, 0), centerRamp.get(0).pos());
+        assertEquals(RoadPlannerBuildSettings.DEFAULTS.slabBottomState(), centerRamp.get(0).state(),
+                "the lower side must place a bottom slab at targetY to form the intermediate half-step");
+        assertEquals(new BlockPos(1, 64, 0), centerRamp.get(1).pos());
+        assertEquals(RoadPlannerBuildSettings.DEFAULTS.surfaceState(), centerRamp.get(1).state(),
+                "the higher side must keep its full surface block below targetY");
+        assertTrue(steps.stream().anyMatch(step -> step.pos().equals(new BlockPos(0, 63, 0))
+                        && step.phase() == BuildPhase.FOUNDATION && !step.state().isAir()),
+                "the raised low-side slab must have a solid foundation directly underneath");
         assertFalse(centerRamp.stream().anyMatch(step -> step.pos().equals(new BlockPos(1, 65, 0))),
-                "road ramp slabs must not be shifted one full block above the uphill terrain surface");
+                "the higher surface must not be shifted one full block above its target height");
     }
 
 

@@ -3,6 +3,7 @@
     "description": {
       "text": "${market_web_mod_id} resources"
     },
-    "pack_format": 15
+    "pack_format": 34,
+    "supported_formats": [34, 48]
   }
 }

@@ -81,7 +81,8 @@ class ReceivingWarehouseContractTest {
     @Test
     void shippedModesRejectWhenNoReceivingWarehouse() throws Exception {
         String src = marketBlockEntity();
-        int idx = src.indexOf("private boolean purchaseListingResolved(");
+        // The first overload forwards to the full implementation without a town override.
+        int idx = src.lastIndexOf("private boolean purchaseListingResolved(");
         assertTrue(idx >= 0, "purchaseListingResolved should exist");
         int end = src.indexOf("\n    private ", idx + 1);
         if (end < 0) {
@@ -89,7 +90,7 @@ class ReceivingWarehouseContractTest {
         }
         String body = src.substring(idx, end);
         // ②③ 模式无收货仓时，必须在扣款前拒单（兜底），不能让钱货已动后才发现 null
-        assertTrue(body.contains("receivingWarehouse == null"),
+        assertTrue(body.contains("resolvedMode != FulfillmentMode.REAL_PICKUP && receivingWarehouse == null"),
                 "purchaseListingResolved should reject shipped modes when receiving warehouse is null");
         assertTrue(body.indexOf("receivingWarehouse == null") < body.indexOf("chargePlayer("),
                 "the null receiving-warehouse rejection must happen before chargePlayer");

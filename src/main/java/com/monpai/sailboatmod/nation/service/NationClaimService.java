@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.registry.ModBlocks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -19,7 +20,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.server.ServerLifecycleHooks;
+import net.neoforged.neoforge.server.ServerLifecycleHooks;
 
 import java.util.HashSet;
 import java.util.List;
@@ -187,9 +188,10 @@ public final class NationClaimService {
         player.level().removeBlock(pos, false);
 
         ItemStack relocatedCore = new ItemStack(ModBlocks.NATION_CORE_BLOCK.get());
-        CompoundTag tag = relocatedCore.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(relocatedCore);
         tag.putString("RelocatingNationId", nation.nationId());
         tag.putString("RelocatingNationName", nation.name());
+        ItemStackNbt.setTag(relocatedCore, tag);
         if (!player.getInventory().add(relocatedCore)) {
             player.drop(relocatedCore, false);
         } else {

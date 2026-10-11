@@ -8,17 +8,17 @@ import software.bernie.geckolib.model.GeoModel;
 public class SailboatEntityModel extends GeoModel<SailboatEntity> {
     @Override
     public ResourceLocation getModelResource(SailboatEntity animatable) {
-        return new ResourceLocation(SailboatMod.MODID, "geo/sailboat.geo.json");
+        return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "geo/sailboat.geo.json");
     }
 
     @Override
     public ResourceLocation getTextureResource(SailboatEntity animatable) {
-        return new ResourceLocation(SailboatMod.MODID, "textures/entity/sailboat.png");
+        return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "textures/entity/sailboat.png");
     }
 
     @Override
     public ResourceLocation getAnimationResource(SailboatEntity animatable) {
-        return new ResourceLocation(SailboatMod.MODID, "animations/sailboat.animation.json");
+        return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "animations/sailboat.animation.json");
     }
 }
 

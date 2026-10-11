@@ -10,9 +10,9 @@ import net.minecraft.nbt.NbtUtils;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -278,11 +278,11 @@ public class SyncRoadPlannerPreviewPacket {
     }
 
     public static void handle(SyncRoadPlannerPreviewPacket msg, Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
+        ctx.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
         ctx.get().setPacketHandled(true);
     }
 
-    @net.minecraftforge.api.distmarker.OnlyIn(Dist.CLIENT)
+    @net.neoforged.api.distmarker.OnlyIn(Dist.CLIENT)
     private static void handleClient(SyncRoadPlannerPreviewPacket msg) {
         if (msg.ghostBlocks.isEmpty() && msg.pathNodes.isEmpty()) {
             RoadPlannerClientHooks.clearPreview();

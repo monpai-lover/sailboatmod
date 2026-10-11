@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
+
 import com.monpai.sailboatmod.ModConfig;
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
 import net.minecraft.core.BlockPos;

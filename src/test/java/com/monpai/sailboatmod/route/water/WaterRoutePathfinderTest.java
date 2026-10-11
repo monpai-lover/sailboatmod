@@ -50,17 +50,21 @@ class WaterRoutePathfinderTest {
     }
 
     @Test
-    void chunkLoadBudgetLimitsLoadsWithinSingleStep() {
-        CountingChunkWaterWorld world = new CountingChunkWaterWorld().waterRect(-64, -64, 160, 64);
-        WaterRoutePolicy policy = new WaterRoutePolicy(16, 2, 1, 2, 256, 5000, 512, 64, 1, 200);
+    void legacyChunkBudgetDoesNotPauseRouteWithZeroChunkLoads() {
+        TestWaterWorld world = new TestWaterWorld().waterRect(-64, -64, 160, 64);
+        WaterRoutePolicy policy = new WaterRoutePolicy(16, 2, 1, 2, 256, 5000, 0, 64, 0, 200);
         WaterRoutePathfinder pathfinder = new WaterRoutePathfinder(
                 world, new BlockPos(0, 64, 0), new BlockPos(128, 64, 0), policy);
-        world.resetTickLoads();
 
-        WaterRoutePathfinder.Status status = pathfinder.step(64, 1);
+        WaterRoutePathfinder.Status status = pathfinder.step(64, 0);
 
-        assertEquals(WaterRoutePathfinder.Status.RUNNING, status);
-        assertTrue(world.tickChunkLoads() <= 1, "chunkLoadsPerTick must cap loads, got " + world.tickChunkLoads());
+        assertEquals(WaterRoutePathfinder.Status.SUCCESS, status);
+        assertEquals(0, world.consumedChunkLoads());
+        assertEquals(new BlockPos(0, 64, 0), pathfinder.path().get(0));
+        assertEquals(new BlockPos(128, 64, 0), pathfinder.path().get(pathfinder.path().size() - 1));
+        for (BlockPos waypoint : pathfinder.path()) {
+            assertTrue(world.sample(waypoint.getX(), waypoint.getZ(), policy).passable());
+        }
     }
 
     @Test
@@ -169,53 +173,4 @@ class WaterRoutePathfinderTest {
         }
     }
 
-    private static final class CountingChunkWaterWorld implements WaterRouteWorld {
-        private final Set<Long> water = new HashSet<>();
-        private final Set<Long> loadedChunks = new HashSet<>();
-        private int tickChunkLoads;
-        private int totalChunkLoads;
-
-        CountingChunkWaterWorld waterRect(int minX, int minZ, int maxX, int maxZ) {
-            for (int x = minX; x <= maxX; x++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    water.add(key(x, z));
-                }
-            }
-            return this;
-        }
-
-        void resetTickLoads() {
-            tickChunkLoads = 0;
-        }
-
-        int tickChunkLoads() {
-            return tickChunkLoads;
-        }
-
-        @Override
-        public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
-            long chunk = key(x >> 4, z >> 4);
-            if (loadedChunks.add(chunk)) {
-                tickChunkLoads++;
-                totalChunkLoads++;
-            }
-            return water.contains(key(x, z))
-                    ? WaterColumn.passable(new BlockPos(x, 64, z), 0.0D)
-                    : WaterColumn.blocked();
-        }
-
-        @Override
-        public boolean canLoadMoreChunks(int requested) {
-            return requested > 0;
-        }
-
-        @Override
-        public int consumedChunkLoads() {
-            return totalChunkLoads;
-        }
-
-        private static long key(int x, int z) {
-            return (((long) x) << 32) ^ (z & 0xffffffffL);
-        }
-    }
 }

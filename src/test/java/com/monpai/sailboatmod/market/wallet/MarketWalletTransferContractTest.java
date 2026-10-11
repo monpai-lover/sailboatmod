@@ -70,10 +70,13 @@ class MarketWalletTransferContractTest {
                 "linked-warehouse withdrawal should remove gold from the player's private warehouse storage");
         assertTrue(source.contains("insertCargo(ownerId"),
                 "linked-warehouse deposit and change should go to the player's private warehouse storage");
-        assertTrue(source.contains("Items.GOLD_BLOCK")
-                        && source.contains("Items.GOLD_INGOT")
-                        && source.contains("Items.GOLD_NUGGET")
-                        && source.contains("ModItems.HALF_NUGGET_ITEM"),
-                "warehouse wallet deposits should handle all gold-standard denominations");
+        assertTrue(source.contains("CurrencyStandard.current().denominations()"),
+                "warehouse wallet transfers should use the active shared currency denomination table");
+        String standard = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/economy/CurrencyStandard.java"));
+        assertTrue(standard.contains("Items.GOLD_BLOCK")
+                        && standard.contains("Items.GOLD_INGOT")
+                        && standard.contains("Items.GOLD_NUGGET")
+                        && standard.contains("ModItems.HALF_NUGGET_ITEM"),
+                "the shared gold-standard table should retain all warehouse currency denominations");
     }
 }

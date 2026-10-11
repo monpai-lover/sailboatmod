@@ -35,6 +35,13 @@ import org.jetbrains.annotations.Nullable;
  * Residents need a Cottage to live in. The tavern is where they first appear.
  */
 public class BarBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<BarBlock> CODEC = simpleCodec(BarBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     private static final int RECRUIT_COST_BREAD = 3;
     private static final int RECRUIT_COST_EMERALDS = 1;
 
@@ -52,7 +59,7 @@ public class BarBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide || !(player instanceof ServerPlayer sp)) return InteractionResult.SUCCESS;
         ServerLevel sl = (ServerLevel) level;
 
@@ -119,7 +126,7 @@ public class BarBlock extends BaseEntityBlock {
         if (!player.getAbilities().instabuild) player.getInventory().placeItemBackInInventory(stack.copy());
     }
 
-    @Override public boolean isPathfindable(BlockState s, BlockGetter l, BlockPos p, net.minecraft.world.level.pathfinder.PathComputationType t) { return false; }
+    @Override public boolean isPathfindable(BlockState s, net.minecraft.world.level.pathfinder.PathComputationType t) { return false; }
 
     /** Count total cottage capacity within radius of this bar. */
     private int countCottageCapacity(ServerLevel level, BlockPos center, int radius) {

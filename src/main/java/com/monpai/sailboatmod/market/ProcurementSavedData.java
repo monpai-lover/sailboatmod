@@ -20,12 +20,12 @@ public class ProcurementSavedData extends SavedData {
             return new ProcurementSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(ProcurementSavedData::load, ProcurementSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(ProcurementSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> ProcurementSavedData.load(tag))), DATA_NAME);
     }
 
     public static ProcurementSavedData load(CompoundTag tag) {
         ProcurementSavedData data = new ProcurementSavedData();
-        ListTag procurementTag = tag.getList("Procurements", Tag.TAG_COMPOUND);
+        ListTag procurementTag = tag.getList("Procurements", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : procurementTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -39,6 +39,10 @@ public class ProcurementSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag procurementTag = new ListTag();
         for (ProcurementRecord record : procurements.values()) {

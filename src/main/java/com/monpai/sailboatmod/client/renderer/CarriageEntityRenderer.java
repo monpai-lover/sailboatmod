@@ -15,7 +15,6 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.WalkAnimationState;
 import net.minecraft.world.entity.animal.horse.Horse;
-import net.minecraftforge.fml.util.ObfuscationReflectionHelper;
 import org.jetbrains.annotations.Nullable;
 import software.bernie.geckolib.renderer.GeoEntityRenderer;
 
@@ -31,10 +30,10 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     // ── 马腿动画 speed/position 解耦(治「播放太快/没walk」)──
     // WalkAnimationState.update 里 position(=limb_swing,控腿摆频率)推进=speed(=limb_speed,控walk/trot/run状态),
     // 两者绑死。FA 腿频死绑 limb_swing,凑 run 把 speed 调大→position 飞快。故直写两字段解耦:
-    // speed=状态量(凑门控)、position=按真马步频慢推。用 ObfuscationReflectionHelper(传 SRG 名,reobf 两端都对)。
-    private static final Field WALK_POSITION_FIELD = findWalkField("f_267358_"); // position
-    private static final Field WALK_SPEED_FIELD = findWalkField("f_267371_");    // speed
-    private static final Field WALK_SPEED_OLD_FIELD = findWalkField("f_267406_");// speedOld
+    // speed=状态量(凑门控)、position=按真马步频慢推。NeoForge 运行时保留 Mojang 字段名。
+    private static final Field WALK_POSITION_FIELD = findWalkField("position");
+    private static final Field WALK_SPEED_FIELD = findWalkField("speed");
+    private static final Field WALK_SPEED_OLD_FIELD = findWalkField("speedOld");
 
     // FA 门控阈值(临时马 is_ridden=0 成年马):walk<0.6,trot≥0.6,run≥0.97。状态量按速度分段映射到这些区间。
     private static final float V_FULL = 10.5F;     // 马车满速(m/s,=MAX_FORWARD_SPEED)
@@ -48,11 +47,13 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
     private float smoothedHorseTurn = 0.0F; // 马转向角平滑值(度),逼近 entity.getRenderTurnAngle() 防突变抖动
     private int lastHorseAnimTick = Integer.MIN_VALUE; // 上次推进 position 的 tickCount(差分,只在 tick 跨越时推,防每渲染帧多推)
 
-    /** ObfuscationReflectionHelper 按 SRG 名取 WalkAnimationState 私有字段;失败置 null(运行时退化到 update 兜底,不崩)。 */
+    /** 按 Mojang 名取 WalkAnimationState 私有字段;失败置 null(运行时退化到 update 兜底,不崩)。 */
     @Nullable
-    private static Field findWalkField(String srg) {
+    private static Field findWalkField(String fieldName) {
         try {
-            return ObfuscationReflectionHelper.findField(WalkAnimationState.class, srg);
+            Field field = WalkAnimationState.class.getDeclaredField(fieldName);
+            field.setAccessible(true);
+            return field;
         } catch (Throwable t) {
             return null;
         }
@@ -68,15 +69,15 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
                           net.minecraft.client.renderer.MultiBufferSource bufferSource,
                           com.mojang.blaze3d.vertex.VertexConsumer buffer,
                           boolean isReRender, float partialTick, int packedLight, int packedOverlay,
-                          float red, float green, float blue, float alpha) {
+                          int renderColor) {
         poseStack.translate(0.0F, CarriageVisualRig.carriageModelYOffset(), 0.0F);
         float modelScale = CarriageVisualRig.carriageModelScale();
         poseStack.scale(modelScale, modelScale, modelScale);
-        super.preRender(poseStack, animatable, model, bufferSource, buffer, isReRender, partialTick, packedLight, packedOverlay, red, green, blue, alpha);
+        super.preRender(poseStack, animatable, model, bufferSource, buffer, isReRender, partialTick, packedLight, packedOverlay, renderColor);
     }
 
     @Override
-    protected void applyRotations(CarriageEntity entity, PoseStack poseStack, float ageInTicks, float rotationYaw, float partialTick) {
+    protected void applyRotations(CarriageEntity entity, PoseStack poseStack, float ageInTicks, float rotationYaw, float partialTick, float nativeScale) {
         float yaw = entity.getViewYRot(partialTick);
         poseStack.mulPose(Axis.YP.rotationDegrees(CarriageVisualRig.localYawRotation(yaw)));
     }
@@ -179,7 +180,7 @@ public class CarriageEntityRenderer extends GeoEntityRenderer<CarriageEntity> {
 
     /**
      * 解耦驱动腿摆动画:speed(状态:walk/trot/run 门控+幅度)和 position(频率)分开喂,绕过 WalkAnimationState.update
-     * 的 position+=speed 绑死。直写字段(ObfuscationReflectionHelper SRG);反射不可用则退化到 update(stateValue,0.4)。
+     * 的 position+=speed 绑死。直写 Mojang 字段;反射不可用则退化到 update(stateValue,0.4)。
      * 返回 stateValue(供 bob 幅度等复用)。
      */
     private float driveDecoupledWalkAnimation(Horse horse, CarriageEntity entity, double mps) {

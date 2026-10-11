@@ -16,8 +16,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.AABB;
-import net.minecraftforge.network.PacketDistributor;
-import net.minecraftforge.server.ServerLifecycleHooks;
+import net.neoforged.neoforge.server.ServerLifecycleHooks;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -277,7 +276,7 @@ public final class NationWarService {
         BlockPos defenderCore = BlockPos.of(defender.corePos());
         net.minecraft.server.level.ServerLevel defenderLevel = server.getLevel(net.minecraft.resources.ResourceKey.create(
                 net.minecraft.core.registries.Registries.DIMENSION,
-                new net.minecraft.resources.ResourceLocation(defender.coreDimension())
+                net.minecraft.resources.ResourceLocation.parse(defender.coreDimension())
         ));
         if (defenderLevel == null) {
             return;
@@ -458,7 +457,7 @@ public final class NationWarService {
                 continue;
             }
             NationOverviewData overview = NationOverviewService.buildFor(player);
-            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(overview, !force));
+            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(player, new OpenNationScreenPacket(overview, !force));
         }
     }
 

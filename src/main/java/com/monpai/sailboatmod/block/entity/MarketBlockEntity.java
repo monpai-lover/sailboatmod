@@ -63,7 +63,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.core.registries.BuiltInRegistries;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
@@ -249,8 +249,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     }
                     String itemName = stack.getHoverName().getString();
                     String label = itemName + " x" + stack.getCount();
-                    String itemKey = ForgeRegistries.ITEMS.getKey(stack.getItem()) != null
-                            ? ForgeRegistries.ITEMS.getKey(stack.getItem()).toString()
+                    String itemKey = BuiltInRegistries.ITEM.getKey(stack.getItem()) != null
+                            ? BuiltInRegistries.ITEM.getKey(stack.getItem()).toString()
                             : "";
                     int suggestedUnitPrice = COMMODITY_MARKET.referencePrice(stack);
                     ListingPriceWindow priceWindow = listingPriceWindow(stack, 1, suggestedUnitPrice);
@@ -1330,8 +1330,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     @Override
-    public net.minecraft.nbt.CompoundTag getUpdateTag() {
-        return saveWithoutMetadata();
+    public net.minecraft.nbt.CompoundTag getUpdateTag(net.minecraft.core.HolderLookup.Provider registries) {
+        return saveWithoutMetadata(registries);
     }
 
     public String getOwnerName() {
@@ -1401,8 +1401,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         tag.putString("MarketName", marketName == null ? "" : marketName);
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
         tag.putString("OwnerUuid", ownerUuid == null ? "" : ownerUuid);
@@ -1413,8 +1413,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     @Override
-    public void load(CompoundTag tag) {
-        super.load(tag);
+    public void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
         marketName = tag.getString("MarketName");
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");

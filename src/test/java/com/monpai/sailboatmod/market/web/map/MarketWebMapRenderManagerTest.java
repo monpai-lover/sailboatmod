@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

@@ -29,14 +29,19 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.network.PacketDistributor;
-import net.minecraftforge.fml.DistExecutor;
+import net.neoforged.api.distmarker.Dist;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
 public class NationCoreBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<NationCoreBlock> CODEC = simpleCodec(NationCoreBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public NationCoreBlock(Properties properties) {
         super(properties);
     }
@@ -82,10 +87,10 @@ public class NationCoreBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide) {
             if (!player.isShiftKeyDown() && shouldOpenNationScreenClient(level, pos)) {
-                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> com.monpai.sailboatmod.client.NationClientHooks.openCachedOrEmpty());
+                com.monpai.sailboatmod.client.NationClientHooks.openCachedOrEmpty();
             }
             return InteractionResult.SUCCESS;
         }
@@ -109,7 +114,7 @@ public class NationCoreBlock extends BaseEntityBlock {
         }
         if (playerNation != null && clickedNation != null && playerNation.nationId().equals(clickedNation.nationId())) {
             NationOverviewData data = NationOverviewService.buildFor(serverPlayer);
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> serverPlayer), new OpenNationScreenPacket(data));
+            ModNetwork.CHANNEL.send(serverPlayer, new OpenNationScreenPacket(data));
             return InteractionResult.CONSUME;
         }
 
@@ -143,7 +148,7 @@ public class NationCoreBlock extends BaseEntityBlock {
     }
 
     @Override
-    public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+    public boolean isPathfindable(BlockState state, net.minecraft.world.level.pathfinder.PathComputationType type) {
         return false;
     }
 

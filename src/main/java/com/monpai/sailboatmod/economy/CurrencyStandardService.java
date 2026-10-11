@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.economy;
 
 import com.monpai.sailboatmod.ModConfig;
-import net.minecraftforge.fml.ModList;
+import net.neoforged.fml.ModList;
 
 import java.util.Locale;
 

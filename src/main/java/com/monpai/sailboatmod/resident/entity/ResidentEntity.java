@@ -82,25 +82,25 @@ public class ResidentEntity extends PathfinderMob {
     }
 
     @Override
-    protected void defineSynchedData() {
-        super.defineSynchedData();
-        this.entityData.define(DATA_RESIDENT_ID, "");
-        this.entityData.define(DATA_RESIDENT_NAME, "Villager");
-        this.entityData.define(DATA_PROFESSION, Profession.UNEMPLOYED.id());
-        this.entityData.define(DATA_TOWN_ID, "");
-        this.entityData.define(DATA_SKIN_HASH, "");
-        this.entityData.define(DATA_GENDER, Gender.MALE.id());
-        this.entityData.define(DATA_AGE, 25);
-        this.entityData.define(DATA_HUNGER, ResidentRecord.MAX_HUNGER);
-        this.entityData.define(DATA_EDUCATED, false);
-        this.entityData.define(DATA_LITERACY, 0.0f);
-        this.entityData.define(DATA_EDUCATION_LEVEL, EducationLevel.ILLITERATE.id());
-        this.entityData.define(DATA_CULTURE, Culture.EUROPEAN.id());
-        this.entityData.define(DATA_LEARNING, 5 + this.random.nextInt(11));
-        this.entityData.define(DATA_MARTIAL, 5 + this.random.nextInt(11));
-        this.entityData.define(DATA_STEWARDSHIP, 5 + this.random.nextInt(11));
-        this.entityData.define(DATA_ASSIGNED_BED, "");
-        this.entityData.define(DATA_BUILDING_ACTIVE, false);
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        super.defineSynchedData(builder);
+        builder.define(DATA_RESIDENT_ID, "");
+        builder.define(DATA_RESIDENT_NAME, "Villager");
+        builder.define(DATA_PROFESSION, Profession.UNEMPLOYED.id());
+        builder.define(DATA_TOWN_ID, "");
+        builder.define(DATA_SKIN_HASH, "");
+        builder.define(DATA_GENDER, Gender.MALE.id());
+        builder.define(DATA_AGE, 25);
+        builder.define(DATA_HUNGER, ResidentRecord.MAX_HUNGER);
+        builder.define(DATA_EDUCATED, false);
+        builder.define(DATA_LITERACY, 0.0f);
+        builder.define(DATA_EDUCATION_LEVEL, EducationLevel.ILLITERATE.id());
+        builder.define(DATA_CULTURE, Culture.EUROPEAN.id());
+        builder.define(DATA_LEARNING, 5 + this.random.nextInt(11));
+        builder.define(DATA_MARTIAL, 5 + this.random.nextInt(11));
+        builder.define(DATA_STEWARDSHIP, 5 + this.random.nextInt(11));
+        builder.define(DATA_ASSIGNED_BED, "");
+        builder.define(DATA_BUILDING_ACTIVE, false);
     }
     @Override
     protected void registerGoals() {
@@ -333,10 +333,8 @@ public class ResidentEntity extends PathfinderMob {
         if (!player.level().isClientSide && player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
             ResidentRecord record = buildInteractionRecord(serverPlayer.serverLevel());
             if (record != null) {
-                com.monpai.sailboatmod.network.ModNetwork.CHANNEL.sendTo(
-                    new com.monpai.sailboatmod.network.packet.OpenResidentScreenPacket(record),
-                    serverPlayer.connection.connection,
-                    net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(serverPlayer,
+                    new com.monpai.sailboatmod.network.packet.OpenResidentScreenPacket(record)
                 );
             }
         }

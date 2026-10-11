@@ -40,7 +40,7 @@ public class ResidentService {
             entity.setGender(record.gender());
             entity.setCulture(record.culture());
             entity.setSkinHash(record.skinHash());
-            entity.finalizeSpawn(level, level.getCurrentDifficultyAt(pos), MobSpawnType.COMMAND, null, null);
+            entity.finalizeSpawn(level, level.getCurrentDifficultyAt(pos), MobSpawnType.COMMAND, null);
             level.addFreshEntity(entity);
         }
 

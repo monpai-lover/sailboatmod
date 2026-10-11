@@ -5,42 +5,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-./gradlew build              # Full build (compile + reobfuscate + jarJar)
+./gradlew build              # Compile, test and package the NeoForge main mod
 ./gradlew compileJava        # Compile only, no jar packaging
 ./gradlew runClient          # Launch Minecraft client with mod loaded
 ./gradlew runServer          # Launch dedicated server with mod loaded
 ./gradlew runData            # Data generation
-./gradlew genIntellijRuns    # Generate IntelliJ run configurations
+./gradlew releaseMod         # Main mod plus server market web addon
 ```
 
-Output JARs land in `build/libs/`. The `-reobf.jar` variant is the production artifact (SRG-remapped). The `-all.jar` includes bundled dependencies (JarJar).
+Output JARs land in `build/libs/`. The `sailboatmod-<version>-neoforge-1.21.1.jar` is the production artifact and includes library dependencies via JarJar. GeckoLib 4.9.3 is an external mod dependency. `releaseMod` also builds the optional `sailboatmod-marketweb-<version>-neoforge-1.21.1.jar`.
 
 A `fixIndex` property can be passed to append a `-fix_N` suffix: `./gradlew build -PfixIndex=1`
 
-No test suite or linter is configured.
+JUnit tests are configured; run `./gradlew test`. No separate linter is configured.
 
 ## Project Overview
 
-Minecraft Forge 1.20.1 mod (Java 17) implementing a multiplayer system with sailing/transport, nation governance, territory control, market trading, resident NPCs, and blueprint construction.
+Minecraft NeoForge 1.21.1 mod (Java 21) implementing a multiplayer system with sailing/transport, nation governance, territory control, market trading, resident NPCs, and blueprint construction.
 
 **Mod ID:** `sailboatmod`
 **Package:** `com.monpai.sailboatmod`
 **Entry point:** `SailboatMod.java` — initializes GeckoLib and registers all DeferredRegister instances on the mod event bus.
 
-**Key dependencies:** GeckoLib 4.4.9 (entity animation), gdx-ai 1.8.2 (AI behaviors), SQLite JDBC 3.46.1.3 (commodity market persistence), BlockUI (UI framework), webp-imageio (JarJar bundled), Vault (optional economy), BlueMap (optional map rendering).
+**Key dependencies:** GeckoLib 4.9.3 (entity animation), gdx-ai 1.8.2 (AI behaviors), SQLite JDBC 3.46.1.3 (commodity market persistence), BlockUI (UI framework), webp-imageio (JarJar bundled), Vault (optional economy), BlueMap (optional map rendering).
 
 ## Architecture
 
 ### Registry Layer (`registry/`)
-All content uses Forge's `DeferredRegister` pattern. Registries initialized in `SailboatMod` constructor:
-- `ModEntities` — three entity types: `SAILBOAT`, `RESIDENT`, `SOLDIER`
+All content uses NeoForge's `DeferredRegister` pattern. Registries initialized in `SailboatMod` constructor:
+- `ModEntities` — four entity types: `SAILBOAT`, `CARRIAGE`, `RESIDENT`, `SOLDIER`
 - `ModBlocks` / `ModBlockEntities` — dock, market, town core, nation core, flag variants
 - `ModItems` — sailboat spawn item, route book, block items
 - `ModMenus` — dock and market container menus
 - `ModCreativeTabs` — single creative tab
 
 ### Network (`network/`)
-`ModNetwork` registers 46 packets on a `SimpleChannel` (protocol version "1") with sequential IDs. Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Add new packets at the end of `ModNetwork.register()` with `packetId++`. `PacketStringCodec` provides safe UTF encoding helpers.
+`ModNetwork` registers 106 directional custom payloads through `PayloadChannel` (protocol version "11"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Add new packets at the end of `ModNetwork.register()` with `packetId++`. `PacketStringCodec` provides safe UTF encoding helpers.
 
 ### Entity System (`entity/`)
 - **SailboatEntity** — extends `Boat`, implements GeckoLib's `GeoEntity`. Features: 5-seat passengers, 27-slot inventory, sail/engine/autopilot mechanics, rental pricing, route waypoint following. Physics uses knot-based speed with drag coefficients. Autopilot has stall detection and dock parking logic with chunk loading.
@@ -119,5 +119,5 @@ NPC system with jobs, families, armies, and economy — the largest subsystem.
 ## Resource Layout
 
 - `assets/sailboatmod/` — GeckoLib models/animations, blockstates, block/item models, lang files (en_us, zh_cn), textures
-- `data/sailboatmod/` — loot tables, recipes
-- `META-INF/mods.toml` — mod metadata (uses variable substitution from `gradle.properties`)
+- `data/sailboatmod/` — loot tables (`loot_table`), recipes (`recipe`), structures (`structure`)
+- `META-INF/neoforge.mods.toml` — mod metadata (uses variable substitution from `gradle.properties`)

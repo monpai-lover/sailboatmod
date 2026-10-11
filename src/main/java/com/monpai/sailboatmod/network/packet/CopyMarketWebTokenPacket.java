@@ -2,9 +2,9 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.MarketClientHooks;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -31,7 +31,7 @@ public class CopyMarketWebTokenPacket {
 
     public static void handle(CopyMarketWebTokenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
                 MarketClientHooks.copyMarketWebToken(packet.token, packet.url)));
         context.setPacketHandled(true);
     }

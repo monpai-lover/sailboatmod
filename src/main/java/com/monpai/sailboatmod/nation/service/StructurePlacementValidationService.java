@@ -125,7 +125,7 @@ public final class StructurePlacementValidationService {
                 || state.is(BlockTags.SAPLINGS)
                 || state.is(BlockTags.FLOWERS)
                 || state.is(BlockTags.CROPS)
-                || state.is(Blocks.GRASS)
+                || state.is(Blocks.SHORT_GRASS)
                 || state.is(Blocks.TALL_GRASS)
                 || state.is(Blocks.FERN)
                 || state.is(Blocks.LARGE_FERN)

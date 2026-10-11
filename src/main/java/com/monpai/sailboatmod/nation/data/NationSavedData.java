@@ -63,13 +63,13 @@ public class NationSavedData extends SavedData {
             return new NationSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(NationSavedData::load, NationSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(NationSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> NationSavedData.load(tag))), DATA_NAME);
     }
 
     public static NationSavedData load(CompoundTag tag) {
         NationSavedData data = new NationSavedData();
 
-        ListTag nationTag = tag.getList("Nations", Tag.TAG_COMPOUND);
+        ListTag nationTag = tag.getList("Nations", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : nationTag) {
             if (raw instanceof CompoundTag compound) {
                 NationRecord nation = NationRecord.load(compound);
@@ -79,7 +79,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag townTag = tag.getList("Towns", Tag.TAG_COMPOUND);
+        ListTag townTag = tag.getList("Towns", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : townTag) {
             if (raw instanceof CompoundTag compound) {
                 TownRecord town = TownRecord.load(compound);
@@ -89,7 +89,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag memberTag = tag.getList("Members", Tag.TAG_COMPOUND);
+        ListTag memberTag = tag.getList("Members", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : memberTag) {
             if (raw instanceof CompoundTag compound) {
                 NationMemberRecord member = NationMemberRecord.load(compound);
@@ -97,7 +97,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag officeTag = tag.getList("Offices", Tag.TAG_COMPOUND);
+        ListTag officeTag = tag.getList("Offices", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : officeTag) {
             if (raw instanceof CompoundTag compound) {
                 String nationId = compound.getString("NationId").trim().toLowerCase(Locale.ROOT);
@@ -108,7 +108,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag inviteTag = tag.getList("Invites", Tag.TAG_COMPOUND);
+        ListTag inviteTag = tag.getList("Invites", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : inviteTag) {
             if (raw instanceof CompoundTag compound) {
                 NationInviteRecord invite = NationInviteRecord.load(compound);
@@ -116,7 +116,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag joinRequestTag = tag.getList("JoinRequests", Tag.TAG_COMPOUND);
+        ListTag joinRequestTag = tag.getList("JoinRequests", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : joinRequestTag) {
             if (raw instanceof CompoundTag compound) {
                 NationJoinRequestRecord request = NationJoinRequestRecord.load(compound);
@@ -124,7 +124,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag claimTag = tag.getList("Claims", Tag.TAG_COMPOUND);
+        ListTag claimTag = tag.getList("Claims", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : claimTag) {
             if (raw instanceof CompoundTag compound) {
                 NationClaimRecord claim = NationClaimRecord.load(compound);
@@ -135,7 +135,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag warTag = tag.getList("Wars", Tag.TAG_COMPOUND);
+        ListTag warTag = tag.getList("Wars", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : warTag) {
             if (raw instanceof CompoundTag compound) {
                 NationWarRecord war = NationWarRecord.load(compound);
@@ -145,7 +145,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag proposalLoadTag = tag.getList("PeaceProposals", Tag.TAG_COMPOUND);
+        ListTag proposalLoadTag = tag.getList("PeaceProposals", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : proposalLoadTag) {
             if (raw instanceof CompoundTag compound) {
                 com.monpai.sailboatmod.nation.model.PeaceProposalRecord proposal = com.monpai.sailboatmod.nation.model.PeaceProposalRecord.load(compound);
@@ -155,7 +155,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag structuresLoadTag = tag.getList("PlacedStructures", Tag.TAG_COMPOUND);
+        ListTag structuresLoadTag = tag.getList("PlacedStructures", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : structuresLoadTag) {
             if (raw instanceof CompoundTag compound) {
                 com.monpai.sailboatmod.nation.model.PlacedStructureRecord s = com.monpai.sailboatmod.nation.model.PlacedStructureRecord.load(compound);
@@ -165,7 +165,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag roadsLoadTag = tag.getList("RoadNetworks", Tag.TAG_COMPOUND);
+        ListTag roadsLoadTag = tag.getList("RoadNetworks", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : roadsLoadTag) {
             if (raw instanceof CompoundTag compound) {
                 com.monpai.sailboatmod.nation.model.RoadNetworkRecord road = com.monpai.sailboatmod.nation.model.RoadNetworkRecord.load(compound);
@@ -175,7 +175,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag tradeLoadTag = tag.getList("TradeProposals", Tag.TAG_COMPOUND);
+        ListTag tradeLoadTag = tag.getList("TradeProposals", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : tradeLoadTag) {
             if (raw instanceof CompoundTag compound) {
                 com.monpai.sailboatmod.nation.model.TradeProposalRecord t = com.monpai.sailboatmod.nation.model.TradeProposalRecord.load(compound);
@@ -185,7 +185,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag flagTag = tag.getList("Flags", Tag.TAG_COMPOUND);
+        ListTag flagTag = tag.getList("Flags", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : flagTag) {
             if (raw instanceof CompoundTag compound) {
                 NationFlagRecord flag = NationFlagRecord.load(compound);
@@ -195,7 +195,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag diplomacyTag = tag.getList("Diplomacy", Tag.TAG_COMPOUND);
+        ListTag diplomacyTag = tag.getList("Diplomacy", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : diplomacyTag) {
             if (raw instanceof CompoundTag compound) {
                 NationDiplomacyRecord record = NationDiplomacyRecord.load(compound);
@@ -206,7 +206,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag diplomacyRequestTag = tag.getList("DiplomacyRequests", Tag.TAG_COMPOUND);
+        ListTag diplomacyRequestTag = tag.getList("DiplomacyRequests", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : diplomacyRequestTag) {
             if (raw instanceof CompoundTag compound) {
                 NationDiplomacyRequestRecord request = NationDiplomacyRequestRecord.load(compound);
@@ -217,7 +217,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag townNationRequestTag = tag.getList("TownNationRequests", Tag.TAG_COMPOUND);
+        ListTag townNationRequestTag = tag.getList("TownNationRequests", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : townNationRequestTag) {
             if (raw instanceof CompoundTag compound) {
                 TownNationRequestRecord request = TownNationRequestRecord.load(compound);
@@ -228,7 +228,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag treasuryTag = tag.getList("Treasuries", Tag.TAG_COMPOUND);
+        ListTag treasuryTag = tag.getList("Treasuries", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : treasuryTag) {
             if (raw instanceof CompoundTag compound) {
                 NationTreasuryRecord treasury = NationTreasuryRecord.load(compound);
@@ -238,7 +238,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag nationLoanTag = tag.getList("NationLoans", Tag.TAG_COMPOUND);
+        ListTag nationLoanTag = tag.getList("NationLoans", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : nationLoanTag) {
             if (raw instanceof CompoundTag compound) {
                 LoanAccountRecord account = LoanAccountRecord.load(compound);
@@ -248,7 +248,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag personalLoanTag = tag.getList("PersonalLoans", Tag.TAG_COMPOUND);
+        ListTag personalLoanTag = tag.getList("PersonalLoans", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : personalLoanTag) {
             if (raw instanceof CompoundTag compound) {
                 LoanAccountRecord account = LoanAccountRecord.load(compound);
@@ -261,7 +261,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag townMemberTag = tag.getList("TownMembers", Tag.TAG_COMPOUND);
+        ListTag townMemberTag = tag.getList("TownMembers", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : townMemberTag) {
             if (raw instanceof CompoundTag compound) {
                 TownMemberRecord member = TownMemberRecord.load(compound);
@@ -272,7 +272,7 @@ public class NationSavedData extends SavedData {
             }
         }
 
-        ListTag townMemberInviteTag = tag.getList("TownMemberRequests", Tag.TAG_COMPOUND);
+        ListTag townMemberInviteTag = tag.getList("TownMemberRequests", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : townMemberInviteTag) {
             if (raw instanceof CompoundTag compound) {
                 TownMemberInviteRecord invite = TownMemberInviteRecord.load(compound);
@@ -291,6 +291,10 @@ public class NationSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag nationTag = new ListTag();
         for (NationRecord nation : nations.values()) {

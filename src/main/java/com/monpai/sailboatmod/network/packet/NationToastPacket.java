@@ -5,10 +5,9 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
-import net.minecraftforge.fml.DistExecutor;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.network.NetworkEvent;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
 
 import java.util.function.Supplier;
 
@@ -39,7 +38,7 @@ public class NationToastPacket {
 
     public static void handle(NationToastPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> NationClientHooks.showToast(packet.title, packet.message)));
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> NationClientHooks.showToast(packet.title, packet.message)));
         context.setPacketHandled(true);
     }
 
@@ -47,6 +46,6 @@ public class NationToastPacket {
         if (player == null || title == null || message == null) {
             return;
         }
-        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new NationToastPacket(title, message));
+        ModNetwork.CHANNEL.send(player, new NationToastPacket(title, message));
     }
 }

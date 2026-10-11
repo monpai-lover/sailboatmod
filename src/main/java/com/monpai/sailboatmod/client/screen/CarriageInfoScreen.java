@@ -86,9 +86,7 @@ public class CarriageInfoScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
-        if (this.nameInput != null) {
-            this.nameInput.tick();
-        }
+
         if (this.routePrevButton != null) {
             this.routePrevButton.active = carriage.getRouteCount() > 0;
         }
@@ -102,7 +100,6 @@ public class CarriageInfoScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         int left = (this.width - PANEL_W) / 2;

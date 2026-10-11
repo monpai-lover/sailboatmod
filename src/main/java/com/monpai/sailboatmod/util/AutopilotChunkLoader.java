@@ -2,7 +2,8 @@ package com.monpai.sailboatmod.util;
 
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraftforge.common.world.ForgeChunkManager;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.common.world.chunk.TicketHelper;
 import org.slf4j.Logger;
 
 import java.util.Map;
@@ -11,9 +12,9 @@ import java.util.UUID;
 /**
  * autopilot 载具(帆船/马车)强加载区块的 Forge 票据校验回调。
  *
- * <p><b>问题</b>:载具用 {@code ForgeChunkManager.forceChunk(...,entity owner,...,ticking=true)} 强加载自身周围区块,
+ * <p><b>问题</b>:载具用 {@code ModChunkLoading.forceChunk(...,entity owner,...,ticking=true)} 强加载自身周围区块,
  * 让它在玩家不在附近时也能 tick/移动。这些 entity-owner 票据会持久化到 {@code ForcedChunksSavedData}。但 Forge 要求
- * mod <b>注册 {@link ForgeChunkManager.LoadingValidationCallback}</b> 才会在世界重载后恢复这些票据——<b>没注册则
+ * mod <b>注册 {@link ModChunkLoading.LoadingValidationCallback}</b> 才会在世界重载后恢复这些票据——<b>没注册则
  * 全部丢弃</b>。本 mod 一直漏了注册,导致:退档保存(实体随区块写入 NBT)→ 票据丢失 → 重进 Forge 不恢复票据 → 载具
  * 区块不加载 → 实体不 tick → autopilot 不跑 → 永不重申票据 = <b>死锁,实体在磁盘活着但永远加载不回来 = 消失</b>。
  *
@@ -28,9 +29,8 @@ public final class AutopilotChunkLoader {
     }
 
     /** mod 构造时调一次,注册 Forge 票据校验回调(否则退档重进票据全丢→载具消失)。 */
-    public static void register() {
-        ForgeChunkManager.setForcedChunkLoadingCallback(
-                com.monpai.sailboatmod.SailboatMod.MODID, AutopilotChunkLoader::validateTickets);
+    public static void register(IEventBus modEventBus) {
+        ModChunkLoading.register(modEventBus, AutopilotChunkLoader::validateTickets);
     }
 
     /**
@@ -38,7 +38,7 @@ public final class AutopilotChunkLoader {
      * (什么都不做),让 Forge 重新强加载这些区块→实体加载→tick→autopilot 恢复。block-owner 票据本 mod 不再使用,若有
      * 残留(老存档)一并保留无害(实体加载后会自行清理切换为 entity 票据)。
      */
-    private static void validateTickets(ServerLevel level, ForgeChunkManager.TicketHelper helper) {
+    private static void validateTickets(ServerLevel level, TicketHelper helper) {
         Map<UUID, ?> entityTickets = helper.getEntityTickets();
         int kept = entityTickets.size();
         // 全部保留:不调 removeAllTickets/removeTicket → Forge 据持久化票据重新强加载区块 → 载具回来。

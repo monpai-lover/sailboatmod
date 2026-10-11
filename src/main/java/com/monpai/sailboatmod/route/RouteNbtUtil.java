@@ -14,7 +14,7 @@ public final class RouteNbtUtil {
 
     public static List<RouteDefinition> readRoutes(CompoundTag root, String key) {
         List<RouteDefinition> routes = new ArrayList<>();
-        ListTag routesTag = root.getList(key, Tag.TAG_COMPOUND);
+        ListTag routesTag = root.getList(key, net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag routeEntry : routesTag) {
             if (!(routeEntry instanceof CompoundTag routeTag)) {
                 continue;
@@ -23,7 +23,7 @@ public final class RouteNbtUtil {
             List<Vec3> waypoints = new ArrayList<>();
             List<WaypointMeta> metas = new ArrayList<>();
             boolean allHaveMeta = true; // 只有每个 point 都带 Seg 标记才认 metas(旧航线无标记→留空降级)
-            ListTag pointsTag = routeTag.getList("Waypoints", Tag.TAG_COMPOUND);
+            ListTag pointsTag = routeTag.getList("Waypoints", net.minecraft.nbt.Tag.TAG_COMPOUND);
             for (Tag pointEntry : pointsTag) {
                 if (pointEntry instanceof CompoundTag pointTag) {
                     waypoints.add(new Vec3(

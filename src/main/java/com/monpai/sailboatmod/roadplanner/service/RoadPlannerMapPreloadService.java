@@ -30,8 +30,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.common.world.ForgeChunkManager;
-import net.minecraftforge.network.NetworkDirection;
+import com.monpai.sailboatmod.util.ModChunkLoading;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -277,7 +276,7 @@ public final class RoadPlannerMapPreloadService {
                 if (forcedForTile.contains(chunkKey) || startedThisTick >= MAX_FORCE_CHUNKS_PER_TICK) {
                     continue;
                 }
-                if (ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false)) {
+                if (ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, chunkX, chunkZ, true, false)) {
                     forcedForTile.add(chunkKey);
                     startedThisTick++;
                 }
@@ -299,7 +298,7 @@ public final class RoadPlannerMapPreloadService {
             if (chunkKey == null) {
                 continue;
             }
-            ForgeChunkManager.forceChunk(
+            ModChunkLoading.forceChunk(
                     level,
                     SailboatMod.MODID,
                     owner,
@@ -363,11 +362,11 @@ public final class RoadPlannerMapPreloadService {
 
     private void sendTile(ServerPlayer player, RoadPlannerMapTileSyncPacket packet) {
         SharedMapServerState.markRendered(packet);
-        ModNetwork.CHANNEL.sendTo(packet, player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
+        ModNetwork.CHANNEL.send(player, packet);
     }
 
     private void sendProgress(ServerPlayer player, RoadPlannerMapPreloadProgressPacket packet) {
-        ModNetwork.CHANNEL.sendTo(packet, player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
+        ModNetwork.CHANNEL.send(player, packet);
     }
 
     private record JobKey(UUID sessionId, RoadPlannerMapPreloadRequestPacket.Purpose purpose) {

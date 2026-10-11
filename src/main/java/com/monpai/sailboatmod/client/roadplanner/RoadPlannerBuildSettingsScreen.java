@@ -60,7 +60,7 @@ public class RoadPlannerBuildSettingsScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        renderBackground(graphics, mouseX, mouseY, partialTick);
         int left = (width - PANEL_WIDTH) / 2;
         int top = (height - PANEL_HEIGHT) / 2;
         graphics.fill(left, top, left + PANEL_WIDTH, top + PANEL_HEIGHT, 0xE012151B);
@@ -69,7 +69,7 @@ public class RoadPlannerBuildSettingsScreen extends Screen {
         graphics.drawString(font, "路宽", left + 18, top + 32, 0xFFC9D7E1, false);
         graphics.drawString(font, "路基材料", left + 18, top + 76, 0xFFC9D7E1, false);
         graphics.drawString(font, "确认后会退出 UI 并显示幽灵方块预览", left + 18, top + 66, 0xFF9FB0BC, false);
-        super.render(graphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, graphics, mouseX, mouseY, partialTick);
     }
 
     @Override

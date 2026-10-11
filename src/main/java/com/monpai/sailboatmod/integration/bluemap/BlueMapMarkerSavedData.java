@@ -30,13 +30,13 @@ public class BlueMapMarkerSavedData extends SavedData {
             return new BlueMapMarkerSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(BlueMapMarkerSavedData::load, BlueMapMarkerSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(BlueMapMarkerSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> BlueMapMarkerSavedData.load(tag))), DATA_NAME);
     }
 
     public static BlueMapMarkerSavedData load(CompoundTag tag) {
         BlueMapMarkerSavedData data = new BlueMapMarkerSavedData();
 
-        ListTag dockTag = tag.getList("Docks", Tag.TAG_COMPOUND);
+        ListTag dockTag = tag.getList("Docks", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : dockTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -45,7 +45,7 @@ public class BlueMapMarkerSavedData extends SavedData {
             data.docks.put(dockKey(snapshot.dimension(), snapshot.pos()), snapshot);
         }
 
-        ListTag boatTag = tag.getList("Boats", Tag.TAG_COMPOUND);
+        ListTag boatTag = tag.getList("Boats", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : boatTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -54,7 +54,7 @@ public class BlueMapMarkerSavedData extends SavedData {
             data.boats.put(boatKey(snapshot.dimension(), snapshot.uuid()), snapshot);
         }
 
-        ListTag nationOverlayTag = tag.getList("NationOverlays", Tag.TAG_COMPOUND);
+        ListTag nationOverlayTag = tag.getList("NationOverlays", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : nationOverlayTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -66,6 +66,10 @@ public class BlueMapMarkerSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag dockTag = new ListTag();
         for (DockSnapshot snapshot : docks.values()) {
@@ -368,7 +372,7 @@ public class BlueMapMarkerSavedData extends SavedData {
 
         public static NationOverlaySnapshot load(CompoundTag tag) {
             List<BorderSegmentSnapshot> borders = new ArrayList<>();
-            ListTag bordersTag = tag.getList("Borders", Tag.TAG_COMPOUND);
+            ListTag bordersTag = tag.getList("Borders", net.minecraft.nbt.Tag.TAG_COMPOUND);
             for (Tag raw : bordersTag) {
                 if (raw instanceof CompoundTag compound) {
                     borders.add(BorderSegmentSnapshot.load(compound));

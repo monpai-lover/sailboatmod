@@ -5,9 +5,9 @@ import com.monpai.sailboatmod.dock.AvailableDockEntry;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,7 +55,7 @@ public class SyncAutoRouteDocksPacket {
     }
 
     public static void handle(SyncAutoRouteDocksPacket msg, Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        ctx.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
             DockClientHooks.openAutoRouteDockSelection(msg.sourceDockPos, msg.terminalKind, msg.docks)
         ));
         ctx.get().setPacketHandled(true);

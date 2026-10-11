@@ -1,0 +1,55 @@
+{
+  "target": {
+    "minecraft": "1.21.1",
+    "loader": "NeoForge 21.1.259",
+    "java": 21,
+    "branch": "1.21.1-neoforge"
+  },
+  "fullSuite": {
+    "tests": 1267,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "remainingFailures": [
+    {
+      "class": "com.monpai.sailboatmod.market.web.map.MarketWebMapRegionImageTest",
+      "test": "doesNotPublishPartialRegionPixelsBeforeAllChunksAreReady()",
+      "message": "org.opentest4j.AssertionFailedError: expected: <false> but was: <true>"
+    },
+    {
+      "class": "com.monpai.sailboatmod.market.web.MarketWebAppResourceTest",
+      "test": "mapClientUsesSquaremapLeafletTileRenderer()",
+      "message": "org.opentest4j.AssertionFailedError: terrain layer should use squaremap's custom fetch/blob tile layer pattern ==> expected: <true> but was: <false>"
+    }
+  ],
+  "originalForgeBaseline": {
+    "primaryTests": 92,
+    "primaryFailures": 12,
+    "supplementalTests": 75,
+    "supplementalFailures": 6,
+    "note": "Original HEAD implementations and exact original dependencies; selected failing classes only."
+  },
+  "javascriptSyntax": {
+    "app.js": "passed",
+    "map.js": "passed"
+  },
+  "legacyFrontendChecker": {
+    "failedChecks": 2,
+    "checks": [
+      "MAP page must mount the live canvas module",
+      "map.js must request cached map tiles only"
+    ]
+  },
+  "scope": "Web frontend implementation unchanged. CSS source-contract tests now normalize Windows CRLF. Authentication SavedData race remains assigned to Claude.",
+  "runtimeSmoke": {
+    "environment": "isolated run-neoforge development directory",
+    "client": "mod loading and resource initialization; window responsive; normal close",
+    "server": "startup complete; SQLite schema patches 001..008 applied; database initialized; web addon HTTP started",
+    "httpChecks": {
+      "/api/debug/version": "returned sailboatmarketweb 1.3.13",
+      "/api/markets": "returned empty markets array for new test world"
+    },
+    "limits": "No multiplayer sailing/trade gameplay or existing-world upgrade test. Production JARs inspected; launch used development modules. Server console input was not forwarded by Gradle, so test process was terminated after checks."
+  }
+}

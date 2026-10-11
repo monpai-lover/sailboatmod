@@ -2,7 +2,7 @@ package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.roadplanner.compile.CompiledRoadSectionType;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;

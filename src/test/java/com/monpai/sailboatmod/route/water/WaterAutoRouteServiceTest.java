@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.route.water;
 
 import com.monpai.sailboatmod.route.RouteDefinition;
+import com.monpai.sailboatmod.route.WaypointMeta;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
@@ -50,26 +52,45 @@ class WaterAutoRouteServiceTest {
     }
 
     @Test
-    void candidateCheckFailsWhenDockDistanceExceedsSearchRange() {
+    void distantDockRemainsListedWhileSolverEnforcesSearchRadius() {
         WaterRoutePolicy shortRange = new WaterRoutePolicy(8, 2, 1, 2, 32, 5000, 512, 64, 64, 200);
+        TestBerthWorld world = new TestBerthWorld().waterRect(-12, -8, 108, 8);
         WaterRouteResult<WaterAutoRouteService.BerthPair> result = WaterAutoRouteService.canListCandidate(
                 dock("Source", new BlockPos(0, 64, 0), "town-a", "nation-a"),
                 dock("Target", new BlockPos(96, 64, 0), "town-b", "nation-a"),
-                new TestBerthWorld().waterRect(-12, -8, 108, 8),
+                world,
                 relation(Map.of()),
                 shortRange);
 
-        assertEquals(WaterRouteFailureReason.RANGE_EXCEEDED, result.reason());
+        assertTrue(result.successful());
+        BlockPos source = BlockPos.containing(result.value().source().pos());
+        BlockPos target = BlockPos.containing(result.value().target().pos());
+        assertTrue(source.distSqr(target) > shortRange.maxSearchRadius() * shortRange.maxSearchRadius());
+
+        WaterRoutePathfinder limited = new WaterRoutePathfinder(world, source, target, shortRange);
+        assertEquals(WaterRoutePathfinder.Status.FAILED, runToCompletion(limited));
+        assertEquals(WaterRouteFailureReason.NO_WATER_PATH, limited.failureReason());
+        assertTrue(limited.path().isEmpty());
+
+        WaterRoutePathfinder fullRange = new WaterRoutePathfinder(world, source, target, policy());
+        assertEquals(WaterRoutePathfinder.Status.SUCCESS, runToCompletion(fullRange));
+        assertEquals(source, fullRange.path().get(0));
+        assertEquals(target, fullRange.path().get(fullRange.path().size() - 1));
     }
 
     @Test
-    void completedPathBuildsNamedRouteDefinition() {
+    void completedPathPreservesDenseWaypointsAndMetadataInNamedRoute() {
+        List<WaypointMeta> metadata = List.of(
+                WaypointMeta.of(WaypointMeta.SEGMENT_START, WaypointMeta.ORIGIN_RAW),
+                WaypointMeta.of(WaypointMeta.SEGMENT_MID, WaypointMeta.ORIGIN_INTERP),
+                WaypointMeta.of(WaypointMeta.SEGMENT_END, WaypointMeta.ORIGIN_RAW));
         RouteDefinition route = WaterAutoRouteService.routeDefinitionFromPath(
                 dock("Source Dock", new BlockPos(0, 64, 0), "town-a", "nation-a"),
                 dock("Target Dock", new BlockPos(32, 64, 0), "town-b", "nation-a"),
                 "TownA",
                 "TownB",
                 List.of(new BlockPos(0, 64, 0), new BlockPos(16, 64, 0), new BlockPos(32, 64, 0)),
+                metadata,
                 "Tester",
                 "uuid",
                 1234L);
@@ -79,7 +100,10 @@ class WaterAutoRouteServiceTest {
         assertEquals("Target Dock", route.endDockName());
         assertEquals("Tester", route.authorName());
         assertEquals("uuid", route.authorUuid());
-        assertEquals(2, route.waypoints().size());
+        assertEquals(3, route.waypoints().size());
+        assertEquals(List.of(new Vec3(0.5D, 64.0D, 0.5D), new Vec3(16.5D, 64.0D, 0.5D),
+                new Vec3(32.5D, 64.0D, 0.5D)), route.waypoints());
+        assertEquals(metadata, route.waypointMetas());
         assertEquals(32.0D, route.routeLengthMeters(), 0.001D);
     }
 
@@ -123,11 +147,19 @@ class WaterAutoRouteServiceTest {
         return new WaterRoutePolicy(8, 2, 1, 2, 256, 5000, 512, 64, 64, 200);
     }
 
+    private static WaterRoutePathfinder.Status runToCompletion(WaterRoutePathfinder pathfinder) {
+        WaterRoutePathfinder.Status status = WaterRoutePathfinder.Status.RUNNING;
+        for (int tick = 0; tick < 200 && status == WaterRoutePathfinder.Status.RUNNING; tick++) {
+            status = pathfinder.step(64, 0);
+        }
+        return status;
+    }
+
     private static WaterRoutePermissionService.RelationLookup relation(Map<String, String> values) {
         return (left, right) -> values.getOrDefault(left + "|" + right, values.getOrDefault(right + "|" + left, ""));
     }
 
-    private static final class TestBerthWorld implements DockBerthResolver.BerthWorld {
+    private static final class TestBerthWorld implements DockBerthResolver.BerthWorld, WaterRouteWorld {
         private final Set<Long> water = new HashSet<>();
 
         TestBerthWorld waterRect(int minX, int minZ, int maxX, int maxZ) {
@@ -147,6 +179,23 @@ class WaterAutoRouteServiceTest {
         @Override
         public int waterSurfaceY(int x, int z) {
             return 64;
+        }
+
+        @Override
+        public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
+            return isBerthWater(x, z, policy)
+                    ? WaterColumn.passable(new BlockPos(x, waterSurfaceY(x, z), z), 0.0D)
+                    : WaterColumn.blocked();
+        }
+
+        @Override
+        public boolean canLoadMoreChunks(int requested) {
+            return true;
+        }
+
+        @Override
+        public int consumedChunkLoads() {
+            return 0;
         }
 
         private static long key(int x, int z) {

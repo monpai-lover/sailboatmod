@@ -11,8 +11,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -87,7 +86,7 @@ public record RoadMapSnapshotRequestPacket(UUID sessionId,
                 region.pixelWidth(),
                 region.pixelHeight(),
                 snapshot.argbPixels());
-        ModNetwork.CHANNEL.sendTo(response, sender.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
+        ModNetwork.CHANNEL.send(sender, response);
     }
 
     public static int normalizeRegionSize(int requestedSize, MapLod lod) {

@@ -23,16 +23,12 @@ public class TerrainPreviewSavedData extends SavedData {
             return new TerrainPreviewSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(
-                TerrainPreviewSavedData::load,
-                TerrainPreviewSavedData::new,
-                DATA_NAME
-        );
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(TerrainPreviewSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> TerrainPreviewSavedData.load(tag))), DATA_NAME);
     }
 
     public static TerrainPreviewSavedData load(CompoundTag tag) {
         TerrainPreviewSavedData data = new TerrainPreviewSavedData();
-        ListTag entries = tag.getList("Entries", Tag.TAG_COMPOUND);
+        ListTag entries = tag.getList("Entries", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : entries) {
             if (!(raw instanceof CompoundTag entry)) {
                 continue;
@@ -56,6 +52,10 @@ public class TerrainPreviewSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag entries = new ListTag();
         for (Map.Entry<String, int[]> entry : tiles.entrySet()) {

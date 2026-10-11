@@ -2,7 +2,7 @@ package com.monpai.sailboatmod.resident.event;
 
 import com.monpai.sailboatmod.resident.model.ResidentRecord;
 import net.minecraft.core.BlockPos;
-import net.minecraftforge.eventbus.api.Event;
+import net.neoforged.bus.api.Event;
 
 /**
  * Base class for all resident lifecycle events (inspired by MineColonies)

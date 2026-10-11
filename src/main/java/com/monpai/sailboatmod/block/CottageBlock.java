@@ -18,6 +18,13 @@ import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 
 public class CottageBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<CottageBlock> CODEC = simpleCodec(CottageBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public CottageBlock(Properties properties) { super(properties); }
 
     @Override public RenderShape getRenderShape(BlockState state) { return RenderShape.MODEL; }
@@ -41,5 +48,5 @@ public class CottageBlock extends BaseEntityBlock {
         if (!player.getAbilities().instabuild) player.getInventory().placeItemBackInInventory(stack.copy());
     }
 
-    @Override public boolean isPathfindable(BlockState s, BlockGetter l, BlockPos p, net.minecraft.world.level.pathfinder.PathComputationType t) { return false; }
+    @Override public boolean isPathfindable(BlockState s, net.minecraft.world.level.pathfinder.PathComputationType t) { return false; }
 }

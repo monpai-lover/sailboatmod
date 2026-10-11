@@ -2,9 +2,9 @@ package com.monpai.sailboatmod.network.packet.roadplanner;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.function.Supplier;
@@ -45,7 +45,7 @@ public record OpenRoadDemolitionSelectionPacket(List<Entry> roads) {
     }
 
     public static void handle(OpenRoadDemolitionSelectionPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        contextSupplier.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
                 RoadPlannerClientHooks.openDemolitionSelection(packet.roads())));
         contextSupplier.get().setPacketHandled(true);
     }

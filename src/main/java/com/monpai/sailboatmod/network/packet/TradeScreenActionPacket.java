@@ -8,8 +8,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -84,7 +83,7 @@ public class TradeScreenActionPacket {
             }
 
             TradeScreenData data = NationTradeService.buildTradeScreenData(player, packet.targetNationId);
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTradeScreenPacket(data));
+            ModNetwork.CHANNEL.send(player, new OpenTradeScreenPacket(data));
         });
         context.setPacketHandled(true);
     }
@@ -94,14 +93,14 @@ public class TradeScreenActionPacket {
         for (ItemStack item : items) { if (!item.isEmpty()) count++; }
         buffer.writeVarInt(count);
         for (ItemStack item : items) {
-            if (!item.isEmpty()) buffer.writeItem(item);
+            if (!item.isEmpty()) com.monpai.sailboatmod.network.PacketItemCodec.write(buffer, item);
         }
     }
 
     private static List<ItemStack> readItems(FriendlyByteBuf buffer) {
         int count = buffer.readVarInt();
         List<ItemStack> items = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) items.add(buffer.readItem());
+        for (int i = 0; i < count; i++) items.add(com.monpai.sailboatmod.network.PacketItemCodec.read(buffer));
         return items;
     }
 

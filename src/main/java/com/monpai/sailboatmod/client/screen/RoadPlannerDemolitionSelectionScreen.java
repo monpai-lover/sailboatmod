@@ -78,9 +78,9 @@ public class RoadPlannerDemolitionSelectionScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         if (roads.isEmpty()) {
-            return super.mouseScrolled(mouseX, mouseY, delta);
+            return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
         }
         int previous = scrollOffset;
         scrollOffset = Math.max(0, Math.min(Math.max(0, roads.size() - 1), scrollOffset + (delta < 0 ? 1 : -1)));
@@ -88,17 +88,17 @@ public class RoadPlannerDemolitionSelectionScreen extends Screen {
             rebuildButtons();
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, delta);
+        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
     }
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        renderBackground(graphics, mouseX, mouseY, partialTick);
         graphics.drawCenteredString(font, Component.literal("Select a built road to demolish"), width / 2, 20, 0xFFF1D9A0);
         if (roads.isEmpty()) {
             graphics.drawCenteredString(font, Component.literal("No built roads available"), width / 2, height / 2 - 8, 0xFFB7C8D6);
         }
-        super.render(graphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, graphics, mouseX, mouseY, partialTick);
     }
 
     @Override

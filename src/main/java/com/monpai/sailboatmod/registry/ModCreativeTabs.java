@@ -4,14 +4,14 @@ import com.monpai.sailboatmod.SailboatMod;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.CreativeModeTab;
-import net.minecraftforge.registries.DeferredRegister;
-import net.minecraftforge.registries.RegistryObject;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.neoforged.neoforge.registries.DeferredHolder;
 
 public final class ModCreativeTabs {
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS =
             DeferredRegister.create(Registries.CREATIVE_MODE_TAB, SailboatMod.MODID);
 
-    public static final RegistryObject<CreativeModeTab> SAILBOAT_TAB = CREATIVE_MODE_TABS.register(
+    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> SAILBOAT_TAB = CREATIVE_MODE_TABS.register(
             "sailboat_tab",
             () -> CreativeModeTab.builder()
                     .title(Component.translatable("itemGroup.sailboatmod.sailboat_tab"))

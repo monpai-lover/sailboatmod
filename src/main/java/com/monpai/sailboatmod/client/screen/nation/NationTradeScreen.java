@@ -108,9 +108,9 @@ public class NationTradeScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
+        this.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         drawContents(guiGraphics, mouseX, mouseY);
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
     }
 
     @Override

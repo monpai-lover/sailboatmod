@@ -323,7 +323,7 @@ public record RoadNetworkRecord(
 
     private static List<BlockPos> readPath(CompoundTag tag, String key) {
         List<BlockPos> path = new ArrayList<>();
-        ListTag pathTag = tag.getList(key, Tag.TAG_COMPOUND);
+        ListTag pathTag = tag.getList(key, net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int i = 0; i < pathTag.size(); i++) {
             path.add(BlockPos.of(pathTag.getCompound(i).getLong("Pos")));
         }
@@ -353,7 +353,7 @@ public record RoadNetworkRecord(
     }
 
     private static List<RoadPlannerSharedRoadSpan> readSharedSpans(CompoundTag tag) {
-        ListTag spanTag = tag.getList("SharedSpans", Tag.TAG_COMPOUND);
+        ListTag spanTag = tag.getList("SharedSpans", net.minecraft.nbt.Tag.TAG_COMPOUND);
         if (spanTag.isEmpty()) {
             return List.of();
         }

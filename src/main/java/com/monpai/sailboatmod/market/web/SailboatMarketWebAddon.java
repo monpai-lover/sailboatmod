@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.market.web;
 
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.fml.common.Mod;
 
 @Mod(SailboatMarketWebAddon.MODID)
 public final class SailboatMarketWebAddon {

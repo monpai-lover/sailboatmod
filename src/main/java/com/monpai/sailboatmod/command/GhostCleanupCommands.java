@@ -358,7 +358,7 @@ public final class GhostCleanupCommands {
             if (blocks.isEmpty()) {
                 return BlockProbe.UNVERIFIABLE;
             }
-            String expectedId = net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(expected).toString();
+            String expectedId = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(expected).toString();
             String actualId = blocks.blockId(pos.getX() & 15, pos.getY(), pos.getZ() & 15);
             return expectedId.equals(actualId) ? BlockProbe.PRESENT : BlockProbe.ABSENT;
         } catch (RuntimeException e) {

@@ -4,9 +4,9 @@ import com.monpai.sailboatmod.client.NationClientHooks;
 import com.monpai.sailboatmod.client.TownClientHooks;
 import com.monpai.sailboatmod.nation.service.ClaimMapViewportSnapshot;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.function.Supplier;
@@ -81,7 +81,7 @@ public record SyncClaimPreviewMapPacket(ScreenKind screenKind, String ownerId, C
 
     public static void handle(SyncClaimPreviewMapPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
             if (packet.screenKind() == ScreenKind.NATION) {
                 NationClientHooks.applyClaimPreview(packet.ownerId(), packet.snapshot());
             } else {

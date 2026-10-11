@@ -1474,7 +1474,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics);
+        renderBackground(graphics, mouseX, mouseY, partialTick);
         canvas.render(graphics, font);
         claimOverlayRenderer.render(graphics, mapView, mapLayout.map());
         renderRoadOverlay(graphics, mouseX, mouseY);
@@ -1494,7 +1494,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     @Override
-    public void renderBackground(GuiGraphics graphics) {
+    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, RoadPlannerMapTheme.BACKGROUND);
     }
 
@@ -2162,13 +2162,13 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         if (canvas.contains(mouseX, mouseY)) {
             mapView.zoomAround(mouseX, mouseY, delta > 0 ? 1.2D : 0.833333D, mapLayout.map());
             requestViewportMapSnapshot();
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, delta);
+        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
     }
 
     private boolean openContextMenuForGraph(double worldX, double worldZ, int mouseX, int mouseY) {

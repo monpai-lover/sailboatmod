@@ -20,7 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 
 public final class NationFlagTextureCache {
-    private static final ResourceLocation BANNER_BASE_TEXTURE = new ResourceLocation("minecraft", "textures/entity/banner/base.png");
+    private static final ResourceLocation BANNER_BASE_TEXTURE = ResourceLocation.fromNamespaceAndPath("minecraft", "textures/entity/banner/base.png");
     private static final int BANNER_TEXTURE_SIZE = 64;
     private static final int FLAG_FACE_WIDTH = 20;
     private static final int FLAG_FACE_HEIGHT = 40;

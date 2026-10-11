@@ -18,10 +18,16 @@ import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 
 public class DockBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<DockBlock> CODEC = simpleCodec(DockBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public DockBlock(Properties properties) {
         super(properties);
     }
@@ -57,7 +63,7 @@ public class DockBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide) {
             return InteractionResult.SUCCESS;
         }
@@ -72,7 +78,7 @@ public class DockBlock extends BaseEntityBlock {
             return InteractionResult.PASS;
         }
         dock.initializeOwnerIfAbsent(serverPlayer);
-        NetworkHooks.openScreen(serverPlayer, dock, pos);
+        serverPlayer.openMenu(dock, pos);
         return InteractionResult.CONSUME;
     }
 
@@ -88,7 +94,7 @@ public class DockBlock extends BaseEntityBlock {
     }
 
     @Override
-    public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+    public boolean isPathfindable(BlockState state, net.minecraft.world.level.pathfinder.PathComputationType type) {
         return false;
     }
 }

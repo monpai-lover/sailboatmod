@@ -4,9 +4,9 @@ import com.monpai.sailboatmod.client.integration.xaero.SailboatClaimHighlightInd
 import com.monpai.sailboatmod.client.integration.xaero.SailboatXaeroCompat;
 import com.monpai.sailboatmod.integration.xaero.SailboatClaimHighlightEntry;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,7 +62,7 @@ public record SyncClaimHighlightsPacket(List<SailboatClaimHighlightEntry> entrie
 
     public static void handle(SyncClaimHighlightsPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
             SailboatClaimHighlightIndex.INSTANCE.replaceAll(packet.entries());
             SailboatXaeroCompat.onHighlightDataUpdated();
         }));

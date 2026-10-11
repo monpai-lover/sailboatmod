@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.client.integration.xaero;
 
 import com.mojang.logging.LogUtils;
-import net.minecraftforge.fml.ModList;
+import net.neoforged.fml.ModList;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Field;

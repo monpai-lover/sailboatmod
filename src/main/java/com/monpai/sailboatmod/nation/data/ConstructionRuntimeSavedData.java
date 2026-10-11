@@ -23,17 +23,13 @@ public class ConstructionRuntimeSavedData extends SavedData {
             return new ConstructionRuntimeSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(
-                ConstructionRuntimeSavedData::load,
-                ConstructionRuntimeSavedData::new,
-                DATA_NAME
-        );
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(ConstructionRuntimeSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> ConstructionRuntimeSavedData.load(tag))), DATA_NAME);
     }
 
     public static ConstructionRuntimeSavedData load(CompoundTag tag) {
         ConstructionRuntimeSavedData data = new ConstructionRuntimeSavedData();
 
-        ListTag structures = tag.getList("StructureJobs", Tag.TAG_COMPOUND);
+        ListTag structures = tag.getList("StructureJobs", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : structures) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -44,7 +40,7 @@ public class ConstructionRuntimeSavedData extends SavedData {
             }
         }
 
-        ListTag roads = tag.getList("RoadJobs", Tag.TAG_COMPOUND);
+        ListTag roads = tag.getList("RoadJobs", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : roads) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -59,6 +55,10 @@ public class ConstructionRuntimeSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag structures = new ListTag();
         for (StructureJobState state : structureJobs.values()) {
@@ -291,9 +291,9 @@ public class ConstructionRuntimeSavedData extends SavedData {
                     tag.getString("DimensionId"),
                     tag.getString("OwnerUuid"),
                     toLongList(tag.getLongArray(pathKey)),
-                    toRoadGhostBlockList(tag.getList("GhostBlocks", Tag.TAG_COMPOUND)),
-                    toRoadBuildStepList(tag.getList("BuildSteps", Tag.TAG_COMPOUND)),
-                    toRoadRollbackStateList(tag.getList("RollbackStates", Tag.TAG_COMPOUND)),
+                    toRoadGhostBlockList(tag.getList("GhostBlocks", net.minecraft.nbt.Tag.TAG_COMPOUND)),
+                    toRoadBuildStepList(tag.getList("BuildSteps", net.minecraft.nbt.Tag.TAG_COMPOUND)),
+                    toRoadRollbackStateList(tag.getList("RollbackStates", net.minecraft.nbt.Tag.TAG_COMPOUND)),
                     toLongList(tag.getLongArray("OwnedBlocks")),
                     legacyPathOnly ? 0 : tag.getInt("PlacedStepCount"),
                     legacyPathOnly

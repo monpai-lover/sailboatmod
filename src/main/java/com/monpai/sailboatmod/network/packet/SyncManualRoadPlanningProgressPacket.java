@@ -2,9 +2,9 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -58,7 +58,7 @@ public record SyncManualRoadPlanningProgressPacket(long requestId,
     }
 
     public static void handle(SyncManualRoadPlanningProgressPacket msg, Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
+        ctx.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
         ctx.get().setPacketHandled(true);
     }
 
@@ -66,7 +66,6 @@ public record SyncManualRoadPlanningProgressPacket(long requestId,
         handleClient(msg);
     }
 
-    @net.minecraftforge.api.distmarker.OnlyIn(Dist.CLIENT)
     private static void handleClient(SyncManualRoadPlanningProgressPacket msg) {
         RoadPlannerClientHooks.updatePlanningProgress(msg);
     }

@@ -21,16 +21,12 @@ public class ConstructionMaterialRequestSavedData extends SavedData {
             return new ConstructionMaterialRequestSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(
-                ConstructionMaterialRequestSavedData::load,
-                ConstructionMaterialRequestSavedData::new,
-                DATA_NAME
-        );
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(ConstructionMaterialRequestSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> ConstructionMaterialRequestSavedData.load(tag))), DATA_NAME);
     }
 
     public static ConstructionMaterialRequestSavedData load(CompoundTag tag) {
         ConstructionMaterialRequestSavedData data = new ConstructionMaterialRequestSavedData();
-        ListTag requestTag = tag.getList("MaterialRequests", Tag.TAG_COMPOUND);
+        ListTag requestTag = tag.getList("MaterialRequests", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : requestTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -44,6 +40,10 @@ public class ConstructionMaterialRequestSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag requestTag = new ListTag();
         for (ConstructionMaterialRequestRecord record : requests.values()) {

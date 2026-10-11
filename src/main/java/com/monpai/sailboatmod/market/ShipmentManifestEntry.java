@@ -25,7 +25,7 @@ public record ShipmentManifestEntry(
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag();
         tag.putString("ListingId", listingId);
-        tag.put("ItemStack", itemStack.save(new CompoundTag()));
+        tag.put("ItemStack", com.monpai.sailboatmod.compat.ItemStackNbt.save(itemStack, new CompoundTag()));
         tag.putString("PurchaseOrderId", purchaseOrderId);
         tag.putString("ShippingOrderId", shippingOrderId);
         tag.putString("RecipientUuid", recipientUuid);
@@ -37,7 +37,7 @@ public record ShipmentManifestEntry(
     public static ShipmentManifestEntry load(CompoundTag tag) {
         return new ShipmentManifestEntry(
                 tag.getString("ListingId"),
-                ItemStack.of(tag.getCompound("ItemStack")),
+                com.monpai.sailboatmod.compat.ItemStackNbt.read(tag.getCompound("ItemStack")),
                 tag.getString("PurchaseOrderId"),
                 tag.getString("ShippingOrderId"),
                 tag.getString("RecipientUuid"),

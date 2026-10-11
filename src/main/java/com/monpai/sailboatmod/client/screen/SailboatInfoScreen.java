@@ -119,11 +119,8 @@ public class SailboatInfoScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
-        if (this.nameInput != null) {
-            this.nameInput.tick();
-        }
+
         if (this.rentalPriceInput != null) {
-            this.rentalPriceInput.tick();
             if (!this.rentalPriceInput.isFocused()) {
                 this.rentalPriceInput.setValue(formatRentalPriceInput());
             }
@@ -152,7 +149,6 @@ public class SailboatInfoScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         int centerX = this.width / 2;

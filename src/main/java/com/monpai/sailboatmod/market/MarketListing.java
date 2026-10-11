@@ -54,7 +54,7 @@ public record MarketListing(
         tag.putString("ListingId", listingId);
         tag.putString("SellerUuid", sellerUuid);
         tag.putString("SellerName", sellerName);
-        tag.put("ItemStack", itemStack.save(new CompoundTag()));
+        tag.put("ItemStack", com.monpai.sailboatmod.compat.ItemStackNbt.save(itemStack, new CompoundTag()));
         tag.putInt("UnitPrice", unitPrice);
         tag.putInt("AvailableCount", availableCount);
         tag.putInt("ReservedCount", reservedCount);
@@ -72,7 +72,7 @@ public record MarketListing(
                 tag.getString("ListingId"),
                 tag.getString("SellerUuid"),
                 tag.getString("SellerName"),
-                ItemStack.of(tag.getCompound("ItemStack")),
+                com.monpai.sailboatmod.compat.ItemStackNbt.read(tag.getCompound("ItemStack")),
                 tag.getInt("UnitPrice"),
                 tag.getInt("AvailableCount"),
                 tag.getInt("ReservedCount"),

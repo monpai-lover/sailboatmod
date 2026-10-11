@@ -21,12 +21,12 @@ public class TownFinanceSavedData extends SavedData {
             return new TownFinanceSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(TownFinanceSavedData::load, TownFinanceSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(TownFinanceSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> TownFinanceSavedData.load(tag))), DATA_NAME);
     }
 
     public static TownFinanceSavedData load(CompoundTag tag) {
         TownFinanceSavedData data = new TownFinanceSavedData();
-        ListTag entriesTag = tag.getList("TownFinanceEntries", Tag.TAG_COMPOUND);
+        ListTag entriesTag = tag.getList("TownFinanceEntries", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : entriesTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -40,6 +40,10 @@ public class TownFinanceSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag entriesTag = new ListTag();
         for (TownFinanceEntryRecord record : entries.values()) {

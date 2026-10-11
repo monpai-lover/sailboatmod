@@ -7,9 +7,9 @@ import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.Locale;
@@ -94,7 +94,7 @@ public record RoadPlannerAutoMergeRouteSyncPacket(UUID sessionId,
 
     public static void handle(RoadPlannerAutoMergeRouteSyncPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
                 RoadPlannerClientHooks.applyAutoMergeRoute(packet)));
         context.setPacketHandled(true);
     }

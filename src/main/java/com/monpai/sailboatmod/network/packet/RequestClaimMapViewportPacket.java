@@ -13,8 +13,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.Collection;
 import java.util.List;
@@ -328,7 +327,7 @@ public record RequestClaimMapViewportPacket(ScreenKind screenKind,
 
     private static void sendSnapshot(ServerPlayer player, ScreenKind screenKind, String ownerId, ClaimMapViewportSnapshot snapshot) {
         ModNetwork.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> player),
+                player,
                 new SyncClaimPreviewMapPacket(toSyncScreenKind(screenKind), ownerId, snapshot)
         );
     }

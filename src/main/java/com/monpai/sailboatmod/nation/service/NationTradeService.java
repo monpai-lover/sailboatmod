@@ -8,7 +8,7 @@ import net.minecraft.core.NonNullList;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.server.ServerLifecycleHooks;
+import net.neoforged.neoforge.server.ServerLifecycleHooks;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -260,7 +260,7 @@ public final class NationTradeService {
             int needed = required.getCount();
             for (ItemStack avail : available) {
                 if (avail.isEmpty()) continue;
-                if (ItemStack.isSameItemSameTags(avail, required)) {
+                if (ItemStack.isSameItemSameComponents(avail, required)) {
                     int take = Math.min(needed, avail.getCount());
                     avail.shrink(take);
                     needed -= take;
@@ -277,7 +277,7 @@ public final class NationTradeService {
         NonNullList<ItemStack> items = treasury.items();
         for (int i = 0; i < items.size() && remaining > 0; i++) {
             ItemStack slot = items.get(i);
-            if (!slot.isEmpty() && ItemStack.isSameItemSameTags(slot, toRemove)) {
+            if (!slot.isEmpty() && ItemStack.isSameItemSameComponents(slot, toRemove)) {
                 int take = Math.min(remaining, slot.getCount());
                 slot.shrink(take);
                 remaining -= take;
@@ -291,7 +291,7 @@ public final class NationTradeService {
         // Try to merge into existing stacks first
         for (int i = 0; i < items.size() && !remaining.isEmpty(); i++) {
             ItemStack slot = items.get(i);
-            if (!slot.isEmpty() && ItemStack.isSameItemSameTags(slot, remaining)) {
+            if (!slot.isEmpty() && ItemStack.isSameItemSameComponents(slot, remaining)) {
                 int space = slot.getMaxStackSize() - slot.getCount();
                 if (space > 0) {
                     int add = Math.min(space, remaining.getCount());

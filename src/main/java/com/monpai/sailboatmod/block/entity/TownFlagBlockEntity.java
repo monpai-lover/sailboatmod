@@ -90,8 +90,8 @@ public class TownFlagBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         tag.putString("TownId", townId == null ? "" : townId);
         tag.putString("TownName", townName == null ? "" : townName);
         tag.putString("NationId", nationId == null ? "" : nationId);
@@ -104,8 +104,8 @@ public class TownFlagBlockEntity extends BlockEntity {
     }
 
     @Override
-    public void load(CompoundTag tag) {
-        super.load(tag);
+    public void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
         townId = tag.getString("TownId");
         townName = tag.getString("TownName");
         nationId = tag.getString("NationId");
@@ -118,16 +118,16 @@ public class TownFlagBlockEntity extends BlockEntity {
     }
 
     @Override
-    public CompoundTag getUpdateTag() { return saveWithoutMetadata(); }
+    public CompoundTag getUpdateTag(net.minecraft.core.HolderLookup.Provider registries) { return saveWithoutMetadata(registries); }
 
     @Nullable
     @Override
     public ClientboundBlockEntityDataPacket getUpdatePacket() { return ClientboundBlockEntityDataPacket.create(this); }
 
     @Override
-    public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt) {
+    public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt, net.minecraft.core.HolderLookup.Provider registries) {
         if (pkt.getTag() != null) {
-            load(pkt.getTag());
+            loadWithComponents(pkt.getTag(), registries);
         }
     }
 

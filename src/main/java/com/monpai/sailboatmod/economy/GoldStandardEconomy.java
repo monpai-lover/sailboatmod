@@ -154,7 +154,7 @@ public final class GoldStandardEconomy {
         }
         int count = amount / unitValue;
         while (count > 0) {
-            int stackSize = Math.min(item.getMaxStackSize(), count);
+            int stackSize = Math.min(new ItemStack(item).getMaxStackSize(), count);
             ItemStack stack = new ItemStack(item, stackSize);
             boolean added = player.getInventory().add(stack);
             if (!added || !stack.isEmpty()) {

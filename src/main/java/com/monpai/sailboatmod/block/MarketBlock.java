@@ -18,10 +18,16 @@ import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 
 public class MarketBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<MarketBlock> CODEC = simpleCodec(MarketBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public MarketBlock(Properties properties) {
         super(properties);
     }
@@ -54,7 +60,7 @@ public class MarketBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide) {
             return InteractionResult.SUCCESS;
         }
@@ -70,7 +76,7 @@ public class MarketBlock extends BaseEntityBlock {
         }
         market.initializeOwnerIfAbsent(serverPlayer);
         market.bindNearestDockIfAbsent();
-        NetworkHooks.openScreen(serverPlayer, market, pos);
+        serverPlayer.openMenu(market, pos);
         return InteractionResult.CONSUME;
     }
 
@@ -83,7 +89,7 @@ public class MarketBlock extends BaseEntityBlock {
     }
 
     @Override
-    public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+    public boolean isPathfindable(BlockState state, net.minecraft.world.level.pathfinder.PathComputationType type) {
         return false;
     }
 }

@@ -30,7 +30,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.core.registries.BuiltInRegistries;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -226,7 +226,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         }
         int total = 0;
         for (ItemStack stack : getOrCreatePlayerStorage(ownerId)) {
-            if (!stack.isEmpty() && ItemStack.isSameItemSameTags(stack, sample)) {
+            if (!stack.isEmpty() && ItemStack.isSameItemSameComponents(stack, sample)) {
                 total += stack.getCount();
             }
         }
@@ -251,7 +251,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         int remaining = quantity;
         for (int i = 0; i < storage.size() && remaining > 0; i++) {
             ItemStack slot = storage.get(i);
-            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, sample)) {
+            if (slot.isEmpty() || !ItemStack.isSameItemSameComponents(slot, sample)) {
                 continue;
             }
             int removed = Math.min(remaining, slot.getCount());
@@ -388,7 +388,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
             boolean merged = false;
             for (int i = 0; i < groups.size(); i++) {
                 StorageGroup group = groups.get(i);
-                if (ItemStack.isSameItemSameTags(group.displayStack(), stack)) {
+                if (ItemStack.isSameItemSameComponents(group.displayStack(), stack)) {
                     groups.set(i, new StorageGroup(group.displayStack(), group.displayName(), group.totalCount() + stack.getCount()));
                     merged = true;
                     break;
@@ -455,7 +455,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
     private void mergeIntoExistingStacks(ItemStack remaining, NonNullList<ItemStack> targetStorage) {
         for (int i = 0; i < targetStorage.size() && !remaining.isEmpty(); i++) {
             ItemStack slot = targetStorage.get(i);
-            if (slot.isEmpty() || !ItemStack.isSameItemSameTags(slot, remaining)) {
+            if (slot.isEmpty() || !ItemStack.isSameItemSameComponents(slot, remaining)) {
                 continue;
             }
             int limit = Math.min(slot.getMaxStackSize(), 64);
@@ -486,7 +486,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         if (key == null) {
             return ItemStack.EMPTY;
         }
-        Item item = ForgeRegistries.ITEMS.getValue(key);
+        Item item = BuiltInRegistries.ITEM.get(key);
         if (item == null) {
             return ItemStack.EMPTY;
         }
@@ -496,7 +496,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
     }
 
     private static String commodityKey(ItemStack stack) {
-        ResourceLocation key = ForgeRegistries.ITEMS.getKey(stack.getItem());
+        ResourceLocation key = BuiltInRegistries.ITEM.getKey(stack.getItem());
         return key == null ? "" : key.toString();
     }
 
@@ -522,8 +522,8 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         tag.putString("TownId", getTownId());
         tag.putString("TownName", getTownName());
         tag.putBoolean("TerminalsImported", terminalsImported);
@@ -534,7 +534,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
             CompoundTag playerTag = new CompoundTag();
             playerTag.putUUID(TAG_PLAYER_UUID, entry.getKey());
             CompoundTag itemsTag = new CompoundTag();
-            ContainerHelper.saveAllItems(itemsTag, entry.getValue());
+            ContainerHelper.saveAllItems(itemsTag, entry.getValue(), registries);
             playerTag.put(TAG_ITEMS, itemsTag);
             players.add(playerTag);
         }
@@ -542,28 +542,28 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
     }
 
     @Override
-    public void load(CompoundTag tag) {
-        super.load(tag);
+    public void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
         townId = tag.getString("TownId");
         townName = tag.getString("TownName");
         terminalsImported = tag.getBoolean("TerminalsImported");
         legacyStorageMigrated = !tag.contains(TAG_LEGACY_STORAGE, Tag.TAG_COMPOUND) || tag.getBoolean("LegacyStorageMigrated");
 
         playerStorage.clear();
-        ListTag players = tag.getList(TAG_PLAYER_STORAGE, Tag.TAG_COMPOUND);
+        ListTag players = tag.getList(TAG_PLAYER_STORAGE, net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : players) {
             if (!(raw instanceof CompoundTag playerTag) || !playerTag.hasUUID(TAG_PLAYER_UUID)) {
                 continue;
             }
             UUID playerId = playerTag.getUUID(TAG_PLAYER_UUID);
             NonNullList<ItemStack> storage = NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY);
-            ContainerHelper.loadAllItems(playerTag.getCompound(TAG_ITEMS), storage);
+            com.monpai.sailboatmod.compat.InventoryNbt.loadAllItems(playerTag.getCompound(TAG_ITEMS), storage, registries);
             playerStorage.put(playerId, storage);
         }
 
         clearLegacyStorage();
         if (tag.contains(TAG_LEGACY_STORAGE, Tag.TAG_COMPOUND)) {
-            ContainerHelper.loadAllItems(tag.getCompound(TAG_LEGACY_STORAGE), legacySharedStorage);
+            com.monpai.sailboatmod.compat.InventoryNbt.loadAllItems(tag.getCompound(TAG_LEGACY_STORAGE), legacySharedStorage, registries);
             legacyStorageMigrated = false;
         }
     }

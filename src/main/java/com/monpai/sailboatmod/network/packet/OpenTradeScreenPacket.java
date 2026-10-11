@@ -4,9 +4,9 @@ import com.monpai.sailboatmod.client.TradeClientHooks;
 import com.monpai.sailboatmod.nation.menu.TradeScreenData;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -76,7 +76,7 @@ public class OpenTradeScreenPacket {
 
     public static void handle(OpenTradeScreenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
             TradeClientHooks.openOrUpdate(packet.data);
         }));
         context.setPacketHandled(true);
@@ -90,7 +90,7 @@ public class OpenTradeScreenPacket {
             ItemStack item = items.get(i);
             if (!item.isEmpty()) {
                 buffer.writeVarInt(i);
-                buffer.writeItem(item);
+                com.monpai.sailboatmod.network.PacketItemCodec.write(buffer, item);
             }
         }
     }
@@ -100,7 +100,7 @@ public class OpenTradeScreenPacket {
         List<ItemStack> items = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             int slot = buffer.readVarInt();
-            ItemStack item = buffer.readItem();
+            ItemStack item = com.monpai.sailboatmod.network.PacketItemCodec.read(buffer);
             // Pad with empty stacks up to slot index
             while (items.size() < slot) items.add(ItemStack.EMPTY);
             items.add(item);

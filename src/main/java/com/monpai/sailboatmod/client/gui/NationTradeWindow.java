@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class NationTradeWindow extends AbstractSailboatWindow {
-    private static final ResourceLocation LAYOUT = new ResourceLocation(SailboatMod.MODID, "gui/nation/trade.xml");
+    private static final ResourceLocation LAYOUT = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "gui/nation/trade.xml");
     private static final int MAX_TRADE_ITEMS = TradeScreenData.MAX_TRADE_ITEMS;
     private static final int TREASURY_COLUMNS = 5;
     private static final int AUTO_REFRESH_TICKS = 40;

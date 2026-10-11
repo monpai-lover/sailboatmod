@@ -5,8 +5,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -42,7 +41,7 @@ public class RenameDockPacket {
                 dock.setDockName(packet.dockName);
             }
             ModNetwork.CHANNEL.send(
-                    PacketDistributor.PLAYER.with(() -> player),
+                    player,
                     new OpenDockScreenPacket(dock.buildScreenData(player))
             );
         });

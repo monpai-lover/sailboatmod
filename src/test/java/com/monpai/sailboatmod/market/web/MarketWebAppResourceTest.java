@@ -25,6 +25,12 @@ class MarketWebAppResourceTest {
     private static final Path CREATE_BUY_ORDER_PACKET = Path.of("src/main/java/com/monpai/sailboatmod/network/packet/CreateBuyOrderPacket.java");
     private static final Path CANCEL_BUY_ORDER_PACKET = Path.of("src/main/java/com/monpai/sailboatmod/network/packet/CancelBuyOrderPacket.java");
 
+    private static String cssSource() throws IOException {
+        // Git may check this text file out with CRLF on Windows. CSS contracts
+        // should assert the rules themselves, independently of newline style.
+        return Files.readString(APP_CSS, StandardCharsets.UTF_8).replace("\r\n", "\n");
+    }
+
     @Test
     void appJavaScriptParsesInBrowserRuntime() throws Exception {
         Process process = new ProcessBuilder("node", "--check", APP_JS.toString())
@@ -103,7 +109,7 @@ class MarketWebAppResourceTest {
     void mapWorkspaceHasCollapsibleSidePanels() throws IOException {
         String appJs = Files.readString(APP_JS, StandardCharsets.UTF_8);
         String mapJs = Files.readString(MAP_JS, StandardCharsets.UTF_8);
-        String appCss = Files.readString(APP_CSS, StandardCharsets.UTF_8);
+        String appCss = cssSource();
 
         assertTrue(appJs.contains("data-map-panel-toggle=\"left\""),
                 "left map panel should expose a collapse button");
@@ -158,7 +164,7 @@ class MarketWebAppResourceTest {
     @Test
     void mapClientUsesMobilePerformanceBudget() throws IOException {
         String mapJs = Files.readString(MAP_JS, StandardCharsets.UTF_8);
-        String appCss = Files.readString(APP_CSS, StandardCharsets.UTF_8);
+        String appCss = cssSource();
 
         assertTrue(mapJs.contains("function isMobileMapDevice("),
                 "map client should detect touch/mobile devices");
@@ -228,7 +234,7 @@ class MarketWebAppResourceTest {
         String index = Files.readString(INDEX_HTML, StandardCharsets.UTF_8);
         String appJs = Files.readString(APP_JS, StandardCharsets.UTF_8);
         String mapJs = Files.readString(MAP_JS, StandardCharsets.UTF_8);
-        String appCss = Files.readString(APP_CSS, StandardCharsets.UTF_8);
+        String appCss = cssSource();
 
         assertTrue(Files.isRegularFile(Path.of("src/main/resources/marketweb/vendor/leaflet/leaflet.js")),
                 "Leaflet runtime should be vendored locally");
@@ -497,7 +503,7 @@ class MarketWebAppResourceTest {
     @Test
     void mapSelectionDetailShowsFixedTerritoryFlagFrame() throws IOException {
         String mapJs = Files.readString(MAP_JS, StandardCharsets.UTF_8);
-        String appCss = Files.readString(APP_CSS, StandardCharsets.UTF_8);
+        String appCss = cssSource();
 
         assertTrue(mapJs.contains("map-detail-flag-frame"),
                 "territory detail panel should render a fixed flag frame");
@@ -513,7 +519,7 @@ class MarketWebAppResourceTest {
 
     @Test
     void expandedAccessToggleKeepsReadableTextContrast() throws IOException {
-        String appCss = Files.readString(APP_CSS, StandardCharsets.UTF_8);
+        String appCss = cssSource();
 
         assertTrue(appCss.contains(".access-toggle[aria-expanded=\"true\"] strong,\n.access-toggle[aria-expanded=\"true\"] .hero-chip-label"),
                 "expanded login toggle needs an explicit final text color rule for contrast on light glass backgrounds");
@@ -521,7 +527,7 @@ class MarketWebAppResourceTest {
 
     @Test
     void goodsCardsUseLiquidGlassFlowWithReducedMotionFallback() throws IOException {
-        String appCss = Files.readString(APP_CSS, StandardCharsets.UTF_8);
+        String appCss = cssSource();
 
         assertTrue(appCss.contains(".goods-card::after,\n.map-side-panel::after"),
                 "commodity cards should share the animated liquid-glass refraction layer");
@@ -538,7 +544,7 @@ class MarketWebAppResourceTest {
         String service = Files.readString(MARKET_WEB_SERVICE, StandardCharsets.UTF_8);
         String appJs = Files.readString(APP_JS, StandardCharsets.UTF_8);
         String indexHtml = Files.readString(INDEX_HTML, StandardCharsets.UTF_8);
-        String appCss = Files.readString(APP_CSS, StandardCharsets.UTF_8);
+        String appCss = cssSource();
 
         assertTrue(service.contains("root.addProperty(\"walletBalance\""),
                 "market detail JSON should keep walletBalance as the available market-wallet balance for compatibility");

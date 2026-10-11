@@ -5,8 +5,8 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.chunk.ChunkStatus;
-import net.minecraftforge.common.world.ForgeChunkManager;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import com.monpai.sailboatmod.util.ModChunkLoading;
 import org.slf4j.Logger;
 
 import java.util.Optional;
@@ -434,7 +434,7 @@ public final class RealBlockWaterMap {
                         int nbtSurfY = cw == null ? -999 : cw.surfaceY[(z & 15) * CHUNK + (x & 15)];
                         int cx = x >> 4, cz = z >> 4;
                         BlockPos owner = new BlockPos(cx << 4, seaLevel, cz << 4);
-                        ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
+                        ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
                         boolean realWaterSurf;
                         boolean realWaterSea;
                         int realSurfY;
@@ -447,7 +447,7 @@ public final class RealBlockWaterMap {
                             realWaterSea = level.getFluidState(new BlockPos(x, seaLevel, z)).is(net.minecraft.tags.FluidTags.WATER);
                             id = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(st.getBlock()).toString();
                         } finally {
-                            ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, false, false);
+                            ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, cx, cz, false, false);
                         }
                         // 口径修正([[worldpainter_noise_mismatch]]):真实水面不一定在 seaLevel(WorldPainter 地图水面 Y=62,
                         // getSeaLevel()=63 那格是水面上方空气 → 死查必误判非水)。船看的是「真实表面那格是不是水」:

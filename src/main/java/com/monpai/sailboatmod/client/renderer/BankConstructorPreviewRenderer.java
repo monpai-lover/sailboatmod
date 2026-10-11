@@ -29,11 +29,11 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.level.ClipContext;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.RenderLevelStageEvent;
-import net.minecraftforge.client.event.RenderGuiOverlayEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import org.joml.Matrix4f;
 
 import java.util.ArrayList;
@@ -45,7 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Locale;
 
-@Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
+@EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.GAME)
 public final class BankConstructorPreviewRenderer {
     private static final long ANALYSIS_REFRESH_TICKS = 5L;
     private static final Map<String, BlueprintService.BlueprintPlacement> PLACEMENT_CACHE = new HashMap<>();
@@ -80,8 +80,8 @@ public final class BankConstructorPreviewRenderer {
         renderPendingProjection(event, mc, player, held, heldType);
 
         BlockHitResult hit = player.level().clip(new ClipContext(
-                player.getEyePosition(event.getPartialTick()),
-                player.getEyePosition(event.getPartialTick()).add(player.getViewVector(event.getPartialTick()).scale(5.0D)),
+                player.getEyePosition(event.getPartialTick().getGameTimeDeltaPartialTick(true)),
+                player.getEyePosition(event.getPartialTick().getGameTimeDeltaPartialTick(true)).add(player.getViewVector(event.getPartialTick().getGameTimeDeltaPartialTick(true)).scale(5.0D)),
                 ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
         if (hit.getType() != HitResult.Type.BLOCK) {
             previewCache = null;
@@ -147,7 +147,7 @@ public final class BankConstructorPreviewRenderer {
     }
 
     @SubscribeEvent
-    public static void onRenderOverlay(RenderGuiOverlayEvent.Post event) {
+    public static void onRenderOverlay(RenderGuiEvent.Post event) {
         PreviewSummary summary = currentPreview;
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) {
@@ -992,8 +992,8 @@ public final class BankConstructorPreviewRenderer {
     private static void line(VertexConsumer vc, Matrix4f matrix, org.joml.Vector3f normal,
                              float x1, float y1, float z1, float x2, float y2, float z2,
                              float r, float g, float b, float a) {
-        vc.vertex(matrix, x1, y1, z1).color(r, g, b, a).normal(normal.x(), normal.y(), normal.z()).endVertex();
-        vc.vertex(matrix, x2, y2, z2).color(r, g, b, a).normal(normal.x(), normal.y(), normal.z()).endVertex();
+        vc.addVertex(matrix, x1, y1, z1).setColor(r, g, b, a).setNormal(normal.x(), normal.y(), normal.z());
+        vc.addVertex(matrix, x2, y2, z2).setColor(r, g, b, a).setNormal(normal.x(), normal.y(), normal.z());
     }
 
     private static StructureType selectedType(Player player) {

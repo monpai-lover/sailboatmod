@@ -47,7 +47,7 @@ public final class OfflineChunkPalette {
     }
 
     private static List<Section> readSections(CompoundTag data) {
-        ListTag list = data.getList("sections", Tag.TAG_COMPOUND);
+        ListTag list = data.getList("sections", net.minecraft.nbt.Tag.TAG_COMPOUND);
         List<Section> sections = new ArrayList<>(list.size());
         for (int i = 0; i < list.size(); i++) {
             CompoundTag sectionTag = list.getCompound(i);
@@ -55,7 +55,7 @@ public final class OfflineChunkPalette {
                 continue;
             }
             CompoundTag blockStates = sectionTag.getCompound("block_states");
-            ListTag paletteTag = blockStates.getList("palette", Tag.TAG_COMPOUND);
+            ListTag paletteTag = blockStates.getList("palette", net.minecraft.nbt.Tag.TAG_COMPOUND);
             if (paletteTag.isEmpty()) {
                 continue;
             }

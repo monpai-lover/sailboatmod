@@ -9,7 +9,6 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncClaimHighlightsPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,7 +22,7 @@ public final class ClaimHighlightSyncService {
             return;
         }
         SyncClaimHighlightsPacket packet = buildPacket(player.getServer());
-        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), packet);
+        ModNetwork.CHANNEL.send(player, packet);
     }
 
     public static void syncAll(MinecraftServer server) {
@@ -32,7 +31,7 @@ public final class ClaimHighlightSyncService {
         }
         SyncClaimHighlightsPacket packet = buildPacket(server);
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), packet);
+            ModNetwork.CHANNEL.send(player, packet);
         }
     }
 

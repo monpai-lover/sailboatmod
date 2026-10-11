@@ -42,12 +42,12 @@ public class StructureBuilder {
         }
 
         try {
-            InputStream stream = StructureBuilder.class.getResourceAsStream("/data/sailboatmod/structures/" + structureType + ".nbt");
+            InputStream stream = StructureBuilder.class.getResourceAsStream("/data/sailboatmod/structure/" + structureType + ".nbt");
             if (stream == null) return null;
 
-            CompoundTag nbt = NbtIo.readCompressed(stream);
-            ListTag paletteList = nbt.getList("palette", 10);
-            ListTag blocksList = nbt.getList("blocks", 10);
+            CompoundTag nbt = NbtIo.readCompressed(stream, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+            ListTag paletteList = nbt.getList("palette", net.minecraft.nbt.Tag.TAG_COMPOUND);
+            ListTag blocksList = nbt.getList("blocks", net.minecraft.nbt.Tag.TAG_COMPOUND);
 
             // Parse palette
             BlockState[] palette = new BlockState[paletteList.size()];
@@ -59,7 +59,7 @@ public class StructureBuilder {
             List<BlockPlacement> placements = new ArrayList<>();
             for (int i = 0; i < blocksList.size(); i++) {
                 CompoundTag blockTag = blocksList.getCompound(i);
-                ListTag pos = blockTag.getList("pos", 3);
+                ListTag pos = blockTag.getList("pos", net.minecraft.nbt.Tag.TAG_INT);
                 int stateIdx = blockTag.getInt("state");
 
                 BlockState state = stateIdx < palette.length ? palette[stateIdx] : Blocks.AIR.defaultBlockState();
@@ -75,7 +75,7 @@ public class StructureBuilder {
 
     private static BlockState parseBlockState(CompoundTag paletteEntry) {
         String name = paletteEntry.getString("Name");
-        ResourceLocation loc = new ResourceLocation(name);
+        ResourceLocation loc = ResourceLocation.parse(name);
         Block block = BuiltInRegistries.BLOCK.get(loc);
         BlockState state = block.defaultBlockState();
 

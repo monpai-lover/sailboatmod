@@ -3,9 +3,9 @@ package com.monpai.sailboatmod.network.packet;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,11 +55,11 @@ public class SyncRoadConstructionProgressPacket {
     }
 
     public static void handle(SyncRoadConstructionProgressPacket msg, Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
+        ctx.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
         ctx.get().setPacketHandled(true);
     }
 
-    @net.minecraftforge.api.distmarker.OnlyIn(Dist.CLIENT)
+    @net.neoforged.api.distmarker.OnlyIn(Dist.CLIENT)
     private static void handleClient(SyncRoadConstructionProgressPacket msg) {
         List<RoadPlannerClientHooks.ProgressState> progress = msg.entries.stream()
                 .map(entry -> new RoadPlannerClientHooks.ProgressState(

@@ -44,19 +44,19 @@ public class BarracksBlockEntity extends BlockEntity {
         be.refreshFromTown();
     }
 
-    @Override protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    @Override protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         tag.putString("TownId", townId); tag.putString("TownName", townName);
         tag.putInt("SecondaryColor", secondaryColor);
     }
-    @Override public void load(CompoundTag tag) {
-        super.load(tag);
+    @Override public void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
         townId = tag.getString("TownId"); townName = tag.getString("TownName");
         secondaryColor = tag.contains("SecondaryColor") ? tag.getInt("SecondaryColor") : 0x8B0000;
     }
-    @Override public CompoundTag getUpdateTag() { return saveWithoutMetadata(); }
+    @Override public CompoundTag getUpdateTag(net.minecraft.core.HolderLookup.Provider registries) { return saveWithoutMetadata(registries); }
     @Nullable @Override public ClientboundBlockEntityDataPacket getUpdatePacket() { return ClientboundBlockEntityDataPacket.create(this); }
-    @Override public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt) { if (pkt.getTag() != null) load(pkt.getTag()); }
+    @Override public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt, net.minecraft.core.HolderLookup.Provider registries) { if (pkt.getTag() != null) loadWithComponents(pkt.getTag(), registries); }
 
     private void updateState(String tid, String tname, int color) {
         boolean changed = !tid.equals(townId) || !tname.equals(townName) || color != secondaryColor;

@@ -24,7 +24,7 @@ public final class RoadSurfaceHeuristics {
                 || state.is(BlockTags.SAPLINGS)
                 || state.is(BlockTags.TALL_FLOWERS)
                 || state.is(Blocks.TALL_GRASS)
-                || state.is(Blocks.GRASS)
+                || state.is(Blocks.SHORT_GRASS)
                 || state.is(Blocks.FERN)
                 || state.is(Blocks.LARGE_FERN)
                 || state.is(Blocks.VINE)
@@ -75,7 +75,7 @@ public final class RoadSurfaceHeuristics {
         }
         return state.is(Blocks.SNOW)
                 || state.is(Blocks.SNOW_BLOCK)
-                || state.is(Blocks.GRASS)
+                || state.is(Blocks.SHORT_GRASS)
                 || state.is(Blocks.FERN)
                 || state.is(Blocks.TALL_GRASS)
                 || state.is(Blocks.LARGE_FERN)

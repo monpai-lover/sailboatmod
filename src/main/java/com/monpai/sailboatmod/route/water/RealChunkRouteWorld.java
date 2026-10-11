@@ -11,8 +11,8 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
-import net.minecraft.world.level.chunk.ChunkStatus;
-import net.minecraftforge.common.world.ForgeChunkManager;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import com.monpai.sailboatmod.util.ModChunkLoading;
 import org.slf4j.Logger;
 
 import java.util.ArrayDeque;
@@ -105,7 +105,7 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
         try {
             for (int cx = cxLo; cx <= cxHi; cx++) {
                 for (int cz = czLo; cz <= czHi; cz++) {
-                    ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
+                    ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
                     forced.add(new int[]{cx, cz});
                     level.getChunk(cx, cz, ChunkStatus.FULL, true); // 同步加载到 FULL(阻塞直到 ready)
                 }
@@ -127,7 +127,7 @@ public final class RealChunkRouteWorld implements WaterRouteWorld, DockBerthReso
             }
         } finally {
             for (int[] c : forced) {
-                ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, c[0], c[1], false, false);
+                ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, c[0], c[1], false, false);
             }
         }
         int[][] dist = computeOffshoreDist(water, size);

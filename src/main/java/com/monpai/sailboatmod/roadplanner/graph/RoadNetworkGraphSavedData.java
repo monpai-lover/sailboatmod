@@ -26,16 +26,13 @@ public class RoadNetworkGraphSavedData extends SavedData {
             return new RoadNetworkGraphSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(
-                RoadNetworkGraphSavedData::load,
-                RoadNetworkGraphSavedData::new,
-                DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(RoadNetworkGraphSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> RoadNetworkGraphSavedData.load(tag))), DATA_NAME);
     }
 
     public static RoadNetworkGraphSavedData load(CompoundTag tag) {
         RoadNetworkGraphSavedData data = new RoadNetworkGraphSavedData();
 
-        ListTag nodeTag = tag.getList("Nodes", Tag.TAG_COMPOUND);
+        ListTag nodeTag = tag.getList("Nodes", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : nodeTag) {
             if (raw instanceof CompoundTag compound) {
                 RoadGraphNodeRecord node = RoadGraphNodeRecord.load(compound);
@@ -43,7 +40,7 @@ public class RoadNetworkGraphSavedData extends SavedData {
             }
         }
 
-        ListTag edgeTag = tag.getList("Edges", Tag.TAG_COMPOUND);
+        ListTag edgeTag = tag.getList("Edges", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : edgeTag) {
             if (raw instanceof CompoundTag compound) {
                 RoadGraphEdgeRecord edge = RoadGraphEdgeRecord.load(compound);
@@ -56,6 +53,10 @@ public class RoadNetworkGraphSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag nodeTag = new ListTag();
         for (RoadGraphNodeRecord node : nodes.values()) {

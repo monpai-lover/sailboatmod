@@ -53,7 +53,7 @@ public class RoadPlannerTargetSelectionScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(guiGraphics);
+        renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         int left = (this.width - SCREEN_W) / 2;
         int top = (this.height - SCREEN_H) / 2;
         guiGraphics.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xD1141920);
@@ -87,7 +87,7 @@ public class RoadPlannerTargetSelectionScreen extends Screen {
                         left + 18, rowY + 6, 0xFFE5EEF5);
             }
         }
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
     }
 
     @Override
@@ -110,12 +110,12 @@ public class RoadPlannerTargetSelectionScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         int left = (this.width - SCREEN_W) / 2;
         int top = (this.height - SCREEN_H) / 2;
         int listTop = top + 48;
         if (mouseX < left + 14 || mouseX >= left + SCREEN_W - 14 || mouseY < listTop || mouseY >= listTop + VISIBLE_ROWS * ROW_H) {
-            return super.mouseScrolled(mouseX, mouseY, delta);
+            return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
         }
         scroll = Mth.clamp(scroll - (int) delta, 0, Math.max(0, targets.size() - VISIBLE_ROWS));
         return true;

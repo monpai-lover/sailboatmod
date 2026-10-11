@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.monpai.sailboatmod.market.map.MarketWebMapDtos;
+
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -11,7 +13,7 @@ class ShipmentTraceDtoFieldsTest {
     @Test
     void shipmentTraceDtoHasCurrentAndManual() throws Exception {
         String dtos = Files.readString(
-                Path.of("src/main/java/com/monpai/sailboatmod/market/web/map/MarketWebMapDtos.java"));
+                Path.of("src/main/java/com/monpai/sailboatmod/market/map/MarketWebMapDtos.java"));
         assertTrue(dtos.contains("Point current"),
                 "ShipmentTrace should carry the live current position");
         assertTrue(dtos.contains("boolean manual"),

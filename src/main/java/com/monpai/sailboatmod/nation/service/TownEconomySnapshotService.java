@@ -10,7 +10,7 @@ import com.monpai.sailboatmod.resident.model.Profession;
 import com.monpai.sailboatmod.resident.model.ResidentRecord;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
@@ -137,7 +137,7 @@ public final class TownEconomySnapshotService {
     private static String displayCommodity(String commodityKey) {
         ResourceLocation key = ResourceLocation.tryParse(commodityKey == null ? "" : commodityKey.trim());
         if (key != null) {
-            Item item = ForgeRegistries.ITEMS.getValue(key);
+            Item item = BuiltInRegistries.ITEM.get(key);
             if (item != null) {
                 return item.getDefaultInstance().getHoverName().getString();
             }

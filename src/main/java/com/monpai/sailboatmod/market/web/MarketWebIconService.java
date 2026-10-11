@@ -6,8 +6,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraftforge.fml.ModList;
-import net.minecraftforge.forgespi.language.IModFileInfo;
+import net.neoforged.fml.ModList;
+import net.neoforged.neoforgespi.language.IModFileInfo;
 import org.slf4j.Logger;
 
 import javax.imageio.ImageIO;
@@ -42,7 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
 final class MarketWebIconService {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final int ICON_SIZE = 64;
-    private static final String MINECRAFT_ASSET_BASE_URL = "https://assets.mcasset.cloud/1.20.1/";
+    private static final String MINECRAFT_ASSET_BASE_URL = "https://assets.mcasset.cloud/1.21.1/";
     private static final List<String> FLAT_KEYS = List.of("layer0", "layer1", "particle");
     private static final List<String> TOP_KEYS = List.of("top", "up", "end", "all", "particle", "bottom", "side", "front", "north");
     private static final List<String> LEFT_KEYS = List.of("front", "north", "south", "side", "all", "particle", "end");
@@ -800,7 +800,7 @@ final class MarketWebIconService {
             return null;
         }
         List<Path> indexFiles = new ArrayList<>();
-        indexFiles.add(indexes.resolve("1.20.1.json"));
+        indexFiles.add(indexes.resolve("1.21.1.json"));
         indexFiles.add(indexes.resolve("1.20.json"));
         try (java.util.stream.Stream<Path> discovered = Files.list(indexes)) {
             discovered

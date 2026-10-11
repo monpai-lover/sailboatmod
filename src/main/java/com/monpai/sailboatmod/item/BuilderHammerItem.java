@@ -39,7 +39,7 @@ public class BuilderHammerItem extends Item {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
+    public void appendHoverText(ItemStack stack, net.minecraft.world.item.Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("item.sailboatmod.builder_hammer.tip.use"));
         tooltip.add(Component.translatable("item.sailboatmod.builder_hammer.tip.cost"));
     }

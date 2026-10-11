@@ -671,7 +671,7 @@ class RoadPlannerBuildControlServiceTest {
         try {
             TestServerLevel level = allocate(TestServerLevel.class);
             level.dimensionKey = Level.OVERWORLD;
-            level.dataStorage = new DimensionDataStorage(Files.createTempDirectory("roadplanner-build-control-test").toFile(), null);
+            level.dataStorage = new DimensionDataStorage(Files.createTempDirectory("roadplanner-build-control-test").toFile(), null, level.registryAccess());
             level.registryAccess = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
             TestMinecraftServer server = allocate(TestMinecraftServer.class);
             setField(MinecraftServer.class, server, "levels", new LinkedHashMap<>(Map.of(Level.OVERWORLD, level)));
@@ -750,6 +750,17 @@ class RoadPlannerBuildControlServiceTest {
     private static final class TestMinecraftServer extends MinecraftServer {
         private TestMinecraftServer() {
             super(null, null, null, null, null, null, null, null);
+        }
+
+        @Override
+        protected net.minecraft.util.debugchart.SampleLogger getTickTimeLogger() {
+            return new net.minecraft.util.debugchart.LocalSampleLogger(
+                    net.minecraft.util.debugchart.TpsDebugDimensions.values().length);
+        }
+
+        @Override
+        public boolean isTickTimeLoggingEnabled() {
+            return false;
         }
 
         @Override

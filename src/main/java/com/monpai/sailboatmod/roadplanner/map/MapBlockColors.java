@@ -457,7 +457,7 @@ public final class MapBlockColors {
     }
 
     private static String blockKey(BlockState state) {
-        var registryName = net.minecraftforge.registries.ForgeRegistries.BLOCKS.getKey(state.getBlock());
+        var registryName = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock());
         return registryName == null ? null : registryName.toString();
     }
 }

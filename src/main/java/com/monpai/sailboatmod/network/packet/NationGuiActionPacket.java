@@ -18,8 +18,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 import org.slf4j.Logger;
 
 import java.util.UUID;
@@ -178,7 +177,7 @@ public class NationGuiActionPacket {
                                 com.monpai.sailboatmod.nation.service.NationTradeService.buildTradeScreenData(player, packet.text);
                         LOGGER.info("[NationTradeUI] server built data ourNation={} targetNation={} canManageTreasury={}",
                                 tradeData.ourNationId(), tradeData.targetNationId(), tradeData.canManageTreasury());
-                        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTradeScreenPacket(tradeData));
+                        ModNetwork.CHANNEL.send(player, new OpenTradeScreenPacket(tradeData));
                     } catch (Exception e) {
                         LOGGER.error("Failed to open trade screen for target={}", packet.text, e);
                     }
@@ -199,7 +198,7 @@ public class NationGuiActionPacket {
 
             if (shouldRefreshNationOverviewAfterAction(packet.action)) {
                 NationOverviewData data = NationOverviewService.buildFor(player);
-                ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
+                ModNetwork.CHANNEL.send(player, new OpenNationScreenPacket(data));
             }
         });
         context.setPacketHandled(true);

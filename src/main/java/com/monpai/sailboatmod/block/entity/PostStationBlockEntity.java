@@ -129,8 +129,8 @@ public class PostStationBlockEntity extends DockBlockEntity {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         tag.putInt("SelectedDestinationIndex", selectedDestinationIndex);
         tag.putInt("SelectedVehicleIndex", selectedVehicleIndex);
         tag.putBoolean("AutoReturnOnDispatch", autoReturnOnDispatch);
@@ -138,8 +138,8 @@ public class PostStationBlockEntity extends DockBlockEntity {
     }
 
     @Override
-    public void load(CompoundTag tag) {
-        super.load(tag);
+    public void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
         selectedDestinationIndex = Math.max(0, tag.getInt("SelectedDestinationIndex"));
         selectedVehicleIndex = Math.max(0, tag.getInt("SelectedVehicleIndex"));
         autoReturnOnDispatch = !tag.contains("AutoReturnOnDispatch") || tag.getBoolean("AutoReturnOnDispatch");

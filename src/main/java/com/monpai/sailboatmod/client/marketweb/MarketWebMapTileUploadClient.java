@@ -1,6 +1,6 @@
 package com.monpai.sailboatmod.client.marketweb;
 
-import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.marketweb.MarketWebMapTileUploadPacket;

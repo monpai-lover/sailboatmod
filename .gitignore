@@ -21,6 +21,12 @@ build
 eclipse
 run
 run-data
+run-neoforge
+/logs/
+/config/
+build_baseline.log
+artifacts/*.zip
+artifacts/*.zip.sha256
 .worktrees
 marketweb-minecraft-assets
 src/generated/marketweb-minecraft-assets

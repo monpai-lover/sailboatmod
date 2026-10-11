@@ -4,7 +4,7 @@ import com.monpai.sailboatmod.entity.CarriageDriveInput;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 

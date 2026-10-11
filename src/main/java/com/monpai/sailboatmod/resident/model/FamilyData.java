@@ -72,7 +72,7 @@ public class FamilyData {
 
     private static void loadStringList(CompoundTag tag, String key, List<String> out) {
         if (tag.contains(key)) {
-            ListTag list = tag.getList(key, Tag.TAG_STRING);
+            ListTag list = tag.getList(key, net.minecraft.nbt.Tag.TAG_STRING);
             for (int i = 0; i < list.size(); i++) out.add(list.getString(i));
         }
     }

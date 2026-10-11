@@ -1,48 +1,48 @@
 package com.monpai.sailboatmod;
 
-import net.minecraftforge.common.ForgeConfigSpec;
+import net.neoforged.neoforge.common.ModConfigSpec;
 
 public final class ModConfig {
-    public static final ForgeConfigSpec COMMON_SPEC;
-    public static final ForgeConfigSpec.IntValue CLAIM_PREVIEW_RADIUS;
-    public static final ForgeConfigSpec.BooleanValue MARKET_SQLITE_ENABLED;
-    public static final ForgeConfigSpec.ConfigValue<String> MARKET_SQLITE_FILE_NAME;
-    public static final ForgeConfigSpec.BooleanValue MARKET_WEB_ENABLED;
-    public static final ForgeConfigSpec.ConfigValue<String> MARKET_WEB_BIND_HOST;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_PORT;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES;
-    public static final ForgeConfigSpec.BooleanValue MARKET_WEB_DEV_MODE;
-    public static final ForgeConfigSpec.ConfigValue<String> MARKET_WEB_DEV_ROOT;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_RENDER_THREADS;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_CACHE_SIZE;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_MAX_ACTIVE_SNAPSHOT_REQUESTS;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_MAX_CHUNKS_PER_INTERVAL;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_PARTIAL_REGION_FLUSH_CHUNKS;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_MAX_TRACKED_REGION_STATES;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_MAX_DIRTY_CHUNKS;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_DIRTY_REGION_CHUNKS_PER_INTERVAL;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_PROGRESS_SAVE_INTERVAL_CHUNKS;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_IMAGE_IO_BACKLOG_WARNING_THRESHOLD;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_TASKS_PER_TICK;
-    public static final ForgeConfigSpec.IntValue MARKET_WEB_MAP_SAME_TILE_BURST_LIMIT;
-    public static final ForgeConfigSpec.BooleanValue MARKET_WEB_MAP_BIOME_COLORS_ENABLED;
-    public static final ForgeConfigSpec.BooleanValue MARKET_WEB_MAP_BLACK_TILE_AUTO_REPAIR_ENABLED;
-    public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES;
-    public static final ForgeConfigSpec.IntValue MARKET_ANALYTICS_RETENTION_DAYS;
-    public static final ForgeConfigSpec.BooleanValue BANK_PERSONAL_LOANS_ENABLED;
-    public static final ForgeConfigSpec.BooleanValue BANK_NATION_LOANS_ENABLED;
-    public static final ForgeConfigSpec.IntValue BANK_PERSONAL_LOAN_MAX;
-    public static final ForgeConfigSpec.IntValue BANK_NATION_LOAN_MAX;
-    public static final ForgeConfigSpec.IntValue BANK_LOAN_MIN;
-    public static final ForgeConfigSpec.DoubleValue BANK_PERSONAL_COLLATERAL_RATIO;
-    public static final ForgeConfigSpec.DoubleValue BANK_NATION_COLLATERAL_RATIO;
-    public static final ForgeConfigSpec.DoubleValue BANK_LOAN_DAILY_INTEREST_RATE;
-    public static final ForgeConfigSpec.IntValue BANK_LOAN_MIN_DAILY_INTEREST;
-    public static final ForgeConfigSpec.ConfigValue<String> CURRENCY_STANDARD;
+    public static final ModConfigSpec COMMON_SPEC;
+    public static final ModConfigSpec.IntValue CLAIM_PREVIEW_RADIUS;
+    public static final ModConfigSpec.BooleanValue MARKET_SQLITE_ENABLED;
+    public static final ModConfigSpec.ConfigValue<String> MARKET_SQLITE_FILE_NAME;
+    public static final ModConfigSpec.BooleanValue MARKET_WEB_ENABLED;
+    public static final ModConfigSpec.ConfigValue<String> MARKET_WEB_BIND_HOST;
+    public static final ModConfigSpec.IntValue MARKET_WEB_PORT;
+    public static final ModConfigSpec.IntValue MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES;
+    public static final ModConfigSpec.BooleanValue MARKET_WEB_DEV_MODE;
+    public static final ModConfigSpec.ConfigValue<String> MARKET_WEB_DEV_ROOT;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_RENDER_THREADS;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_CACHE_SIZE;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_MAX_ACTIVE_SNAPSHOT_REQUESTS;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_MAX_CHUNKS_PER_INTERVAL;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_BACKGROUND_INTERVAL_TICKS;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_PARTIAL_REGION_FLUSH_CHUNKS;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_MAX_TRACKED_REGION_STATES;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_MAX_DIRTY_CHUNKS;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_DIRTY_REGION_CHUNKS_PER_INTERVAL;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_PROGRESS_SAVE_INTERVAL_CHUNKS;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_IMAGE_IO_BACKLOG_WARNING_THRESHOLD;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_TASKS_PER_TICK;
+    public static final ModConfigSpec.IntValue MARKET_WEB_MAP_SAME_TILE_BURST_LIMIT;
+    public static final ModConfigSpec.BooleanValue MARKET_WEB_MAP_BIOME_COLORS_ENABLED;
+    public static final ModConfigSpec.BooleanValue MARKET_WEB_MAP_BLACK_TILE_AUTO_REPAIR_ENABLED;
+    public static final ModConfigSpec.IntValue MARKET_ANALYTICS_SNAPSHOT_INTERVAL_MINUTES;
+    public static final ModConfigSpec.IntValue MARKET_ANALYTICS_RETENTION_DAYS;
+    public static final ModConfigSpec.BooleanValue BANK_PERSONAL_LOANS_ENABLED;
+    public static final ModConfigSpec.BooleanValue BANK_NATION_LOANS_ENABLED;
+    public static final ModConfigSpec.IntValue BANK_PERSONAL_LOAN_MAX;
+    public static final ModConfigSpec.IntValue BANK_NATION_LOAN_MAX;
+    public static final ModConfigSpec.IntValue BANK_LOAN_MIN;
+    public static final ModConfigSpec.DoubleValue BANK_PERSONAL_COLLATERAL_RATIO;
+    public static final ModConfigSpec.DoubleValue BANK_NATION_COLLATERAL_RATIO;
+    public static final ModConfigSpec.DoubleValue BANK_LOAN_DAILY_INTEREST_RATE;
+    public static final ModConfigSpec.IntValue BANK_LOAN_MIN_DAILY_INTEREST;
+    public static final ModConfigSpec.ConfigValue<String> CURRENCY_STANDARD;
 
     static {
-        ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
+        ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
         builder.comment("Nation & Town Settings").push("nation");
         CLAIM_PREVIEW_RADIUS = builder
                 .comment("Claim map visualization radius in chunks (default 20, range 5-60)")

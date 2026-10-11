@@ -9,14 +9,14 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.RenderGuiOverlayEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import java.util.Locale;
 
-@Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
+@EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.GAME)
 public final class SailboatSpeedHud {
     private static final double BLOCKS_PER_TICK_TO_KNOTS = 38.87689D;
     private static final double METERS_PER_SECOND_TO_KNOTS = 1.9438445D;
@@ -29,10 +29,7 @@ public final class SailboatSpeedHud {
     private static String speedUnit = "kn";       // 当前显示单位(帆船 kn / 马车 km/h)
 
     @SubscribeEvent
-    public static void onClientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) {
-            return;
-        }
+    public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
         if (player == null || !(player.getVehicle() instanceof TransportEntity transport)) {
@@ -73,7 +70,7 @@ public final class SailboatSpeedHud {
     }
 
     @SubscribeEvent
-    public static void onRenderOverlay(RenderGuiOverlayEvent.Post event) {
+    public static void onRenderOverlay(RenderGuiEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
         if (player == null || !(player.getVehicle() instanceof TransportEntity transport)) {
@@ -88,7 +85,7 @@ public final class SailboatSpeedHud {
                 : Component.empty();
 
         int x = 10;
-        int y = event.getWindow().getGuiScaledHeight() - 40;
+        int y = minecraft.getWindow().getGuiScaledHeight() - 40;
         event.getGuiGraphics().drawString(minecraft.font, speedText, x, y, 0xFFFFFF, true);
         event.getGuiGraphics().drawString(minecraft.font, gearText, x, y + 12, 0xFFD27F, true);
     }

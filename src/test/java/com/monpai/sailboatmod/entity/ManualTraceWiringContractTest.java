@@ -22,8 +22,8 @@ class ManualTraceWiringContractTest {
     @Test
     void sailboatSyncsLivePositionPeriodically() throws Exception {
         String src = sailboat();
-        assertTrue(src.contains("updateLivePosition("),
-                "sailboat tick should periodically push its live position to the trace");
+        assertTrue(src.contains("updateLivePositionProgressAndSpeed("),
+                "sailboat tick should periodically push position, progress and speed to the trace");
         assertTrue(src.contains("TRACE_LIVE_SYNC_INTERVAL_TICKS"),
                 "live sync should use a named interval constant (2s = 40 ticks)");
     }
@@ -40,8 +40,8 @@ class ManualTraceWiringContractTest {
         String src = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/CarriageEntity.java"));
         assertTrue(src.contains("createOrUpdateManualTrace("),
                 "carriage should create a manual trace when manually dispatched");
-        assertTrue(src.contains("updateLivePosition("),
-                "carriage should sync live position to the trace");
+        assertTrue(src.contains("updateLivePositionProgressAndSpeed("),
+                "carriage should sync position, progress and speed to the trace");
         assertTrue(src.contains("ShippingTraceService.removeTrace("),
                 "carriage should clear its manual trace on stop");
     }

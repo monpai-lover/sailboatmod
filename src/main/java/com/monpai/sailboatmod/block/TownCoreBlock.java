@@ -28,12 +28,17 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.network.PacketDistributor;
-import net.minecraftforge.fml.DistExecutor;
+import net.neoforged.api.distmarker.Dist;
 import org.jetbrains.annotations.Nullable;
 
 public class TownCoreBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<TownCoreBlock> CODEC = simpleCodec(TownCoreBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public TownCoreBlock(Properties properties) {
         super(properties);
     }
@@ -79,10 +84,10 @@ public class TownCoreBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide) {
             if (!player.isShiftKeyDown()) {
-                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> com.monpai.sailboatmod.client.TownClientHooks.openCachedOrEmpty());
+                com.monpai.sailboatmod.client.TownClientHooks.openCachedOrEmpty();
             }
             return InteractionResult.SUCCESS;
         }
@@ -105,7 +110,7 @@ public class TownCoreBlock extends BaseEntityBlock {
             return InteractionResult.CONSUME;
         }
         TownOverviewData data = TownOverviewService.buildFor(serverPlayer, town.townId());
-        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> serverPlayer), new OpenTownScreenPacket(data));
+        ModNetwork.CHANNEL.send(serverPlayer, new OpenTownScreenPacket(data));
         return InteractionResult.CONSUME;
     }
 
@@ -118,7 +123,7 @@ public class TownCoreBlock extends BaseEntityBlock {
     }
 
     @Override
-    public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+    public boolean isPathfindable(BlockState state, net.minecraft.world.level.pathfinder.PathComputationType type) {
         return false;
     }
 

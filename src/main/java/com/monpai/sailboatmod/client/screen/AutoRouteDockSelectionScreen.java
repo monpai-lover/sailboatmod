@@ -88,7 +88,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(g);
+        this.renderBackground(g, mouseX, mouseY, partialTick);
         int left = (this.width - SCREEN_W) / 2;
         int top = (this.height - SCREEN_H) / 2;
 
@@ -130,7 +130,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
                     left + 12, top + SCREEN_H - 78, 0xFF6FB7E0);
         }
 
-        super.render(g, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, g, mouseX, mouseY, partialTick);
     }
 
     @Override
@@ -151,7 +151,7 @@ public class AutoRouteDockSelectionScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         scroll = Mth.clamp(scroll - (int) delta, 0, Math.max(0, docks.size() - VISIBLE_ROWS));
         return true;
     }

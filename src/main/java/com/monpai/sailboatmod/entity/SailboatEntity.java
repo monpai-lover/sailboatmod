@@ -69,13 +69,12 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 import software.bernie.geckolib.animatable.GeoEntity;
-import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
-import software.bernie.geckolib.core.animation.AnimationController;
-import software.bernie.geckolib.core.animation.AnimatableManager;
-import software.bernie.geckolib.core.animation.RawAnimation;
+import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.animation.AnimationController;
+import software.bernie.geckolib.animation.AnimatableManager;
+import software.bernie.geckolib.animation.RawAnimation;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.time.Instant;
@@ -428,40 +427,35 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         this.noCulling = true;
     }
 
-    /**
-     * 用 Forge 的 spawn 包(NetworkHooks)替代原版 Boat 的 ClientboundAddEntityPacket。
-     * 帆船是 GeckoLib GeoEntity 且有十几个自定义 EntityDataAccessor(帆/挡位/自动驾驶/航线...);
-     * 原版包不带这些自定义数据,客户端建出的实体字段全是默认值、且 GeckoLib 实体首帧初始化更易出问题
-     * → 旁观玩家看不到(幽灵船)。CarriageEntity 早已这么做,帆船此前遗漏,本次补齐(止血心跳之外的彻底修复一环)。
-     */
+    /** NeoForge pairs this vanilla spawn packet with tracked entity data and custom spawn payloads. */
     @Override
-    public Packet<ClientGamePacketListener> getAddEntityPacket() {
-        return NetworkHooks.getEntitySpawningPacket(this);
+    public Packet<ClientGamePacketListener> getAddEntityPacket(net.minecraft.server.level.ServerEntity serverEntity) {
+        return super.getAddEntityPacket(serverEntity);
     }
 
     @Override
-    protected void defineSynchedData() {
-        super.defineSynchedData();
-        this.entityData.define(DATA_SAIL_DEPLOYED, true);
-        this.entityData.define(DATA_HANDLING_PRESET, HandlingPreset.BALANCED.id);
-        this.entityData.define(DATA_ENGINE_GEAR, EngineGear.STOP.id);
-        this.entityData.define(DATA_AUTOPILOT_ACTIVE, false);
-        this.entityData.define(DATA_AUTOPILOT_PAUSED, false);
-        this.entityData.define(DATA_ROUTE_COUNT, 0);
-        this.entityData.define(DATA_ROUTE_INDEX, 0);
-        this.entityData.define(DATA_ROUTE_NAME, "-");
-        this.entityData.define(DATA_SEAT_0, -1);
-        this.entityData.define(DATA_SEAT_1, -1);
-        this.entityData.define(DATA_SEAT_2, -1);
-        this.entityData.define(DATA_SEAT_3, -1);
-        this.entityData.define(DATA_SEAT_4, -1);
-        this.entityData.define(DATA_RENTAL_PRICE, DEFAULT_RENTAL_PRICE);
-        this.entityData.define(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
-        this.entityData.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
-        this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
-        this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
-        this.entityData.define(DATA_CURRENT_SPEED, 0.0F);
-        this.entityData.define(DATA_OWNER_NAME, "");
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        super.defineSynchedData(builder);
+        builder.define(DATA_SAIL_DEPLOYED, true);
+        builder.define(DATA_HANDLING_PRESET, HandlingPreset.BALANCED.id);
+        builder.define(DATA_ENGINE_GEAR, EngineGear.STOP.id);
+        builder.define(DATA_AUTOPILOT_ACTIVE, false);
+        builder.define(DATA_AUTOPILOT_PAUSED, false);
+        builder.define(DATA_ROUTE_COUNT, 0);
+        builder.define(DATA_ROUTE_INDEX, 0);
+        builder.define(DATA_ROUTE_NAME, "-");
+        builder.define(DATA_SEAT_0, -1);
+        builder.define(DATA_SEAT_1, -1);
+        builder.define(DATA_SEAT_2, -1);
+        builder.define(DATA_SEAT_3, -1);
+        builder.define(DATA_SEAT_4, -1);
+        builder.define(DATA_RENTAL_PRICE, DEFAULT_RENTAL_PRICE);
+        builder.define(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
+        builder.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
+        builder.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
+        builder.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
+        builder.define(DATA_CURRENT_SPEED, 0.0F);
+        builder.define(DATA_OWNER_NAME, "");
     }
 
     @Override
@@ -1233,7 +1227,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     // 故覆写：手动 local-control 端清 0 步即时预测、autopilot 服务端权威时插值跟随。
 
     @Override
-    public void lerpTo(double x, double y, double z, float yRot, float xRot, int posRotationIncrements, boolean teleport) {
+    public void lerpTo(double x, double y, double z, float yRot, float xRot, int posRotationIncrements) {
         this.sailboatLerpX = x;
         this.sailboatLerpY = y;
         this.sailboatLerpZ = z;
@@ -1284,26 +1278,32 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!hasPassenger(passenger)) {
             return;
         }
-
-        int seatIndex = getSeatFor(passenger);
-        if (seatIndex < 0 || seatIndex >= PASSENGER_OFFSETS.length) {
-            seatIndex = Math.min(getPassengers().indexOf(passenger), PASSENGER_OFFSETS.length - 1);
-        }
-
-        Vec3 seat = PASSENGER_OFFSETS[seatIndex];
-        float yawRad = -getYRot() * ((float) Math.PI / 180F);
-        double sin = Math.sin(yawRad);
-        double cos = Math.cos(yawRad);
-
-        double x = getX() + seat.x * cos - seat.z * sin;
-        double y = getY() + getPassengersRidingOffset() + seat.y + passenger.getMyRidingOffset();
-        double z = getZ() + seat.x * sin + seat.z * cos;
-
-        moveFunction.accept(passenger, x, y, z);
+        Vec3 seatPosition = getPassengerRidingPosition(passenger);
+        Vec3 attachment = passenger.getVehicleAttachmentPoint(this);
+        moveFunction.accept(passenger, seatPosition.x - attachment.x,
+                seatPosition.y - attachment.y, seatPosition.z - attachment.z);
         passenger.setYBodyRot(getYRot());
     }
 
     @Override
+    public Vec3 getPassengerRidingPosition(Entity passenger) {
+        if (!hasPassenger(passenger)) {
+            return super.getPassengerRidingPosition(passenger);
+        }
+        int seatIndex = getSeatFor(passenger);
+        if (seatIndex < 0 || seatIndex >= PASSENGER_OFFSETS.length) {
+            seatIndex = Math.min(getPassengers().indexOf(passenger), PASSENGER_OFFSETS.length - 1);
+        }
+        Vec3 seat = PASSENGER_OFFSETS[seatIndex];
+        float yawRad = -getYRot() * ((float) Math.PI / 180F);
+        double sin = Math.sin(yawRad);
+        double cos = Math.cos(yawRad);
+        Vec3 legacySeatPosition = new Vec3(getX() + seat.x * cos - seat.z * sin,
+                getY() + getPassengersRidingOffset() + seat.y,
+                getZ() + seat.x * sin + seat.z * cos);
+        return PassengerSeatPosition.anchor(passenger, this, legacySeatPosition, getPassengersRidingOffset());
+    }
+
     public double getPassengersRidingOffset() {
         return 0.30D;
     }
@@ -1327,7 +1327,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     @Override
     protected void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
-        net.minecraft.world.ContainerHelper.saveAllItems(tag, inventory);
+        net.minecraft.world.ContainerHelper.saveAllItems(tag, inventory, registryAccess());
 
         ListTag seats = new ListTag();
         for (Map.Entry<UUID, Integer> entry : seatAssignments.entrySet()) {
@@ -1388,10 +1388,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     @Override
     protected void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
-        net.minecraft.world.ContainerHelper.loadAllItems(tag, inventory);
+        com.monpai.sailboatmod.compat.InventoryNbt.loadAllItems(tag, inventory, registryAccess());
 
         seatAssignments.clear();
-        ListTag seats = tag.getList("SeatAssignments", Tag.TAG_COMPOUND);
+        ListTag seats = tag.getList("SeatAssignments", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag seatTag : seats) {
             if (seatTag instanceof CompoundTag compound && compound.hasUUID("Player")) {
                 seatAssignments.put(compound.getUUID("Player"), compound.getInt("Seat"));
@@ -1411,7 +1411,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         selectedRouteIndex = routeCatalog.isEmpty() ? 0 : Mth.clamp(tag.getInt("SelectedRouteIndex"), 0, routeCatalog.size() - 1);
         routeDockPos = tag.contains("RouteDockPos") ? BlockPos.of(tag.getLong("RouteDockPos")) : null;
         autopilotRoute.clear();
-        ListTag routeTag = tag.getList("AutopilotRoute", Tag.TAG_COMPOUND);
+        ListTag routeTag = tag.getList("AutopilotRoute", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag entry : routeTag) {
             if (entry instanceof CompoundTag waypointTag) {
                 autopilotRoute.add(new Vec3(
@@ -1437,7 +1437,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotAllowNonOrderAutoUnload = tag.getBoolean("AutopilotAllowNonOrderAutoUnload");
         autopilotReturnTrip = tag.getBoolean("AutopilotReturnTrip");
         autopilotShipmentManifest.clear();
-        ListTag manifestTag = tag.getList("AutopilotShipmentManifest", Tag.TAG_COMPOUND);
+        ListTag manifestTag = tag.getList("AutopilotShipmentManifest", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : manifestTag) {
             if (raw instanceof CompoundTag compound) {
                 autopilotShipmentManifest.add(ShipmentManifestEntry.load(compound));
@@ -1525,7 +1525,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         controllers.add(new AnimationController<>(this, "sail_state", 0, state -> {
             boolean deployed = isSailDeployed();
             if (deployed == sailAnimDeployedState && sailAnimInitialized) {
-                return software.bernie.geckolib.core.object.PlayState.CONTINUE;
+                return software.bernie.geckolib.animation.PlayState.CONTINUE;
             }
             sailAnimDeployedState = deployed;
             sailAnimInitialized = true;
@@ -1545,7 +1545,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
     public void openStorage(Player player) {
         if (!level().isClientSide && player instanceof ServerPlayer serverPlayer) {
-            NetworkHooks.openScreen(serverPlayer, this);
+            serverPlayer.openMenu(this);
         }
     }
 
@@ -3723,7 +3723,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             if (slot.isEmpty()) {
                 continue;
             }
-            if (!ItemStack.isSameItemSameTags(slot, remaining)) {
+            if (!ItemStack.isSameItemSameComponents(slot, remaining)) {
                 continue;
             }
             int limit = Math.min(slot.getMaxStackSize(), container.getMaxStackSize());
@@ -4083,7 +4083,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     /**
-     * 强制/取消加载区块。用 ForgeChunkManager.forceChunk(ticking=true) 申请 ENTITY_TICKING 票据。
+     * 强制/取消加载区块。用 ModChunkLoading.forceChunk(ticking=true) 申请 ENTITY_TICKING 票据。
      * 必须用 ticking 票据：vanilla setChunkForced 只给 FORCED 票据(level 31)，玩家不在附近时
      * ChunkMap 不为区块内实体建 EntityTrackerEntry —— 实体在服务端 tick 却从不向客户端发 spawn 包，
      * 导致载具远行返回后「看不见但有音效」。ENTITY_TICKING 保证实体被客户端追踪可见，
@@ -4094,7 +4094,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         int chunkZ = ChunkPos.getZ(chunkKey);
         // 2026-06 改 entity-owner 票据(原 BlockPos owner):entity 票据持久化且按 UUID 归类,配合 AutopilotChunkLoader
         // 回调,退档重进时 Forge 据持久化票据重新强加载载具区块→实体回来,修「退档消失」。
-        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+        com.monpai.sailboatmod.util.ModChunkLoading.forceChunk(
                 serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
                 this, chunkX, chunkZ, add, true);
     }

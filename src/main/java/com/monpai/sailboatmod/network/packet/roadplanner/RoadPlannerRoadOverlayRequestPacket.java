@@ -6,8 +6,7 @@ import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.UUID;
@@ -80,14 +79,12 @@ public record RoadPlannerRoadOverlayRequestPacket(UUID sessionId,
                         overlay.createdAt(),
                         overlay.legacyMetadata()))
                 .toList();
-        ModNetwork.CHANNEL.sendTo(new RoadPlannerRoadOverlaySyncPacket(
+        ModNetwork.CHANNEL.send(sender, new RoadPlannerRoadOverlaySyncPacket(
                         packet.sessionId(),
                         packet.regionCenter(),
                         packet.regionSize(),
                         packet.scope(),
-                        entries),
-                sender.connection.connection,
-                NetworkDirection.PLAY_TO_CLIENT);
+                        entries));
     }
 
     public static int normalizeRegionSize(int requestedSize) {

@@ -56,14 +56,6 @@ public class NationMenuScreen extends Screen {
     }
 
     @Override
-    public void tick() {
-        super.tick();
-        if (this.flagPathInput != null) {
-            this.flagPathInput.tick();
-        }
-    }
-
-    @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.flagPathInput)) {
             return true;
@@ -77,7 +69,6 @@ public class NationMenuScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
         int centerX = this.width / 2;

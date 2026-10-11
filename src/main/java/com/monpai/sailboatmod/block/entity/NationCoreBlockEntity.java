@@ -110,8 +110,8 @@ public class NationCoreBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    protected void saveAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         tag.putString("NationId", nationId == null ? "" : nationId);
         tag.putString("NationName", nationName == null ? "" : nationName);
         tag.putInt("PrimaryColor", primaryColor);
@@ -125,8 +125,8 @@ public class NationCoreBlockEntity extends BlockEntity {
     }
 
     @Override
-    public void load(CompoundTag tag) {
-        super.load(tag);
+    public void loadAdditional(CompoundTag tag, net.minecraft.core.HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
         nationId = tag.getString("NationId");
         nationName = tag.getString("NationName");
         primaryColor = tag.contains("PrimaryColor") ? tag.getInt("PrimaryColor") : 0xAA3333;
@@ -140,8 +140,8 @@ public class NationCoreBlockEntity extends BlockEntity {
     }
 
     @Override
-    public CompoundTag getUpdateTag() {
-        return saveWithoutMetadata();
+    public CompoundTag getUpdateTag(net.minecraft.core.HolderLookup.Provider registries) {
+        return saveWithoutMetadata(registries);
     }
 
     @Nullable
@@ -151,9 +151,9 @@ public class NationCoreBlockEntity extends BlockEntity {
     }
 
     @Override
-    public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt) {
+    public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt, net.minecraft.core.HolderLookup.Provider registries) {
         if (pkt.getTag() != null) {
-            load(pkt.getTag());
+            loadWithComponents(pkt.getTag(), registries);
         }
     }
 

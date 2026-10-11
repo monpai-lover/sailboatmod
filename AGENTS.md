@@ -5,23 +5,23 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Build Commands
 
 ```bash
-./gradlew build              # Full build (compile + reobfuscate + jarJar)
+./gradlew build              # Compile, test and package the NeoForge main mod
 ./gradlew compileJava        # Compile only, no jar packaging
 ./gradlew runClient          # Launch Minecraft client with mod loaded
 ./gradlew runServer          # Launch dedicated server with mod loaded
-./gradlew genIntellijRuns    # Generate IntelliJ run configurations
-./gradlew genEclipseRuns     # Generate Eclipse run configurations
+./gradlew releaseMod         # Main mod plus server market web addon
+./gradlew createMinecraftArtifacts # Download and prepare mapped target sources
 ```
 
-Output JARs land in `build/libs/`. The `-reobf.jar` variant is the production artifact (SRG-remapped). The `-all.jar` includes bundled dependencies (JarJar).
+Output JARs land in `build/libs/`. The `sailboatmod-<version>-neoforge-1.21.1.jar` is the production artifact and includes library dependencies via JarJar. GeckoLib 4.9.3 is an external mod dependency. `releaseMod` also builds the optional `sailboatmod-marketweb-<version>-neoforge-1.21.1.jar`.
 
 A `fixIndex` property can be passed to append a `-fix_N` suffix: `./gradlew build -PfixIndex=1`
 
-No test suite or linter is configured.
+JUnit tests are configured; run `./gradlew test`. No separate linter is configured.
 
 ## Project Overview
 
-Minecraft Forge 1.20.1 mod (Java 17) implementing a multiplayer sailing/nation system. Key dependencies: GeckoLib (entity animation), Vault (optional economy), BlueMap (optional map rendering).
+Minecraft NeoForge 1.21.1 mod (Java 21) implementing a multiplayer sailing/nation system. Key dependencies: GeckoLib (entity animation), Vault (optional economy), BlueMap (optional map rendering).
 
 **Mod ID:** `sailboatmod`
 **Package:** `com.monpai.sailboatmod`
@@ -30,15 +30,16 @@ Minecraft Forge 1.20.1 mod (Java 17) implementing a multiplayer sailing/nation s
 ## Architecture
 
 ### Registry Layer (`registry/`)
-All content uses Forge's `DeferredRegister` pattern. Six registries initialized in `SailboatMod` constructor:
-- `ModEntities` — single entity type (`SAILBOAT`)
+All content uses NeoForge's `DeferredRegister` pattern. Seven registries initialized in `SailboatMod` constructor:
+- `ModEntities` — sailboat, carriage, resident and soldier entity types
 - `ModBlocks` / `ModBlockEntities` — dock, market, town core, nation core, flag variants
 - `ModItems` — sailboat spawn item, route book, block items
 - `ModMenus` — dock and market container menus
 - `ModCreativeTabs` — single creative tab
+- `ModSounds` — sound events
 
 ### Network (`network/`)
-`ModNetwork` registers ~31 packets on a `SimpleChannel` (protocol version "1") with sequential IDs. Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Packet names are self-descriptive (e.g., `ToggleSailPacket`, `CreateMarketListingPacket`).
+`ModNetwork` registers 106 directional custom payloads through `PayloadChannel` (protocol version "11"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Packet names are self-descriptive (e.g., `ToggleSailPacket`, `CreateMarketListingPacket`).
 
 ### Entity (`entity/SailboatEntity.java`)
 Extends `Boat`, implements GeckoLib's `GeoEntity`. Features: 5-seat passengers, 27-slot inventory, sail/engine/autopilot mechanics, rental pricing, route waypoint following. Physics uses knot-based speed with drag coefficients. Autopilot has stall detection and dock parking logic with chunk loading.
@@ -46,7 +47,7 @@ Extends `Boat`, implements GeckoLib's `GeoEntity`. Features: 5-seat passengers, 
 ### Nation System (`nation/`)
 Server-authoritative nation/town system with chunk-based territory claims.
 
-- **Data:** `NationSavedData` persists nations, towns, members, offices, claims, wars, flags, diplomacy to `"sailboatmod_nations"` via Forge `SavedData`.
+- **Data:** `NationSavedData` persists nations, towns, members, offices, claims, wars, flags, diplomacy to `"sailboatmod_nations"` via Minecraft `SavedData`.
 - **Services:** `NationService`, `TownService`, `NationClaimService`, `NationFlagService`, `NationDiplomacyService`, `NationWarService`, `NationAdminService`, `NationPermissionService`, `NationOverviewService`, `ClaimPreviewTerrainService` — each handles one concern.
 - **Commands:** `NationCommands` registers Brigadier commands under `/nation` (create, rename, invite, town management, diplomacy, war, claims).
 - **Models:** Immutable record classes (`NationRecord`, `TownRecord`, `NationMemberRecord`, `NationClaimRecord`, etc.).
@@ -74,7 +75,7 @@ Server-authoritative nation/town system with chunk-based territory claims.
 `BlueMapIntegration` uses reflection to render docks, sailboats, routes, town/nation cores, and nation borders on BlueMap. `BlueMapMarkerSavedData` persists marker snapshots; sync runs every 40 ticks via `ServerEvents`.
 
 ### Event Handling
-- `ServerEvents` (Forge bus) — server lifecycle, tick-based BlueMap sync, entity join tracking.
+- `ServerEvents` (NeoForge bus) — server lifecycle, tick-based BlueMap sync, entity join tracking.
 - `ClientEvents` (mod bus, client dist) — renderer and screen registration.
 - `NationEvents` — nation-specific server events (territory entry messages, claim protection).
 
@@ -89,5 +90,5 @@ Server-authoritative nation/town system with chunk-based territory claims.
 ## Resource Layout
 
 - `assets/sailboatmod/` — GeckoLib models/animations, blockstates, block/item models, lang files (en_us, zh_cn)
-- `data/sailboatmod/` — loot tables, recipes
-- `META-INF/mods.toml` — mod metadata (uses variable substitution from `gradle.properties`)
+- `data/sailboatmod/` — loot tables (`loot_table`), recipes (`recipe`), structures (`structure`)
+- `META-INF/neoforge.mods.toml` — mod metadata (uses variable substitution from `gradle.properties`)

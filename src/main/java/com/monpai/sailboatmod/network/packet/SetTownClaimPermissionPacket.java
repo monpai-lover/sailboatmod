@@ -8,8 +8,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -64,7 +63,7 @@ public class SetTownClaimPermissionPacket {
                 player.sendSystemMessage(result.message());
             }
             TownOverviewData data = TownOverviewService.buildFor(player, packet.townId);
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenTownScreenPacket(data));
+            ModNetwork.CHANNEL.send(player, new OpenTownScreenPacket(data));
         });
         context.setPacketHandled(true);
     }

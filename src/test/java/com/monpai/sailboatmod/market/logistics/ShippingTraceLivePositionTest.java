@@ -17,7 +17,7 @@ class ShippingTraceLivePositionTest {
                 "nation-1", "town-1", "Src", "Dst",
                 List.of(new Vec3(0, 64, 0), new Vec3(10, 64, 10)),
                 0, 0.0D, 100L, 100L,
-                12.5D, 34.5D, true);
+                12.5D, 34.5D, 0.0D, List.of(), true);
     }
 
     @Test
@@ -50,7 +50,7 @@ class ShippingTraceLivePositionTest {
                 "", "", "Src", "Dst",
                 List.of(new Vec3(5, 64, 7), new Vec3(10, 64, 10)),
                 0, 0.0D, 100L, 100L,
-                0.0D, 0.0D, false);
+                0.0D, 0.0D, 0.0D, List.of(), false);
         CompoundTag tag = rec.save();
         tag.remove("CurrentX");
         tag.remove("CurrentZ");

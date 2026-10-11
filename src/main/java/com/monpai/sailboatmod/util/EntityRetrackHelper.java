@@ -37,7 +37,7 @@ public final class EntityRetrackHelper {
      * @return true 表示执行了一次 vanilla retrack。
      */
     public static boolean retrackViaVanilla(ServerLevel level, Entity entity) {
-        if (level == null || entity == null || !entity.isAddedToWorld() || entity.isRemoved()) {
+        if (level == null || entity == null || !entity.isAddedToLevel() || entity.isRemoved()) {
             return false;
         }
         if (!entity.getPassengers().isEmpty()) {

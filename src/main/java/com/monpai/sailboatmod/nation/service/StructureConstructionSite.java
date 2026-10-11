@@ -354,7 +354,7 @@ final class StructureConstructionSite {
         if (tag == null) {
             return;
         }
-        BlockEntity blockEntity = BlockEntity.loadStatic(pos, state, tag.copy());
+        BlockEntity blockEntity = BlockEntity.loadStatic(pos, state, tag.copy(), level.registryAccess());
         if (blockEntity != null) {
             level.setBlockEntity(blockEntity);
         }

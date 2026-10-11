@@ -9,8 +9,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.Locale;
@@ -111,9 +110,7 @@ public record RoadPlannerAutoMergeRouteRequestPacket(UUID sessionId,
                         new RoadPlannerAutoMergeRouteService.PreferredEntry(packet.preferredRoadId(), packet.preferredPathIndex()),
                         RoadPlannerAutoMergeRouteService.DEFAULT_ENTRY_RADIUS,
                         RoadPlannerAutoMergeRouteService.DEFAULT_DESTINATION_RADIUS));
-        ModNetwork.CHANNEL.sendTo(RoadPlannerAutoMergeRouteSyncPacket.fromResult(packet.sessionId(), packet.requestId(), result),
-                sender.connection.connection,
-                NetworkDirection.PLAY_TO_CLIENT);
+        ModNetwork.CHANNEL.send(sender, RoadPlannerAutoMergeRouteSyncPacket.fromResult(packet.sessionId(), packet.requestId(), result));
     }
 
     private static List<BlockPos> readCappedPositions(FriendlyByteBuf buffer) {

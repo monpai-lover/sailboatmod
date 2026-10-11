@@ -4,8 +4,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.roadplanner.edit.RoadPlannerRoadEditSelectionService;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -33,7 +32,7 @@ public record RoadPlannerSelectEditRoadPacket(String roadId) {
                     RoadPlannerRoadEditSelectionService.prepareSelectedRoadForEditing(sender, packet.roadId());
             sender.sendSystemMessage(result.message());
             result.openPacket().ifPresent(openPacket ->
-                    ModNetwork.CHANNEL.sendTo(openPacket, sender.connection.connection, NetworkDirection.PLAY_TO_CLIENT));
+                    ModNetwork.CHANNEL.send(sender, openPacket));
         });
         context.setPacketHandled(true);
     }

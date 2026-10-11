@@ -175,7 +175,7 @@ public final class MarketWalletGoldSource {
         if (out == null || item == null || count <= 0L) {
             return;
         }
-        int maxStack = Math.max(1, Math.min(64, item.getMaxStackSize()));
+        int maxStack = Math.max(1, Math.min(64, new ItemStack(item).getMaxStackSize()));
         long remaining = count;
         while (remaining > 0L) {
             int stackSize = (int) Math.min(maxStack, remaining);

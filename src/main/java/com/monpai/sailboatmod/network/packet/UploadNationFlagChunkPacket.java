@@ -4,7 +4,7 @@ import com.monpai.sailboatmod.nation.service.NationFlagUploadService;
 import com.monpai.sailboatmod.nation.service.NationResult;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -37,8 +37,11 @@ public class UploadNationFlagChunkPacket {
         int totalBytes = buffer.readVarInt();
         int chunkIndex = buffer.readVarInt();
         int chunkCount = buffer.readVarInt();
-        int ignoredLength = buffer.readVarInt();
-        byte[] bytes = buffer.readByteArray();
+        int declaredLength = buffer.readVarInt();
+        byte[] bytes = buffer.readByteArray(NationFlagUploadService.CHUNK_SIZE);
+        if (declaredLength != bytes.length) {
+            throw new IllegalArgumentException("Nation flag chunk length mismatch");
+        }
         return new UploadNationFlagChunkPacket(uploadId, totalBytes, chunkIndex, chunkCount, bytes);
     }
 

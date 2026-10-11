@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.item;
 
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import com.monpai.sailboatmod.nation.service.BlueprintService;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import net.minecraft.core.BlockPos;
@@ -56,16 +57,16 @@ public class BankConstructorItem extends Item {
     // --- NBT accessors ---
 
     public static StructureType getSelectedType(ItemStack stack) {
-        if (stack.hasTag() && stack.getTag().contains(TAG_STRUCTURE_INDEX)) {
-            int idx = stack.getTag().getInt(TAG_STRUCTURE_INDEX);
+        if (ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains(TAG_STRUCTURE_INDEX)) {
+            int idx = ItemStackNbt.tag(stack).getInt(TAG_STRUCTURE_INDEX);
             if (idx >= 0 && idx < StructureType.ALL.size()) return StructureType.ALL.get(idx);
         }
         return StructureType.VICTORIAN_BANK;
     }
 
     public static int getSelectedIndex(ItemStack stack) {
-        if (stack.hasTag() && stack.getTag().contains(TAG_STRUCTURE_INDEX)) {
-            return Math.floorMod(stack.getTag().getInt(TAG_STRUCTURE_INDEX), StructureType.ALL.size());
+        if (ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains(TAG_STRUCTURE_INDEX)) {
+            return Math.floorMod(ItemStackNbt.tag(stack).getInt(TAG_STRUCTURE_INDEX), StructureType.ALL.size());
         }
         return 0;
     }
@@ -73,52 +74,52 @@ public class BankConstructorItem extends Item {
     public static void cycleStructure(ItemStack stack, int delta) {
         int current = getSelectedIndex(stack);
         int next = Math.floorMod(current + delta, StructureType.ALL.size());
-        stack.getOrCreateTag().putInt(TAG_STRUCTURE_INDEX, next);
+        ItemStackNbt.updateTag(stack, tag -> tag.putInt(TAG_STRUCTURE_INDEX, next));
     }
 
     public static void setSelectedIndex(ItemStack stack, int index) {
-        stack.getOrCreateTag().putInt(TAG_STRUCTURE_INDEX, Math.floorMod(index, StructureType.ALL.size()));
+        ItemStackNbt.updateTag(stack, tag -> tag.putInt(TAG_STRUCTURE_INDEX, Math.floorMod(index, StructureType.ALL.size())));
     }
 
     public static AdjustMode getAdjustMode(ItemStack stack) {
-        if (stack.hasTag() && stack.getTag().contains(TAG_ADJUST_MODE)) {
-            int idx = stack.getTag().getInt(TAG_ADJUST_MODE);
+        if (ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains(TAG_ADJUST_MODE)) {
+            int idx = ItemStackNbt.tag(stack).getInt(TAG_ADJUST_MODE);
             if (idx >= 0 && idx < AdjustMode.ALL.size()) return AdjustMode.ALL.get(idx);
         }
         return AdjustMode.BUILD;
     }
 
     public static void cycleAdjustMode(ItemStack stack, int delta) {
-        int current = stack.hasTag() && stack.getTag().contains(TAG_ADJUST_MODE) ? stack.getTag().getInt(TAG_ADJUST_MODE) : 0;
+        int current = ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains(TAG_ADJUST_MODE) ? ItemStackNbt.tag(stack).getInt(TAG_ADJUST_MODE) : 0;
         int next = Math.floorMod(current + delta, AdjustMode.ALL.size());
-        stack.getOrCreateTag().putInt(TAG_ADJUST_MODE, next);
+        ItemStackNbt.updateTag(stack, tag -> tag.putInt(TAG_ADJUST_MODE, next));
     }
 
     public static int getAdjustModeIndex(ItemStack stack) {
-        if (stack.hasTag() && stack.getTag().contains(TAG_ADJUST_MODE)) {
-            return Math.floorMod(stack.getTag().getInt(TAG_ADJUST_MODE), AdjustMode.ALL.size());
+        if (ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains(TAG_ADJUST_MODE)) {
+            return Math.floorMod(ItemStackNbt.tag(stack).getInt(TAG_ADJUST_MODE), AdjustMode.ALL.size());
         }
         return 0;
     }
 
     public static void setAdjustModeIndex(ItemStack stack, int index) {
-        stack.getOrCreateTag().putInt(TAG_ADJUST_MODE, Math.floorMod(index, AdjustMode.ALL.size()));
+        ItemStackNbt.updateTag(stack, tag -> tag.putInt(TAG_ADJUST_MODE, Math.floorMod(index, AdjustMode.ALL.size())));
     }
 
     public static int getOffsetY(ItemStack stack) {
-        return stack.hasTag() ? stack.getTag().getInt(TAG_OFFSET_Y) : 0;
+        return ItemStackNbt.hasTag(stack) ? ItemStackNbt.tag(stack).getInt(TAG_OFFSET_Y) : 0;
     }
 
     public static int getOffsetX(ItemStack stack) {
-        return stack.hasTag() ? stack.getTag().getInt(TAG_OFFSET_X) : 0;
+        return ItemStackNbt.hasTag(stack) ? ItemStackNbt.tag(stack).getInt(TAG_OFFSET_X) : 0;
     }
 
     public static int getOffsetZ(ItemStack stack) {
-        return stack.hasTag() ? stack.getTag().getInt(TAG_OFFSET_Z) : 0;
+        return ItemStackNbt.hasTag(stack) ? ItemStackNbt.tag(stack).getInt(TAG_OFFSET_Z) : 0;
     }
 
     public static int getRotation(ItemStack stack) {
-        return stack.hasTag() ? Math.floorMod(stack.getTag().getInt(TAG_ROTATION), 4) : 0;
+        return ItemStackNbt.hasTag(stack) ? Math.floorMod(ItemStackNbt.tag(stack).getInt(TAG_ROTATION), 4) : 0;
     }
 
     public static void applySettings(ItemStack stack,
@@ -131,18 +132,19 @@ public class BankConstructorItem extends Item {
         if (stack == null || stack.isEmpty()) {
             return;
         }
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         tag.putInt(TAG_STRUCTURE_INDEX, Math.floorMod(structureIndex, StructureType.ALL.size()));
         tag.putInt(TAG_ADJUST_MODE, Math.floorMod(adjustModeIndex, AdjustMode.ALL.size()));
         tag.putInt(TAG_OFFSET_X, offsetX);
         tag.putInt(TAG_OFFSET_Y, offsetY);
         tag.putInt(TAG_OFFSET_Z, offsetZ);
         tag.putInt(TAG_ROTATION, Math.floorMod(rotation, 4));
+        ItemStackNbt.setTag(stack, tag);
     }
 
     public static void adjustValue(ItemStack stack, int delta) {
         AdjustMode mode = getAdjustMode(stack);
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         switch (mode) {
             case OFFSET_Y -> {
                 tag.putInt(TAG_OFFSET_Y, tag.getInt(TAG_OFFSET_Y) + delta);
@@ -165,6 +167,7 @@ public class BankConstructorItem extends Item {
             }
             default -> {} // BUILD mode: scroll does nothing
         }
+        ItemStackNbt.setTag(stack, tag);
     }
 
     public static BlockPos applyOffsets(ItemStack stack, BlockPos base) {
@@ -172,10 +175,10 @@ public class BankConstructorItem extends Item {
     }
 
     public static boolean hasPendingProjection(ItemStack stack, Level level) {
-        if (stack == null || stack.isEmpty() || !stack.hasTag() || level == null) {
+        if (stack == null || stack.isEmpty() || !ItemStackNbt.hasTag(stack) || level == null) {
             return false;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         return tag != null
                 && tag.contains(TAG_PENDING_DIMENSION)
                 && tag.contains(TAG_PENDING_X)
@@ -188,15 +191,15 @@ public class BankConstructorItem extends Item {
         if (!hasPendingProjection(stack, level)) {
             return null;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         return new BlockPos(tag.getInt(TAG_PENDING_X), tag.getInt(TAG_PENDING_Y), tag.getInt(TAG_PENDING_Z));
     }
 
     public static StructureType getPendingProjectionType(ItemStack stack) {
-        if (stack == null || stack.isEmpty() || !stack.hasTag()) {
+        if (stack == null || stack.isEmpty() || !ItemStackNbt.hasTag(stack)) {
             return null;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null || !tag.contains(TAG_PENDING_STRUCTURE_INDEX)) {
             return null;
         }
@@ -205,10 +208,10 @@ public class BankConstructorItem extends Item {
     }
 
     public static int getPendingProjectionRotation(ItemStack stack) {
-        if (stack == null || stack.isEmpty() || !stack.hasTag()) {
+        if (stack == null || stack.isEmpty() || !ItemStackNbt.hasTag(stack)) {
             return 0;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         return tag == null ? 0 : Math.floorMod(tag.getInt(TAG_PENDING_ROTATION), 4);
     }
 
@@ -228,20 +231,21 @@ public class BankConstructorItem extends Item {
         if (stack == null || stack.isEmpty() || dimension == null || origin == null || type == null) {
             return;
         }
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         tag.putString(TAG_PENDING_DIMENSION, dimension.location().toString());
         tag.putInt(TAG_PENDING_X, origin.getX());
         tag.putInt(TAG_PENDING_Y, origin.getY());
         tag.putInt(TAG_PENDING_Z, origin.getZ());
         tag.putInt(TAG_PENDING_STRUCTURE_INDEX, type.ordinal());
         tag.putInt(TAG_PENDING_ROTATION, Math.floorMod(rotation, 4));
+        ItemStackNbt.setTag(stack, tag);
     }
 
     public static void clearPendingProjection(ItemStack stack) {
-        if (stack == null || stack.isEmpty() || !stack.hasTag()) {
+        if (stack == null || stack.isEmpty() || !ItemStackNbt.hasTag(stack)) {
             return;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null) {
             return;
         }
@@ -251,9 +255,7 @@ public class BankConstructorItem extends Item {
         tag.remove(TAG_PENDING_Z);
         tag.remove(TAG_PENDING_STRUCTURE_INDEX);
         tag.remove(TAG_PENDING_ROTATION);
-        if (tag.isEmpty()) {
-            stack.setTag(null);
-        }
+        ItemStackNbt.setTag(stack, tag);
     }
 
     public static boolean isTargetingPendingProjection(Level level, Player player, ItemStack stack) {
@@ -306,8 +308,7 @@ public class BankConstructorItem extends Item {
         // Shift+right-click: open structure selection menu
         if (player.isShiftKeyDown()) {
             if (level.isClientSide) {
-                net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(net.minecraftforge.api.distmarker.Dist.CLIENT,
-                    () -> () -> openStructureScreen(stack));
+                openStructureScreen(stack);
             }
             return InteractionResultHolder.success(stack);
         }
@@ -365,7 +366,8 @@ public class BankConstructorItem extends Item {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
+    public void appendHoverText(ItemStack stack, net.minecraft.world.item.Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
+        Level level = context.level();
         StructureType type = getSelectedType(stack);
         AdjustMode mode = getAdjustMode(stack);
         tooltip.add(Component.translatable("item.sailboatmod.structure.current", Component.translatable(type.translationKey())));
@@ -391,7 +393,7 @@ public class BankConstructorItem extends Item {
         tooltip.add(Component.translatable("item.sailboatmod.constructor.assist_hint"));
     }
 
-    @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
+    @net.neoforged.api.distmarker.OnlyIn(net.neoforged.api.distmarker.Dist.CLIENT)
     private static void openStructureScreen(ItemStack stack) {
         net.minecraft.client.Minecraft.getInstance().setScreen(
                 new com.monpai.sailboatmod.client.screen.StructureSelectionScreen(stack)

@@ -4,7 +4,7 @@ import com.monpai.sailboatmod.roadplanner.service.RoadPlannerMapPreloadService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.Objects;

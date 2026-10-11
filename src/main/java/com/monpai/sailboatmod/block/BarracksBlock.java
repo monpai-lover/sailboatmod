@@ -37,6 +37,13 @@ import java.util.List;
  * Right-click: pick the nearest idle civilian resident, convert to soldier, add to army.
  */
 public class BarracksBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<BarracksBlock> CODEC = simpleCodec(BarracksBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public BarracksBlock(Properties properties) {
         super(properties);
     }
@@ -52,7 +59,7 @@ public class BarracksBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide || !(player instanceof ServerPlayer sp)) return InteractionResult.SUCCESS;
         ServerLevel sl = (ServerLevel) level;
 

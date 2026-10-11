@@ -12,7 +12,7 @@ class SailboatControlInputPacketTest {
     @Test
     void roundTripsExplicitKeyState() {
         SailboatControlInputPacket packet = new SailboatControlInputPacket(
-                SailboatControlInput.fromKeys(true, false, false, true, false)
+                SailboatControlInput.fromKeys(true, false, false, true, false), 0
         );
         FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
 

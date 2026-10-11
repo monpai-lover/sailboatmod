@@ -19,12 +19,12 @@ public class ArmySavedData extends SavedData {
 
     public static ArmySavedData get(Level level) {
         if (!(level instanceof ServerLevel sl) || sl.getServer() == null) return new ArmySavedData();
-        return sl.getServer().overworld().getDataStorage().computeIfAbsent(ArmySavedData::load, ArmySavedData::new, DATA_NAME);
+        return sl.getServer().overworld().getDataStorage().computeIfAbsent(new SavedData.Factory<>(ArmySavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> ArmySavedData.load(tag))), DATA_NAME);
     }
 
     public static ArmySavedData load(CompoundTag tag) {
         ArmySavedData data = new ArmySavedData();
-        ListTag list = tag.getList("Armies", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Armies", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
             ArmyRecord r = ArmyRecord.load(list.getCompound(i));
             if (!r.armyId().isBlank()) data.armies.put(r.armyId(), r);
@@ -33,6 +33,10 @@ public class ArmySavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (ArmyRecord r : armies.values()) list.add(r.save());

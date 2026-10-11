@@ -6,8 +6,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -43,12 +42,12 @@ public class CancelMarketListingPacket {
             String messageKey = result.messageKey();
             if (!messageKey.isBlank()) {
                 ModNetwork.CHANNEL.send(
-                        PacketDistributor.PLAYER.with(() -> player),
+                        player,
                         new MarketStatusNoticePacket(packet.marketPos, Component.translatable(messageKey).getString(), result.success())
                 );
             }
             ModNetwork.CHANNEL.send(
-                    PacketDistributor.PLAYER.with(() -> player),
+                    player,
                     new OpenMarketScreenPacket(market.buildOverview(player))
             );
         });

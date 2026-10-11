@@ -15,7 +15,7 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemp
 import java.io.InputStream;
 
 public final class BankConstructionManager {
-    private static final ResourceLocation STRUCTURE_ID = new ResourceLocation(SailboatMod.MODID, "victorian_bank");
+    private static final ResourceLocation STRUCTURE_ID = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "victorian_bank");
 
     private BankConstructionManager() {
     }
@@ -41,13 +41,13 @@ public final class BankConstructionManager {
         StructureTemplate template = level.getStructureManager().get(STRUCTURE_ID).orElse(null);
         if (template != null) return template;
         try {
-            String path = "/data/" + SailboatMod.MODID + "/structures/victorian_bank.nbt";
+            String path = "/data/" + SailboatMod.MODID + "/structure/victorian_bank.nbt";
             InputStream is = BankConstructionManager.class.getResourceAsStream(path);
             if (is == null) {
-                is = Thread.currentThread().getContextClassLoader().getResourceAsStream("data/" + SailboatMod.MODID + "/structures/victorian_bank.nbt");
+                is = Thread.currentThread().getContextClassLoader().getResourceAsStream("data/" + SailboatMod.MODID + "/structure/victorian_bank.nbt");
             }
             if (is == null) return null;
-            CompoundTag tag = NbtIo.readCompressed(is);
+            CompoundTag tag = NbtIo.readCompressed(is, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
             is.close();
             template = new StructureTemplate();
             template.load(level.holderLookup(net.minecraft.core.registries.Registries.BLOCK), tag);

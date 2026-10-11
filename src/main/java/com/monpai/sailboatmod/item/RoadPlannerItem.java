@@ -30,7 +30,6 @@ import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraftforge.network.NetworkDirection;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -91,10 +90,8 @@ public class RoadPlannerItem extends Item {
     }
 
     private void sendActionMenu(ServerPlayer player, RoadPlannerActionMenuMode mode, UUID sessionId) {
-        ModNetwork.CHANNEL.sendTo(
-                new OpenRoadPlannerActionMenuPacket(mode, sessionId),
-                player.connection.connection,
-                NetworkDirection.PLAY_TO_CLIENT
+        ModNetwork.CHANNEL.send(player,
+                new OpenRoadPlannerActionMenuPacket(mode, sessionId)
         );
     }
 
@@ -244,7 +241,7 @@ public class RoadPlannerItem extends Item {
         RoadPlannerDestinationService.TownEndpoint start = route.start();
         RoadPlannerDestinationService.TownEndpoint destination = route.destination();
         int distance = (int) Math.round(Math.sqrt(start.anchorPos().distSqr(destination.anchorPos())));
-        ModNetwork.CHANNEL.sendTo(
+        ModNetwork.CHANNEL.send(player,
                 new OpenRoadPlannerScreenPacket(
                         hand == InteractionHand.OFF_HAND,
                         start.townName(),
@@ -255,14 +252,12 @@ public class RoadPlannerItem extends Item {
                         start.anchorPos(),
                         destination.anchorPos(),
                         claimOverlays
-                ),
-                player.connection.connection,
-                NetworkDirection.PLAY_TO_CLIENT
+                )
         );
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
+    public void appendHoverText(ItemStack stack, net.minecraft.world.item.Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.use"));
         tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.select"));
         tooltip.add(Component.translatable("item.sailboatmod.road_planner.tip.confirm"));

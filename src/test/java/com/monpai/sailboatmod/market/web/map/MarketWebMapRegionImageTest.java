@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
+
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColumnSample;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapRenderStyle;
 import org.junit.jupiter.api.Test;

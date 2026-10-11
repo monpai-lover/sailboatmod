@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.item;
 
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import com.monpai.sailboatmod.client.renderer.CarriageItemRenderer;
 import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.entity.CarriageWoodType;
@@ -22,7 +23,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.client.extensions.common.IClientItemExtensions;
+import net.neoforged.neoforge.client.extensions.common.IClientItemExtensions;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -36,12 +37,12 @@ public class CarriageItem extends SailboatItem {
     }
 
     public static CarriageWoodType getWoodType(ItemStack stack) {
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         return CarriageWoodType.fromSerialized(tag == null ? null : tag.getString(TAG_WOOD_TYPE));
     }
 
     public static void setWoodType(ItemStack stack, CarriageWoodType woodType) {
-        stack.getOrCreateTag().putString(TAG_WOOD_TYPE, woodType.serializedName());
+        ItemStackNbt.updateTag(stack, tag -> tag.putString(TAG_WOOD_TYPE, woodType.serializedName()));
     }
 
     public static CarriageWoodType cycleWoodType(ItemStack stack) {
@@ -114,7 +115,7 @@ public class CarriageItem extends SailboatItem {
             if (!level.isClientSide) {
                 carriage.initializeOwnerIfAbsent(player);
                 carriage.setWoodType(getWoodType(itemstack));
-                if (itemstack.hasCustomHoverName()) {
+                if (itemstack.has(net.minecraft.core.component.DataComponents.CUSTOM_NAME)) {
                     carriage.setCustomName(itemstack.getHoverName());
                 }
                 level.addFreshEntity(carriage);
@@ -132,7 +133,7 @@ public class CarriageItem extends SailboatItem {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
+    public void appendHoverText(ItemStack stack, net.minecraft.world.item.Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("item.sailboatmod.carriage.wood", Component.translatable(getWoodType(stack).translationKey())));
         tooltip.add(Component.translatable("item.sailboatmod.carriage.tip.cycle"));
     }

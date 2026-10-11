@@ -8,7 +8,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.common.MinecraftForge;
+import net.neoforged.neoforge.common.NeoForge;
 
 import java.util.List;
 
@@ -23,7 +23,7 @@ public class ResidentDeathService {
         if (record == null) return;
 
         // Fire death event
-        MinecraftForge.EVENT_BUS.post(new ResidentEvent.Died(residentId, record.townId(), deathPos, cause));
+        NeoForge.EVENT_BUS.post(new ResidentEvent.Died(residentId, record.townId(), deathPos, cause));
 
         // Notify town members
         notifyTownMembers(level, record, cause);

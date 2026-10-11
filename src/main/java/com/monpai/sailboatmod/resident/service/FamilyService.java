@@ -5,7 +5,7 @@ import com.monpai.sailboatmod.resident.event.ResidentEvent;
 import com.monpai.sailboatmod.resident.model.*;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraftforge.common.MinecraftForge;
+import net.neoforged.neoforge.common.NeoForge;
 
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
@@ -72,7 +72,7 @@ public class FamilyService {
             }
         }
 
-        MinecraftForge.EVENT_BUS.post(new ResidentEvent.Born(child));
+        NeoForge.EVENT_BUS.post(new ResidentEvent.Born(child));
         return child;
     }
 

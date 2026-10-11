@@ -21,12 +21,12 @@ public class TownStockpileSavedData extends SavedData {
             return new TownStockpileSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(TownStockpileSavedData::load, TownStockpileSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(TownStockpileSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> TownStockpileSavedData.load(tag))), DATA_NAME);
     }
 
     public static TownStockpileSavedData load(CompoundTag tag) {
         TownStockpileSavedData data = new TownStockpileSavedData();
-        ListTag stockpileTag = tag.getList("TownStockpiles", Tag.TAG_COMPOUND);
+        ListTag stockpileTag = tag.getList("TownStockpiles", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : stockpileTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -40,6 +40,10 @@ public class TownStockpileSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag stockpileTag = new ListTag();
         for (TownStockpileRecord record : stockpiles.values()) {

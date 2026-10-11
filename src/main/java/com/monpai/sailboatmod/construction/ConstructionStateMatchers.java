@@ -30,7 +30,7 @@ public final class ConstructionStateMatchers {
                 || state.is(Blocks.WEEPING_VINES_PLANT)
                 || state.is(Blocks.TWISTING_VINES)
                 || state.is(Blocks.TWISTING_VINES_PLANT)
-                || state.is(Blocks.GRASS)
+                || state.is(Blocks.SHORT_GRASS)
                 || state.is(Blocks.TALL_GRASS)
                 || state.is(Blocks.FERN)
                 || state.is(Blocks.LARGE_FERN)

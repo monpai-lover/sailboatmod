@@ -5,9 +5,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -103,11 +103,11 @@ public class SyncConstructionGhostPreviewPacket {
     }
 
     public static void handle(SyncConstructionGhostPreviewPacket msg, Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
+        ctx.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
         ctx.get().setPacketHandled(true);
     }
 
-    @net.minecraftforge.api.distmarker.OnlyIn(Dist.CLIENT)
+    @net.neoforged.api.distmarker.OnlyIn(Dist.CLIENT)
     private static void handleClient(SyncConstructionGhostPreviewPacket msg) {
         List<ConstructionGhostClientHooks.BuildingPreview> buildings = msg.buildings.stream()
                 .map(entry -> new ConstructionGhostClientHooks.BuildingPreview(

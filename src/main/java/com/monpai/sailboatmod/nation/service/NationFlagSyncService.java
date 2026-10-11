@@ -5,7 +5,6 @@ import com.monpai.sailboatmod.nation.model.NationFlagRecord;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SyncNationFlagChunkPacket;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.PacketDistributor;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -49,7 +48,7 @@ public final class NationFlagSyncService {
                 int length = Math.min(CHUNK_SIZE, bytes.length - start);
                 byte[] slice = new byte[length];
                 System.arraycopy(bytes, start, slice, 0, length);
-                ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new SyncNationFlagChunkPacket(flagId, chunkIndex, chunkCount, slice));
+                ModNetwork.CHANNEL.send(player, new SyncNationFlagChunkPacket(flagId, chunkIndex, chunkCount, slice));
             }
         } catch (IOException ignored) {
         }

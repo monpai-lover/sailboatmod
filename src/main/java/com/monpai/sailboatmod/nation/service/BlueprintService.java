@@ -127,7 +127,7 @@ public final class BlueprintService {
     }
 
     public static StructureTemplate loadTemplate(ServerLevel level, String blueprintId) {
-        ResourceLocation id = new ResourceLocation(SailboatMod.MODID, blueprintId);
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, blueprintId);
         StructureTemplate template = level.getStructureManager().get(id).orElse(null);
         if (template != null) {
             return template;
@@ -142,7 +142,7 @@ public final class BlueprintService {
                 return null;
             }
 
-            CompoundTag tag = NbtIo.readCompressed(is);
+            CompoundTag tag = NbtIo.readCompressed(is, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
             StructureTemplate template = new StructureTemplate();
             template.load(blockLookup, tag);
             return template;
@@ -176,14 +176,14 @@ public final class BlueprintService {
     }
 
     private static InputStream openTemplateStream(String blueprintId) {
-        String path = "/data/" + SailboatMod.MODID + "/structures/" + blueprintId + ".nbt";
+        String path = "/data/" + SailboatMod.MODID + "/structure/" + blueprintId + ".nbt";
         InputStream is = BlueprintService.class.getResourceAsStream(path);
         if (is != null) {
             return is;
         }
 
         return Thread.currentThread().getContextClassLoader()
-                .getResourceAsStream("data/" + SailboatMod.MODID + "/structures/" + blueprintId + ".nbt");
+                .getResourceAsStream("data/" + SailboatMod.MODID + "/structure/" + blueprintId + ".nbt");
     }
 
     private static RawBlueprint loadBlueprint(String blueprintId) {
@@ -192,13 +192,13 @@ public final class BlueprintService {
                 return null;
             }
 
-            CompoundTag tag = NbtIo.readCompressed(is);
-            ListTag sizeTag = tag.getList("size", 3);
+            CompoundTag tag = NbtIo.readCompressed(is, net.minecraft.nbt.NbtAccounter.unlimitedHeap());
+            ListTag sizeTag = tag.getList("size", net.minecraft.nbt.Tag.TAG_INT);
             Vec3i size = sizeTag.size() >= 3
                     ? new Vec3i(sizeTag.getInt(0), Math.max(1, sizeTag.getInt(1)), sizeTag.getInt(2))
                     : new Vec3i(1, 1, 1);
-            ListTag paletteList = tag.getList("palette", 10);
-            ListTag blocksList = tag.getList("blocks", 10);
+            ListTag paletteList = tag.getList("palette", net.minecraft.nbt.Tag.TAG_COMPOUND);
+            ListTag blocksList = tag.getList("blocks", net.minecraft.nbt.Tag.TAG_COMPOUND);
             BlockState[] palette = new BlockState[paletteList.size()];
             for (int i = 0; i < paletteList.size(); i++) {
                 palette[i] = parseBlockState(paletteList.getCompound(i));
@@ -207,7 +207,7 @@ public final class BlueprintService {
             List<BlueprintBlock> blocks = new ArrayList<>();
             for (int i = 0; i < blocksList.size(); i++) {
                 CompoundTag blockTag = blocksList.getCompound(i);
-                ListTag posTag = blockTag.getList("pos", 3);
+                ListTag posTag = blockTag.getList("pos", net.minecraft.nbt.Tag.TAG_INT);
                 if (posTag.size() < 3) {
                     continue;
                 }
@@ -232,7 +232,7 @@ public final class BlueprintService {
     }
 
     private static BlockState parseBlockState(CompoundTag paletteEntry) {
-        ResourceLocation blockId = new ResourceLocation(paletteEntry.getString("Name"));
+        ResourceLocation blockId = ResourceLocation.parse(paletteEntry.getString("Name"));
         Block block = BuiltInRegistries.BLOCK.get(blockId);
         BlockState state = block.defaultBlockState();
         if (!paletteEntry.contains("Properties")) {

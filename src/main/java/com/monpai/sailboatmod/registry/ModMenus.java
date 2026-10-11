@@ -7,37 +7,37 @@ import com.monpai.sailboatmod.menu.MarketMenu;
 import com.monpai.sailboatmod.menu.PostStationMenu;
 import com.monpai.sailboatmod.menu.WarehouseMenu;
 import net.minecraft.world.inventory.MenuType;
-import net.minecraftforge.common.extensions.IForgeMenuType;
-import net.minecraftforge.registries.DeferredRegister;
-import net.minecraftforge.registries.ForgeRegistries;
-import net.minecraftforge.registries.RegistryObject;
+import net.neoforged.neoforge.common.extensions.IMenuTypeExtension;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.minecraft.core.registries.Registries;
+import net.neoforged.neoforge.registries.DeferredHolder;
 
 public final class ModMenus {
-    public static final DeferredRegister<MenuType<?>> MENUS = DeferredRegister.create(ForgeRegistries.MENU_TYPES, SailboatMod.MODID);
+    public static final DeferredRegister<MenuType<?>> MENUS = DeferredRegister.create(Registries.MENU, SailboatMod.MODID);
 
-    public static final RegistryObject<MenuType<DockMenu>> DOCK_MENU = MENUS.register(
+    public static final DeferredHolder<MenuType<?>, MenuType<DockMenu>> DOCK_MENU = MENUS.register(
             "dock_menu",
-            () -> IForgeMenuType.create(DockMenu::new)
+            () -> IMenuTypeExtension.create(DockMenu::new)
     );
 
-    public static final RegistryObject<MenuType<PostStationMenu>> POST_STATION_MENU = MENUS.register(
+    public static final DeferredHolder<MenuType<?>, MenuType<PostStationMenu>> POST_STATION_MENU = MENUS.register(
             "post_station_menu",
-            () -> IForgeMenuType.create(PostStationMenu::new)
+            () -> IMenuTypeExtension.create(PostStationMenu::new)
     );
 
-    public static final RegistryObject<MenuType<MarketMenu>> MARKET_MENU = MENUS.register(
+    public static final DeferredHolder<MenuType<?>, MenuType<MarketMenu>> MARKET_MENU = MENUS.register(
             "market_menu",
-            () -> IForgeMenuType.create(MarketMenu::new)
+            () -> IMenuTypeExtension.create(MarketMenu::new)
     );
 
-    public static final RegistryObject<MenuType<BankMenu>> BANK_MENU = MENUS.register(
+    public static final DeferredHolder<MenuType<?>, MenuType<BankMenu>> BANK_MENU = MENUS.register(
             "bank_menu",
-            () -> IForgeMenuType.create(BankMenu::new)
+            () -> IMenuTypeExtension.create(BankMenu::new)
     );
 
-    public static final RegistryObject<MenuType<WarehouseMenu>> WAREHOUSE_MENU = MENUS.register(
+    public static final DeferredHolder<MenuType<?>, MenuType<WarehouseMenu>> WAREHOUSE_MENU = MENUS.register(
             "warehouse_menu",
-            () -> IForgeMenuType.create(WarehouseMenu::new)
+            () -> IMenuTypeExtension.create(WarehouseMenu::new)
     );
 
     private ModMenus() {

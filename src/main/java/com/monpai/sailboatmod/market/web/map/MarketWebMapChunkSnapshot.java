@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.market.web.map;
 
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
+
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.roadplanner.map.MapBlockColors;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColorizer;

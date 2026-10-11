@@ -4,9 +4,9 @@ import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeRelationship;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.UUID;
@@ -68,7 +68,7 @@ public record OpenRoadMergeCandidatesPacket(UUID sessionId, UUID requestId, List
     }
 
     public static void handle(OpenRoadMergeCandidatesPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
+        contextSupplier.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () ->
                 RoadPlannerClientHooks.applyRoadMergeCandidates(packet.sessionId(), packet.requestId(), packet.candidates())));
         contextSupplier.get().setPacketHandled(true);
     }

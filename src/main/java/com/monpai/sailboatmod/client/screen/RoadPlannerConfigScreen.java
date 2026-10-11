@@ -95,7 +95,7 @@ public class RoadPlannerConfigScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(guiGraphics);
+        renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         int left = (this.width - SCREEN_W) / 2;
         int top = (this.height - SCREEN_H) / 2;
         guiGraphics.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xD1141920);
@@ -110,7 +110,7 @@ public class RoadPlannerConfigScreen extends Screen {
         guiGraphics.drawString(this.font,
                 Component.translatable("screen.sailboatmod.road_planner.config.tunnel_label"),
                 left + 14, top + 94, 0xFFB9CAD9);
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
     }
 
     @Override

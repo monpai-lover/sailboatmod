@@ -8,8 +8,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.chunk.ChunkStatus;
-import net.minecraftforge.common.world.ForgeChunkManager;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import com.monpai.sailboatmod.util.ModChunkLoading;
 
 import java.util.Optional;
 
@@ -68,7 +68,7 @@ public final class NbtChunkWaterReader {
         }
         BlockPos owner = new BlockPos(cx << 4, level.getSeaLevel(), cz << 4);
         try {
-            ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
+            ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
             level.getChunk(cx, cz, ChunkStatus.FULL, true);
             int minY = level.getMinBuildHeight();
             int maxY = level.getMaxBuildHeight();
@@ -80,7 +80,7 @@ public final class NbtChunkWaterReader {
             return Optional.empty();
         } finally {
             try {
-                ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, false, false);
+                ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, cx, cz, false, false);
             } catch (Throwable ignored) {
             }
         }

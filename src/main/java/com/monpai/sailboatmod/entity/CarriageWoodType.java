@@ -23,7 +23,7 @@ public enum CarriageWoodType {
     }
 
     public ResourceLocation textureLocation() {
-        return new ResourceLocation(SailboatMod.MODID, "textures/entity/carriage_" + serializedName + ".png");
+        return ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "textures/entity/carriage_" + serializedName + ".png");
     }
 
     public CarriageWoodType next() {

@@ -56,12 +56,12 @@ public class TerminalNetworkSavedData extends SavedData {
             return new TerminalNetworkSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(TerminalNetworkSavedData::load, TerminalNetworkSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(TerminalNetworkSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> TerminalNetworkSavedData.load(tag))), DATA_NAME);
     }
 
     public static TerminalNetworkSavedData load(CompoundTag tag) {
         TerminalNetworkSavedData data = new TerminalNetworkSavedData();
-        ListTag list = tag.getList("Terminals", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Terminals", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : list) {
             if (raw instanceof CompoundTag compound) {
                 TerminalEntry entry = TerminalEntry.load(compound);
@@ -74,6 +74,10 @@ public class TerminalNetworkSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (TerminalEntry entry : entries.values()) {

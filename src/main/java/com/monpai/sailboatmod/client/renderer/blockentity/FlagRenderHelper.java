@@ -15,8 +15,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
-import org.joml.Matrix3f;
-import org.joml.Matrix4f;
 
 /**
  * 旗帜渲染共享逻辑(国旗/城镇旗共用)——<b>照搬 vanilla BannerRenderer 的几何与变换</b>,几何稳定正确。
@@ -33,7 +31,7 @@ import org.joml.Matrix4f;
  * </ul>
  */
 public final class FlagRenderHelper {
-    private static final ResourceLocation POLE_TEXTURE = new ResourceLocation("minecraft", "textures/block/oak_planks.png");
+    private static final ResourceLocation POLE_TEXTURE = ResourceLocation.fromNamespaceAndPath("minecraft", "textures/block/oak_planks.png");
 
     // 旗面像素尺寸(贴图坐标 64×64,flag cube 用 20×40,但我们让 UV 铺满 → 见 buildMesh)。
     private static final int TEX_W = 64;
@@ -215,23 +213,20 @@ public final class FlagRenderHelper {
                              float x4, float y4, float z4, float u4, float v4,
                              float nx, float ny, float nz) {
         PoseStack.Pose pose = poseStack.last();
-        Matrix4f m = pose.pose();
-        Matrix3f n = pose.normal();
-        vertex(c, m, n, x1, y1, z1, u1, v1, nx, ny, nz, light, packedOverlay);
-        vertex(c, m, n, x2, y2, z2, u2, v2, nx, ny, nz, light, packedOverlay);
-        vertex(c, m, n, x3, y3, z3, u3, v3, nx, ny, nz, light, packedOverlay);
-        vertex(c, m, n, x4, y4, z4, u4, v4, nx, ny, nz, light, packedOverlay);
+        vertex(c, pose, x1, y1, z1, u1, v1, nx, ny, nz, light, packedOverlay);
+        vertex(c, pose, x2, y2, z2, u2, v2, nx, ny, nz, light, packedOverlay);
+        vertex(c, pose, x3, y3, z3, u3, v3, nx, ny, nz, light, packedOverlay);
+        vertex(c, pose, x4, y4, z4, u4, v4, nx, ny, nz, light, packedOverlay);
     }
 
-    private static void vertex(VertexConsumer c, Matrix4f m, Matrix3f n,
+    private static void vertex(VertexConsumer c, PoseStack.Pose pose,
                                float x, float y, float z, float u, float v,
                                float nx, float ny, float nz, int light, int packedOverlay) {
-        c.vertex(m, x, y, z)
-                .color(255, 255, 255, 255)
-                .uv(u, v)
-                .overlayCoords(packedOverlay)
-                .uv2(light)
-                .normal(n, nx, ny, nz)
-                .endVertex();
+        c.addVertex(pose, x, y, z)
+                .setColor(255, 255, 255, 255)
+                .setUv(u, v)
+                .setOverlay(packedOverlay)
+                .setLight(light)
+                .setNormal(pose, nx, ny, nz);
     }
 }

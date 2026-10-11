@@ -21,8 +21,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -170,7 +169,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                     safePacket.mergeSelection(),
                     safePacket.logicalNodes(),
                     safePacket.sharedSpans());
-            ModNetwork.CHANNEL.sendTo(safePacket.toSafePreview(player.serverLevel()), player.connection.connection, NetworkDirection.PLAY_TO_CLIENT);
+            ModNetwork.CHANNEL.send(player, safePacket.toSafePreview(player.serverLevel()));
         });
         context.setPacketHandled(true);
     }

@@ -31,7 +31,7 @@ public final class RoadBuildSavedData {
         }
 
         public static Snapshot decode(CompoundTag tag) {
-            ListTag jobTags = tag.getList("Jobs", Tag.TAG_COMPOUND);
+            ListTag jobTags = tag.getList("Jobs", net.minecraft.nbt.Tag.TAG_COMPOUND);
             return new Snapshot(jobTags.stream()
                     .map(CompoundTag.class::cast)
                     .map(JobSnapshot::decode)

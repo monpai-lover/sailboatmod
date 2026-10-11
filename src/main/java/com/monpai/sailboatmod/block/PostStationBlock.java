@@ -20,10 +20,16 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 
 public class PostStationBlock extends DockBlock {
+    public static final com.mojang.serialization.MapCodec<PostStationBlock> CODEC = simpleCodec(PostStationBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends net.minecraft.world.level.block.BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public static final net.minecraft.world.level.block.state.properties.DirectionProperty FACING = HorizontalDirectionalBlock.FACING;
 
     public PostStationBlock(Properties properties) {
@@ -76,7 +82,7 @@ public class PostStationBlock extends DockBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide) {
             return InteractionResult.SUCCESS;
         }
@@ -91,7 +97,7 @@ public class PostStationBlock extends DockBlock {
             return InteractionResult.PASS;
         }
         station.initializeOwnerIfAbsent(serverPlayer);
-        NetworkHooks.openScreen(serverPlayer, station, pos);
+        serverPlayer.openMenu(station, pos);
         return InteractionResult.CONSUME;
     }
 

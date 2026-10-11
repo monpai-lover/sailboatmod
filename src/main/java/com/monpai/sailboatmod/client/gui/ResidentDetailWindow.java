@@ -12,7 +12,7 @@ import net.minecraft.resources.ResourceLocation;
  * Resident detail window (MineColonies citizen detail style)
  */
 public class ResidentDetailWindow extends AbstractSailboatWindow {
-    private static final ResourceLocation LAYOUT = new ResourceLocation(SailboatMod.MODID, "gui/resident/residentdetail.xml");
+    private static final ResourceLocation LAYOUT = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "gui/resident/residentdetail.xml");
 
     private static final String LABEL_NAME = "name";
     private static final String LABEL_GENDER = "gender";

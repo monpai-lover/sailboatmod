@@ -27,16 +27,16 @@ import com.monpai.sailboatmod.client.integration.xaero.SailboatXaeroCompat;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.registry.ModEntities;
 import com.monpai.sailboatmod.registry.ModMenus;
-import net.minecraftforge.client.event.RegisterClientReloadListenersEvent;
-import net.minecraft.client.gui.screens.MenuScreens;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.EntityRenderersEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.ModList;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
+import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
+import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 
-@Mod.EventBusSubscriber(modid = SailboatMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
+@EventBusSubscriber(modid = SailboatMod.MODID, bus = EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public final class ClientEvents {
     @SubscribeEvent
     public static void registerClientReloadListeners(RegisterClientReloadListenersEvent event) {
@@ -69,13 +69,17 @@ public final class ClientEvents {
     }
 
     @SubscribeEvent
+    public static void registerMenuScreens(RegisterMenuScreensEvent event) {
+        event.register(ModMenus.BANK_MENU.get(), BankScreen::new);
+        event.register(ModMenus.DOCK_MENU.get(), StandardDockScreen::new);
+        event.register(ModMenus.POST_STATION_MENU.get(), PostStationScreen::new);
+        event.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
+        event.register(ModMenus.WAREHOUSE_MENU.get(), WarehouseScreen::new);
+    }
+
+    @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
-            MenuScreens.register(ModMenus.BANK_MENU.get(), BankScreen::new);
-            MenuScreens.register(ModMenus.DOCK_MENU.get(), StandardDockScreen::new);
-            MenuScreens.register(ModMenus.POST_STATION_MENU.get(), PostStationScreen::new);
-            MenuScreens.register(ModMenus.MARKET_MENU.get(), MarketScreen::new);
-            MenuScreens.register(ModMenus.WAREHOUSE_MENU.get(), WarehouseScreen::new);
             SailboatXaeroCompat.onClientSetup();
         });
     }

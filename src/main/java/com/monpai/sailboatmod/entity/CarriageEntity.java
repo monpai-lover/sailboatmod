@@ -58,15 +58,14 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
-import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import software.bernie.geckolib.animatable.GeoEntity;
-import software.bernie.geckolib.core.animatable.instance.AnimatableInstanceCache;
-import software.bernie.geckolib.core.animation.AnimatableManager;
-import software.bernie.geckolib.core.animation.AnimationController;
-import software.bernie.geckolib.core.animation.RawAnimation;
-import software.bernie.geckolib.core.object.PlayState;
+import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
+import software.bernie.geckolib.animation.AnimatableManager;
+import software.bernie.geckolib.animation.AnimationController;
+import software.bernie.geckolib.animation.RawAnimation;
+import software.bernie.geckolib.animation.PlayState;
 import software.bernie.geckolib.util.GeckoLibUtil;
 
 import java.time.Instant;
@@ -372,41 +371,45 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     public CarriageEntity(EntityType<? extends CarriageEntity> entityType, Level level) {
         super(entityType, level);
-        setMaxUpStep(LAND_VEHICLE_STEP_HEIGHT);
         this.driveState = CarriageLandDriveModel.State.idle(getYRot());
         // 2026-06 EntityCulling 白名单(同帆船):noCulling=true 让 EntityCulling 不剔除,治远行幽灵车。[[entity_culling_ghost_noculling]]
         this.noCulling = true;
     }
 
     @Override
-    protected void defineSynchedData() {
-        this.entityData.define(DATA_WOOD_TYPE, CarriageWoodType.OAK.serializedName());
-        this.entityData.define(DATA_AUTOPILOT_ACTIVE, false);
-        this.entityData.define(DATA_AUTOPILOT_PAUSED, false);
-        this.entityData.define(DATA_ROUTE_COUNT, 0);
-        this.entityData.define(DATA_ROUTE_INDEX, 0);
-        this.entityData.define(DATA_ROUTE_NAME, "-");
-        this.entityData.define(DATA_SEAT_0, -1);
-        this.entityData.define(DATA_SEAT_1, -1);
-        this.entityData.define(DATA_SEAT_2, -1);
-        this.entityData.define(DATA_SEAT_3, -1);
-        this.entityData.define(DATA_SEAT_4, -1);
-        this.entityData.define(DATA_RENTAL_PRICE, SailboatEntity.DEFAULT_RENTAL_PRICE);
-        this.entityData.define(DATA_CURRENT_SPEED, 0.0F);
-        this.entityData.define(DATA_ACCELERATION, CarriageDriveInput.AccelerationDirection.NONE.ordinal());
-        this.entityData.define(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
-        this.entityData.define(DATA_TARGET_TURN_ANGLE, 0.0F);
-        this.entityData.define(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
-        this.entityData.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
-        this.entityData.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
-        this.entityData.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
-        this.entityData.define(DATA_ON_ROAD, false);
-        this.entityData.define(DATA_OWNER_NAME, "");
+    public float maxUpStep() {
+        return LAND_VEHICLE_STEP_HEIGHT;
+    }
+
+    @Override
+    protected void defineSynchedData(SynchedEntityData.Builder builder) {
+        builder.define(DATA_WOOD_TYPE, CarriageWoodType.OAK.serializedName());
+        builder.define(DATA_AUTOPILOT_ACTIVE, false);
+        builder.define(DATA_AUTOPILOT_PAUSED, false);
+        builder.define(DATA_ROUTE_COUNT, 0);
+        builder.define(DATA_ROUTE_INDEX, 0);
+        builder.define(DATA_ROUTE_NAME, "-");
+        builder.define(DATA_SEAT_0, -1);
+        builder.define(DATA_SEAT_1, -1);
+        builder.define(DATA_SEAT_2, -1);
+        builder.define(DATA_SEAT_3, -1);
+        builder.define(DATA_SEAT_4, -1);
+        builder.define(DATA_RENTAL_PRICE, SailboatEntity.DEFAULT_RENTAL_PRICE);
+        builder.define(DATA_CURRENT_SPEED, 0.0F);
+        builder.define(DATA_ACCELERATION, CarriageDriveInput.AccelerationDirection.NONE.ordinal());
+        builder.define(DATA_TURN_DIRECTION, CarriageDriveInput.TurnDirection.FORWARD.ordinal());
+        builder.define(DATA_TARGET_TURN_ANGLE, 0.0F);
+        builder.define(DATA_ARRIVAL_NOTICE_UNTIL_TICK, 0);
+        builder.define(DATA_ARRIVAL_NOTICE_STATION_NAME, "");
+        builder.define(DATA_ARRIVAL_NOTICE_ELAPSED_SECONDS, 0);
+        builder.define(DATA_ARRIVAL_NOTICE_DATE_TEXT, "");
+        builder.define(DATA_ON_ROAD, false);
+        builder.define(DATA_OWNER_NAME, "");
     }
 
     @Override
     protected void addAdditionalSaveData(CompoundTag tag) {
-        net.minecraft.world.ContainerHelper.saveAllItems(tag, inventory);
+        net.minecraft.world.ContainerHelper.saveAllItems(tag, inventory, registryAccess());
         tag.putString("WoodType", getWoodType().serializedName());
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
         tag.putString("OwnerUuid", ownerUuid == null ? "" : ownerUuid);
@@ -441,7 +444,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     protected void readAdditionalSaveData(CompoundTag tag) {
-        net.minecraft.world.ContainerHelper.loadAllItems(tag, inventory);
+        com.monpai.sailboatmod.compat.InventoryNbt.loadAllItems(tag, inventory, registryAccess());
         setWoodType(CarriageWoodType.fromSerialized(tag.getString("WoodType")));
         ownerName = tag.getString("OwnerName");
         ownerUuid = tag.getString("OwnerUuid");
@@ -471,7 +474,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         setArrivalNoticeTicks(arrivalHold.arrivalNoticeTicks());
 
         seatAssignments.clear();
-        ListTag seats = tag.getList("SeatAssignments", Tag.TAG_COMPOUND);
+        ListTag seats = tag.getList("SeatAssignments", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : seats) {
             if (raw instanceof CompoundTag seat && seat.hasUUID("Player")) {
                 seatAssignments.put(seat.getUUID("Player"), seat.getInt("Seat"));
@@ -1168,8 +1171,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
                        double z,
                        float yRot,
                        float xRot,
-                       int posRotationIncrements,
-                       boolean teleport) {
+                       int posRotationIncrements) {
         lerpX = x;
         lerpY = y;
         lerpZ = z;
@@ -1336,8 +1338,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     @Override
-    public Packet<ClientGamePacketListener> getAddEntityPacket() {
-        return NetworkHooks.getEntitySpawningPacket(this);
+    public Packet<ClientGamePacketListener> getAddEntityPacket(net.minecraft.server.level.ServerEntity serverEntity) {
+        return super.getAddEntityPacket(serverEntity);
     }
 
     @Override
@@ -1361,23 +1363,28 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (!hasPassenger(passenger)) {
             return;
         }
+        Vec3 seatPosition = getPassengerRidingPosition(passenger);
+        Vec3 attachment = passenger.getVehicleAttachmentPoint(this);
+        moveFunction.accept(passenger, seatPosition.x - attachment.x,
+                seatPosition.y - attachment.y, seatPosition.z - attachment.z);
+        passenger.setYBodyRot(getYRot());
+    }
+
+    @Override
+    public Vec3 getPassengerRidingPosition(Entity passenger) {
+        if (!hasPassenger(passenger)) {
+            return super.getPassengerRidingPosition(passenger);
+        }
         int seatIndex = getSeatFor(passenger);
         if (seatIndex < 0 || seatIndex >= PASSENGER_OFFSETS.length) {
             seatIndex = Math.min(getPassengers().indexOf(passenger), PASSENGER_OFFSETS.length - 1);
         }
         Vec3 seat = PASSENGER_OFFSETS[seatIndex];
-        // 2026-06 照 MrCrayfish(AbstractLandVehicleRenderer/VehicleEntity.updatePassengerPosition):座位向量用 Vec3.yRot
-        // 旋转,带 -90°(-π/2)偏移对齐模型朝向坐标系——之前手写 cos/sin 无偏移导致座位转 90°飘到车侧。
         Vec3 seatVec = seat.yRot(-getYRot() * (float) (Math.PI / 180.0D) - ((float) Math.PI / 2F));
-        double x = getX() + seatVec.x;
-        double y = getY() + getPassengersRidingOffset() + seatVec.y + passenger.getMyRidingOffset();
-        double z = getZ() + seatVec.z;
-        moveFunction.accept(passenger, x, y, z);
-        // 驾驶员/乘客身体朝向 = 车头朝向。不叠加转向角抖动(之前叠加导致座位朝向抖)。
-        passenger.setYBodyRot(getYRot());
+        Vec3 legacySeatPosition = position().add(seatVec.x, getPassengersRidingOffset() + seatVec.y, seatVec.z);
+        return PassengerSeatPosition.anchor(passenger, this, legacySeatPosition, getPassengersRidingOffset());
     }
 
-    @Override
     public double getPassengersRidingOffset() {
         return 0.35D;
     }
@@ -1457,7 +1464,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return;
         }
         if (!level().isClientSide && player instanceof ServerPlayer serverPlayer) {
-            NetworkHooks.openScreen(serverPlayer, this);
+            serverPlayer.openMenu(this);
         }
     }
 
@@ -1862,7 +1869,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     /**
-     * 强制/取消加载区块。用 ForgeChunkManager.forceChunk(ticking=true) 申请 ENTITY_TICKING 票据。
+     * 强制/取消加载区块。用 ModChunkLoading.forceChunk(ticking=true) 申请 ENTITY_TICKING 票据。
      * 必须用 ticking 票据：vanilla setChunkForced 只给 FORCED 票据(level 31)，玩家不在附近时
      * ChunkMap 不为区块内实体建 EntityTrackerEntry —— 实体在服务端 tick(有音效、可被扫描)却
      * 从不向客户端发 spawn 包，导致载具远行返回后「看不见但有音效」(实测回归)。
@@ -1872,7 +1879,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         int chunkX = net.minecraft.world.level.ChunkPos.getX(chunkKey);
         int chunkZ = net.minecraft.world.level.ChunkPos.getZ(chunkKey);
         // 2026-06 改 entity-owner 票据(同帆船):配合 AutopilotChunkLoader 回调,退档重进 Forge 重新强加载载具区块→实体回来。
-        net.minecraftforge.common.world.ForgeChunkManager.forceChunk(
+        com.monpai.sailboatmod.util.ModChunkLoading.forceChunk(
                 serverLevel, com.monpai.sailboatmod.SailboatMod.MODID,
                 this, chunkX, chunkZ, add, true);
     }
@@ -2937,7 +2944,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             return List.of();
         }
         List<Vec3> points = new ArrayList<>();
-        ListTag list = tag.getList(key, Tag.TAG_COMPOUND);
+        ListTag list = tag.getList(key, net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : list) {
             if (raw instanceof CompoundTag entry) {
                 points.add(new Vec3(entry.getDouble("X"), entry.getDouble("Y"), entry.getDouble("Z")));
@@ -3322,7 +3329,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
         for (int i = 0; i < targetInventory.size() && !remaining.isEmpty(); i++) {
             ItemStack slot = targetInventory.get(i);
-            if (!slot.isEmpty() && ItemStack.isSameItemSameTags(slot, remaining)) {
+            if (!slot.isEmpty() && ItemStack.isSameItemSameComponents(slot, remaining)) {
                 int limit = Math.min(slot.getMaxStackSize(), container.getMaxStackSize());
                 int move = Math.min(limit - slot.getCount(), remaining.getCount());
                 if (move > 0) {

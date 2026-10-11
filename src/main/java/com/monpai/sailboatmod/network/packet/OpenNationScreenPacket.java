@@ -11,9 +11,9 @@ import com.monpai.sailboatmod.nation.menu.NationOverviewMember;
 import com.monpai.sailboatmod.nation.menu.NationOverviewNationEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewTown;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -115,7 +115,7 @@ public class OpenNationScreenPacket {
         for (int i = 0; i < data.treasuryItems().size(); i++) {
             if (!data.treasuryItems().get(i).isEmpty()) {
                 buffer.writeVarInt(i);
-                buffer.writeItem(data.treasuryItems().get(i));
+                com.monpai.sailboatmod.network.PacketItemCodec.write(buffer, data.treasuryItems().get(i));
             }
         }
         writeUtfSafe(buffer, data.officerTitle(), 64);
@@ -258,7 +258,7 @@ public class OpenNationScreenPacket {
         int treasuryItemCount = buffer.readVarInt();
         for (int i = 0; i < treasuryItemCount; i++) {
             int slot = buffer.readVarInt();
-            net.minecraft.world.item.ItemStack stack = buffer.readItem();
+            net.minecraft.world.item.ItemStack stack = com.monpai.sailboatmod.network.PacketItemCodec.read(buffer);
             if (slot >= 0 && slot < treasuryItems.size()) {
                 treasuryItems.set(slot, stack);
             }
@@ -432,7 +432,7 @@ public class OpenNationScreenPacket {
 
     public static void handle(OpenNationScreenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
+        context.enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
             if (packet.warSyncOnly) {
                 NationClientHooks.updateIfOpen(packet.data);
             } else {

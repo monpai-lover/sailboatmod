@@ -23,12 +23,12 @@ public class ResidentSavedData extends SavedData {
             return new ResidentSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(ResidentSavedData::load, ResidentSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(ResidentSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> ResidentSavedData.load(tag))), DATA_NAME);
     }
 
     public static ResidentSavedData load(CompoundTag tag) {
         ResidentSavedData data = new ResidentSavedData();
-        ListTag list = tag.getList("Residents", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Residents", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
             ResidentRecord r = ResidentRecord.load(list.getCompound(i));
             if (!r.residentId().isBlank()) {
@@ -39,6 +39,10 @@ public class ResidentSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (ResidentRecord r : residents.values()) {

@@ -14,8 +14,7 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -95,7 +94,7 @@ public class RequestAutoRouteDocksPacket {
             LOGGER.info("[AutoRoute] 源 @{} 模式={} 共扫描 {} 个其它码头,列出 {} 个可用",
                     msg.sourceDockPos, postStationMode ? "驿站" : "码头", scanned, available.size());
 
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+            ModNetwork.CHANNEL.send(player,
                 new SyncAutoRouteDocksPacket(msg.sourceDockPos, terminalKind, available));
         });
         ctx.get().setPacketHandled(true);

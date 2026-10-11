@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.item;
 
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
@@ -15,10 +16,10 @@ public class TownCoreItem extends DescribedBlockItem {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
-        super.appendHoverText(stack, level, tooltip, flag);
-        if (stack.hasTag() && stack.getTag().contains("RelocatingTownName")) {
-            tooltip.add(Component.translatable("item.sailboatmod.core.relocating", stack.getTag().getString("RelocatingTownName")));
+    public void appendHoverText(ItemStack stack, net.minecraft.world.item.Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
+        super.appendHoverText(stack, context, tooltip, flag);
+        if (ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack).contains("RelocatingTownName")) {
+            tooltip.add(Component.translatable("item.sailboatmod.core.relocating", ItemStackNbt.tag(stack).getString("RelocatingTownName")));
             tooltip.add(Component.translatable("item.sailboatmod.core.relocation_hint"));
         }
     }

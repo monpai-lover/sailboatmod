@@ -42,7 +42,7 @@ public class RoadPlannerOptionSelectionScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(graphics);
+        this.renderBackground(graphics, mouseX, mouseY, partialTick);
         graphics.drawCenteredString(this.font, this.title, this.width / 2, 18, 0xFFF3E4B0);
         graphics.drawCenteredString(this.font,
                 Component.translatable("screen.sailboatmod.road_planner.option.route", sourceTownName, targetTownName),
@@ -61,7 +61,7 @@ public class RoadPlannerOptionSelectionScreen extends Screen {
                     Component.literal(option.pathNodeCount() + " nodes" + (option.bridgeBacked() ? " | bridge" : " | detour")),
                     left + 8, y + 16, 0xFFB7C8D6, false);
         }
-        super.render(graphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, graphics, mouseX, mouseY, partialTick);
     }
 
     @Override

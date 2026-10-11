@@ -23,12 +23,12 @@ public class MarketTerminalSavedData extends SavedData {
             return new MarketTerminalSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(MarketTerminalSavedData::load, MarketTerminalSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(MarketTerminalSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> MarketTerminalSavedData.load(tag))), DATA_NAME);
     }
 
     public static MarketTerminalSavedData load(CompoundTag tag) {
         MarketTerminalSavedData data = new MarketTerminalSavedData();
-        ListTag list = tag.getList("Entries", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Entries", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : list) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -42,6 +42,10 @@ public class MarketTerminalSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (MarketTerminalEntry entry : entries.values()) {

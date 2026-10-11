@@ -5,9 +5,9 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -151,7 +151,7 @@ public record RoadPlannerMapTileSyncPacket(UUID sessionId,
     }
 
     public static void handle(RoadPlannerMapTileSyncPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        contextSupplier.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleOnClient(packet)));
+        contextSupplier.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleOnClient(packet)));
         contextSupplier.get().setPacketHandled(true);
     }
 

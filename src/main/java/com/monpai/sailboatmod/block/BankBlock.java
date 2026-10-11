@@ -19,10 +19,16 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 
 public class BankBlock extends BaseEntityBlock {
+    public static final com.mojang.serialization.MapCodec<BankBlock> CODEC = simpleCodec(BankBlock::new);
+
+    @Override
+    protected com.mojang.serialization.MapCodec<? extends BaseEntityBlock> codec() {
+        return CODEC;
+    }
+
     public BankBlock(Properties properties) {
         super(properties);
     }
@@ -68,7 +74,7 @@ public class BankBlock extends BaseEntityBlock {
     }
 
     @Override
-    public InteractionResult use(BlockState state, Level level, BlockPos pos, Player player, InteractionHand hand, BlockHitResult hit) {
+    public InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
         if (level.isClientSide) {
             return InteractionResult.SUCCESS;
         }
@@ -82,12 +88,12 @@ public class BankBlock extends BaseEntityBlock {
         if (!(level.getBlockEntity(pos) instanceof BankBlockEntity bank)) {
             return InteractionResult.PASS;
         }
-        NetworkHooks.openScreen(serverPlayer, bank, pos);
+        serverPlayer.openMenu(bank, pos);
         return InteractionResult.CONSUME;
     }
 
     @Override
-    public boolean isPathfindable(BlockState state, BlockGetter level, BlockPos pos, net.minecraft.world.level.pathfinder.PathComputationType type) {
+    public boolean isPathfindable(BlockState state, net.minecraft.world.level.pathfinder.PathComputationType type) {
         return false;
     }
 }

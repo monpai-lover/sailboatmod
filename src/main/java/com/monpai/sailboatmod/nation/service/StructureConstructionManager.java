@@ -67,7 +67,6 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraftforge.network.NetworkDirection;
 import org.slf4j.Logger;
 
 import java.util.*;
@@ -3241,7 +3240,7 @@ public final class StructureConstructionManager {
                 || block instanceof SnowLayerBlock
                 || state.is(Blocks.VINE)
                 || state.is(Blocks.SNOW)
-                || state.is(Blocks.GRASS)
+                || state.is(Blocks.SHORT_GRASS)
                 || state.is(Blocks.TALL_GRASS)
                 || state.is(Blocks.FERN)
                 || state.is(Blocks.LARGE_FERN)
@@ -4085,7 +4084,7 @@ public final class StructureConstructionManager {
                 || block instanceof SnowLayerBlock
                 || state.is(Blocks.VINE)
                 || state.is(Blocks.SNOW)
-                || state.is(Blocks.GRASS)
+                || state.is(Blocks.SHORT_GRASS)
                 || state.is(Blocks.TALL_GRASS)
                 || state.is(Blocks.FERN)
                 || state.is(Blocks.LARGE_FERN)
@@ -5020,11 +5019,8 @@ public final class StructureConstructionManager {
                         getActiveWorkerCount(level, activeEntry.getKey())
                 ));
             }
-            ModNetwork.CHANNEL.sendTo(
-                    new SyncConstructionProgressPacket(entries),
-                    player.connection.connection,
-                    NetworkDirection.PLAY_TO_CLIENT
-            );
+            ModNetwork.CHANNEL.send(player,
+                    new SyncConstructionProgressPacket(entries));
         }
     }
 
@@ -5049,11 +5045,8 @@ public final class StructureConstructionManager {
                         getActiveRoadWorkerCount(level, activeEntry.getKey())
                 ));
             }
-            ModNetwork.CHANNEL.sendTo(
-                    new SyncRoadConstructionProgressPacket(entries),
-                    player.connection.connection,
-                    NetworkDirection.PLAY_TO_CLIENT
-            );
+            ModNetwork.CHANNEL.send(player,
+                    new SyncRoadConstructionProgressPacket(entries));
         }
     }
 
@@ -5067,11 +5060,8 @@ public final class StructureConstructionManager {
             }
             List<SyncConstructionGhostPreviewPacket.BuildingEntry> buildingEntries = collectBuildingGhostEntries(level, player);
             List<SyncConstructionGhostPreviewPacket.RoadEntry> roadEntries = collectRoadGhostEntries(level, player);
-            ModNetwork.CHANNEL.sendTo(
-                    new SyncConstructionGhostPreviewPacket(buildingEntries, roadEntries),
-                    player.connection.connection,
-                    NetworkDirection.PLAY_TO_CLIENT
-            );
+            ModNetwork.CHANNEL.send(player,
+                    new SyncConstructionGhostPreviewPacket(buildingEntries, roadEntries));
         }
     }
 
@@ -5303,9 +5293,9 @@ public final class StructureConstructionManager {
             return;
         }
         if (player.getMainHandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())) {
-            player.getMainHandItem().hurtAndBreak(1, player, p -> p.broadcastBreakEvent(net.minecraft.world.InteractionHand.MAIN_HAND));
+            player.getMainHandItem().hurtAndBreak(1, player, net.minecraft.world.entity.EquipmentSlot.MAINHAND);
         } else if (player.getOffhandItem().is(ModItems.BUILDER_HAMMER_ITEM.get())) {
-            player.getOffhandItem().hurtAndBreak(1, player, p -> p.broadcastBreakEvent(net.minecraft.world.InteractionHand.OFF_HAND));
+            player.getOffhandItem().hurtAndBreak(1, player, net.minecraft.world.entity.EquipmentSlot.OFFHAND);
         }
     }
 

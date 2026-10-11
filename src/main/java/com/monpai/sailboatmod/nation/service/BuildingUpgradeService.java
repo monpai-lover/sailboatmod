@@ -5,7 +5,7 @@ import com.monpai.sailboatmod.nation.event.BuildingEvent;
 import com.monpai.sailboatmod.nation.model.BuildingUpgradeRequirement;
 import com.monpai.sailboatmod.nation.model.PlacedStructureRecord;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraftforge.common.MinecraftForge;
+import net.neoforged.neoforge.common.NeoForge;
 
 /**
  * Service for managing building upgrades
@@ -49,7 +49,7 @@ public class BuildingUpgradeService {
         );
 
         data.putStructure(upgraded);
-        MinecraftForge.EVENT_BUS.post(new BuildingEvent.Upgraded(
+        NeoForge.EVENT_BUS.post(new BuildingEvent.Upgraded(
             structure.structureId(), structure.townId(), structure.origin(),
             structure.buildingLevel(), structure.buildingLevel() + 1));
         return true;

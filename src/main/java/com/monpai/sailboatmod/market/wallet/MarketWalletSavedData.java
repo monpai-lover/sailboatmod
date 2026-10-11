@@ -20,12 +20,12 @@ public final class MarketWalletSavedData extends SavedData {
             return new MarketWalletSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(MarketWalletSavedData::load, MarketWalletSavedData::new, DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(MarketWalletSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> MarketWalletSavedData.load(tag))), DATA_NAME);
     }
 
     public static MarketWalletSavedData load(CompoundTag tag) {
         MarketWalletSavedData data = new MarketWalletSavedData();
-        ListTag accountsTag = tag.getList("Accounts", Tag.TAG_COMPOUND);
+        ListTag accountsTag = tag.getList("Accounts", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : accountsTag) {
             if (!(raw instanceof CompoundTag compound)) {
                 continue;
@@ -45,6 +45,10 @@ public final class MarketWalletSavedData extends SavedData {
     }
 
     @Override
+    public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
+        return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
+    }
+
     public CompoundTag save(CompoundTag tag) {
         ListTag accountsTag = new ListTag();
         for (MarketWalletAccount account : accounts.values()) {

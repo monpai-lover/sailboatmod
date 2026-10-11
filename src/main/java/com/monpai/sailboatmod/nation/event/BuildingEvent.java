@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.nation.event;
 
 import net.minecraft.core.BlockPos;
-import net.minecraftforge.eventbus.api.Event;
+import net.neoforged.bus.api.Event;
 
 /**
  * Building lifecycle events (inspired by MineColonies IBuildingEventsModule)

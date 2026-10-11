@@ -17,7 +17,7 @@ import java.util.List;
  * Family tree visualization window
  */
 public class FamilyTreeWindow extends AbstractSailboatWindow {
-    private static final ResourceLocation LAYOUT = new ResourceLocation(SailboatMod.MODID, "gui/resident/familytree.xml");
+    private static final ResourceLocation LAYOUT = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "gui/resident/familytree.xml");
 
     private final ResidentRecord resident;
     private final FamilyData family;

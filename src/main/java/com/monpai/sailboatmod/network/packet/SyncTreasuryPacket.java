@@ -5,7 +5,7 @@ import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import net.minecraft.core.NonNullList;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -43,7 +43,7 @@ public class SyncTreasuryPacket {
         for (int i = 0; i < msg.items.size(); i++) {
             if (!msg.items.get(i).isEmpty()) {
                 buf.writeVarInt(i);
-                buf.writeItem(msg.items.get(i));
+                com.monpai.sailboatmod.network.PacketItemCodec.write(buf, msg.items.get(i));
                 String dep = (msg.depositors != null && i < msg.depositors.length && msg.depositors[i] != null) ? msg.depositors[i] : "";
                 PacketStringCodec.writeUtfSafe(buf, dep, 64);
             }
@@ -60,7 +60,7 @@ public class SyncTreasuryPacket {
         int count = buf.readVarInt();
         for (int i = 0; i < count; i++) {
             int slot = buf.readVarInt();
-            ItemStack stack = buf.readItem();
+            ItemStack stack = com.monpai.sailboatmod.network.PacketItemCodec.read(buf);
             String dep = buf.readUtf(64);
             if (slot >= 0 && slot < items.size()) {
                 items.set(slot, stack);

@@ -36,7 +36,7 @@ public record RoadGraphSegmentPlacement(BlockPos middlePos, List<BlockPos> posit
     public static RoadGraphSegmentPlacement load(CompoundTag tag) {
         BlockPos middle = BlockPos.of(tag.getLong("Middle"));
         java.util.ArrayList<BlockPos> positions = new java.util.ArrayList<>();
-        ListTag positionsTag = tag.getList("Positions", Tag.TAG_COMPOUND);
+        ListTag positionsTag = tag.getList("Positions", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (int index = 0; index < positionsTag.size(); index++) {
             positions.add(BlockPos.of(positionsTag.getCompound(index).getLong("Pos")));
         }

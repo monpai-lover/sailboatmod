@@ -61,21 +61,21 @@ public record TradeProposalRecord(
         tag.putLong("CreatedAt", createdAt);
         tag.putString("Status", status);
         ListTag offerList = new ListTag();
-        for (ItemStack item : offerItems) { if (!item.isEmpty()) offerList.add(item.save(new CompoundTag())); }
+        for (ItemStack item : offerItems) { if (!item.isEmpty()) offerList.add(com.monpai.sailboatmod.compat.ItemStackNbt.save(item, new CompoundTag())); }
         tag.put("OfferItems", offerList);
         ListTag requestList = new ListTag();
-        for (ItemStack item : requestItems) { if (!item.isEmpty()) requestList.add(item.save(new CompoundTag())); }
+        for (ItemStack item : requestItems) { if (!item.isEmpty()) requestList.add(com.monpai.sailboatmod.compat.ItemStackNbt.save(item, new CompoundTag())); }
         tag.put("RequestItems", requestList);
         return tag;
     }
 
     public static TradeProposalRecord load(CompoundTag tag) {
         List<ItemStack> offerItems = new ArrayList<>();
-        ListTag offerList = tag.getList("OfferItems", Tag.TAG_COMPOUND);
-        for (int i = 0; i < offerList.size(); i++) offerItems.add(ItemStack.of(offerList.getCompound(i)));
+        ListTag offerList = tag.getList("OfferItems", net.minecraft.nbt.Tag.TAG_COMPOUND);
+        for (int i = 0; i < offerList.size(); i++) offerItems.add(com.monpai.sailboatmod.compat.ItemStackNbt.read(offerList.getCompound(i)));
         List<ItemStack> requestItems = new ArrayList<>();
-        ListTag requestList = tag.getList("RequestItems", Tag.TAG_COMPOUND);
-        for (int i = 0; i < requestList.size(); i++) requestItems.add(ItemStack.of(requestList.getCompound(i)));
+        ListTag requestList = tag.getList("RequestItems", net.minecraft.nbt.Tag.TAG_COMPOUND);
+        for (int i = 0; i < requestList.size(); i++) requestItems.add(com.monpai.sailboatmod.compat.ItemStackNbt.read(requestList.getCompound(i)));
         return new TradeProposalRecord(
                 tag.getString("Id"), tag.getString("Proposer"), tag.getString("Target"),
                 tag.getLong("OfferCurrency"), offerItems,

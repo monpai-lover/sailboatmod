@@ -35,6 +35,7 @@ import com.monpai.sailboatmod.road.pathfinding.post.PathPostProcessor;
 import com.monpai.sailboatmod.roadplanner.obstacle.RoadPlannerObstacleMask;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import com.monpai.sailboatmod.compat.ItemStackNbt;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -47,7 +48,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
-import net.minecraftforge.network.PacketDistributor;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -128,7 +128,7 @@ public final class ManualRoadPlannerService {
                 readyPreview.failureMessageKey()
         ));
         String previewHash = previewHash(rebuilt.plan());
-        cachePreviewState(stack.getOrCreateTag(), rebuilt, previewHash, System.currentTimeMillis());
+        ItemStackNbt.updateTag(stack, dataTag -> cachePreviewState(dataTag, rebuilt, previewHash, System.currentTimeMillis()));
         sendPreview(player, rebuilt, updatedCandidates, true);
     }
 
@@ -180,7 +180,7 @@ public final class ManualRoadPlannerService {
             PlannerMode next = readPlannerMode(stack).next();
             READY_PREVIEWS.remove(player.getUUID());
             clearPreviewState(stack);
-            stack.getOrCreateTag().putString(TAG_MODE, next.name());
+            ItemStackNbt.updateTag(stack, dataTag -> dataTag.putString(TAG_MODE, next.name()));
             return Component.translatable(modeMessageKey(next));
         }
         return openTargetSelection(player, stack, false);
@@ -213,7 +213,7 @@ public final class ManualRoadPlannerService {
             return Component.translatable("message.sailboatmod.road_planner.no_targets");
         }
 
-        String selectedTownId = stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
+        String selectedTownId = ItemStackNbt.tag(stack).getString(TAG_TARGET_TOWN_ID);
         List<RoadPlannerClientHooks.TargetEntry> entries = new ArrayList<>(targets.size());
         for (TownRecord target : targets) {
             BlockPos targetCore = townCorePos(level, target);
@@ -224,7 +224,7 @@ public final class ManualRoadPlannerService {
         }
 
         ModNetwork.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> player),
+                player,
                 new OpenRoadPlannerScreenPacket(offhand, displayTownName(sourceTown), selectedTownId, entries)
         );
         return Component.translatable("message.sailboatmod.road_planner.selection_opened", displayTownName(sourceTown));
@@ -266,7 +266,7 @@ public final class ManualRoadPlannerService {
 
         for (TownRecord target : targets) {
             if (target.townId().equalsIgnoreCase(selectedTownId)) {
-                stack.getOrCreateTag().putString(TAG_TARGET_TOWN_ID, target.townId());
+                ItemStackNbt.updateTag(stack, dataTag -> dataTag.putString(TAG_TARGET_TOWN_ID, target.townId()));
                 READY_PREVIEWS.remove(player.getUUID());
                 markPlanningPending(stack, false);
                 clearPreviewState(stack);
@@ -287,7 +287,7 @@ public final class ManualRoadPlannerService {
             if (hasPreparedPreviewState(stack)) {
                 return applyReadyPreview(player, stack, readyPreview);
             }
-            sendPlanningResult(player, readyPreview, stack.getOrCreateTag().getString(TAG_PREVIEW_OPTION_ID));
+            sendPlanningResult(player, readyPreview, ItemStackNbt.tag(stack).getString(TAG_PREVIEW_OPTION_ID));
             return Component.empty();
         }
         if (isPlanningPending(stack)) {
@@ -377,7 +377,7 @@ public final class ManualRoadPlannerService {
         if (player == null || stack == null || roadId == null || roadId.isBlank()) {
             return Component.translatable("message.sailboatmod.road_planner.path_failed");
         }
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         String cachedRoadId = tag.getString(TAG_PREVIEW_ROAD_ID);
         long cachedAt = tag.getLong(TAG_PREVIEW_AT);
         boolean confirmable = roadId.equalsIgnoreCase(cachedRoadId)
@@ -394,6 +394,7 @@ public final class ManualRoadPlannerService {
         }
         tag.putString(TAG_PREVIEW_ROAD_ID, roadId);
         tag.putLong(TAG_PREVIEW_AT, System.currentTimeMillis());
+        ItemStackNbt.setTag(stack, tag);
         if (plan != null) {
             sendPreview(player, sourceName, targetName, plan, true);
         }
@@ -1256,14 +1257,14 @@ public final class ManualRoadPlannerService {
     }
 
     private static TownRecord resolveSelectedTarget(ItemStack stack, List<TownRecord> targets) {
-        String selectedTownId = stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
+        String selectedTownId = ItemStackNbt.tag(stack).getString(TAG_TARGET_TOWN_ID);
         for (TownRecord target : targets) {
             if (target.townId().equalsIgnoreCase(selectedTownId)) {
                 return target;
             }
         }
         TownRecord fallback = targets.get(0);
-        stack.getOrCreateTag().putString(TAG_TARGET_TOWN_ID, fallback.townId());
+        ItemStackNbt.updateTag(stack, dataTag -> dataTag.putString(TAG_TARGET_TOWN_ID, fallback.townId()));
         return fallback;
     }
 
@@ -1929,12 +1930,13 @@ public final class ManualRoadPlannerService {
         if (stack == null) {
             return;
         }
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         tag.putString(TAG_PREVIEW_TARGET_TOWN_ID, targetTownId == null ? "" : targetTownId);
         tag.putString(TAG_PREVIEW_ROAD_ID, roadId == null ? "" : roadId);
         tag.putString(TAG_PREVIEW_HASH, previewHash == null ? "" : previewHash);
         tag.putLong(TAG_PREVIEW_AT, previewAt);
         tag.putString(TAG_PREVIEW_FAILURE, "message.sailboatmod.road_planner.path_failed");
+        ItemStackNbt.setTag(stack, tag);
     }
 
     static void clearConfigRebuildFailurePreviewStateForTest(UUID playerId, ItemStack stack) {
@@ -1949,7 +1951,7 @@ public final class ManualRoadPlannerService {
         PlannerMode next = readPlannerMode(stack).next();
         if (stack != null) {
             clearPreviewState(stack);
-            stack.getOrCreateTag().putString(TAG_MODE, next.name());
+            ItemStackNbt.updateTag(stack, dataTag -> dataTag.putString(TAG_MODE, next.name()));
         }
         return next;
     }
@@ -2306,7 +2308,7 @@ public final class ManualRoadPlannerService {
         if (optionId == null || optionId.isBlank()) {
             return;
         }
-        stack.getOrCreateTag().putString(TAG_PREVIEW_OPTION_ID, optionId);
+        ItemStackNbt.updateTag(stack, dataTag -> dataTag.putString(TAG_PREVIEW_OPTION_ID, optionId));
         clearFailureMessage(stack);
         PlannedPreviewState readyPreview = readyPreviewState(player, stack);
         if (readyPreview != null || isPlanningPending(stack)) {
@@ -2324,10 +2326,10 @@ public final class ManualRoadPlannerService {
     }
 
     private static boolean hasPreparedPreviewState(ItemStack stack) {
-        if (stack == null || !stack.hasTag() || stack.getTag() == null) {
+        if (stack == null || !ItemStackNbt.hasTag(stack) || ItemStackNbt.tag(stack) == null) {
             return false;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         return !tag.getString(TAG_PREVIEW_HASH).isBlank()
                 && !tag.getString(TAG_PREVIEW_ROAD_ID).isBlank()
                 && tag.getLong(TAG_PREVIEW_AT) > 0L;
@@ -2460,7 +2462,7 @@ public final class ManualRoadPlannerService {
             ));
         }
         ModNetwork.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> player),
+                player,
                 new SyncRoadPlannerResultPacket(
                         displayTownName(selected.sourceTown()),
                         displayTownName(selected.targetTown()),
@@ -2497,7 +2499,7 @@ public final class ManualRoadPlannerService {
             sendPreviewClear(player);
             return;
         }
-        ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), packet);
+        ModNetwork.CHANNEL.send(player, packet);
     }
 
     private static void sendPreview(ServerPlayer player,
@@ -2506,14 +2508,14 @@ public final class ManualRoadPlannerService {
                                     Object plan,
                                     boolean awaitingConfirmation) {
         ModNetwork.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> player),
+                player,
                 previewPacket(sourceName, targetName, plan, List.of(), "", awaitingConfirmation, false)
         );
     }
 
     private static void sendPreviewClear(ServerPlayer player) {
         ModNetwork.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> player),
+                player,
                 new SyncRoadPlannerPreviewPacket("", "", List.of(), List.of(), 0, null, null, null, false, List.of(), "", List.of())
         );
     }
@@ -2530,7 +2532,7 @@ public final class ManualRoadPlannerService {
         List<PlanCandidate> candidates = buildPlanCandidates(player, stack, (stage, percent) ->
                 sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
                         stage, percent, SyncManualRoadPlanningProgressPacket.Status.RUNNING));
-        String targetTownId = stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
+        String targetTownId = ItemStackNbt.tag(stack).getString(TAG_TARGET_TOWN_ID);
         String failureKey = candidates.isEmpty() ? "message.sailboatmod.road_planner.path_failed" : "";
         PlannedPreviewState preview = new PlannedPreviewState(targetTownId, candidates, failureKey);
         applyPlannedPreview(player, stack, preview, requestId, routeNames);
@@ -2639,7 +2641,7 @@ public final class ManualRoadPlannerService {
         }
 
         clearFailureMessage(stack);
-        CompoundTag tag = stack.getOrCreateTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         String previewHash = previewHash(candidate.plan());
         long now = System.currentTimeMillis();
         boolean confirmable = candidate.targetTown().townId().equalsIgnoreCase(tag.getString(TAG_PREVIEW_TARGET_TOWN_ID))
@@ -2673,6 +2675,7 @@ public final class ManualRoadPlannerService {
         }
 
         cachePreviewState(tag, candidate, previewHash, now);
+        ItemStackNbt.setTag(stack, tag);
         sendPreview(player, candidate, preview.candidates(), true);
         return Component.translatable(
                 "message.sailboatmod.road_planner.preview_ready",
@@ -2700,7 +2703,7 @@ public final class ManualRoadPlannerService {
         if (stack == null) {
             return false;
         }
-        String selectedTarget = stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID);
+        String selectedTarget = ItemStackNbt.tag(stack).getString(TAG_TARGET_TOWN_ID);
         return Objects.equals(selectedTarget == null ? "" : selectedTarget, targetTownId == null ? "" : targetTownId);
     }
 
@@ -2709,33 +2712,33 @@ public final class ManualRoadPlannerService {
             return;
         }
         if (pending) {
-            stack.getOrCreateTag().putBoolean(TAG_PENDING_REQUEST, true);
+            ItemStackNbt.updateTag(stack, dataTag -> dataTag.putBoolean(TAG_PENDING_REQUEST, true));
             return;
         }
-        if (stack.hasTag() && stack.getTag() != null) {
-            stack.getTag().remove(TAG_PENDING_REQUEST);
+        if (ItemStackNbt.hasTag(stack) && ItemStackNbt.tag(stack) != null) {
+            ItemStackNbt.updateTag(stack, dataTag -> dataTag.remove(TAG_PENDING_REQUEST));
         }
     }
 
     private static boolean isPlanningPending(ItemStack stack) {
         return stack != null
-                && stack.hasTag()
-                && stack.getTag() != null
-                && stack.getTag().getBoolean(TAG_PENDING_REQUEST);
+                && ItemStackNbt.hasTag(stack)
+                && ItemStackNbt.tag(stack) != null
+                && ItemStackNbt.tag(stack).getBoolean(TAG_PENDING_REQUEST);
     }
 
     private static String failureMessageKey(ItemStack stack) {
-        if (stack == null || !stack.hasTag() || stack.getTag() == null) {
+        if (stack == null || !ItemStackNbt.hasTag(stack) || ItemStackNbt.tag(stack) == null) {
             return "";
         }
-        return stack.getTag().getString(TAG_PREVIEW_FAILURE);
+        return ItemStackNbt.tag(stack).getString(TAG_PREVIEW_FAILURE);
     }
 
     private static void clearPreviewState(ItemStack stack) {
-        if (stack == null || !stack.hasTag()) {
+        if (stack == null || !ItemStackNbt.hasTag(stack)) {
             return;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null) {
             return;
         }
@@ -2745,6 +2748,7 @@ public final class ManualRoadPlannerService {
         tag.remove(TAG_PREVIEW_AT);
         tag.remove(TAG_PREVIEW_OPTION_ID);
         tag.remove(TAG_PENDING_REQUEST);
+        ItemStackNbt.setTag(stack, tag);
     }
 
     private static void clearConfigRebuildFailurePreviewState(UUID playerId, ItemStack stack) {
@@ -2756,10 +2760,10 @@ public final class ManualRoadPlannerService {
     }
 
     private static PlannerMode readPlannerMode(ItemStack stack) {
-        if (stack == null || !stack.hasTag()) {
+        if (stack == null || !ItemStackNbt.hasTag(stack)) {
             return PlannerMode.BUILD;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null) {
             return PlannerMode.BUILD;
         }
@@ -2787,7 +2791,7 @@ public final class ManualRoadPlannerService {
         if (stack == null || key == null || key.isBlank()) {
             return;
         }
-        stack.getOrCreateTag().putString(TAG_PREVIEW_FAILURE, key);
+        ItemStackNbt.updateTag(stack, dataTag -> dataTag.putString(TAG_PREVIEW_FAILURE, key));
     }
 
     private static void writeFailureMessage(ItemStack stack, Object reason) {
@@ -2798,10 +2802,10 @@ public final class ManualRoadPlannerService {
     }
 
     private static Component readFailureMessage(ItemStack stack) {
-        if (stack == null || !stack.hasTag()) {
+        if (stack == null || !ItemStackNbt.hasTag(stack)) {
             return null;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null) {
             return null;
         }
@@ -2813,14 +2817,15 @@ public final class ManualRoadPlannerService {
     }
 
     private static void clearFailureMessage(ItemStack stack) {
-        if (stack == null || !stack.hasTag()) {
+        if (stack == null || !ItemStackNbt.hasTag(stack)) {
             return;
         }
-        CompoundTag tag = stack.getTag();
+        CompoundTag tag = ItemStackNbt.tag(stack);
         if (tag == null) {
             return;
         }
         tag.remove(TAG_PREVIEW_FAILURE);
+        ItemStackNbt.setTag(stack, tag);
     }
 
     private static void logPathAttempt(BlockPos from, BlockPos to, boolean bridgeFallback, int pathSize, long elapsedMillis) {
@@ -2934,7 +2939,7 @@ public final class ManualRoadPlannerService {
         if (candidates == null || candidates.isEmpty()) {
             return null;
         }
-        String preferred = stack == null ? "" : stack.getOrCreateTag().getString(TAG_PREVIEW_OPTION_ID);
+        String preferred = stack == null ? "" : ItemStackNbt.tag(stack).getString(TAG_PREVIEW_OPTION_ID);
         for (PlanCandidate candidate : candidates) {
             if (candidate.optionId().equalsIgnoreCase(preferred)) {
                 return candidate;
@@ -2983,7 +2988,7 @@ public final class ManualRoadPlannerService {
             return;
         }
         ModNetwork.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> player),
+                player,
                 planningProgressPacket(requestId, sourceTownName, targetTownName, stage, stagePercent, status)
         );
     }

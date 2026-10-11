@@ -23,11 +23,11 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
-import net.minecraft.world.level.chunk.ChunkStatus;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.common.world.ForgeChunkManager;
+import com.monpai.sailboatmod.util.ModChunkLoading;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -340,7 +340,7 @@ public final class RouteDebugService {
                 String how = i == 0 ? "start-berth(trusted)"
                         : (i == verified.size() - 1 ? "goal-berth(trusted)" : "NBT-offthread/cache");
                 BlockPos owner = new BlockPos(cx << 4, seaLevel, cz << 4);
-                ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
+                ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, cx, cz, true, false);
                 boolean realNav;
                 int realSurfY;
                 String id;
@@ -353,7 +353,7 @@ public final class RouteDebugService {
                     realNav = surfW || seaW;
                     id = BuiltInRegistries.BLOCK.getKey(st.getBlock()).toString();
                 } finally {
-                    ForgeChunkManager.forceChunk(level, SailboatMod.MODID, owner, cx, cz, false, false);
+                    ModChunkLoading.forceChunk(level, SailboatMod.MODID, owner, cx, cz, false, false);
                 }
                 String routed = "verified#" + i + (nbtWater == realNav ? ""
                         : (nbtWater ? " [NBT=water but REAL=land => land-crossing!]" : " [NBT=land]"));

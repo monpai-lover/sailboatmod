@@ -21,7 +21,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -58,7 +57,7 @@ public class BankMenu extends AbstractContainerMenu {
                 NationSavedData data = NationSavedData.get(serverPlayer.level());
                 NationTreasuryRecord treasury = data.getOrCreateTreasury(town.nationId());
                 ModNetwork.CHANNEL.send(
-                        PacketDistributor.PLAYER.with(() -> serverPlayer),
+                        serverPlayer,
                         new SyncTreasuryPacket(
                                 treasury,
                                 BANK_LOANS.buildPersonalView(serverPlayer),
@@ -174,7 +173,7 @@ public class BankMenu extends AbstractContainerMenu {
 
     private void sync(ServerPlayer player, NationTreasuryRecord treasury, String nationId) {
         ModNetwork.CHANNEL.send(
-                PacketDistributor.PLAYER.with(() -> player),
+                player,
                 new SyncTreasuryPacket(
                         treasury,
                         BANK_LOANS.buildPersonalView(player),

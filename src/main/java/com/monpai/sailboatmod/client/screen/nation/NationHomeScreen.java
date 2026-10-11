@@ -386,13 +386,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     @Override
     public void tick() {
         super.tick();
-        if (this.nationNameInput != null) this.nationNameInput.tick();
-        if (this.shortNameInput != null) this.shortNameInput.tick();
-        if (this.primaryColorInput != null) this.primaryColorInput.tick();
-        if (this.secondaryColorInput != null) this.secondaryColorInput.tick();
-        if (this.flagPathInput != null) this.flagPathInput.tick();
-        if (this.warTargetInput != null) this.warTargetInput.tick();
-        if (this.officerTitleInput != null) this.officerTitleInput.tick();
         tickAutoRefresh();
         updateButtonState();
     }
@@ -459,7 +452,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
         boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
         ClaimMapViewport viewport = claimMapViewport();
         ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
@@ -501,7 +494,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             updateButtonState();
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, delta);
+        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
     }
 
     @Override
@@ -557,9 +550,9 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
+        this.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         drawContents(guiGraphics, mouseX, mouseY);
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
+        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
     }
 
     @Override

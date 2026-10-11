@@ -1,11 +1,11 @@
 package com.monpai.sailboatmod.network.packet.marketweb;
 
-import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 import com.monpai.sailboatmod.market.web.map.MarketWebMapTileUploadService;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.Arrays;
 import java.util.function.Supplier;
@@ -78,7 +78,7 @@ public record MarketWebMapTileUploadPacket(String dimensionId,
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> {
             ServerPlayer sender = context.getSender();
-            if (sender != null) {
+            if (sender != null && net.neoforged.fml.ModList.get().isLoaded("sailboatmarketweb")) {
                 MarketWebMapTileUploadService.acceptClientUpload(sender, packet);
             }
         });

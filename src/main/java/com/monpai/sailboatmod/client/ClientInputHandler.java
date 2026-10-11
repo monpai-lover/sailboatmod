@@ -27,23 +27,19 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
-import net.minecraftforge.client.event.InputEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 
-@Mod.EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
+@EventBusSubscriber(modid = SailboatMod.MODID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.GAME)
 public final class ClientInputHandler {
     private static float carriageTurnAngle = 0.0F;
 
     @SubscribeEvent
-    public static void onClientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.START) {
-            return;
-        }
-
+    public static void onClientTick(ClientTickEvent.Pre event) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
         if (player == null) {
@@ -83,7 +79,8 @@ public final class ClientInputHandler {
                 : player.getOffhandItem().is(ModItems.BANK_CONSTRUCTOR_ITEM.get()) ? player.getOffhandItem() : ItemStack.EMPTY;
         if (held.isEmpty()) return;
 
-        int delta = event.getScrollDelta() > 0 ? 1 : -1;
+        if (event.getScrollDeltaY() == 0.0D) return;
+        int delta = event.getScrollDeltaY() > 0 ? 1 : -1;
         boolean shift = net.minecraft.client.gui.screens.Screen.hasShiftDown();
         boolean alt = net.minecraft.client.gui.screens.Screen.hasAltDown();
 
@@ -139,9 +136,9 @@ public final class ClientInputHandler {
             return; // 已坐在马车上,右键不重新触发上车 raytrace。
         }
 
-        float partialTick = mc.getFrameTime();
+        float partialTick = mc.getTimer().getGameTimeDeltaPartialTick(true);
         Vec3 eye = player.getEyePosition(partialTick);
-        double reach = player.getEntityReach();
+        double reach = player.entityInteractionRange();
         Vec3 end = eye.add(player.getViewVector(partialTick).scale(reach));
         AABB searchBox = new AABB(eye, end).inflate(1.0D);
 

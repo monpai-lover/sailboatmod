@@ -6,8 +6,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraftforge.network.NetworkEvent;
-import net.minecraftforge.network.PacketDistributor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
@@ -29,7 +28,7 @@ public class OpenNationMenuPacket {
             }
             ChunkPos previewCenter = NationOverviewService.getCoreCenterOrPlayer(player);
             NationOverviewData data = NationOverviewService.buildFor(player, previewCenter);
-            ModNetwork.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new OpenNationScreenPacket(data));
+            ModNetwork.CHANNEL.send(player, new OpenNationScreenPacket(data));
         });
         context.setPacketHandled(true);
     }

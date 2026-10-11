@@ -7,8 +7,7 @@ import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.UUID;
@@ -85,8 +84,6 @@ public record RoadPlannerMergeCandidateRequestPacket(UUID sessionId,
                         candidate.ownerNationId(),
                         candidate.relationship()))
                 .toList();
-        ModNetwork.CHANNEL.sendTo(new OpenRoadMergeCandidatesPacket(packet.sessionId(), packet.requestId(), entries),
-                sender.connection.connection,
-                NetworkDirection.PLAY_TO_CLIENT);
+        ModNetwork.CHANNEL.send(sender, new OpenRoadMergeCandidatesPacket(packet.sessionId(), packet.requestId(), entries));
     }
 }

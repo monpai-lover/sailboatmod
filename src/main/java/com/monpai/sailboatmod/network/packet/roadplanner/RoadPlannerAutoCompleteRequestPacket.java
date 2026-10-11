@@ -7,8 +7,7 @@ import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.UUID;
@@ -60,17 +59,13 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
                 service = new RoadPlannerAutoCompleteService();
             }
             RoadPlannerAutoCompleteResult result = service.complete(packet.start(), packet.destination(), packet.manualNodes(), packet.spacingBlocks());
-            ModNetwork.CHANNEL.sendTo(
-                    new RoadPlannerAutoCompleteResultPacket(
+            ModNetwork.CHANNEL.send(player, new RoadPlannerAutoCompleteResultPacket(
                             packet.sessionId(),
                             result.success(),
                             result.nodes(),
                             result.segmentTypes(),
                             result.message(),
-                            result.terrainSamples()),
-                    player.connection.connection,
-                    NetworkDirection.PLAY_TO_CLIENT
-            );
+                            result.terrainSamples()));
         });
         context.setPacketHandled(true);
     }

@@ -2,9 +2,9 @@ package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.neoforged.api.distmarker.Dist;
+import com.monpai.sailboatmod.util.ClientSideExecutor;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,7 +55,7 @@ public record SyncRoadPlannerResultPacket(String sourceTownName,
     }
 
     public static void handle(SyncRoadPlannerResultPacket msg, Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
+        ctx.get().enqueueWork(() -> ClientSideExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> handleClient(msg)));
         ctx.get().setPacketHandled(true);
     }
 
@@ -75,7 +75,7 @@ public record SyncRoadPlannerResultPacket(String sourceTownName,
         );
     }
 
-    @net.minecraftforge.api.distmarker.OnlyIn(Dist.CLIENT)
+    @net.neoforged.api.distmarker.OnlyIn(Dist.CLIENT)
     private static void handleClient(SyncRoadPlannerResultPacket msg) {
         RoadPlannerClientHooks.showPlanningResult(
                 msg.sourceTownName(),

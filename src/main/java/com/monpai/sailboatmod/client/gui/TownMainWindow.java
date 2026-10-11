@@ -20,7 +20,7 @@ import java.util.List;
  * Main town management window with tabs (MineColonies TownHall style)
  */
 public class TownMainWindow extends AbstractSailboatWindow {
-    private static final ResourceLocation LAYOUT = new ResourceLocation(SailboatMod.MODID, "gui/town/townmain.xml");
+    private static final ResourceLocation LAYOUT = ResourceLocation.fromNamespaceAndPath(SailboatMod.MODID, "gui/town/townmain.xml");
 
     private final String townId;
     private final String townName;

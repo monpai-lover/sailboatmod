@@ -96,7 +96,7 @@ public class HappinessData {
     public static HappinessData load(CompoundTag tag) {
         HappinessData data = new HappinessData();
         if (tag.contains("Modifiers")) {
-            ListTag list = tag.getList("Modifiers", Tag.TAG_COMPOUND);
+            ListTag list = tag.getList("Modifiers", net.minecraft.nbt.Tag.TAG_COMPOUND);
             for (int i = 0; i < list.size(); i++) {
                 CompoundTag modTag = list.getCompound(i);
                 data.addModifier(modTag.getString("Key"), modTag.getDouble("Value"), modTag.getDouble("Weight"));

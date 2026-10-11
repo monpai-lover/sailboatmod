@@ -3,13 +3,24 @@ package com.monpai.sailboatmod;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BuildPackagingTest {
+    @Test
+    void isolatedDevelopmentModuleHasEmbeddedSqliteDriverResource() throws IOException {
+        try (InputStream driver = com.monpai.sailboatmod.market.db.MarketDatabase.class.getResourceAsStream(
+                "/META-INF/sailboatmod-libs/sqlite-jdbc-3.46.1.3.jar")) {
+            assertNotNull(driver, "the isolated NeoForge development module needs the inert SQLite driver resource");
+            assertTrue(driver.read() == 'P' && driver.read() == 'K', "the embedded driver should be a JAR archive");
+        }
+    }
+
     @Test
     void buildScriptDoesNotRelocateSqliteJdbcNativeBindings() throws IOException {
         String buildScript = Files.readString(Path.of("build.gradle"));

@@ -5,9 +5,9 @@ import com.monpai.sailboatmod.market.MarketSavedData;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.PurchaseOrder;
 import com.monpai.sailboatmod.market.ShippingOrder;
-import com.monpai.sailboatmod.market.web.MarketPlayerIdentity;
-import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
-import com.monpai.sailboatmod.market.web.map.MarketWebMapDtos;
+import com.monpai.sailboatmod.market.MarketPlayerIdentity;
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.map.MarketWebMapDtos;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationMemberRecord;
@@ -126,14 +126,14 @@ public final class ShippingTraceService {
                                                        net.minecraft.world.level.Level level) {
         // 调试航线(debugroute)带逐航点真实方块快照:按 trace id 取旁路缓存,index 对齐富化 Point。
         // 非 debug trace / 老航线 → debugNodes==null → 走普通 2 参 Point,不富化。
-        List<com.monpai.sailboatmod.market.web.DebugRouteNodeCache.Node> debugNodes =
-                com.monpai.sailboatmod.market.web.DebugRouteNodeCache.get(trace.shippingOrderId());
+        List<com.monpai.sailboatmod.market.logistics.DebugRouteNodeCache.Node> debugNodes =
+                com.monpai.sailboatmod.market.logistics.DebugRouteNodeCache.get(trace.shippingOrderId());
         List<MarketWebMapDtos.Point> points = new ArrayList<>();
         List<Vec3> tracePoints = trace.waypoints();
         for (int pi = 0; pi < tracePoints.size(); pi++) {
             Vec3 waypoint = tracePoints.get(pi);
             if (debugNodes != null && pi < debugNodes.size()) {
-                com.monpai.sailboatmod.market.web.DebugRouteNodeCache.Node node = debugNodes.get(pi);
+                com.monpai.sailboatmod.market.logistics.DebugRouteNodeCache.Node node = debugNodes.get(pi);
                 points.add(new MarketWebMapDtos.Point(
                         waypoint.x, waypoint.z, node.blockId(), node.water(), node.origin(), node.segment()));
             } else {

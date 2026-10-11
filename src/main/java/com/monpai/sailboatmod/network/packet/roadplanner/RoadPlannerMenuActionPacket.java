@@ -18,8 +18,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.network.NetworkDirection;
-import net.minecraftforge.network.NetworkEvent;
+import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.List;
 import java.util.Optional;
@@ -59,11 +58,7 @@ public record RoadPlannerMenuActionPacket(Action action) {
                     sender.sendSystemMessage(Component.literal("No built roads available for demolition."));
                     return;
                 }
-                ModNetwork.CHANNEL.sendTo(
-                        new OpenRoadDemolitionSelectionPacket(roads),
-                        sender.connection.connection,
-                        NetworkDirection.PLAY_TO_CLIENT
-                );
+                ModNetwork.CHANNEL.send(sender, new OpenRoadDemolitionSelectionPacket(roads));
                 return;
             }
             if (packet.action() == Action.RETURN_TO_PLANNER) {
@@ -111,8 +106,7 @@ public record RoadPlannerMenuActionPacket(Action action) {
         TownRecord destinationTown = data.getTown(townRoute.destination().townId());
         List<RoadPlannerClaimOverlay> claimOverlays = RoadPlannerClaimOverlayService.collectRouteClaims(data, startTown, destinationTown);
         int distance = (int) Math.round(Math.sqrt(townRoute.start().anchorPos().distSqr(townRoute.destination().anchorPos())));
-        ModNetwork.CHANNEL.sendTo(
-                new OpenRoadPlannerScreenPacket(
+        ModNetwork.CHANNEL.send(player, new OpenRoadPlannerScreenPacket(
                         false,
                         townRoute.start().townName(),
                         townRoute.destination().townId(),
@@ -122,10 +116,7 @@ public record RoadPlannerMenuActionPacket(Action action) {
                         townRoute.start().anchorPos(),
                         townRoute.destination().anchorPos(),
                         claimOverlays
-                ),
-                player.connection.connection,
-                NetworkDirection.PLAY_TO_CLIENT
-        );
+                ));
     }
 
     private static void openEditSelection(ServerPlayer player, List<OpenRoadEditSelectionPacket.Entry> roads) {
@@ -133,11 +124,7 @@ public record RoadPlannerMenuActionPacket(Action action) {
             player.sendSystemMessage(Component.literal("No editable roads available."));
             return;
         }
-        ModNetwork.CHANNEL.sendTo(
-                new OpenRoadEditSelectionPacket(roads),
-                player.connection.connection,
-                NetworkDirection.PLAY_TO_CLIENT
-        );
+        ModNetwork.CHANNEL.send(player, new OpenRoadEditSelectionPacket(roads));
     }
 
     public enum Action {

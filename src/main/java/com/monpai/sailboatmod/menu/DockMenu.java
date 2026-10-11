@@ -18,7 +18,6 @@ import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
-import net.minecraftforge.network.PacketDistributor;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -198,13 +197,13 @@ public class DockMenu extends AbstractContainerMenu {
         if (player instanceof ServerPlayer serverPlayer) {
             if (dock instanceof PostStationBlockEntity station) {
                 ModNetwork.CHANNEL.send(
-                        PacketDistributor.PLAYER.with(() -> serverPlayer),
+                        serverPlayer,
                         new OpenPostStationScreenPacket(station.buildPostStationScreenData(serverPlayer))
                 );
                 return;
             }
             ModNetwork.CHANNEL.send(
-                    PacketDistributor.PLAYER.with(() -> serverPlayer),
+                    serverPlayer,
                     new OpenDockScreenPacket(dock.buildScreenData(serverPlayer))
             );
         }

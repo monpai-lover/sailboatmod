@@ -53,12 +53,12 @@ public record RoadEditableSegment(String segmentId,
                 tag.getString("SegmentId"),
                 tag.getString("FromNodeId"),
                 tag.getString("ToNodeId"),
-                loadPositions(tag.getList("Centerline", Tag.TAG_COMPOUND)),
-                loadPositions(tag.getList("DisplayPath", Tag.TAG_COMPOUND)),
+                loadPositions(tag.getList("Centerline", net.minecraft.nbt.Tag.TAG_COMPOUND)),
+                loadPositions(tag.getList("DisplayPath", net.minecraft.nbt.Tag.TAG_COMPOUND)),
                 tag.getInt("Width"),
                 tag.getString("SectionType"),
                 tag.getString("MaterialId"),
-                loadLongPositions(tag.getList("BlockPositions", Tag.TAG_COMPOUND)));
+                loadLongPositions(tag.getList("BlockPositions", net.minecraft.nbt.Tag.TAG_COMPOUND)));
     }
 
     static ListTag savePositions(List<BlockPos> positions) {

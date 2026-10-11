@@ -179,7 +179,7 @@ public final class NationClientHooks {
         Component messageComponent = message == null || message.isBlank()
                 ? CommonComponents.EMPTY
                 : Component.literal(message);
-        SystemToast.add(minecraft.getToasts(), SystemToast.SystemToastIds.PERIODIC_NOTIFICATION, titleComponent, messageComponent);
+        SystemToast.add(minecraft.getToasts(), SystemToast.SystemToastId.PERIODIC_NOTIFICATION, titleComponent, messageComponent);
     }
 
     public static NationOverviewData lastSyncedData() {

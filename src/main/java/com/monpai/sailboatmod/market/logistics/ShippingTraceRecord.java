@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.market.logistics;
 
-import com.monpai.sailboatmod.market.web.map.MarketWebMapConstants;
-import com.monpai.sailboatmod.market.web.map.MarketWebMapDtos;
+import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
+import com.monpai.sailboatmod.market.map.MarketWebMapDtos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -127,14 +127,14 @@ public record ShippingTraceRecord(String shippingOrderId,
 
     public static ShippingTraceRecord load(CompoundTag tag) {
         List<Vec3> points = new ArrayList<>();
-        ListTag list = tag.getList("Waypoints", Tag.TAG_COMPOUND);
+        ListTag list = tag.getList("Waypoints", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : list) {
             if (raw instanceof CompoundTag pointTag) {
                 points.add(new Vec3(pointTag.getDouble("X"), pointTag.getDouble("Y"), pointTag.getDouble("Z")));
             }
         }
         List<MarketWebMapDtos.CargoItem> cargoItems = new ArrayList<>();
-        ListTag cargoList = tag.getList("Cargo", Tag.TAG_COMPOUND);
+        ListTag cargoList = tag.getList("Cargo", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : cargoList) {
             if (raw instanceof CompoundTag itemTag) {
                 cargoItems.add(new MarketWebMapDtos.CargoItem(
