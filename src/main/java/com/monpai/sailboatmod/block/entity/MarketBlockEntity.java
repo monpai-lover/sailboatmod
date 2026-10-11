@@ -975,13 +975,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         applyCommodityDemand(listing, amount, total, safePlayerUuid, safePlayerName);
         int sellerPayout = total;
         com.monpai.sailboatmod.nation.service.TaxService.TaxResult salesTaxResult =
-                com.monpai.sailboatmod.nation.service.TaxService.applySalesTax(level, total, this.worldPosition);
+                com.monpai.sailboatmod.nation.service.TaxService.quoteSalesTax(level, total, this.worldPosition);
         sellerPayout = salesTaxResult.sellerReceives();
         com.monpai.sailboatmod.nation.service.TaxService.TaxResult tariffResult =
-                com.monpai.sailboatmod.nation.service.TaxService.applyImportTariff(level, sellerPayout, listing.sourceDockPos(), linkedDockPos);
+                com.monpai.sailboatmod.nation.service.TaxService.quoteImportTariff(level, sellerPayout, listing.sourceDockPos(), receivingWarehouse);
         sellerPayout = tariffResult.sellerReceives();
         com.monpai.sailboatmod.nation.service.TaxService.recordTrade(level, this.worldPosition);
-        paySeller(market, listing.sellerUuid(), listing.sellerName(), sellerPayout);
         // pricing: keep the seller-fixed unit price on resale
         market.putListing(new MarketListing(
                 listing.listingId(),
@@ -1019,8 +1018,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 fulfillmentMode,
                 receivingWarehouse
         );
+        market.putEscrow(new com.monpai.sailboatmod.market.MarketOrderEscrow(
+                createdOrder.orderId(), listing.sellerUuid(), listing.sellerName(), total, sellerPayout,
+                com.monpai.sailboatmod.nation.service.TaxService.getNationIdAt(level, this.worldPosition), salesTaxResult.taxAmount(),
+                com.monpai.sailboatmod.nation.service.TaxService.getNationIdAt(level, receivingWarehouse), tariffResult.taxAmount()));
         market.putPurchaseOrder(createdOrder);
-        // 订单已落库、钱货已结算。以下采购记录/财务账簿是审计性记账——失败不应回退已完成的交易。
+        // 订单和保留货物已落库；买家付款由订单托管，送达后才结算卖家与税款。审计记账失败不回退已保存的订单。
         try {
             String buyerTownId = warehouse.getTownId();
             String sourceTownId = DockTownResolver.resolveTownForSource(level, listing.sourceDockPos(), listing.townId());
@@ -1064,7 +1067,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 );
             }
         } catch (Exception e) {
-            MARKET_LOGGER.error("订单已落库且钱货交易已完成，但采购记录/财务账簿写入失败，orderId={}",
+            MARKET_LOGGER.error("订单与托管款项已落库，但采购记录/财务账簿写入失败，orderId={}",
                     createdOrder.orderId(), e);
         }
         tryAutoDispatchOrders(safePlayerUuid, safePlayerName, onlinePlayer, createdOrder.sourceDockPos(), TransportTerminalKind.AUTO);
@@ -1104,9 +1107,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (sellerId == null) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_not_owner");
         }
-        if (listing.availableCount() <= 0) {
+        List<PurchaseOrder> strandedOrders = market.getActiveOrdersForListing(listing.listingId());
+        if (listing.availableCount() <= 0 && strandedOrders.isEmpty()) {
             return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_no_stock");
         }
+        if (!com.monpai.sailboatmod.market.MarketRefundService.canRefundOrders(level, market, strandedOrders)) {
+            return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_refund");
+        }
+        int cancelledQuantity = strandedOrders.stream().mapToInt(PurchaseOrder::quantity).sum();
         // 无限库存系统商店:凭空供应,撤单不该把哨兵(10 亿)当真实数量造货退仓。跳过造货入库 + 供应调整,直接删 listing/退款。
         boolean usedLinkedWarehouseFallback = false;
         if (!listing.isInfinite()) {
@@ -1114,7 +1122,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (targetWarehouseSelection.result() != null) {
                 return targetWarehouseSelection.result();
             }
-            List<ItemStack> cargo = splitCargo(listing.itemStack(), listing.availableCount());
+            List<ItemStack> cargo = splitCargo(listing.itemStack(), listing.availableCount() + cancelledQuantity);
             if (!targetWarehouseSelection.warehouse().insertCargo(sellerId, cargo)) {
                 return CancelListingResult.failure("screen.sailboatmod.market.unlist.failed_storage_full");
             }
@@ -1122,8 +1130,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             usedLinkedWarehouseFallback = targetWarehouseSelection.usedLinkedWarehouseFallback();
         }
         // 场景③：卖家撤单时，挂单下未发货的买家订单已无法履约——退款给买家（货物随撤单已回卖家仓，不再归还）。
-        List<PurchaseOrder> strandedOrders = market.getActiveOrdersForListing(listing.listingId());
-        if (listing.reservedCount() <= 0) {
+        // 旧订单需先从仍保留卖家身份的挂单追回款项；批次资金已在退货前统一检查。
+        for (PurchaseOrder stranded : strandedOrders) {
+            refundAndReleaseOrder(market, stranded, "seller_cancel", false);
+        }
+        int remainingReserved = Math.max(0, listing.reservedCount() - cancelledQuantity);
+        if (remainingReserved <= 0) {
             market.removeListing(listing.listingId());
         } else {
             market.putListing(new MarketListing(
@@ -1133,7 +1145,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.itemStack(),
                     listing.unitPrice(),
                     0,
-                    listing.reservedCount(),
+                    remainingReserved,
                     listing.sourceDockPos(),
                     listing.sourceDockName(),
                     listing.townId(),
@@ -1142,9 +1154,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     listing.sellerNote()
             ));
         }
-        for (PurchaseOrder stranded : strandedOrders) {
-            refundAndReleaseOrder(market, stranded, "seller_cancel", false);
-        }
         return CancelListingResult.success(usedLinkedWarehouseFallback
                 ? "screen.sailboatmod.market.unlist.success_linked_dock"
                 : "screen.sailboatmod.market.unlist.success");
@@ -1152,10 +1161,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     /**
      * 退款并（可选）归还一个订单的货物。委托给 {@link com.monpai.sailboatmod.market.MarketRefundService}。
-     * {@code returnCargo=true}（买家取消/送达失败）归还货物到挂单；{@code false}（卖家撤单）只退钱。
+     * {@code returnCargo=true} 归还逻辑库存到挂单；实体货物已退仓或由运输层保留时传 {@code false}。
      */
-    private void refundAndReleaseOrder(MarketSavedData market, PurchaseOrder order, String reason, boolean returnCargo) {
-        com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(level, market, order, reason, returnCargo);
+    private boolean refundAndReleaseOrder(MarketSavedData market, PurchaseOrder order, String reason, boolean returnCargo) {
+        return com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(level, market, order, reason, returnCargo);
     }
 
     /** 买家主动取消未发货订单（场景①）：仅本人、仅未发货态（PAID/WAITING_SHIPMENT/PICKUP_LOCKED）可取消。 */
@@ -1179,7 +1188,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (!cancellable) {
             return CancelPurchaseResult.failure("screen.sailboatmod.market.order.cancel.failed_in_transit");
         }
-        refundAndReleaseOrder(market, order, "buyer_cancel", true);
+        if (!refundAndReleaseOrder(market, order, "buyer_cancel", true)) {
+            return CancelPurchaseResult.failure("screen.sailboatmod.market.order.cancel.failed_refund");
+        }
         return CancelPurchaseResult.success("screen.sailboatmod.market.order.cancel.success");
     }
 
@@ -2285,6 +2296,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     order.targetWarehousePos()
             ));
             if (selection.remainderOrder() != null) {
+                market.splitEscrow(order.orderId(), order, selection.remainderOrder());
                 market.putPurchaseOrder(selection.remainderOrder());
             }
         }
@@ -2596,8 +2608,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
      */
     private List<ShipmentManifestEntry> applyPickupSelections(MarketSavedData market, List<ShipmentOrderSelection> selections) {
         List<ShipmentManifestEntry> manifest = new ArrayList<>();
+        Map<String, Integer> listingReservationDeltas = new LinkedHashMap<>();
         for (ShipmentOrderSelection selection : selections) {
             PurchaseOrder order = selection.dispatchOrder();
+            listingReservationDeltas.merge(selection.listing().listingId(), order.quantity(), Integer::sum);
             manifest.add(new ShipmentManifestEntry(
                     selection.listing().listingId(),
                     selection.listing().itemStack(),
@@ -2623,9 +2637,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     order.targetWarehousePos()
             ));
             if (selection.remainderOrder() != null) {
+                market.splitEscrow(order.orderId(), order, selection.remainderOrder());
                 market.putPurchaseOrder(selection.remainderOrder());
             }
         }
+        applyListingReservationDeltas(market, listingReservationDeltas);
         return manifest;
     }
 
@@ -2702,7 +2718,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (shippedQuantity >= order.quantity()) {
             return new PurchaseSplit(order, null);
         }
-        int shippedTotal = order.totalPrice() * shippedQuantity / Math.max(1, order.quantity());
+        int shippedTotal = (int) ((long) order.totalPrice() * shippedQuantity / Math.max(1, order.quantity()));
         int remainderQuantity = order.quantity() - shippedQuantity;
         int remainderTotal = Math.max(0, order.totalPrice() - shippedTotal);
         PurchaseOrder shipped = new PurchaseOrder(
@@ -2815,11 +2831,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     private boolean chargePlayer(String playerUuid, String playerName, @Nullable Player player, int amount) {
         if (amount <= 0) {
             return true;
-        }
-        if (player != null) {
-            if (player.getAbilities().instabuild) {
-                return true;
-            }
         }
         return level != null
                 && MarketWalletService.withdraw(level, playerUuid, playerName, amount).success();

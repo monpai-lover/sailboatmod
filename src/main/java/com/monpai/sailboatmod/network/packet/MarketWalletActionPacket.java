@@ -8,6 +8,7 @@ import com.monpai.sailboatmod.market.wallet.MarketWalletGoldSource;
 import com.monpai.sailboatmod.market.wallet.MarketWalletService;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationPermission;
+import com.monpai.sailboatmod.nation.model.NationMemberRecord;
 import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.NationService;
@@ -142,10 +143,14 @@ public class MarketWalletActionPacket {
             return false;
         }
         UUID uuid = player.getUUID();
+        NationSavedData data = NationSavedData.get(player.level());
+        NationMemberRecord member = data.getMember(uuid);
+        if (member == null || !nationId.equals(member.nationId())) {
+            return false;
+        }
         if (!NationService.hasPermission(player.level(), uuid, NationPermission.MANAGE_TREASURY)) {
             return false;
         }
-        NationSavedData data = NationSavedData.get(player.level());
         NationTreasuryRecord treasury = data.getOrCreateTreasury(nationId);
         if (treasury.currencyBalance() < amount) {
             return false;

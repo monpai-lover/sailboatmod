@@ -109,7 +109,9 @@ public class BankActionPacket {
                         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.insufficient", GoldStandardEconomy.formatBalance(treasury.currencyBalance())));
                         return;
                     }
-                    GoldStandardEconomy.tryDeposit(player, msg.amount);
+                    if (!Boolean.TRUE.equals(GoldStandardEconomy.tryDeposit(player, msg.amount))) {
+                        return;
+                    }
                     data.putTreasury(treasury.withBalance(treasury.currencyBalance() - msg.amount));
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", GoldStandardEconomy.formatBalance(msg.amount)));
                 }
@@ -154,19 +156,19 @@ public class BankActionPacket {
                     if (extracted.isEmpty()) {
                         return;
                     }
-                    java.util.List<ItemStack> added = new java.util.ArrayList<>();
+                    boolean inventoryFull = false;
                     for (ItemStack item : extracted) {
-                        if (player.getInventory().add(item.copy())) {
-                            added.add(item);
-                            continue;
+                        player.getInventory().add(item);
+                        if (!item.isEmpty()) {
+                            treasury.addItem(item, player.getName().getString());
+                            inventoryFull = true;
                         }
-                        for (ItemStack rollback : added) {
-                            treasury.addItem(rollback, player.getName().getString());
-                        }
+                    }
+                    data.putTreasury(treasury);
+                    if (inventoryFull) {
                         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.inventory_full"));
                         return;
                     }
-                    data.putTreasury(treasury);
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.bank.withdraw_item.success"));
                 }
                 case WITHDRAW_AS_GOLD -> {
@@ -179,7 +181,9 @@ public class BankActionPacket {
                         player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.insufficient", GoldStandardEconomy.formatBalance(treasury.currencyBalance())));
                         return;
                     }
-                    GoldStandardEconomy.tryDeposit(player, msg.amount);
+                    if (!Boolean.TRUE.equals(GoldStandardEconomy.tryDeposit(player, msg.amount))) {
+                        return;
+                    }
                     data.putTreasury(treasury.withBalance(treasury.currencyBalance() - msg.amount));
                     player.sendSystemMessage(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", GoldStandardEconomy.formatBalance(msg.amount)));
                 }

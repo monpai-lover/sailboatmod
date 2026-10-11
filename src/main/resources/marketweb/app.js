@@ -168,6 +168,12 @@ const els = {
   flowLabel: document.querySelector("#flow-label"),
   flowValue: document.querySelector("#flow-value"),
   localeSelect: document.querySelector("#locale-select"),
+  themeToggle: document.querySelector("#theme-toggle"),
+  workspaceNav: document.querySelector("#workspace-nav"),
+  terminalToggle: document.querySelector("#terminal-toggle"),
+  terminalToggleLabel: document.querySelector("#terminal-toggle-label"),
+  terminalCurrent: document.querySelector("#terminal-current"),
+  terminalPanel: document.querySelector("#terminal-panel"),
   accessToggle: document.querySelector("#access-toggle"),
   accessToggleLabel: document.querySelector("#access-toggle-label"),
   sessionStatusInline: document.querySelector("#session-status-inline"),
@@ -436,6 +442,16 @@ const I18N = {
     selected_market: "Selected Market",
     brand_kicker: "Monpai Online Market",
     language_label: "Language",
+    theme_to_light: "Switch to light theme",
+    theme_to_dark: "Switch to dark theme",
+    terminal_picker: "Terminal",
+    terminal_none: "Choose a terminal",
+    market_strip_more: "Details",
+    category_filter: "Category",
+    results_count: "%1 items",
+    filters_label: "Filters",
+    buy_box_buy: "Buy",
+    buy_box_bid: "Place buy order",
     empty_select_market: "Select a market terminal to browse commodities, listings, buy orders, and price history.",
     market_overview: "Market Overview",
     explore_tab: "Explore",
@@ -758,6 +774,16 @@ Object.assign(I18N["zh-CN"], I18N["en-US"], {
   selected_market: "当前市场",
   brand_kicker: "Monpai 在线市场",
   language_label: "语言",
+  theme_to_light: "切换到亮色主题",
+  theme_to_dark: "切换到深色主题",
+  terminal_picker: "终端",
+  terminal_none: "选择终端",
+  market_strip_more: "更多",
+  category_filter: "分类",
+  results_count: "%1 件",
+  filters_label: "筛选",
+  buy_box_buy: "购买",
+  buy_box_bid: "发布求购",
   empty_select_market: "选择一个市场终端来浏览商品、挂单、求购和价格走势。",
   market_overview: "市场概览",
   explore_tab: "浏览",
@@ -1220,6 +1246,8 @@ function updateStaticCopy() {
   setNodeText(els.heroTitle, uiTitle());
   setNodeText(els.heroSubtitle, t("hero_subtitle"));
   setNodeText(els.localeLabel, t("language_label"));
+  setNodeText(els.terminalToggleLabel, t("terminal_picker"));
+  syncThemeToggle();
   setNodeText(els.modeLabel, t("mode_label"));
   setNodeText(els.modeValue, t("mode_value"));
   setNodeText(els.sessionLabel, t("session_label"));
@@ -1785,6 +1813,10 @@ function openPurchaseModal(listingIndex) {
 }
 
 function bindDetailActions() {
+  document.querySelector(".market-strip")?.addEventListener("toggle", (event) => {
+    state.marketStripOpen = !!event.target.open;
+  });
+
   const search = document.querySelector("#commodity-search");
   if (search) {
     search.addEventListener("input", (event) => {
@@ -1913,7 +1945,7 @@ function bindDetailActions() {
     });
   });
 
-  (els.marketDetail || document).querySelectorAll("[data-route]").forEach((node) => {
+  document.querySelectorAll("#market-detail [data-route], #workspace-nav [data-route]").forEach((node) => {
     node.addEventListener("click", () => {
       const nextRoute = normalizePageRoute(node.getAttribute("data-route") || "browse");
       if (nextRoute === "inventory" && state.activeProductTab !== "inventory") {
@@ -2547,68 +2579,73 @@ function renderBrowseOrderModeSwitch(purchaseCount, demandCount) {
   `;
 }
 
+// 商品目录:左侧筛选栏(分类 → 展开的子分类、稀有度、价格),右侧结果区(标题、买/求购切换、搜索、排序、商品格)。
 function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMessage, cardRenderer, headExtra = "" }) {
   const groups = catalogGroups(catalog);
   const expandedGroup = resolvedCatalogExpandedGroup(catalog);
   const subcategories = expandedGroup === "all" ? [] : categoriesForGroup(expandedGroup, catalog);
+  const subcategoryList = subcategories.length ? `
+    <div class="catalog-subcategory-strip" data-catalog-subcategory-strip>
+      <div class="catalog-subcategory-grid">
+        ${subcategories.map((category) => renderCatalogSubcategoryButton(category, catalog)).join("")}
+      </div>
+    </div>
+  ` : "";
+  const groupButtons = ["all", ...groups].map((group) => {
+    const button = renderCatalogGroupButton(group, catalog);
+    return normalizeCatalogGroup(group) === expandedGroup && group !== "all" ? `${button}${subcategoryList}` : button;
+  }).join("");
   return `
     <div class="market-browse">
-      <div class="shelf-head">
-        <div>
-          <p class="section-kicker">${escapeHtml(kicker)}</p>
-          <h3>${escapeHtml(title)}</h3>
-        </div>
-        ${headExtra}
-      </div>
-      <div class="catalog-navigation">
-        <div id="catalog-group-strip" class="catalog-category-strip tap-enabled">
-          ${renderCatalogGroupButton("all", catalog)}
-          ${groups.map((group) => renderCatalogGroupButton(group, catalog)).join("")}
-        </div>
-        ${expandedGroup !== "all" && subcategories.length ? `
-          <div class="catalog-subcategory-strip" data-catalog-subcategory-strip>
-            <div class="catalog-subcategory-head">
-              <span class="toolbar-label">${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
-              <span class="catalog-subcategory-hint">${escapeHtml(t("all_types"))} · ${escapeHtml(categoryGroupLabel(expandedGroup))}</span>
-            </div>
-            <div class="catalog-subcategory-grid">
-              ${subcategories.map((category) => renderCatalogSubcategoryButton(category, catalog)).join("")}
-            </div>
+      <aside class="catalog-rail" aria-label="${escapeHtml(t("filters_label"))}">
+        <section class="rail-section catalog-navigation">
+          <h4 class="rail-title">${escapeHtml(t("category_filter"))}</h4>
+          <div id="catalog-group-strip" class="catalog-category-strip tap-enabled">
+            ${groupButtons}
           </div>
-        ` : ""}
-      </div>
-      <div class="catalog-refine-row">
-        <div class="catalog-rarity-strip">
-          <span class="toolbar-label">${escapeHtml(t("rarity_filter"))}</span>
-          ${renderCatalogRarityButton("all", catalog)}
-          ${catalogRarities(catalog).map((rarity) => renderCatalogRarityButton(rarity, catalog)).join("")}
+        </section>
+        <section class="rail-section">
+          <h4 class="rail-title">${escapeHtml(t("rarity_filter"))}</h4>
+          <div class="catalog-rarity-strip">
+            ${renderCatalogRarityButton("all", catalog)}
+            ${catalogRarities(catalog).map((rarity) => renderCatalogRarityButton(rarity, catalog)).join("")}
+          </div>
+        </section>
+        <section class="rail-section">
+          <h4 class="rail-title">${escapeHtml(t("price_range"))}</h4>
+          <div class="catalog-price-range">
+            <input id="catalog-price-min" class="catalog-range-input" type="number" min="0" step="1" value="${escapeHtml(state.catalogFilters.minPrice || "")}" placeholder="${escapeHtml(t("min_price"))}" aria-label="${escapeHtml(t("min_price"))}">
+            <span class="range-divider">-</span>
+            <input id="catalog-price-max" class="catalog-range-input" type="number" min="0" step="1" value="${escapeHtml(state.catalogFilters.maxPrice || "")}" placeholder="${escapeHtml(t("max_price"))}" aria-label="${escapeHtml(t("max_price"))}">
+          </div>
+        </section>
+      </aside>
+      <div class="catalog-main">
+        <div class="shelf-head">
+          <div class="shelf-title">
+            <p class="section-kicker">${escapeHtml(kicker)}</p>
+            <h3>${escapeHtml(title)}</h3>
+            <span class="result-count">${escapeHtml(t("results_count").replace("%1", number(filteredCatalog.length)))}</span>
+          </div>
+          ${headExtra}
         </div>
-        <div class="shelf-tools">
-          <input id="commodity-search" class="goods-search" type="search" value="${escapeHtml(state.commodityQuery)}" placeholder="${escapeHtml(t("search_placeholder"))}">
-        </div>
-      </div>
-      <div class="catalog-toolbar">
-        <div class="catalog-price-range">
-          <span class="toolbar-label">${escapeHtml(t("price_range"))}</span>
-          <input id="catalog-price-min" class="catalog-range-input" type="number" min="0" step="1" value="${escapeHtml(state.catalogFilters.minPrice || "")}" placeholder="${escapeHtml(t("min_price"))}">
-          <span class="range-divider">-</span>
-          <input id="catalog-price-max" class="catalog-range-input" type="number" min="0" step="1" value="${escapeHtml(state.catalogFilters.maxPrice || "")}" placeholder="${escapeHtml(t("max_price"))}">
-        </div>
-        <div class="shelf-tools">
-          <span class="toolbar-label">${escapeHtml(t("sort_label"))}</span>
-          <div class="sort-controls">
+        <div class="catalog-toolbar">
+          <div class="shelf-tools">
+            <input id="commodity-search" class="goods-search" type="search" value="${escapeHtml(state.commodityQuery)}" placeholder="${escapeHtml(t("search_placeholder"))}" aria-label="${escapeHtml(t("search_placeholder"))}">
+          </div>
+          <div class="sort-controls" role="group" aria-label="${escapeHtml(t("sort_label"))}">
             ${renderCatalogSortButton("name", t("sort_name"))}
             ${renderCatalogSortButton("price", t("sort_price"))}
             ${renderCatalogSortButton("time", t("sort_time"))}
             ${renderCatalogSortButton("quantity", t("sort_quantity"))}
           </div>
         </div>
+        ${filteredCatalog.length ? `
+          <div class="goods-grid">
+            ${filteredCatalog.map((commodity) => cardRenderer(commodity)).join("")}
+          </div>
+        ` : `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`}
       </div>
-      ${filteredCatalog.length ? `
-        <div class="goods-grid">
-          ${filteredCatalog.map((commodity) => cardRenderer(commodity)).join("")}
-        </div>
-      ` : `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`}
     </div>
   `;
 }
@@ -3700,19 +3737,6 @@ function renderSellingTab(commodity, detail, canManage, canAct, options = null) 
           ` : `<div class="empty-state">${escapeHtml(t("no_storage"))}</div>`}
         </div>
 
-        <div class="surface-card stack">
-          <div class="panel-head">
-            <div>
-              <p class="section-kicker">${escapeHtml(t("market_notes"))}</p>
-              <h3>${escapeHtml(t("sell_summary"))}</h3>
-            </div>
-          </div>
-          <div class="summary-note">${escapeHtml(t("lowest_sell"))} ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}. ${number(commodity.sellUnits)} / ${number(commodity.totalListings)}.</div>
-          <div class="summary-note">${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))} · ${escapeHtml(detail.linkedDockName || "-")}.</div>
-          <div class="summary-note">${escapeHtml(t("dock_stock"))} ${number(dockStorage.length)} ${escapeHtml(t("storage_rows"))} / ${number(sumBy(dockStorage, "quantity"))}.</div>
-          <div class="summary-note">${escapeHtml(canManage ? t("manager_access") : t("read_only"))}.</div>
-          <div class="summary-note">${escapeHtml(canAct ? t("manage") : t("browse_only"))}.</div>
-        </div>
       </div>
     </div>
   `;
@@ -4463,7 +4487,12 @@ function currentChartPalette() {
     background: cssThemeValue("--panel", "#fbfdff"),
     text: cssThemeValue("--muted-strong", "#526070"),
     grid: cssThemeValue("--chart-grid", "rgba(125, 139, 161, 0.14)"),
-    border: cssThemeValue("--chart-border", "rgba(125, 139, 161, 0.22)")
+    border: cssThemeValue("--chart-border", "rgba(125, 139, 161, 0.22)"),
+    up: cssThemeValue("--trade-up", "#0b8a5a"),
+    down: cssThemeValue("--trade-down", "#cc3a32"),
+    volume: cssThemeValue("--chart-volume", "rgba(31, 93, 143, 0.28)"),
+    maShort: cssThemeValue("--chart-ma-short", "#c98a00"),
+    maLong: cssThemeValue("--chart-ma-long", "#1f5d8f")
   };
 }
 
@@ -4599,28 +4628,28 @@ function hydrateLightweightChart() {
   chartState.chart = chart;
 
   chartState.candleSeries = chart.addCandlestickSeries({
-    upColor: "#22c55e",
-    downColor: "#ef4444",
+    upColor: palette.up,
+    downColor: palette.down,
     borderVisible: false,
-    wickUpColor: "#16a34a",
-    wickDownColor: "#dc2626"
+    wickUpColor: palette.up,
+    wickDownColor: palette.down
   });
   chartState.volumeSeries = chart.addHistogramSeries({
     priceFormat: { type: "volume" },
     priceScaleId: "",
-    color: "rgba(59, 130, 246, 0.35)"
+    color: palette.volume
   });
   chart.priceScale("").applyOptions({
     scaleMargins: { top: 0.76, bottom: 0 }
   });
   chartState.maShortSeries = chart.addLineSeries({
-    color: "#f59e0b",
+    color: palette.maShort,
     lineWidth: 2,
     priceLineVisible: false,
     lastValueVisible: false
   });
   chartState.maLongSeries = chart.addLineSeries({
-    color: "#38bdf8",
+    color: palette.maLong,
     lineWidth: 2,
     priceLineVisible: false,
     lastValueVisible: false
@@ -4726,10 +4755,10 @@ function hydrateMacroCharts(detail, commodity) {
   const categoryIndex = analyticsSeries(detail, "CATEGORY_INDEX", firstListingCategory(commodity) || "");
   const cpiSeries = analyticsSeries(detail, "MACRO_INDEX", "cpi");
   const loansSeries = analyticsSeries(detail, "MACRO_INDEX", "outstanding_loans");
-  chartState.marketIndexChart = createMacroChart("#market-index-chart", marketIndex, "#2563eb");
-  chartState.categoryIndexChart = createMacroChart("#category-index-chart", categoryIndex, "#7c3aed");
-  chartState.cpiChart = createMacroChart("#cpi-chart", cpiSeries, "#a855f7");
-  chartState.loansChart = createMacroChart("#loans-chart", loansSeries, "#ea580c");
+  chartState.marketIndexChart = createMacroChart("#market-index-chart", marketIndex, cssThemeValue("--chart-index-market", "#1f5d8f"));
+  chartState.categoryIndexChart = createMacroChart("#category-index-chart", categoryIndex, cssThemeValue("--chart-index-category", "#0c8599"));
+  chartState.cpiChart = createMacroChart("#cpi-chart", cpiSeries, cssThemeValue("--chart-index-cpi", "#8b3fc0"));
+  chartState.loansChart = createMacroChart("#loans-chart", loansSeries, cssThemeValue("--chart-index-loans", "#c4561a"));
 }
 
 function renderMacroChartFallback(container, series, color) {
@@ -5323,10 +5352,8 @@ function workspaceHint(section) {
 function workspaceButton(section, label) {
   const active = activeWorkspaceSection() === section;
   return `
-    <button type="button" class="workspace-button ${active ? "active" : ""}" data-route="${workspaceTargetRoute(section)}">
-      <span class="workspace-kicker">${escapeHtml(t("mode_label"))}</span>
+    <button type="button" class="workspace-button ${active ? "active" : ""}" data-route="${workspaceTargetRoute(section)}" title="${escapeHtml(workspaceHint(section))}" ${active ? 'aria-current="page"' : ""}>
       <span class="workspace-title">${escapeHtml(label)}</span>
-      <span class="muted-inline">${escapeHtml(workspaceHint(section))}</span>
     </button>
   `;
 }
@@ -5380,6 +5407,7 @@ function renderMarketSummary(markets) {
 }
 
 function renderSession() {
+  document.body.classList.toggle("is-signed-in", !!state.session);
   if (!state.session) {
     if (els.sessionStatus) {
       els.sessionStatus.textContent = `${t("not_signed_in")} ${t("guest_mode_ready")}`;
@@ -5410,9 +5438,27 @@ function renderSession() {
   renderTopbarWallet();
 }
 
+// 顶栏终端下拉:当前终端名 + 开合。终端列表(#market-list)渲染在下拉面板里。
+function syncTerminalPicker() {
+  const selected = state.markets.find((market) => market.marketId === state.selectedMarketId) || null;
+  setNodeText(els.terminalCurrent, selected?.marketName || t("terminal_none"));
+}
+
+function setTerminalPanelOpen(open) {
+  if (!els.terminalPanel || !els.terminalToggle) {
+    return;
+  }
+  els.terminalPanel.hidden = !open;
+  els.terminalToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    els.marketSearch?.focus({ preventScroll: true });
+  }
+}
+
 function renderMarkets() {
   const markets = filteredMarkets();
   renderMarketSummary(markets);
+  syncTerminalPicker();
 
   if (!markets.length) {
     els.marketList.innerHTML = `<div class="empty-state">${escapeHtml(state.marketQuery ? t("no_match") : t("no_markets"))}</div>`;
@@ -5420,7 +5466,7 @@ function renderMarkets() {
   }
 
   els.marketList.innerHTML = markets.map((market) => `
-    <button type="button" class="market-card ${market.marketId === state.selectedMarketId ? "active" : ""}" data-market-id="${escapeHtml(market.marketId)}">
+    <button type="button" class="market-card ${market.marketId === state.selectedMarketId ? "active" : ""} ${market.loaded ? "" : "is-cold"}" data-market-id="${escapeHtml(market.marketId)}">
       <p class="panel-meta">${market.loaded ? t("live_terminal") : t("chunk_cold")}</p>
       <h3>${escapeHtml(market.marketName)}</h3>
       <div class="muted">${escapeHtml(market.ownerName || market.townName || "-")}</div>
@@ -5439,33 +5485,52 @@ function renderMarkets() {
       state.selectedCommodityKey = "";
       state.catalogHoverGroup = "all";
       state.catalogExpandedGroup = currentCatalogActiveGroup();
+      setTerminalPanelOpen(false);
       loadMarketDetail(node.getAttribute("data-market-id") || "", "push");
     });
   });
 }
 
-function renderWorkspaceRail(detail, catalog, canAct, canManage) {
-  const accessBody = canAct
-    ? (canManage ? t("manager_access") : t("browse_only"))
-    : `${t("guest_mode_ready")} ${t("sign_in_to_trade")}`;
+// 市场单行摘要:默认只显示终端名、状态与几个关键数字;"更多"展开完整账本(钱包/国库/库存等)。
+function renderMarketStrip(detail, catalog, canAct, canManage) {
+  const figure = (label, value, accent = false) => `
+    <span class="strip-figure${accent ? " accent" : ""}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(String(value))}</strong></span>
+  `;
   return `
-    <div class="market-rail">
-      <div class="section-copy">
-        <p class="section-kicker">${escapeHtml(t("market_summary_title"))}</p>
-        <strong>${escapeHtml(activeWorkspaceSection() === "inventory" ? t("inventory_tab") : t(`${activeWorkspaceSection()}_tab`))}</strong>
-        <p>${escapeHtml(workspaceHint(activeWorkspaceSection()))}</p>
-      </div>
-      <div class="section-copy">
-        <p class="section-kicker">${escapeHtml(t("session_label"))}</p>
-        <strong>${escapeHtml(canAct ? (state.session?.playerName || t("signin_status_ready")) : t("signin_status_guest"))}</strong>
-        <p>${escapeHtml(accessBody)}</p>
-      </div>
-      <div class="section-copy">
-        <p class="section-kicker">${escapeHtml(t("commodity_types"))}</p>
-        <strong>${escapeHtml(number(catalog.length))}</strong>
-        <p>${escapeHtml(detail.linkedDock ? t("dock_linked") : t("no_linked_dock"))}</p>
-      </div>
-    </div>
+    <section class="market-overview">
+      <details class="market-strip" ${state.marketStripOpen ? "open" : ""}>
+        <summary>
+          <span class="market-strip-name">
+            <h2>${escapeHtml(detail.marketName)}</h2>
+            <span class="pill ${detail.linkedDock ? "success" : "warning"}">${detail.linkedDock ? escapeHtml(t("dock_linked")) : escapeHtml(t("no_linked_dock"))}</span>
+            ${canManage ? `<span class="pill">${escapeHtml(t("manager_access"))}</span>` : ""}
+          </span>
+          <span class="market-strip-figures">
+            ${canAct ? figure(t("wallet_balance"), number(detail.walletBalance), true) : ""}
+            ${canAct ? figure(t("pending_credits"), number(detail.pendingCredits)) : ""}
+            ${figure(t("commodity_types"), number(catalog.length))}
+            ${figure(t("listings_word"), number((detail.listings || []).length))}
+            ${figure(t("open_demand"), number(detail.openDemandUnits))}
+          </span>
+          <span class="market-strip-more">${escapeHtml(t("market_strip_more"))}</span>
+        </summary>
+        <div class="market-strip-body">
+          <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} · ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} · ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
+          <div class="metric-strip">
+            ${metricBox(t("wallet_balance"), number(detail.walletBalance))}
+            ${metricBox(t("wallet_reserved"), number(detail.walletReservedBalance || 0))}
+            ${metricBox(t("treasury_balance"), number(detail.treasuryBalance || 0))}
+            ${metricBox(t("pending_credits"), number(detail.pendingCredits))}
+            ${metricBox(t("commodity_types"), number(catalog.length))}
+            ${metricBox(t("storage_units"), number(detail.stockpileTotalUnits))}
+            ${metricBox(t("open_demand"), number(detail.openDemandUnits))}
+            ${metricBox(t("my_buy_orders_metric"), number((detail.buyOrderEntries || []).length))}
+            ${state.settings.showTownEconomySummary ? metricBox(t("net_balance"), number(detail.netBalance)) : ""}
+          </div>
+          <div class="summary-note">${escapeHtml(t("wallet_balance_hint"))}</div>
+        </div>
+      </details>
+    </section>
   `;
 }
 
@@ -5662,8 +5727,7 @@ function renderDetail() {
 
   // 全部商品作为一级入口放导航首位;点它留在全服视图,点其余进选中市场对应功能。全服视图与市场详情共用这排导航。
   const workspaceNav = `
-    <div class="workspace-toolbar">
-      <div class="workspace-switch">
+    <div class="workspace-switch">
         ${workspaceButton("all", t("all_listings_tab"))}
         ${workspaceButton("explore", t("explore_tab"))}
         ${workspaceButton("trade", t("trade_tab"))}
@@ -5672,13 +5736,17 @@ function renderDetail() {
         ${state.detail?.canManage ? workspaceButton("inventory", t("inventory_tab")) : ""}
         ${workspaceButton("analytics", t("analytics_tab"))}
         ${workspaceButton("map", t("map_tab"))}
-      </div>
     </div>
   `;
+  // 一级导航渲染在顶栏 #workspace-nav;每次整体替换,不会累积监听器。
+  if (els.workspaceNav) {
+    els.workspaceNav.innerHTML = workspaceNav;
+  }
+  syncTerminalPicker();
 
   if (state.activeProductTab === "all") {
     renderTopbarWallet();
-    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${workspaceNav}${renderAggregatedView()}</div>`;
+    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${renderAggregatedView()}</div>`;
     bindDetailActions();
     if (!state.aggregatedLoaded) {
       loadAggregatedListings();
@@ -5700,7 +5768,7 @@ function renderDetail() {
 
   if (!state.detail) {
     renderTopbarWallet();
-    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${workspaceNav}${state.activeProductTab === "map" ? renderMarketMapPlaceholder(null, !!state.session, false) : `<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`}</div>`;
+    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${state.activeProductTab === "map" ? renderMarketMapPlaceholder(null, !!state.session, false) : `<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`}</div>`;
     bindDetailActions();
     mountMarketMapIfNeeded();
     return;
@@ -5749,41 +5817,7 @@ function renderDetail() {
   els.marketDetail.innerHTML = `
     ${bars.join("")}
     <div class="market-shell">
-      ${workspaceNav}
-      <section class="market-overview">
-        <div class="market-header-card">
-          <div class="market-overview-layout">
-            <div class="overview-main">
-              <div class="detail-header">
-                <div class="overview-title">
-                  <p class="section-kicker">${escapeHtml(t("market_overview"))}</p>
-                  <h2>${escapeHtml(detail.marketName)}</h2>
-                  <div class="overview-subtitle">${escapeHtml(t("owner_word"))} ${escapeHtml(detail.ownerName || "-")} · ${escapeHtml(t("warehouse_word"))} ${escapeHtml(detail.linkedWarehouseName || detail.linkedDockName || "-")} · ${escapeHtml(t("town_word"))} ${escapeHtml(detail.townName || "-")}</div>
-                </div>
-                <div class="market-meta">
-                  <span class="pill ${detail.linkedDock ? "success" : "warning"}">${detail.linkedDock ? escapeHtml(t("dock_linked")) : escapeHtml(t("no_linked_dock"))}</span>
-                  <span class="pill">${canManage ? escapeHtml(t("manager_access")) : escapeHtml(t("read_only"))}</span>
-                  <span class="pill">${canAct ? escapeHtml(t("signin_status_ready")) : escapeHtml(t("signin_status_guest"))}</span>
-                  <span class="pill">${number((detail.listings || []).length)} ${escapeHtml(t("listings_word"))}</span>
-                </div>
-              </div>
-              <div class="metric-strip">
-                ${metricBox(t("wallet_balance"), number(detail.walletBalance))}
-                ${metricBox(t("wallet_reserved"), number(detail.walletReservedBalance || 0))}
-                ${metricBox(t("treasury_balance"), number(detail.treasuryBalance || 0))}
-                ${metricBox(t("pending_credits"), number(detail.pendingCredits))}
-                ${metricBox(t("commodity_types"), number(catalog.length))}
-                ${metricBox(t("storage_units"), number(detail.stockpileTotalUnits))}
-                ${metricBox(t("open_demand"), number(detail.openDemandUnits))}
-                ${metricBox(t("my_buy_orders_metric"), number((detail.buyOrderEntries || []).length))}
-                ${state.settings.showTownEconomySummary ? metricBox(t("net_balance"), number(detail.netBalance)) : ""}
-              </div>
-              <div class="summary-note">${escapeHtml(t("wallet_balance_hint"))}</div>
-            </div>
-            ${renderWorkspaceRail(detail, catalog, canAct, canManage)}
-          </div>
-        </div>
-      </section>
+      ${renderMarketStrip(detail, catalog, canAct, canManage)}
 
       <section class="goods-market">
         ${activeWorkspaceSection() === "orders"
@@ -5949,49 +5983,43 @@ function renderCommodityDetailPage(commodity, detail, canManage, canAct, options
     <div class="goods-detail">
       ${crumb}
 
-      <section class="goods-hero">
+      <section class="goods-hero ${rarityClassName(commodity.rarity)}">
         ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
         <div class="goods-main">
-          <div class="tiny-label">${escapeHtml(t("selected_commodity"))}</div>
+          <div class="goods-card-topline">
+            <span class="goods-category-tag">${escapeHtml(categoryLabel(commodity.category))}</span>
+            <span class="goods-rarity-tag ${rarityClassName(commodity.rarity)}">${escapeHtml(rarityLabel(commodity.rarity))}</span>
+          </div>
           <h2>${escapeHtml(commodity.displayName)}</h2>
           <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
-          <div class="price-line">
-            ${commodity.bestSell == null ? "--" : number(commodity.bestSell)}
-            <span class="minor">${escapeHtml(t("lowest_sell"))}${commodity.bestBuy == null ? "" : ` · ${escapeHtml(t("highest_buy"))} ${number(commodity.bestBuy)} bp`}</span>
-          </div>
           <div class="goods-stats">
             ${metricBox(t("sell_listings"), number(commodity.totalListings))}
             ${metricBox(t("on_sale"), number(commodity.sellUnits))}
             ${metricBox(t("buying_demand"), number(commodity.demandUnits))}
             ${metricBox(t("in_storage"), number(commodity.storageUnits))}
+            ${metricBox(t("avg_24h"), latestPoint ? number(latestPoint.averageUnitPrice) : "--")}
+            ${metricBox(t("trades_24h"), number(chartStats.tradeCount))}
+            ${metricBox(t("reference_price"), commodity.referencePrice == null ? "--" : number(commodity.referencePrice))}
+            ${metricBox(t("liquidity_score"), number(commodity.liquidityScore))}
           </div>
         </div>
-        <div class="quote-panel">
+        <aside class="buy-box quote-panel">
           <div class="quote-box">
             <span class="quote-label">${escapeHtml(t("lowest_sell"))}</span>
-            <strong>${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
+            <strong class="price-line">${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
           </div>
           <div class="quote-box buy">
             <span class="quote-label">${escapeHtml(t("highest_buy"))}</span>
-            <strong>${commodity.bestBuy == null ? "--" : number(commodity.bestBuy)}</strong>
+            <strong>${commodity.bestBuy == null ? "--" : `${number(commodity.bestBuy)} <small>bp</small>`}</strong>
           </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("avg_24h"))}</span>
-            <strong>${latestPoint ? number(latestPoint.averageUnitPrice) : "--"}</strong>
+          <div class="actions buy-box-actions">
+            ${aggregate
+              ? `<button type="button" data-aggregate-tab="sell">${escapeHtml(t("buy_box_buy"))}</button>
+                 <button type="button" class="secondary" data-aggregate-tab="buy">${escapeHtml(t("buying"))}</button>`
+              : `<button type="button" data-route="sell">${escapeHtml(t("buy_box_buy"))}</button>
+                 <button type="button" class="secondary" data-route="demand">${escapeHtml(t("buy_box_bid"))}</button>`}
           </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("trades_24h"))}</span>
-            <strong>${number(chartStats.tradeCount)}</strong>
-          </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("reference_price"))}</span>
-            <strong>${commodity.referencePrice == null ? "--" : number(commodity.referencePrice)}</strong>
-          </div>
-          <div class="quote-box neutral">
-            <span class="quote-label">${escapeHtml(t("liquidity_score"))}</span>
-            <strong>${number(commodity.liquidityScore)}</strong>
-          </div>
-        </div>
+        </aside>
       </section>
 
       ${detailNav}
@@ -6029,6 +6057,7 @@ els.refreshMarkets.addEventListener("click", async () => {
   }
 });
 els.allListingsNav?.addEventListener("click", () => {
+  setTerminalPanelOpen(false);
   state.activeProductTab = "all";
   state.aggregatedLoaded = false;
   state.aggregatedSelectedCommodityKey = "";
@@ -6039,6 +6068,74 @@ els.allListingsNav?.addEventListener("click", () => {
   syncRouteUrl(false);
   renderDetail();
 });
+// 主题:index.html 头部已按 marketWebTheme / 系统偏好设置 data-theme;这里负责切换与持久化。
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
+function syncThemeToggle() {
+  const theme = currentTheme();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    meta.setAttribute("content", theme === "light" ? "#ffffff" : "#0d0f14");
+  }
+  if (!els.themeToggle) {
+    return;
+  }
+  const label = t(theme === "light" ? "theme_to_dark" : "theme_to_light");
+  els.themeToggle.setAttribute("aria-pressed", theme === "light" ? "true" : "false");
+  els.themeToggle.setAttribute("aria-label", label);
+  els.themeToggle.setAttribute("title", label);
+}
+
+function applyTheme(theme, persist) {
+  document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark");
+  if (persist) {
+    try {
+      localStorage.setItem("marketWebTheme", currentTheme());
+    } catch (error) {
+      // 存储不可用时仅本次会话生效。
+    }
+  }
+  syncThemeToggle();
+  // 图表在创建时读取 CSS 主题色,切换后重建一次。
+  hydrateLightweightChart();
+}
+
+els.terminalToggle?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setTerminalPanelOpen(!!els.terminalPanel?.hidden);
+});
+
+document.addEventListener("click", (event) => {
+  if (els.terminalPanel && !els.terminalPanel.hidden && !event.target.closest?.(".terminal-picker")) {
+    setTerminalPanelOpen(false);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && els.terminalPanel && !els.terminalPanel.hidden) {
+    setTerminalPanelOpen(false);
+    els.terminalToggle?.focus();
+  }
+});
+
+els.themeToggle?.addEventListener("click", () => {
+  applyTheme(currentTheme() === "light" ? "dark" : "light", true);
+});
+
+window.matchMedia?.("(prefers-color-scheme: light)")?.addEventListener?.("change", (event) => {
+  let saved = null;
+  try {
+    saved = localStorage.getItem("marketWebTheme");
+  } catch (error) {
+    saved = null;
+  }
+  if (saved !== "light" && saved !== "dark") {
+    applyTheme(event.matches ? "light" : "dark", false);
+  }
+});
+
 els.localeSelect?.addEventListener("change", (event) => {
   state.locale = event.target.value || "zh-CN";
   localStorage.setItem("marketWebLocale", state.locale);

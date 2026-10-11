@@ -66,7 +66,10 @@ public record RoadPlannerEditCommitPacket(UUID sessionId,
         UUID sessionId = RoadPlannerPacketCodec.readUuid(buffer);
         String roadId = buffer.readUtf(128);
         List<BlockPos> nodes = RoadPlannerPacketCodec.readBlockPosList(buffer);
-        int segmentCount = Math.max(0, buffer.readVarInt());
+        int segmentCount = buffer.readVarInt();
+        if (segmentCount < 0 || segmentCount > buffer.readableBytes()) {
+            throw new IllegalArgumentException("Invalid road segment count: " + segmentCount);
+        }
         List<RoadPlannerSegmentType> segmentTypes = new ArrayList<>(segmentCount);
         for (int index = 0; index < segmentCount; index++) {
             segmentTypes.add(buffer.readEnum(RoadPlannerSegmentType.class));

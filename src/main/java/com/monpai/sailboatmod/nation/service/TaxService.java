@@ -29,23 +29,33 @@ public final class TaxService {
     }
 
     public static TaxResult applySalesTax(Level level, int totalPrice, BlockPos marketPos) {
+        TaxResult quote = quoteSalesTax(level, totalPrice, marketPos);
+        depositTax(level, getNationIdAt(level, marketPos), quote.taxAmount());
+        return quote;
+    }
+
+    public static TaxResult quoteSalesTax(Level level, int totalPrice, BlockPos marketPos) {
         if (level == null || totalPrice <= 0 || marketPos == null) return new TaxResult(totalPrice, 0);
         String nationId = getNationIdAt(level, marketPos);
         if (nationId == null) return new TaxResult(totalPrice, 0);
         int bp = effectiveSalesTaxBp(level, nationId);
         int tax = Math.max(0, (int) Math.floor((long) totalPrice * bp / 10000.0));
-        if (tax > 0) depositTax(level, nationId, tax);
         return new TaxResult(totalPrice - tax, tax);
     }
 
     public static TaxResult applyImportTariff(Level level, int totalPrice, BlockPos sourceDockPos, BlockPos targetDockPos) {
+        TaxResult quote = quoteImportTariff(level, totalPrice, sourceDockPos, targetDockPos);
+        depositTax(level, getNationIdAt(level, targetDockPos), quote.taxAmount());
+        return quote;
+    }
+
+    public static TaxResult quoteImportTariff(Level level, int totalPrice, BlockPos sourceDockPos, BlockPos targetDockPos) {
         if (level == null || totalPrice <= 0 || sourceDockPos == null || targetDockPos == null) return new TaxResult(totalPrice, 0);
         String exportNationId = getNationIdAt(level, sourceDockPos);
         String importNationId = getNationIdAt(level, targetDockPos);
         if (importNationId == null || importNationId.equals(exportNationId)) return new TaxResult(totalPrice, 0);
         int bp = effectiveImportTariffBp(level, importNationId);
         int tax = Math.max(0, (int) Math.floor((long) totalPrice * bp / 10000.0));
-        if (tax > 0) depositTax(level, importNationId, tax);
         return new TaxResult(totalPrice - tax, tax);
     }
 

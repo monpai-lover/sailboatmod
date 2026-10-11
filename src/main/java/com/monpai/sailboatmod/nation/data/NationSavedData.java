@@ -473,7 +473,7 @@ public class NationSavedData extends SavedData {
             }
         }
         for (String townId : townIds) {
-            towns.remove(townId);
+            removeTown(townId);
             changed = true;
         }
 
@@ -622,6 +622,8 @@ public class NationSavedData extends SavedData {
             return;
         }
         boolean changed = towns.remove(normalized) != null;
+        changed |= townMembers.values().removeIf(member -> normalized.equals(member.townId()));
+        changed |= townMemberInvites.values().removeIf(invite -> normalized.equals(invite.townId()));
         List<String> claimKeys = new ArrayList<>();
         for (Map.Entry<String, NationClaimRecord> entry : claims.entrySet()) {
             if (normalized.equals(entry.getValue().townId())) {

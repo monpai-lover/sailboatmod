@@ -659,6 +659,16 @@ public final class MarketWebServer {
             writeStatic(exchange, "marketweb/config.json", "application/json; charset=utf-8");
             return;
         }
+        if (path.startsWith("/vendor/leaflet/")) {
+            String resourcePath = path.substring(1);
+            if (path.indexOf('\\') >= 0 || Arrays.stream(resourcePath.split("/", -1))
+                    .anyMatch(segment -> segment.isEmpty() || ".".equals(segment) || "..".equals(segment))) {
+                writeJson(exchange, 404, error("not_found", "Not found"));
+                return;
+            }
+            writeStatic(exchange, "marketweb/" + resourcePath, contentType(resourcePath));
+            return;
+        }
         if (path.startsWith("/assets/")) {
             String resourcePath = path.substring(1);
             writeStatic(exchange, resourcePath, contentType(resourcePath));

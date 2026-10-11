@@ -100,6 +100,15 @@ public record NationTreasuryRecord(
                 }
             }
         }
+        for (int i = 0; i < items.size() && !remaining.isEmpty(); i++) {
+            if (!items.get(i).isEmpty()) {
+                continue;
+            }
+            int add = Math.min(remaining.getMaxStackSize(), remaining.getCount());
+            items.set(i, remaining.copyWithCount(add));
+            itemDepositors[i] = depositorName;
+            remaining.shrink(add);
+        }
         while (!remaining.isEmpty()) {
             int add = Math.min(remaining.getMaxStackSize(), remaining.getCount());
             ItemStack stored = remaining.copy();
@@ -227,12 +236,11 @@ public record NationTreasuryRecord(
     }
 
     private static NonNullList<ItemStack> normalizeItems(NonNullList<ItemStack> source) {
-        if (source == null || source.isEmpty()) {
-            return NonNullList.withSize(TREASURY_SLOTS, ItemStack.EMPTY);
-        }
-        NonNullList<ItemStack> normalized = NonNullList.withSize(Math.max(TREASURY_SLOTS, source.size()), ItemStack.EMPTY);
-        for (int i = 0; i < source.size(); i++) {
-            normalized.set(i, source.get(i) == null ? ItemStack.EMPTY : source.get(i));
+        int size = Math.max(TREASURY_SLOTS, source == null ? 0 : source.size());
+        NonNullList<ItemStack> normalized = NonNullList.createWithCapacity(size);
+        for (int i = 0; i < size; i++) {
+            ItemStack stack = source != null && i < source.size() ? source.get(i) : ItemStack.EMPTY;
+            normalized.add(stack == null ? ItemStack.EMPTY : stack);
         }
         return normalized;
     }

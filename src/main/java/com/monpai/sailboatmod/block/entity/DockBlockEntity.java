@@ -59,6 +59,7 @@ import java.util.UUID;
 import java.util.Collections;
 
 public class DockBlockEntity extends BlockEntity implements MenuProvider {
+    private static final String REFUNDED_CARGO_RECOVERY_RECIPIENT = "sailboatmod:refund_recovery";
     private static final double ASSIGN_RADIUS = 64.0D;
     private static final int MAX_WAYBILLS = 64;
     public static final int STORAGE_SIZE = 27;
@@ -879,13 +880,37 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean claimSelectedWaybill(Player player) {
+        if (player == null) {
+            return false;
+        }
         if (waybills.isEmpty()) {
             selectedWaybillIndex = 0;
             return false;
         }
         int idx = Mth.clamp(selectedWaybillIndex, 0, waybills.size() - 1);
         WaybillEntry removed = waybills.get(idx);
-        if (!removed.canClaim(player)) {
+        PurchaseOrder purchaseOrder = level == null || level.isClientSide ? null
+                : MarketSavedData.get(level).getPurchaseOrder(removed.purchaseOrderId);
+        if (purchaseOrder != null && PurchaseOrder.STATUS_CANCELLED.equals(purchaseOrder.status())) {
+            if (removed.recipientUuid == null || removed.recipientUuid.isBlank()
+                    || purchaseOrder.buyerUuid().equals(removed.recipientUuid)) {
+                MarketListing listing = MarketSavedData.get(level).getListing(purchaseOrder.listingId());
+                String sellerUuid = listing == null ? "" : listing.sellerUuid();
+                String sellerName = listing == null ? "Refund recovery" : listing.sellerName();
+                removed = removed.withRecipient(sellerName, parseUuid(sellerUuid) == null
+                        ? REFUNDED_CARGO_RECOVERY_RECIPIENT : sellerUuid);
+                waybills.set(idx, removed);
+                setChanged();
+            }
+            if (purchaseOrder.buyerUuid().equals(player.getUUID().toString())) {
+                player.displayClientMessage(Component.translatable(
+                        "block.sailboatmod.dock.waybill_claim_denied", removed.recipientNameOrFallback()), true);
+                return false;
+            }
+        }
+        boolean canClaim = REFUNDED_CARGO_RECOVERY_RECIPIENT.equals(removed.recipientUuid)
+                ? player.hasPermissions(2) : removed.canClaim(player);
+        if (!canClaim) {
             player.displayClientMessage(Component.translatable(
                     "block.sailboatmod.dock.waybill_claim_denied",
                     removed.recipientNameOrFallback()
@@ -988,13 +1013,19 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             if (entryCargo.isEmpty()) {
                 continue;
             }
+            // Refund consumes escrow, so retain the seller's identity before attempting delivery.
+            ShipmentManifestEntry recoveryEntry = refundedCargoRecipient(entry);
             if (tryDeliverManifestEntryToWarehouse(entryCargo, entry)) {
                 continue;
             }
-            TownDeliveryService.deliverDockArrival(level, worldPosition, townId, entryCargo, List.of(entry));
+            PurchaseOrder currentOrder = level == null || level.isClientSide ? null
+                    : MarketSavedData.get(level).getPurchaseOrder(entry.purchaseOrderId());
+            ShipmentManifestEntry fallbackEntry = currentOrder != null && PurchaseOrder.STATUS_CANCELLED.equals(currentOrder.status())
+                    ? recoveryEntry : entry;
+            TownDeliveryService.deliverDockArrival(level, worldPosition, townId, entryCargo, List.of(fallbackEntry));
             appendWaybillEntry(sailboat, routeName, shipperName, startDockName, endDockName,
                     departureEpochMillis, elapsedMillis, distanceMeters, entryCargo,
-                    entry.recipientName(), entry.recipientUuid(), entry.purchaseOrderId(), entry.shippingOrderId());
+                    fallbackEntry.recipientName(), fallbackEntry.recipientUuid(), fallbackEntry.purchaseOrderId(), fallbackEntry.shippingOrderId());
         }
         if (!cargoPool.isEmpty()) {
             TownDeliveryService.deliverDockArrival(level, worldPosition, townId, cargoPool, List.of());
@@ -1002,6 +1033,26 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     departureEpochMillis, elapsedMillis, distanceMeters, cargoPool,
                     "", "", "", "");
         }
+    }
+
+    private ShipmentManifestEntry refundedCargoRecipient(ShipmentManifestEntry entry) {
+        String sellerUuid = "";
+        String sellerName = "Refund recovery";
+        if (level != null && !level.isClientSide && entry.isMarketOrder()) {
+            MarketSavedData market = MarketSavedData.get(level);
+            com.monpai.sailboatmod.market.MarketOrderEscrow escrow = market.getEscrow(entry.purchaseOrderId());
+            PurchaseOrder order = market.getPurchaseOrder(entry.purchaseOrderId());
+            MarketListing listing = order == null ? null : market.getListing(order.listingId());
+            if (escrow != null && parseUuid(escrow.sellerUuid()) != null) {
+                sellerUuid = escrow.sellerUuid();
+                sellerName = escrow.sellerName();
+            } else if (listing != null && parseUuid(listing.sellerUuid()) != null) {
+                sellerUuid = listing.sellerUuid();
+                sellerName = listing.sellerName();
+            }
+        }
+        return new ShipmentManifestEntry(entry.listingId(), entry.itemStack(), entry.purchaseOrderId(), entry.shippingOrderId(),
+                parseUuid(sellerUuid) == null ? REFUNDED_CARGO_RECOVERY_RECIPIENT : sellerUuid, sellerName, entry.quantity());
     }
 
     private boolean tryDeliverManifestEntryToWarehouse(List<ItemStack> cargo, ShipmentManifestEntry entry) {
@@ -1013,17 +1064,18 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (order == null) {
             return false;
         }
+        if (PurchaseOrder.STATUS_CANCELLED.equals(order.status())) {
+            return false;
+        }
         if (!(level.getBlockEntity(order.targetDockPos()) instanceof TownWarehouseBlockEntity warehouse)) {
             // 收货仓已不存在：货物无法入买家仓，退款给买家（货物由上层兜底存入镇仓）。
-            com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(
-                    level, market, order, "delivery_failed_no_warehouse", true);
+            refundFailedPhysicalDelivery(market, order, "delivery_failed_no_warehouse");
             return false;
         }
         UUID buyerId = parseUuid(order.buyerUuid());
         if (buyerId == null || !warehouse.insertCargo(buyerId, cargo)) {
             // 收货仓已满或买家身份无效：退款给买家（货物由上层兜底存入镇仓）。
-            com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(
-                    level, market, order, "delivery_failed_full", true);
+            refundFailedPhysicalDelivery(market, order, "delivery_failed_full");
             return false;
         }
         int deliveredQuantity = 0;
@@ -1082,6 +1134,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 resolvedQuantity
         );
         return true;
+    }
+
+    private void refundFailedPhysicalDelivery(MarketSavedData market, PurchaseOrder order, String reason) {
+        // Dispatch already released this order's reservation. Its real cargo goes to the town fallback.
+        // Recreating stock or decreasing other pending reservations would corrupt the listing.
+        com.monpai.sailboatmod.market.MarketRefundService.refundAndReleaseOrder(
+                level, market, order, reason, false);
     }
 
     private void appendWaybillEntry(
@@ -1646,6 +1705,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                     order.targetWarehousePos()
             ));
             if (selection.remainderOrder() != null) {
+                market.splitEscrow(order.orderId(), order, selection.remainderOrder());
                 market.putPurchaseOrder(selection.remainderOrder());
             }
             market.putShippingOrder(new ShippingOrder(
@@ -1798,7 +1858,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (shippedQuantity >= order.quantity()) {
             return new PurchaseSplit(order, null);
         }
-        int shippedTotal = order.totalPrice() * shippedQuantity / Math.max(1, order.quantity());
+        int shippedTotal = (int) ((long) order.totalPrice() * shippedQuantity / Math.max(1, order.quantity()));
         int remainderQuantity = order.quantity() - shippedQuantity;
         int remainderTotal = Math.max(0, order.totalPrice() - shippedTotal);
         PurchaseOrder shipped = new PurchaseOrder(
@@ -2211,7 +2271,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         MarketSavedData market = MarketSavedData.get(level);
         if (purchaseOrderId != null && !purchaseOrderId.isBlank()) {
             PurchaseOrder order = market.getPurchaseOrder(purchaseOrderId);
-            if (order != null) {
+            if (order != null && !PurchaseOrder.STATUS_CANCELLED.equals(order.status()) && !"CLAIMED".equals(order.status())) {
                 market.putPurchaseOrder(new PurchaseOrder(
                         order.orderId(),
                         order.listingId(),
@@ -2264,7 +2324,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         MarketSavedData market = MarketSavedData.get(level);
         PurchaseOrder order = market.getPurchaseOrder(entry.purchaseOrderId);
-        if (order != null) {
+        if (order != null && !PurchaseOrder.STATUS_CANCELLED.equals(order.status())) {
             market.putPurchaseOrder(new PurchaseOrder(
                     order.orderId(),
                     order.listingId(),
@@ -2444,6 +2504,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 return true;
             }
             return recipientUuid.equals(player.getUUID().toString());
+        }
+
+        private WaybillEntry withRecipient(String name, String uuid) {
+            return new WaybillEntry(waybillName, routeName, boatName, shipperName, startDockName, endDockName,
+                    departureEpochMillis, elapsedMillis, distanceMeters, cargo, name, uuid, purchaseOrderId, shippingOrderId);
         }
 
         private String recipientNameOrFallback() {

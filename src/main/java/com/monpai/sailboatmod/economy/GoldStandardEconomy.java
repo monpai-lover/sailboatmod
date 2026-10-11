@@ -46,10 +46,13 @@ public final class GoldStandardEconomy {
 
     @Nullable
     public static Boolean tryWithdraw(Player player, long amount) {
+        if (amount > Integer.MAX_VALUE) {
+            return Boolean.FALSE;
+        }
         if (player == null || amount <= 0L || player.getAbilities().instabuild) {
             return Boolean.TRUE;
         }
-        int safeAmount = saturatingInt(amount);
+        int safeAmount = (int) amount;
         // 紫水晶本位的前提就是"无 Vault",直接走物理物品路径,不碰 Vault(避免本位判定与 VaultBridge 结果矛盾)。
         if (CurrencyStandard.current() != CurrencyStandard.AMETHYST) {
             Boolean vaultResult = VaultEconomyBridge.tryWithdraw(player, safeAmount);
@@ -62,18 +65,24 @@ public final class GoldStandardEconomy {
 
     @Nullable
     public static Boolean tryWithdrawByIdentity(@Nullable UUID playerUuid, String playerName, long amount) {
+        if (amount > Integer.MAX_VALUE) {
+            return Boolean.FALSE;
+        }
         if (amount <= 0L) {
             return Boolean.TRUE;
         }
-        return VaultEconomyBridge.tryWithdrawByIdentity(playerUuid, playerName, saturatingInt(amount));
+        return VaultEconomyBridge.tryWithdrawByIdentity(playerUuid, playerName, (int) amount);
     }
 
     @Nullable
     public static Boolean tryDeposit(Player player, long amount) {
+        if (amount > Integer.MAX_VALUE) {
+            return Boolean.FALSE;
+        }
         if (player == null || amount <= 0L) {
             return Boolean.TRUE;
         }
-        int safeAmount = saturatingInt(amount);
+        int safeAmount = (int) amount;
         // 紫水晶本位无 Vault，直接给物理物品。
         if (CurrencyStandard.current() != CurrencyStandard.AMETHYST) {
             Boolean vaultResult = VaultEconomyBridge.tryDeposit(player, safeAmount);
@@ -87,10 +96,13 @@ public final class GoldStandardEconomy {
 
     @Nullable
     public static Boolean tryDepositByIdentity(@Nullable UUID playerUuid, String playerName, long amount) {
+        if (amount > Integer.MAX_VALUE) {
+            return Boolean.FALSE;
+        }
         if (amount <= 0L) {
             return Boolean.TRUE;
         }
-        return VaultEconomyBridge.tryDepositByIdentity(playerUuid, playerName, saturatingInt(amount));
+        return VaultEconomyBridge.tryDepositByIdentity(playerUuid, playerName, (int) amount);
     }
 
     public static long getBalance(Player player) {
@@ -182,7 +194,4 @@ public final class GoldStandardEconomy {
         return CurrencyStandard.current().unitValueOf(stack);
     }
 
-    private static int saturatingInt(long amount) {
-        return (int) Math.max(0L, Math.min(Integer.MAX_VALUE, amount));
-    }
 }

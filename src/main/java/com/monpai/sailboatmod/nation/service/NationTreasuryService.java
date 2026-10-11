@@ -55,7 +55,9 @@ public final class NationTreasuryService {
         if (treasury.currencyBalance() < amount) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.insufficient", GoldStandardEconomy.formatBalance(treasury.currencyBalance())));
         }
-        GoldStandardEconomy.tryDeposit(player, amount);
+        if (!Boolean.TRUE.equals(GoldStandardEconomy.tryDeposit(player, amount))) {
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.treasury.invalid_amount"));
+        }
         data.putTreasury(treasury.withBalance(treasury.currencyBalance() - amount));
         return NationResult.success(Component.translatable("command.sailboatmod.nation.treasury.withdraw.success", GoldStandardEconomy.formatBalance(amount)));
     }

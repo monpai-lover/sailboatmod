@@ -22,15 +22,29 @@ class MarketWebMapRegionImageTest {
     Path tempDir;
 
     @Test
-    void doesNotPublishPartialRegionPixelsBeforeAllChunksAreReady() throws Exception {
+    void publishesPartialRegionAndPreservesUntouchedPixelsOnLaterRefresh() throws Exception {
         MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
         MarketWebMapRegionImage image = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, 0, 0);
 
         image.putChunkPixels(0, 0, chunkPixels(0xFF114477));
 
-        assertFalse(image.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 10L));
-        assertTrue(cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 0, 0, 0).isEmpty());
-        assertTrue(cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 1, 0, 0).isEmpty());
+        assertFalse(image.complete());
+        assertTrue(image.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 10L));
+        BufferedImage partial = ImageIO.read(new ByteArrayInputStream(
+                cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 0, 0, 0).orElseThrow()));
+        assertEquals(0xFF114477, partial.getRGB(0, 0));
+        assertEquals(0x00000000, partial.getRGB(511, 511));
+        MarketWebMapRegionImage refresh = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, 0, 0);
+        refresh.putChunkPixels(31, 31, chunkPixels(0xFF778811));
+        assertTrue(refresh.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 15L));
+        BufferedImage merged = ImageIO.read(new ByteArrayInputStream(
+                cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 0, 0, 0).orElseThrow()));
+        assertEquals(0xFF114477, merged.getRGB(0, 0), "unrendered chunks must retain the previous image");
+        assertEquals(0xFF778811, merged.getRGB(511, 511));
+        BufferedImage partialZoom = ImageIO.read(new ByteArrayInputStream(
+                cache.readSquareTile(MarketWebMapConstants.OVERWORLD, 1, 0, 0).orElseThrow()));
+        assertEquals(0xFF114477, partialZoom.getRGB(0, 0));
+        assertEquals(0xFF778811, partialZoom.getRGB(255, 255));
 
         MarketWebMapRegionImage full = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, 0, 0);
         for (int chunkZ = 0; chunkZ < 32; chunkZ++) {

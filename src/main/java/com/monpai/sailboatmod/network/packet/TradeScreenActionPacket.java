@@ -99,6 +99,9 @@ public class TradeScreenActionPacket {
 
     private static List<ItemStack> readItems(FriendlyByteBuf buffer) {
         int count = buffer.readVarInt();
+        if (count < 0 || count > buffer.readableBytes()) {
+            throw new IllegalArgumentException("Invalid trade item count: " + count);
+        }
         List<ItemStack> items = new ArrayList<>(count);
         for (int i = 0; i < count; i++) items.add(com.monpai.sailboatmod.network.PacketItemCodec.read(buffer));
         return items;

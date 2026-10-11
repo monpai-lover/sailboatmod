@@ -141,6 +141,10 @@ public final class NationPermissionService {
             return ChunkRole.OUTSIDER;
         }
         if (claim.nationId().equals(actorMember.nationId())) {
+            NationRecord nation = data.getNation(claim.nationId());
+            if (nation != null && actorMember.playerUuid().equals(nation.leaderUuid())) {
+                return ChunkRole.LEADER;
+            }
             int priority = actorOffice == null ? Integer.MAX_VALUE : actorOffice.priority();
             if (priority <= NationClaimAccessLevel.LEADER.maxPriority()) {
                 return ChunkRole.LEADER;

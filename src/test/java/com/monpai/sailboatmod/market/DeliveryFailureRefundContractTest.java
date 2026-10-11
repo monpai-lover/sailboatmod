@@ -22,9 +22,14 @@ class DeliveryFailureRefundContractTest {
         // 入仓失败分支退款
         assertTrue(body.contains("delivery_failed_full"),
                 "warehouse-full failure should refund the buyer");
-        // 走共享退款服务
-        assertTrue(body.contains("MarketRefundService.refundAndReleaseOrder("),
-                "delivery failure should use the shared refund service");
+        assertTrue(body.contains("refundFailedPhysicalDelivery(market, order,"),
+                "delivery failure should preserve the already loaded physical cargo");
+        int refundIndex = src.indexOf("private void refundFailedPhysicalDelivery(");
+        int refundEnd = src.indexOf("\n    }", refundIndex);
+        String refundBody = src.substring(refundIndex, refundEnd);
+        assertTrue(refundBody.contains("MarketRefundService.refundAndReleaseOrder(")
+                        && refundBody.contains("level, market, order, reason, false"),
+                "physical delivery failure should refund without recreating listing stock");
     }
 
     @Test
@@ -33,7 +38,11 @@ class DeliveryFailureRefundContractTest {
                 "src/main/java/com/monpai/sailboatmod/market/MarketRefundService.java"));
         assertTrue(src.contains("STATUS_CANCELLED.equals(order.status())"),
                 "shared refund service should be idempotent");
-        assertTrue(src.contains("MarketWalletService.deposit(level, order.buyerUuid(), order.buyerName(), order.totalPrice())"),
-                "shared refund service should deposit full totalPrice");
+        assertTrue(src.contains("market.getPurchaseOrder(snapshot.orderId())"),
+                "refund idempotence should consult the authoritative saved order");
+        assertTrue(src.contains("escrow == null ? order.totalPrice() : escrow.totalPrice()"),
+                "refund should use the escrow gross or the recoverable legacy gross");
+        assertTrue(src.contains("MarketWalletService.deposit(level, order.buyerUuid(), order.buyerName(), refundAmount)"),
+                "shared refund service should deposit the full funded gross amount");
     }
 }

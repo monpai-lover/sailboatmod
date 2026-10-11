@@ -250,10 +250,12 @@ class MarketWebAppResourceTest {
                 "map client should create a Leaflet map for terrain rendering");
         assertTrue(mapJs.contains("crs: L.CRS.Simple"),
                 "Leaflet map should use squaremap's simple CRS world projection");
-        assertTrue(mapJs.contains("L.TileLayer.extend"),
-                "terrain layer should use squaremap's custom fetch/blob tile layer pattern");
-        assertTrue(mapJs.contains("URL.revokeObjectURL"),
-                "blob tile URLs should be revoked after load like squaremap");
+        assertTrue(mapJs.contains("new L.TileLayer("),
+                "terrain layer should load cached images through Leaflet's native tile layer");
+        assertTrue(mapJs.contains("/api/map/square/tile/overworld/${tileZoom}/"),
+                "terrain layer should use the server's squaremap tile endpoint");
+        assertTrue(mapJs.contains("encodeURIComponent(tileRefreshKey())"),
+                "tile URLs should carry a render version to refresh changed images");
         assertTrue(mapJs.contains("errorTileUrl"),
                 "missing squaremap tiles should render as transparent placeholders instead of broken images");
         assertFalse(mapJs.contains("fetch(this.getTileUrl(coords), { cache: \"no-store\" })"),
@@ -526,17 +528,19 @@ class MarketWebAppResourceTest {
     }
 
     @Test
-    void goodsCardsUseLiquidGlassFlowWithReducedMotionFallback() throws IOException {
+    void goodsCardsUseRarityShowcaseWithReducedMotionFallback() throws IOException {
         String appCss = cssSource();
 
-        assertTrue(appCss.contains(".goods-card::after,\n.map-side-panel::after"),
-                "commodity cards should share the animated liquid-glass refraction layer");
-        assertTrue(appCss.contains(".goods-card > *,\n.map-side-panel > *"),
-                "commodity card content should stay above the liquid-glass overlay");
-        assertTrue(appCss.contains(".goods-card::after {\n    opacity: 0.16;"),
-                "commodity cards need a restrained liquid-glass opacity so text and icons remain readable");
-        assertTrue(appCss.contains(".goods-card::after,\n    .map-side-panel::after"),
-                "commodity card liquid-glass animation should be disabled by prefers-reduced-motion");
+        assertTrue(appCss.contains(".goods-card:has(.goods-rarity-tag.rarity-epic)"),
+                "commodity cards should take their showcase colour from the item rarity");
+        assertTrue(appCss.contains("box-shadow: inset 0 -3px 0 var(--rarity-color);"),
+                "commodity card art should carry a rarity bar beneath the item");
+        assertTrue(appCss.contains("image-rendering: pixelated;"),
+                "Minecraft item icons must stay pixel-crisp when enlarged in the showcase");
+        assertTrue(appCss.contains("@media (prefers-reduced-motion: reduce)"),
+                "card hover lift must be disabled by prefers-reduced-motion");
+        assertFalse(appCss.contains(".goods-card::after"),
+                "commodity cards should not stack decorative overlays above item art");
     }
 
     @Test

@@ -59,7 +59,8 @@ expectContains(appJs, 'workspaceButton("map"', "MAP workspace tab must remain vi
 expectContains(appJs, 'workspaceButton("demand"', "dedicated buy-order workspace tab must remain visible");
 expectContains(appJs, "pureDemandPage", "dedicated buy-order page should hide dispatch-only controls");
 expectContains(appJs, "renderMarketMapPlaceholder", "MAP placeholder page must remain wired");
-expectContains(appJs, "SailboatMarketMap.mount", "MAP page must mount the live canvas module");
+expectContains(appJs, "window.SailboatSquareMap || window.SailboatMarketMap", "MAP page must select the live map module");
+expectContains(appJs, "mapApi.mount", "MAP page must mount the selected live map module");
 expectContains(appJs, "marketWebAccessPanelOpenV2", "login panel should use the compact-layout access state key");
 expectContains(appJs, "/api/items/resolve", "buy order form should resolve arbitrary registered item ids");
 expectContains(appJs, "buy-order-preview", "buy order form should render an item preview panel");
@@ -79,7 +80,7 @@ expectContains(appCss, ".buy-order-preview", "buy order item preview styles must
 expectContains(indexHtml, 'lang="zh-CN"', "marketweb should default to the Chinese locale");
 expectContains(indexHtml, "/map.js", "marketweb must load the live map script");
 expectContains(mapJs, "window.SailboatMarketMap", "map.js must expose SailboatMarketMap");
-expectContains(mapJs, "/api/map/tile/lod_1/", "map.js must request cached map tiles only");
+expectContains(mapJs, "/api/map/square/tile/overworld/${tileZoom}/", "map.js must request cached squaremap tiles");
 expectContains(mapJs, "setLineDash", "map.js must draw dashed remaining shipment traces");
 expectContains(mapJs, "drawShipmentVehicleIcon", "map.js must draw a directional vehicle icon on active shipment traces");
 expectContains(mapJs, "drawSailboatIcon", "map.js must include a sailboat-shaped shipment icon");
@@ -135,24 +136,31 @@ if (!appCss.includes("--surface-0") || !appCss.includes("--trade-up") || !appCss
   fail("trading-dashboard design tokens are missing from app.css");
 }
 
-if (!appCss.includes("/* Liquid glass light redesign */")
-  || !appCss.includes("--glass-surface")
-  || !appCss.includes("color-scheme: light")
-  || !appCss.includes("backdrop-filter: saturate(180%) blur(20px)")) {
-  fail("marketweb must use the approved light liquid-glass visual system");
+if (!appCss.includes("/* Trade Floor")
+  || !appCss.includes("color-scheme: dark")
+  || !appCss.includes(":root[data-theme=\"light\"]")
+  || !appCss.includes("--accent-text:")
+  || !appCss.includes("--font-num:")
+  || !appCss.includes("--chart-ma-short")) {
+  fail("marketweb must use the approved Trade Floor visual system with dark and light token sets");
 }
 
-if (!appCss.includes("--glass-caustic")
-  || !appCss.includes("--glass-rim")
-  || !appCss.includes("box-shadow: var(--glass-rim), var(--glass-shadow-soft)")
-  || !appCss.includes("background-attachment: fixed")) {
-  fail("liquid-glass theme must include visible refraction, rim lighting, and a fixed backdrop");
+if (!indexHtml.includes("marketWebTheme") || !indexHtml.includes('id="theme-toggle"') || !appJs.includes("localStorage.setItem(\"marketWebTheme\"")) {
+  fail("theme must be user-switchable, applied before CSS loads, and persisted in marketWebTheme");
 }
 
-if (!indexHtml.includes("liquid-glass-distortion")
-  || !indexHtml.includes("feTurbulence")
-  || !appCss.includes("url(#liquid-glass-distortion)")
-  || !appCss.includes("@keyframes liquidGlassFlow")
-  || !appCss.includes("animation: liquidGlassFlow")) {
-  fail("liquid-glass theme must use an SVG distortion filter with a reduced-motion-safe flowing refraction layer");
+if (/backdrop-filter\s*:\s*(?!none)/.test(appCss)) {
+  fail("Trade Floor theme must not use backdrop-filter (Safari compositing cost)");
+}
+
+if (!appCss.includes("prefers-reduced-motion: reduce")) {
+  fail("marketweb CSS must honour reduced-motion preferences");
+}
+
+if (/\.(?:goods-detail|market-browse|market-shell)[^{]*\{[^}]*animation\s*:/.test(appCss)) {
+  fail("re-rendered detail containers must not carry entrance animations");
+}
+
+if (!appJs.includes('cssThemeValue("--trade-up"') || !appJs.includes('cssThemeValue("--chart-ma-short"')) {
+  fail("chart series colours must come from the CSS theme tokens");
 }

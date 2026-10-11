@@ -13,7 +13,7 @@ class RefundCoreContractTest {
     @Test
     void refundCoreDelegatesToSharedService() throws Exception {
         String src = marketBlockEntity();
-        int idx = src.indexOf("private void refundAndReleaseOrder(");
+        int idx = src.indexOf("private boolean refundAndReleaseOrder(");
         assertTrue(idx >= 0, "refundAndReleaseOrder should exist");
         int end = src.indexOf("\n    }", idx);
         String body = src.substring(idx, end);

@@ -91,6 +91,9 @@ public final class ServerEvents {
             });
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
+            if (server.getTickCount() % 20 == 0) {
+                com.monpai.sailboatmod.market.MarketSavedData.get(server.overworld()).retryDeliveredEscrows();
+            }
             if (++loanTickCounter >= 1200) {
                 loanTickCounter = 0;
                 BANK_LOANS.tick(server);

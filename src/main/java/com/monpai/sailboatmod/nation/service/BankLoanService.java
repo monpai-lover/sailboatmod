@@ -100,8 +100,10 @@ public final class BankLoanService {
                 System.currentTimeMillis(),
                 System.currentTimeMillis() + DAY_MS
         );
+        if (!Boolean.TRUE.equals(GoldStandardEconomy.tryDeposit(player, safeAmount))) {
+            return false;
+        }
         data.putPersonalLoan(updated);
-        GoldStandardEconomy.tryDeposit(player, safeAmount);
         return true;
     }
 

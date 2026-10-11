@@ -18,15 +18,21 @@ public class MarketSavedData extends SavedData {
 
     private final Map<String, MarketListing> listings = new LinkedHashMap<>();
     private final Map<String, PurchaseOrder> purchaseOrders = new LinkedHashMap<>();
+    private final Map<String, MarketOrderEscrow> orderEscrows = new LinkedHashMap<>();
     private final Map<String, ShippingOrder> shippingOrders = new LinkedHashMap<>();
     private final Map<String, Integer> pendingCredits = new LinkedHashMap<>();
+    private transient ServerLevel rootServerLevel;
+    private transient int lastSettlementRetryTick = Integer.MIN_VALUE;
 
     public static MarketSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
             return new MarketSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(MarketSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> MarketSavedData.load(tag))), DATA_NAME);
+        MarketSavedData data = root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(MarketSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> MarketSavedData.load(tag))), DATA_NAME);
+        data.rootServerLevel = root;
+        data.retryDeliveredEscrows();
+        return data;
     }
 
     public static MarketSavedData load(CompoundTag tag) {
@@ -46,6 +52,15 @@ public class MarketSavedData extends SavedData {
                 PurchaseOrder order = PurchaseOrder.load(compound);
                 if (!order.orderId().isBlank()) {
                     data.purchaseOrders.put(order.orderId(), order);
+                }
+            }
+        }
+        ListTag escrowTag = tag.getList("OrderEscrows", Tag.TAG_COMPOUND);
+        for (Tag raw : escrowTag) {
+            if (raw instanceof CompoundTag compound) {
+                MarketOrderEscrow escrow = MarketOrderEscrow.load(compound);
+                if (!escrow.orderId().isBlank()) {
+                    data.orderEscrows.put(escrow.orderId(), escrow);
                 }
             }
         }
@@ -82,6 +97,12 @@ public class MarketSavedData extends SavedData {
             orderTag.add(order.save());
         }
         tag.put("PurchaseOrders", orderTag);
+
+        ListTag escrowTag = new ListTag();
+        for (MarketOrderEscrow escrow : orderEscrows.values()) {
+            escrowTag.add(escrow.save());
+        }
+        tag.put("OrderEscrows", escrowTag);
 
         ListTag shippingTag = new ListTag();
         for (ShippingOrder order : shippingOrders.values()) {
@@ -233,7 +254,77 @@ public class MarketSavedData extends SavedData {
     }
 
     public void putPurchaseOrder(PurchaseOrder order) {
+        PurchaseOrder existing = purchaseOrders.get(order.orderId());
+        if (existing != null && PurchaseOrder.STATUS_CANCELLED.equals(existing.status())) {
+            return;
+        }
         purchaseOrders.put(order.orderId(), order);
+        setDirty();
+        if ("ARRIVED".equals(order.status()) || "CLAIMED".equals(order.status())) {
+            MarketOrderEscrowService.settle(rootServerLevel, this, getEscrow(order.orderId()));
+        }
+    }
+
+    public void putEscrow(MarketOrderEscrow escrow) {
+        if (escrow == null || escrow.orderId().isBlank()) {
+            return;
+        }
+        if (!escrow.hasBalancedAmounts()) {
+            throw new IllegalArgumentException("Escrow recipients must account for the full held payment");
+        }
+        if (orderEscrows.putIfAbsent(escrow.orderId(), escrow) != null) {
+            throw new IllegalArgumentException("An escrow already exists for this order");
+        }
+        setDirty();
+    }
+
+    public MarketOrderEscrow getEscrow(String orderId) {
+        return orderId == null ? null : orderEscrows.get(orderId);
+    }
+
+    public MarketOrderEscrow removeEscrow(String orderId) {
+        MarketOrderEscrow removed = orderId == null ? null : orderEscrows.remove(orderId);
+        if (removed != null) {
+            setDirty();
+        }
+        return removed;
+    }
+
+    /** Retries completed deliveries after a temporary recipient payment failure. */
+    public void retryDeliveredEscrows() {
+        if (rootServerLevel == null) {
+            return;
+        }
+        int tick = rootServerLevel.getServer().getTickCount();
+        if (lastSettlementRetryTick == tick) {
+            return;
+        }
+        lastSettlementRetryTick = tick;
+        for (MarketOrderEscrow escrow : List.copyOf(orderEscrows.values())) {
+            PurchaseOrder order = getPurchaseOrder(escrow.orderId());
+            if (order != null && ("ARRIVED".equals(order.status()) || "CLAIMED".equals(order.status()))) {
+                MarketOrderEscrowService.settle(rootServerLevel, this, escrow);
+            }
+        }
+    }
+
+    public void splitEscrow(String originalId, PurchaseOrder shipped, PurchaseOrder remainder) {
+        MarketOrderEscrow original = getEscrow(originalId);
+        if (original == null || shipped == null || remainder == null) {
+            return;
+        }
+        if (!originalId.equals(shipped.orderId()) || originalId.equals(remainder.orderId())
+                || orderEscrows.containsKey(remainder.orderId())
+                || (long) shipped.totalPrice() + remainder.totalPrice() != original.totalPrice()) {
+            throw new IllegalArgumentException("Split orders must conserve the original escrow");
+        }
+        MarketOrderEscrow shippedEscrow = original.portion(shipped.orderId(), shipped.totalPrice());
+        MarketOrderEscrow remainderEscrow = new MarketOrderEscrow(remainder.orderId(), original.sellerUuid(),
+                original.sellerName(), remainder.totalPrice(), original.sellerPayout() - shippedEscrow.sellerPayout(),
+                original.salesTaxNationId(), original.salesTax() - shippedEscrow.salesTax(),
+                original.importTariffNationId(), original.importTariff() - shippedEscrow.importTariff());
+        orderEscrows.put(shipped.orderId(), shippedEscrow);
+        orderEscrows.put(remainder.orderId(), remainderEscrow);
         setDirty();
     }
 

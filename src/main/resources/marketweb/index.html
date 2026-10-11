@@ -3,12 +3,23 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0d0f14">
     <link rel="icon" href="/brand-mark.svg" sizes="any" type="image/svg+xml">
     <title>Monpai Online Market</title>
     <script>
-    // Safari 检测(在 CSS 之前、尽早执行,避免闪烁):给 <html> 加 is-safari class。
-    // Safari 上 backdrop-filter: blur() 每个面板都强制昂贵合成层、每帧重新模糊背后内容 → 整页卡顿
-    // (Retina 4x 像素更甚);Chrome/Windows 有 GPU 优化所以不卡。CSS 里据此对 Safari 关掉毛玻璃换纯色背景。
+    // Safari 检测(在 CSS 之前、尽早执行):给 <html> 加 is-safari class,供 CSS 关闭昂贵的合成效果。
+    // 主题:读取用户上次选择(marketWebTheme),没有则跟随系统;在 CSS 之前设置,避免闪烁。
+    (function () {
+      try {
+        var saved = localStorage.getItem('marketWebTheme');
+        var theme = saved === 'light' || saved === 'dark'
+          ? saved
+          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
     (function () {
       try {
         var ua = navigator.userAgent;
@@ -21,14 +32,6 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<svg class="liquid-glass-filter" width="0" height="0" aria-hidden="true" focusable="false">
-    <filter id="liquid-glass-distortion" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
-        <feTurbulence type="fractalNoise" baseFrequency="0.011 0.017" numOctaves="2" seed="7" result="liquidNoise">
-            <animate attributeName="baseFrequency" dur="12s" values="0.011 0.017;0.017 0.012;0.012 0.02;0.011 0.017" repeatCount="indefinite" />
-        </feTurbulence>
-        <feDisplacementMap in="SourceGraphic" in2="liquidNoise" scale="10" xChannelSelector="R" yChannelSelector="G" />
-    </filter>
-</svg>
 <div class="page-shell">
     <div id="status-live" class="sr-only" aria-live="polite"></div>
 
@@ -38,52 +41,83 @@
                 <img src="/brand-mark.svg" alt="Monpai anti-counterfeit mark">
             </div>
             <div class="brand-copy">
-                <p id="brand-kicker" class="brand-kicker">Monpai Online Market</p>
                 <h1 id="hero-title">Monpai Online Market</h1>
+                <p id="brand-kicker" class="brand-kicker">Monpai Online Market</p>
                 <p id="hero-subtitle" class="brand-subtitle">Browse market terminals and commodity prices first. Bind a web account only when you want to trade, list goods, or manage logistics.</p>
             </div>
         </div>
 
+        <nav id="workspace-nav" class="workspace-nav" aria-label="Market sections"></nav>
+
         <div class="topbar-side">
-            <div class="topbar-control-row">
-                <label class="locale-switcher" for="locale-select">
-                    <span id="locale-label" class="hero-chip-label">Language</span>
-                    <select id="locale-select">
-                        <option value="zh-CN">&#31616;&#20307;&#20013;&#25991;</option>
-                        <option value="en-US">English</option>
-                    </select>
-                </label>
-
-                <button id="access-toggle" type="button" class="access-toggle" aria-controls="access-panel" aria-expanded="true">
-                    <span id="access-toggle-label" class="hero-chip-label">登录</span>
-                    <strong id="session-status-inline">立即登录</strong>
-                </button>
-            </div>
-
-            <div id="wallet-dock" class="wallet-dock" hidden></div>
-
             <div class="hero-strip">
-                <div class="hero-chip">
+                <div class="hero-chip hero-chip-mode">
                     <span id="mode-label" class="hero-chip-label">Mode</span>
                     <strong id="mode-value">Commodity Market</strong>
                 </div>
-                <div class="hero-chip">
+                <div class="hero-chip hero-chip-session">
                     <span id="session-label" class="hero-chip-label">Session</span>
                     <strong id="session-pill">Offline</strong>
                 </div>
-                <div class="hero-chip">
+                <div class="hero-chip hero-chip-flow">
                     <span id="flow-label" class="hero-chip-label">Flow</span>
                     <strong id="flow-value">Token Login</strong>
                 </div>
             </div>
 
-            <div class="command-card compact">
-                <div>
-                    <div id="command-label" class="command-label">In-game command</div>
-                    <code id="command-preview">/marketweb token</code>
+            <div class="terminal-picker">
+                <button id="terminal-toggle" type="button" class="terminal-toggle" aria-controls="terminal-panel" aria-expanded="false">
+                    <span id="terminal-toggle-label" class="terminal-toggle-label">Terminal</span>
+                    <strong id="terminal-current">-</strong>
+                </button>
+
+                <div id="terminal-panel" class="terminal-panel" hidden>
+                    <div class="sidebar-panel sidebar-intro">
+                        <div class="panel-head">
+                            <div>
+                                <p id="market-network-kicker" class="section-kicker">Market Network</p>
+                                <h2 id="browse-markets-title">Browse Markets</h2>
+                            </div>
+                            <button id="refresh-markets" type="button" class="secondary">Refresh</button>
+                        </div>
+
+                        <label class="market-search-field" for="market-search">
+                            <span id="market-search-label" class="hero-chip-label">Find Terminal</span>
+                            <input id="market-search" type="search" placeholder="Search market, owner, town, or dimension">
+                        </label>
+
+                        <p id="market-sidebar-hint" class="muted">Choose one market terminal, then browse its commodities like a marketplace and drill into one item page.</p>
+                    </div>
+
+                    <div id="market-summary" class="sidebar-panel market-summary">
+                        <div class="empty-state compact">Loading markets...</div>
+                    </div>
+
+                    <div class="sidebar-panel market-list-shell">
+                        <button id="all-listings-nav" type="button" class="all-listings-nav" data-route="all">All Goods</button>
+                        <div id="market-list" class="market-list empty-state">Loading markets...</div>
+                    </div>
                 </div>
-                <button id="copy-command-button" type="button" class="secondary">Copy command</button>
             </div>
+
+            <div id="wallet-dock" class="wallet-dock" hidden></div>
+
+            <button id="theme-toggle" type="button" class="theme-toggle" aria-pressed="false" aria-label="Switch to light theme" title="Switch to light theme">
+                <span class="theme-toggle-icon" aria-hidden="true"></span>
+            </button>
+
+            <label class="locale-switcher" for="locale-select">
+                <span id="locale-label" class="hero-chip-label">Language</span>
+                <select id="locale-select">
+                    <option value="zh-CN">&#31616;&#20307;&#20013;&#25991;</option>
+                    <option value="en-US">English</option>
+                </select>
+            </label>
+
+            <button id="access-toggle" type="button" class="access-toggle" aria-controls="access-panel" aria-expanded="true">
+                <span id="access-toggle-label" class="hero-chip-label">登录</span>
+                <strong id="session-status-inline">立即登录</strong>
+            </button>
         </div>
     </header>
 
@@ -93,6 +127,14 @@
                 <p id="portal-kicker" class="section-kicker">Portal Access</p>
                 <h2 id="auth-title">Bind once with token, then sign in offline</h2>
                 <p id="auth-subtitle" class="subtle">Use the in-game token once to bind a web account, then continue using username and password even while offline.</p>
+
+                <div class="command-card">
+                    <div>
+                        <div id="command-label" class="command-label">In-game command</div>
+                        <code id="command-preview">/marketweb token</code>
+                    </div>
+                    <button id="copy-command-button" type="button" class="secondary">Copy command</button>
+                </div>
             </div>
 
             <div class="login-panel">
@@ -108,12 +150,12 @@
                 <textarea id="chat-capture" autocomplete="off" placeholder="Paste the full chat line here. The page will detect the token automatically."></textarea>
 
                 <div class="account-grid">
-                    <input id="account-username" type="text" autocomplete="username" placeholder="Account username">
-                    <input id="account-password" type="password" autocomplete="current-password" placeholder="Password">
+                    <input id="account-username" type="text" autocomplete="username" placeholder="Account username" aria-label="Account username">
+                    <input id="account-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">
                 </div>
 
                 <div class="token-row">
-                    <input id="login-token" type="text" autocomplete="off" placeholder="Token appears here automatically">
+                    <input id="login-token" type="text" autocomplete="off" placeholder="Token appears here automatically" aria-label="Token">
                     <button id="bind-button" type="button">Bind account</button>
                     <button id="login-button" type="button" class="secondary">Account login</button>
                 </div>
@@ -124,35 +166,6 @@
     </section>
 
     <main class="dashboard-grid">
-        <aside class="market-sidebar">
-            <div class="sidebar-panel sidebar-intro">
-                <div class="panel-head">
-                    <div>
-                        <p id="market-network-kicker" class="section-kicker">Market Network</p>
-                        <h2 id="browse-markets-title">Browse Markets</h2>
-                    </div>
-                    <button id="refresh-markets" type="button" class="secondary">Refresh</button>
-                </div>
-
-                <button id="all-listings-nav" type="button" class="all-listings-nav" data-route="all">All Goods</button>
-
-                <label class="market-search-field" for="market-search">
-                    <span id="market-search-label" class="hero-chip-label">Find Terminal</span>
-                    <input id="market-search" type="search" placeholder="Search market, owner, town, or dimension">
-                </label>
-
-                <p id="market-sidebar-hint" class="muted">Choose one market terminal, then browse its commodities like a marketplace and drill into one item page.</p>
-            </div>
-
-            <div id="market-summary" class="sidebar-panel market-summary">
-                <div class="empty-state compact">Loading markets...</div>
-            </div>
-
-            <div class="sidebar-panel market-list-shell">
-                <div id="market-list" class="market-list empty-state">Loading markets...</div>
-            </div>
-        </aside>
-
         <section class="market-stage">
             <div id="market-detail" class="empty-state">Select a market terminal to browse commodities, listings, buy orders, and price history.</div>
         </section>
