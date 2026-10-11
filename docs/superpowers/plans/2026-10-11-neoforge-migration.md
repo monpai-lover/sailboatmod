@@ -20,7 +20,7 @@
 - [x] Run all 1,267 unit tests: 1,265 pass; two preexisting web failures remain assigned to Claude. Build main/addon artifacts separately with `releaseMod -x test`; inspect metadata and nested dependencies.
 - [x] Run isolated development dedicated-server and client startup checks. SQLite database and web HTTP startup verified. No existing world or multiplayer gameplay checked; production JAR installation smoke remains a release follow-up.
 - [x] Review final migration for feature/data preservation; update migration instructions.
-- [ ] Commit and push the requested branch, then set GitHub default branch to `1.21.1-neoforge` when verified.
+- [x] Commit and push the requested branch; GitHub default branch is verified as `1.21.1-neoforge`. Original `main` and source branch remain available.
 
 ## Verification commands
 

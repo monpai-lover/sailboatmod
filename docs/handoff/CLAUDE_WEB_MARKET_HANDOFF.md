@@ -1,6 +1,6 @@
 # Claude 網頁商城重構交接
 
-此交接包用於 **Minecraft 1.21.1 / NeoForge 網頁商城重構**。主模組的版本遷移由 Codex 持續處理，Claude 負責網頁商城的前端、HTTP 介面層及其認證問題。交接包是目前工作目錄的原始碼快照，可能包含尚未提交的遷移修正；不是 Git 歷史或正式發行檔。
+此交接包用於 **Minecraft 1.21.1 / NeoForge 網頁商城重構**。Codex 負責主模組遷移及後續整合，Claude 負責網頁商城的前端、HTTP 介面層及其認證問題。遷移分支 `1.21.1-neoforge` 已推送並設為 GitHub 預設分支。ZIP 的來源 commit 與逐檔內容以 `HANDOFF_MANIFEST.json` 為準；這是開發原始碼快照，不含 Git 歷史，也不是正式發行檔。
 
 ## 版本與工作邊界
 
