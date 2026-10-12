@@ -1813,8 +1813,18 @@ function openPurchaseModal(listingIndex) {
 }
 
 function bindDetailActions() {
-  document.querySelector(".market-strip")?.addEventListener("toggle", (event) => {
-    state.marketStripOpen = !!event.target.open;
+  const marketStrip = document.querySelector(".market-strip");
+  marketStrip?.addEventListener("toggle", (event) => {
+    const open = !!event.target.open;
+    // Rebuilding <details open> also emits toggle; only animate a new opening.
+    const opening = open && !state.marketStripOpen;
+    state.marketStripOpen = open;
+    marketStrip.classList.toggle("is-opening", opening && !prefersReducedMotion());
+  });
+  marketStrip?.addEventListener("animationend", (event) => {
+    if (event.animationName === "panelDrop") {
+      marketStrip.classList.remove("is-opening");
+    }
   });
 
   const search = document.querySelector("#commodity-search");
@@ -5713,6 +5723,102 @@ function renderAggregatedView() {
   `;
 }
 
+// 动效:renderDetail 每次整页重建 DOM(含搜索输入、状态提示),所以入场动画只在真正变化时播放——
+// 视图(路由/终端/商品/加载完成)变化 → view-enter;筛选或排序变化 → grid-enter(格子依次"装入");
+// 新状态消息 → status-enter。普通重绘不加这些 class,新节点就不会重复播放动画。
+const motionState = { viewKey: null, gridKey: null, statusKey: "" };
+
+function prefersReducedMotion() {
+  return !!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+}
+
+function currentViewKey() {
+  return [
+    state.activeProductTab,
+    state.selectedMarketId,
+    state.detail?.marketId || "",
+    state.selectedCommodityKey,
+    state.aggregatedLoaded ? "agg" : "",
+    state.aggregatedSelectedCommodityKey,
+    state.aggregatedDetailLoaded ? "agg-detail" : "",
+    state.aggregatedDetailTab
+  ].join("|");
+}
+
+function currentGridKey() {
+  const filters = state.catalogFilters || {};
+  return [
+    filters.categoryGroup,
+    filters.category,
+    filters.rarity,
+    filters.minPrice,
+    filters.maxPrice,
+    state.catalogSort?.mode,
+    state.catalogSort?.direction,
+    state.browseOrderView
+  ].join("|");
+}
+
+// 数字从 0 滚到目标值(市场摘要、商品价格),只在切换终端/商品时播放。
+function countUpFigures(nodes) {
+  nodes.forEach((node) => {
+    const textNode = node.firstChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+      return;
+    }
+    const text = textNode.textContent;
+    const target = Number(String(text).replace(/[^0-9.-]/g, ""));
+    if (!text.trim() || !Number.isFinite(target) || target <= 0) {
+      return;
+    }
+    const started = performance.now();
+    const duration = 520;
+    const step = (now) => {
+      const progress = Math.min(1, (now - started) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      textNode.textContent = progress >= 1 ? text : number(Math.round(target * eased));
+      if (progress < 1 && textNode.isConnected) {
+        requestAnimationFrame(step);
+      }
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function playViewMotion() {
+  const viewKey = currentViewKey();
+  const gridKey = currentGridKey();
+  const statusKey = `${state.status || ""}|${state.error || ""}`;
+  const firstPaint = motionState.viewKey === null;
+  const viewChanged = viewKey !== motionState.viewKey;
+  const gridChanged = gridKey !== motionState.gridKey;
+  const statusChanged = statusKey !== motionState.statusKey && !!(state.status || state.error);
+  motionState.viewKey = viewKey;
+  motionState.gridKey = gridKey;
+  motionState.statusKey = statusKey;
+
+  const body = document.body;
+  body.classList.remove("view-enter", "grid-enter", "status-enter");
+  if (prefersReducedMotion()) {
+    return;
+  }
+  if (viewChanged) {
+    body.classList.add("view-enter");
+  }
+  if (viewChanged || gridChanged) {
+    els.marketDetail?.querySelectorAll(".goods-grid > .goods-card").forEach((card, index) => {
+      card.style.setProperty("--i", String(Math.min(index, 24)));
+    });
+    body.classList.add("grid-enter");
+  }
+  if (statusChanged) {
+    body.classList.add("status-enter");
+  }
+  if (viewChanged && !firstPaint) {
+    countUpFigures(els.marketDetail?.querySelectorAll(".strip-figure strong, .price-line") || []);
+  }
+}
+
 function renderDetail() {
   if (els.allListingsNav) {
     els.allListingsNav.classList.toggle("active", state.activeProductTab === "all");
@@ -5748,6 +5854,7 @@ function renderDetail() {
     renderTopbarWallet();
     els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${renderAggregatedView()}</div>`;
     bindDetailActions();
+    playViewMotion();
     if (!state.aggregatedLoaded) {
       loadAggregatedListings();
     }
@@ -5770,6 +5877,7 @@ function renderDetail() {
     renderTopbarWallet();
     els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${state.activeProductTab === "map" ? renderMarketMapPlaceholder(null, !!state.session, false) : `<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`}</div>`;
     bindDetailActions();
+    playViewMotion();
     mountMarketMapIfNeeded();
     return;
   }
@@ -5838,6 +5946,7 @@ function renderDetail() {
   `;
 
   bindDetailActions();
+  playViewMotion();
   hydrateCommodityIcons();
   hydrateLightweightChart();
   mountMarketMapIfNeeded();
@@ -6089,7 +6198,13 @@ function syncThemeToggle() {
 }
 
 function applyTheme(theme, persist) {
-  document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark");
+  const root = document.documentElement;
+  if (!prefersReducedMotion()) {
+    root.classList.add("theme-switching");
+    window.clearTimeout(applyTheme.timer);
+    applyTheme.timer = window.setTimeout(() => root.classList.remove("theme-switching"), 320);
+  }
+  root.setAttribute("data-theme", theme === "light" ? "light" : "dark");
   if (persist) {
     try {
       localStorage.setItem("marketWebTheme", currentTheme());

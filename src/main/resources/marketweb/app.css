@@ -1,49 +1,58 @@
-/* Trade Floor — Monpai market web terminal
-   Modelled on CS2 skin marketplaces: a dark trading floor, image-first item
-   cards lit by their rarity colour, dense filter rails and one warm accent
-   reserved for money and the buy action. Minecraft rarities are mapped onto
-   the CS2 rarity ladder (consumer → covert) so value reads at a glance. */
+/* Trading Hall — Monpai market web terminal
+   A Minecraft server's commodity exchange, styled from the game's own trading
+   vernacular. The signature is the inventory slot: every item sits in a
+   bevelled, pixel-cornered slot tinted by its rarity and lit on hover the way
+   the game lights a slot. The currency mark is the villager emerald. Item names
+   take their rarity colour, as in an in-game tooltip. Everything around the
+   slots stays quiet: plain panels, DIN numerals, one jewel accent. */
 
 :root {
     color-scheme: dark;
 
-    /* Floor */
-    --bg: #0d0f14;
-    --bg-2: #11141a;
-    --surface: #161a22;
-    --surface-2: #1c212b;
-    --surface-3: #232935;
-    --line: #252b37;
-    --line-2: #323a49;
-    --text: #e9edf4;
-    --text-2: #aab3c4;
-    --text-3: #6e7a8f;
+    /* Night hall */
+    --bg: #0f1420;
+    --bg-2: #121826;
+    --surface: #161d2b;
+    --surface-2: #1c2535;
+    --surface-3: #243045;
+    --line: #243046;
+    --line-2: #33415a;
+    --text: #e7ecf5;
+    --text-2: #a6b1c6;
+    --text-3: #6d7a93;
 
-    /* Accent: money & buy */
-    --accent: #ffa31a;
-    --accent-hover: #ffb84d;
-    --accent-ink: #1b1204;
-    --accent-soft: rgba(255, 163, 26, 0.12);
-    --accent-line: rgba(255, 163, 26, 0.45);
-    --accent-text: #ffa31a;
-    --info: #4b8bff;
-    --info-soft: rgba(75, 139, 255, 0.14);
+    /* Emerald: the currency and the buy action, nothing else */
+    --accent: #34d399;
+    --accent-hover: #5ee3b0;
+    --accent-ink: #032317;
+    --accent-soft: rgba(52, 211, 153, 0.12);
+    --accent-line: rgba(52, 211, 153, 0.45);
+    --accent-text: #4ade9f;
+    --info: #6ea8ff;
+    --info-soft: rgba(110, 168, 255, 0.15);
 
     /* Market semantics */
-    --trade-up: #33c27a;
-    --trade-down: #ff5d5d;
-    --trade-warn: #ffb020;
-    --trade-up-soft: rgba(51, 194, 122, 0.13);
-    --trade-down-soft: rgba(255, 93, 93, 0.12);
-    --trade-warn-soft: rgba(255, 176, 32, 0.12);
+    --trade-up: #3ccf7e;
+    --trade-down: #ff6b6b;
+    --trade-warn: #f5b13d;
+    --trade-up-soft: rgba(60, 207, 126, 0.13);
+    --trade-down-soft: rgba(255, 107, 107, 0.12);
+    --trade-warn-soft: rgba(245, 177, 61, 0.12);
 
-    /* CS2 rarity ladder */
-    --rarity-common: #b0c3d9;
-    --rarity-uncommon: #5e98d9;
-    --rarity-rare: #4b69ff;
-    --rarity-epic: #8847ff;
-    --rarity-legend: #d32ce6;
-    --rarity-extraordinary: #eb4b4b;
+    /* Minecraft rarity colours (tooltip colour codes, softened for screens) */
+    --rarity-common: #c9d2e3;
+    --rarity-uncommon: #f2e35c;
+    --rarity-rare: #5fe3ef;
+    --rarity-epic: #f07cf0;
+    --rarity-legend: #ffb238;
+    --rarity-extraordinary: #ff6a6a;
+
+    /* Inventory slot */
+    --slot-bg: #1a2233;
+    --slot-hi: #2e3a52;
+    --slot-lo: #0a0e17;
+    --slot-hover: rgba(255, 255, 255, 0.1);
+    --slot-ring: #070a11;
 
     /* Aliases read by app.js / map.js */
     --surface-0: var(--bg);
@@ -57,99 +66,113 @@
     --terminal-muted-strong: var(--text-2);
 
     /* Charts */
-    --chart-grid: rgba(170, 179, 196, 0.07);
-    --chart-border: rgba(170, 179, 196, 0.16);
-    --chart-ma-short: #ffa31a;
-    --chart-ma-long: #4b8bff;
-    --chart-volume: rgba(75, 139, 255, 0.3);
+    --chart-grid: rgba(166, 177, 198, 0.07);
+    --chart-border: rgba(166, 177, 198, 0.16);
+    --chart-ma-short: #f5b13d;
+    --chart-ma-long: #6ea8ff;
+    --chart-volume: rgba(110, 168, 255, 0.28);
     --chart-control-height: 30px;
-    --chart-index-market: #4b8bff;
-    --chart-index-category: #33c2b4;
-    --chart-index-cpi: #8847ff;
-    --chart-index-loans: #ffa31a;
+    --chart-index-market: #6ea8ff;
+    --chart-index-category: #5fe3ef;
+    --chart-index-cpi: #f07cf0;
+    --chart-index-loans: #f5b13d;
 
     /* Type */
     --font-text: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
     --font-num: "Bahnschrift", "DIN Alternate", "D-DIN", "Barlow Semi Condensed", "Roboto Condensed", "Ubuntu Condensed", "Arial Narrow", var(--font-text);
     --font-code: "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, "Ubuntu Mono", monospace;
 
-    --r-tag: 3px;
-    --r-control: 6px;
-    --r-card: 8px;
-    --r-panel: 10px;
+    /* Shape: panels are softly rounded; slots and gems are pixel-cut */
+    --r-tag: 2px;
+    --r-control: 4px;
+    --r-card: 6px;
+    --r-panel: 8px;
+    --px: 3px;
+    --pixel-corners: polygon(
+        0 var(--px), var(--px) var(--px), var(--px) 0,
+        calc(100% - var(--px)) 0, calc(100% - var(--px)) var(--px), 100% var(--px),
+        100% calc(100% - var(--px)), calc(100% - var(--px)) calc(100% - var(--px)), calc(100% - var(--px)) 100%,
+        var(--px) 100%, var(--px) calc(100% - var(--px)), 0 calc(100% - var(--px))
+    );
 
     --gutter: 24px;
     --masthead-h: 64px;
-    --shadow-pop: 0 20px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--line-2);
-    --shadow-lift: 0 10px 28px rgba(0, 0, 0, 0.45);
-    --art-shadow: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.55));
-    --topbar-bg: rgba(13, 15, 20, 0.96);
-    --tag-overlay: rgba(13, 15, 20, 0.72);
-    --toolbar-float: rgba(22, 26, 34, 0.94);
-    --scrim: rgba(4, 5, 8, 0.72);
-    --error-text: #ffb3b3;
-    --map-floor: #07090c;
+    --shadow-pop: 0 20px 48px rgba(3, 6, 12, 0.6), 0 0 0 1px var(--line-2);
+    --shadow-lift: 0 10px 26px rgba(3, 6, 12, 0.5);
+    --art-shadow: drop-shadow(3px 3px 0 rgba(0, 0, 0, 0.35));
+    --topbar-bg: rgba(15, 20, 32, 0.96);
+    --tag-overlay: var(--surface-3);
+    --toolbar-float: rgba(22, 29, 43, 0.95);
+    --scrim: rgba(5, 8, 14, 0.72);
+    --error-text: #ffb8b8;
+    --map-floor: #080b12;
 }
 
-/* Light trading floor — chosen with the masthead toggle (data-theme on <html>).
-   Same structure, re-tuned for contrast on white: accent text darkens and the
-   palest rarity tier gains weight so tags stay legible. */
+/* Day hall — chosen with the top-bar toggle (data-theme on <html>).
+   Lighter inventory greys; rarity colours darken so tooltip-coloured names
+   keep their contrast on white. */
 :root[data-theme="light"] {
     color-scheme: light;
 
-    --bg: #f1f3f6;
-    --bg-2: #f6f7f9;
+    --bg: #eef1f5;
+    --bg-2: #f5f7fa;
     --surface: #ffffff;
-    --surface-2: #f4f6f8;
-    --surface-3: #e9edf2;
-    --line: #e1e5eb;
-    --line-2: #cdd4de;
-    --text: #131821;
-    --text-2: #444e5d;
-    --text-3: #747f90;
+    --surface-2: #f3f5f8;
+    --surface-3: #e6eaf0;
+    --line: #dde2ea;
+    --line-2: #c6cdd8;
+    --text: #121826;
+    --text-2: #46516a;
+    --text-3: #77829a;
 
-    --accent: #ffa31a;
-    --accent-hover: #ffb240;
-    --accent-ink: #1b1204;
-    --accent-soft: rgba(255, 163, 26, 0.14);
-    --accent-line: rgba(224, 128, 0, 0.55);
-    --accent-text: #c76d00;
-    --info: #2f6fe0;
-    --info-soft: rgba(47, 111, 224, 0.14);
+    --accent: #047857;
+    --accent-hover: #065f46;
+    --accent-ink: #ffffff;
+    --accent-soft: rgba(4, 120, 87, 0.09);
+    --accent-line: rgba(4, 120, 87, 0.45);
+    --accent-text: #047857;
+    --info: #2563c9;
+    --info-soft: rgba(37, 99, 201, 0.13);
 
-    --trade-up: #128a55;
-    --trade-down: #d6383a;
-    --trade-warn: #b97200;
-    --trade-up-soft: rgba(18, 138, 85, 0.1);
-    --trade-down-soft: rgba(214, 56, 58, 0.09);
-    --trade-warn-soft: rgba(185, 114, 0, 0.1);
+    --trade-up: #11824f;
+    --trade-down: #cf3434;
+    --trade-warn: #a86500;
+    --trade-up-soft: rgba(17, 130, 79, 0.1);
+    --trade-down-soft: rgba(207, 52, 52, 0.09);
+    --trade-warn-soft: rgba(168, 101, 0, 0.1);
 
-    --rarity-common: #7f90a6;
-    --rarity-uncommon: #3f7fc9;
-    --rarity-rare: #3a58f0;
-    --rarity-epic: #7a38ef;
-    --rarity-legend: #bd22cf;
-    --rarity-extraordinary: #d93a3a;
+    --rarity-common: #5d6880;
+    --rarity-uncommon: #9a7d00;
+    --rarity-rare: #0a8796;
+    --rarity-epic: #a636ab;
+    --rarity-legend: #bb6c00;
+    --rarity-extraordinary: #cc3030;
 
-    --chart-grid: rgba(19, 24, 33, 0.06);
-    --chart-border: rgba(19, 24, 33, 0.14);
-    --chart-ma-short: #e08000;
-    --chart-ma-long: #2f6fe0;
-    --chart-volume: rgba(47, 111, 224, 0.24);
-    --chart-index-market: #2f6fe0;
-    --chart-index-category: #129a8c;
-    --chart-index-cpi: #7a38ef;
-    --chart-index-loans: #e08000;
+    --slot-bg: #d6dbe3;
+    --slot-hi: #fbfcfd;
+    --slot-lo: #a3acba;
+    --slot-hover: rgba(255, 255, 255, 0.55);
+    --slot-ring: #9aa3b2;
 
-    --shadow-pop: 0 18px 44px rgba(19, 24, 33, 0.16), 0 0 0 1px var(--line);
-    --shadow-lift: 0 10px 24px rgba(19, 24, 33, 0.12);
-    --art-shadow: drop-shadow(0 6px 6px rgba(19, 24, 33, 0.22));
+    --chart-grid: rgba(18, 24, 38, 0.06);
+    --chart-border: rgba(18, 24, 38, 0.14);
+    --chart-ma-short: #c27a00;
+    --chart-ma-long: #2563c9;
+    --chart-volume: rgba(37, 99, 201, 0.22);
+    --chart-index-market: #2563c9;
+    --chart-index-category: #0a8796;
+    --chart-index-cpi: #a636ab;
+    --chart-index-loans: #c27a00;
+
+    --shadow-pop: 0 18px 44px rgba(18, 24, 38, 0.16), 0 0 0 1px var(--line);
+    --shadow-lift: 0 10px 22px rgba(18, 24, 38, 0.1);
+    --art-shadow: drop-shadow(3px 3px 0 rgba(18, 24, 38, 0.18));
     --topbar-bg: rgba(255, 255, 255, 0.97);
-    --tag-overlay: rgba(255, 255, 255, 0.86);
+    --tag-overlay: var(--surface-3);
     --toolbar-float: rgba(255, 255, 255, 0.96);
-    --scrim: rgba(19, 24, 33, 0.45);
-    --error-text: #a3221f;
-    --map-floor: #0b0e13;
+    --scrim: rgba(18, 24, 38, 0.45);
+    --error-text: #9f1f1f;
+    --map-floor: #0b0f17;
 }
 
 /* ---------- Base ---------- */
@@ -282,6 +305,21 @@ code {
     border-color: var(--accent-hover);
 }
 
+/* In-game button bevel on action buttons only (plain, secondary, danger,
+   warn); tabs, chips and cards are buttons too and stay flat. */
+:where(button:not([class]), button.secondary, button.danger, button.warn, .access-toggle) {
+    box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.22);
+}
+
+:where(button.secondary) {
+    box-shadow: inset 0 -2px 0 var(--line);
+}
+
+:where(button:not([class]), button.secondary, button.danger, button.warn, .access-toggle):active:not(:disabled) {
+    box-shadow: none;
+    transform: translateY(1px);
+}
+
 :where(button.secondary) {
     background: var(--surface-3);
     border-color: var(--line-2);
@@ -322,6 +360,7 @@ code {
     background: var(--surface-2);
     border-color: var(--line);
     color: var(--text-3);
+    box-shadow: none;
     cursor: not-allowed;
 }
 
@@ -543,14 +582,11 @@ label {
     min-width: 0;
 }
 
+/* Brand mark sits in a slot like any other item (slot styles below) */
 .brand-mark {
-    display: grid;
-    place-items: center;
     flex: 0 0 auto;
-    width: 38px;
-    height: 38px;
-    border-radius: var(--r-card);
-    background: linear-gradient(135deg, var(--accent), #ff7a1a);
+    width: 40px;
+    height: 40px;
 }
 
 .brand-mark img {
@@ -786,7 +822,7 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
 }
 
 .wallet-dock .wallet-dock-toggle strong {
-    color: var(--accent-text);
+    color: var(--text);
     font-family: var(--font-num);
     font-size: 18px;
     font-weight: 700;
@@ -1374,7 +1410,7 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
 }
 
 .strip-figure.accent strong {
-    color: var(--accent-text);
+    color: var(--text);
 }
 
 .market-strip-more {
@@ -1585,11 +1621,14 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     display: grid;
     place-items: center;
     flex: 0 0 auto;
-    width: 26px;
-    height: 26px;
-    border-radius: var(--r-tag);
-    background: var(--bg-2);
+    width: 28px;
+    height: 28px;
     color: var(--text-2);
+}
+
+/* Category icons use the slot (styles below) at a 2px pixel grid */
+.catalog-category-icon {
+    --px: 2px;
 }
 
 .catalog-subcategory-icon {
@@ -1863,20 +1902,101 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     font-family: var(--font-num);
 }
 
+/* ---------- Inventory slot (the signature) ----------
+   Minecraft draws a slot dark on the top-left edge and light on the
+   bottom-right, so items look set into the panel. Corners are cut on the
+   pixel grid; the slot glows faintly in the item's rarity colour and lights
+   up on hover the way the game highlights a hovered slot. */
+
+.goods-art,
+.catalog-category-icon,
+.brand-mark {
+    --slot-edge: var(--px);
+    position: relative;
+    display: grid;
+    place-items: center;
+    border-radius: 0;
+    background: var(--slot-bg);
+    box-shadow:
+        inset 0 0 0 1px var(--slot-ring),
+        inset var(--slot-edge) var(--slot-edge) 0 var(--slot-lo),
+        inset calc(var(--slot-edge) * -1) calc(var(--slot-edge) * -1) 0 var(--slot-hi);
+    clip-path: var(--pixel-corners);
+    overflow: hidden;
+}
+
+.goods-art {
+    width: 48px;
+    height: 48px;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--rarity-color, transparent) 16%, var(--slot-bg)), var(--slot-bg) 75%);
+}
+
+.goods-art::after {
+    content: "";
+    position: absolute;
+    inset: var(--slot-edge);
+    background: transparent;
+    pointer-events: none;
+    transition: background-color 90ms linear;
+}
+
+.goods-art img {
+    position: relative;
+    z-index: 1;
+    width: 32px;
+    height: 32px;
+    image-rendering: pixelated;
+    object-fit: contain;
+    filter: var(--art-shadow);
+}
+
+.goods-art-fallback {
+    position: relative;
+    z-index: 1;
+    font-family: var(--font-num);
+    font-size: 20px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--rarity-color, var(--text-3)) 70%, var(--text-3));
+}
+
+.goods-art.has-image .goods-art-fallback {
+    display: none;
+}
+
+/* The emerald: currency mark in front of every price */
+.goods-card-footer strong::before,
+.price-line::before,
+.strip-figure.accent strong::before,
+.wallet-dock .wallet-dock-toggle strong::before {
+    content: "";
+    display: inline-block;
+    width: 0.62em;
+    height: 0.62em;
+    margin-right: 0.32em;
+    vertical-align: 0.08em;
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0 30%, transparent 30%),
+        var(--accent);
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
 /* ---------- Item cards ---------- */
 
 .goods-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 10px;
 }
 
 .goods-card {
     --rarity-color: var(--rarity-common);
+    --rarity-name: var(--text);
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
+        "top"
         "art"
         "name"
         "key"
@@ -1886,7 +2006,7 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     justify-content: stretch;
     gap: 0;
     min-height: 0;
-    padding: 0 0 12px;
+    padding: 10px 12px 12px;
     border: 1px solid var(--line);
     border-radius: var(--r-card);
     background: var(--surface);
@@ -1895,65 +2015,65 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     text-align: left;
     white-space: normal;
     overflow: hidden;
-    transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.goods-card:has(.goods-rarity-tag.rarity-uncommon) { --rarity-color: var(--rarity-uncommon); }
-.goods-card:has(.goods-rarity-tag.rarity-rare) { --rarity-color: var(--rarity-rare); }
-.goods-card:has(.goods-rarity-tag.rarity-epic) { --rarity-color: var(--rarity-epic); }
-.goods-card:has(.goods-rarity-tag.rarity-legend) { --rarity-color: var(--rarity-legend); }
-.goods-card:has(.goods-rarity-tag.rarity-extraordinary) { --rarity-color: var(--rarity-extraordinary); }
+.goods-card:has(.goods-rarity-tag.rarity-uncommon) { --rarity-color: var(--rarity-uncommon); --rarity-name: var(--rarity-uncommon); }
+.goods-card:has(.goods-rarity-tag.rarity-rare) { --rarity-color: var(--rarity-rare); --rarity-name: var(--rarity-rare); }
+.goods-card:has(.goods-rarity-tag.rarity-epic) { --rarity-color: var(--rarity-epic); --rarity-name: var(--rarity-epic); }
+.goods-card:has(.goods-rarity-tag.rarity-legend) { --rarity-color: var(--rarity-legend); --rarity-name: var(--rarity-legend); }
+.goods-card:has(.goods-rarity-tag.rarity-extraordinary) { --rarity-color: var(--rarity-extraordinary); --rarity-name: var(--rarity-extraordinary); }
 
 .goods-card:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--rarity-color) 60%, var(--line));
+    border-color: color-mix(in srgb, var(--rarity-color) 50%, var(--line));
     background: var(--surface);
     color: var(--text);
-    box-shadow: var(--shadow-lift);
-    transform: translateY(-2px);
+}
+
+.goods-card:hover:not(:disabled) > .goods-art::after,
+.goods-card:focus-visible > .goods-art::after {
+    background: var(--slot-hover);
 }
 
 .goods-card.active,
 .goods-card.active:hover:not(:disabled) {
     border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* Showcase: item art on a rarity-lit floor with the rarity bar beneath */
 .goods-card > .goods-art {
+    --px: 4px;
+    --slot-edge: 4px;
     grid-area: art;
-    width: auto;
-    height: 128px;
-    margin-bottom: 12px;
-    border-radius: 0;
-    background: linear-gradient(180deg, var(--surface-2) 25%, color-mix(in srgb, var(--rarity-color) 26%, var(--surface-2)));
-    box-shadow: inset 0 -3px 0 var(--rarity-color);
+    justify-self: center;
+    width: 92px;
+    height: 92px;
+    margin: 8px 0 12px;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--rarity-color) 22%, var(--slot-bg)), var(--slot-bg) 80%);
 }
 
 .goods-card > .goods-art img {
-    width: 64px;
-    height: 64px;
-    filter: var(--art-shadow);
+    width: 56px;
+    height: 56px;
 }
 
 .goods-card > .goods-art .goods-art-fallback {
-    font-size: 40px;
-    color: color-mix(in srgb, var(--rarity-color) 70%, var(--text-3));
+    font-size: 34px;
 }
 
 .goods-card-topline {
-    grid-area: art;
-    z-index: 1;
+    grid-area: top;
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
     justify-content: space-between;
-    gap: 4px;
-    padding: 8px;
-    align-self: start;
+    gap: 6px;
+    min-width: 0;
 }
 
 .goods-card h3 {
     grid-area: name;
-    padding: 0 12px;
+    color: var(--rarity-name);
     font-size: 14px;
     font-weight: 700;
     line-height: 1.3;
@@ -1964,7 +2084,6 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
 
 .goods-key {
     grid-area: key;
-    padding: 0 12px;
     color: var(--text-3);
     font-size: 12px;
     overflow: hidden;
@@ -1978,7 +2097,9 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     align-items: baseline;
     justify-content: space-between;
     gap: 8px;
-    padding: 10px 12px 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line-2);
 }
 
 .goods-card-footer strong {
@@ -1987,6 +2108,7 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     font-weight: 700;
     line-height: 1;
     color: var(--text);
+    white-space: nowrap;
 }
 
 .goods-card-footer span {
@@ -1999,7 +2121,7 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     display: flex;
     flex-wrap: wrap;
     gap: 2px 10px;
-    padding: 0 12px;
+    margin-top: 6px;
 }
 
 .goods-badge {
@@ -2011,14 +2133,11 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
 .goods-rarity-tag {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    min-height: 20px;
-    padding: 0 7px;
-    border-radius: var(--r-tag);
-    background: var(--tag-overlay);
-    color: var(--text-2);
-    font-size: 11px;
-    font-weight: 700;
+    gap: 5px;
+    min-height: 18px;
+    color: var(--text-3);
+    font-size: 12px;
+    font-weight: 600;
     white-space: nowrap;
 }
 
@@ -2026,49 +2145,29 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     color: var(--rarity-color, var(--text-2));
 }
 
-.goods-art {
-    position: relative;
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    border-radius: var(--r-control);
-    background: var(--surface-2);
-    overflow: hidden;
+.goods-rarity-tag::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    background: currentColor;
 }
 
-.goods-art img {
-    width: 32px;
-    height: 32px;
-    image-rendering: pixelated;
-    object-fit: contain;
-}
-
-.goods-art-fallback {
-    font-family: var(--font-num);
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--text-3);
-}
-
-.goods-art.has-image .goods-art-fallback {
-    display: none;
-}
-
-/* Storage picker re-uses goods-card at a smaller showcase */
+/* Storage picker re-uses goods-card with a smaller slot */
 .storage-choice-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 8px;
 }
 
 .storage-choice-card > .goods-art {
-    height: 92px;
+    width: 64px;
+    height: 64px;
+    margin: 6px 0 10px;
 }
 
 .storage-choice-card > .goods-art img {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
 }
 
 .storage-choice-card .goods-card-footer strong {
@@ -2115,18 +2214,20 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
 .goods-hero.rarity-legend { --rarity-color: var(--rarity-legend); }
 .goods-hero.rarity-extraordinary { --rarity-color: var(--rarity-extraordinary); }
 
+/* The big slot: same bevel at a 6px pixel grid, so a 16px item texture
+   scales by whole pixels */
 .goods-hero > .goods-art {
+    --px: 6px;
+    --slot-edge: 6px;
     width: 240px;
     height: 240px;
-    border-radius: var(--r-card);
-    background: linear-gradient(180deg, var(--surface-2) 20%, color-mix(in srgb, var(--rarity-color) 28%, var(--surface-2)));
-    box-shadow: inset 0 -3px 0 var(--rarity-color);
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--rarity-color) 26%, var(--slot-bg)), var(--slot-bg) 80%);
 }
 
 .goods-hero > .goods-art img {
-    width: 136px;
-    height: 136px;
-    filter: var(--art-shadow);
+    width: 128px;
+    height: 128px;
 }
 
 .goods-hero > .goods-art .goods-art-fallback {
@@ -2149,14 +2250,17 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
     padding: 0;
 }
 
-.goods-main .goods-category-tag,
-.goods-main .goods-rarity-tag {
-    background: var(--surface-3);
+.goods-main .goods-card-topline {
+    margin-bottom: 2px;
 }
 
 .goods-main h2 {
     font-size: 30px;
     font-weight: 800;
+}
+
+.goods-hero:not(.rarity-common) .goods-main h2 {
+    color: var(--rarity-color);
 }
 
 .goods-main > .muted {
@@ -2238,7 +2342,7 @@ body.is-signed-in .access-toggle:hover:not(:disabled) {
 
 .price-line,
 .quote-box strong.price-line {
-    color: var(--accent-text);
+    color: var(--text);
     font-family: var(--font-num);
     font-size: 44px;
     font-weight: 700;
@@ -3376,22 +3480,181 @@ td input {
     margin-top: 12px;
 }
 
-/* ---------- Motion: only in response to the user's actions ----------
-   app.js re-renders #market-detail wholesale, so content containers must not
-   carry entrance animations (they would replay on every refresh). */
+/* ---------- Motion ----------
+   app.js re-renders #market-detail wholesale, so entrance motion is gated by
+   body classes that playViewMotion() sets only when something really changed:
+   .view-enter (page, terminal or item), .grid-enter (filters / sort),
+   .status-enter (a new status message). Plain re-renders get no class and no
+   replay. Hover and press motion answers the pointer directly.
+   The vocabulary is the game's: slots fill one by one, items drop into them,
+   a hovered item bobs like a dropped item and the emerald spins. */
 
 @media (prefers-reduced-motion: no-preference) {
+    /* Page change: the stage settles in */
+    body.view-enter #market-detail > * {
+        animation: stageIn 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    }
+
+    body.view-enter .workspace-button.active::after {
+        animation: tabGrow 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+
+    /* Inventory fill: slots arrive in reading order, each item drops in */
+    body.grid-enter .goods-grid > .goods-card {
+        animation: slotFill 340ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+        animation-delay: calc(var(--i, 0) * 32ms);
+    }
+
+    body.grid-enter .goods-grid > .goods-card > .goods-art img,
+    body.grid-enter .goods-grid > .goods-card > .goods-art .goods-art-fallback {
+        animation: itemDrop 420ms cubic-bezier(0.3, 1.5, 0.6, 1) both;
+        animation-delay: calc(var(--i, 0) * 32ms + 120ms);
+    }
+
+    /* Item page: the big slot opens, the item floats like a dropped item */
+    body.view-enter .goods-hero > .goods-art {
+        animation: slotFill 420ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+    }
+
+    .goods-hero > .goods-art img,
+    .goods-hero > .goods-art .goods-art-fallback {
+        animation: itemFloat 3.2s ease-in-out 600ms infinite;
+    }
+
+    body.view-enter .buy-box {
+        animation: stageIn 320ms cubic-bezier(0.2, 0.7, 0.2, 1) 120ms both;
+    }
+
+    /* Hover: the slot lights (static rule above), the item bobs, the emerald spins */
+    /* "body .goods-grid" lifts this above the grid-enter drop rule, so a
+       hover during or after the fill still bobs */
+    .goods-card:hover:not(:disabled) > .goods-art img,
+    .goods-card:hover:not(:disabled) > .goods-art .goods-art-fallback,
+    body .goods-grid > .goods-card:hover:not(:disabled) > .goods-art img,
+    body .goods-grid > .goods-card:hover:not(:disabled) > .goods-art .goods-art-fallback {
+        animation: itemBob 1.1s ease-in-out infinite;
+    }
+
+    .goods-card:hover:not(:disabled) .goods-card-footer strong::before,
+    .buy-box:hover .price-line::before {
+        animation: gemSpin 1.2s linear infinite;
+    }
+
+    .goods-card:active:not(:disabled) > .goods-art {
+        transform: scale(0.94);
+    }
+
+    .goods-card > .goods-art {
+        transition: transform 90ms ease-out;
+    }
+
+    /* Status messages slide in when they are new */
+    body.status-enter .status-bar {
+        animation: statusIn 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+
+    /* Panels open where they were asked for */
     .access-panel:not([hidden]) {
         animation: panelDrop 200ms ease-out;
     }
 
+    .terminal-panel:not([hidden]) {
+        transform-origin: top right;
+        animation: dropdownIn 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .market-strip.is-opening .market-strip-body {
+        animation: panelDrop 220ms ease-out;
+    }
+
     .purchase-modal-scrim {
-        animation: fadeIn 120ms ease-out;
+        animation: fadeIn 140ms ease-out;
     }
 
     .purchase-modal-card {
-        animation: popIn 160ms ease-out;
+        animation: modalIn 220ms cubic-bezier(0.34, 1.3, 0.64, 1);
     }
+
+    .purchase-modal-mode.is-selected {
+        animation: selectPulse 260ms ease-out;
+    }
+
+    /* Filter rows answer the pointer */
+    .catalog-category-card,
+    .catalog-subcategory-card,
+    .rarity-filter,
+    .market-card {
+        transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+    }
+
+    .catalog-category-card:hover:not(:disabled):not(.active),
+    .rarity-filter:hover:not(:disabled):not(.active),
+    .market-card:hover:not(:disabled):not(.active) {
+        transform: translateX(2px);
+    }
+
+    .theme-toggle-icon {
+        transition: transform 300ms cubic-bezier(0.34, 1.4, 0.64, 1), box-shadow 200ms ease;
+    }
+
+    .theme-toggle:hover .theme-toggle-icon {
+        transform: rotate(-40deg);
+    }
+
+    :root[data-theme="light"] .theme-toggle:hover .theme-toggle-icon {
+        transform: rotate(45deg);
+    }
+
+    /* Theme switch cross-fades instead of snapping */
+    html.theme-switching,
+    html.theme-switching *,
+    html.theme-switching *::before,
+    html.theme-switching *::after {
+        transition: background-color 260ms ease, border-color 260ms ease, color 260ms ease, fill 260ms ease !important;
+    }
+}
+
+@keyframes stageIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes tabGrow {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+}
+
+@keyframes slotFill {
+    from { opacity: 0; transform: scale(0.86); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes itemDrop {
+    from { opacity: 0; transform: translateY(-14px) scale(0.7); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes itemBob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+}
+
+@keyframes itemFloat {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-8px) rotate(-2deg); }
+}
+
+@keyframes gemSpin {
+    0% { transform: scaleX(1); }
+    25% { transform: scaleX(0.15); }
+    50% { transform: scaleX(-1); }
+    75% { transform: scaleX(0.15); }
+    100% { transform: scaleX(1); }
+}
+
+@keyframes statusIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes panelDrop {
@@ -3399,9 +3662,19 @@ td input {
     to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes popIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+@keyframes dropdownIn {
+    from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes modalIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes selectPulse {
+    0% { box-shadow: 0 0 0 0 var(--accent-line); }
+    100% { box-shadow: 0 0 0 6px transparent; }
 }
 
 @keyframes fadeIn {
@@ -3448,8 +3721,8 @@ td input {
     }
 
     .goods-hero > .goods-art img {
-        width: 104px;
-        height: 104px;
+        width: 96px;
+        height: 96px;
     }
 
     .goods-hero > .buy-box,

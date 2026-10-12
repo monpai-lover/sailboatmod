@@ -136,13 +136,15 @@ if (!appCss.includes("--surface-0") || !appCss.includes("--trade-up") || !appCss
   fail("trading-dashboard design tokens are missing from app.css");
 }
 
-if (!appCss.includes("/* Trade Floor")
+if (!appCss.includes("/* Trading Hall")
+  || !appCss.includes("--pixel-corners:")
+  || !appCss.includes("--slot-bg:")
   || !appCss.includes("color-scheme: dark")
   || !appCss.includes(":root[data-theme=\"light\"]")
   || !appCss.includes("--accent-text:")
   || !appCss.includes("--font-num:")
   || !appCss.includes("--chart-ma-short")) {
-  fail("marketweb must use the approved Trade Floor visual system with dark and light token sets");
+  fail("marketweb must use the approved Trading Hall visual system (inventory slots, dark and light token sets)");
 }
 
 if (!indexHtml.includes("marketWebTheme") || !indexHtml.includes('id="theme-toggle"') || !appJs.includes("localStorage.setItem(\"marketWebTheme\"")) {
@@ -150,7 +152,7 @@ if (!indexHtml.includes("marketWebTheme") || !indexHtml.includes('id="theme-togg
 }
 
 if (/backdrop-filter\s*:\s*(?!none)/.test(appCss)) {
-  fail("Trade Floor theme must not use backdrop-filter (Safari compositing cost)");
+  fail("Trading Hall theme must not use backdrop-filter (Safari compositing cost)");
 }
 
 if (!appCss.includes("prefers-reduced-motion: reduce")) {
@@ -159,6 +161,13 @@ if (!appCss.includes("prefers-reduced-motion: reduce")) {
 
 if (/\.(?:goods-detail|market-browse|market-shell)[^{]*\{[^}]*animation\s*:/.test(appCss)) {
   fail("re-rendered detail containers must not carry entrance animations");
+}
+
+if (!appJs.includes("function playViewMotion(")
+  || !appCss.includes("body.view-enter")
+  || !appCss.includes("body.grid-enter")
+  || /#market-detail[^{,]*\{[^}]*animation\s*:/.test(appCss.replace(/body\.(?:view|grid|status)-enter[^{]*\{[^}]*\}/g, ""))) {
+  fail("entrance motion must be gated by playViewMotion change classes so wholesale re-renders do not replay it");
 }
 
 if (!appJs.includes('cssThemeValue("--trade-up"') || !appJs.includes('cssThemeValue("--chart-ma-short"')) {

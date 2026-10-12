@@ -528,13 +528,15 @@ class MarketWebAppResourceTest {
     }
 
     @Test
-    void goodsCardsUseRarityShowcaseWithReducedMotionFallback() throws IOException {
+    void goodsCardsUseRaritySlotsWithReducedMotionFallback() throws IOException {
         String appCss = cssSource();
 
         assertTrue(appCss.contains(".goods-card:has(.goods-rarity-tag.rarity-epic)"),
                 "commodity cards should take their showcase colour from the item rarity");
-        assertTrue(appCss.contains("box-shadow: inset 0 -3px 0 var(--rarity-color);"),
-                "commodity card art should carry a rarity bar beneath the item");
+        assertTrue(appCss.contains("clip-path: var(--pixel-corners);"),
+                "commodity art should sit in a pixel-cornered inventory slot");
+        assertTrue(appCss.contains("color-mix(in srgb, var(--rarity-color) 22%, var(--slot-bg))"),
+                "the inventory slot should be tinted by the item's rarity");
         assertTrue(appCss.contains("image-rendering: pixelated;"),
                 "Minecraft item icons must stay pixel-crisp when enlarged in the showcase");
         assertTrue(appCss.contains("@media (prefers-reduced-motion: reduce)"),
